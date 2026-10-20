@@ -250,7 +250,7 @@ def render(data):
 <title>zSentinel · VPS herstelwerkbank</title><style>{css}</style></head><body>
 <header><h1>zSentinel · VPS herstelwerkbank</h1>
 <p>Privé momentopname · {escape(data["time"])} · alleen observatie</p>
-<p class="muted">Geen services, runners, modeltraining of wachtrij gewijzigd. Niet live gesynchroniseerd.</p></header>
+<p class="muted">Geen services, runners, modeltraining of wachtrij gewijzigd. {("Historische privébron, niet opnieuw geobserveerd." if data.get("offline_replay") else "Niet live gesynchroniseerd.")}</p></header>
 <main><h2>Hostcapaciteit</h2><div class="grid">{metrics}</div>
 <section class="panel"><h2>Vrijblijvend CPU-advies voor Fuckball-training</h2>
 <p><strong>Advies:</strong> CPUQuota {_value(data["quota"], "%")}, CPUWeight {_value(data["weight"])}</p>
@@ -270,6 +270,42 @@ Een actieve service bewijst geen GitHub job, succesvolle CI, main-merge of produ
 retry, servicewijziging, GitHub-actie of portfolio-claim is uitgevoerd.</p></section>
 <footer>Bron: lokale Linux host- en systemd-observatie. Geen netwerkverzoek of credentialopslag.
 Alleen bedoeld als privé operatoroverzicht, niet als productie- of releasebewijs.</footer></main></body></html>"""
+
+
+def offline_comparison_report(t0_path, t1_path):
+    """Replay only two owner-private receipts, with no systemd or host probing."""
+    from zsentinel_runner_snapshot import changes, load_private
+    previous = load_private(t0_path)
+    current = load_private(t1_path)
+    comparison = changes(previous, current)
+    rec = current.get("cpu_recommendation")
+    capacity = current.get("capacity")
+    if not isinstance(rec, dict) or not isinstance(capacity, dict):
+        raise ValueError("Incomplete stored capacity receipt")
+    coach = current.get("coach_state")
+    if not isinstance(coach, dict):
+        # Older stored T1 may lack coach detail. Never infer live settings.
+        coach = {"observed": False, "active": None, "quota": None,
+                 "weight": None, "recommendation_matches": None}
+    quota, weight = rec.get("quota_percent"), rec.get("weight")
+    if type(quota) is not int or quota not in {60, 100, 175} or (
+            type(weight) is not int or weight not in {25, 40, 70}):
+        raise ValueError("Untrusted stored CPU recommendation")
+    reasons = rec.get("reasons")
+    if not isinstance(reasons, list) or len(reasons) > 20 or not all(
+            isinstance(r, str) and r in REASON_NL for r in reasons):
+        raise ValueError("Untrusted stored pressure reasons")
+    for key in ("host_load", "cores", "memory_available_gib",
+                "swap_used_percent", "disk_unavailable_percent", "source_complete"):
+        if key not in capacity:
+            raise ValueError("Missing saved host measurement")
+    return {
+        "time": current["observation_utc"].replace("T", " ").replace("Z", " UTC"),
+        "host": capacity, "units": current["units"], "coach": coach,
+        "quota": quota, "weight": weight, "reasons": reasons,
+        "comparison": comparison,
+        "offline_replay": True,
+    }
 
 
 def save_private(path, markup):
@@ -305,14 +341,21 @@ def main():
     parser = argparse.ArgumentParser(description="Private one-shot zSentinel runner incident workbench")
     parser.add_argument("--output", required=True, help="NEW private 0600 .html report (never overwritten)")
     parser.add_argument("--previous", help="Optional owner-private T0 JSON, same-host and <=72 hours")
+    parser.add_argument("--t0", help="Offline replay: first owner-private JSON receipt")
+    parser.add_argument("--t1", help="Offline replay: later owner-private JSON receipt")
     args = parser.parse_args()
+    if bool(args.t0) != bool(args.t1) or (args.previous and args.t0):
+        parser.error("Use --t0 with --t1, or --previous for a live read-only observation")
     try:
-        data = collect()
-        if args.previous:
-            # Import only for opt-in private previous-receipt comparison.
-            from zsentinel_runner_snapshot import packet, changes, load_private
-            current = packet(data)
-            data["comparison"] = changes(load_private(args.previous), current)
+        if args.t0:
+            data = offline_comparison_report(args.t0, args.t1)
+        else:
+            data = collect()
+            if args.previous:
+                # Import only for opt-in private previous-receipt comparison.
+                from zsentinel_runner_snapshot import packet, changes, load_private
+                current = packet(data)
+                data["comparison"] = changes(load_private(args.previous), current)
         markup = render(data)
         save_private(args.output, markup)
     except (OSError, ValueError, KeyError, TypeError, UnicodeError):
