@@ -989,6 +989,7 @@ def as_private_csv(board):
     columns = (
         "record_type", "project", "repository", "source_status",
         "source_complete_for_sample", "pr_number", "pr_url", "pr_head_sha",
+        "pr_base_sha", "previous_pr_base_sha",
         "related_pr_url", "related_pr_head_sha", "cluster_number",
         "shared_filename", "shared_files_observed",
         "issue_number_hint", "current_exact_head_gate_status",
@@ -1091,6 +1092,7 @@ def as_private_csv(board):
             emit("current_gate_observation", project, view["repository"],
                  view["source_status"], pr_url=url,
                  pr_head_sha=item.get("head_sha_observed") or "",
+                 pr_base_sha=item.get("base_sha_observed") or "",
                  current_exact_head_gate_status=item["status"],
                  operator_notice="Observed gate only; branch protection/ownership still unknown.")
             if item["status"] != "current_exact_pr_head_and_sample_match":
@@ -1099,6 +1101,7 @@ def as_private_csv(board):
                 emit("current_check_job", project, view["repository"],
                      view["source_status"], pr_url=url,
                      pr_head_sha=item["head_sha_observed"],
+                     pr_base_sha=item["base_sha_observed"],
                      current_exact_head_gate_status=item["status"],
                      check_name=check["name"], check_state=check["state"],
                      check_conclusion=check["conclusion"] or "",
@@ -1108,6 +1111,7 @@ def as_private_csv(board):
                 emit("current_legacy_status", project, view["repository"],
                      view["source_status"], pr_url=url,
                      pr_head_sha=item["head_sha_observed"],
+                     pr_base_sha=item["base_sha_observed"],
                      current_exact_head_gate_status=item["status"],
                      check_name=status["context"], check_state=status["state"],
                      check_url=status["url"],
@@ -1128,6 +1132,8 @@ def as_private_csv(board):
                 raise ValueError("historical gate outside canonical project")
             emit("gate_episode_history", project, repo, "historical_gate_comparison",
                  pr_url=row["url"], pr_head_sha=row["current_head"] or "",
+                 pr_base_sha=row["current_base"] or "",
+                 previous_pr_base_sha=row["previous_base"] or "",
                  prior_gate_blocker=row["previous_blocker"] or "",
                  current_gate_blocker=row["current_blocker"] or "",
                  gate_episode_change=row["change"],
