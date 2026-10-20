@@ -279,6 +279,14 @@ def main(argv=None):
                 print("    Further saved PR references omitted, NOT resolved")
         print("CURRENT OWNER / REQUIRED CI / REVIEW / MAIN / DEPLOY: UNKNOWN")
         if args.extract_to is not None:
+            # A targeted CLI inspection must not silently extract unrelated
+            # private issue cards from a broader saved portfolio archive.
+            if (args.inspect_issue is not None and
+                    (len(report["issues"]) != 1 or
+                     manifest["selected_issue"] != args.inspect_issue)):
+                raise ValueError(
+                    "For one-issue extraction, create a source-pinned "
+                    "ZIP with --inspect-issue first")
             extract_private(files, args.extract_to)
             print("Original validated issue dossier extracted to a NEW private "
                   "directory. No external writes or approvals.")
