@@ -313,8 +313,11 @@ def private_html(report):
 
 def main():
     parser = argparse.ArgumentParser(description="Private queue claim-attempt source snapshots and operator report")
-    parser.add_argument("--database", type=Path, required=True,
-                        help="one existing read-only SQLite queue (never changed)")
+    sources = parser.add_mutually_exclusive_group(required=True)
+    sources.add_argument("--database", type=Path,
+                         help="one existing read-only SQLite queue (never changed)")
+    sources.add_argument("--current-snapshot", type=Path,
+                         help="already saved 0600 private current JSON source (offline)")
     parser.add_argument("--previous", type=Path, help="earlier private 0600 JSON snapshot of same queue source")
     parser.add_argument("--snapshot-output", type=Path,
                         help="new create-only private 0600 JSON of current snapshot")
@@ -324,6 +327,8 @@ def main():
     try:
         if not args.previous and not args.snapshot_output:
             raise ValueError("choose a previous snapshot or save a new snapshot")
+        if args.current_snapshot and (not args.previous or args.snapshot_output):
+            raise ValueError("offline current source requires previous, without snapshot output")
         if args.previous and args.output is None and args.format != "text":
             raise ValueError("HTML/JSON/Markdown require an explicit new private output file")
         if args.output and not args.previous:
@@ -334,7 +339,8 @@ def main():
             raise ValueError("previous and new snapshot paths overlap")
         if args.output and args.snapshot_output and args.output.resolve() == args.snapshot_output.resolve():
             raise ValueError("snapshot and trend outputs overlap")
-        latest = observe(args.database)
+        latest = (load_previous(args.current_snapshot) if args.current_snapshot
+                  else observe(args.database))
         trend = compare(load_previous(args.previous), latest) if args.previous else None
         if trend and args.output:
             content = (private_html(trend) if args.format == "html"
