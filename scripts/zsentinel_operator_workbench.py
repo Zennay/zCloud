@@ -181,6 +181,10 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .portfolio dl{display:flex;flex-wrap:wrap;gap:15px;margin:6px 0}.portfolio dt{font-size:12px;color:#b9cce6}.portfolio dd{font-size:19px;font-weight:750;margin:0}
 .portfolio ul{columns:2;list-style:none;padding:0;margin:10px 0}.portfolio li{break-inside:avoid;margin:5px 0}
 .portfolio small{color:#d5dfed}.brief{border:1px solid #53738e;border-radius:12px;padding:15px;margin:12px 0}
+.navtriage{display:flex;flex-wrap:wrap;gap:9px;align-items:center;padding:12px 14px;border:1px solid #53738e;border-radius:12px;background:#142438;margin:10px 0}
+.navtriage button{background:#243c56;color:#ecf5ff;border:1px solid #7897b6;padding:7px 12px}
+.navtriage button[disabled]{opacity:.5;cursor:not-allowed}
+.navtriage small{flex-basis:100%}
 .triage{border:1px solid #5c718c;background:#17283a;border-radius:12px;padding:15px;margin:14px 0}
 .triage ol{padding-left:23px;margin:8px 0;max-height:360px;overflow:auto}.triage li{padding:5px 0;overflow-wrap:anywhere}
 .triage button{background:#243c56;color:#ecf5ff;border:1px solid #7897b6;padding:6px 9px;margin-right:8px}
@@ -254,6 +258,15 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <option value="still-observed">Still observed (not resolved)</option>
 </select></label>
 </div>
+<nav class="navtriage" aria-label="Browse observed issue cards without taking ownership">
+<button id="navPrev" type="button">← Previous issue</button>
+<button id="navNext" type="button">Next issue →</button>
+<button id="navUrgent" type="button">Next open P0/P1 follow-up →</button>
+<span id="navPosition" role="status" aria-live="polite">No issue selected</span>
+<small>Keyboard: J / K for next / previous when not typing. Only the
+currently filtered, saved source is navigated; these are not assignments,
+claim permissions or external actions. Human notes remain local.</small>
+</nav>
 <section class="portfolio" aria-label="Snapshot portfolio triage">
 <h2>Observed product workload</h2>
 <p id="portfolioFreshness">Source freshness is not live-worker availability.</p>
@@ -1838,6 +1851,15 @@ function drawList(){
  document.getElementById('info').textContent=board.cards.length+' bounded issue cards · '+view.length+
    ' shown · observed '+board.observed_at_utc+' · no active-claim authorization';
  if(selected&&!view.some(c=>c.issue===selected)){saveSelection();selected=null;drawDetail()}
+ const at=view.findIndex(c=>c.issue===selected);
+ document.getElementById('navPosition').textContent=at>=0?
+   'Observed card '+(at+1)+' of '+view.length+' · '+selected:
+   view.length+' observed cards · select or navigate';
+ document.getElementById('navPrev').disabled=!view.length;
+ document.getElementById('navNext').disabled=!view.length;
+ document.getElementById('navUrgent').disabled=!view.some(c=>
+   (c.priority==='P0'||c.priority==='P1')&&
+   handoffs.get(c.issue)?.followup_status!=='local-complete');
  refreshTriage();refreshFollowups();refreshBatch();refreshPrDesk()
 }
 function drawDetail(){
@@ -1932,6 +1954,39 @@ function drawDetail(){
  owner.addEventListener('input',update);
  due.addEventListener('change',update);
 }
+function navigateObserved(direction,urgentOnly=false){
+ saveSelection();
+ const visible=filtered();
+ const items=urgentOnly?visible.filter(card=>
+   (card.priority==='P0'||card.priority==='P1')&&
+   handoffs.get(card.issue)?.followup_status!=='local-complete'):visible;
+ if(!items.length){
+   status.textContent=urgentOnly?
+    'No open P0/P1 follow-ups in the current bounded filters; live project state remains unknown.':
+    'No cards in the current saved-source filters.';
+   return;
+ }
+ const at=items.findIndex(card=>card.issue===selected);
+ const next=at<0?(direction<0?items.length-1:0):
+   (at+direction+items.length)%items.length;
+ selected=items[next].issue;
+ invalidateBrief();drawList();drawDetail();
+ status.textContent=(urgentOnly?'Open urgent human follow-up: ':'Observed issue: ')+
+   selected+'. Current ownership, required CI and release gates remain unverified.';
+}
+document.getElementById('navPrev').onclick=()=>navigateObserved(-1);
+document.getElementById('navNext').onclick=()=>navigateObserved(1);
+document.getElementById('navUrgent').onclick=()=>navigateObserved(1,true);
+document.addEventListener('keydown',event=>{
+ if(event.defaultPrevented||event.altKey||event.ctrlKey||event.metaKey||
+    event.shiftKey||event.repeat)return;
+ const active=document.activeElement;
+ if(active&&(active.isContentEditable||
+    ['INPUT','TEXTAREA','SELECT'].includes(active.tagName)))return;
+ if(event.key==='j'||event.key==='k'){
+   event.preventDefault();navigateObserved(event.key==='j'?1:-1);
+ }
+});
 ['search','priority','project','disposition','change','followupStatus'].forEach(id=>document.getElementById(id).addEventListener(
  'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
 document.getElementById('export').onclick=()=>{
