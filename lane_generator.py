@@ -288,7 +288,21 @@ def _recovery_declared_scope(metadata):
                     return {"capabilities": [], "files": []}
             if name not in parsed[key]:
                 parsed[key].append(name)
+    # A capability label alone names a lane, not the files it may edit.
+    # Only explicit, finite real file paths can prove two code writers
+    # are independent. Read-only tasks are never granted writer authority.
+    if not parsed["files"]:
+        return {"capabilities": [], "files": []}
     return parsed
+
+
+def recovery_scope_diagnostic(item):
+    """Human-safe metadata classification; never returns raw paths or owners."""
+    metadata = _metadata(item)
+    if not isinstance(metadata.get("conflict_scope"), dict):
+        return "missing_declaration"
+    return ("declared" if any(_recovery_declared_scope(metadata).values())
+            else "invalid_or_empty_declaration")
 
 
 def _recovery_scope_from_item(item):
