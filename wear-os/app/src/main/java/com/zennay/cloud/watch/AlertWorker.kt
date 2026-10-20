@@ -32,7 +32,10 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             ?: emptySet()
         val delivered = previouslySeen.toMutableSet()
         val urgent = snapshot.alerts
-            .filter { it.id.isNotBlank() && it.isUrgent() }
+            // Do not interrupt for generic high severity. Only the server
+            // can assert that the known incident requires a human decision.
+            .filter { it.id.isNotBlank() && it.isUrgent() &&
+                      it.humanActionRequired }
             .distinctBy { it.id }
             .sortedWith(compareBy<AlertItem> {
                 if (it.severity.equals("critical", true)) 0 else 1
