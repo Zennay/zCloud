@@ -155,7 +155,11 @@ def discover_open_prs(registry, selected_projects, token=None, limit=MAX_PRS,
                                  exc.category if isinstance(exc, GithubAdmissionError)
                                  else None),
                              "all_open_prs_observed": False})
-            if reason == "github_permission_or_rate_limit":
+            # HTTP 401/403 can be scoped to this repository; continue
+            # reading unrelated project PRs. A confirmed provider rate-limit
+            # is the only cross-project stop condition.
+            if (isinstance(exc, GithubAdmissionError)
+                    and exc.category == "rate_limit_confirmed"):
                 rate_limited = True
     picked = []
     for priority in ("P0", "P1", "Unspecified"):
@@ -341,7 +345,8 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
                         # A source or permission denial degrades ONLY this
                         # optional diagnosis, not the core PR/CI evidence.
                         item["ci"]["no_start_annotation_coverage"] = "unavailable"
-                        if str(error) == "github_permission_or_rate_limit":
+                        if (isinstance(error, GithubAdmissionError)
+                                and error.category == "rate_limit_confirmed"):
                             annotations_denied = True
                 elif annotations_denied:
                     item["ci"]["no_start_annotation_coverage"] = "not_queried_after_denial"
@@ -456,7 +461,8 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
                 next_step = "confirm_branch_protection_and_release_with_owner"
             item["next_step"] = next_step
         except (OSError, ValueError, TypeError, KeyError) as exc:
-            if str(exc) == "github_permission_or_rate_limit":
+            if (isinstance(exc, GithubAdmissionError)
+                    and exc.category == "rate_limit_confirmed"):
                 rate_limited = True
             # Partially observed checks or a moved source HEAD cannot be
             # displayed as current readiness. Keep only the safe PR link.
