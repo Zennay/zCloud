@@ -15,6 +15,7 @@ QA_LANES = frozenset({
     "test-validation", "evaluation-validation", "test-only", "qa-only",
     "kwaliteitsvalidatie", "kwaliteitscontrole", "qa-validatie",
     "testvalidatie", "test-only-validatie", "regressie-validatie",
+    "qa-only-validatie", "alleen-qa", "uitsluitend-qa",
 })
 QA_TITLE = re.compile(
     r"^(?:(?:p[0-3])\s*[:.·/-]\s*)?"
@@ -31,8 +32,9 @@ DELIVERY_VERBS = re.compile(
     r"\b(?:build|implement|integrate|ship|deliver|deploy|fix|repair|"
     r"migrate|restore|unblock|enable|release|merge|refactor|"
     r"bouw|bouwen|implementeer|implementeren|integreer|integreren|"
-    r"repareer|repareren|herstel|herstellen|los|oplossen|"
-    r"lever|leveren|uitrollen|vrijgeven|samenvoegen|verhelp)\b",
+    r"repareer|repareren|herstel|herstellen|"
+    r"lever|leveren|uitrollen|vrijgeven|samenvoegen|verhelp|"
+    r"mergen|fixen|los\s+op|oplossen)\b",
     re.IGNORECASE,
 )
 # Negative delivery phrases must not turn a QA-only ticket into product work.
@@ -41,10 +43,20 @@ NEGATED_DELIVERY = re.compile(
     r"mag\s+niet)\s+(?:[\w-]+\s+){0,3}"
     r"(?:merge|deploy|release|build|fix|repair|implement|integrate|"
     r"ship|deliver|refactor|migrate|restore|enable|herstel|"
-    r"repareer|bouw|implementeer|integreer|lever|samenvoegen)\b",
+    r"repareer|bouw|implementeer|integreer|lever|samenvoegen|"
+    r"mergen|fixen|oplossen|uitrollen)\b",
     re.IGNORECASE,
 )
 
+
+
+# "QA-only" is an explicit lane declaration even if a note mentions a fix.
+EXPLICIT_QA_ONLY_TITLE = re.compile(
+    r"^(?:(?:p[0-3])\s*[:.·/-]\s*)?"
+    r"(?:qa[-_ /]?only|test[-_ /]?only|uitsluitend\s+qa|alleen\s+qa)"
+    r"\b",
+    re.IGNORECASE,
+)
 
 def _positive_delivery(text):
     return bool(DELIVERY_VERBS.search(NEGATED_DELIVERY.sub(" ", text)))
@@ -82,7 +94,7 @@ def _lane_value(value):
     """Normalize only known work-type labels; never infer ownership."""
     if not isinstance(value, str):
         return ""
-    return re.sub(r"[\s_]+", "-", value.strip().casefold())
+    return re.sub(r"[\s_/]+", "-", value.strip().casefold())
 
 
 def product_delivery_disposition(item):
@@ -129,6 +141,8 @@ def product_delivery_disposition(item):
     if not isinstance(criteria, str) or len(criteria) > 32768:
         return "invalid"
     title = title.strip()
+    if EXPLICIT_QA_ONLY_TITLE.match(title):
+        return "qa_only"
     # Keep an actual code repair, including Dutch wording, even if a legacy
     # ticket title begins with "Test". Explicit QA metadata always wins.
     if (QA_TITLE.match(title) and not _positive_delivery(title)
