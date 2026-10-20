@@ -2713,6 +2713,42 @@ def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
         )
         if len(page)<240:
             break
+    # The global 960-row sample can itself be monopolised by one project's
+    # P0 backlog. Boundedly inspect a source slice for each *other* registered
+    # project before reducing the final window to 240 candidates. This cannot
+    # grant a new claim or bypass a project's ordinary execution mode.
+    observed_projects={str(row['project_id'] or '') for row in rows}
+    for other_project in sorted(PROJECT_INDEX)[:24]:
+        if other_project in observed_projects:
+            continue
+        # A source sample is not a full backlog census. Keep this extra
+        # project discovery read capped and strictly query-only.
+        project_page=connection.execute(
+            """SELECT * FROM portfolio_queue
+               WHERE project_id=? AND eligible=1 AND status='queued'
+                 AND worker_slot IS NULL AND claimed_at IS NULL
+                 AND claim_expires IS NULL
+               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                             WHEN 'P2' THEN 2 ELSE 3 END,
+                        created_at,queue_id LIMIT 128""",
+            (other_project,),
+        ).fetchall()
+        matches=[
+            row for row in project_page
+            if str(row['queue_id']) not in preempted
+            and is_new_product_delivery(dict(row))
+        ]
+        if matches:
+            rows.extend(matches[:8])
+    # Cross-project additions may have higher urgency than older items in
+    # the global sample: restore the canonical SQL priority/creation ordering
+    # before selecting the final 240 candidate rows.
+    priority_order={'P0':0,'P1':1,'P2':2}
+    rows.sort(key=lambda row: (
+        priority_order.get(str(row['priority'] or ''),3),
+        str(row['created_at'] or ''),
+        str(row['queue_id'] or ''),
+    ))
     # Reserve at most eight candidates per observed project before filling
     # spare places globally. Final output keeps the source's priority order;
     # normal lane ownership, hard caps, memory and manual-start gates still
