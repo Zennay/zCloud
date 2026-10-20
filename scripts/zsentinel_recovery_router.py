@@ -860,6 +860,19 @@ def plan(bundle, previous=None, now=None):
             "status": ("human_action_required" if human else "read_only_diagnosis_required"),
             "human_escalation": human,
             "last_status": previous_status if isinstance(previous_status, str) else "",
+            # Exact observed job identity for a human operator, not a runner
+            # recovery assertion or a credential to act on this job.
+            "exact_github_job": ({
+                "run_id": github["run_id"], "job_id": github["job_id"],
+                "head_sha": github["head_sha"],
+            } if (reason.startswith("github_")
+                  and github.get("verified_receipt") == "github_exact_run_job"
+                  and type(github.get("run_id")) is int
+                  and type(github.get("job_id")) is int
+                  and 1 <= github["run_id"] <= 2**53 - 1
+                  and 1 <= github["job_id"] <= 2**53 - 1
+                  and type(github.get("head_sha")) is str
+                  and SHA.fullmatch(github["head_sha"]) else None),
         })
         next_state[key] = {
             "first_seen": utc_string(first), "last_seen": utc_string(now),
