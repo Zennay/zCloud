@@ -833,3 +833,48 @@ Markdown/JSON operator handoff, with false authorization flags.
 
 Latest implementation on the same existing PR; no owner or active-claim
 transfer, source-only change, no QA suites written or manually executed.
+
+
+### 20 October · Continue with safely available batches
+
+The offline saved-gate bridge now offers an **explicit partial import** when
+one source batch is absent or unavailable. This avoids freezing all unrelated
+PR observations while preserving source integrity and mandatory merge gates.
+
+```sh
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./reviewed-manifest.json \
+  --receipt ./private-gates-batch-1.json \
+  --receipt ./private-gates-batch-3.json \
+  --allow-partial \
+  --output ./new-private-PARTIAL-gates.json
+```
+
+Without `--allow-partial` the original all-batches-required behavior remains
+the default. Each provided receipt still passes exact original manifest SHA,
+original board SHA, ordered four-PR batch membership, strict UTC source time
+window, allowlisted observational fields, and identity-bound, regular-file,
+size/duplicate-JSON checks. Missing source cannot become a success.
+
+The combined JSON carries `observed_batch_count`,
+`expected_batch_count`, `review_candidate_pr_count`,
+`missing_batch_count`, sorted `missing_batch_indexes`, and
+`all_batches_observed_not_all_checks_required_verified`. The browser
+verifies these fields together: no forged complete flag, missing index outside
+the manifest, duplicate index, or contradictory totals is accepted.
+It reports **PARTIAL saved batch coverage** and exact missing batch indexes.
+Only actually supplied PR observations appear; other captured PRs remain
+**UNKNOWN**. The existing original board membership/URL checks continue
+to apply to every imported issue/PR association.
+
+The workbench's read-only human Markdown and JSON export carries source
+coverage and missing indexes. A *complete saved batch set* is still not
+evidence that required current GitHub workflows succeeded, the current PR
+HEAD remained unchanged, independent owner reviews occurred, a worker slot
+is free, or deployment was authorized. It never triggers a dispatch,
+retry, merge, claim, external network call or file overwrite. Refuse reports
+with zero receipts; unverified input or unsupported schema cannot be
+partially ingested.
+
+No QA/regression suite, runner restart or privileged production task is
+needed for this offline source feature.
