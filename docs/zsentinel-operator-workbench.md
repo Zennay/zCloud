@@ -1275,3 +1275,46 @@ bronmanifestkandidaten; de broninventaris moet één-op-één overeenkomen
 met de getoonde kaarten. Een lege index of een historische PR-link
 is geen eigendoms- of mergebewijs. Er wordt geen nieuwe API-bron
 bevraagd en de HTML blijft offline, scriptvrij en niet-autoriseren.
+
+
+## 20 oktober · Sorteerbare privé PR-afrondingslijst (CSV)
+
+De al beschikbare, aan één reviewmanifest en exacte bronboard-SHA
+gebonden gatebatches kunnen nu naast `json`, `markdown` en `html`
+rechtstreeks als **offline semikolon-CSV** worden overgedragen:
+
+```sh
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./review-manifest.json \
+  --receipt ./gate-batch-1.json \
+  --receipt ./gate-batch-2.json \
+  --format csv --output ./private-bestaande-pr-werkbak.csv
+```
+
+Hiermee kan de operator in een lokale spreadsheet **per bestaande PR**
+sorteren op oorspronkelijk issueprioriteit, project, waargenomen
+blokkeringsreden of vervolgactie, zonder een tweede browserimport
+of extra GitHub-/Notion-aanroepen. Iedere PR komt maximaal eenmaal
+voor, ook bij meerdere gekoppelde issues. Canonieke bronissue- en
+PR-links, waargenomen SHA, CI- en reviewtellingen, bronvenster en beide
+SHA256-bronidentiteiten blijven in elke rij behouden.
+
+**Betekenis van lege versus nul-waarden:** als een batch ontbreekt
+of GitHub-bron onbekend is, zijn CI-/reviewtellingen **leeg** en staat
+de batchstatus op niet waargenomen/onbeschikbaar. Een echt waargenomen
+nul wordt numeriek weergegeven. De kolommen voor verplichte
+CI-/reviewvrijgave, actuele claim, main-merge en live-status blijven
+altijd expliciet **ONBEKEND**. Dit is dus nooit een release- of
+reviewgoedkeuring.
+
+Het bestand gebruikt UTF-8 met BOM en puntkomma's voor gebruikelijke
+Nederlandse spreadsheetinstellingen. Alleen canonieke repository-/PR-
+en issue-identiteiten, gecontroleerde SHA/tijdstempels, getallen en
+vaste Nederlandse labels/acties worden als cellen toegelaten:
+geen onbetrouwbare vrije providertekst of formules. De bestaande
+`combined_manifest`-validatie en create-only privé-bestandsuitvoer
+(`0600`, `O_EXCL`, maximaal 1 MiB) blijven gelden. `--previous`
+blijft uitsluitend voor `markdown` en `html` beschikbaar,
+zodat een historisch CSV-importbestand niet als actuele mergevrijgave
+kan worden geïnterpreteerd. Er wordt geen QA-suite aangemaakt of
+gestart, geen werk overgenomen en geen CI, claim, queue of VPS gewijzigd.
