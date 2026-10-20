@@ -315,3 +315,19 @@ whole flow runs locally in the browser without server writes, browser
 network calls, worker assignment, notifications, retries, or queue mutations.
 No QA/regression suites were created or run. Integration of this feature
 remains gated by the existing protected-main and exact-head release checks.
+
+### Historical source-drift visibility before manual import
+
+Carry-forward preview compares **the old board's exact issue evidence** against
+the new board, including priority, original title, linked PRs, recommended
+investigation and individual missing-gate contents. It explicitly counts
+cards with changed source evidence and identifies the changed fields beside
+each proposed human annotation. This warns operators before they reuse a
+contact or a date for an issue whose blockers may have materially changed.
+
+An optional locally generated calendar event also includes the previous
+board's SHA256 when its manual annotation was carried forward, plus a
+renewed-owner-review warning. This is provenance only, not a verified
+owner, released claim or calendar notification. The transfer still requires
+a deliberate preview and confirmation; current human notes remain untouched,
+and all original required source/CI/security/review/release gates stay active.
