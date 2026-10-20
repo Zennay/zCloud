@@ -64,7 +64,7 @@ def _utc(value):
         return None
 
 
-def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases, missing_local_claim):
+def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases, missing_local_claim, active_profile_mismatch):
     """Map a local lane observation to human-only admission guidance.
 
     This deliberately never claims a task and is not an admission token.
@@ -85,6 +85,12 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
             "code": "HOLD_EXPIRED_LOCAL_CLAIM",
             "label": "Verlopen lokale lease(s) aangetroffen",
             "next_step": "Laat de bestaande claimeigenaar de daadwerkelijke taakstatus vergelijken; niet opnieuw claimen.",
+        }
+    if active_profile_mismatch:
+        return {
+            "code": "HOLD_LEGACY_PROFILE_MIGRATION",
+            "label": "Actieve taken horen bij een ander baanprofiel",
+            "next_step": "Laat de runtime-eigenaar het gedeployde profiel en bestaande claims verenigen; migreer geen actieve eigenaar automatisch.",
         }
     if missing_local_claim:
         return {
@@ -285,6 +291,10 @@ def collect(database, maximum, include_runner_processes=False):
     untrusted_active_leases = max(
         (lane.get("untrusted_active_lease_count", 0) for lane in lanes), default=0
     )
+    active_profile_mismatch = max(
+        (lane.get("active_profile_mismatch_count", 0) for lane in lanes),
+        default=0,
+    )
     # Diagnostic only. The dispatch path itself remains governed by the
     # existing lane generator and actual external claim/release gates.
     active_items = [
@@ -315,6 +325,7 @@ def collect(database, maximum, include_runner_processes=False):
         or unknown_active_scopes or unknown_claim_scopes or runtime_shadowed_active
         or portfolio_partial or unknown_project_groups
         or inconsistent_queue_claim_windows or untrusted_active_leases
+        or active_profile_mismatch
     )
     missing_local_claim = (
         sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0
@@ -325,6 +336,7 @@ def collect(database, maximum, include_runner_processes=False):
         admission = operator_admission(
             lane, source_complete, cross_lane_coverage,
             collision_counts[lane["lane_id"]], expired, missing_local_claim,
+            active_profile_mismatch,
         )
         visible.append({
             "id": lane["lane_id"],
@@ -379,6 +391,8 @@ def collect(database, maximum, include_runner_processes=False):
         "active_write_scopes_not_declared": unknown_active_scopes,
         "active_scope_declarations_missing": missing_active_declarations,
         "active_scope_declarations_invalid_or_empty": invalid_active_declarations,
+        "active_legacy_profile_claims_observed": active_profile_mismatch,
+        "deployed_four_lane_profile": "NOT_VERIFIED",
         "active_claim_scopes_not_declared": unknown_claim_scopes,
         "untrusted_active_leases_observed": untrusted_active_leases,
         "runtime_active_filtered_by_eligibility": runtime_shadowed_active,
@@ -408,6 +422,7 @@ def collect(database, maximum, include_runner_processes=False):
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
             or runtime_shadowed_active or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
+            or active_profile_mismatch
             or any(collision_counts.values())
             or missing_local_claim
         ),
@@ -498,6 +513,10 @@ def text_view(data):
                    str(data["inconsistent_in_flight_queue_claim_windows_observed"])
                    + " actieve queue-claimvensters hebben onmogelijke of ontbrekende start; "
                    "behoud huidige eigenaar.")
+    if data["active_legacy_profile_claims_observed"]:
+        out.append("MIGRATIE-HOLD: "
+                   + str(data["active_legacy_profile_claims_observed"])
+                   + " actieve taken vallen onder een ander of onbekend baanprofiel.")
     if data["active_write_scopes_not_declared"]:
         out.append(
             "Schrijfscopes actief: " + str(data["active_scope_declarations_missing"])
@@ -590,6 +609,11 @@ def html_view(data):
             str(data["inconsistent_in_flight_queue_claim_windows_observed"])
             + " actieve queue-claimvensters hebben een ontbrekende/toekomstige start of "
               "niet-vooruitlopende vervaltijd; geen herclaim zonder eigenaar."
+        )
+    if data["active_legacy_profile_claims_observed"]:
+        warnings.append(
+            str(data["active_legacy_profile_claims_observed"])
+            + " actieve claims hebben een legacy/onbekend profiel; eigenaars behouden hun claims."
         )
     if data["active_write_scopes_not_declared"]:
         warnings.append(
@@ -802,6 +826,9 @@ def markdown_view(data):
         "- Actieve queueleases niet toelaatbaar voor nieuwe schrijvers: "
         + str(data["untrusted_active_leases_observed"])
         + " (houder blijft eigenaar).",
+        "- Actieve claims met legacy of onbekend baanprofiel: "
+        + str(data["active_legacy_profile_claims_observed"])
+        + " (geen automatische profielmigratie).",
         "- Schrijfscopes: " + str(data["active_scope_declarations_missing"])
         + " ontbrekend; " + str(data["active_scope_declarations_invalid_or_empty"])
         + " ongeldig/leeg; niet herclaimen of invullen namens eigenaar.",
