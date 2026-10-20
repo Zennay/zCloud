@@ -447,3 +447,23 @@ unchanged. No QA or regression suites were authored or manually executed.
 ### Source checks directly in the bulk review
 
 Every selectable human follow-up includes a canonical original GitHub-issue link. The private pre-apply review prints that issue URL and the first source-observed missing gate alongside the exact proposed local change, so a human can reopen the original owner/CI/release evidence before confirming. The first displayed gap is not an exhaustive authorization checklist and the original source snapshot may be stale. The operator must still verify all current gates independently; neither preview nor confirmation writes to GitHub, Notion, workers, CI or production.
+
+## 20 October · Calendar contact privacy by default
+
+Calendar follow-up export now **excludes human contact labels by default**.
+The original issue link, scheduled all-day review, source-observation timestamp
+and an explicit "not an authorization" warning remain so the event is still
+usable without shipping a private contact name to any calendar provider.
+The optional **Deliberately include private human contact labels** checkbox
+is initially unchecked and must be chosen by a person before generating
+the private .ics file. Toggling it invalidates the previous calendar preview
+and disables its download until the operator reviews exactly the new bytes.
+
+This matters because an intentionally imported .ics file can be synced by
+the target calendar client even though zSentinel itself never uses any network
+or calendar connector. A contact label is user-entered and **not** a validated
+GitHub/Notion assignee or escalation acknowledgement. The selected personal
+note and any raw GitHub/Notion data are never included automatically.
+No background notification, browser storage, worker dispatch, queue mutation,
+privilege expansion or production release was introduced. Source syntax was
+directly inspected; no QA/regression suite was authored or manually run.
