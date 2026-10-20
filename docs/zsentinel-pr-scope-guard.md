@@ -1572,3 +1572,7 @@ De cross-window werkbank had twee routes die bij veel PRs met hetzelfde bestand 
 De verbonden clusters bewaren uitsluitend verschillende PR-paarverbindingen; de per-bestandsmatrix wordt rechtstreeks uit de bestaande filename-naar-PR index opgebouwd voor maximaal achttien zichtbare namen per groep. Zowel bestandsaantallen, alle werkelijke paarrelaties, transitive groepsverbindingen als bronlinks blijven intact. Er wordt niets ingekort aan het observatiebewijs waarmee groepen worden berekend; alleen de presentatie van concrete bestanden is begrensd.
 
 Dit vermindert geheugenafhankelijkheid van de vermenigvuldiging tussen gedeelde filenames en PR-paren; het is geen garantie dat alle GitHub PRs, claims of branchbescherming zijn gezien. Volledigheid, autorisatie, CI en bronmoment blijven separate, expliciet niet aangetoonde voorwaarden.
+
+#### Zichtbare bestandsmatrix op integratiewaarde gesorteerd
+
+In de begrensde lijst van achttien voorbeeldbestanden verschijnen nu **eerst paden die daadwerkelijk PRs uit verschillende bronvensters verbinden**. Daarna komen paden met de meeste betrokken PRs, met een stabiele alfabetische tie-break. De volgorde helpt om meteen de kern van een over-pagina integratiegroep te zien; alle geobserveerde bestandsnamen blijven meetellen bij de volledige graaf, ook als zij niet in de voorbeeldlijst staan. Dit is een observatieprioriteit, geen mergevolgorde of toewijzing van code-eigenaarschap.
