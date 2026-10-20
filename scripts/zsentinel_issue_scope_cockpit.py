@@ -51,6 +51,24 @@ NEXT_ACTIONS_NL = {
 }
 
 
+GATE_STEPS_NL = {
+    "inspect_incomplete_current_head_gate_source":
+        "Onvolledige check-, legacy-status- of reviewbron; eerst volledig bronbewijs ophalen.",
+    "inspect_current_head_failed_checks_with_owner":
+        "Huidige HEAD heeft mislukte checks/statussen; herstel via bevoegde PR-eigenaar.",
+    "wait_for_existing_current_head_checks":
+        "Bestaande HEAD-checks lopen nog; niet opnieuw dispatchen of mergen.",
+    "owner_address_exact_head_review_changes":
+        "Wijzigingsverzoek op exacte HEAD; laat bevoegde PR-eigenaar afhandelen.",
+    "verify_missing_current_head_checks_and_rules":
+        "Geen check-ontvangsten gezien; vereiste workflow- en branchregels apart opvragen.",
+    "request_independent_current_head_review":
+        "Vraag onafhankelijke review op de actuele HEAD; geen zelfgoedkeuring.",
+    "verify_required_rules_ownership_and_release_separately":
+        "Waarnemingen aanwezig; controleer vereiste branchregels, eigenaar en release apart.",
+}
+
+
 def direct_issue_inbox(canonical, selected_projects, focus_issue, token):
     """Fetch one explicitly named still-open canonical GitHub product issue.
 
@@ -592,7 +610,18 @@ def output_text(report, markdown=False):
                                  str(live_gate["observed_checks_not_successful"]) +
                                  " · exact-head onafhankelijke approvals gezien: " +
                                  str(live_gate["observed_independent_exact_head_approvals"]) +
+                                 " · legacy statussen: " +
+                                 str(live_gate.get("legacy_status_contexts_observed", 0)) +
+                                 " contexten (" +
+                                 str(live_gate.get("legacy_status_pending_observed", 0)) +
+                                 " lopend, " +
+                                 str(live_gate.get("legacy_status_failure_or_error_observed", 0)) +
+                                 " mislukt) · bron onvolledig: " +
+                                 str(live_gate.get("legacy_status_source_may_be_truncated", True)) +
                                  " · vereiste branch/reviewregels ONBEKEND")
+                    lines.append("    Actie: " + GATE_STEPS_NL.get(
+                        live_gate.get("human_next_gate_step"),
+                        "Volledige actuele bron of bevoegde eigenaar ontbreekt."))
                 else:
                     lines.append("    Actuele PR-bron onbekend of HEAD veranderd; geen mergebesluit.")
             gates = pr["saved_exact_head_gates"]
@@ -658,7 +687,20 @@ def output_html(report):
                 str(live_gate["observed_checks_not_successful"]) +
                 " · onafhankelijke HEAD-approvals gezien: " +
                 str(live_gate["observed_independent_exact_head_approvals"]) +
-                ". Vereiste branch/reviewregels ONBEKEND; geen mergevrijgave.</p>"
+                " · legacy statuscontexten: " +
+                str(live_gate.get("legacy_status_contexts_observed", 0)) +
+                " (" + str(live_gate.get("legacy_status_pending_observed", 0)) +
+                " lopend, " +
+                str(live_gate.get("legacy_status_failure_or_error_observed", 0)) +
+                " niet geslaagd)" +
+                (" · statusbron mogelijk afgekapt" if
+                 live_gate.get("legacy_status_source_may_be_truncated", True) else "") +
+                ". Vereiste branch/reviewregels ONBEKEND; geen mergevrijgave.</p>" +
+                "<p><strong>Menselijke gate-stap:</strong> " +
+                escape(GATE_STEPS_NL.get(
+                    live_gate.get("human_next_gate_step"),
+                    "Volledige actuele bron of bevoegde eigenaar ontbreekt.")) +
+                "</p>"
                 if live_gate is not None and
                 live_gate.get("status") == "observed_current_head_partial_gate_evidence"
                 else "<p>Actuele PR-bron onbereikbaar of HEAD gewijzigd; geen mergebesluit.</p>"
