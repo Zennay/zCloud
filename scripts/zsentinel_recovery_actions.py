@@ -95,6 +95,49 @@ def suggested_actions(packet):
             "Laat de taak starten uitsluitend na externe claim-, eigenaar- en resourcecontrole; geen parallelle schrijver.",
             "SERIAL_CANDIDATE_NOT_AUTHORIZED",
         ))
+    # Runner /proc only corroborates local process presence. It cannot prove
+    # GitHub runner registration, labels, job assignment or successful CI.
+    local_proc = packet.get("runner_processes")
+    if isinstance(local_proc, dict):
+        families = local_proc.get("families") or {}
+        cloud = families.get("zCloud", {}) if isinstance(families, dict) else {}
+        listener_count = _number(cloud.get("listeners"))
+        if listener_count:
+            result.append(action(
+                "zcloud-listener-presence", "review",
+                "Op de VPS is een zCloud Runner.Listener-proces waargenomen.",
+                "Controleer de bestaande GitHub-jobs op runner_id, labels en werkelijke start; "
+                "procesaanwezigheid is geen bewijs van geslaagde CI.",
+                "GITHUB_RUNNER_ASSIGNMENT_NOT_OBSERVED",
+            ))
+        elif local_proc.get("source_complete") is True:
+            result.append(action(
+                "zcloud-listener-absent", "urgent",
+                "De volledige lokale processnapshot toont geen zCloud-listener.",
+                "Laat de bevoegde runtime-eigenaar de service en GitHub-runnerregistratie inspecteren; "
+                "onderbreek geen actieve worker.",
+                "RUNNER_OWNER_INSPECTION_REQUIRED",
+            ))
+        else:
+            result.append(action(
+                "zcloud-proc-incomplete", "review",
+                "De afgeschermde procfs-bron toont geen verifieerbare zCloud-listener.",
+                "Vergelijk met de eigenaar zijn bestaande serviceproces en een GitHub-jobreceipt.",
+                "RUNNER_PRESENCE_NOT_CONCLUSIVE",
+            ))
+        active_workers = [
+            name for name, details in families.items()
+            if isinstance(details, dict) and _number(details.get("workers")) > 0
+        ]
+        if active_workers:
+            # No process IDs, command lines, raw paths, tokens or owner IDs leave
+            # the bounded probe. Report the aggregate without taking ownership.
+            result.append(action(
+                "runner-worker-in-progress", "review",
+                f"{len(active_workers)} runnerfamilie(s) hebben lokaal een Runner.Worker-proces.",
+                "Behoud bestaande jobs en inspecteer hun voortgang zonder serviceherstart of queue-drain.",
+                "ACTIVE_RUNNER_WORK_PROTECTED",
+            ))
     # Source-limited P0 discovery stays advisory. Eligible is NOT the same as
     # ownership-free and never licenses a dispatch, CI run or merge.
     portfolio = packet.get("portfolio_urgent_local", [])
