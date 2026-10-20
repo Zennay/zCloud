@@ -1,6 +1,7 @@
 package com.zennay.cloud.watch.data
 
 import com.zennay.cloud.watch.BuildConfig
+import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -22,6 +23,8 @@ class ZennayCloudRepository(
         parseProject(request("/api/v1/watch/project?project=$encoded").getJSONObject("project"))
     }
 
+    private companion object { const val MAX_RESPONSE_BYTES = 512 * 1024 }
+
     private fun request(path: String): JSONObject {
         val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -33,9 +36,22 @@ class ZennayCloudRepository(
         }
         try {
             val code = connection.responseCode
-            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            // Never buffer untrusted HTTP errors or arbitrarily large JSON on a watch.
             if (code !in 200..299) throw IllegalStateException("Cloud HTTP $code")
+            if (connection.contentLengthLong > MAX_RESPONSE_BYTES)
+                throw IllegalStateException("Cloud response exceeds watch memory limit")
+            val body = connection.inputStream.use { stream ->
+                val output = ByteArrayOutputStream()
+                val chunk = ByteArray(8192)
+                while (true) {
+                    val count = stream.read(chunk)
+                    if (count < 0) break
+                    if (output.size() + count > MAX_RESPONSE_BYTES)
+                        throw IllegalStateException("Cloud response exceeds watch memory limit")
+                    output.write(chunk, 0, count)
+                }
+                output.toString(Charsets.UTF_8.name())
+            }
             return JSONObject(body)
         } finally {
             connection.disconnect()
