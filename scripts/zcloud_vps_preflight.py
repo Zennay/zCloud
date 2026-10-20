@@ -14,6 +14,7 @@ import sys
 from datetime import datetime, timezone, timedelta
 
 RUNNER_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+TRAINING_FREE_RESERVE_BYTES = 10 * 1024 ** 3
 
 
 def command(*argv: str, cwd: Path | None = None, timeout: int = 8) -> tuple[int, str]:
@@ -261,7 +262,7 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
             "changes_host": "no", "authorization_required": "yes",
         })
 
-    if codes & {"LOW_DISK", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE"}:
+    if codes & {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE"}:
         recommend("CAPACITY_FIRST", "VPS resource owner",
                   "Insufficient resource headroom can cause repeat OOM crashes or incomplete releases.",
                   "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
@@ -348,11 +349,16 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
 
     try:
         volume = os.statvfs(root)
+        disk_free_bytes = volume.f_bavail * volume.f_frsize
         disk_free_pct = round(100 * volume.f_bavail / max(volume.f_blocks, 1), 1)
+        if disk_free_bytes < TRAINING_FREE_RESERVE_BYTES:
+            mark("TRAINING_DISK_RESERVE_BELOW", "block",
+                 "Filesystem available bytes below the operational 10 GiB training reserve; protect active workloads.")
         if disk_free_pct < 10:
             mark("LOW_DISK", "block", "Filesystem free space below 10%.")
     except OSError:
         disk_free_pct = None
+        disk_free_bytes = None
         mark("DISK_UNOBSERVABLE", "warn", "Cannot read filesystem space.")
 
     inventory = optional_storage_inventory(root) if disk_hotspots else None
@@ -388,7 +394,10 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
                      "untracked_entries": untracked_count},
         "runner": {"unit": RUNNER_UNIT, "unit_state": unit, "listener_pids": pids},
         "resources": {"available_ram_pct": available_pct, "swap_used_pct": swap_pct,
-                      "disk_free_pct": disk_free_pct},
+                      "disk_free_pct": disk_free_pct, "disk_free_bytes": disk_free_bytes,
+                      "training_reserve_bytes": TRAINING_FREE_RESERVE_BYTES,
+                      "training_reserve_gap_bytes": max(0, TRAINING_FREE_RESERVE_BYTES - disk_free_bytes)
+                      if disk_free_bytes is not None else None},
         "findings": findings,
         "recovery_priorities": recovery,
         "storage_inventory": inventory,
@@ -434,7 +443,7 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
         runner_status = "process_observed_only"
     add("runner_identity", runner_status, "zCloud Actions runner owner (#1326)",
         "Listener existence does not prove current GitHub job assignment.")
-    if {"LOW_DISK", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY"} & findings:
+    if {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY"} & findings:
         capacity_status = "blocked"
     elif None in (resources["available_ram_pct"], resources["disk_free_pct"]):
         capacity_status = "unknown"
@@ -636,6 +645,9 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 {item("Available RAM", val(resources["available_ram_pct"]) + "%")}
 {item("Swap used", val(resources["swap_used_pct"]) + "%")}
 {item("Filesystem free", val(resources["disk_free_pct"]) + "%")}
+{item("Actual free bytes", val(resources["disk_free_bytes"]))}
+{item("Training free reserve bytes", resources["training_reserve_bytes"])}
+{item("Remaining reserve gap bytes", val(resources["training_reserve_gap_bytes"]))}
 </dl></section>
 {comparison_html}
 {storage_html}
@@ -686,6 +698,8 @@ def main() -> int:
         print(f"Checkout: {c['branch']} {c['sha'] or 'unknown'}; tracked={c['tracked_changes']} untracked={c['untracked_entries']}")
         r = report["runner"]
         print(f"Runner: {r['unit_state']}; dedicated listener PIDs: {r['listener_pids']}")
+        disk = report["resources"]
+        print(f"Free bytes: {disk['disk_free_bytes']} / training reserve: {disk['training_reserve_bytes']}; gap: {disk['training_reserve_gap_bytes']}")
         for f in report["findings"]:
             print(f"[{f['severity'].upper()}] {f['code']}: {f['detail']}")
         if "comparison" in report:
