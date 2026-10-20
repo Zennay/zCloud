@@ -1146,3 +1146,42 @@ parallelle fixes voor dezelfde PR-verwijzing te starten. De
 GitHub-scope, Notion-claims, CI, onafhankelijke reviews en releasegates
 moeten nog steeds separaat worden gecontroleerd. Geen claim, merge,
 dispatch, self-hosted runnerwrite of workflowactie vindt plaats.
+
+
+## Oudere, nog-open PR's opzoeken op een volgende GitHub-pagina
+
+Een drukke zCloud-repository heeft meer open PR's dan de eerste
+maximaal 48 recent bijgewerkte kandidaten. De bestandsconflicttool kan nu
+ook een **expliciete oudere sorteerpagina** inspecteren, zonder het
+standaardbudget aan GitHub-GETs per run te vergroten:
+
+```bash
+# Controleer oudere open PR's tegen precies de bestaande product-PR scope.
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --source-pr 1567 --open-page 2 --max-prs 24 \
+  --format html > ./private-older-pr-collisions.html
+
+# Zoek ook oudere conflicten of dubbele issuevermeldingen tussen PR's
+# op diezelfde beperkte oudere pagina.
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs --open-page 3 --max-prs 24 \
+  --format markdown > ./private-older-pr-graph.md
+```
+
+`--open-page` accepteert expliciet 1–50 en gebruikt dezelfde maximaal
+24/48 inspectielimiet als voorheen. GitHub sortering blijft
+`updated desc`; vóór en ná het uitlezen van bestanden leest de tool
+exact **dezelfde pagina en paginagrootte** opnieuw. De geselecteerde
+source-PR krijgt daarnaast dezelfde onafhankelijke HEAD/base-herlezing
+als voorheen. De JSON, tekst, Markdown en lokale HTML vermelden
+**paginanummer, begin- en eindpositie, de daadwerkelijk gelezen PRs**
+en dat eerdere/niet-gelezen pagina's onbekend blijven.
+
+Een pagina groter dan 1 kan **nooit** `pr_file_scope_sample_complete=true`
+produceren, zelfs niet als die pagina kort of stabiel lijkt. Het
+audit-resultaat verbergt daarom altijd vermeende onafhankelijke of
+'overlapvrije' PR-kandidaten op oudere pagina's. Waargenomen botsingen
+blijven bruikbaar voor handmatige review, maar géén botsing in zo'n
+venster heeft exitcode 3 (nooit claimvrijgave). De twee requests voor de
+gekozen PR-pagina worden niet vermenigvuldigd en er is geen automatische
+volledige paginacrawl, merge, claim, workflow of deploy.
