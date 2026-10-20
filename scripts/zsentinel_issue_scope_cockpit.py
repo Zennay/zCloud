@@ -707,6 +707,8 @@ def output_html(report):
         for item in inbox["cards"]:
             issue_url = escape(item["issue_url"], quote=True)
             issue_title = escape(item["title"])
+            anchor = ("issue-card-" + item["project"] + "-" +
+                      item["issue"].rsplit("#", 1)[-1])
             source = ("<a href='" + escape(item["candidate_existing_pr_url"], quote=True) +
                       "' rel='noopener noreferrer'>Open bestaande PR</a>"
                       if item["candidate_existing_pr_url"] else
@@ -715,7 +717,10 @@ def output_html(report):
                 "<tr><td><strong>" + escape(item["priority"]) + "</strong> " +
                 escape(item["project"]) + "</td><td><a href='" +
                 issue_url + "' rel='noopener noreferrer'>" + issue_title +
-                "</a></td><td>" + source + "</td><td><strong>" +
+                "</a> · <a href='#" + escape(anchor, quote=True) +
+                "' data-open-issue='" + escape(anchor, quote=True) +
+                "'>Bekijk kaart</a></td><td>" + source +
+                "</td><td><strong>" +
                 escape(item["category_nl"]) + "</strong><br>" +
                 escape(item["human_next_step_nl"]) +
                 "<br><small>PR-bestandsscope: " +
@@ -869,8 +874,11 @@ def output_html(report):
                  history_links + "</ul><p>Geen fix of release geverifieerd.</p></details>"
                  if history_links else "") +
                 ("<ul>" + rivals + "</ul>" if rivals else "") + "</li>")
+        card_anchor = ("issue-card-" + row["project"] + "-" +
+                       row["issue"].rsplit("#", 1)[-1])
         cards.append(
-            "<article data-priority='" + escape(row["priority"], quote=True) +
+            "<article id='" + escape(card_anchor, quote=True) +
+            "' data-priority='" + escape(row["priority"], quote=True) +
             "' data-project='" + escape(row["project"], quote=True) +
             "' data-history='" + ("changed" if row.get("historical_linked_pr_activity_observed")
                                    else "not-observed") +
@@ -943,6 +951,18 @@ function update(){
   count.textContent=shown+' van '+cards.length+' productissues zichtbaar';
 }
 for(const el of [search,priority,project,history])if(el)el.addEventListener('input',update);
+for(const link of document.querySelectorAll('a[data-open-issue]')){
+  link.addEventListener('click',function(){
+    const card=document.getElementById(link.dataset.openIssue);
+    if(!card)return;
+    search.value=''; priority.value=''; project.value='';
+    if(history)history.value='';
+    update();
+    card.scrollIntoView({block:'start'});
+    const heading=card.querySelector('h2 a');
+    if(heading)heading.focus({preventScroll:true});
+  });
+}
 update();
 })();</script>"""
     return ("<!doctype html><html lang='nl'><meta charset='utf-8'>"
