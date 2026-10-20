@@ -77,6 +77,54 @@ def collect():
     }
 
 
+def recovery_priorities(data):
+    """Conservative operator decisions, never executable recovery instructions."""
+    host = data["host"]
+    unit_source = data["units"]
+    entries = unit_source["runner_units"] if unit_source["runner_units_observed"] else []
+    failed = [u for u in entries if u["state"] == "failed"]
+    stopped = [u for u in entries if u["state"] == "inactive"]
+    active = [u for u in entries if u["state"] == "active"]
+    load = host["host_load"]
+    cores = host["cores"]
+    under_pressure = (not host["source_complete"] or
+                      host["swap_used_percent"] is None or
+                      host["disk_unavailable_percent"] is None or
+                      load is None or
+                      host["swap_used_percent"] >= 80 or
+                      host["disk_unavailable_percent"] >= 90 or
+                      load > cores * 1.35)
+    actions = []
+    if under_pressure:
+        actions.append(("P0 · capaciteit veiligstellen",
+                        "Geheugen-, swap-, load- of schijfdruk is hoog of onvoldoende "
+                        "geobserveerd. Start geen extra workers of OOM-gefaalde "
+                        "runner-services zolang de bevoegde beheerder niet "
+                        "onafhankelijk heeft vastgesteld dat er voldoende ruimte is."))
+    if failed:
+        actions.append(("P1 · gefaalde runner-services",
+                        f"{len(failed)} service(s) hebben een systemd-fout. "
+                        "De bevoegde service-eigenaar onderzoekt oorzaak en "
+                        "huidige GitHub-labelroute; dit rapport voert geen herstart uit."))
+    if stopped:
+        actions.append(("P1 · gestopte runner-services",
+                        f"{len(stopped)} service(s) staan uit. Een geslaagde "
+                        "stop kan bewust zijn; eerst eigenaarsintentie controleren."))
+    if active:
+        actions.append(("P2 · actieve services",
+                        f"{len(active)} service(s) zijn actief. GitHub-jobtoewijzing, "
+                        "actuele workflowstatus en CI blijven afzonderlijk te bevestigen."))
+    if not unit_source["runner_units_observed"] or unit_source.get("runner_units_truncated"):
+        actions.append(("Brondekking onvolledig",
+                        "Runnerinventaris is onvolledig. Ontbrekende services of jobs "
+                        "mogen niet als gezond, hersteld of verwijderd worden beschouwd."))
+    if not actions:
+        actions.append(("Geen aantoonbare herstelactie",
+                        "De beperkte lokale observatie bewijst geen afwezigheid van "
+                        "GitHub- of workflowblokkades."))
+    return actions
+
+
 def render(data):
     host = data["host"]
     units = data["units"]
@@ -105,6 +153,20 @@ def render(data):
 
     reasons = ", ".join(REASON_NL.get(r, "Onbekende observatie")
                         for r in data["reasons"]) or "Geen druk gemeten (uitsluitend momentopname)"
+    plans = "".join(
+        f"<li><strong>{escape(title)}</strong> — {escape(advice)}</li>"
+        for title, advice in recovery_priorities(data)
+    )
+    counts = {
+        "failed": sum(u["state"] == "failed" for u in units["runner_units"]),
+        "inactive": sum(u["state"] == "inactive" for u in units["runner_units"]),
+        "active": sum(u["state"] == "active" for u in units["runner_units"]),
+    }
+    overview = (f'{counts["failed"]} gefaald · {counts["inactive"]} gestopt · '
+                f'{counts["active"]} actief · '
+                + ("gedeeltelijke bron" if units.get("runner_units_truncated")
+                   or not units["runner_units_observed"] else "begrensde lokale bron"))
+
     coach_state = ("Bestaande coach-instellingen niet uitleesbaar"
                    if not coach["observed"] else
                    "Coach inactief (geen herstart)"
@@ -151,7 +213,10 @@ def render(data):
 <p><strong>Oorzaken:</strong> {escape(reasons)}</p>
 <p>{escape(coach_state)} · {escape(coach_match)}</p>
 <p>De voorbeeldinstellingen zijn niet door dit rapport toegepast.</p></section>
-<h2>GitHub-runner-servicestatus</h2><div class="grid">{"".join(cards)}</div>
+<h2>GitHub-runner-servicestatus</h2><p class="muted">{escape(overview)}</p>
+<div class="grid">{"".join(cards)}</div>
+<section class="panel"><h2>Prioriteit en veilige herstelvolgorde</h2><ol>{plans}</ol>
+<p>Dit zijn leesadviezen, geen bewijs van toestemming tot herstart, dispatch of merge.</p></section>
 <section class="panel"><h2>Bevoegde vervolgactie</h2>
 <p>Geef voorrang aan gefaalde OOM-services wanneer RAM/swap voldoende ruimte hebben en
 de service-eigenaar herstel toestaat. Controleer voor gestopte services eerst of dat bewust is.
