@@ -228,6 +228,45 @@ def observe_many(prs, token=None):
 PR_ARGUMENT = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}#[1-9][0-9]{0,8}$")
 
 
+def human_gate_summary(source: dict) -> str:
+    """Compact offline operator view; observed receipts never authorize merging."""
+    if (type(source) is not dict or source.get("schema") != SCHEMA
+            or source.get("merge_authorized") is not False
+            or source.get("writes_performed") is not False):
+        raise ValueError("invalid current-head gate source")
+    lines = [
+        "zSentinel | actuele PR-gates · uitsluitend waarneming",
+        "Bronmoment UTC: " + source["observed_at_utc"],
+        "Protected main, verplichte CI, onafhankelijke review en eigenaar: NIET vrijgegeven.",
+    ]
+    for item in source["items"]:
+        lines.append("")
+        lines.append("PR: " + item["url"])
+        if item.get("status") != "observed_current_head_partial_gate_evidence":
+            lines.append("GitHub-bron onbereikbaar of HEAD veranderd; PR niet vrijgeven.")
+            continue
+        lines.append("Waargenomen HEAD: " + item["head_sha_observed"])
+        lines.append(
+            "Checks: " + str(item["observed_checks_pending"]) + " lopend, " +
+            str(item["observed_checks_not_successful"]) + " niet geslaagd")
+        lines.append(
+            "Oudere statuscontexten: " +
+            str(item["legacy_status_pending_observed"]) + " lopend, " +
+            str(item["legacy_status_failure_or_error_observed"]) + " niet geslaagd")
+        lines.append(
+            "Onafhankelijke exact-head approvals (waargenomen): " +
+            str(item["observed_independent_exact_head_approvals"]))
+        lines.append("Volgende menselijke actie: " + item["human_next_gate_step"])
+        if (item["legacy_status_source_may_be_truncated"] or
+                not item["check_runs_page_complete"] or
+                item["review_page_may_be_truncated"]):
+            lines.append("WAARSCHUWING: huidige bronnen onvolledig of afgekapt.")
+        lines.append("Merge-/deployautorisatie: NEE.")
+    lines.append("")
+    lines.append("Geen claims, herdispatch, merge of deploy uitgevoerd.")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv=None):
     """Produce one bounded source receipt for the offline merge-first workbench."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -235,8 +274,11 @@ def main(argv=None):
         "--pr", action="append", required=True,
         help="Canonical Zennay/repository#number (repeat one to four times)")
     parser.add_argument(
+        "--format", choices=("json", "text"), default="json",
+        help="JSON for offline import (default), or human-readable Dutch gate triage")
+    parser.add_argument(
         "--output", type=Path,
-        help="Create NEW private 0600 JSON file; omit to print JSON to stdout")
+        help="Create NEW private 0600 report; omit to print to stdout")
     args = parser.parse_args(argv)
     try:
         if not 1 <= len(args.pr) <= MAX_PRS:
@@ -250,7 +292,9 @@ def main(argv=None):
         if len(set(refs)) != len(refs):
             raise ValueError("duplicate PR reference")
         source = observe_many(refs, token=os.environ.get("GITHUB_TOKEN"))
-        rendered = json.dumps(source, sort_keys=True, ensure_ascii=True, indent=2) + "\n"
+        rendered = (
+            json.dumps(source, sort_keys=True, ensure_ascii=True, indent=2) + "\n"
+            if args.format == "json" else human_gate_summary(source))
         if args.output is None:
             sys.stdout.write(rendered)
         else:
