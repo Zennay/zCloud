@@ -445,6 +445,54 @@ def render_html(board):
             'Verouderde of ontbrekende bron vereist nieuwe observatie.</p>'
             '<ul>' + "".join(lines) + '</ul></section>'
         )
+    # Merge-first existing PR inventory, sourced exclusively from the PR
+    # listing that the issue collector already fetched. Not an exact HEAD
+    # check or a lease/merge decision; unlinked means only unlinked in sample.
+    listed_prs = board.get("recent_open_product_prs", [])
+    if (type(listed_prs) is not list or len(listed_prs) > 144):
+        raise ValueError("untrusted existing PR source count")
+    listed_sections = []
+    for pid in board["projects"]:
+        cards = []
+        for pr in listed_prs:
+            if not isinstance(pr, dict) or pr.get("project_id") not in board["projects"]:
+                raise ValueError("untrusted listed PR project")
+            if pr["project_id"] != pid:
+                continue
+            cards.append(
+                '<li><a href="' + escape(pr["url"], quote=True) +
+                '" rel="noopener noreferrer" target="_blank">' +
+                escape(pr["title"]) + '</a> · ' +
+                ('CONCEPT · ' if pr["draft"] else 'OPEN · ') +
+                'getoonde HEAD ' + escape(pr["listed_head_sha"][:12]) +
+                ' · doel ' + escape(pr["listed_base"]) +
+                (' · issuekoppeling in beperkte steekproef'
+                 if pr["referenced_by_sampled_issue"] else
+                 ' · GEEN issuekoppeling in deze beperkte steekproef') +
+                (' · BRON VEROUDERD' if pr.get("source_stale") else '') +
+                ' · <strong>geen actuele gate- of eigendomscheck</strong></li>'
+            )
+        if cards:
+            listed_sections.append(
+                '<details><summary>' + escape(pid) + ' · ' + str(len(cards)) +
+                ' recent open product-PRs</summary><ul>' +
+                ''.join(cards) + '</ul></details>'
+            )
+    existing_pr_panel = (
+        '<section aria-label="Merge eerst: reeds open product PRs">'
+        '<h2>Merge eerst · bestaande product-PRs (' +
+        str(len(listed_prs)) + ' in recente steekproef)</h2>'
+        '<p class="notice">Dit is uitsluitend de nieuwste begrensde GitHub '
+        'PR-lijst per project (maximaal acht); geen bewijs dat niet-vermelde '
+        'PRs ontbreken. Getoonde HEAD kan inmiddels gewijzigd zijn. '
+        'Geen huidige checks, onafhankelijke review, actieve lease, '
+        'mergeautorisatie of productie-release uit deze lijst afleiden.</p>' +
+        (''.join(listed_sections) if listed_sections else
+         '<p>Geen open product-PRs in de gelezen bronvensters aangetroffen; '
+         'ongelezen en onbereikbare bronnen blijven ONBEKEND.</p>') +
+        '</section>' if board.get("schema") == "zsentinel-portfolio-workboard-v1"
+        or listed_prs else ''
+    )
     sections = []
     owner_cards = []
     for level in SEVERITY:
@@ -588,7 +636,7 @@ def render_html(board):
          ' · Zelf opgeslagen bronvensters' if mode == "explicit_saved_private_sources"
          else '') + '</p>' +
         source_warning + '</header><main>' +
-        controls(board["projects"]) + overview_panel + queue_panel +
+        controls(board["projects"]) + overview_panel + existing_pr_panel + queue_panel +
         notion_panel + progress_panel + "".join(sections) + owner_panel + '<section><details><summary>Brondekking en '
         'onzekerheid</summary><ul>' + coverage + '</ul><p>Zelfs volledige '
         'steekproef bewijst geen complete backlog; lokale Notion-/fileclaims '
@@ -665,6 +713,21 @@ def render_markdown(board):
                          _markdown_literal(source["project"]) +
                          " (" + _markdown_literal(source["status"]) +
                          "); geen nul-issues of herstelbewijs.")
+    listed_prs = board.get("recent_open_product_prs", [])
+    if listed_prs:
+        lines.extend(["", "## Merge eerst · reeds open product-PRs uit beperkte bron",
+                      "Per project maximaal acht recentste PRs. HEAD uit lijst, "
+                      "geen actuele review, verplichte CI, lease of mergebewijs."])
+        for pr in listed_prs:
+            lines.append("- " + _markdown_literal(pr["project_id"]) +
+                         " · [" + _markdown_literal(pr["title"]) +
+                         "](" + pr["url"] + ")" +
+                         (" · CONCEPT" if pr["draft"] else " · OPEN") +
+                         " · lijst-HEAD " + pr["listed_head_sha"][:12] +
+                         (" · GEEN issuekoppeling in beperkte bron" if not
+                          pr["referenced_by_sampled_issue"] else
+                          " · issuekoppeling in beperkte bron") +
+                         (" · VEROUDERD" if pr.get("source_stale") else ""))
     for item in sorted(board["items"],
                        key=lambda row: row["next_step"] ==
                                        "authorized_infrastructure_owner_required"):
