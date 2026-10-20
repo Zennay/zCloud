@@ -219,6 +219,33 @@ nagevraagd. `--previous T0.json` zonder `--t0/--t1` is de aparte
 nieuwe privé HTML-bestand plaatst. Beide modi zijn afzonderlijk van
 `--snapshot` en van productieactivatie.
 
+## Bootbewuste runnerherstelvergelijking (privé T0/T1)
+
+Nieuwe `zsentinel_runner_snapshot.py`-bonnen slaan vanaf deze bronversie
+`boot_fingerprint` op: een afgekorte SHA-256 van de Linux `boot_id`
+(geen letterlijke boot-UUID; uitsluitend binnen het eigenaar-private JSON).
+Voor vergelijkingen op hetzelfde hostlabel worden twee bronmomenten nu
+onderverdeeld in drie expliciete gevallen:
+
+- `same_boot_verified=true`: opstartsessie van beide metingen bevestigd;
+  niet hetzelfde als een bevestigde GitHub-job, runner-claim of CI.
+- `host_reboot_observed=true`: Linux heeft tussen T0/T1 aantoonbaar een
+  andere opstartsessie; herstelde `active` services zijn geen bewijs
+  dat oorspronkelijke worker/CI na de reboot doorging.
+- Beide onbekend: ten minste één bron mist een geldig bootbewijs, bijvoorbeeld
+  oudere v1-bronnen. Dit blijft **onbekend**, niet stilzwijgend dezelfde boot.
+
+De CLI JSON en het privé offline HTML-vergelijkingsrapport tonen dit
+onderscheid. Ook de gededupliceerde service-overgangen binden aan de
+beschikbare opstartsessie-identiteiten; na reboot wordt niet per ongeluk
+de oude incidentcode als hetzelfde meetmoment behandeld. V1 blijft leesbaar
+en is bewust niet achteraf voorzien van verzonnen bootbewijs.
+
+Het betreft uitsluitend een read-only systeemmeting bij het maken van een
+nieuw privé bronmoment; geen extra systeembrede installatie, reset,
+workerstart, GitHub-dispatch, betaling, merge of deploy. Toestemming en
+exacte-head CI/review blijven onverkort van toepassing.
+
 ## Samenhangend privé operatorpakket (geen installatie)
 
 Een normale toekomstige runtime-installatie van het basis CPU-prioriteitscript
