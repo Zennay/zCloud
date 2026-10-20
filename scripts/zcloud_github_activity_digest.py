@@ -17,6 +17,26 @@ EVENT_ID = re.compile(r"^github:Zennay/[A-Za-z0-9_.-]{1,100}:(?:(?:pr_created|pr
 KINDS = {"pr_created", "pr_updated", "pr_merged", "ci_run", "main_commit"}
 OUTCOMES = {"success", "failure", "cancelled", "skipped", "timed_out",
             "action_required", "neutral", "stale", "startup_failure", None}
+# Constant operator language: never interpolate GitHub response text or tokens.
+PROVIDER_ADMISSIONS = {
+    "none": "",
+    "authentication_required": (
+        "GitHub authenticatie geweigerd: controleer de verbinding/bevoegde token; "
+        "volgende projectbronnen zijn mogelijk niet opgevraagd."
+    ),
+    "rate_limit_confirmed": (
+        "GitHub rate-limit aantoonbaar bereikt: verzoeken gestopt. "
+        "Ontbrekende activiteit blijft onbekend."
+    ),
+    "repository_or_secondary_limit_unknown": (
+        "GitHub 403 op deze repository: rechten of secundaire limiet onbekend. "
+        "Alleen deze repository is gepauzeerd; andere blijven onafhankelijk."
+    ),
+    "global_admission_denied_prior_project": (
+        "GitHub-collector eerder globaal gestopt wegens 401 of bevestigde limiet. "
+        "Dit project is niet opgevraagd."
+    ),
+}
 
 
 def safe_receipt(raw: bytes) -> dict:
@@ -87,6 +107,11 @@ def digest(payload: dict) -> str:
             lines.append("**Source page budget reached:** older GitHub events were not scanned; counts are lower bounds.")
         if state != "partial_sources":
             lines.append("Source is **incomplete or inaccessible**. Missing events are unknown, not zero.")
+        admission = item.get("provider_admission", "none")
+        if type(admission) is not str or admission not in PROVIDER_ADMISSIONS:
+            raise ValueError("invalid_provider_admission")
+        if admission != "none":
+            lines.append("**Bronblokkade:** " + PROVIDER_ADMISSIONS[admission])
         project_events = [event for event in payload["events"]
                           if isinstance(event, dict) and event.get("project") == project]
         if len(project_events) > 200:
