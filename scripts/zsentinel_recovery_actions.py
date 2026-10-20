@@ -23,6 +23,20 @@ def _number(value):
 def suggested_actions(packet):
     """Return a bounded prioritized list; observation is never authorization."""
     result = []
+    deferred_qa = sum(
+        _number(lane.get("deferred_qa_packages"))
+        for lane in packet.get("lanes", [])[:4]
+        if isinstance(lane, dict)
+    )
+    if deferred_qa:
+        result.append(action(
+            "qa-product-policy-exclusion", "review",
+            f"{deferred_qa} wachtende QA-/validatietaken zijn niet toegelaten tot herstelwerk.",
+            "Laat de wachtrijeigenaar deze items apart beheren en geef voorrang aan "
+            "open productissues, bestaande PR-integraties en actuele blokkades; "
+            "bestaande actieve claims blijven intact.",
+            "NO_NEW_QA_WORK_ADMISSION",
+        ))
     if packet.get("source_complete") is not True or (
         packet.get("active_cross_lane_coverage_complete") is not True
     ):
