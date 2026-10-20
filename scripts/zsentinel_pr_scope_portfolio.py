@@ -1497,7 +1497,7 @@ def main(argv=None):
     parser.add_argument("--inspect-current-pr-gates", action="store_true",
                         help="Optioneel tot vier exacte-head GitHub CI/reviewbonnen "
                              "in bestaande PR-steekproef (max 20 extra GETs)")
-    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "csv"),
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "csv", "workorders"),
                         default="text")
     args = parser.parse_args(argv)
     try:
@@ -1506,6 +1506,11 @@ def main(argv=None):
                                   os.environ.get("GITHUB_TOKEN"), args.max_prs)
         if args.gate_pr and not args.inspect_current_pr_gates:
             raise ValueError("--gate-pr requires --inspect-current-pr-gates")
+        if args.format == "workorders":
+            if not args.inspect_current_pr_gates:
+                raise ValueError("workorders require --inspect-current-pr-gates")
+            if args.output is None:
+                raise ValueError("private workorders require exclusive --output")
         if args.inspect_current_pr_gates:
             board = current_merge_first_gates(board, os.environ.get("GITHUB_TOKEN"),
                                              focus_prs=args.gate_pr)
@@ -1516,7 +1521,10 @@ def main(argv=None):
                 board["historical_gate_episodes"] = compare_gate_episodes(previous, board)
         if args.inspect_current_pr_gates:
             board["merge_first_attention"] = merge_first_attention(board)
-        if args.format == "csv":
+        if args.format == "workorders":
+            from zsentinel_pr_workorders import collect_workorders, render_markdown
+            rendered = render_markdown(collect_workorders(board))
+        elif args.format == "csv":
             if args.output is None:
                 raise ValueError("private portfolio CSV requires --output")
             rendered = as_private_csv(board)
@@ -1548,7 +1556,7 @@ def main(argv=None):
             except Exception:
                 args.output.unlink(missing_ok=True)
                 raise
-            print("Created new private read-only portfolio dashboard (0600); no remote writes.",
+            print("Created private 0600 read-only zSentinel operator artifact; no remote writes.",
                   file=sys.stderr)
         if (args.inspect_current_pr_gates and
                 any(g["status"] != "current_exact_pr_head_and_sample_match"
