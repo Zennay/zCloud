@@ -36,7 +36,12 @@ Unexpected future, invalid or free-form database kind values are emitted as
 `other_local_event` while preserving the same source timestamp, ID cursor and
 pagination position. This prevents a raw string in a legacy `kind` column
 from being reflected as user-facing event text and does not infer that the
-event disappeared. The older full-event legacy endpoint is unchanged.
+event disappeared. The event IDs used as keyset cursors now also require
+bounded canonical ASCII characters (`A-Z/a-z/0-9/_ . : / -`, without spaces);
+a malformed/free-form ID produces an explicit unavailable page rather than
+returning uncontrolled ID text. Direct read-only VPS observation found the
+existing ~5,000 event IDs within this format, without reading event content.
+The older full-event legacy endpoint is unchanged.
 
 This is a genuine local-feed fix, not proof of GitHub PR/CI synchronization. The independently open [Activity browser UI PR #1550](https://github.com/Zennay/zCloud/pull/1550) covers opt-in GitHub evidence, still subject to its normal gates. Original PR #1519 remains unchanged and unmerged. No QA files were copied or manually run; no production SQLite/service/runner has been modified.
 
