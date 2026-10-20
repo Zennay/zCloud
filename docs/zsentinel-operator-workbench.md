@@ -1169,3 +1169,59 @@ releasewriter en live deploy afzonderlijk te controleren. Alleen een echte
 `merged=true` respons en exacte nieuwe default-branch SHA tellen als
 source-integratie op main. Geen QA-code, automatische claim, dispatch,
 workflow of productieactie is onderdeel van deze uitbreiding.
+
+
+## 20 oktober · Eén commando naar een zelfstandige offline HTML PR-afrondingswerkbak
+
+De al bestaande opgeslagen exact-head PR-gatebatches kunnen nu rechtstreeks
+tot een **volledig offline, zelfstandige, mobiel leesbare HTML-werkbak**
+worden verwerkt. Dit is een extra productuitvoer naast de bestaande
+JSON-browserimport en de volledige Markdown-overdracht: er is dus geen
+separate workbench-import, webserver, browserextensie of live GitHub-token
+nodig voor het bekijken van reeds opgeslagen bewijs.
+
+```sh
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./review-manifest.json \
+  --receipt ./gate-batch-1.json \
+  --receipt ./gate-batch-2.json \
+  --format html \
+  --output ./private-merge-first-workbench.html
+```
+
+Alleen reeds verkregen **identiteitsgebonden, begrensde receipts** worden
+gebruikt. Zoals bij `--format json` en `--format markdown` weigert
+de standaardroute ontbrekende batches; met expliciet
+`--allow-partial` krijgen niet-geziene batches **BRON ONBEKEND**.
+Een eerdere momentopname `--previous` blijft bewust **alleen**
+ondersteund bij `--format markdown`, zodat huidige HTML-kaarten nooit
+historische CI als verse gate presenteren.
+
+Het nieuwe werkblad bevat:
+
+- Een aanklikbaar overzicht van de **waargenomen blokkaderedenen**,
+  met bronuitval, falende checks, pending checks, gevraagde
+  aanpassingen, onvolledige gate-dekking, ontbrekende onafhankelijke
+  review en onbekende verplichte branch-/ownerregels strikt gescheiden.
+- Per kandidaat-PR een oorspronkelijke canonieke GitHub-link, P0/P1/P2
+  issueprioriteit, gekoppelde bronissues, eventuele **waargenomen**
+  HEAD en begrensde CI-/reviewtellingen plus de menselijke vervolgactie.
+  PR's worden maar eenmaal getoond, ook wanneer meerdere issues
+  dezelfde bestaande PR noemen.
+- Per categorie open-/dichtklapbare kaarten met P0-eerst bronvolgorde,
+  bruikbaar op mobiel en op papier, inclusief oudste/nieuwste
+  waarnemingsmoment, het aantal onbekende batches, beide SHA256
+  brondigests en een duidelijke zesuur-stale-waarschuwing.
+
+**Privé en geen schijnvrijgave:** de HTML heeft geen JavaScript, API,
+webformulier, opslag, workflowknop of externe bronnen. De CSP blokkeert
+scripts, netwerkverbindingen en externe afbeeldingen. Canonieke
+GitHub-links openen uitsluitend na een bewuste klik in de browser.
+De bron komt uitsluitend uit de al bestaande strict-bounded
+`combined_manifest`-admission en een aanvullende fail-closed HTML
+weergavecontrole. De bestandsuitvoer blijft create-only, 0600,
+`O_EXCL` en maximaal 1 MiB. Een bron-HEAD die er groen uitziet,
+geeft **NOOIT** bewijs voor de actuele verplichte CI, reviews,
+branch protection, eigenaarschap, een merge of live productie.
+Er is geen QA- of regressiesuite toegevoegd of uitgevoerd en
+geen VPS-/GitHub-/Notion-mutatie gestart vanuit de pagina.
