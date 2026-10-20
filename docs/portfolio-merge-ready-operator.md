@@ -22,6 +22,35 @@ python3 scripts/zsentinel_merge_first_board.py \
 
 This **read-only discovery** prioritizes P0/fix-labelled product titles within each project's most recent 100 open PRs. The result is a triage hint, not a claim or a complete backlog enumeration. Draft PRs are **included as existing unfinished product work**, with a visible DRAFT / owner-action-required status; they are never treated as merge-ready and never promoted by this read-only tool. Ready PRs lead equally prioritized drafts. Child and QA-only PRs are not automatically selected. If a repository fails or has 100+ open PRs, it is separately flagged as incomplete; the other projects remain visible. A specific older PR is inspected with `--pr` and does not depend on the recent discovery window. The discovery budget is 3 list GETs + up to 72 exact PR/check/review/workflow GETs. The workbench also stops new reads after a 120-second monotonic source window (an already started bounded GitHub GET may finish afterwards); no unlimited background polling. An empty selection explicitly says it is not evidence that the backlog is empty.
 
+### Consistent delivery truth across JSON, text and private HTML
+
+`zsentinel_merge_first_board.py --pr OWNER/REPO#N` now includes a
+per-PR `main_merged` observation alongside the existing exact immutable
+`main_commit` on source-verified historical deliveries. Its JSON top level
+reports `main_delivery_scope=PER_PR_EXACT_SOURCE_ONLY` and
+`main_verified_prs` rather than claiming one blanket merge result for
+different PRs. CLI text displays each PR's main evidence and explicitly
+reports `live_verified=false`. A missing source does **not** become proof
+that a historical merged PR is present or live.
+
+The existing `zsentinel_issue_first_board.py --candidate-pr N` route
+also carries those per-PR observations in `prs[]` and
+`targeted_coverage.candidate_outcomes[]`. Its HTML direct-PR selection
+now shows an immutable commit link **only if main delivery is
+reconciled**; otherwise it says `main: NIET BEVESTIGD`. CLI text uses
+the same `VERIFIED` versus `NOT_VERIFIED` distinction.
+
+The issue-first JSON retains the legacy **top-level**
+`main_merged=false` for historical snapshot compatibility. That legacy
+field means only **this read-only command did not execute a merge**,
+not that all the PRs in its evidence are unmerged. The new
+`main_merged_meaning=THIS_INVOCATION_PERFORMED_NO_MERGE`,
+`main_delivery_scope=PER_PR_EXACT_SOURCE_ONLY`, and
+`main_verified_prs` fields distinguish actual historical merge proof
+without changing the existing private source format. A verified PR
+receipt never marks the referenced issue as fixed or the deployment as
+live; mainwriter authorization and release gates are still separate.
+
 ### Closed PR receipts: main delivery is proved, never inferred
 
 For an explicitly selected **closed** PR, both operator entry points now distinguish
