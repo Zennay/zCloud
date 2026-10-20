@@ -175,7 +175,14 @@ voltooide taak, vrijgekomen slot, herstelde runner of veilige takeover.
 Het aantal gedeelde slots wordt afzonderlijk en correct berekend.
 
 De gewone tekst en offline HTML tonen deze ontbrekende/nieuwe
-waarnemingen, inclusief dezelfde disclaimer. Voor een actieoverdracht
+waarnemingen, inclusief dezelfde disclaimer. Daarnaast geldt een
+striktere eventcursorregel: een voor het eerst waargenomen cursor is
+**geen** nieuw event tussen de meetpunten. Een progress-event telt pas
+als nieuw wanneer het na de bekende vorige progresscursor ligt, of
+(als die ontbrak) aantoonbaar na de vorige hoogste algemene
+eventcursor. Een zichtbare cursor zonder die continuïteit krijgt
+`first_cursor_observed_not_delta` en een eigenaaractie, nooit vals
+`generation_progress_signal_observed`. Voor een actieoverdracht
 kan de operator vanuit twee reeds bestaande privé-observaties ook
 een **nieuwe privé Markdown-werkbak** laten maken:
 
