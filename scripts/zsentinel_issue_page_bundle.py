@@ -73,8 +73,11 @@ def _read_private(path):
         if len(raw) > MAX_BYTES:
             raise ValueError("source exceeds size cap")
         after = p.lstat()
+        final = os.fstat(fd)
         if (after.st_ino != actual.st_ino or after.st_dev != actual.st_dev
-                or not stat.S_ISREG(after.st_mode)):
+                or not stat.S_ISREG(after.st_mode)
+                or final.st_size != actual.st_size
+                or final.st_mtime_ns != actual.st_mtime_ns):
             raise ValueError("source path changed during read")
     finally:
         os.close(fd)
@@ -106,6 +109,7 @@ def load_pages(paths):
     problems = set()
     total_hits = None
     repo = None
+    candidate_seen = set()
     for payload in pages:
         if not isinstance(payload, dict) or payload.get("selection") != "TARGETED_OPEN_ISSUE":
             raise ValueError("not a targeted zSentinel issue snapshot")
@@ -141,6 +145,17 @@ def load_pages(paths):
                 or type(coverage.get("search_complete")) is not bool
                 or type(payload.get("source_partial")) is not bool):
             raise ValueError("invalid page boundaries / duplicate page")
+        candidate_numbers = coverage.get("candidate_pr_numbers")
+        if (not isinstance(candidate_numbers, list)
+                or len(candidate_numbers) != examined
+                or any(type(n) is not int or not 1 <= n <= 9999999
+                       for n in candidate_numbers)
+                or len(set(candidate_numbers)) != len(candidate_numbers)):
+            problems.add("UNVERIFIED_CANDIDATE_IDS")
+        else:
+            if candidate_seen.intersection(candidate_numbers):
+                problems.add("CANDIDATE_OVERLAP_BETWEEN_PAGES")
+            candidate_seen.update(candidate_numbers)
         selected[index] = payload
         observations.append(_utc(payload.get("observed_utc")))
         if total_hits is None:
@@ -228,11 +243,14 @@ def load_pages(paths):
         "candidate_rows_examined": sum(x["targeted_coverage"]["search_examined"]
                                        for x in selected.values()),
         "distinct_linked_prs_observed": len(prs),
+        "unique_candidate_ids_observed": len(candidate_seen),
         "prs": [prs[n] for n in sorted(prs)],
         "partial_reasons": sorted(problems),
         # Any saved GitHub pages are historical. Even complete historical
         # coverage cannot authorize a current claim, review, merge, or release.
-        "coverage": ("COMPLETE_HISTORICAL_SNAPSHOT" if not problems
+        # Contiguous pages are not an atomic search result, even without
+        # detected overlap: result ranking can shift between requests.
+        "coverage": ("CONTIGUOUS_SAVED_WINDOWS_NONATOMIC" if not problems
                      else "PARTIAL_HISTORICAL_SNAPSHOT"),
         "current_github_state": "NOT_VERIFIED",
         "claim_free": "NOT_INFERABLE", "merge_authorized": False,
