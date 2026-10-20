@@ -152,8 +152,13 @@ def compare(previous, current):
                     "base_changed": old_pins[number][1] != new_pins[number][1],
                     "head_changed": old_pins[number][0] != new_pins[number][0],
                 })
-        old_pairs = _pairs(old, repo) if both_complete else set()
-        new_pairs = _pairs(new, repo) if both_complete else set()
+        # A busy repository rarely yields a complete sample. Preserve
+        # positive *sample-only* overlap movement without pretending it is
+        # a newly introduced or truly resolved full-repository collision.
+        old_seen_pairs = _pairs(old, repo) if old_stable else set()
+        new_seen_pairs = _pairs(new, repo) if new_stable else set()
+        old_pairs = old_seen_pairs if both_complete else set()
+        new_pairs = new_seen_pairs if both_complete else set()
         def describe(pairs):
             return [{"left": f"https://github.com/{repo}/pull/{a}",
                      "right": f"https://github.com/{repo}/pull/{b}"}
@@ -171,6 +176,17 @@ def compare(previous, current):
                  for n in sorted(old_pins.keys() - new_pins.keys())] if stable else []),
             "added_collision_pairs_if_complete": describe(new_pairs - old_pairs),
             "disappeared_collision_pairs_if_complete": describe(old_pairs - new_pairs),
+            "overlap_pairs_only_in_current_sample_not_proven_new": (
+                describe(new_seen_pairs - old_seen_pairs)
+                if stable and not both_complete else []),
+            "overlap_pairs_only_in_previous_sample_not_proven_resolved": (
+                describe(old_seen_pairs - new_seen_pairs)
+                if stable and not both_complete else []),
+            "overlap_sample_pair_preview_truncated": (
+                stable and not both_complete and
+                (len(new_seen_pairs - old_seen_pairs) > 40 or
+                 len(old_seen_pairs - new_seen_pairs) > 40)),
+            "sample_change_may_reflect_pr_window_drift": not both_complete,
             "absence_of_conflicts_proven": False,
             "claim_authorized": False, "merge_authorized": False,
         })
@@ -207,6 +223,17 @@ def render_delta(delta, format="text"):
             for url in row["seen_only_in_previous_sample_not_proven_closed"]:
                 links.append("<li>Alleen vorige steekproef: " + link(url) +
                              " (niet bewezen gesloten)</li>")
+            if not row["complete_open_pr_inventory_comparable"]:
+                for pair in row["overlap_pairs_only_in_current_sample_not_proven_new"]:
+                    links.append("<li>Alleen huidig waargenomen botsingspaar: " +
+                                 link(pair["left"]) + " ↔ " + link(pair["right"]) +
+                                 " (NIET bewezen nieuw in repository)</li>")
+                for pair in row["overlap_pairs_only_in_previous_sample_not_proven_resolved"]:
+                    links.append("<li>Alleen eerder waargenomen botsingspaar: " +
+                                 link(pair["left"]) + " ↔ " + link(pair["right"]) +
+                                 " (NIET bewezen opgelost)</li>")
+                if row["overlap_sample_pair_preview_truncated"]:
+                    links.append("<li>Meer historische overlapparen buiten zichtbare limiet.</li>")
             if row["complete_open_pr_inventory_comparable"]:
                 for pair in row["added_collision_pairs_if_complete"]:
                     links.append("<li>Nieuwe waargenomen bestandsoverlap: " +
@@ -242,7 +269,13 @@ def render_delta(delta, format="text"):
                      ", nieuwe overlapparen " +
                      str(len(row["added_collision_pairs_if_complete"])) +
                      ", niet-meer-geobserveerde overlapparen " +
-                     str(len(row["disappeared_collision_pairs_if_complete"])))
+                     str(len(row["disappeared_collision_pairs_if_complete"])) +
+                     ", steekproef-only huidige overlapparen " +
+                     str(len(row["overlap_pairs_only_in_current_sample_not_proven_new"])) +
+                     ", steekproef-only eerdere overlapparen " +
+                     str(len(row["overlap_pairs_only_in_previous_sample_not_proven_resolved"])) +
+                     (" (extra paren verborgen)" if
+                      row["overlap_sample_pair_preview_truncated"] else ""))
         for item in row["head_or_base_changed_in_both_samples"]:
             lines.append("  HEAD/basis: " + item["url"] + " " +
                          item["previous_head"][:12] + " → " + item["current_head"][:12])
@@ -250,6 +283,13 @@ def render_delta(delta, format="text"):
             lines.append("  Alleen huidige steekproef, niet bewezen nieuw: " + url)
         for url in row["seen_only_in_previous_sample_not_proven_closed"]:
             lines.append("  Alleen vorige steekproef, niet bewezen gesloten: " + url)
+        if not row["complete_open_pr_inventory_comparable"]:
+            for pair in row["overlap_pairs_only_in_current_sample_not_proven_new"]:
+                lines.append("  Alleen huidige botsingssteekproef, NIET bewezen nieuw: " +
+                             pair["left"] + " ↔ " + pair["right"])
+            for pair in row["overlap_pairs_only_in_previous_sample_not_proven_resolved"]:
+                lines.append("  Alleen vorige botsingssteekproef, NIET bewezen opgelost: " +
+                             pair["left"] + " ↔ " + pair["right"])
         if row["complete_open_pr_inventory_comparable"]:
             for pair in row["added_collision_pairs_if_complete"]:
                 lines.append("  Nieuw waargenomen overlap: " +
