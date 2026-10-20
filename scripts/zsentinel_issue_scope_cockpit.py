@@ -102,7 +102,7 @@ def _saved_pr_gates(raw):
 
 
 def compose(source, source_sha, canonical, selected, collision, saved_gates=None,
-            source_mode="saved_local_snapshot", focus_issue=None):
+            source_mode="saved_local_snapshot", focus_issue=None, raw_board=None):
     if (not isinstance(source_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", source_sha)
             or type(collision) is not dict
             or collision.get("schema") != "zsentinel-portfolio-pr-collision-board-v1"
@@ -117,6 +117,38 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         raise ValueError("scope source unexpectedly authorizes work or mismatches issue projects")
     if source_mode not in ("saved_local_snapshot", "live_readonly_github_issues"):
         raise ValueError("unknown issue source mode")
+    if (type(raw_board) is not dict
+            or raw_board.get("schema") != "zsentinel-product-delivery-triage-v1"
+            or raw_board.get("authorizes_claim") is not False
+            or raw_board.get("authorizes_merge") is not False
+            or raw_board.get("authorizes_deploy") is not False
+            or raw_board.get("automatic_dispatch_enabled") is not False
+            or raw_board.get("observed_at_utc") != source["observed_at_utc"]
+            or type(raw_board.get("cards")) is not list
+            or len(raw_board["cards"]) > MAX_ISSUES):
+        raise ValueError("noncanonical or unauthorized raw product board")
+    raw_by_issue = {}
+    validated_by_issue = {card["issue"]: card for card in source["cards"]}
+    for raw in raw_board["cards"]:
+        if type(raw) is not dict or raw.get("issue") not in validated_by_issue:
+            raise ValueError("raw product issue identity missing from canonical validator")
+        issue = raw["issue"]
+        if issue in raw_by_issue:
+            raise ValueError("duplicate raw issue record")
+        canonical_row = validated_by_issue[issue]
+        if (raw.get("project") != canonical_row["project"]
+                or raw.get("priority") != canonical_row["priority"]
+                or raw.get("open_pr_candidates") != canonical_row["open_pr_candidates"]
+                or raw.get("recommended_next_step") != canonical_row["recommended_next_step"]
+                or raw.get("evidence_gaps") != canonical_row["evidence_gaps"]
+                or raw.get("claim_authorized") is not False
+                or raw.get("merge_authorized") is not False
+                or raw.get("deploy_authorized") is not False):
+            raise ValueError("raw board diverged from canonical validated issue")
+        title = raw.get("title")
+        if type(title) is not str or not 1 <= len(title) <= 180:
+            raise ValueError("raw source issue title missing or unbounded")
+        raw_by_issue[issue] = raw
     saved_gates = saved_gates or {}
     if type(saved_gates) is not dict or len(saved_gates) > 5:
         raise ValueError("invalid saved PR gate map")
@@ -200,11 +232,6 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
     except (TypeError, ValueError, OverflowError):
         raise ValueError("invalid source time") from None
     coherent = delta <= 600
-    raw_titles = {}
-    for row in source["cards"][:MAX_ISSUES]:
-        name = row.get("title")
-        if type(name) is str and 0 < len(name) <= 180:
-            raw_titles[row["issue"]] = name
     issue_rows = []
     for card in source["cards"][:MAX_ISSUES]:
         if focus_issue is not None and card["issue"] != focus_issue:
@@ -263,7 +290,7 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         issue_rows.append({
             "priority": card["priority"], "project": pid,
             "issue": card["issue"], "url": card["url"],
-            "title": raw_titles.get(card["issue"], card["issue"]),
+            "title": raw_by_issue[card["issue"]]["title"],
             "existing_prs": refs, "next_action": route,
             "next_action_nl": NEXT_ACTIONS_NL[route],
             "source_recommended_next_step": card["recommended_next_step"],
@@ -281,7 +308,7 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
     # signals (queue retries, expiries, and positive claim observations).
     # This does NOT read production SQLite or determine owner availability.
     source_operations = {}
-    for item in source.get("project_operations", []):
+    for item in raw_board.get("project_operations", []):
         if type(item) is not dict or item.get("action_authorized") is not False:
             raise ValueError("unexpected authority in saved operator context")
         pid = item.get("project")
@@ -326,7 +353,7 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             "human_next_step": action,
             "active_owner_verified": False, "recovery_authorized": False,
         })
-    branch_raw = source.get("coverage", {}).get("branches")
+    branch_raw = raw_board.get("coverage", {}).get("branches")
     branch_context = None
     if branch_raw is not None:
         if (type(branch_raw) is not dict
@@ -338,9 +365,9 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         branch_context = {
             "repository": "Zennay/zCloud",
             "historical_branch_source_fresh":
-                source.get("fresh", {}).get("branches") is True,
+                raw_board.get("fresh", {}).get("branches") is True,
             "historical_branch_observed_at_utc":
-                source.get("source_times_utc", {}).get("branches"),
+                raw_board.get("source_times_utc", {}).get("branches"),
             "recent_overlap_candidates_observed":
                 branch_raw["recent_overlap_candidates"],
             "sample_complete": branch_raw["coverage_complete"],
@@ -356,9 +383,9 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         "focus_found_in_bounded_issue_source": True if focus_issue else None,
         "source_issue_observed_at_utc": source["observed_at_utc"],
         "saved_claim_source_observed_at_utc":
-            source.get("source_times_utc", {}).get("claims"),
+            raw_board.get("source_times_utc", {}).get("claims"),
         "saved_queue_source_observed_at_utc":
-            source.get("source_times_utc", {}).get("retry"),
+            raw_board.get("source_times_utc", {}).get("retry"),
         "source_pr_observed_at_utc": collision["observed_at_utc"],
         "source_clocks_within_10_minutes": coherent,
         "chosen_projects": selected,
@@ -652,7 +679,7 @@ def main(argv=None):
                          saved_gates=_saved_pr_gates(source),
                          source_mode=("live_readonly_github_issues" if args.live_issues
                                       else "saved_local_snapshot"),
-                         focus_issue=args.focus_issue)
+                         focus_issue=args.focus_issue, raw_board=source)
         if args.format == "json":
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.format == "html":
