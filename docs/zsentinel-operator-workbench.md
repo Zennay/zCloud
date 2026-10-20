@@ -2443,3 +2443,20 @@ De gewone broninventaris en volledige samenvatting blijven zichtbaar
 ook wanneer de operator maar één project, één prioriteit of één pagina
 bekijkt. Nieuwe PR-claims, automatische werkdispatch en releases worden
 hierdoor **niet** toegestaan.
+
+
+### Niet-afgebeelde bronlinks zijn geen afgeronde reparaties
+
+De portfolio-HTML toont per uitklapbare groep de eerste drie oorspronkelijke
+PR-links en het **exacte aantal extra niet-afgebeelde PRs**. De
+Markdownoverdracht toont de eerste vijf en meldt eveneens hoeveel er
+achterwege blijven. Dit voorkomt de foutieve indruk dat alle reparaties
+voor een issue op een korte kaart zichtbaar zijn. De overzichten blijven
+gebaseerd op één door de operator gekozen pagina, terwijl de broncijfers
+en alle filtermatches behouden blijven. Weggevallen of verborgen items
+zijn **niet** bevestigd als gesloten, gemerged of vrijgegeven werk.
+
+Voor volledige inspectie van één issue gebruikt de operator de reeds
+beschikbare `--inspect-issue`-route van
+`zsentinel_saved_issue_timeline.py` en inspecteert daarna actuele
+GitHub/Notion-eigenaarschap en verplichte exacte-head mergegates.
