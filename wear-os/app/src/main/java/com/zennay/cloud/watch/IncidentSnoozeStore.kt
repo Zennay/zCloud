@@ -18,7 +18,7 @@ object IncidentSnoozeStore {
     private const val MAX_SNOOZES = 32
 
     fun episodeKey(alert: AlertItem): String =
-        alert.id + "\u001f" + alert.occurredAt.orEmpty()
+        alert.id + "\\u001f" + alert.occurredAt.orEmpty()
 
     private fun preferenceKey(alert: AlertItem): String {
         val digest = MessageDigest.getInstance("SHA-256")
