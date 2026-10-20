@@ -464,6 +464,16 @@ def main(argv=None):
         if args.show_queue:
             ordered = saved_queue(receipt, project=args.project,
                                   priority=args.priority)
+            counts = {name: sum(item["priority"] == name
+                                for _, item in ordered) for name in PRIORITY}
+            print("Human-only saved PR queue: " + str(len(ordered)) +
+                  " sampled candidates in " +
+                  str(len({repo for repo, _ in ordered})) + " sampled projects.")
+            print("Sampled priority distribution: " +
+                  " | ".join(name + "=" + str(counts[name]) for name in PRIORITY))
+            print("Ordering: P0 first, then P1/P2/unspecified, with " +
+                  "round-robin project fairness within each tier. " +
+                  "Never proof of current claims or permission to merge.")
             for repo, item in ordered[:args.limit]:
                 print(item["priority"] + " " + repo + "#" +
                       str(item["pr_number"]) + " [" +
