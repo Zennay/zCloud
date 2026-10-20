@@ -170,7 +170,7 @@ def prune_authorized():
     except OSError:
         return False
     return (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
-            and info.st_mode & 0o077 == 0)
+            and info.st_nlink == 1 and stat.S_IMODE(info.st_mode) == 0o600)
 
 def transfer(item, prune=False):
     src = item["path"]
@@ -201,9 +201,11 @@ def main():
     args = parser.parse_args()
     # Planning does not create state, acquire a lock or contact OAuth.
     if args.mode == "plan":
-        items = candidates(MIN_UPLOAD_DAYS)
+        window = candidates(MIN_UPLOAD_DAYS, limit=MAX_CANDIDATES + 1)
+        items = window[:MAX_CANDIDATES]
         print(json.dumps({"mode": "read_only", "cold_days": MIN_UPLOAD_DAYS,
-            "candidate_count": len(items), "scope": "zcloud-{cold,archive,backup}-YYYYMMDD[-suffix]",
+            "candidate_count": len(items), "candidate_window_truncated": len(window) > MAX_CANDIDATES,
+            "scope": "zcloud-{cold,archive,backup}-YYYYMMDD[-suffix]",
             "max_candidates": MAX_CANDIDATES, "max_batch_bytes": MAX_BATCH_BYTES,
             "unscoped_dated_directories_excluded": excluded_dated_directory_count(),
             "unscoped_size_measured": False, "manual_owner_selection_required": True,
