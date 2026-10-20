@@ -355,6 +355,72 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
                 "owner_claim_verified": False,
             })
             auth_gate_count += 1
+    # A second queued self-hosted job is independently visible but has NOT
+    # yet passed the exact-job refresh that feeds authoritative diagnosis.
+    # Surface a read-only follow-up in the normal blocker queue, not as a
+    # verified outage or human escalation.
+    secondary_count = 0
+    if (isinstance(ci_source, dict)
+            and ci_source.get("source") == "github_canonical_readonly_bounded_discovery"
+            and ci_source.get("jobs_restarted") is False
+            and ci_source.get("runner_mutations") is False):
+        for source_row in ci_source.get("coverage", []):
+            if not isinstance(source_row, dict):
+                raise ValueError("invalid additional CI source")
+            pid = source_row.get("project_id")
+            if pid not in known:
+                raise ValueError("unregistered secondary job project")
+            entries = source_row.get("additional_job_links", [])
+            if type(entries) is not list or len(entries) > 5:
+                raise ValueError("unbounded secondary jobs")
+            if entries and source_row.get("repository") != repo_for[pid]:
+                raise ValueError("secondary job repository mismatch")
+            for job in entries:
+                if (type(job) is not dict
+                        or job.get("observed_only") is not True
+                        or job.get("action_authorized") is not False
+                        or job.get("work_resumed_verified") is not False):
+                    raise ValueError("untrusted secondary job authority")
+                if (job.get("job_status") != "queued"
+                        or job.get("runner_route") != "self_hosted"):
+                    continue
+                run_id, job_id = job.get("run_id"), job.get("job_id")
+                sha = job.get("head_sha")
+                if (type(run_id) is not int or type(job_id) is not int
+                        or not 0 < run_id <= 2**53-1
+                        or not 0 < job_id <= 2**53-1
+                        or type(sha) is not str
+                        or not re.fullmatch(r"[0-9a-f]{40}", sha)):
+                    raise ValueError("invalid secondary job identity")
+                canonical_url = ("https://github.com/" + repo_for[pid] +
+                                 "/actions/runs/" + str(run_id) +
+                                 "/job/" + str(job_id))
+                if job.get("url") != canonical_url:
+                    raise ValueError("secondary job link not canonical")
+                key = "job:" + pid + ":" + str(run_id) + ":" + str(job_id)
+                if key in seen:
+                    raise ValueError("duplicate secondary job")
+                seen.add(key)
+                cards.append({
+                    "kind": "secondary_queued_self_hosted_job_needs_exact_read",
+                    "id": key, "project_id": pid, "priority": "P1",
+                    "problem": "Nog een exact gevonden wachtende self-hosted job; "
+                               "huidige runnerstatus NIET geverifieerd",
+                    "owner": "unassigned_operator_readonly_followup",
+                    "action": "Lees deze exacte bestaande GitHub-job opnieuw via de "
+                              "getoonde --job-selector. Alleen brononderzoek; geen "
+                              "runnerstart, workflowretry of claimovername.",
+                    "source_secondary_job_url": canonical_url,
+                    "source_secondary_job_pin": (pid + ":" + str(run_id) + ":" +
+                                                 str(job_id) + ":" + sha),
+                    "observed_from": "bounded_secondary_github_job_sample_only",
+                    "requires_human": False,
+                    "next_gate": "pin_exact_job_readonly_before_diagnosis",
+                    "worker_resumed_verified": False,
+                    "permission_to_recover": False,
+                    "owner_claim_verified": False,
+                })
+                secondary_count += 1
     # A private old incident is not a currently active outage, but still must
     # remain visible before ordinary work; missing from a window != resolved.
     for row in backlog["shown"]:
@@ -402,7 +468,8 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             "owner_claim_verified": False,
         })
     historical_count = (len(cards) - live_observed_count - pr_gate_count
-                        - issue_gate_count - worker_gap_count - auth_gate_count)
+                        - issue_gate_count - worker_gap_count - auth_gate_count
+                        - secondary_count)
     # A historical incident may reference a project removed from today's
     # canonical registry. Do not crash the whole workboard or silently mark
     # that earlier incident recovered; surface it as unmapped source debt.
@@ -445,10 +512,11 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
         "verified_source_incident_not_runtime_recovery": 0,
         "open_owner_only_issue_not_current_outage_proof": 1,
         "github_ci_auth_owner_gate_not_runner_outage": 2,
-        "read_only_worker_progress_gap_not_proven_outage": 3,
-        "queue_pressure_not_proven_outage": 4,
-        "existing_product_pr_gate_inspection_only": 5,
-        "historical_not_reconciled": 6,
+        "secondary_queued_self_hosted_job_needs_exact_read": 3,
+        "read_only_worker_progress_gap_not_proven_outage": 4,
+        "queue_pressure_not_proven_outage": 5,
+        "existing_product_pr_gate_inspection_only": 6,
+        "historical_not_reconciled": 7,
     }
     # Preserve P0 before P1 and verified/source-holder gates ahead of
     # generic queue pressure. Within the *same* urgency and blocker class,
@@ -519,7 +587,8 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
         "owner_only_open_issue_observations": issue_gate_count,
         "worker_event_gap_observations": worker_gap_count,
         "github_ci_auth_owner_gates": auth_gate_count,
-        "queue_pressure_observations": len(cards) - live_observed_count - historical_count - pr_gate_count - issue_gate_count - worker_gap_count - auth_gate_count,
+        "secondary_github_job_followups": secondary_count,
+        "queue_pressure_observations": len(cards) - live_observed_count - historical_count - pr_gate_count - issue_gate_count - worker_gap_count - auth_gate_count - secondary_count,
         "shown_blocker_cards": shown,
         "blocker_cards_truncated": len(cards) > len(shown),
         "independent_fallback_inspection": fallback[:5],
@@ -608,6 +677,7 @@ def blocker_board_html(board):
         ' · eigenaargebonden P0/P1 issues: ' + str(board["owner_only_open_issue_observations"]) +
         ' · worker-eventgaten: ' + str(board["worker_event_gap_observations"]) +
         ' · GitHub-authentificatiegates: ' + str(board.get("github_ci_auth_owner_gates", 0)) +
+        ' · andere wachtende GitHub-jobs: ' + str(board.get("secondary_github_job_followups", 0)) +
         ' · bestaande PR-gates: ' + str(board["existing_pr_gate_observations"]) +
         ' · historisch te hercontroleren: ' +
         str(board["historical_not_reconciled"]) +
