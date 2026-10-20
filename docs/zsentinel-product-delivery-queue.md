@@ -575,3 +575,22 @@ voor bronlinks in de operationele queue en Attention Needed.
 Deze broncode maakt geen URL-bezoek, externe fetch of mutatie van live
 werkergroepen. De PR vereist nog steeds exact-head CI, onafhankelijke review
 en goedgekeurde main/runtime-integratie.
+
+
+## 20 oktober · Eén menselijk incident kan geen ander project overschrijven
+
+In `portfolio_attention_add` geldt voor nieuwe of herhaalde menselijke
+escalaties nu een canonieke incidentidentiteit van maximaal 160 tekens.
+Een expliciet lege, gemanipuleerde of niet-canonieke ID wordt geweigerd in
+plaats van stilzwijgend omgezet in een mogelijk reeds bezette sleutel.
+
+De bestaande SQLite UPSERT kan een aandachtspunt met dezelfde ID nog steeds
+updaten of opnieuw openen, maar **uitsluitend binnen het oorspronkelijke
+project**. Wanneer dezelfde ID al bij een ander project hoort, faalt de
+bewerking met een bruikbare foutmelding. Zo kan bijvoorbeeld een herstelalert
+van Project B niet stilzwijgend de actuele contactactie en bron van Project A
+vervangen. Er wordt geen bestaande aandacht opgelost of verwijderd.
+
+Deze wijziging hoort bij dezelfde veilige bronlinkafhandeling en queue-ID-
+beveiliging. De status in deze PR is uitsluitend source committed; geen live
+attentionrecords, productiedatabase of actieve worker-claim gewijzigd.
