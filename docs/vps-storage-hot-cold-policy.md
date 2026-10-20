@@ -147,3 +147,24 @@ The scanner reads candidate filesystem inode identities and looks for matching d
 
 Read-only live source inspection on 20 October of exact [`aa1bd2e`](https://github.com/Zennay/zCloud/commit/aa1bd2eae6d7e3221becb8ef9a7ad1eb76f0246a) sampled 35 old training reports and approximately 4291 visible FDs across the first 350 process entries. It found no positive candidate matches **but marked the observation incomplete** and all 35 files as unverified. No closed-file proof, transfer, cleanup or trainer restart occurred. The actual product remains on the existing open PR until required CI, independent review and protected-main merge.
 
+
+
+## 20 October 2026 · Operator capacity recovery plan (10–1000 GiB)
+
+The existing inventory is now usable as a **target-driven, read-only capacity planning tool**. Set the free-space goal with `--target-free-gib`; the operational **10 GiB training reserve remains unchanged** and still appears separately:
+
+```bash
+# Human-friendly summary with a 60 GiB free-space goal:
+python3 scripts/vps_storage_audit.py --target-free-gib 60 \
+  --hotspot-inventory --open-handle-hints --format text
+
+# Self-contained mobile/desktop operator view, PRIVATE output only:
+python3 scripts/vps_storage_audit.py --target-free-gib 60 \
+  --hotspot-inventory --format html > /private/path/zcloud-storage-plan.html
+```
+
+This integrates measured local free bytes with a realistic advisory: `target_exceeds_local_volume_capacity`, `target_currently_met`, `incomplete_archive_inventory`, `aged_review_scope_insufficient` or `aged_review_scope_only_hypothetically_sufficient`. None grants owner release authority. When scanning exceeds the existing budget, candidate amounts are only observed lower bounds; **no** final storage feasibility conclusion is derived from an incomplete inventory. Likewise positive-only open-FD hints inspect at most 100 displayed old-file records; `unexamined_candidates` keeps the distinction from broader report limits and no non-match proves a handle closed.
+
+**Live read-only source observation** at [`c4bafb3`](https://github.com/Zennay/zCloud/commit/c4bafb30d543dbcac646f216ca86d793943371fa) on the permanent VPS measured `9,655,795,712` actual free bytes and a **`54,768,713,728`-byte** gap to an optional 60 GiB free-space goal. The previously surveyed old-file candidates represented just `851,574` bytes, not a safe set of files to remove. Training's mandatory 10 GiB reserve was also below threshold. The later [`c5787cb`](https://github.com/Zennay/zCloud/commit/c5787cb30ddabc5648d2524790b20489a1c5ee75) makes partial-scan / sampled-FD limits explicit. The result does not authorize deletion of the ~GiB-sized hot runner/caches, moving active research/training files or changing the read-only FUSE archive.
+
+The desired amount of free space may require a separately authorized larger local volume or owner-verified, safely restorable archive migration. **No migration, deletion, automatic restart or deploy occurred.** This is part of the existing unmerged product PR #1569, subject to the original exact-HEAD CI and independent review before protected-main merge.
