@@ -4232,6 +4232,27 @@ def watch_warnings(data):
             warnings.append({'level':'warning','project':p['id'],'message':f"{p['name']} needs attention"})
     return warnings
 
+def watch_incident_episode_id(incident):
+    """Opaque incident episode, stable across periodic status refreshes.
+
+    A service-health observation's detected_at can be the current snapshot
+    time, not the beginning of an outage. Source identity plus status cause
+    must remain stable until the underlying condition changes. Other incident
+    types use a real detection receipt (if available) to distinguish events.
+    No free text is returned to the client in this identifier.
+    """
+    category = str(incident.get('type') or '')
+    identity = str(incident.get('id') or '')
+    if not identity or len(identity) > 256 or not category:
+        return None
+    parts = [category, identity, str(incident.get('severity') or '')]
+    if category == 'service_health':
+        parts.append(str(incident.get('cause') or '')[:512])
+    else:
+        parts.append(str(incident.get('detected_at') or '')[:64])
+    return hashlib.sha256('\x1f'.join(parts).encode('utf-8')).hexdigest()
+
+
 def watch_summary(data):
     projects=[]
     runner=runner_status()
@@ -4267,6 +4288,9 @@ def watch_summary(data):
         'active_blockers':[
             {
                 'id':str(item.get('id') or ''),
+                # Stable within the same unresolved incident. Not a lease,
+                # proof of resolution, or authority to perform remediation.
+                'episode_id':watch_incident_episode_id(item),
                 'project':str(item.get('project') or 'cloud'),
                 'severity':str(item.get('severity') or 'high'),
                 # Escalation requires a known human-gated remediation class.
