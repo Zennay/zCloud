@@ -175,10 +175,12 @@ def build(report):
             candidate for candidate in linked_candidates
             if candidate["url"] != chosen_url
         ]
-        gate_source = ("not_observed" if selected is None or not selected[2]
-                       else "observed_failed" if selected[3]
-                       else "observed_pending" if selected[4]
-                       else "observed_partial_no_release_permission")
+        # Main issue card and PR group must display the same source verdict.
+        # Incoherent/stale clocks take precedence over sampled check results.
+        gate_source = next((
+            candidate["gate_state"] for candidate in linked_candidates
+            if candidate["url"] == chosen_url
+        ), "not_observed")
         # A complete-looking positive observation isn't current claim/review
         # authorisation. The human has to verify those in the source app.
         card = {
