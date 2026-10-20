@@ -46,6 +46,16 @@ def suggested_actions(packet):
             "Herlees de begrensde bron en herstel ontbrekende/ongeldige metadata met de eigenaar.",
             "HOLD_SOURCE_INCOMPLETE",
         ))
+    migrated = _number(packet.get("active_legacy_profile_claims_observed"))
+    if migrated:
+        result.append(action(
+            "legacy-profile-owner-migration", "urgent",
+            f"{migrated} actieve herstelopdrachten hebben een oud of onbevestigd baanprofiel.",
+            "Laat de runtime-eigenaar de werkelijk actieve configuratie, claimhouder "
+            "en conflicterende PR-scopes verifiëren; behoud bestaande taken en "
+            "migreer pas na geautoriseerde release.",
+            "HOLD_LEGACY_PROFILE_MIGRATION",
+        ))
     expired_local = _number(packet.get("expired_local_leases_observed"))
     if expired_local:
         result.append(action(
@@ -243,6 +253,7 @@ def suggested_actions(packet):
     protected = {
         "runner-worker-in-progress",
         "zcloud-worker-without-listener-observation",
+        "legacy-profile-owner-migration",
     }
     def display_rank(item):
         identifier = item["id"]
