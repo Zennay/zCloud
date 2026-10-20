@@ -65,12 +65,24 @@ private val Danger = Color(0xFFFF7D86)
 private val Track = Color(0xFF202A35)
 
 @Composable
-fun ZennayWearApp(repository: ZennayCloudRepository = remember { ZennayCloudRepository() }) {
+fun ZennayWearApp(
+    repository: ZennayCloudRepository = remember { ZennayCloudRepository() },
+    openIncidentId: String? = null,
+    onIncidentHandled: () -> Unit = {}
+) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(openIncidentId) {
+        if (openIncidentId != null) selectedId = null
+    }
     MaterialTheme {
         Box(Modifier.fillMaxSize().background(Bg)) {
             if (selectedId == null) {
-                HomeScreen(repository = repository, onProject = { selectedId = it })
+                HomeScreen(
+                    repository = repository,
+                    onProject = { selectedId = it },
+                    openIncidentId = openIncidentId,
+                    onIncidentHandled = onIncidentHandled
+                )
             } else {
                 BackHandler { selectedId = null }
                 DetailScreen(
@@ -86,7 +98,9 @@ fun ZennayWearApp(repository: ZennayCloudRepository = remember { ZennayCloudRepo
 @Composable
 private fun HomeScreen(
     repository: ZennayCloudRepository,
-    onProject: (String) -> Unit
+    onProject: (String) -> Unit,
+    openIncidentId: String?,
+    onIncidentHandled: () -> Unit
 ) {
     var data by remember { mutableStateOf<WatchSnapshot?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -113,7 +127,24 @@ private fun HomeScreen(
             }
         loading = false
     }
-    LaunchedEffect(Unit) { reload() }
+    LaunchedEffect(openIncidentId) {
+        // A notification can arrive while the watch is already running.
+        // Always obtain new evidence before opening the named blocker;
+        // never navigate by ID into historical or offline cached data.
+        reload()
+        if (openIncidentId != null) {
+            val snapshot = data
+            expandedAlertId = openIncidentId.takeIf { id ->
+                error == null && snapshot?.stale == false &&
+                snapshot.currentBlockerFeedAvailable &&
+                snapshot.alerts.any { it.id == id && (
+                    it.severity.equals("high", true) ||
+                    it.severity.equals("critical", true) ||
+                    it.severity.equals("needs_attention", true)) }
+            }
+            onIncidentHandled()
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
