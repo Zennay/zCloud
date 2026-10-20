@@ -248,20 +248,131 @@ def render_html(data: dict) -> str:
     )
 
 
+def read_project_progress(db_path: Path, project: str, limit: int = 8) -> dict:
+    """Show bounded activity for the eight existing worker slots, not claims.
+
+    Each slot uses the original explicitly read-only reader. These are
+    successive observations rather than one atomic portfolio snapshot; never
+    infer active owner, release readiness or independent generation.
+    """
+    if (type(project) is not str or PROJECT.fullmatch(project) is None
+            or type(limit) is not int or not 1 <= limit <= MAX_ROWS):
+        raise ValueError("invalid project progress selection")
+    slots = [read_worker_progress(db_path, project, slot, limit) for slot in range(1, 9)]
+    available = sum(item["available"] is True for item in slots)
+    signaled = sum(item["latest_event"] is not None for item in slots)
+    return {
+        "schema": "zcloud-worker-progress-overview-v1",
+        "project": project,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "available": available > 0,
+        "coverage": "read_only_sequential_nonatomic",
+        "slots_considered": 8,
+        "slots_source_available": available,
+        "slots_with_observed_events": signaled,
+        "slots": [{
+            "slot": item["worker_slot"],
+            "source_available": item["available"],
+            "latest_event": item["latest_event"],
+            "latest_prompt": item["latest_prompt"],
+            "latest_progress": item["latest_progress"],
+            "latest_completion": item["latest_completion"],
+            "progress_since_latest_prompt": item["progress_since_latest_prompt"],
+            "progress_after_last_completion": item["progress_after_last_completion"],
+            "recent_events_sampled": len(item["recent_events"]),
+            "sample_truncated": item.get("truncated", False),
+        } for item in slots],
+        "claim_bound": False,
+        "claim_epoch_verified": False,
+        "browser_progress_is_independent_proof": False,
+        "worker_resumed_verified": False,
+        "deployment_verified": False,
+        "notes": ("Sequential, privacy-bounded browser signals across eight slots. "
+                  "Missing signals do not prove an inactive worker or cleared queue."),
+    }
+
+
+def render_project_progress_html(data: dict) -> str:
+    """Mobile-friendly eight-slot operator page with no external resources."""
+    def age(item: dict | None) -> str:
+        if not item:
+            return "None observed"
+        clock = item.get("clock") or {}
+        status = clock.get("status", "unknown")
+        stamp = clock.get("utc") or "UTC unavailable"
+        seconds = clock.get("age_s")
+        suffix = " / " + str(seconds) + "s old" if type(seconds) is int else ""
+        return escape(str(stamp) + " / " + str(status) + suffix)
+
+    rows = []
+    for slot in data.get("slots", []):
+        fields = [
+            str(slot["slot"]),
+            "available" if slot["source_available"] else "unavailable",
+            str((slot["latest_event"] or {}).get("kind") or "none"),
+            age(slot["latest_event"]),
+            age(slot["latest_prompt"]),
+            age(slot["latest_progress"]),
+            age(slot["latest_completion"]),
+            "reported" if slot["progress_since_latest_prompt"] else "not observed",
+        ]
+        rows.append("<tr>" + "".join("<td>" + escape(value) + "</td>"
+                                      for value in fields) + "</tr>")
+    if not rows:
+        rows.append("<tr><td colspan='8'>No bounded slot observations.</td></tr>")
+    summary = (str(data.get("slots_source_available", 0)) +
+               " of 8 slot reads available; " +
+               str(data.get("slots_with_observed_events", 0)) +
+               " have any sampled browser event.")
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta name='referrer' content='no-referrer'>"
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none';"
+        "style-src 'unsafe-inline'; form-action 'none'; base-uri 'none';\">"
+        "<title>zSentinel eight-slot progress</title>"
+        "<style>:root{color-scheme:dark;font-family:system-ui;background:#101820;color:#ecf4fa}"
+        "body{max-width:1200px;margin:auto;padding:18px;line-height:1.5}"
+        "table{width:100%;border-collapse:collapse}th,td{padding:9px;text-align:left;"
+        "border-bottom:1px solid #405564}th{white-space:nowrap}"
+        ".scroll{overflow-x:auto}.warn{border-left:4px solid #f5cc91;"
+        "background:#1a2834;padding:14px}</style></head><body>"
+        "<h1>zSentinel / " + escape(str(data.get("project") or "")) +
+        " / 8 browser-worker slots</h1>"
+        "<p>" + escape(summary) + "</p>"
+        "<div class='warn'><strong>Not an active-claim or recovery report.</strong>"
+        "<p>Browser-declared telemetry only, read from eight sequential "
+        "SQLite read-only observations. A missing event is not evidence that "
+        "a worker is stopped. Independent generation, queue lease, current "
+        "GitHub CI, merge and production deployment remain unverified.</p></div>"
+        "<div class='scroll'><table><thead><tr>"
+        "<th>Slot</th><th>Source</th><th>Last kind</th>"
+        "<th>Latest event UTC</th><th>Last prompt UTC</th>"
+        "<th>Last progress UTC</th><th>Last completion UTC</th>"
+        "<th>Progress after prompt</th></tr></thead><tbody>"
+        + "".join(rows) + "</tbody></table></div></body></html>"
+    )
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Read-only browser progress receipts")
     parser.add_argument("--db", type=Path, default=Path(__file__).resolve().parent.parent / "history.db")
     parser.add_argument("--project", required=True)
-    parser.add_argument("--slot", required=True, type=int)
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--slot", type=int)
+    selection.add_argument("--all-slots", action="store_true",
+                           help="Show all eight known worker slots; browser signals only")
     parser.add_argument("--limit", type=int, default=24)
     parser.add_argument("--format", choices=("json", "html"), default="json")
     args = parser.parse_args(argv)
     try:
-        data = read_worker_progress(args.db, args.project, args.slot, args.limit)
+        data = (read_project_progress(args.db, args.project, min(args.limit, 8))
+                if args.all_slots else
+                read_worker_progress(args.db, args.project, args.slot, args.limit))
     except ValueError:
         parser.error("invalid project, worker slot, or bounded limit")
     if args.format == "html":
-        print(render_html(data))
+        print(render_project_progress_html(data) if args.all_slots else render_html(data))
     else:
         print(json.dumps(data, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
     return 0 if data["available"] else 3
