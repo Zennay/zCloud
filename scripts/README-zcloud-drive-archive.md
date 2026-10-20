@@ -50,8 +50,13 @@ deleted by the ordinary archive run.
 
 `plan` is genuinely read-only: it never creates the state/lock directory,
 checks OAuth or changes any data. It prints bounded eligible directory names,
-file/byte counts and explicitly `transfer_performed=false` /
-`cleanup_authorized=false`. If there are no eligible zCloud-owned
+file/byte counts, whether more than eight eligible candidates were present
+(`candidate_window_truncated`), and explicitly `transfer_performed=false` /
+`cleanup_authorized=false`. The plan also counts unrelated date-named
+directories **without listing their names or reading their contents**;
+`unscoped_size_measured=false` means that count is never a claim of
+reclaimable bytes. Those folders require separate, explicit project-owner
+selection and cannot be automatically included by this script. If there are no eligible zCloud-owned
 directories, `run` and `cleanup` report that fact and do **not** try to
 archive unrelated dated directories. Remote authentication failures, by
 contrast, produce a nonzero process exit so enabled timers cannot claim
@@ -70,7 +75,7 @@ active writers out of the cold archive roots.
 
 Pruning additionally requires the original
 `~/.config/zcloud-drive/allow-prune` marker to be an actual regular,
-**user-owned mode-0600 file** (no symlink), with the recovery keys already
+**user-owned mode-0600 regular file with one hardlink** (no symlink), with the recovery keys already
 backed up offsite. The marker is rechecked immediately before deletion.
 No cleanup is run or authorized by this source change.
 
@@ -94,8 +99,12 @@ Do not create that marker for a demo, smoke check or unverified provider.
   `python3 -B ~/zennay-cloud/scripts/zcloud-drive-archive.py run`
 - Cleanup after offsite key backup and explicit marker:
   `python3 -B ~/zennay-cloud/scripts/zcloud-drive-archive.py cleanup`
-- Restore a directory (after OAuth):
-  `~/.local/bin/rclone copy "vpsarchive:zCloud-cold/DIR" "/home/ubuntu/zennay-cloud/DIR"`
+- Stage a restore **outside the live checkout**, after OAuth and explicit
+  owner approval:
+  `~/.local/bin/rclone copy "vpsarchive:zCloud-cold/DIR" "/home/ubuntu/zcloud-restore-staging/DIR" --immutable`
+  First compare staged files and obtain the normal owner/runtime release
+  permission; never run a restore directly over a live project checkout.
+  A downloaded snapshot does not itself authorize replacing active data.
 
 User services `zcloud-drive-archive.timer` (daily 03:15 Amsterdam time)
 and `zcloud-drive-cleanup.timer` (Sunday 04:45) are installed and enabled.
