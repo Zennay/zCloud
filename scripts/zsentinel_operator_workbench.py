@@ -221,6 +221,13 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <option value="park-blocker">Parked blocker</option>
 <option value="ready-for-new-product-work">Candidate only · verify live claims</option>
 </select></label>
+<label>Follow-up status<select id="followupStatus">
+<option value="">All manual states</option>
+<option value="overdue">Past manual review date</option>
+<option value="incomplete">Missing contact or date</option>
+<option value="today">Due today UTC</option>
+<option value="scheduled">Scheduled later</option>
+</select></label>
 <label>Change since earlier board<select id="change" disabled>
 <option value="">All captured issues</option>
 <option value="new-or-changed">New or changed evidence</option>
@@ -296,6 +303,23 @@ const entries=new Map(board.cards.map(c=>[c.issue,c]));
 const permitted=new Set(['investigate','integrate-existing-pr','coordinate-owner','park-blocker','ready-for-new-product-work']);
 const manualGateDecisions=new Set(['coordinate-owner','park-blocker']);
 const utcToday=()=>new Date().toISOString().slice(0,10);
+function contactLabel(value){
+ return Array.from(String(value||'')).filter(ch=>{
+  const point=ch.codePointAt(0);
+  return point>=32&&point!==127&&ch!=='<'&&ch!=='>';
+ }).join('').trim().slice(0,80);
+}
+function followupStateMatches(info,kind){
+ if(!kind)return true;
+ if(!manualGateDecisions.has(info?.decision))return false;
+ const complete=Boolean(info?.owner?.trim()&&info?.due);
+ if(kind==='incomplete')return !complete;
+ if(!complete)return false;
+ const now=utcToday();
+ return kind==='overdue'?info.due<now:
+  kind==='today'?info.due===now:
+  kind==='scheduled'?info.due>now:false;
+}
 function validFollowupDate(value){
  if(value==='')return true;
  return typeof value==='string' && /^20[2-9][0-9]-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])$/.test(value) &&
@@ -323,7 +347,7 @@ function saveSelection(){
  const owner=document.getElementById('followupOwner'),due=document.getElementById('followupDue');
  if(decision&&note&&owner&&due)handoffs.set(selected,{
   decision:decision.value,note:note.value.slice(0,1000),
-  owner:owner.value.slice(0,80).trim(),due:validFollowupDate(due.value)?due.value:''
+  owner:contactLabel(owner.value),due:validFollowupDate(due.value)?due.value:''
  });
 }
 function filtered(){
@@ -332,9 +356,11 @@ function filtered(){
  const project=document.getElementById('project').value;
  const decision=document.getElementById('disposition').value;
  const change=document.getElementById('change').value;
+ const followupStatus=document.getElementById('followupStatus').value;
  const kinds=change&&baseline?new Map(changesSinceBaseline().map(x=>[x.issue,x.kind])):null;
  return board.cards.filter(c=>(!p||p===c.priority)&&(!project||project===c.project)&&
    (!decision||decision===(handoffs.get(c.issue)?.decision||'investigate'))&&
+   followupStateMatches(handoffs.get(c.issue),followupStatus)&&
    (!change||(kinds&&(change==='new-or-changed'?
      ['new-observation','changed-evidence'].includes(kinds.get(c.issue)):
      kinds.get(c.issue)===change)))&&
@@ -685,7 +711,7 @@ function drawDetail(){
  owner.addEventListener('input',update);
  due.addEventListener('change',update);
 }
-['search','priority','project','disposition','change'].forEach(id=>document.getElementById(id).addEventListener(
+['search','priority','project','disposition','change','followupStatus'].forEach(id=>document.getElementById(id).addEventListener(
  'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
 document.getElementById('export').onclick=()=>{
  saveSelection();
