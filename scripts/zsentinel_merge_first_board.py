@@ -158,9 +158,52 @@ def inspect(repo, number, budget, expected_body_digest=None,
                         "checks": "UNKNOWN", "source": "CHANGED",
                         "actions": ["Refresh current issue references"]}
         if first.get("state") != "open":
-            return {"repo": repo, "number": number, "title": title, "head": sha,
-                    "status": "CLOSED_OR_MERGED", "review": "NOT_INSPECTED",
-                    "checks": "NOT_INSPECTED", "source": "COMPLETE", "actions": ["Verify default-branch receipt"]}
+            # Closed != merged, and merged != currently contained in main.
+            # Reconcile the immutable PR receipt with the *current* default ref.
+            closed = {"repo": repo, "number": number, "title": title, "head": sha,
+                      "status": "CLOSED_NOT_MERGED", "review": "NOT_APPLICABLE",
+                      "checks": "NOT_APPLICABLE", "source": "COMPLETE",
+                      "actions": ["Choose another open product PR"]}
+            if first.get("merged") is not True or not first.get("merged_at"):
+                return closed
+            closed.update(status="MERGED_MAIN_UNVERIFIED", source="PARTIAL",
+                          actions=["Verify the current default-branch ancestry"])
+            if base["ref"] != "main":
+                closed.update(status="MERGED_INTO_NONDEFAULT_BRANCH", source="COMPLETE",
+                              actions=["Integrate the parent branch into main"])
+                return closed
+            merge_sha = first.get("merge_commit_sha")
+            if not isinstance(merge_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", merge_sha):
+                return closed
+            closed["reported_commit"] = merge_sha
+            current = bounded_gh(f"repos/{repo}/pulls/{number}", budget)
+            ref = bounded_gh(f"repos/{repo}/git/ref/heads/main", budget)
+            default_sha = (ref.get("object") or {}).get("sha") if isinstance(ref, dict) else None
+            if not (isinstance(current, dict) and isinstance(current.get("head"), dict)
+                    and current["head"].get("sha") == sha
+                    and current.get("state") == "closed" and current.get("merged") is True
+                    and current.get("merged_at")
+                    and current.get("merge_commit_sha") == merge_sha
+                    and isinstance(current.get("base"), dict)
+                    and current["base"].get("ref") == "main"
+                    and isinstance(default_sha, str)
+                    and re.fullmatch(r"[0-9a-f]{40}", default_sha)):
+                return closed
+            contained = merge_sha == default_sha
+            if not contained:
+                compare = bounded_gh(
+                    f"repos/{repo}/compare/{merge_sha}...{default_sha}", budget)
+                contained = (isinstance(compare, dict)
+                             and compare.get("status") == "ahead"
+                             and (compare.get("base_commit") or {}).get("sha") == merge_sha
+                             and type(compare.get("ahead_by")) is int
+                             and compare["ahead_by"] > 0
+                             and compare.get("behind_by") == 0)
+            if contained:
+                closed.update(status="MERGED_ON_MAIN_VERIFIED", source="COMPLETE",
+                              main_commit=merge_sha,
+                              actions=["Deployment requires separate live verification"])
+            return closed
         if base["ref"] != "main":
             return {"repo": repo, "number": number, "title": title, "head": sha,
                     "status": "CHILD_PR", "review": "NOT_INSPECTED",
@@ -243,7 +286,12 @@ def render(rows, observed):
             esc(row["checks"]) + ' · Review: ' + esc(row["review"]) +
             ' · Workflows: ' + esc(row.get("workflows", "UNKNOWN")) +
             '</p><p class="sub">Bron: ' + esc(row["source"]) + ' · HEAD: ' +
-            esc((row["head"] or "unknown")[:12]) + '</p><ul>' + actions + '</ul></article>'
+            esc((row["head"] or "unknown")[:12]) +
+            (' · Main: <a href="' + esc('https://github.com/' + row['repo'] +
+                                      '/commit/' + row['main_commit']) + '">' +
+             esc(row['main_commit'][:12]) + '</a>' if row.get("status") ==
+             "MERGED_ON_MAIN_VERIFIED" and row.get("main_commit") else '') +
+            '</p><ul>' + actions + '</ul></article>'
         )
     return ('<!doctype html><html lang="nl"><meta charset="utf-8"><meta name="viewport" '
             'content="width=device-width,initial-scale=1"><title>zSentinel · Merge-first werkbak</title>'
