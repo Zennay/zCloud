@@ -30,7 +30,9 @@ object IncidentSnoozeStore {
         val deadline = context.applicationContext
             .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getLong(preferenceKey(alert), 0L)
-        return (deadline - now).coerceAtLeast(0L)
+        // Clock rollback must never turn a one-hour user choice into days
+        // of silence. Old or implausibly distant deadlines fail open.
+        return (deadline - now).takeIf { it in 1L..DURATION_MS } ?: 0L
     }
 
     fun snoozeForOneHour(context: Context, alert: AlertItem) {
