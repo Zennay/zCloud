@@ -102,3 +102,30 @@ The existing **Read public GitHub for selected project** browser action now uses
 The browser continues to use no credentials, `redirect:error`, a canonical Zennay repo allowlist, bounded responses, a single on-demand fetch, rate budgeting and `no-store` caching. The sole cache pin in `public/index.html` now tracks the resulting updated `public/app.js` Git blob, so the new screen is not hidden behind the stale version query string.
 
 These browser observations and any separately imported activity receipts have different trust boundaries: an imported receipt is an operator-supplied claim and must include its **own exact main-commit event** to display even a qualified match; a browser live refresh reads the canonical GitHub main response directly. Neither is production acceptance, required-HEAD CI approval, a review or runtime proof. Work is on the existing **open PR #1550**, not merged to main or deployed.
+
+
+## Source freshness and Markdown handoff · 20 Oct 2026
+
+The combined Activity timeline now distinguishes **source-observation time** from
+**last event timestamp** in the per-project coverage disclosure. A successful
+scoped `/api/activity?project=...` read that returned zero events is displayed
+as a scoped read with 0 sampled events; an item from the older global 80-row
+fallback is never mislabelled as a successful project read. A failed scoped
+refresh retains prior events but marks them stale. Project sources not yet read
+remain explicitly unobserved rather than silently treated as idle.
+
+Each project shows the bounded local source read time and event cap separately
+from the GitHub read time, GitHub source status, and latest GitHub sample event.
+The combined timeline's **Export timeline .md** now includes bounded
+per-project GitHub provider coverage, observed timestamps and stale/unavailable
+states, in addition to the existing scoped local VPS section. The export
+contains **no tokens, owner claims or release authority**.
+
+The overview's former generic "Recent activity / Full history" copy now reads
+"Recent local activity / Inspect source coverage". A green `/api/status` or
+the presence of a local checkout commit does not imply remote PR/CI sync.
+Manual opt-in GitHub source collection, its request budgets, source validation,
+protected-main merge proof and all existing release gates are unchanged.
+This PR is source-only until normal exact-head CI, independent review,
+protected-main merge and authorized VPS deployment; no runtime activation is
+claimed.
