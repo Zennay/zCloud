@@ -206,12 +206,21 @@ def selected_source_pr(repo, number, token):
             or not isinstance(sha, str) or not SHA.fullmatch(sha)
             or not isinstance(base_sha, str) or not SHA.fullmatch(base_sha)):
         raise ValueError("selected PR is not a canonical open project PR")
+    # Directly specified old PRs need the same visible product-only policy
+    # as the bounded recent-PR inventory. Do not silently elevate test/QA
+    # work just because it has an explicit numeric PR reference.
+    title = receipt.get("title")
+    if type(title) is not str or not 0 < len(title) <= 256:
+        raise ValueError("selected PR product title unavailable")
+    product_candidate = QA_ONLY_TITLE.match(title) is None
     files, truncated = changed_paths(repo, number, token)
     if truncated or not 1 <= len(files) <= MAX_SOURCE_FILES:
         raise ValueError("source PR file scope is incomplete or exceeds 80 paths")
     return {"number": number, "url": "https://github.com/" + repo +
             "/pull/" + str(number), "head_sha": sha,
-            "base_sha": base_sha, "paths": files}
+            "base_sha": base_sha, "paths": files,
+            "product_candidate_based_on_title": product_candidate,
+            "read_only": True}
 
 
 def overlaps(wanted, changed):
