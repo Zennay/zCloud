@@ -1044,6 +1044,21 @@ def operator_text(result):
         lines.append("No actionable fresh incidents; unknown or missing evidence does not mean healthy.")
     lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
     lines.append(f"Human-only watch candidates (NOT delivered): {len(result['watch_alert_candidates'])}")
+    old_owner = result.get("historical_owner_recheck_candidates", [])
+    lines.append("Historical human owner rechecks (NO notification, NO current incident): " +
+                 str(len(old_owner)))
+    for item in old_owner:
+        source = item["exact_github_job"]
+        exact = ("run " + str(source["run_id"]) + " / job " +
+                 str(source["job_id"]) + " / head " + source["head_sha"]
+                 if source else "exact run/job not pinned")
+        lines.append("- HISTORICAL " + item["severity_at_last_observation"] + " " +
+                     item["project_id"] + " · " +
+                     item["problem_at_last_observation"] + " · last " +
+                     item["source_last_seen"] + " · " + exact +
+                     " · authorized owner must recheck source; not delivered.")
+    if result.get("historical_recheck_source_truncated"):
+        lines.append("Historical human-recheck shortlist incomplete; no omitted row resolved.")
     historic = result.get("historical_unresolved", {})
     if historic.get("total_unresolved", 0):
         lines.append(f"Historical not-observed incidents (NOT recovered): {historic['total_unresolved']}")
