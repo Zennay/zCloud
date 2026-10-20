@@ -565,14 +565,14 @@ const knownPrLinks=new Set(board.cards.flatMap(c=>c.open_pr_candidates));
 function gateTime(value){
  if(typeof value!=='string'||value.length<20||value.length>40||
  !/^20[2-9][0-9]-[01][0-9]-[0-3][0-9]T/.test(value)||
- !/(Z|\+00:00)$/.test(value))throw Error('Invalid UTC observation time');
+ !/(Z|\\+00:00)$/.test(value))throw Error('Invalid UTC observation time');
  const time=Date.parse(value);
  if(!Number.isFinite(time)||time>Date.now()+300000)throw Error('Future or invalid gate time');
  return time;
 }
 function parseGateRow(row){
  if(!row||typeof row!=='object'||Array.isArray(row)||
-    typeof row.url!=='string'||!/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]{0,8}$/.test(row.url)||
+    typeof row.url!=='string'||!/^https:\\/\\/github\\.com\\/Zennay\\/[A-Za-z0-9_.-]+\\/pull\\/[1-9][0-9]{0,8}$/.test(row.url)||
     row.merge_authorized!==false||row.deployment_authorized!==false||
     row.read_only!==true)throw Error('Not a read-only canonical PR receipt');
  if(row.status==='github_source_unavailable_or_head_changed')
