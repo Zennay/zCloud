@@ -767,6 +767,12 @@ def graph_html(report):
         str(r["first_position"]) + "–" + str(r["last_position"]) +
         " · " + str(r["observed_prs"]) + " PRs</li>"
         for r in report["open_pr_page_receipts"])
+    source_warning = (
+        "<p role='alert'>ONSTABIELE BRON: dezelfde PR staat op meerdere "
+        "pagina's of de resultaten verschoven tussen dubbele lezingen. "
+        "Niet op basis hiervan mergen of claimen.</p>"
+        if report["cross_page_duplicate_prs_observed"] or
+           not report["open_pr_snapshot_stable"] else "")
     duplicate_cards = []
     for group in report["shown_duplicate_issue_groups"]:
         mentioned = "".join(
@@ -807,7 +813,7 @@ def graph_html(report):
             str(report["open_pr_window_start"]) + "–" +
             str(report["open_pr_window_end"]) +
             " · geen oordeel over andere pagina's.</p><ul>" + page_rows +
-            "</ul><aside>Bron: " + escape(completeness) +
+            "</ul>" + source_warning + "<aside>Bron: " + escape(completeness) +
             ". Gedeelde bestandspaden betekenen niet automatisch Git-mergeconflict."
             " Geen Notion-claim, eigenaar, bestandslease of PR-loze branch"
             " geverifieerd. Geen automatische claim of merge.</aside>"
