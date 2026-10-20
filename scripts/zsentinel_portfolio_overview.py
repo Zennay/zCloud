@@ -1030,6 +1030,10 @@ def main():
         elif args.format == "handoff":
             from zsentinel_unblock_board import human_handoff_markdown
             rendered = human_handoff_markdown(unblock)
+            if runner_cross_source is not None:
+                from zsentinel_runner_cross_source import as_text as runner_cross_text
+                rendered = ("## zSentinel · exacte runner en lokale VPS-observatie\n\n" +
+                            runner_cross_text(runner_cross_source) + "\n\n" + rendered)
         elif args.format == "json":
             rendered = json.dumps({
                 "portfolio": summary, "selected_window": window_index,
