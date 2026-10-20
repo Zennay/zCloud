@@ -751,11 +751,23 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
             outcome_items = []
             for item in target_coverage.get("candidate_outcomes", []):
                 pr_url = canonical_repo_url + "/pull/" + str(item["number"])
+                # Direct, source-verified main receipts are navigable;
+                # historical references and missing proof cannot close issues.
+                verified_commit = item.get("main_commit")
+                main_note = " · main: NIET BEVESTIGD"
+                if (item.get("main_merged") is True
+                        and isinstance(verified_commit, str)
+                        and re.fullmatch(r"[0-9a-f]{40}", verified_commit)):
+                    main_note = (
+                        " · main: <a href='" +
+                        esc(canonical_repo_url + "/commit/" + verified_commit) +
+                        "'>BEVESTIGD " + esc(verified_commit[:12]) + "</a>")
                 outcome_items.append(
                     "<li><a href='" + esc(pr_url) + "'>PR #" +
                     esc(item["number"]) + "</a>: " +
                     esc(item["status"]) + " · issueverband: " +
-                    esc(item["issue_reference_source"]) + "</li>")
+                    esc(item["issue_reference_source"]) + main_note +
+                    " · productie: NIET BEVESTIGD</li>")
             target_section += (
                 "<details open><summary>Uitkomst per opgegeven PR (" +
                 esc(len(outcome_items)) + ")</summary><ul>" +
@@ -967,7 +979,10 @@ def main():
                 if target_coverage.get("source") == "EXPLICIT_PR_CANONICAL_GET":
                     for item in target_coverage.get("candidate_outcomes", []):
                         print(f"DIRECT_PR #{item['number']} status={item['status']} "
-                              f"issue_link={item['issue_reference_source']}")
+                              f"issue_link={item['issue_reference_source']} "
+                              f"main_delivery={'VERIFIED' if item.get('main_merged') is True else 'NOT_VERIFIED'} "
+                              f"main_commit={item.get('main_commit') or 'NOT_VERIFIED'} "
+                              "live_verified=false")
                     print("DIRECT_PR_SELECTION " +
                           ",".join(str(n) for n in target_coverage["requested_pr_numbers"]) +
                           f" inspected={target_coverage['search_examined']} " +
