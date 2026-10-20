@@ -333,6 +333,15 @@ No live owner/claim status is fetched or inferred. Recheck GitHub, Notion and re
 This is a saved partial snapshot: linked PRs may have changed, closed or merged.
 Open the original PR, inspect the current head, live claims, required checks,
 independent reviews and branch/release authority before touching code or merging.</p>
+<div class="brief" aria-label="Saved GitHub PR gate observation">
+<h3>Import GitHub PR-gate snapshot · optional</h3>
+<p>Attach saved JSON from the zSentinel current-head PR gate desk or integrated issue cockpit.
+Imported receipts are NOT live GitHub evidence, required branch rules, owner consent or merge clearance.</p>
+<label>Saved PR gate JSON (maximum 1 MiB)
+<input type="file" id="prGateImport" accept=".json,application/json"></label>
+<button id="prGateClear" type="button" disabled>Clear imported gate snapshot</button>
+<p id="prGateStatus" aria-live="polite">No imported source. All current PR gates unknown.</p>
+</div>
 <p id="prDeskSummary" aria-live="polite"></p><ol id="prDeskRows"></ol>
 <h3>Productissues without captured PR references · human triage first</h3>
 <p>Missing from this saved PR window does not mean no PR exists in live GitHub.
@@ -405,7 +414,7 @@ const board = """ + records + """;
 const boardSha = """ + json.dumps(board_sha) + """;
 const baselineSchema = 'zsentinel-product-delivery-triage-v1';
 const issuePattern = /^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$/;
-let baseline=null,carryPreview=null;
+let baseline=null,carryPreview=null,prGateImport=null;
 const issueList=document.getElementById('issues'),detail=document.getElementById('detail');
 const status=document.getElementById('status');
 const entries=new Map(board.cards.map(c=>[c.issue,c]));
@@ -542,6 +551,106 @@ function filtered(){
    (!q||(c.issue+' '+c.title+' '+c.project+' '+c.recommended_next_step).toLowerCase().includes(q)));
 }
 
+
+const knownPrLinks=new Set(board.cards.flatMap(c=>c.open_pr_candidates));
+function gateTime(value){
+ if(typeof value!=='string'||value.length<20||value.length>40||
+ !/^20[2-9][0-9]-[01][0-9]-[0-3][0-9]T/.test(value)||
+ !/(Z|\+00:00)$/.test(value))throw Error('Invalid UTC observation time');
+ const time=Date.parse(value);
+ if(!Number.isFinite(time)||time>Date.now()+300000)throw Error('Future or invalid gate time');
+ return time;
+}
+function parseGateRow(row){
+ if(!row||typeof row!=='object'||Array.isArray(row)||
+    typeof row.url!=='string'||!/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]{0,8}$/.test(row.url)||
+    row.merge_authorized!==false||row.deployment_authorized!==false||
+    row.read_only!==true)throw Error('Not a read-only canonical PR receipt');
+ if(row.status==='github_source_unavailable_or_head_changed')
+  return {url:row.url,available:false};
+ if(row.status!=='observed_current_head_partial_gate_evidence'||
+    typeof row.head_sha_observed!=='string'||!/^[a-f0-9]{40}$/.test(row.head_sha_observed)||
+    row.exact_head_stable_on_second_read!==true||
+    row.required_branch_checks_and_rules_verified!==false||
+    row.required_review_policy_verified!==false||
+    row.mergable_by_automation!==false)
+  throw Error('Untrusted current-head observation');
+ const fields=['observed_checks_pending','observed_checks_not_successful',
+   'observed_independent_exact_head_approvals','observed_exact_head_changes_requested',
+   'legacy_status_pending_observed','legacy_status_failure_or_error_observed'];
+ if(fields.some(k=>!Number.isInteger(row[k])||row[k]<0||row[k]>100)||
+    typeof row.legacy_status_source_may_be_truncated!=='boolean'||
+    typeof row.check_runs_page_complete!=='boolean'||
+    typeof row.review_page_may_be_truncated!=='boolean'||
+    typeof row.human_next_gate_step!=='string'||
+    !/^[a-z_]{5,80}$/.test(row.human_next_gate_step))
+  throw Error('Invalid bounded check/review counts');
+ return {url:row.url,available:true,head:row.head_sha_observed,
+   checks_pending:row.observed_checks_pending,
+   checks_failed:row.observed_checks_not_successful,
+   legacy_pending:row.legacy_status_pending_observed,
+   legacy_failed:row.legacy_status_failure_or_error_observed,
+   approvals:row.observed_independent_exact_head_approvals,
+   changes_requested:row.observed_exact_head_changes_requested,
+   incomplete:row.legacy_status_source_may_be_truncated||
+     !row.check_runs_page_complete||row.review_page_may_be_truncated,
+   next:row.human_next_gate_step};
+}
+function acceptGateSource(data){
+ if(!data||typeof data!=='object'||Array.isArray(data)||
+    data.merge_authorized!==false||data.writes_performed!==false)
+  throw Error('Source attempts privileged action');
+ let rows,time;
+ if(data.schema==='zsentinel-current-pr-gate-observation-v1'){
+  if(data.deployment_authorized!==false||
+     data.required_branch_protection_verified!==false||
+     data.current_review_and_check_samples_only!==true||
+     !Array.isArray(data.items)||data.items.length>4)throw Error('Invalid PR gate source');
+  rows=data.items;time=data.observed_at_utc;
+ }else if(data.schema==='zsentinel-integrated-issue-pr-scope-v1'){
+  if(data.deploy_authorized!==false||data.may_take_ownership!==false||
+     !Array.isArray(data.issues)||data.issues.length>60)
+   throw Error('Invalid issue cockpit source');
+  rows=[];time=data.generated_at_utc;
+  for(const issue of data.issues){
+   if(!issue||!Array.isArray(issue.existing_prs)||issue.existing_prs.length>5)
+    throw Error('Unbounded issue PR references');
+   for(const pr of issue.existing_prs){
+    const gate=pr.live_exact_head_review_checks_observation;
+    if(gate!==undefined&&gate!==null){
+     if(gate.url!==pr.url)throw Error('Mismatch PR observation URL');
+     rows.push(gate);
+    }
+   }
+  }
+  if(rows.length>300)throw Error('Unbounded gate receipts');
+ }else throw Error('Unsupported PR-gate evidence schema');
+ const timestamp=gateTime(time),items=new Map();
+ for(const row of rows){
+  const gate=parseGateRow(row);
+  if(!knownPrLinks.has(gate.url))continue;
+  const previous=items.get(gate.url);
+  if(previous&&JSON.stringify(previous)!==JSON.stringify(gate))
+   throw Error('Conflicting PR observations');
+  items.set(gate.url,gate);
+ }
+ if(!items.size)throw Error('No PR receipt matches this captured source board');
+ return {time,timestamp,items,kind:data.schema};
+}
+function prGateLabel(url){
+ if(!prGateImport)return 'No imported PR gate receipt; current checks and approvals UNKNOWN.';
+ const row=prGateImport.items.get(url);
+ if(!row)return 'No imported receipt for this PR; current checks and approvals UNKNOWN.';
+ const age=Math.max(0,Math.floor((Date.now()-prGateImport.timestamp)/60000));
+ const label='IMPORTED '+(age>15?'STALE ':'')+'snapshot '+age+' min ago · ';
+ if(!row.available)return label+'GitHub gate source unavailable or HEAD changed; no merge clearance.';
+ return label+'observed HEAD '+row.head.slice(0,12)+
+  ' · checks pending '+row.checks_pending+' / failed '+row.checks_failed+
+  ' · legacy pending '+row.legacy_pending+' / failed '+row.legacy_failed+
+  ' · observed independent approvals '+row.approvals+
+  (row.incomplete?' · SOURCE INCOMPLETE':'')+' · next: '+row.next+
+  ' · CURRENT OWNER, BRANCH RULES AND MERGE AUTHORITY UNVERIFIED.';
+}
 function prDeskGroups(){
  const index=new Map(),weights={P0:0,P1:1,P2:2,Unspecified:3};
  for(const card of filtered()){
