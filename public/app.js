@@ -827,6 +827,12 @@ function validateGitHubActivityReceipt(value){
     sourceByProject.set(row.project,row.repository);
     coverage.push({project:row.project,status:['partial_sources','partial_error','unavailable'].includes(row.status)?row.status:'unavailable',observedAt:value.observed_at});
   }
+  // Imported receipts are NOT an authorization to merge or deploy.
+  // Correlate source-claimed positive PR main evidence with an exact
+  // main-commit entry in this same bounded, untrusted receipt.
+  const mainEvidence=new Set(value.events.filter(item=>item&&item.kind==='main_commit'
+    &&typeof item.sha==='string'&&/^[a-f0-9]{40}$/.test(item.sha)
+    &&typeof item.project==='string').map(item=>item.project+':'+item.sha));
   const seen=new Set(),events=[];
   for(const entry of value.events){
     if(!entry||typeof entry!=='object'||!GITHUB_RECEIPT_KINDS.has(entry.kind)
@@ -853,13 +859,23 @@ function validateGitHubActivityReceipt(value){
     }else{
       if(!Number.isSafeInteger(entry.pr)||entry.pr<=0
           ||entry.id!=='github:'+repository+':'+entry.kind+':'+entry.pr
-          ||entry.main_merged!==false)throw Error('Invalid PR event');
+          ||(entry.main_merged!==false&&entry.main_merged!==true))throw Error('Invalid PR event');
+      if(entry.main_merged===true&&(
+           entry.merged!==true||entry.reported_target!=='main'
+           ||typeof entry.merge_commit_sha!=='string'
+           ||!/^[a-f0-9]{40}$/.test(entry.merge_commit_sha)
+           ||entry.main_merge_evidence!=='canonical_main_history_exact_sha'
+           ||!mainEvidence.has(entry.project+':'+entry.merge_commit_sha)
+      ))throw Error('Uncorroborated main merge evidence');
       url='https://github.com/'+repository+'/pull/'+entry.pr;
       description='PR #'+entry.pr+' · '+entry.kind.replaceAll('_',' ');
       if(typeof entry.pr_head_sha==='string'&&/^[a-f0-9]{40}$/.test(entry.pr_head_sha))
         description+=' · '+entry.pr_head_sha.slice(0,12);
-      if(entry.kind==='pr_merged')
-        description+=' · reported target only, main not verified';
+      if(entry.kind==='pr_merged'){
+        description+=entry.main_merged===true
+          ? ' · exact merge SHA also in this imported main history (not live deploy proof)'
+          : ' · merge reported; main not proven by this receipt';
+      }
     }
     events.push({project:entry.project,id:entry.id,kind:entry.kind,url,description,
       ts:entry.source_at,firstSeen:entry.new_since_previous===true});
