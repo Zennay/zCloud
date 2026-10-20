@@ -320,12 +320,22 @@ def _lane_scope(project_id, lane_id, item=None):
     }
 
 
-def _lane_score(text, lane):
+def _lane_score(text, lane, profile=None):
     score = 0
     for keyword in lane["keywords"]:
         pattern = r"(?<![a-z0-9])" + re.escape(keyword) + r"(?![a-z0-9])"
         if re.search(pattern, text):
-            score += 3 if " " in keyword or "-" in keyword else 1
+            weight = 3 if " " in keyword or "-" in keyword else 1
+            # All issue tickets mention "issue" or "fix", regardless of the
+            # worker best equipped to handle them. Keep those words as a
+            # fallback for product remediation, but prefer an actual runner,
+            # claim, deploy or merge signal when one is present.
+            if profile == "portfolio-recovery" and keyword in {
+                "issue", "issues", "bug", "fix", "repair",
+                "product", "feature",
+            }:
+                weight = 0.25
+            score += weight
     return score
 
 
@@ -336,7 +346,7 @@ def classify_backlog_item(project, item):
         str(item.get("title") or "") + "\n" +
         str(item.get("completion_criteria") or "")
     ).lower()
-    scored = [(_lane_score(text, lane), index, lane) for index, lane in enumerate(lanes)]
+    scored = [(_lane_score(text, lane, profile), index, lane) for index, lane in enumerate(lanes)]
     score, _, lane = max(scored, key=lambda value: (value[0], -value[1]))
     # No keyword match: keep the first lane as the deterministic primary work lane.
     if score <= 0:
