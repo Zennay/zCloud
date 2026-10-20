@@ -70,7 +70,14 @@ def observe_open_references(root: Path, file_rows: list, *,
         if type(row) is not dict:
             raise ValueError("invalid candidate record")
         identity = _candidate(root, row.get("relative_path"), device)
-        if identity is not None:
+        # A rotated/replaced file must never inherit an old sampled inode's
+        # open-reference classification. Both values came from the private
+        # original metadata scan, not from a user supplied pathname.
+        expected_dev, expected_inode = row.get("scan_device"), row.get("scan_inode")
+        if (type(expected_dev) is not int or type(expected_inode) is not int
+                or expected_dev < 0 or expected_inode < 0):
+            raise ValueError("missing original candidate inode identity")
+        if identity == (expected_dev, expected_inode):
             identities.setdefault(identity, []).append(index)
     matches = [0] * len(file_rows)
     observed_pids = [set() for _ in file_rows]
