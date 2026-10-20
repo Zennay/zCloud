@@ -740,10 +740,15 @@ bestaande PR** uit: `selected_source_pr` leest canonieke open-PR metadata en
 de beperkte veranderde-bestandenlijst (maximaal twee extra GitHub GETs).
 Alleen een geldige open PR van het gekozen geregistreerde project met
 product-PR-titel en complete bestandslijst (maximaal 80 paden) kan door.
-Afwezig, QA-only, ongeldig, truncated of netwerkfout resulteert in een
-expliciete bronweigering, nooit in een veronderstelde mergevrijgave. Ook
-buiten het recente PR-venster kan de operator daardoor een oudere P0/P1
-product-PR rechtstreeks controleren zonder de hele backlog te downloaden.
+Bij afwezig, QA-only, ongeldige/truncated bron of netwerkfout wordt **alleen
+die gekozen PR** als `direct_selected_pr_unavailable_or_not_product` met
+onbekende HEAD en **geen mergevrijgave** opgenomen. De andere onafhankelijk
+gekozen en beschikbare PR's worden nog wél gelezen; het overzicht valt
+dus niet volledig om door één externe GitHub-bronfout. De HTML/tekst/JSON
+toont het aantal onbereikbare of geweigerde gerichte PR's en exitcode 3
+bij incomplete dekking. Ook buiten het recente PR-venster kan de operator
+daardoor een oudere P0/P1-product-PR gericht inspecteren zonder de hele
+backlog te downloaden.
 
 Voor oudere gericht gelezen PRs toont de cockpit daarnaast uitsluitend
 **positief waargenomen bestandsbotsingen** tegen de al eerder gelezen recente
@@ -755,8 +760,11 @@ echte Git-mergeconflict of actieve eigenaar. Geen overlap in de beperkte
 steekproef betekent nooit dat de oudere PR geheel conflictvrij is.
 
 De extra gate-API-grens blijft **maximaal vier PR's × vijf GETs** plus
-**twee afzonderlijke scoped GETs per expliciet gericht gelezen oudere
-PR**, dus maximaal **28 extra GETs**.
+**maximaal twee afzonderlijke scoped GETs per expliciet gericht opgevraagde
+oudere PR (ook wanneer de bron onbereikbaar blijkt)**, dus maximaal
+**28 extra GETs**. De enige automatische bijwerking bij een mislukte
+gerichte bron is een expliciet onbekende operatorregel, niet een
+claim-/merge-/deployactie.
 `current_live_pr_gate_observation.mode` onderscheidt expliciet
 gekozen PR's van de automatische beperkte shortlist;
 `explicit_selected_prs` bevat uitsluitend die brongebonden
