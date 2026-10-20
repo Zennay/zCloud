@@ -545,7 +545,7 @@ function refreshBatch(){
   const info=handoffs.get(card.issue);
   label.append(checkbox,elem('span',card.priority+' '+card.issue+' · '+card.title+
    ' · '+dueState(info)));
-  li.append(label);list.append(li);
+  li.append(label,link('Original GitHub issue ↗',card.url));list.append(li);
  }
  if(!cases.length)list.append(elem('li','No human-only follow-ups have been marked on this bounded board.'));
  document.getElementById('batchCount').textContent=batchSelection.size+
@@ -571,6 +571,8 @@ function batchPlan(){
   }else to=action;
   if(to===current&&nextDate===(info.due||''))continue;
   rows.push({issue,project:card.project,priority:card.priority,title:card.title,
+    original:card.url,firstGate:card.evidence_gaps[0]||
+     'Current owner/claim/CI/release permissions must be independently reverified',
     before:JSON.stringify(info),from:current,to,oldDate:info.due||'',newDate:nextDate});
  }
  if(!rows.length)return null;
@@ -581,10 +583,12 @@ function batchPlan(){
    'Captured source '+boardSha+' · '+board.observed_at_utc,
    'No GitHub issue closure, ownership assignment, CI success or release.',
    'Changes: '+rows.length+' of '+selected.length+' selected cards',
-   ...rows.map(r=>r.priority+' '+r.issue+' · '+line(r.title,180)+
-    ' · '+r.from+' → '+r.to+' · UTC date '+(r.oldDate||'none')+
-    ' → '+(r.newDate||'none')),'',
-   'Confirm only after reviewing each original issue and its required gates.'].join('\\n');
+   ...rows.flatMap(r=>[r.priority+' '+r.issue+' · '+line(r.title,180),
+    'Original issue · '+r.original,
+    'First observed missing gate · '+line(r.firstGate,250),
+    'Local state '+r.from+' → '+r.to+' · UTC date '+(r.oldDate||'none')+
+      ' → '+(r.newDate||'none'),'']),
+   'Confirm only after reviewing each original issue and ALL required gates.'].join('\\n');
  return {proof,rows,preview};
 }
 function refreshTriage(){
