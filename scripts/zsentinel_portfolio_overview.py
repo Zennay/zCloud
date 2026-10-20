@@ -873,6 +873,13 @@ def main():
             decision["local_runner_observation"] = local_runner
         github_coverage = verified_source_coverage(selected, provenance, bundle)
         summary = portfolio_summary(registry, queue, selected, github_coverage, decision)
+        runner_cross_source = None
+        if local_runner is not None:
+            from zsentinel_runner_cross_source import combine as combine_runner_evidence
+            job_source = provenance.get("github_jobs") if isinstance(provenance, dict) else None
+            fresh_jobs = job_source.get("refreshed_projects", []) if isinstance(job_source, dict) else []
+            runner_cross_source = combine_runner_evidence(local_runner, fresh_jobs)
+            decision["runner_cross_source"] = runner_cross_source
         attempts = coverage_history(
             windows, registry, previous_window_state if args.window_state else None,
             window_index, github_coverage)
@@ -1001,6 +1008,12 @@ def main():
                     raise ValueError("no canonical portfolio HTML main for runner evidence")
                 rendered = rendered.replace("<main>", "<main>" +
                                             runner_html(local_runner), 1)
+            if runner_cross_source is not None:
+                from zsentinel_runner_cross_source import as_html as runner_cross_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("no canonical portfolio HTML main for runner correlation")
+                rendered = rendered.replace("<main>", "<main>" +
+                                            runner_cross_html(runner_cross_source), 1)
             if continuity is not None:
                 from zsentinel_blocker_continuity import as_html
                 fragment = as_html(continuity).split("<main>", 1)[1].split("</main>", 1)[0]
@@ -1027,6 +1040,7 @@ def main():
                 "blocker_first_handoff": unblock,
                 "blocker_continuity": continuity,
                 "local_runner_observation": local_runner,
+                "runner_cross_source": runner_cross_source,
                 "existing_pr_delivery": (pr_desk if pr_desk is not None else
                     {"coverage": "not_requested", "merge_authorized": False}),
                 "recent_unpr_branch_ownership": (
@@ -1037,6 +1051,9 @@ def main():
             lines = ["zSentinel portfolio | venster %d/%d | GitHub: %s" % (
                 window_index + 1, len(windows), ", ".join(selected))]
             lines.append("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
+            if runner_cross_source is not None:
+                from zsentinel_runner_cross_source import as_text as runner_cross_text
+                lines.append(runner_cross_text(runner_cross_source))
             if args.github_only:
                 lines.append("QUEUE: NIET WAARGENOMEN (--github-only); geen nulmeting, vrijgave of leasebewijs.")
             if provenance.get("pinned_requested"):
