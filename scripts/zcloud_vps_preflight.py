@@ -64,14 +64,14 @@ def listener_pids() -> list[int]:
     return sorted(result)
 
 
-def service_state() -> str:
-    """Read only a *loaded* dedicated unit, checking both systemd managers.
+def service_observation() -> dict[str, object]:
+    """Observe both systemd managers without confusing a missing unit with idle.
 
-    An unknown unit can report ActiveState=inactive; treating that response
-    as real would hide an active listener in the other manager.
+    Always identify which manager supplied a loaded unit. Contradictory
+    manager states are a blocked release, not a preferred answer.
     """
-    observed = []
-    for prefix in (("systemctl", "--user"), ("systemctl",)):
+    observed: dict[str, str] = {}
+    for manager, prefix in (("user", ("systemctl", "--user")), ("system", ("systemctl",))):
         rc, output = command(*prefix, "show", RUNNER_UNIT,
                              "--property=LoadState", "--property=ActiveState", timeout=4)
         if rc:
@@ -85,10 +85,17 @@ def service_state() -> str:
             continue
         state = props.get("ActiveState")
         if state in {"active", "inactive", "failed", "activating", "deactivating"}:
-            observed.append(state)
-    if len(observed) > 1 and len(set(observed)) > 1:
-        return "ambiguous"
-    return observed[0] if observed else "unavailable"
+            observed[manager] = state
+    unique = set(observed.values())
+    state = ("ambiguous" if len(unique) > 1 else next(iter(unique)) if unique else "unavailable")
+    return {"state": state, "manager": next(iter(observed)) if len(observed) == 1 else
+            "both" if len(observed) == 2 else "unverified",
+            "loaded_managers": sorted(observed)}
+
+
+def service_state() -> str:
+    """Backwards-compatible state read; detailed reports use service_observation."""
+    return str(service_observation()["state"])
 
 
 def optional_storage_inventory(root: Path) -> dict:
@@ -343,7 +350,8 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         mark("NOT_MAIN", "block", "Live checkout is not on main.")
 
     pids = listener_pids()
-    unit = service_state()
+    systemd = service_observation()
+    unit = str(systemd["state"])
     if not pids:
         mark("ZCLOUD_RUNNER_MISSING", "block", "Dedicated zCloud Runner.Listener not observed.")
     if unit in {"failed", "inactive"}:
@@ -417,7 +425,10 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         "result": "blocked" if blocked else ("partial" if findings else "preflight_clear"),
         "checkout": {"branch": branch, "sha": sha, "expected_main_sha": expected_main_sha, "tracked_changes": tracked_count,
                      "untracked_entries": untracked_count},
-        "runner": {"unit": RUNNER_UNIT, "unit_state": unit, "listener_pids": pids},
+        "runner": {"unit": RUNNER_UNIT, "unit_state": unit,
+                   "unit_manager": systemd["manager"],
+                   "loaded_managers": systemd["loaded_managers"],
+                   "listener_pids": pids},
         "resources": {"available_ram_pct": available_pct, "swap_used_pct": swap_pct,
                       "disk_free_pct": disk_free_pct, "disk_free_bytes": disk_free_bytes,
                       "training_reserve_bytes": TRAINING_FREE_RESERVE_BYTES,
@@ -668,6 +679,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 {item("Untracked entries", checkout["untracked_entries"])}
 {item("Dedicated runner unit", runner["unit"])}
 {item("Unit state", runner["unit_state"])}
+{item("Unit manager", runner["unit_manager"])}
 {item("Dedicated listener count", len(runner["listener_pids"]))}
 {item("Available RAM", val(resources["available_ram_pct"]) + "%")}
 {item("Swap used", val(resources["swap_used_pct"]) + "%")}
@@ -724,7 +736,7 @@ def main() -> int:
         c = report["checkout"]
         print(f"Checkout: {c['branch']} {c['sha'] or 'unknown'}; tracked={c['tracked_changes']} untracked={c['untracked_entries']}")
         r = report["runner"]
-        print(f"Runner: {r['unit_state']}; dedicated listener PIDs: {r['listener_pids']}")
+        print(f"Runner: {r['unit_state']} (systemd manager: {r['unit_manager']}); dedicated listener PIDs: {r['listener_pids']}")
         disk = report["resources"]
         print(f"Free bytes: {disk['disk_free_bytes']} / training reserve: {disk['training_reserve_bytes']}; gap: {disk['training_reserve_gap_bytes']}")
         for f in report["findings"]:
