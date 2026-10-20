@@ -57,6 +57,15 @@ Deze werkbak kan geen claim, job, merge of systeemdienst veranderen.</p></sectio
 <section id="stats" class="statgrid" aria-label="Geobserveerde samenvatting"></section>
 <section aria-label="Bronvensters"><h2>Historische bronmomenten</h2>
 <div id="sources"></div></section>
+<section class="warning" aria-label="Historische SQLite-wachtrijdruk">
+<h2>Wachtrij en claimpogingen · alleen bronvergelijking</h2>
+<p>Afwijkingen tussen opgeslagen, volledige bronmomenten; claimpogingen zijn geen
+mislukte runs en een daling is geen geverifieerd herstel. Bronhiaat = ONBEKEND.
+Geen claims vrijgeven, jobs herstarten of automatische retries uitvoeren.</p>
+<div id="queueStats" class="statgrid"></div>
+<div id="queueWindows"></div>
+<div id="queueDeltas"></div>
+</section>
 <section class="filters" aria-label="Filters">
 <label>Zoeken<input id="search" type="search" placeholder="Incident, project, eigenaar of advies"></label>
 <label>Hoogste historisch waargenomen prioriteit<select id="severity"><option value="">Alle</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></label>
@@ -98,6 +107,37 @@ $("stats").append(
  stat("Getoonde kaarten",data.visible_incidents),
  stat("Afgekapt",data.rows_truncated?"JA, onzichtbare incidenten bestaan":"nee")
 );
+const queue=data.queue_pressure_history;
+$("queueStats").append(
+ stat("Vergelijkbare bronparen",queue.compared_pairs),
+ stat("Bronhiaten / niet vergelijkbaar",queue.unknown_pairs),
+ stat("Actuele lease- of herstelstatus","NIET GECONTROLEERD")
+);
+for(const w of queue.windows){
+ const q=w.queue;
+ $("queueWindows").append(line(
+  "Wachtrijbron "+w.window,
+  q.coverage==="not_supplied"?"NIET GELEZEN — geen nulclaim":(
+   q.sampled_at_utc+" · "+q.coverage+
+   (q.coverage==="current" ?
+    " · wachtenden "+q.totals.queued_items+
+    " · hoge claimpogingen "+q.totals.high_claim_attempt_items+
+    " · verlopen lease-rijen "+q.totals.expired_owner_lease_rows
+    :" · BRON ONVOLLEDIG / HISTORISCH; niet als herstelbewijs gebruiken")
+  )
+ ));
+}
+for(const delta of queue.adjacent_comparisons){
+ const label="Venster "+delta.from_window+" → "+delta.to_window;
+ const changes=delta.deltas;
+ $("queueDeltas").append(line(label,
+  changes===null?"ONBEKEND · één of beide bronsamples ontbreken of zijn onvergelijkbaar":
+  "wachtenden "+(changes.queued_items>=0?"+":"")+changes.queued_items+
+  ", hoge claimpogingen "+(changes.high_claim_attempt_items>=0?"+":"")+changes.high_claim_attempt_items+
+  ", verlopen lease-rijen "+(changes.expired_owner_lease_rows>=0?"+":"")+changes.expired_owner_lease_rows+
+  (delta.owner_review_required ? " · EIGENAAR CONTROLEERT BRON": " · niet gelijk aan herstel")
+ ));
+}
 for(const source of data.sources){
  $("sources").append(line("Venster "+source.index,
  source.observed_at_utc+" · "+source.observed_incident_count+
