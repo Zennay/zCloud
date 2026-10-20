@@ -3914,6 +3914,15 @@ def reconcile_dynamic_worker_limit():
         ).fetchone()
         if unsafe:
             raise ValueError('Workerlimiet: actieve eigenaar buiten nieuwe capaciteit; geen automatische requeue')
+        pending=c.execute(
+            """SELECT 1 FROM ai_global_slots s JOIN runner_commands cmd
+                 ON cmd.project_id=s.project_id || '::w' || s.worker_slot
+               WHERE s.slot>? AND cmd.status='pending'
+                 AND cmd.action IN ('start','new_chat','push') LIMIT 1""",
+            (limit,),
+        ).fetchone()
+        if pending:
+            raise ValueError('Workerlimiet: open browseroverdracht buiten nieuwe capaciteit; geen mappingvrijgave')
         # Only the empty high slots can disappear. Running/verifying and
         # claimed rows retain status, lease and worker identity unchanged.
         c.execute('DELETE FROM ai_global_slots WHERE slot>?',(limit,))
