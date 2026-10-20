@@ -504,6 +504,16 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
                 target_section += ("<p>Automatisch gelezen pagina\u0027s: " +
                     esc(", ".join(str(p["candidate_page"]) for p in target_coverage["page_windows"])) +
                     ". Niet-atomaire GitHub-zoekbron; geen volledig actueel PR-bewijs.</p>")
+            if target_coverage.get("next_candidate_offset") is not None:
+                target_section += (
+                    "<p><strong>Deze pagina is niet volledig onderzocht.</strong> "
+                    "Hervat pagina " + esc(target_coverage["candidate_page"]) +
+                    " op kandidaat-offset " + esc(target_coverage["next_candidate_offset"]) +
+                    " met --candidate-offset en --expected-page-sha " +
+                    esc(target_coverage["source_page_sha256"]) +
+                    ". Als de zoekvolgorde wijzigt, weigert het programma "
+                    "de vervolgopdracht.</p>"
+                )
             if target_coverage["next_page"] is not None:
                 target_section += (
                     "<p>Volgende zoekpagina: " +
@@ -533,6 +543,10 @@ def main():
                      help="continue targeted issue search on page 1–50 of 20 PRs")
     cli.add_argument("--auto-pages", type=int, default=1,
                      help="follow 1–3 existing PR search pages within the same bounded run")
+    cli.add_argument("--candidate-offset", type=int, default=0,
+                     help="resume candidate index 0–19 inside the exact same result page")
+    cli.add_argument("--expected-page-sha",
+                     help="ordered candidate fingerprint printed with an unfinished source page")
     cli.add_argument("--output", help="create new private 0600 offline .html (never overwrite)")
     cli.add_argument("--snapshot-output",
                      help="save this targeted issue search page as a NEW private 0600 JSON snapshot")
@@ -551,6 +565,17 @@ def main():
         cli.error("--auto-pages must remain inside page 1–50 and be at most 3")
     if args.issue is None and args.auto_pages != 1:
         cli.error("--auto-pages requires --issue")
+    if not 0 <= args.candidate_offset < TARGET_CANDIDATES_PER_PAGE:
+        cli.error("--candidate-offset must be 0–19")
+    if args.candidate_offset and (
+            args.issue is None or not isinstance(args.expected_page_sha, str)
+            or len(args.expected_page_sha) != 64 or
+            any(c not in "0123456789abcdef" for c in args.expected_page_sha)):
+        cli.error("--candidate-offset requires --issue and --expected-page-sha (64 lowercase hex)")
+    if args.expected_page_sha and not args.candidate_offset:
+        cli.error("--expected-page-sha requires --candidate-offset")
+    if args.snapshot_output and args.candidate_offset:
+        cli.error("--snapshot-output requires a complete page from offset zero")
     if args.snapshot_output and args.auto_pages != 1:
         cli.error("--snapshot-output requires exactly one source page")
     if args.snapshot_output and args.issue is None:
@@ -564,7 +589,9 @@ def main():
         if args.issue is not None:
             rows, targeted, partial, target_coverage = collect_targeted_windows(
                 args.project[0], args.issue, registry, budget,
-                candidate_page=args.candidate_page, auto_pages=args.auto_pages)
+                candidate_page=args.candidate_page, auto_pages=args.auto_pages,
+                candidate_offset=args.candidate_offset,
+                expected_page_sha=args.expected_page_sha)
             unmatched = []
         else:
             rows, unmatched, partial = collect(args.project, registry, budget)
@@ -625,6 +652,8 @@ def main():
                       f"observed={target_coverage['search_examined']} "
                       f"total={target_coverage['search_total']} "
                       f"next_page={target_coverage['next_page']} "
+                      f"next_candidate_offset={target_coverage.get('next_candidate_offset')} "
+                      f"source_page_sha256={target_coverage.get('source_page_sha256')} "
                       f"complete={target_coverage['search_complete']}")
     except (ValueError, OSError, KeyError, TypeError):
         cli.error("invalid project, source, or private output; no remote writer action performed")
