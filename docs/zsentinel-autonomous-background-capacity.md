@@ -172,6 +172,8 @@ De `comparison.transitions` onderscheiden `newly_observed`,
 `failed` naar `active` is géén bewijs dat een GitHub-job, PR of deploy
 hersteld is**; de velden `github_job_recovered` en
 `production_restored` blijven daarom `null`.
+Iedere statusovergang krijgt daarnaast een stabiele, privé SHA-256-afgeleide `incident_key` (24 hextekens) over host, canonical service-id en waargenomen vóór/na-toestand. Herhaalde identieke overgangen kunnen hierdoor als hetzelfde type incident worden herkend, zonder een oude T0-bron als huidige vrijgave of herstelbewijs te accepteren. De vergelijking bevat ook de gemeten `elapsed_seconds` en per overgang `action_authorized=false`. Dit is een deduplicatiehint, geen vertrouwenshandtekening.
+
 Iedere bron draagt expliciet `claim_authorized=false`,
 `service_restart_authorized=false`, `merge_authorized=false` en
 `deploy_authorized=false`. Een oude bron wordt nooit als vrijgave
