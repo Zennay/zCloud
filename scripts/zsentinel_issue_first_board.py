@@ -17,7 +17,7 @@ from portfolio_merge_ready import DB
 from zsentinel_claim_visibility import observe as observe_local_claims
 from zsentinel_issue_merge_priority import (
     issue_inventory, link_candidates, priority_rank, unaddressed_urgent,
-    classification, references
+    classification, references, title_references, reference_hints
 )
 
 MAX_PER_PROJECT = 4
@@ -88,15 +88,17 @@ def collect(projects, registry, budget):
                     partial.append({"project": project, "reason": "INVALID_PR_BODY"})
                     continue
                 fingerprint = hashlib.sha256(body.encode("utf-8")).hexdigest()
+                title_digest = hashlib.sha256(item["title"].encode("utf-8")).hexdigest()
                 report = board.inspect(repo, item["number"], budget,
-                                       expected_body_digest=fingerprint)
+                                       expected_body_digest=fingerprint,
+                                       expected_title_digest=title_digest)
                 if (report.get("source") == "COMPLETE"
                         and report.get("status") in {"HOLD", "OBSERVED_GATES_ONLY"}
                         and report.get("head") == observed_head
                         and isinstance(observed_head, str)):
                     report["observed_issue_refs"] = [
                         issues[number] for number in links.get(item["number"], [])][:8]
-                    report["issue_reference_source"] = "OBSERVED_PR_BODY"
+                    report["issue_reference_source"] = "OBSERVED_PR_TITLE_OR_BODY"
                 else:
                     report["observed_issue_refs"] = []
                     report["issue_reference_source"] = "UNKNOWN_OR_MOVED"
@@ -183,16 +185,24 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
             body = record.get("body") or ""
             if not isinstance(body, str) or len(body) > 128000:
                 continue
-            if issue_number not in references(body, {issue_number}):
+            if issue_number not in reference_hints(record["title"], body,
+                                                    {issue_number}):
                 continue
             fingerprint = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            title_digest = hashlib.sha256(
+                record["title"].encode("utf-8")).hexdigest()
             report = board.inspect(repo, number, budget,
-                                   expected_body_digest=fingerprint)
+                                   expected_body_digest=fingerprint,
+                                   expected_title_digest=title_digest)
             if (report.get("source") == "COMPLETE"
                     and report.get("status") in {"HOLD", "OBSERVED_GATES_ONLY"}
                     and report.get("head") == (record.get("head") or {}).get("sha")):
                 report["observed_issue_refs"] = [issue_info]
-                report["issue_reference_source"] = "TARGETED_VERIFIED_PR_BODY"
+                report["issue_reference_source"] = (
+                    "TARGETED_VERIFIED_PR_BODY" if
+                    issue_number in references(body, {issue_number})
+                    else "TARGETED_VERIFIED_PR_TITLE"
+                )
             else:
                 report["observed_issue_refs"] = []
                 report["issue_reference_source"] = "UNKNOWN_OR_MOVED"
@@ -314,7 +324,8 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
             esc(targeted["priority"] + " #" + str(targeted["number"]) + " · "
                 + targeted["title"]) + "</a></p>"
             "<p>Alleen actuele expliciete PR-bodyverwijzingen, geen ownership-"
-            "of oplossingsbewijs.</p>"
+            "of oplossingsbewijs. Ook een expliciete PR-titelverwijzing is "
+            "uitsluitend een verwijzing, geen claim of bewezen fix.</p>"
         )
         if target_coverage:
             target_section += (
