@@ -2742,3 +2742,74 @@ retries, runnerrestart, deployment of claim is onderdeel van deze tools.
 De enige codewijzigingen zijn op [zCloud PR #1563](https://github.com/Zennay/zCloud/pull/1563)
 gecommit; protected-main, echte exacte-head verplichte CI, onafhankelijke
 review en geserialiseerde release-eigenaar blijven verplicht.
+
+
+### 20 oktober · Portfolio queue claimpogingen vergelijken (#677)
+
+Nieuwe *alleen-lezen* `scripts/zsentinel_queue_churn.py` koppelt twee
+**bestaande** lokale `portfolio_queue`-bronmetingen aan hetzelfde SQLite
+bestand, zonder enige write naar de queue, lease, worker of scheduler.
+
+Eerste meting (alleen als een ECHTE queue-DB met tabel `portfolio_queue`
+via het reeds bevoegde bronpad beschikbaar is):
+```sh
+python3 scripts/zsentinel_queue_churn.py \
+  --database /bestaand/privaat/portfolio-queue.db \
+  --snapshot-output /bestaand/privaat/queue-20261020-1.json
+```
+Latere meting + optioneel nieuw privérapport:
+```sh
+python3 scripts/zsentinel_queue_churn.py \
+  --database /bestaand/privaat/portfolio-queue.db \
+  --previous /bestaand/privaat/queue-20261020-1.json \
+  --snapshot-output /bestaand/privaat/queue-20261020-2.json \
+  --format html --output /bestaand/privaat/queue-trend-1.html
+```
+Als de live DB daarna onbereikbaar is maar **beide brongebonden 0600**
+privémetingen reeds bestaan, kan de nieuwe offline route alsnog een
+besloten herstelbord maken:
+```sh
+python3 scripts/zsentinel_queue_churn.py \
+  --previous /bestaand/privaat/queue-20261020-1.json \
+  --current-snapshot /bestaand/privaat/queue-20261020-2.json \
+  --format html --output /bestaand/privaat/queue-trend-2.html
+```
+De paden hierboven zijn placeholders: verzin geen live DB, schema, eerdere
+snapshot of write-bevoegdheid. De opgeslagen observaties zijn **uitsluitend
+privé** en de `zsentinel_private_output`-writer schrijft create-only,
+mode 0600 en weigert overschrijven en symlinks.
+
+**Wat de functie wel/niet bewijst:**
+- De reader opent SQLite als `mode=ro` en `PRAGMA query_only`, leest
+  maximaal 2.500 actieve rijen en geeft een SHA-256 bronidentiteitsdigest
+  van dezelfde host/pad/device/inode af. Roterende bronbestanden of een
+  andere host mogen nooit als één tijdserie doorgaan. De originele
+  bestandsnaam, queue UUID's, worker-identiteiten en claimtokens worden
+  niet getoond in de publieke rapportage.
+- De vergelijking vereist dezelfde bronidentiteit en strikt opeenvolgende
+  UTC-waarnemingen binnen 72 uur. Alleen de reeds bestaande besloten
+  16-hex `queue_ref`-samples die **in beide waarnemingen nog actief** zijn
+  leveren bewezen waargenomen **claimpogingentellerstijging**.
+- Een hogere *groepsteller*, meer gequeue'de items of extra attempts
+  bewijst **geen mislukte run, automatische retry of veilig vrijgegeven
+  lease**. Verdwenen/nieuwe items en ontbrekende samples blijven expliciet
+  onbekend.
+- HTML, JSON en Markdown bevatten uitsluitend bounded resultaten.
+  De `--queue-previous`-optie in de bestaande
+  `zsentinel_portfolio_overview.py` voegt een geanonimiseerde samenvatting
+  toe aan portfolio HTML, JSON, tekst en de privé human-handoff. Als de
+  oude bron ontbreekt of ongeldig is, toont het portfolio **onbekend** en
+  gaat de overige onafhankelijke rapportage gewoon door.
+- De output autoriseert geen lease release, claim, retry, signal, worker
+  restart of queue-reparatie. Het menselijke vervolg hoort bij een
+  bevoegde queue-owner met echte progress receipts en claim-eigenaarschap.
+
+**Actueel bewijs en blocker op 20 oktober:** via de verbonden zSSH
+read-only vastgesteld dat de twee in `/home/ubuntu/zennay-cloud`
+gevonden bestanden `portfolio_queue.sqlite` en `portfolio_queue.db`
+beide **geen** tabel `portfolio_queue` aanbieden. Daarom is een live
+trend uit die bestanden niet mogelijk en is er ook geen claim dat een
+queue-retry defect gerepareerd is. De bevoegde runtime-/queue-eigenaar
+moet óf het echte read-only bestaande `portfolio_queue`-bronpad,
+óf twee reeds bestaande, brongebonden 0600-observaties beschikbaar
+stellen. Geen alternatieve DB aangemaakt en geen data vervalst.
