@@ -418,10 +418,24 @@ def html_view(data):
                         ("".join(lines) or "<p class='muted'>No sampled issues in this class. Coverage is not exhaustive.</p>")
                         + "</section>")
     coverage = []
+    source_denials = {
+        "authentication_required":
+            "GitHub HTTP 401: bevoegde eigenaar moet toegang controleren.",
+        "rate_limit_confirmed":
+            "GitHub-rate-limit bevestigd: andere verzoeken uitgesteld.",
+        "forbidden_or_rate_limit_unknown":
+            "GitHub 403: bronrechten of rate-limit onbekend.",
+    }
     for item in data["coverage"]:
-        coverage.append("<li><b>" + escape(item["project"]) + "</b> — oldest " +
+        category = item.get("provider_admission")
+        if category is not None and category not in source_denials:
+            raise ValueError("invalid provider denial classification")
+        coverage.append("<li><b>" + escape(item["project"]) + "</b> — oudste " +
                         escape(item["oldest_window"]) + "; recent " +
-                        escape(item["recent_window"]) + "; recent open PRs " + escape(item["open_pr_window"]) + "</li>")
+                        escape(item["recent_window"]) + "; open PR-venster " +
+                        escape(item["open_pr_window"]) +
+                        ("; " + escape(source_denials[category]) if category else "") +
+                        "</li>")
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'>"
             "<meta name='referrer' content='no-referrer'>"
@@ -432,7 +446,7 @@ def html_view(data):
             "explicit P0/P1 label or title, oldest first within each priority. "
             "QA-only work excluded by the 17 October product policy.</p><p class='notice'>"
             "Partial bounded sample, not a full backlog or active claim/runner inventory. "
-            "A GitHub assignee is not an active worker claim. On a GitHub 403/429, later repos are not queried. Do not overwrite owned work, "
+            "GitHub-assignees are not active worker claims. Repo-specific 401/403 never suppress another independent project; confirmed rate limits stop further requests. Do not overwrite owned work, "
             "perform recovery, merge or deploy from this page.</p><p class='muted'>"
             "Observed " + escape(data["observed_at"]) + " · requests " +
             str(data["request_count"]) + " · QA-only excluded " +
