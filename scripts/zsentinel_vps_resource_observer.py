@@ -48,8 +48,13 @@ def observe_vps_capacity(database: Path):
     load = os.getloadavg()[1]
     available, swap = _memory_values()
     fs = os.statvfs(database)
+    if fs.f_blocks <= 0 or fs.f_frsize <= 0 or not 0 <= fs.f_bavail <= fs.f_blocks:
+        raise ValueError("invalid database-mount capacity")
     free = fs.f_bavail * fs.f_frsize / (1024 ** 3)
-    vals = (load, available, swap, free)
+    # Account for blocks unavailable to the unprivileged runtime (including
+    # filesystem reserves); 94% occupied with 6 GiB free still matters.
+    unavailable_percent = 100 * (1 - fs.f_bavail / fs.f_blocks)
+    vals = (load, available, swap, free, unavailable_percent)
     if any(not math.isfinite(value) or value < 0 for value in vals):
         raise ValueError("invalid host resource observation")
     return {
@@ -61,6 +66,7 @@ def observe_vps_capacity(database: Path):
             "available_memory_mib": round(available, 1),
             "available_swap_mib": round(swap, 1),
             "free_disk_gib": round(free, 3),
+            "disk_unavailable_percent": round(unavailable_percent, 2),
         },
     }
 
