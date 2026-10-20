@@ -345,6 +345,13 @@ article p{margin:9px 0}.line{display:flex;justify-content:space-between;flex-wra
 small{display:block;color:#c3d6e6}code{font-size:12px;background:#0b182a;border-radius:5px;padding:3px 6px}
 .provenance{padding-top:18px;border-top:1px solid #405774;color:#b1c6d8;font-size:13px;overflow-wrap:anywhere}
 .changes{padding:6px 20px 20px}.changes ol{padding-left:24px}.changes li{padding:6px 0;overflow-wrap:anywhere}
+.portfolio-overview{border:1px solid #4b7592;border-radius:14px;padding:12px 20px;background:#102338}
+.portfolio-overview h2{font-size:20px}.portfolio-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,335px),1fr));gap:12px}
+.portfolio-project{border:1px solid #587b94;background:#1b3045;padding:13px;border-radius:10px}
+.portfolio-project h3{font-size:16px;margin:0 0 5px}
+.portfolio-project details{margin:7px 0}
+.portfolio-project details summary{font-size:14px;font-weight:600;padding:7px}
+.portfolio-project details p{padding:0 10px;overflow-wrap:anywhere}
 .projects{background:#101c2f;border:1px solid #3c5d73;border-radius:14px;padding:12px 20px}
 .projects h2{font-size:19px;margin:6px 0}.projects p{color:#c5d8e7}
 .projects details{margin:10px 0}.projects ol{columns:2;padding:4px 25px 14px}
@@ -360,8 +367,12 @@ article:target{outline:3px solid #7bd3ff;scroll-margin:15px}
 Deze pagina kan geen claim, CI, vereiste branchregels, onafhankelijke review,
 merge of productieactie autoriseren. Controleer altijd de actuele exacte PR-HEAD in GitHub.</div>
 </header>'''
+    # All-project prioritization shares the same admission and exact
+    # observed-gate classification as this per-PR desk; it does not add GETs.
+    from zsentinel_saved_gate_portfolio import portfolio_html
     html += (warning + _historical_html(historical_change_lines) +
-             '<div class="stats">' + summary + '</div>' + project_navigation +
+             '<div class="stats">' + summary + '</div>' +
+             portfolio_html(selected, integrated) + project_navigation +
              '<p>Bronvenster: ' + n(integrated["earliest_observed_at_utc"]) +
              ' — ' + n(integrated["latest_observed_at_utc"]) +
              ' · batches: ' + str(integrated["observed_batch_count"]) + '/' +
