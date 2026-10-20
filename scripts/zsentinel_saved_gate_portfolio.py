@@ -210,6 +210,67 @@ def portfolio_html(selected, integrated, *, project=None):
 
 
 
+
+def portfolio_issue_html(selected, integrated, *, project=None):
+    """Offline merge-first issue index from already validated saved PR evidence."""
+    projects = project_worklist(selected, integrated, project=project)
+    index = {}
+    for group in projects:
+        repo = group["repository"]
+        for pr in group["candidates"]:
+            for issue_url in pr["linked_issue_urls"]:
+                prefix = "https://github.com/" + repo + "/issues/"
+                number = issue_url[len(prefix):] if issue_url.startswith(prefix) else ""
+                if (not number.isascii() or not number.isdecimal()
+                        or not 1 <= len(number) <= 9 or number[0] == "0"):
+                    raise ValueError("Invalid source-linked issue URL")
+                entry = index.setdefault(issue_url, {"repo": repo, "prs": []})
+                if entry["repo"] != repo:
+                    raise ValueError("Conflicting issue source repository")
+                entry["prs"].append(pr)
+    rank = {priority: n for n, priority in enumerate(PRIORITIES)}
+    ordered = sorted(index.items(), key=lambda pair: (
+        min(rank[pr["priority"]] for pr in pair[1]["prs"]),
+        pair[1]["repo"], int(pair[0].rsplit("/", 1)[-1])))
+    e = lambda value: escape(str(value), quote=True)
+    cards = []
+    for url, info in ordered[:60]:
+        prs = info["prs"]
+        highest = min(prs, key=lambda pr: rank[pr["priority"]])
+        links = []
+        for pr in prs[:4]:
+            links.append(
+                '<li><a href="' + e(pr["url"]) + '" target="_blank" '
+                'rel="noopener noreferrer">' + e(pr["priority"]) +
+                ' · PR #' + str(pr["pr_number"]) + '</a> · ' +
+                e(LABELS[pr["primary_gate"]][0]) + '</li>')
+        remaining = len(prs) - len(links)
+        cards.append(
+            '<li><details><summary>' + e(highest["priority"]) +
+            ' · <a href="' + e(url) +
+            '" target="_blank" rel="noopener noreferrer">' +
+            e(info["repo"]) + ' issue #' + e(url.rsplit("/", 1)[-1]) +
+            '</a> · ' + str(len(prs)) + ' PR-kandidaten</summary><ol>' +
+            ''.join(links) + '</ol>' +
+            ('<p>' + str(remaining) + ' andere PRs NIET beoordeeld</p>'
+             if remaining else '') + '</details></li>')
+    hidden = len(ordered) - len(cards)
+    return (
+        '<section class="portfolio-overview" aria-label="Issuegerichte PR-inbox">'
+        '<h2>Issue naar bestaande PR · merge eerst</h2>'
+        '<p>Historische, begrensde bronkoppelingen, niet de actuele GitHub-status. '
+        'Controleer huidige eigenaar/claim, HEAD, verplichte CI, review, main en '
+        'live release zelfstandig. Geen oude PR is automatisch vrij.</p>'
+        '<p>Waargenomen issuekoppelingen: ' + str(len(ordered)) +
+        ' · zichtbaar: ' + str(len(cards)) +
+        ' · actuele status: <strong>ONBEKEND</strong>.</p>'
+        '<ol class="issue-pr-index">' + ''.join(cards) + '</ol>' +
+        ('<p>' + str(hidden) + ' niet getoonde bronissues; NIET opgelost.</p>'
+         if hidden else '') +
+        '</section>'
+    )
+
+
 def portfolio_page_html(selected, integrated, *, project=None):
     """One complete, fully offline project delivery page from saved receipts.
 
@@ -223,7 +284,8 @@ def portfolio_page_html(selected, integrated, *, project=None):
     source_digest = e(integrated["original_review_manifest_sha256"])
     board_digest = e(integrated["original_board_sha256"])
     label = e(project) if project is not None else "Geobserveerde portfolio"
-    cards = portfolio_html(selected, integrated, project=project)
+    cards = (portfolio_issue_html(selected, integrated, project=project) +
+             portfolio_html(selected, integrated, project=project))
     html = """<!doctype html>
 <html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -248,6 +310,10 @@ aside{border-left:4px solid #e9bb61;background:#2b2930;padding:14px 20px;border-
 .portfolio-project li{margin:12px 0;overflow-wrap:anywhere}
 .portfolio-project summary{cursor:pointer;padding:7px 2px;font-weight:650}
 .portfolio-project small{color:#d3e1ed}
+.issue-pr-index{padding-left:24px}
+.issue-pr-index li{margin:9px 0;overflow-wrap:anywhere}
+.issue-pr-index details{background:#192e45;border:1px solid #56768b;border-radius:9px;padding:10px}
+.issue-pr-index summary{cursor:pointer}
 .portfolio-overview nav{margin:14px 0;padding:12px;background:#1b334c;border-radius:8px}
 .portfolio-overview nav a{display:inline-block;margin:3px 7px}
 article:target{outline:3px solid #fbd675;scroll-margin:20px}
