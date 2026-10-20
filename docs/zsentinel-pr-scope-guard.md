@@ -1494,3 +1494,32 @@ identiteit leiden tot weigering; andere niet-gelezen pagina's,
 ongetrackte branches, Notion-leases en vereiste CI/reviews
 blijven onbekend. Dit is geen automatische dispatcher of
 productieactie en geeft nooit edit-, claim-, merge- of deployrechten.
+
+
+### Eén geprioriteerde lijst van bestaande PRs uit meerdere vensters
+
+De gecombineerde privérapportage maakt nu een **compacte bestaande-PR
+werkbak**, niet alleen losse conflictenparen. Een operator ziet per
+bestaande PR hoeveel cross-window PR-paren dezelfde bestanden raken,
+het totale aantal daarbij gevonden gedeelde bestandspaden en hoeveel
+onbevestigde issue-/PR-nummervermeldingen aan die PR zijn gekoppeld.
+
+De prioriteit in deze *observatie* is bewust deterministisch:
+**eerst waargenomen bestandenoverlap**, daarna het aantal betrokken
+bestanden, daarna alleen de onzekere nummer-hints; binnen dezelfde
+categorie op canoniek PR-nummer. Maximaal veertig rechtstreeks
+klikbare PR's worden als snelle werklijst bovenaan HTML/Markdown/tekst
+getoond. JSON bewaart
+`impacted_existing_prs_observed`,
+`prioritized_existing_prs` en
+`prioritized_existing_prs_truncated`.
+De oorspronkelijke volledige bron-PR-paren en cross-window issuehint-
+kaarten blijven eronder beschikbaar, zodat de operator de oorzaak kan
+terugvinden.
+
+Een rangorde is **geen actieve eigenaar, conflictvrije claim, bewezen
+Git-mergeconflict of mergeautorisatie**. De directe live-collector
+en de bestaande offline composer leveren hetzelfde type werklijst
+uit dezelfde strikt begrensde bronobservaties; de huidige
+Notion-claims, branches, verplichte reviews/CI en main/deploy zijn
+nog altijd afzonderlijke releasevoorwaarden.
