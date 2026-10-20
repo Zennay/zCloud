@@ -997,6 +997,12 @@ document.getElementById('carryApply').onclick=()=>{
 };
 document.getElementById('restore').addEventListener('change',async event=>{
  const file=event.currentTarget.files?.[0];if(!file)return;
+ if(unsavedLocal&&!window.confirm(
+   'Restoring this handoff replaces unsaved private annotations in this tab. Download a private JSON handoff first unless you want to discard those edits. Continue?')){
+  event.currentTarget.value='';
+  status.textContent='Import cancelled. Your current local annotations were preserved.';
+  return;
+ }
  try{
    if(file.size<4||file.size>65536)throw Error('size');
    const data=JSON.parse(await file.text());
