@@ -1920,3 +1920,14 @@ van issue A en B en de weergegeven `issue_ref_last_seen_snapshot`
 komen voortaan uitsluitend van de bronmomenten waarin die relatie
 zelf werkelijk gezien is. Ook het verdwijnen van de **link**, los van
 het verdwijnen van de PR, betekent nooit dat het issue is gefixt.
+
+
+### Zichtbaarheid voor niet-gekoppelde PRs
+
+Ook de bron-PRs zonder terugvindbare issuekoppeling staan nu **met hun
+echte oorspronkelijke GitHub-links** in een apart uitklapgedeelte van
+de interactieve operatorwerkbank (maximaal dertig zichtbare links,
+met expliciete telling van het niet getoonde restant). Ze zijn dus
+niet alleen als aantal te zien en worden nooit als vrij, opgelost of
+gemerged geclassificeerd. De werkbank blijft dezelfde private,
+door de oorspronkelijke board/ZIP-bronnen begrensde HTML-output.
