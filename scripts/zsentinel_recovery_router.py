@@ -1123,11 +1123,15 @@ def main():
     parser.add_argument("--prless-branches", type=Path,
                         help="optional saved zCloud un-PR branch owner observation (read-only)")
     parser.add_argument("--format", choices=("json", "text", "html", "ics", "desk"), default="text")
+    parser.add_argument("--ics-include-historical-owner-rechecks", action="store_true",
+                        help="ICS only: add source-bound historical owner checks without new alarms")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
     args = parser.parse_args()
     ledger_lock = None
     try:
+        if args.ics_include_historical_owner_rechecks and args.format != "ics":
+            raise ValueError("--ics-include-historical-owner-rechecks requires --format ics")
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
         if args.desk_output is not None and args.format not in ("desk", "html"):
@@ -1158,7 +1162,8 @@ def main():
             rendered = html_view(output)
         elif args.format == "ics":
             from zsentinel_human_agenda import human_calendar
-            rendered = human_calendar(output)
+            rendered = human_calendar(
+                output, include_historical=args.ics_include_historical_owner_rechecks)
         elif args.format == "desk":
             from zsentinel_incident_desk import review_html
             rendered = review_html(output)
