@@ -627,3 +627,29 @@ permissie, geen afname of overname van actieve workerkoppelingen.
 Dit is code op de bestaande PR; geen live database-write of service-
 herstart. Exact-head CI, onafhankelijke review en geserialiseerde
 productierelease blijven ongewijzigd vereist.
+
+
+## 20 oktober · Handmatige Drop kan geen actieve worker meer beëindigen
+
+De vorige `portfolio_queue_drop()` accepteerde elke rij behalve `done` en
+`dropped`. Daardoor kon een vertrouwde beheerclient ook een `claimed`,
+`running` of `verifying`-taak op `dropped` zetten en diens
+`worker_slot`, `claimed_at` en `claim_expires` wissen zonder de
+claimhouder af te wachten. Dat was niet in overeenstemming met het
+productdelivery- en exclusief-leasecontract.
+
+De bron voert de DROP nu uitsluitend uit op een `queued`-rij zonder
+worker-slot én zonder enig claim-/leaseveld. De controle gebeurt
+**in dezelfde SQLite UPDATE** als de statuswijziging: ook een gelijktijdig
+nieuwe claim kan niet worden teruggedraaid op basis van een verouderde SELECT.
+Verlopen leases of inactief lijkende browsers vormen geen overnamerecht.
+
+Wanneer de rij al een eigenaar heeft of de ID ontbreekt, blijft alles
+ongewijzigd. De bestaande beheer-API geeft nu `ok=false`, HTTP `409`
+en de vaste reden `unclaimed-queued-item-required` in plaats van een
+misleidend `200 ok=true`. Bij een geweigerde drop volgt ook geen
+refill/audit met mogelijk andere database-effecten. Alleen een werkelijk
+gedropte vrije taak volgt het bestaande geautoriseerde refillpad.
+
+Dit is broncode op de bestaande PR #1536; geen live queue/claim mutatie,
+QA- of regressiesuite, workerherstart of release uitgevoerd.
