@@ -154,13 +154,45 @@ def render_comparison(comparison):
             + '</small></li>'
         )
     items = "".join(rows) if rows else "<li>Geen verandering waargenomen in het beperkte bronbereik.</li>"
+    capacity = comparison.get("capacity_comparison") or {}
+    cap_labels = {
+        "host_load": ("Systeemload", ""),
+        "memory_available_gib": ("Beschikbaar RAM", " GiB"),
+        "swap_used_percent": ("Swapgebruik", " procentpunt"),
+        "disk_unavailable_percent": ("Rootruimte niet beschikbaar", " procentpunt"),
+    }
+    metric_rows = []
+    for metric in capacity.get("metrics", [])[:4]:
+        name, unit = cap_labels.get(metric.get("metric"), ("Onbekende meting", ""))
+        if metric.get("comparable") is True:
+            delta = metric.get("difference")
+            fmt = f"{delta:+g}" if isinstance(delta, (float, int)) else "onbekend"
+            metric_rows.append(
+                "<li><strong>" + escape(name) + "</strong>: "
+                + _value(metric.get("previous")) + " → "
+                + _value(metric.get("current")) + " (" + escape(fmt + unit) + ")</li>"
+            )
+        else:
+            metric_rows.append(
+                "<li><strong>" + escape(name)
+                + "</strong>: niet vergelijkbaar (bron ontbreekt of rootvolume verschilt)</li>"
+            )
+    capacity_html = (
+        '<h3>Capaciteit tussen bronmomenten</h3><ul>'
+        + ("".join(metric_rows) or "<li>Geen brongebonden capaciteit beschikbaar.</li>")
+        + '</ul><p class="muted">Verschillen zijn momentopnames, geen bewijs van '
+        'vrijgemaakte bestanden, herstelde runners of prestaties.</p>'
+    )
+    if not capacity.get("root_comparable"):
+        capacity_html += ('<p class="warning">Geen identieke root-mount en '
+                          'volumeomvang vastgesteld; schijfdelta is daarom onbekend.</p>')
     return (
         '<section class="panel"><h2>Verandering sinds privé T0</h2>'
         '<p><strong>Van:</strong> ' + escape(comparison["previous_utc"])
         + ' · <strong>Tot:</strong> ' + escape(comparison["current_utc"])
         + '</p><p><strong>Brontoestand:</strong> ' + escape(heading)
         + ' · ' + escape(str(comparison["elapsed_seconds"])) + ' seconden</p>'
-        '<ul class="transitions">' + items + '</ul>'
+        '<ul class="transitions">' + items + '</ul>' + capacity_html +
         '<p class="warning">Dit toont alleen waargenomen systemd-statusverschillen. '
         'Ook failed→active bewijst geen toegewezen GitHub-job, geslaagde CI, merge '
         'of live herstel. Niet gezien ≠ opgelost; geen automatische herstart.</p></section>'
