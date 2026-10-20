@@ -164,7 +164,7 @@ def portfolio_html(selected, integrated):
             'afhandeling</h2><p>Alle aantallen zijn <strong>uitsluitend '
             'uit het opgeslagen bronvenster</strong>. Projecten zonder '
             'waargenomen PR kunnen buiten de steekproef liggen. Geen '
-            'eigenaar, merge of live herstel is geverifieerd.</p>'
+            'eigenaar, merge of live herstel is geverifieerd.</p>' +
             jump_links + '<div class="portfolio-grid">' +
             ''.join(cards) + '</div></section>')
 
