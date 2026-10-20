@@ -96,12 +96,17 @@ class GitHubReader:
     def __init__(self, token: str | None, budget: int = MAX_REQUESTS) -> None:
         self.token = token
         self.remaining = budget
+        # A 403 without a confirmed exhausted global quota can be local to a
+        # single repository. Do not poison independent portfolio projects.
         self.denied = False
+        self.repository_denials: set[str] = set()
         self.opener = urllib.request.build_opener(_NoRedirect)
 
     def get(self, repo: str, suffix: str, params: dict[str, object]) -> dict:
         if self.denied:
             raise ValueError("not_fetched_after_rate_or_auth_denial")
+        if repo in self.repository_denials:
+            raise ValueError("not_fetched_after_repository_denial")
         if self.remaining < 1:
             raise ValueError("request_budget_exhausted")
         self.remaining -= 1
@@ -128,9 +133,24 @@ class GitHubReader:
             # Never emit provider response bodies, authentication or headers.
             if error.code == 404:
                 raise ValueError("repository_inaccessible") from None
-            if error.code in (401, 403, 429):
+            if error.code == 401:
+                # An invalid bearer token affects all remaining requests.
                 self.denied = True
-                raise ValueError("github_permission_or_rate_limit") from None
+                raise ValueError("github_authentication_required") from None
+            if error.code == 429:
+                self.denied = True
+                raise ValueError("github_rate_limit_confirmed") from None
+            if error.code == 403:
+                # GitHub can signal primary rate exhaustion using 403.
+                # Only its explicit zero remaining header justifies a
+                # global stop; ordinary 403 may be repository-specific.
+                remaining = (error.headers.get("X-RateLimit-Remaining")
+                             if error.headers is not None else None)
+                if remaining == "0":
+                    self.denied = True
+                    raise ValueError("github_rate_limit_confirmed") from None
+                self.repository_denials.add(repo)
+                raise ValueError("github_forbidden_or_rate_limit_unknown") from None
             if error.code in (301, 302, 303, 307, 308):
                 raise ValueError("github_redirect_refused") from None
             raise ValueError("github_http_unavailable") from None
