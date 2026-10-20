@@ -467,3 +467,27 @@ note and any raw GitHub/Notion data are never included automatically.
 No background notification, browser storage, worker dispatch, queue mutation,
 privilege expansion or production release was introduced. Source syntax was
 directly inspected; no QA/regression suite was authored or manually run.
+
+## 20 October · Conflict-safe local bulk undo
+
+After a reviewed, explicitly confirmed bulk follow-up update, operators can
+click **Undo last confirmed local bulk action**. The workbench holds only
+the immediately preceding in-memory snapshots for the affected issue IDs,
+plus their post-apply values and the unchanged original board SHA.
+
+Undo checks *every* affected issue is still on the same source board and
+that its current private annotation still exactly matches the recorded
+post-apply value. If even one affected value changed, the **entire undo is
+refused** without overwriting anyone's intervening edit. A successfully
+validated undo restores all affected private records as one local operation,
+disables the one-shot undo button and flags the workbench as unsaved so the
+operator can explicitly download a new private JSON handoff. Loading a
+different exact-board handoff or importing prior-board annotations clears
+the pending undo record. It does not persist in browser storage or a service.
+
+This is not rollback of any GitHub issue/PR, real worker claim, queue,
+calendar import, CI, review, deployment or external notification: no such
+action was performed. It only reverses changes to the **private human
+annotation state** within the current browser session. Original verified
+owner/security/CI/release gates remain independent and unchanged.
+No QA or regression suites were authored or manually run.
