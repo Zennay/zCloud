@@ -446,6 +446,59 @@ def timeline_footprint(receipts):
     }
 
 
+def timeline_owner_actions(summary, comparisons):
+    """At most three evidence-bound human follow-ups; no execution or dispatch."""
+    if not isinstance(summary, dict) or comparisons is None:
+        return []
+    failed = summary.get("failed_observations") or []
+    stressed = (summary.get("swap_high_samples", 0) > 0
+                or summary.get("root_high_samples", 0) > 0
+                or summary.get("load_high_samples", 0) > 0)
+    reboot = any(pair.get("host_reboot_observed") is True for pair in comparisons)
+    unknown = (summary.get("incomplete_service_samples", 0) > 0
+               or summary.get("unknown_capacity_samples", 0) > 0
+               or any(pair.get("same_boot_verified") is not True
+                      for pair in comparisons))
+    tasks = []
+    if failed and stressed:
+        tasks.append((
+            "P0 · gefaalde services bij VPS-druk",
+            "Herhaald als failed geobserveerde runners en hostdruk vereisen "
+            "eerst eigenaarbevestigde RAM/swap/disk-capaciteit en oorzaakonderzoek; "
+            "geen automatische herstart of extra jobs.",
+            "WACHT OP EIGENAAR",
+        ))
+    elif failed:
+        tasks.append((
+            "P1 · gefaalde runner-service",
+            "Laat de bevoegde runtime-eigenaar systemd-fout en exacte "
+            "GitHub-runnerlabel/toewijzing onafhankelijk vaststellen.",
+            "NIET HERSTELD BEWEZEN",
+        ))
+    if reboot:
+        tasks.append((
+            "P1 · bootwissel in herstelperiode",
+            "Verifieer oorspronkelijke GitHub-run en workerlease opnieuw "
+            "na herstart; systemd active is onvoldoende.",
+            "HERVATTING ONBEKEND",
+        ))
+    if unknown:
+        tasks.append((
+            "P1 · ontbrekend betrouwbaar bronbereik",
+            "Vraag volledige actuele owner-private bronmomenten en "
+            "claim-/jobbewijs; lege records geven geen vrij eigenaarschap.",
+            "BRON ONVOLLEDIG",
+        ))
+    if not tasks:
+        tasks.append((
+            "P1 · service-waarneming zonder GitHub-bevestiging",
+            "Controleer via bestaande GitHub-bronnen de exacte queued/running "
+            "job en actuele claim; geen queue/runneractie geautoriseerd.",
+            "ASSIGNMENT ONBEKEND",
+        ))
+    return tasks[:3]
+
+
 def render_timeline_footprint(summary):
     if not isinstance(summary, dict):
         return ""
@@ -459,6 +512,13 @@ def render_timeline_footprint(summary):
     failed_html = "".join(rows) or (
         "<li>Geen failed-status in waargenomen runnerregels; dit is geen "
         "bewijs dat alle runners gezond zijn.</li>")
+    actions = timeline_owner_actions(summary, summary.get("comparisons", []))
+    action_rows = "".join(
+        "<li><strong>" + escape(title) + "</strong><br>"
+        + escape(advice) + "<br><small>Status: " + escape(status)
+        + " · geen geautoriseerde systeemactie</small></li>"
+        for title, advice, status in actions
+    )
     return (
         "<section class='panel'><h2>Aanhoudende blokkades in het bronvenster</h2>"
         "<p><strong>" + str(samples) + " privémetingen</strong> · "
@@ -471,6 +531,7 @@ def render_timeline_footprint(summary):
         + str(summary["load_high_samples"]) + "×. "
         "Dit zijn meetmomenten, geen minuten onder druk.</p>"
         "<h3>Als failed waargenomen services</h3><ul>" + failed_html + "</ul>"
+        "<h3>Vervolg voor bevoegde operator</h3><ol>" + action_rows + "</ol>"
         "<p class='warning'>Een herhaald failed-meetmoment bewijst geen nieuwe "
         "crash; ontbrekende services of bronnen bewijzen geen herstel. "
         "Geen automatische herstart, claim of workflowactie.</p></section>"
@@ -493,6 +554,7 @@ def offline_timeline_report(paths):
     data["timeline"] = pairs
     data["timeline_observations"] = len(receipts)
     data["timeline_footprint"] = timeline_footprint(receipts)
+    data["timeline_footprint"]["comparisons"] = pairs
     return data
 
 
