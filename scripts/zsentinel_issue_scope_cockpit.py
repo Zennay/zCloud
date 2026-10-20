@@ -563,7 +563,16 @@ def output_text(report, markdown=False):
                      str(b["total_manifest_prs"]) + " PRs; ontbrekende batches: " +
                      str(b["missing_batches"]) + "; bron >15 min: " +
                      str(b["stale_over_15_minutes_prs"]) +
-                     "; HEADs vandaag niet opnieuw geverifieerd; geen mergetoestemming.")
+                     "; batchmomenten onderling binnen 10 minuten: " +
+                     str(b["cross_batch_observation_within_10_minutes"]) +
+                     "; HEADs niet live opnieuw geverifieerd; geen mergetoestemming.")
+        for action in b["manual_review_queue_preview"]:
+            link = ("[" + action["url"] + "](" + action["url"] + ")"
+                    if markdown else action["url"])
+            lines.append("  PR-werkbak " + str(action["manifest_position"]) +
+                         ": " + link + " · [" +
+                         action["historic_gate_category"] + "] " +
+                         action["human_next_gate"])
     for pid in report["github_scope_by_project"]:
         lines.append(pid["project"] + ": PR-bron " + pid["source_status"] +
                      ", waargenomen gedeelde padenparen " +
@@ -693,6 +702,8 @@ def output_html(report):
             " PRs · ontbrekende batches: " +
             escape(str(b["missing_batches"])) + " · verouderd: " +
             str(b["stale_over_15_minutes_prs"]) +
+            " · batchmomenten coherent: " +
+            escape(str(b["cross_batch_observation_within_10_minutes"])) +
             ". Alle HEADs en verplichte branchregels moeten live opnieuw worden "
             "gecontroleerd vóór merge. Geen claim- of mergevrijgave.</p></section>"
         )
@@ -963,6 +974,15 @@ def main(argv=None):
                 "total_manifest_prs": saved_bundle["total_manifest_prs"],
                 "missing_batches": saved_bundle["missing_batches"],
                 "stale_over_15_minutes_prs": saved_bundle["stale_over_15_minutes_prs"],
+                "cross_batch_observation_spread_seconds":
+                    saved_bundle["cross_batch_observation_spread_seconds"],
+                "cross_batch_observation_within_10_minutes":
+                    saved_bundle["cross_batch_observation_within_10_minutes"],
+                "manual_review_queue_preview": saved_bundle["manual_review_queue_preview"],
+                "manual_review_queue_hidden_after_24":
+                    saved_bundle["manual_review_queue_hidden_after_24"],
+                "saved_bundle_complete_and_recent":
+                    saved_bundle["all_observations_present_and_recent"],
                 "unavailable_or_drifted_prs": saved_bundle["unavailable_or_drifted_prs"],
                 "saved_historic_gate_category_counts":
                     saved_bundle["saved_historic_gate_category_counts"],
