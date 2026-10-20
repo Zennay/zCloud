@@ -2228,10 +2228,12 @@ de bronoorzaak, bijvoorbeeld **Schijf minstens 90% niet beschikbaar** en
 **OVERBELAST: GEEN NIEUW WERK**.
 
 Oudere resourcebronnen zonder `disk_unavailable_percent` blijven
-leesbaar, maar krijgen expliciet
-`old_snapshot_disk_occupancy_unknown_not_release_authorization` als geen
-andere grens wordt overschreden; ze vormen nooit bewijs van veilige
-startcapaciteit. De bron is opt-in, lokaal, kort geldig en alleen advies;
+leesbaar, maar krijgen bij afwezigheid van andere overbelasting expliciet
+**`state=unavailable`** en reason
+`old_snapshot_disk_occupancy_unknown_not_release_authorization`.
+Hiermee worden zelfs uitsluitend geadviseerde self-hosted werksuggesties
+fail-closed achtergehouden totdat een actuele volledige meting beschikbaar
+is; een oude snapshot vormt nooit bewijs van veilige startcapaciteit. De bron is opt-in, lokaal, kort geldig en alleen advies;
 geen shell, opgeruimde VPS-schijf, gerepareerde runner, claim, dispatch,
 automatische herstart of productie-release is uitgevoerd of toegestaan.
 
