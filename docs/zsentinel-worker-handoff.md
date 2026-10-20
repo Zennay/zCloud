@@ -157,3 +157,29 @@ Dit is een bruikbaar read-only voortgangsproduct naast het bestaande
 P1-issue [#1342](https://github.com/Zennay/zCloud/issues/1342), maar
 sluit de onderliggende control-plane writer/claim-token reparatie
 nadrukkelijk niet.
+
+## Queueclaim zichtbaar, maar lease verlopen: eigenaarcontrole vóór normale pauze
+
+Eerder kon de read-only observer bij een toegewezen gepauzeerde worker
+met een `claimed`, `running` of `verifying` queue-rij maar
+**ongeldige/verlopen lease** alsnog `configured_paused_not_incident`
+rapporteren, omdat de bestaande urgentiecheck alleen een **actueel
+geldige** lease meenam. Daarmee verdween een waardevol herstelprobleem
+uit de owner-inbox.
+
+De nieuwe status
+`allocated_queue_claim_expired_or_invalid_owner_recheck` is nu zichtbaar
+in de **bronobservatie, prioriteitsinbox, HTML-kaart, tekst, Markdown
+en historische vergelijking**. Hij heeft een aparte veilige route:
+verifieer de originele claimrij, bronklok en lease bij de bevoegde
+control-plane eigenaar. De observer beweert uitdrukkelijk **niet**
+dat deze rij nog steeds een actuele eigenaar heeft of dat de claim
+automatisch kan worden vrijgegeven. Geen `finish`, `retry`,
+`force`, `resume`, `release` of lease-correctie wordt uitgevoerd.
+Een opzettelijk gepauzeerde worker **zonder** dergelijke queue-status
+blijft géén automatisch herstelincident.
+
+Dit is een echte productmatige observer/recovery-triageverbetering,
+geen vervanging voor de transactionele bounded retry- en
+leasewriter-afspraken uit
+[zCloud #677](https://github.com/Zennay/zCloud/issues/677).
