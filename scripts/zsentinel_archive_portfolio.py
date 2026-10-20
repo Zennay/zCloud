@@ -30,7 +30,7 @@ def observe_many(workspaces: list[Path], target: Path, *,
     rows = []
     for workspace in workspaces:
         try:
-            report = scan(workspace, max_entries=max_entries,
+            report = scan(workspace, min_mib=1, max_entries=max_entries,
                           max_depth=max_depth,max_seconds=max_seconds)
             owner_report = archive(report, target, min_age_days=min_age_days)
             public = public_summary(owner_report)
