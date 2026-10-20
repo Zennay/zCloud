@@ -16,6 +16,7 @@ from zsentinel_incident_desk import _source
 from zsentinel_saved_operator_replay import archived_decision
 from zsentinel_private_output import write_private_output
 from zsentinel_queue_pressure_timeline import observed_queue, summarize_queue_windows
+from zsentinel_worker_continuity import observe_saved_workers, summarize_worker_windows
 
 MAX_WINDOWS = 8
 MAX_ROWS = 400
@@ -56,6 +57,7 @@ def collect_history(paths, now: datetime | None = None):
             "observed_human_only_count": sum(i["human"] for i in incidents),
             "source_partial": True, "ownership_verified": False,
             "queue_pressure": observed_queue(decision, moment),
+            "worker_progress": observe_saved_workers(decision, moment),
         })
         for item in incidents:
             key = item["id"]
@@ -117,9 +119,11 @@ def collect_history(paths, now: datetime | None = None):
         -row["observed_windows"], row["project"], row["id"],
     ))
     queue_history = summarize_queue_windows(windows)
+    worker_history = summarize_worker_windows(windows)
     return {
         "schema": "zsentinel-private-router-timeline-v1",
         "queue_pressure_history": queue_history,
+        "worker_continuity_history": worker_history,
         "source_count": len(windows), "sources": windows,
         "first_source_observed_at_utc": windows[0]["observed_at_utc"],
         "last_source_observed_at_utc": windows[-1]["observed_at_utc"],
@@ -155,6 +159,10 @@ def render_text(report):
         "Queuebronparen vergelijkbaar %d, onbekend %d (claimpogingen != retries)" % (
             report["queue_pressure_history"]["compared_pairs"],
             report["queue_pressure_history"]["unknown_pairs"]),
+        "Workerbronparen deels of geheel ONBEKEND %d; nieuwe generatiesignalen %d "
+        "(GEEN productlevering)" % (
+            report["worker_continuity_history"]["unknown_or_partial_pairs"],
+            report["worker_continuity_history"]["observed_generation_signal_pairs"]),
     ]
     for pair in report["queue_pressure_history"]["adjacent_comparisons"]:
         if pair["deltas"] is None:
@@ -168,6 +176,14 @@ def render_text(report):
                 (pair["from_window"], pair["to_window"],
                  delta["queued_items"], delta["high_claim_attempt_items"],
                  delta["expired_owner_lease_rows"]))
+    for pair in report["worker_continuity_history"]["adjacent_comparisons"]:
+        lines.append("Worker venster %d → %d · %s · vergeleken slots %d" %
+                     (pair["from_window"], pair["to_window"],
+                      pair["comparison"], pair["workers_compared"]))
+        for worker in pair["entries"]:
+            lines.append("  %s slot %d · %s · eigenaarcheck %s" %
+                         (worker["project_id"], worker["worker_slot"],
+                          worker["classification"], worker["later_owner_followup"]))
     for row in report["items"]:
         lines.extend([
             "%s %s %s · %s" % (
@@ -210,6 +226,20 @@ def render_markdown(report):
                 pair["deltas"]["high_claim_attempt_items"],
                 pair["deltas"]["expired_owner_lease_rows"]))))
         for pair in report["queue_pressure_history"]["adjacent_comparisons"]
+    ] + [
+        "",
+        "## Historische workergebeurtenissen (geen product-/claimbewijs)", "",
+    ] + [
+        ("- Vensters %d → %d · %s · slots %d" %
+         (pair["from_window"], pair["to_window"],
+          pair["comparison"], pair["workers_compared"]))
+        for pair in report["worker_continuity_history"]["adjacent_comparisons"]
+    ] + [
+        ("  - %s slot %d: %s; eigenaarcontrole: %s" %
+         (worker["project_id"], worker["worker_slot"],
+          worker["classification"], worker["later_owner_followup"]))
+        for pair in report["worker_continuity_history"]["adjacent_comparisons"]
+        for worker in pair["entries"]
     ] + [
         "",
     ]
