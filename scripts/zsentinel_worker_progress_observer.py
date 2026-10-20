@@ -790,7 +790,9 @@ def worker_progress_html(source):
             )
         rows.append(
             '<article class="panel ' +
-            ('warn' if state == "allocated_paused_with_claimed_queue_owner_gate" else 'read') +
+            ('warn' if state in (
+                "allocated_paused_with_claimed_queue_owner_gate",
+                "allocated_queue_claim_expired_or_invalid_owner_recheck") else 'read') +
             '"><h3>' + escape(pid) + ' · worker ' +
             str(slot) + '</h3><p>' + escape(status[state]) +
             '</p><p class="small">Gewenste status: ' + escape(desired) +
