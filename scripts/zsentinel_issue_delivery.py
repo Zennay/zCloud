@@ -109,6 +109,53 @@ def build_workboard(inbox, registry, token=None):
         if (not isinstance(cov, dict) or cov.get("project") not in project_names
                 or cov.get("status") not in ("partial", "degraded", "unavailable")):
             raise ValueError("invalid issue coverage")
+    # Surface already-fetched open product PRs EVEN WHEN their referenced
+    # issue is outside this bounded issue window. This is merge-first
+    # navigation, not independent exact-head review or lease authorization.
+    listed = inbox.get("recent_open_product_prs", [])
+    if (type(listed) is not list or len(listed) > 8 * len(project_names)):
+        raise ValueError("unbounded recent open product PR sample")
+    pr_cards = []
+    seen_listed = set()
+    issue_links = {link for row in sampled for link in
+                   row["existing_pr_links_unverified"]}
+    source_coverage = {row["project"]: row for row in inbox["coverage"]}
+    for candidate in listed:
+        if type(candidate) is not dict:
+            raise ValueError("invalid bounded listed PR")
+        project = candidate.get("project")
+        number = candidate.get("number")
+        if (project not in project_names
+                or candidate.get("repository") != registry[project]
+                or type(number) is not int or not 1 <= number <= 100000000
+                or candidate.get("url") !=
+                "https://github.com/" + registry[project] + "/pull/" + str(number)
+                or candidate.get("source") !=
+                "bounded_recent_open_pr_listing_unverified_current_head"
+                or candidate.get("ownership_verified") is not False
+                or candidate.get("merge_authorized") is not False
+                or type(candidate.get("draft")) is not bool
+                or type(candidate.get("title")) is not str
+                or not 0 < len(candidate["title"]) <= 180
+                or type(candidate.get("listed_head_sha")) is not str
+                or len(candidate["listed_head_sha"]) != 40
+                or any(ch not in "0123456789abcdef"
+                       for ch in candidate["listed_head_sha"])
+                or type(candidate.get("listed_base")) is not str
+                or not 0 < len(candidate["listed_base"]) <= 100
+                or not source_coverage[project]["open_pr_window"].startswith("bounded_")
+                or (project, number) in seen_listed):
+            raise ValueError("untrusted existing PR listing")
+        seen_listed.add((project, number))
+        pr_cards.append({
+            "project_id": project, "url": candidate["url"],
+            "title": candidate["title"], "draft": candidate["draft"],
+            "listed_head_sha": candidate["listed_head_sha"],
+            "listed_base": candidate["listed_base"],
+            "referenced_by_sampled_issue": candidate["url"] in issue_links,
+            "current_exact_head_verified": False,
+            "ownership_verified": False, "merge_authorized": False,
+        })
     selected = [] if degraded else prs
     inspected = (observe_prs(registry, selected, token=token) if selected
                  else {"schema": "zsentinel-pr-delivery-desk-v1",
@@ -185,6 +232,8 @@ def build_workboard(inbox, registry, token=None):
             x["next_step"] == "authorized_infrastructure_owner_required"
             for x in sampled),
         "items": sampled,
+        "recent_open_product_prs": pr_cards,
+        "recent_open_product_pr_count": len(pr_cards),
         "inspected_pr_count": len(inspected["items"]),
         "stopped_after_permission_or_rate_limit": degraded,
         "ownership_verified": False, "claims_taken": False,
