@@ -647,7 +647,8 @@ function refreshComparison(){
 }
 function emptyManual(entry){
  return !entry||(entry.decision==='investigate'&&!entry.note&&!entry.owner&&
-  !entry.due&&!entry.carried_from&&entry.followup_status!=='local-complete');
+  !entry.due&&!entry.carried_from&&entry.followup_status!=='local-complete'&&
+  !entry.followup_changed_at_utc);
 }
 function clearCarryPreview(message){
  carryPreview=null;
@@ -679,7 +680,9 @@ function previewCarry(data){
       !validFollowupDate(record.due)||
       (data.schema_version===3&&(
        !['open','local-complete'].includes(record.followup_status)||
-       (record.followup_status==='local-complete'&&!manualGateDecisions.has(record.decision))))||
+       (record.followup_status==='local-complete'&&!manualGateDecisions.has(record.decision))||
+       (record.followup_changed_at_utc!==undefined&&
+        !validLocalChangeTime(record.followup_changed_at_utc))))||
       (record.carried_from!==undefined&&
        (typeof record.carried_from!=='string'||
         (record.carried_from!==''&&!/^[a-f0-9]{64}$/.test(record.carried_from)))))))
@@ -696,6 +699,7 @@ function previewCarry(data){
     owner:data.schema_version>=2?record.owner:'',
     due:data.schema_version>=2?record.due:'',
     followup_status:data.schema_version===3?record.followup_status:'open',
+    followup_changed_at_utc:data.schema_version===3?(record.followup_changed_at_utc||''):'',
     carried_from:baseline.sha}});
  }
  const eligible=proposed.filter(x=>emptyManual(handoffs.get(x.issue)));
@@ -715,6 +719,8 @@ function previewCarry(data){
     (row.value.owner||'unknown')+' · UTC review date: '+(row.value.due||'unknown')+
     (row.value.followup_status==='local-complete'?
      ' · LOCALLY CLOSED: issue status unknown':' · open local follow-up')+
+    (row.value.followup_changed_at_utc?
+     ' · local toggle '+row.value.followup_changed_at_utc+' (device time only)':'')+
     ' · '+(row.sourceDelta?.changedFields?.length?
        'SOURCE CHANGED: '+row.sourceDelta.changedFields.join(', ')+'. ':'')+
     'Current owner/CI must be reverified'));
@@ -1044,7 +1050,9 @@ document.getElementById('restore').addEventListener('change',async event=>{
           !validFollowupDate(v.due)||
           (data.schema_version===3&&(
            !['open','local-complete'].includes(v.followup_status)||
-           (v.followup_status==='local-complete'&&!manualGateDecisions.has(v.decision))))||
+           (v.followup_status==='local-complete'&&!manualGateDecisions.has(v.decision))||
+           (v.followup_changed_at_utc!==undefined&&
+            !validLocalChangeTime(v.followup_changed_at_utc))))||
           (v.carried_from!==undefined&&
            (typeof v.carried_from!=='string'||
             (v.carried_from!==''&&!/^[a-f0-9]{64}$/.test(v.carried_from)))))))
@@ -1053,7 +1061,8 @@ document.getElementById('restore').addEventListener('change',async event=>{
        owner:data.schema_version>=2?v.owner:'',
        due:data.schema_version>=2?v.due:'',
        carried_from:data.schema_version>=2?(v.carried_from||''):'',
-       followup_status:data.schema_version===3?v.followup_status:'open'});
+       followup_status:data.schema_version===3?v.followup_status:'open',
+       followup_changed_at_utc:data.schema_version===3?(v.followup_changed_at_utc||''):''});
    }
    handoffs.clear();next.forEach((v,k)=>handoffs.set(k,v));
    setUnsaved(false);invalidateBrief();drawList();drawDetail();
