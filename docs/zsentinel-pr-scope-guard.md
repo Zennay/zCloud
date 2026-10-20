@@ -1648,3 +1648,29 @@ de weergave. De huidige claimhouder, exacte-head verplichte CI,
 onafhankelijke review en protected-main blijven noodzakelijke externe
 voorwaarden. Geen QA-suite, automatische dispatch, claimovername, CI-rerun,
 merge of deploy is aan deze bronroute toegevoegd.
+
+
+### Volledige gegroepeerde PR-opvolging, ook bij meerdere kandidaten
+
+De merge-first issuewerkbak groepeert nu niet alleen de eerste gekozen PR
+per issue, maar **iedere** reeds als bronverwijzing gevonden bestaande PR.
+Daardoor blijven maximaal vijf bestaande PRs per issue in de samengestelde
+PR-werkvolgorde zichtbaar. Een PR die door één issue als alternatief en
+door een ander als primaire kandidaat wordt genoemd verschijnt in één
+groep met alle oorspronkelijke bronissue-links.
+
+De volgorde blijft P0/P1-eerst en geeft bij gelijke prioriteit voorrang aan
+PRs met meer issuevermeldingen en vervolgens meer primaire issuekoppelingen.
+Per groep staat het verschil tussen alle geobserveerde issuevermeldingen
+en de primaire reviewkandidaten expliciet in de Nederlandse tekst- en
+privé-HTML-weergave. Een tweede PR op dezelfde issue is **geen** bewezen
+dubbele implementatie, fix of vrijgave. De beperkte steekproef zegt evenmin
+iets over PR-loze branches of actieve externe claims.
+
+De bestaande bronlimieten blijven behouden: hoogstens zestig productissues,
+hoogstens vijf bestaande PR-links per issue, hoogstens driehonderd
+brongebonden PR-groepen. De HTML toont uitsluitend gekoppelde issues
+die binnen het gevraagde beperkte schermvenster vallen; ontbrekende
+issues worden niet als afgerond behandeld. Alle veiligheids- en
+releasebevoegdheidsvlaggen blijven false. Er worden geen automatische
+claims, CI-acties, merges of deployments uitgevoerd.
