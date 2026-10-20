@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 
 ACTIVE_STATUSES = frozenset({"claimed", "running", "verifying"})
 PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
@@ -398,6 +399,21 @@ def _queue_order(item):
     )
 
 
+def _trust_active_lease(item, now_utc):
+    """Never infer a writer has a sound lease from an end time alone."""
+    def parsed(value):
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            date = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            return date.astimezone(timezone.utc) if date.tzinfo else None
+        except (ValueError, OverflowError):
+            return None
+
+    start, expiry = parsed(item.get("claimed_at")), parsed(item.get("claim_expires"))
+    return start is not None and expiry is not None and start <= now_utc < expiry and start < expiry
+
+
 def generate_execution_lanes(project, backlog, claims=()):
     """Return deterministic, non-overlapping lanes for one project's live backlog.
 
@@ -429,6 +445,16 @@ def generate_execution_lanes(project, backlog, claims=()):
         if profile == "portfolio-recovery"
         and str(item.get("status") or "").lower() in ACTIVE_STATUSES
         and not any(_scope_from_item(item).values())
+    ]
+    # An active row with an impossible, expired or absent queue lease stays
+    # owned by its current worker, but cannot authorize another parallel
+    # writer. Only the portfolio-recovery profile has this extra hold.
+    observed_now = datetime.now(timezone.utc) if profile == "portfolio-recovery" else None
+    untrusted_active_leases = [
+        item for item in classified
+        if observed_now is not None
+        and str(item.get("status") or "").lower() in ACTIVE_STATUSES
+        and not _trust_active_lease(item, observed_now)
     ]
 
     active_claims = []
@@ -498,7 +524,7 @@ def generate_execution_lanes(project, backlog, claims=()):
         lane_id = candidate["lane_id"]
         if lane_id in chosen_by_lane:
             continue
-        if unknown_active_scopes or unknown_claim_scopes:
+        if unknown_active_scopes or unknown_claim_scopes or untrusted_active_leases:
             # Existing queue writers and externally supplied claims retain
             # their ownership; neither an empty scope nor a malformed scope
             # proves that a new queued writer is independent.
@@ -514,6 +540,13 @@ def generate_execution_lanes(project, backlog, claims=()):
                     "kind": "claim",
                     "reason": "active_claim_write_scope_not_declared",
                     "ambiguous_claim_count": unknown_claim_scopes,
+                    "overlap": {"capabilities": [], "files": []},
+                })
+            if untrusted_active_leases:
+                blocked_by_lane[lane_id].append({
+                    "kind": "queue",
+                    "reason": "active_queue_lease_untrusted",
+                    "ambiguous_active_count": len(untrusted_active_leases),
                     "overlap": {"capabilities": [], "files": []},
                 })
             continue
@@ -590,6 +623,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             "parallel_active_warning": active_backlog_counts[lane_id] > 1,
             "unknown_active_scope_count": len(unknown_active_scopes),
             "unknown_claim_scope_count": unknown_claim_scopes,
+            "untrusted_active_lease_count": len(untrusted_active_leases),
             "serialized_unscoped_queue_admitted": (
                 bool(unscoped_queued_writer_reserved)
                 and chosen is not None and chosen.get("status") == "queued"
