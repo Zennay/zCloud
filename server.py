@@ -4276,8 +4276,14 @@ def watch_summary(data):
                 'human_action_required':str(item.get('type') or '').lower()
                     in ('recovery_failed','deploy_failed'),
                 'title':str(item.get('title') or 'Aandacht nodig')[:140],
-                'detail':('Oorzaak: '+str(item.get('cause') or 'Nog onbekend')+
-                          ' · Actie: '+str(item.get('action') or 'Controleer zCloud'))[:420],
+                # Preserve all three operator answers as separate, bounded
+                # fields. A long cause must not truncate away the next action.
+                'cause':str(item.get('cause') or 'Nog onbekend')[:240],
+                'impact':str(item.get('impact') or 'Nog onbekend')[:240],
+                'action':str(item.get('action') or 'Controleer zCloud')[:240],
+                # Older watch builds still need their existing detail string.
+                'detail':('Oorzaak: '+str(item.get('cause') or 'Nog onbekend')[:180]+
+                          ' · Actie: '+str(item.get('action') or 'Controleer zCloud')[:180]),
                 'ts':item.get('detected_at'),
             }
             for item in enhancements.incident_center(DB,data=data,limit=30).get('items',[])
