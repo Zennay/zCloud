@@ -79,3 +79,43 @@ These are **browser-declared telemetry observations only**. `claim_bound=false`,
 Future authorized work may introduce signed claim generations at telemetry ingestion. Until then, these histories are operator diagnostics only, not an automated basis for merging, worker health admission, or restarting. [zCloud issue #1341](https://github.com/Zennay/zCloud/issues/1341) about other GET endpoints performing DB writes remains separate.
 
 No QA, regression, or test suite was added or manually executed. Existing protected-main, independent owner review, GitHub-hosted CI and serialized VPS release gates continue to apply. Code committed ≠ merged, and a merge ≠ deployed.
+
+## 20 October · One offline dashboard for all eight worker slots
+
+The existing `scripts/zcloud_worker_progress_history.py` CLI now accepts
+`--all-slots` instead of a single `--slot`. This is an operator-facing
+overview of the eight **known slot numbers** of one canonical project,
+not a command to assign new workers or confirm that eight are running.
+
+```sh
+python3 scripts/zcloud_worker_progress_history.py \
+  --db history.db --project cloud --all-slots --format json
+
+python3 scripts/zcloud_worker_progress_history.py \
+  --db history.db --project cloud --all-slots --format html \
+  > /home/ubuntu/private-reports/cloud-worker-slots.html
+```
+
+The HTML is a self-contained, mobile-friendly dark table showing the
+last browser-event kind, timestamp, reported prompt, progress and completion
+for **each slot**, plus whether progress was reported after the most recently
+reported prompt. The structured JSON uses
+`zcloud-worker-progress-overview-v1`; it records eight bounded slot reads,
+the number of available sources, and the number of slots with any observed
+event. Both outputs always keep explicit
+`claim_bound=false`, `worker_resumed_verified=false`, and
+`deployment_verified=false`.
+
+Each slot reuses the existing read-only `mode=ro`, `PRAGMA query_only`
+SQLite collector and samples at most **eight events per slot** by default
+for this view. These are **sequential, non-atomic** observations; another
+worker may produce new telemetry between slot reads. An empty slot does
+not mean its queue claim is released. No event title, prompt, response,
+conversation URL, raw runner reason, secret, cookie, or worker token is
+emitted. Use the existing `--slot` command for a more detailed bounded
+single-slot history.
+
+All-slots mode makes no write, starts no browser, merges nothing, and does
+not run QA tests. The source is in existing [PR #1549](https://github.com/Zennay/zCloud/pull/1549)
+only; exact-head mandatory CI, independent review and release admission are
+unchanged.
