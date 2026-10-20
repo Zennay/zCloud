@@ -115,6 +115,10 @@ def fair_page(
     project_order = sorted(
         projects,
         key=lambda pid: (
+            # With page_size < project_count, cursor-less projects have not
+            # appeared in the current browsing session. Give those active
+            # projects their first slot before repeating already shown ones.
+            bool(streams[pid]) and pid not in positions,
             _timestamp(streams[pid][0]["ts"]) if streams[pid]
             else datetime.min.replace(tzinfo=timezone.utc),
             pid,
@@ -152,5 +156,12 @@ def fair_page(
             "github_pr_branch_ci": "not_synchronized",
             "feed_complete": False,
             "projects_considered": len(projects),
+            "projects_shown_in_page": len({item["project"] for item in selected}),
+            # Remaining events in an unvisited project are not a cleared
+            # backlog. This captures page-size smaller than project count.
+            "projects_not_yet_shown_with_events": sum(
+                bool(streams[pid]) and pid not in next_positions
+                for pid in projects
+            ),
         },
     }
