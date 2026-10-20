@@ -15,6 +15,7 @@ from pathlib import Path
 from zsentinel_incident_desk import _source
 from zsentinel_saved_operator_replay import archived_decision
 from zsentinel_private_output import write_private_output
+from zsentinel_queue_pressure_timeline import observed_queue, summarize_queue_windows
 
 MAX_WINDOWS = 8
 MAX_ROWS = 400
@@ -54,6 +55,7 @@ def collect_history(paths, now: datetime | None = None):
             "observed_p1_count": sum(i["priority"] == "P1" for i in incidents),
             "observed_human_only_count": sum(i["human"] for i in incidents),
             "source_partial": True, "ownership_verified": False,
+            "queue_pressure": observed_queue(decision, moment),
         })
         for item in incidents:
             key = item["id"]
@@ -114,8 +116,10 @@ def collect_history(paths, now: datetime | None = None):
         not row["human_last_observed"], not row["observed_in_final_sample"],
         -row["observed_windows"], row["project"], row["id"],
     ))
+    queue_history = summarize_queue_windows(windows)
     return {
         "schema": "zsentinel-private-router-timeline-v1",
+        "queue_pressure_history": queue_history,
         "source_count": len(windows), "sources": windows,
         "first_source_observed_at_utc": windows[0]["observed_at_utc"],
         "last_source_observed_at_utc": windows[-1]["observed_at_utc"],
@@ -148,7 +152,22 @@ def render_text(report):
             report["rows_truncated"]),
         "Niet in laatste deelsample %d: NIET bewezen hersteld!" %
         report["not_observed_in_final_sample_needs_reconciliation"],
+        "Queuebronparen vergelijkbaar %d, onbekend %d (claimpogingen != retries)" % (
+            report["queue_pressure_history"]["compared_pairs"],
+            report["queue_pressure_history"]["unknown_pairs"]),
     ]
+    for pair in report["queue_pressure_history"]["adjacent_comparisons"]:
+        if pair["deltas"] is None:
+            lines.append("Queue venster %d → %d: ONBEKEND, bronhiaat." %
+                         (pair["from_window"], pair["to_window"]))
+        else:
+            delta = pair["deltas"]
+            lines.append(
+                "Queue venster %d → %d · wachtrij %+d, hoge claimpogingen %+d, "
+                "verlopen lease-rijen %+d (slechts aggregate verschillen, geen retries)." %
+                (pair["from_window"], pair["to_window"],
+                 delta["queued_items"], delta["high_claim_attempt_items"],
+                 delta["expired_owner_lease_rows"]))
     for row in report["items"]:
         lines.extend([
             "%s %s %s · %s" % (
@@ -176,7 +195,23 @@ def render_markdown(report):
         "- Unieke incidenten: " + str(report["unique_incidents_sampled"]),
         "- Niet opnieuw gezien, opvolgen: " +
         str(report["not_observed_in_final_sample_needs_reconciliation"]),
-        "- Afgekapt: " + str(report["rows_truncated"]), "",
+        "- Afgekapt: " + str(report["rows_truncated"]),
+        "- Wachtrijvergelijkingen: " +
+        str(report["queue_pressure_history"]["compared_pairs"]) +
+        " bronparen; onbekend " +
+        str(report["queue_pressure_history"]["unknown_pairs"]), "",
+        "## Historische SQLite-wachtrijdruk (geen claim- of retryrechten)", "",
+    ] + [
+        ("- Vensters %d → %d: %s" % (
+            pair["from_window"], pair["to_window"],
+            ("BRON ONBEKEND" if pair["deltas"] is None else
+             "wachtenden %+d, hoge claimpogingen %+d, verlopen lease-rijen %+d"
+             % (pair["deltas"]["queued_items"],
+                pair["deltas"]["high_claim_attempt_items"],
+                pair["deltas"]["expired_owner_lease_rows"]))))
+        for pair in report["queue_pressure_history"]["adjacent_comparisons"]
+    ] + [
+        "",
     ]
     def inert(value):
         value = value.replace("\\", "\\\\")
