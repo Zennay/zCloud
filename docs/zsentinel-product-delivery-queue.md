@@ -550,3 +550,28 @@ live lane-/scopeclaims, eigenaarstoewijzing, projectcaps, geheugendruk,
 lease- en CI-/review-/deployvoorwaarden blijven ongewijzigd. De pagina's zijn
 uitsluitend SELECTs op de bestaande databaseconnectie; geen nieuwe queue,
 scheduler- of VPS-mutatie is uitgevoerd.
+
+
+## 20 oktober · Klikbare operatorbronlinks zijn protocol-veilig
+
+Een browser-HTML-`href` is niet veilig enkel omdat het attribute HTML-escaped
+wordt: `javascript:` en `data:` blijven anders navigatie-/scriptmogelijkheden.
+De bestaande backend biedt nu één gedeelde `_safe_operator_source_url`
+voor bronlinks in de operationele queue en Attention Needed.
+
+- Nieuwe queue-enqueues weigeren niet-canonieke of onveilige `source_url`
+  waarden expliciet voordat SQLite wordt gewijzigd. Alleen begrensde absolute
+  `http://` of `https://` URL's zonder spaties, control characters, backslash,
+  embedded credentials of ongeldig poortnummer worden gebruikt.
+- Een human attention item blijft wél bestaan als een oude bronlink onveilig
+  blijkt; alleen het doorklikken naar die link wordt weggelaten.
+- Ook eerder opgeslagen queue- en attentionitems worden **uitsluitend in de
+  read-only API-presentatie** gefilterd, zodat een historische rij geen
+  gevaarlijke `href` blijft afleveren. Historische bronbewijzen in SQLite
+  zijn niet herschreven, verwijderd of als veilig gemarkeerd.
+- De bestaande frontend, CSS, actieve sessies, notificaties, security gates
+  en productieautoriteit zijn niet gewijzigd.
+
+Deze broncode maakt geen URL-bezoek, externe fetch of mutatie van live
+werkergroepen. De PR vereist nog steeds exact-head CI, onafhankelijke review
+en goedgekeurde main/runtime-integratie.
