@@ -348,6 +348,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "github_mergeable_boolean_observed": gate["github_mergeable_boolean_observed"],
                 "check_runs_total_observed": gate["check_runs_total_observed"],
                 "check_runs_latest_attempts_observed": gate["check_runs_latest_attempts_observed"],
+                "check_runs_evidence_sha256": gate["check_runs_evidence_sha256"],
                 "check_runs_superseded_attempts_observed": gate["check_runs_superseded_attempts_observed"],
                 "observed_actionable_check_runs": gate["observed_actionable_check_runs"],
                 "observed_actionable_check_runs_hidden": gate["observed_actionable_check_runs_hidden"],
@@ -356,6 +357,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "observed_checks_not_successful": gate["observed_checks_not_successful"],
                 "observed_legacy_pending": gate["legacy_status_pending_observed"],
                 "legacy_contexts_observed": gate["legacy_status_contexts_observed"],
+                "legacy_status_evidence_sha256": gate["legacy_status_evidence_sha256"],
                 "legacy_status_superseded_attempts_observed":
                     gate["legacy_status_superseded_attempts_observed"],
                 "observed_actionable_legacy_contexts":
@@ -368,6 +370,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                     gate["legacy_status_failure_or_error_observed"],
                 "observed_independent_exact_head_approvals":
                     gate["observed_independent_exact_head_approvals"],
+                "exact_head_review_evidence_sha256": gate["exact_head_review_evidence_sha256"],
                 "observed_exact_head_changes_requested":
                     gate["observed_exact_head_changes_requested"],
                 "human_next_gate_step": gate["human_next_gate_step"],
