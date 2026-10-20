@@ -12,6 +12,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import subprocess
 from pathlib import Path
 
 HOME = Path("/home/ubuntu")
@@ -157,10 +158,83 @@ def archive_mount_status(path: Path = HOME / "VPS-Archief") -> dict:
     return info
 
 
+
+def hotspot_inventory() -> dict:
+    """Bounded sizes of known HOT directories, never cleanup candidates.
+
+    Each du -x stays on its own filesystem with a four-second budget;
+    report only category/size and keep unknown distinct from zero.
+    """
+    categories = (
+        ("actions_work", HOME / "actions-runner-zcloud" / "_work", "zCloud Actions runner owner"),
+        ("user_cache", HOME / ".cache", "VPS cache / consuming-project owners"),
+        ("gradle_cache", HOME / ".gradle", "RaiseAI Android build owner"),
+        ("raiseai_build", HOME / "raiseai-build", "RaiseAI build owner"),
+        ("ftmo_runner_install", Path("/opt/ftmo-runner"), "FTMO runner owner"),
+    )
+    measured, incomplete = [], []
+    for label, target, owner in categories:
+        if target.is_symlink() or not target.is_dir():
+            incomplete.append({"category": label, "reason": "not_a_verified_directory"})
+            continue
+        try:
+            run = subprocess.run(
+                ["du", "-sx", "-B1", "--", str(target)],
+                capture_output=True, text=True, timeout=4, check=False,
+                env={**os.environ, "LC_ALL": "C"},
+            )
+            number = run.stdout.strip().split(maxsplit=1)[0] if run.stdout.strip() else ""
+            if run.returncode != 0 or not number.isdecimal():
+                raise ValueError("incomplete")
+            measured.append({
+                "category": label, "bytes": int(number), "owner": owner,
+                "classification": "hot_or_owner_approval_required",
+                "source_is_known_unreferenced": False,
+                "can_remove_automatically": False,
+            })
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            incomplete.append({"category": label, "reason": "measurement_incomplete"})
+    return {
+        "mode": "explicit_opt_in_bounded_du",
+        "measured": sorted(measured, key=lambda row: -row["bytes"]),
+        "incomplete": incomplete,
+        "scanned_categories": len(categories),
+        "all_categories_measured": not incomplete,
+        "bytes_proven_reclaimable": 0,
+        "source_deletion_authorized": False,
+    }
+
+
+def operator_summary(report: dict) -> str:
+    """Plain-language CLI view: no speculative reclaimed totals."""
+    gb = 1024 ** 3
+    pressure = report["disk_pressure"]
+    lines = [
+        "zCloud VPS storage: read-only assessment (NOT cleanup permission)",
+        f"Local free: {pressure['actual_free_bytes'] / gb:.2f} GiB",
+        f"Training reserve: {pressure['minimum_training_free_bytes'] / gb:.2f} GiB",
+        f"Still needed: {pressure['bytes_needed_to_reserve'] / gb:.2f} GiB",
+        f"Assessed old files: {report['total_candidate_bytes'] / gb:.3f} GiB (NOT safe-to-delete proof)",
+        f"Archive browse mount: {report['archive_mount']['state']} (upload NOT authorized)",
+    ]
+    hotspots = report.get("hotspot_inventory")
+    if hotspots is not None:
+        lines.append("Large local hot paths: owner review required, NOT reclaimable-by-default")
+        for entry in hotspots["measured"]:
+            lines.append(f"  {entry['category']}: {entry['bytes'] / gb:.2f} GiB — {entry['owner']}")
+        if hotspots["incomplete"]:
+            lines.append("  Incomplete: " + ", ".join(row["category"] for row in hotspots["incomplete"]))
+    lines.append("Files moved: 0. Files deleted: 0. Training restart authorized: no.")
+    return "\n".join(lines)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--older-than-days", type=int, default=MIN_AGE_DAYS)
     ap.add_argument("--limit", type=int, default=MAX_LIST)
+    ap.add_argument("--hotspot-inventory", action="store_true",
+                    help="Bounded size assessment of named hot directories, never cleanup permission")
+    ap.add_argument("--format", choices=("json", "text"), default="json")
     ap.add_argument("--include-release-reviews", action="store_true",
                     help="Also assess old standalone APK exports; never assert superseded or safe to prune")
     args = ap.parse_args()
@@ -187,6 +261,7 @@ def main():
         "filesystem": live_filesystem,
         "disk_pressure": disk_pressure(live_filesystem["free_bytes"], total_assessed),
         "archive_mount": archive_mount_status(),
+        "hotspot_inventory": hotspot_inventory() if args.hotspot_inventory else None,
         "cold_candidate_counts": count,
         "cold_candidate_bytes": totals,
         "total_candidate_bytes": total_assessed,
@@ -204,7 +279,7 @@ def main():
         "remote_copies_verified": False,
         "bytes_reclaimed": 0,
     }
-    print(json.dumps(result, indent=2))
+    print(operator_summary(result) if args.format == "text" else json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
