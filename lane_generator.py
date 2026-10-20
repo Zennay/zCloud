@@ -421,6 +421,7 @@ def generate_execution_lanes(project, backlog, claims=()):
 
     chosen_by_lane = {}
     blocked_by_lane = {lane_def["id"]: [] for lane_def in lane_defs}
+    active_backlog_counts = {lane_def["id"]: 0 for lane_def in lane_defs}
     occupied_scopes = []
 
     # Existing active work is authoritative: preserve it and reserve its write
@@ -431,14 +432,19 @@ def generate_execution_lanes(project, backlog, claims=()):
             item for item in lane_items[lane_id]
             if str(item.get("status") or "").lower() in ACTIVE_STATUSES
         ]
+        active_backlog_counts[lane_id] = len(active)
         if active:
-            chosen = active[0]
-            chosen_by_lane[lane_id] = chosen
-            occupied_scopes.append({
-                "queue_id": str(chosen.get("queue_id") or ""),
-                "lane_id": lane_id,
-                "scope": chosen["scope"],
-            })
+            # The first active task remains the displayed lane owner, but ALL
+            # active tasks reserve their write scopes. A second in-flight task
+            # must not disappear from cross-lane collision admission just
+            # because the UI can display only one task per lane.
+            chosen_by_lane[lane_id] = active[0]
+            for in_flight in active:
+                occupied_scopes.append({
+                    "queue_id": str(in_flight.get("queue_id") or ""),
+                    "lane_id": lane_id,
+                    "scope": in_flight["scope"],
+                })
 
     queued = sorted(
         [
@@ -499,6 +505,10 @@ def generate_execution_lanes(project, backlog, claims=()):
             "queue_id": str(chosen.get("queue_id") or "") if chosen else None,
             "status": str(chosen.get("status") or "") if chosen else "blocked" if blocked_by else "idle",
             "scope": scope,
+            # Advisory reconciliation only: never take, release, or supersede
+            # an existing worker claim on the strength of this count.
+            "active_backlog_count": active_backlog_counts[lane_id],
+            "parallel_active_warning": active_backlog_counts[lane_id] > 1,
             "blocked_by": blocked_by,
         })
     return results
