@@ -20,6 +20,8 @@ TRAINING = Path("/opt/fuckball-training")
 ARCHIVE = "vpsarchive:zcloud-vps"
 MIN_AGE_DAYS = 3
 MAX_LIST = 100
+TRAINING_MIN_FREE_GIB = 10
+
 
 
 def candidate_file(path: Path, cutoff: float) -> bool:
@@ -82,6 +84,52 @@ def filesystem():
             "free_bytes": root.f_bavail * root.f_frsize}
 
 
+def disk_pressure(free_bytes: int, candidate_bytes: int) -> dict:
+    """Separate measured headroom from hypothetical gains that were not freed."""
+    reserve = TRAINING_MIN_FREE_GIB * (1024 ** 3)
+    gap = max(0, reserve - free_bytes)
+    return {
+        "minimum_training_free_bytes": reserve,
+        "actual_free_bytes": free_bytes,
+        "actual_reserve_met": free_bytes >= reserve,
+        "bytes_needed_to_reserve": gap,
+        "candidate_assessment_bytes": candidate_bytes,
+        "possible_gap_after_verified_pruning_bytes": max(0, gap - candidate_bytes),
+        "would_candidate_volume_cover_gap_if_all_safe": candidate_bytes >= gap,
+        "actual_bytes_reclaimed_by_inventory": 0,
+        "free_space_post_cleanup_verified": False,
+        "training_restart_authorized": False,
+    }
+
+
+def archive_mount_status(path: Path = HOME / "VPS-Archief") -> dict:
+    """Bounded mount-status observation, not a remote write/crypt attestation."""
+    info = {
+        "mount_point": str(path), "state": "unknown",
+        "filesystem_type": None, "remote_write_verified": False,
+        "transfer_authorized": False,
+    }
+    if path.is_symlink():
+        info["state"] = "unsafe_symlink"
+        return info
+    try:
+        for line in Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines():
+            head, sep, tail = line.partition(" - ")
+            fields, details = head.split(), tail.split()
+            if not sep or len(fields) < 6 or len(details) < 3:
+                continue
+            if fields[4] != str(path):
+                continue
+            info["filesystem_type"] = details[0]
+            options = set(fields[5].split(",")) | set(details[2].split(","))
+            info["state"] = "mounted_read_only" if "ro" in options else "mounted_write_unverified"
+            return info
+        info["state"] = "not_mounted"
+    except OSError:
+        info["state"] = "mountinfo_unavailable"
+    return info
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--older-than-days", type=int, default=MIN_AGE_DAYS)
@@ -97,15 +145,19 @@ def main():
         count[kind] = count.get(kind, 0) + 1
         if len(examples) < args.limit:
             examples.append(row)
+    live_filesystem = filesystem()
+    total_assessed = sum(totals.values())
     result = {
         "schema": "zcloud-storage-tier-plan-v1",
         "read_only": True,
         "remote": ARCHIVE,
         "minimum_age_days": args.older_than_days,
-        "filesystem": filesystem(),
+        "filesystem": live_filesystem,
+        "disk_pressure": disk_pressure(live_filesystem["free_bytes"], total_assessed),
+        "archive_mount": archive_mount_status(),
         "cold_candidate_counts": count,
         "cold_candidate_bytes": totals,
-        "total_candidate_bytes": sum(totals.values()),
+        "total_candidate_bytes": total_assessed,
         "examples": examples,
         "excluded": [
             "live code, GitHub runner executables, working checkouts and active logs",
@@ -115,6 +167,9 @@ def main():
             "files with multiple hardlinks or symlinks",
         ],
         "move_policy": "Existing encrypted archive tooling must complete remote full-byte verification; never delete from inventory alone.",
+        "source_deletion_authorized": False,
+        "remote_copies_verified": False,
+        "bytes_reclaimed": 0,
     }
     print(json.dumps(result, indent=2))
 
