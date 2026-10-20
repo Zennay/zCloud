@@ -30,6 +30,9 @@ MAX_FILES = 20000
 MAX_DEPTH = 4
 MAX_SECONDS = 5
 TOP = 15
+# Immutable-data naming hints, NOT evidence of ownership, coldness or archive permission.
+ARCHIVE_SUFFIX_HINTS = (".hbr2", ".parquet", ".arrow", ".npz", ".safetensors",
+                        ".onnx", ".webm", ".mp4", ".tar.gz", ".zip")
 
 
 def _sensitive(name):
@@ -117,6 +120,8 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
     large_files_seen = 0
     observed_allocated = 0
     top = []
+    cold_files = []
+    cold_files_seen = 0
     directory_bytes = {}
     directory_files = {}
     limit = min_mib * 1024 * 1024
@@ -172,13 +177,22 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
                     folder = rel_parts[0] if len(rel_parts) > 1 else "(workspace root)"
                     directory_bytes[folder] = directory_bytes.get(folder, 0) + allocated
                     directory_files[folder] = directory_files.get(folder, 0) + 1
+                    relative = str(Path(directory, entry.name).relative_to(root))
+                    # Path is a private display label only, never passed to a shell.
+                    item = (allocated, relative, max(0, int(info.st_size)),
+                            max(0, int(info.st_mtime)), int(info.st_dev), int(info.st_ino))
+                    # Archive hints require a separate top-N: large live SQLite
+                    # files must not hide older immutable-looking replay/data.
+                    if (allocated >= 65536 and
+                            entry.name.lower().endswith(ARCHIVE_SUFFIX_HINTS)):
+                        cold_files_seen += 1
+                        if len(cold_files) < TOP:
+                            heapq.heappush(cold_files, item)
+                        elif item > cold_files[0]:
+                            heapq.heapreplace(cold_files, item)
                     if allocated < limit:
                         continue
                     large_files_seen += 1
-                    relative = str(Path(directory, entry.name).relative_to(root))
-                    # Path is a display label only, never passed to a shell.
-                    item = (allocated, relative, max(0, int(info.st_size)),
-                            max(0, int(info.st_mtime)), int(info.st_dev), int(info.st_ino))
                     if len(top) < TOP:
                         heapq.heappush(top, item)
                     elif item > top[0]:
@@ -191,6 +205,7 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
             if directory_fd is not None:
                 os.close(directory_fd)
     items = sorted(top, reverse=True)
+    archive_items = sorted(cold_files, reverse=True)
     complete = (stop_reason is None and not stack and not denied and
                 not directories_unscanned and not sensitive_skipped and
                 not mount_skipped)
@@ -232,6 +247,14 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         ],
         "workspace_groups_truncated": len(directory_bytes) > 128,
         "large_files_seen_lower_bound": large_files_seen,
+        "archive_suffix_candidates_seen_lower_bound": cold_files_seen,
+        "cold_candidates_sample": [
+            {"relative_path": name, "allocated_mib": round(n / 1024**2, 3),
+             "logical_mib": round(size / 1024**2, 3),
+             "last_modified_utc": datetime.fromtimestamp(mtime, timezone.utc).isoformat(),
+             "scan_device": device, "scan_inode": inode}
+            for n, name, size, mtime, device, inode in archive_items
+        ],
         "directories_unscanned": directories_unscanned + len(stack),
         "sensitive_names_skipped": sensitive_skipped,
         "symlinks_skipped": symlinks_skipped,
