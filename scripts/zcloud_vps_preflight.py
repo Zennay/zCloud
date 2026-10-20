@@ -64,6 +64,28 @@ def listener_pids() -> list[int]:
     return sorted(result)
 
 
+def dedicated_worker_pids() -> list[int]:
+    """Observe zCloud Runner.Worker processes, without emitting their arguments."""
+    found: list[int] = []
+    try:
+        processes = list(Path("/proc").iterdir())
+    except OSError:
+        return found
+    for proc in processes:
+        if not proc.name.isdigit():
+            continue
+        try:
+            if (proc / "comm").read_text().strip() != "Runner.Worker":
+                continue
+            argv = (proc / "cmdline").read_bytes().split(b"\\0")
+            program = argv[0].decode("utf-8", "replace").lower() if argv else ""
+            if ("zcloud" in program or "zcloud-vps-1" in program) and program.endswith("/runner.worker"):
+                found.append(int(proc.name))
+        except (OSError, ValueError):
+            continue
+    return sorted(found)
+
+
 def service_observation() -> dict[str, object]:
     """Observe both systemd managers without confusing a missing unit with idle.
 
@@ -297,7 +319,7 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
         recommend("CAPACITY_FIRST", "VPS resource owner",
                   "Insufficient or unverified resource headroom can cause repeat OOM crashes or incomplete releases.",
                   "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
-    if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS", "RUNNER_UNIT_TRANSITIONING", "RUNNER_LISTENER_DUPLICATED"}:
+    if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS", "RUNNER_UNIT_TRANSITIONING", "RUNNER_LISTENER_DUPLICATED", "RUNNER_WORKER_PROCESS_OBSERVED"}:
         recommend("RUNNER_OWNER", "zCloud Actions runner owner (#1326)",
                   "The dedicated listener/registered runner may be unavailable independently of other project runners.",
                   "Inspect the dedicated service and assigned jobs with the authorized runner owner. Restore only under the existing idle and account-identity gates; independently confirm a job was assigned.")
@@ -352,6 +374,10 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         mark("NOT_MAIN", "block", "Live checkout is not on main.")
 
     pids = listener_pids()
+    worker_processes = dedicated_worker_pids()
+    if worker_processes:
+        mark("RUNNER_WORKER_PROCESS_OBSERVED", "block",
+             "A dedicated Runner.Worker process exists; do not restart or promote while the runner may be busy.")
     systemd = service_observation()
     unit = str(systemd["state"])
     if not pids:
@@ -441,7 +467,8 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         "runner": {"unit": RUNNER_UNIT, "unit_state": unit,
                    "unit_manager": systemd["manager"],
                    "loaded_managers": systemd["loaded_managers"],
-                   "listener_pids": pids},
+                   "listener_pids": pids,
+                   "worker_process_count": len(worker_processes)},
         "resources": {"available_ram_pct": available_pct, "swap_used_pct": swap_pct,
                       "disk_free_pct": disk_free_pct, "disk_free_bytes": disk_free_bytes,
                       "training_reserve_bytes": TRAINING_FREE_RESERVE_BYTES,
@@ -486,7 +513,8 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
         clean_status = "locally_clear"
     add("preserve_checkout", clean_status, "Checkout/working-tree owner",
         "Never overwrite an uncommitted or independently owned change.")
-    if len(runner["listener_pids"]) != 1 or runner["unit_state"] in {"failed", "inactive", "ambiguous", "activating", "deactivating"}:
+    if (len(runner["listener_pids"]) != 1 or runner["worker_process_count"] > 0
+            or runner["unit_state"] in {"failed", "inactive", "ambiguous", "activating", "deactivating"}):
         runner_status = "blocked"
     elif runner["unit_state"] == "unavailable":
         runner_status = "unit_unverified"
@@ -694,6 +722,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 {item("Unit state", runner["unit_state"])}
 {item("Unit manager", runner["unit_manager"])}
 {item("Dedicated listener count", len(runner["listener_pids"]))}
+{item("Dedicated worker process count", runner["worker_process_count"])}
 {item("Available RAM", val(resources["available_ram_pct"]) + "%")}
 {item("Swap used", str(resources["swap_used_pct"]) + "%" if resources["swap_used_pct"] is not None else "unknown")}
 {item("Filesystem free", val(resources["disk_free_pct"]) + "%")}
@@ -749,7 +778,9 @@ def main() -> int:
         c = report["checkout"]
         print(f"Checkout: {c['branch']} {c['sha'] or 'unknown'}; tracked={c['tracked_changes']} untracked={c['untracked_entries']}")
         r = report["runner"]
-        print(f"Runner: {r['unit_state']} (systemd manager: {r['unit_manager']}); dedicated listener PIDs: {r['listener_pids']}")
+        print(f"Runner: {r['unit_state']} (systemd manager: {r['unit_manager']}); "
+              f"dedicated listener count={len(r['listener_pids'])}; "
+              f"dedicated Runner.Worker count={r['worker_process_count']}")
         disk = report["resources"]
         print(f"Free bytes: {disk['disk_free_bytes']} / training reserve: {disk['training_reserve_bytes']}; gap: {disk['training_reserve_gap_bytes']}")
         for f in report["findings"]:
