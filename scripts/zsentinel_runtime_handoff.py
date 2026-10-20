@@ -157,6 +157,78 @@ def build_handoff(decision, registry=None, queue_trend=None):
         # An aggregate must never invent a new owner or translate attempts to failures.
         if pressure.get("queue_write_authorized") is True:
             raise ValueError("queue write authority cannot come from a read-only handoff")
+    # A first operator run has no private previous queue snapshot yet.
+    # Existing router already validated a bounded *current* SQLite source:
+    # surface current lease conflicts now, without inventing trend or owner.
+    current_queue = {"coverage": queue_coverage, "observed_at_utc": None,
+                     "inconsistent_windows": None, "expired_leases": None,
+                     "unverifiable_leases": None, "group_sample_truncated": True}
+    if pressure is not None and pressure.get("coverage") == "current":
+        totals = pressure.get("totals")
+        groups = pressure.get("project_groups")
+        if (type(totals) is not dict or type(groups) is not list
+                or len(groups) > 18
+                or type(pressure.get("project_groups_truncated")) is not bool
+                or type(pressure.get("sample_is_complete")) is not bool):
+            raise ValueError("missing bounded current queue source")
+        for name in ("inconsistent_owner_lease_window_rows",
+                     "expired_owner_lease_rows",
+                     "unverifiable_owner_lease_rows"):
+            value = totals.get(name)
+            if type(value) is not int or not 0 <= value <= 2500:
+                raise ValueError("invalid current queue lease total")
+        current_queue = {
+            "coverage": "current",
+            "observed_at_utc": pressure.get("observed_at"),
+            "inconsistent_windows": totals["inconsistent_owner_lease_window_rows"],
+            "expired_leases": totals["expired_owner_lease_rows"],
+            "unverifiable_leases": totals["unverifiable_owner_lease_rows"],
+            "group_sample_truncated": pressure["project_groups_truncated"],
+        }
+        stamp = current_queue["observed_at_utc"]
+        if type(stamp) is not str or len(stamp) > 40:
+            raise ValueError("current queue observation needs UTC source timestamp")
+        try:
+            parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("invalid current queue observation timestamp") from exc
+        if parsed.utcoffset() is None or parsed.utcoffset().total_seconds() != 0:
+            raise ValueError("queue owner timestamp must be UTC")
+        already = set()
+        for row in groups:
+            if (type(row) is not dict
+                    or row.get("priority") not in ("P0", "P1", "P2", "P3")):
+                raise ValueError("invalid current queue group priority")
+            pid = _project(row.get("project_id"))
+            pri = row["priority"]
+            if (pid, pri) in already:
+                raise ValueError("duplicate current queue owner group")
+            already.add((pid, pri))
+            kinds = []
+            for name, label in (
+                ("inconsistent_owner_lease_window_rows", "onbetrouwbare start/vervalklok"),
+                ("expired_owner_lease_rows", "verlopen lease"),
+                ("unverifiable_owner_lease_rows", "niet verifieerbare lease")):
+                value = row.get(name)
+                if type(value) is not int or not 0 <= value <= 2500:
+                    raise ValueError("invalid current queue lease group")
+                if value:
+                    kinds.append(str(value) + " " + label)
+            if not kinds:
+                continue
+            card = _card(
+                pri if pri in ("P0", "P1") else "P2",
+                pid, "queue_current_owner_review",
+                "Actuele read-only queue: " + ", ".join(kinds) +
+                " (bronprioriteit " + pri + "). Laat bevoegde eigenaar "
+                "originele claim/lease controleren; GEEN reclaim/retry.",
+                source="validated_current_sqlite_queue_pressure",
+                ref="https://github.com/Zennay/zCloud/issues/677")
+            card["source_priority"] = pri
+            card["queue_observed_at_utc"] = parsed.isoformat(timespec="seconds")
+            card["queue_claim_failure_proven"] = False
+            card["owner_lease_released_verified"] = False
+            cards.append(card)
     issue = decision.get("open_product_issue_triage")
     issue_coverage = "not_requested_or_unavailable"
     if issue is not None:
@@ -310,7 +382,8 @@ def build_handoff(decision, registry=None, queue_trend=None):
     # Priority before kind: make owner/incident work visible before new intake.
     order = {"P0": 0, "P1": 1, "P2": 2}
     kind_order = {"fresh_incident": 0, "worker_owner_review": 1,
-                  "queue_lease_window_review": 2, "open_product_issue": 3}
+                  "queue_current_owner_review": 2,
+                  "queue_lease_window_review": 3, "open_product_issue": 4}
     cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
                               c.get("review_by_utc", "9999"),
                               0 if c.get("existing_pr_urls") else 1,
@@ -325,6 +398,7 @@ def build_handoff(decision, registry=None, queue_trend=None):
                      "queue": queue_coverage, "workers": worker_coverage,
                      "issues": issue_coverage, "notion": _short(sources.get("notion"), 80)},
         "priority_items": cards[:MAX_ITEMS],
+        "current_queue_lease_owner_summary": current_queue,
         "queue_claim_conflict_total_observed": conflict_total,
         "queue_claim_conflicts_sample_truncated": conflict_truncated,
         "queue_claim_comparison_supplied": queue_trend is not None,
