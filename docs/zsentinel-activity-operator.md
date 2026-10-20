@@ -568,6 +568,37 @@ authoritative current state. Only exact source GitHub checks, current
 Notion claims, required CI/review and actual production receipts can
 establish the respective stronger claims.
 
+## 20 October · GitHub 403 no longer hides unrelated portfolio projects
+
+The independent read-only GitHub Activity collector now treats an
+**unconfirmed HTTP 403** as a repository-scoped source denial. If one
+registered repository rejects its PR/Actions/main-history reads, the collector
+does not silently suppress the other independently selected projects.
+Repeated calls to the denied repository are stopped for this invocation.
+
+A **401 (invalid authentication)**, **429**, or **403 with explicitly
+`X-RateLimit-Remaining: 0`** still stops subsequent provider reads
+globally. A 403 without that header is *not* declared a proven permissions
+problem: GitHub may also use it for a secondary provider limit. The new
+`coverage[].provider_admission` source field therefore distinguishes
+`authentication_required`, `rate_limit_confirmed`,
+`repository_or_secondary_limit_unknown`,
+`global_admission_denied_prior_project` and `none`.
+
+These categories are also rendered in the offline Markdown digest and the
+standalone HTML view. They use fixed safe operator explanations, never raw
+provider error bodies, tokens or request headers. Earlier valid private
+receipts without this optional field remain readable; a receipt with an
+unrecognized value is rejected by the digest and HTML importer.
+
+**Scope:** source-level functionality on existing
+[zCloud PR #1550](https://github.com/Zennay/zCloud/pull/1550), addressing
+[#1518](https://github.com/Zennay/zCloud/issues/1518). This does not enable
+background polling, elevate access, infer project inactivity, change claims,
+retry GitHub CI, modify a runner or deploy anything. The normal current
+exact-head CI, independent review, branch protection, runtime writer and
+production release requirements remain mandatory.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
