@@ -165,3 +165,69 @@ SQLite rows or the portfolio dispatch policy.
 The exact `89f5d63046e125d5467c2794d9bfac1bf28c66bf` source was
 directly parsed and its real read-only VPS CLI path inspected; no suites,
 services, SQLite writes, runners or release gates were touched.
+
+## Owner-safe recovery cards and single-page handoff
+
+The desk now imports the **pure, no-side-effect** source
+`scripts/zsentinel_recovery_actions.py`. It derives at most seven bounded
+three-line action cards from the *same* read-only queue/claim snapshot:
+
+1. Problem: an observed, source-grounded missing lease, missing write scope,
+   parallel ownership risk, or local P0 waiting candidate.
+2. Next step: owner verification or independent issue/PR inspection.
+3. Status: a review/hold state such as `HOLD_PARALLEL_ADMISSION`,
+   **never** permission to mutate or override existing claims.
+
+Cards appear in the text, JSON and offline Dutch HTML desk. A separate
+owner-private Markdown handoff is created only by an explicit command:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --format markdown --output /EXISTING-PRIVATE-DIRECTORY/NEW-handoff.md
+```
+
+Output must be a previously nonexistent `.md` file in an existing private
+directory owned by the caller. The same create-only, symlink-refusing 0600
+writer is used for HTML and Markdown. Nothing is written by the default
+read-only text or JSON modes. The handoff does not export queue IDs, actor
+identities, raw task titles or privileged metadata. It includes the sampled
+local observation time and explicitly states that GitHub/Notion claims and
+release authority were not independently verified.
+
+### Critical four-lane admission boundary: missing actual file scopes
+
+The live 20 October 2026 SQLite read-only observation found **three** active
+zSentinel queue items with **no declared conflict_scope metadata**, despite
+a separate local task_claims table containing zero zSentinel leases. A
+synthetic lane capability cannot prove that two workers will not edit the
+same file in different lanes. Previously the four-lane generator might
+label a separate queued lane free because there was no file overlap to
+compute. This was not safe evidence of non-conflict.
+
+Source commit [748a89a](https://github.com/Zennay/zCloud/commit/748a89a6d120abe5824f294ab2907d30bb54646b)
+now **blocks new queued admission for the zSentinel portfolio-recovery
+profile only**, whenever active queue tasks have no explicit
+file/capability scope. Existing task owners, current worker activity and
+the other 13 project lane profiles are unchanged. The hold is
+`active_write_scope_not_declared`. It is not an automatic release,
+queue mutation or demand that the existing worker be interrupted.
+
+Source commit [cd70620](https://github.com/Zennay/zCloud/commit/cd706209fa9fc8c9674fcb7bb4741b75055d5e83)
+and the bounded action-card code explicitly flag incomplete active scope
+coverage rather than displaying an unsupported zero-collision conclusion.
+The only way to resolve this dependency is for the actual current task
+owners to provide authorized, verified write scopes or complete their
+owned tasks. Do not infer free ownership from missing local leases.
+
+Direct pinned functional source inspection on the connected VPS at
+[4533253](https://github.com/Zennay/zCloud/commit/45332538ed56d277e643c94af7009444ec239049)
+read the existing SQLite source with `query_only=ON`, produced source-only
+HTML/Markdown in memory and reported the CI/deploy lane as **blocked**
+by an unknown active write scope. Source parse succeeded; no QA suite,
+claim, CI rerun, runner, systemd, DB writer, service or production release
+was executed.
+
+**Integration truth:** all these additions are committed to a still-open
+PR branch. Exact-head required CI, independent review, branch protection
+and release ownership remain mandatory. PR source is not main or live
+deployment, and live worker recovery remains unverified.
