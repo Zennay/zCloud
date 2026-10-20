@@ -81,8 +81,12 @@ def combine(local, refreshed_projects):
     local_age = now - local_at
     matches = [r for r in refreshed_projects
                if type(r) is dict and r.get("project_id") == "cloud"
-               and r.get("repository") == "Zennay/zCloud"
-               and r.get("source") == JOB_SOURCE]
+               and r.get("source") == JOB_SOURCE
+               # Degraded refreshes deliberately omit repository and job
+               # details. Keep their explicit source failure visible instead
+               # of falsely turning them into 'no job was selected'.
+               and (r.get("status") == "degraded" or
+                    r.get("repository") == "Zennay/zCloud")]
     if len(matches) > 1:
         raise ValueError("ambiguous simultaneous exact zCloud receipts")
     receipt = matches[0] if matches else None
