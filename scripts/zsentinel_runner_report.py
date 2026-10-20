@@ -207,7 +207,7 @@ def render_comparison(comparison):
         + '</p><p><strong>Brontoestand:</strong> ' + escape(heading)
         + ' · ' + escape(str(comparison["elapsed_seconds"])) + ' seconden</p>'
         + boot_note
-        '<ul class="transitions">' + items + '</ul>' + capacity_html +
+        + '<ul class="transitions">' + items + '</ul>' + capacity_html +
         '<p class="warning">Dit toont alleen waargenomen systemd-statusverschillen. '
         'Ook failed→active bewijst geen toegewezen GitHub-job, geslaagde CI, merge '
         'of live herstel. Niet gezien ≠ opgelost; geen automatische herstart.</p></section>'
