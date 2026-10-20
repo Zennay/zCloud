@@ -11,6 +11,7 @@ import argparse
 import heapq
 import json
 import os
+import socket
 import stat
 import time
 from collections import deque
@@ -62,6 +63,19 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         raise ValueError("bounded scan settings required")
     started = time.monotonic()
     mount = root.stat().st_dev
+    fs = os.statvfs(root)
+    if (fs.f_blocks <= 0 or fs.f_frsize <= 0
+            or not 0 <= fs.f_bavail <= fs.f_blocks):
+        raise ValueError("untrusted workspace mount capacity")
+    mount_total = fs.f_blocks * fs.f_frsize
+    mount_available = fs.f_bavail * fs.f_frsize
+    if mount_total > 10**15 or mount_available > mount_total:
+        raise ValueError("disk capacity outside bounded diagnostic contract")
+    host = socket.gethostname()
+    if (type(host) is not str or not 1 <= len(host) <= 255
+            or any(not (c.isascii() and (c.isalnum() or c in ".-_"))
+                   for c in host)):
+        raise ValueError("untrusted current host identity")
     if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
         raise ValueError("no-follow directory descriptor support required")
     stack = deque([(root, 0)])
@@ -161,6 +175,15 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         "schema": SCHEMA,
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
         "root": str(root),
+        "mount_capacity": {
+            "host": host,
+            "mount_device": mount,
+            "filesystem_total_bytes": mount_total,
+            "available_bytes_to_operator": mount_available,
+            "percent_unavailable": round(
+                100 * (1 - mount_available / mount_total), 2),
+            "source": "same_host_statvfs_observation_not_cleanup_proof",
+        },
         "scan_parameters": {
             "min_mib": min_mib, "max_entries": max_entries,
             "max_depth": max_depth, "max_seconds": max_seconds,
@@ -215,6 +238,10 @@ def markdown(report):
         "Bron: " + report["observed_at_utc"],
         "Workspace: " + report["root"].replace("|", "/"),
         "Dekking: **" + report["coverage"] + "**; ook in volledige dekking geen buiten-root analyse.",
+        "Mount vrije ruimte bij bronmoment: " +
+        str(round(report["mount_capacity"]["available_bytes_to_operator"] / (1024**3), 2)) +
+        " GiB beschikbaar (" + str(report["mount_capacity"]["percent_unavailable"]) +
+        "% niet beschikbaar); momentopname, geen schoonmaakbewijs.",
         "Waargenomen toegewezen ruimte (ondergrens): " +
         str(round(report["observed_allocated_bytes_lower_bound"] / 1024**3, 2)) + " GiB.",
         "Beperkt door: " + str(report["truncation_reason"] or "geen tijd-/itemlimiet"),
@@ -269,6 +296,10 @@ def html(report):
              "<p>Dekking: " + escape(report["coverage"]) +
              " · items gezien: " + str(report["scanned_entries"]) +
              " · reden grens: " + escape(str(report["truncation_reason"] or "geen")) + "</p>",
+             "<p>Vrij op gemeten mount: " +
+             str(round(report["mount_capacity"]["available_bytes_to_operator"] / (1024**3), 2)) +
+             " GiB · " + str(report["mount_capacity"]["percent_unavailable"]) +
+             "% niet beschikbaar. Geen herstelbewijs.</p>",
              "<p>Waargenomen ruimte (ondergrens): " +
              str(round(report["observed_allocated_bytes_lower_bound"] / 1024**3,2)) + " GiB; " +
              str(report["directories_unscanned"]) + " mappen niet bezocht.</p>",
