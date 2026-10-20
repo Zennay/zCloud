@@ -29,6 +29,7 @@ from zsentinel_pr_scope_guard import ROOT, registry
 from zsentinel_pr_scope_portfolio import collect_portfolio
 from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
 from zsentinel_issue_pr_history import attach as attach_history
+from zsentinel_issue_action_board import build as build_human_work_inbox
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 60
@@ -599,6 +600,24 @@ def output_text(report, markdown=False):
                      str(branches["sample_complete"]) +
                      "; bron vers volgens originele board: " +
                      str(branches["historical_branch_source_fresh"]))
+    if report.get("human_work_inbox"):
+        inbox = report["human_work_inbox"]
+        lines.extend([
+            "", "MERGE-EERST · P0/P1 MENSELIJKE WERKBAK",
+            "Bestaande PRs voor " + str(inbox["existing_pr_first_issues"]) +
+            " issue(s) gevonden. Geen enkele kaart verleent claim, merge of dispatch.",
+        ])
+        for item in inbox["cards"]:
+            issue_ref = ("[" + item["issue"] + "](" + item["issue_url"] + ")"
+                         if markdown else item["issue_url"])
+            lines.append(
+                "  " + item["priority"] + " | " + item["project"] +
+                " | " + issue_ref + " | " + item["category_nl"])
+            if item["candidate_existing_pr_url"]:
+                url = item["candidate_existing_pr_url"]
+                lines.append("    PR eerst: " +
+                             ("[" + url + "](" + url + ")" if markdown else url))
+            lines.append("    Volgende stap: " + item["human_next_step_nl"])
     for row in report["issues"]:
         if report.get("historical_pr_delta") is not None:
             lines.append("  PR-historie: " + str(row["historical_linked_prs_with_changes"]) +
@@ -679,6 +698,37 @@ def output_text(report, markdown=False):
 
 def output_html(report):
     delta_panel = render_delta(report.get("historical_pr_delta"), "html")
+    work_panel = ""
+    if report.get("human_work_inbox"):
+        inbox = report["human_work_inbox"]
+        work_rows = []
+        for item in inbox["cards"]:
+            issue_url = escape(item["issue_url"], quote=True)
+            issue_title = escape(item["title"])
+            source = ("<a href='" + escape(item["candidate_existing_pr_url"], quote=True) +
+                      "' rel='noopener noreferrer'>Open bestaande PR</a>"
+                      if item["candidate_existing_pr_url"] else
+                      "Geen PR in beperkte bron; eigenaar onbekend")
+            work_rows.append(
+                "<tr><td><strong>" + escape(item["priority"]) + "</strong> " +
+                escape(item["project"]) + "</td><td><a href='" +
+                issue_url + "' rel='noopener noreferrer'>" + issue_title +
+                "</a></td><td>" + source + "</td><td><strong>" +
+                escape(item["category_nl"]) + "</strong><br>" +
+                escape(item["human_next_step_nl"]) + "</td></tr>")
+        work_panel = (
+            "<section id='merge-first-inbox' aria-label='P0/P1 merge-eerst werkbak'>"
+            "<h2>Merge-eerst · menselijke P0/P1 werkbak</h2><p>" +
+            str(inbox["issue_count"]) + " issues geprioriteerd; bij " +
+            str(inbox["existing_pr_first_issues"]) +
+            " is een bestaande PR-link in de bron gezien. "
+            "Bronsteekproeven zijn niet volledig en huidige claims/branchregels "
+            "zijn NIET geverifieerd. Geen automatisch werk, merge of deploy.</p>"
+            "<div class='scroll'><table><thead><tr><th>Urgentie</th>"
+            "<th>Open issue</th><th>PR eerst</th><th>Menselijke actie</th>"
+            "</tr></thead><tbody>" + "".join(work_rows) +
+            "</tbody></table></div></section>"
+        )
     signals = []
     for item in report["saved_operational_context"]:
         signals.append(
@@ -928,7 +978,7 @@ update();
             "<p>Actuele PR-review/checkbron: " +
             escape(report["current_head_gate_observations"]["mode"]) +
             " · verplichte rules en eigenaarrechten blijven onbekend.</p>" +
-            signals_html + delta_panel + bundle_summary + filter_bar + "<main>" + "".join(cards) + "</main>" +
+            signals_html + work_panel + delta_panel + bundle_summary + filter_bar + "<main>" + "".join(cards) + "</main>" +
             offline_script + "<footer><small>Issue SHA256 " +
             escape(report["product_issue_source_sha256"]) + "</small></footer></html>")
 
@@ -1107,6 +1157,7 @@ def main(argv=None):
                 "required_branch_protection_verified": False,
                 "independent_review_policy_verified": False,
                 "merge_authorized": False, "writes_performed": False}
+        report["human_work_inbox"] = build_human_work_inbox(report)
         if args.format == "json":
             rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         elif args.format == "html":
