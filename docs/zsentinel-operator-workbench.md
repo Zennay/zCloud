@@ -1492,3 +1492,8 @@ PR, service, CI-rerun, GitHub write, workerdispatch of productieactie wordt
 door deze offline functie uitgevoerd. Voor merge eerst *apart* actuele claims,
 exacte-head verplichte CI, onafhankelijke review, branch protection en
 releasebevoegdheid vaststellen; alleen de echte main-SHA en live bewijs tellen.
+
+Navigatie: boven de projectkaarten staat nu ook een toetsenbordtoegankelijke
+**Ga naar project**-lijst met gewone interne HTML-ankers. Daarmee kan de
+operator direct naar het relevante project en diens volledige, uitklapbare
+PR-rij springen, zonder scripts, netwerkverzoeken of extra momentopnamen.
