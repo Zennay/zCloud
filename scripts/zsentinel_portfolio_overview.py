@@ -562,6 +562,9 @@ def main():
     parser.add_argument("--skip-github-issues", action="store_true")
     parser.add_argument("--pin-issue", action="append", default=[],
                         help="bounded extra exact GitHub issue source PROJECT:NUMBER, max 3 in selected window")
+    parser.add_argument("--job", action="append", default=[],
+                        help="follow exact existing GitHub job PROJECT:RUN_ID:JOB_ID:FULL_HEAD_SHA; "
+                             "selected window only; at most three; never retries jobs")
     parser.add_argument("--skip-ci-discovery", action="store_true")
     parser.add_argument("--read-notion-claims", action="store_true")
     parser.add_argument("--notion-data-source")
@@ -606,6 +609,8 @@ def main():
             raise ValueError("--database is required unless --github-only was chosen")
         if args.pin_issue and args.skip_github_issues:
             raise ValueError("--pin-issue requires actual GitHub issues source")
+        if len(args.job) > 3:
+            raise ValueError("--job accepts at most three exact existing job references")
         if args.inspect_hosted_no_start and not (
                 args.inspect_pr or args.inspect_referenced_prs or args.discover_open_prs):
             raise ValueError("--inspect-hosted-no-start needs existing PR inspection")
@@ -672,7 +677,7 @@ def main():
         queue = (explicitly_unobserved_queue() if args.github_only
                  else observe(args.database))
         bundle, provenance = assemble(
-            registry, selected, [], args.database,
+            registry, selected, args.job, args.database,
             token=os.environ.get("GITHUB_TOKEN"),
             include_issues=not args.skip_github_issues,
             include_ci_discovery=not args.skip_ci_discovery,
