@@ -178,7 +178,8 @@ def inspect(repo, number, budget, expected_body_digest=None,
             closed["reported_commit"] = merge_sha
             current = bounded_gh(f"repos/{repo}/pulls/{number}", budget)
             ref = bounded_gh(f"repos/{repo}/git/ref/heads/main", budget)
-            default_sha = (ref.get("object") or {}).get("sha") if isinstance(ref, dict) else None
+            ref_object = ref.get("object") if isinstance(ref, dict) else None
+            default_sha = ref_object.get("sha") if isinstance(ref_object, dict) else None
             if not (isinstance(current, dict) and isinstance(current.get("head"), dict)
                     and current["head"].get("sha") == sha
                     and current.get("state") == "closed" and current.get("merged") is True
@@ -193,9 +194,10 @@ def inspect(repo, number, budget, expected_body_digest=None,
             if not contained:
                 compare = bounded_gh(
                     f"repos/{repo}/compare/{merge_sha}...{default_sha}", budget)
-                contained = (isinstance(compare, dict)
+                compare_base = compare.get("base_commit") if isinstance(compare, dict) else None
+                contained = (isinstance(compare_base, dict)
                              and compare.get("status") == "ahead"
-                             and (compare.get("base_commit") or {}).get("sha") == merge_sha
+                             and compare_base.get("sha") == merge_sha
                              and type(compare.get("ahead_by")) is int
                              and compare["ahead_by"] > 0
                              and compare.get("behind_by") == 0)
