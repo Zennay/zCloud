@@ -36,7 +36,10 @@ Vanaf deze map:
   python3 zsentinel_runner_report.py --format markdown --timeline T0.json T1.json T2.json --output OVERDRACHT.md
 
 Rapporten worden create-only (0600) gemaakt in bestaande veilige doelmappen.
-Gebruik nooit bestaande rapport-/bronbestandsnamen als nieuw doel. Historische
+Gebruik nooit bestaande rapport-/bronbestandsnamen als nieuw doel. Het huidige --preview toont de werkelijke effectieve CPU-toewijzing
+en of een verhoging nog op ten minste 5 minuten/3 observaties wacht.
+De private HTML/JSON-receipts bewaren deze beslisstatus uitsluitend
+als momentopname; geen CPU-wijziging in preview. Oude historische
 statuswijzigingen zijn geen bewijs van GitHub CI, werkclaim of productieherstel.
 De modules kunnen bij onjuist gebruik ook live CPU-properties aanpassen: voer
 de background_priority-module alleen met --preview uit totdat alle vereiste
