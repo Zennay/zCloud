@@ -140,8 +140,11 @@ def queue_card(item):
     """A source-bound queue observation is not a safe automatic retry."""
     urgent = item["owner_lease_expired_observed"]
     unknown_lease = item["owner_lease_unverifiable_observed"]
-    kind = "warn" if urgent or unknown_lease else "read"
-    owner = ("Mogelijk verlopen owner-lease; beheerder moet status beoordelen."
+    impossible_lease = item["owner_lease_window_inconsistent_observed"]
+    kind = "warn" if urgent or unknown_lease or impossible_lease else "read"
+    owner = ("Claimstart/vervaltermijn inconsistent: controleer beide tijden bij de huidige eigenaar."
+             if impossible_lease else
+             "Mogelijk verlopen owner-lease; beheerder moet status beoordelen."
              if urgent else
              "Leaseklok ontbreekt of is ongeldig; eigenaar moet de bezette claim beoordelen."
              if unknown_lease else
@@ -168,7 +171,8 @@ def queue_group_table(groups, truncated, sample_complete):
         items = [phrase(row["project_id"],80), phrase(row["priority"],5)]
         for name in ("queued","claimed","running","verifying",
                      "high_claim_attempts","expired_owner_lease_rows",
-                      "unverifiable_owner_lease_rows"):
+                      "unverifiable_owner_lease_rows",
+                      "inconsistent_owner_lease_window_rows"):
             items.append(str(row[name]))
         rows.append("<tr>" + "".join("<td>" + cell + "</td>" for cell in items) + "</tr>")
     suffix = (" · meer groepen niet weergegeven" if truncated else "")
@@ -177,7 +181,7 @@ def queue_group_table(groups, truncated, sample_complete):
             str(len(groups)) + ')' + suffix + sample + '</summary><div class="wrap">'
             '<table><thead><tr><th>Project</th><th>Prioriteit</th><th>Wachtend</th>'
             '<th>Geclaimd</th><th>Running</th><th>Verifying</th>'
-            '<th>Veel claims</th><th>Lease verlopen?</th><th>Leaseklok onbekend?</th></tr></thead><tbody>' +
+            '<th>Veel claims</th><th>Lease verlopen?</th><th>Leaseklok onbekend?</th><th>Claimvenster inconsistent?</th></tr></thead><tbody>' +
             "".join(rows) + '</tbody></table></div></details>')
 
 
@@ -639,7 +643,9 @@ def html_view(decision):
         " · Mogelijk verlopen leases: " +
         str(queue_totals.get("expired_owner_lease_rows", 0)) +
         " · Onverifieerbare leaseklokken: " +
-        str(queue_totals.get("unverifiable_owner_lease_rows", 0))
+        str(queue_totals.get("unverifiable_owner_lease_rows", 0)) +
+        " · Inconsistente claimvensters: " +
+        str(queue_totals.get("inconsistent_owner_lease_window_rows", 0))
         if queue_coverage == "current" else
         "Bron ontbreekt, is onvolledig of verouderd: geen betrouwbare actuele wachtrijclaim."
     )
