@@ -353,7 +353,7 @@ def public_summary_html(summary):
          ' Overlappende groepen: ' + str(summary["matched_previous_groups"]) +
          '; minstens één bron gedeeltelijk: ' +
          str(summary["comparison_partial"]) + '.</p>'
-         if summary.get("observed_change_mib_not_growth") is not None else '')
+         if summary.get("observed_change_mib_not_growth") is not None else '') +
         '<p>Actie: eigenaar controleert actieve schrijvers, bewaartermijnen en'
         ' backups vóór een afzonderlijk geautoriseerde opruimactie.'
         ' Geen bestand verwijderd, worker herstart of claim vrijgegeven.</p>'
