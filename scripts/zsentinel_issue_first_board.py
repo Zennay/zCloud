@@ -15,6 +15,7 @@ import time
 import zsentinel_merge_first_board as board
 from portfolio_merge_ready import DB
 from zsentinel_claim_visibility import observe as observe_local_claims
+from zsentinel_issue_page_bundle import private_json
 from zsentinel_issue_merge_priority import (
     issue_inventory, link_candidates, priority_rank, unaddressed_urgent,
     classification, references, title_references, reference_hints
@@ -365,6 +366,8 @@ def main():
     cli.add_argument("--candidate-page", type=int, default=1,
                      help="continue targeted issue search on page 1–50 of 20 PRs")
     cli.add_argument("--output", help="create new private 0600 offline .html (never overwrite)")
+    cli.add_argument("--snapshot-output",
+                     help="save this targeted issue search page as a NEW private 0600 JSON snapshot")
     cli.add_argument("--format", choices=("text", "json"), default="text")
     args = cli.parse_args()
     if (not 1 <= len(args.project) <= 3 or
@@ -376,6 +379,8 @@ def main():
         cli.error("--candidate-page must be between 1 and 50")
     if args.issue is None and args.candidate_page != 1:
         cli.error("--candidate-page requires --issue")
+    if args.snapshot_output and args.issue is None:
+        cli.error("--snapshot-output requires a targeted --issue")
     try:
         registry = board.registry()
         budget = [0, time.monotonic() + board.MAX_SECONDS]
@@ -412,6 +417,8 @@ def main():
             "missing_authorization": "EXACT_CI_REVIEW_CLAIM_AND_RELEASE_REQUIRE_SEPARATE_EVIDENCE",
             "main_merged": False, "live_verified": False,
         }
+        if args.snapshot_output:
+            private_json(args.snapshot_output, payload)
         if args.format == "json":
             print(json.dumps(payload, ensure_ascii=False))
         else:
