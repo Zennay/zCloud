@@ -63,7 +63,7 @@ def linked_item(url, title):
     return '<a href="' + escape(valid, quote=True) + '" target="_blank" rel="noopener noreferrer">' + label + "</a>"
 
 
-def incident_card(item):
+def incident_card(item, registry=None):
     priority = phrase(item.get("severity"), 5)
     project = phrase(item.get("project_id"), 80)
     owner = phrase(item.get("owner"), 80)
@@ -75,12 +75,32 @@ def incident_card(item):
     # tell the operator that billing denial or a VPS listener is proven.
     problem = ("GitHub-job niet gestart · oorzaak nog onbekend"
                if reason == "github_job_unstarted" else phrase(reason, 120))
+    # Derive provenance links only from the canonical project registry and
+    # a fresh exact run/job/SHA receipt; never link unpinned incidents.
+    from zsentinel_runtime_handoff import _attach_verified_job
+    source = _attach_verified_job(
+        {"project": item.get("project_id")},
+        item.get("exact_github_job"), registry, None)
+    exact = source.get("exact_github_job")
+    exact_html = ""
+    if exact is not None:
+        exact_html = ('<p class="muted small word">Exacte bron · run ' +
+                      str(exact["run_id"]) + ' · job ' + str(exact["job_id"]) +
+                      ' · HEAD ' + escape(exact["head_sha"]) + '</p>')
+        for key, label in (("exact_github_job_url", "Bekijk exacte job"),
+                           ("exact_github_commit_url", "Bekijk exacte commit")):
+            url = source.get(key)
+            if url:
+                exact_html += (' <a class="small" href="' + escape(url, quote=True) +
+                               '" target="_blank" rel="noopener noreferrer">' +
+                               label + '</a>')
     return (f'<article class="panel warn"><span class="tag">{priority}</span>'
             f'<span class="tag">{project}</span>'
             f'<h3 class="word">Problem · {problem}</h3>'
             f'<p class="row"><strong>Actie ({owner})</strong><br>{action}</p>'
             f'<p class="row"><strong>Status:</strong> {status}<br>'
-            f'<span class="muted small">Herbeoordeling voor {due}; geen automatische retry.</span></p></article>')
+            f'<span class="muted small">Herbeoordeling voor {due}; geen automatische retry.</span></p>'
+            + exact_html + '</article>')
 
 
 def historical_card(item):
@@ -185,7 +205,7 @@ def queue_group_table(groups, truncated, sample_complete):
             "".join(rows) + '</tbody></table></div></details>')
 
 
-def html_view(decision):
+def html_view(decision, registry=None):
     if not isinstance(decision, dict) or decision.get("schema_version") != 1:
         raise ValueError("not a canonical zSentinel decision")
     incidents = decision.get("incidents")
@@ -855,8 +875,8 @@ def html_view(decision):
         str(i.get("target_review_by", "")),
         str(i.get("project_id", "")),
     ))
-    primary_incidents = [incident_card(row) for row in ordered_incidents[:5]]
-    overflow_incidents = [incident_card(row) for row in ordered_incidents[5:]]
+    primary_incidents = [incident_card(row, registry=registry) for row in ordered_incidents[:5]]
+    overflow_incidents = [incident_card(row, registry=registry) for row in ordered_incidents[5:]]
     extra_incidents = (
         '<details><summary>Overige ' + str(len(overflow_incidents)) +
         ' incidenten bekijken</summary>' + section(overflow_incidents, "") + '</details>'
