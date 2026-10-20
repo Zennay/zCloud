@@ -1156,9 +1156,15 @@ function githubActivityImportPanel(){
   const snapshot=IMPORTED_GITHUB_ACTIVITY;
   const visible=new Set((DATA?.projects||[]).map(p=>p.id));
   const rows=(snapshot?.events||[]).filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
-  const counts=snapshot?.coverage.filter(c=>visible.has(c.project)&&(!filter||c.project===filter))
-    .map(c=>c.project+': '+c.status+
+  const selectedCoverage=(snapshot?.coverage||[]).filter(c=>visible.has(c.project)&&(!filter||c.project===filter));
+  const counts=selectedCoverage.map(c=>c.project+': '+c.status+
       (c.staleEvidence?' · STALE observation from '+c.observedAt:'')).join(' · ')||'No GitHub receipt loaded';
+  const denials=selectedCoverage.filter(c=>c.providerAdmission&&c.providerAdmission!=='none')
+    .map(c=>'<div class="detail-note" role="status"><strong>'+esc(c.project)+
+      ' · GITHUB SOURCE BLOCKED:</strong> '+
+      esc(GITHUB_PROVIDER_ADMISSIONS[c.providerAdmission])+
+      ' · observed '+esc(date(c.observedAt,true))+
+      ' · missing events remain UNKNOWN</div>').join('');
   const content=rows.slice(0,80).map(a=>'<div class="service-row"><div><small>'+esc(a.project)+' · '+esc(a.kind)+
     (a.firstSeen?' · absent in preceding bounded snapshot':'')+'</small><br><a target="_blank" rel="noopener noreferrer" href="'+
     esc(a.url)+'">'+esc(a.description)+'</a></div><small>'+esc(date(a.ts,true))+'</small></div>').join('');
@@ -1175,6 +1181,7 @@ function githubActivityImportPanel(){
     '<p role="status" aria-live="polite">'+esc(IMPORTED_GITHUB_ERROR||(snapshot?'Imported observation '+date(snapshot.observedAt,true)+' · '+snapshot.events.length+' bounded events.':'No GitHub receipt imported. Local VPS events continue below.'))+'</p>'+
     (snapshot?'<p class="detail-note">Partial provider coverage: '+esc(counts)+
       '. A PR reported merged or a green CI run never proves deployment, active ownership or worker recovery.</p>'+
+      denials+
       (content?'<div class="service-list">'+content+'</div>':'<div class="empty">No GitHub events in this project-filtered snapshot.</div>')+
       (rows.length>80?'<p class="detail-note">Only 80 of the imported events are displayed.</p>':''):'')+
     '</div>';
