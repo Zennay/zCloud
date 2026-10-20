@@ -15,6 +15,11 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 IDENT = re.compile(r"^[a-z][a-z0-9_-]{0,90}$")
 MAX_ENTRIES = 24
 MAX_WINDOWS = 8
+ASSIGNMENT_COVERAGE = frozenset((
+    "not_currently_allocated", "queue_source_unavailable",
+    "multiple_active_claims_owner_review", "no_active_claim_for_slot",
+    "bounded_current_claim", "lease_expired_or_invalid_owner_recheck",
+))
 OWNER_REVIEW_CATEGORIES = frozenset((
     "allocated_paused_with_claimed_queue_owner_gate",
     "allocated_queue_claim_expired_or_invalid_owner_recheck",
@@ -102,8 +107,15 @@ def observe_saved_workers(decision, source_time):
                 or type(followup) is not str or not IDENT.fullmatch(followup)
                 or type(row.get("queue_lease_current_from_source")) is not bool
                 or row.get("desired_state") not in (
-                    "unknown", "running", "paused", "draining")):
+                    "unknown", "running", "paused", "draining")
+                or row.get("queue_assignment_coverage") not in ASSIGNMENT_COVERAGE
+                or row.get("queue_claim_status_observed") not in (
+                    None, "claimed", "running", "verifying")):
             raise ValueError("worker identity/status/followup invalid")
+        global_slot = row.get("allocated_global_slot")
+        if global_slot is not None and (
+                type(global_slot) is not int or not 1 <= global_slot <= 32):
+            raise ValueError("invalid observed global assignment slot")
         seen.add((pid, slot))
         latest = _cursor(row, "latest_indexed_event_id")
         progress = _cursor(row, "latest_indexed_progress_event_id")
@@ -113,6 +125,9 @@ def observe_saved_workers(decision, source_time):
             "project_id": pid, "worker_slot": slot,
             "classification": state, "safe_followup": followup,
             "desired_state": row["desired_state"],
+            "allocated_global_slot": global_slot,
+            "queue_assignment_coverage": row["queue_assignment_coverage"],
+            "queue_claim_status_observed": row["queue_claim_status_observed"],
             "latest_indexed_event_id": latest,
             "latest_indexed_progress_event_id": progress,
             "source_queue_lease_current_unverified": row["queue_lease_current_from_source"],
@@ -161,6 +176,11 @@ def summarize_worker_windows(windows):
                 category = "UNKNOWN_progress_cursor_or_source_rotation"
             elif old["desired_state"] != new["desired_state"]:
                 category = "UNKNOWN_worker_desired_state_changed"
+            elif (old["allocated_global_slot"] != new["allocated_global_slot"]
+                  or old["queue_assignment_coverage"] != new["queue_assignment_coverage"]
+                  or old["queue_claim_status_observed"] !=
+                     new["queue_claim_status_observed"]):
+                category = "UNKNOWN_assignment_or_lease_context_changed"
             elif last1 > last0 and prog1 is not None and (prog0 is None or prog1 > prog0):
                 category = "new_indexed_generation_signal_not_product_delivery"
             elif last1 > last0:
@@ -174,6 +194,10 @@ def summarize_worker_windows(windows):
                 "later_worker_state": new["classification"],
                 "later_owner_followup": new["safe_followup"],
                 "later_desired_state": new["desired_state"],
+                "assignment_context_same_observed": (
+                    old["allocated_global_slot"] == new["allocated_global_slot"]
+                    and old["queue_assignment_coverage"] == new["queue_assignment_coverage"]
+                    and old["queue_claim_status_observed"] == new["queue_claim_status_observed"]),
                 "worker_state_changed": old["classification"] != new["classification"],
                 "indexed_event_id_before": last0, "indexed_event_id_after": last1,
                 "indexed_progress_id_before": prog0, "indexed_progress_id_after": prog1,
@@ -192,7 +216,12 @@ def summarize_worker_windows(windows):
     for pair in pairs:
         for row in pair["entries"]:
             if (row["previous_worker_state"] in OWNER_REVIEW_CATEGORIES
-                    and row["later_worker_state"] in OWNER_REVIEW_CATEGORIES):
+                    and row["later_worker_state"] in OWNER_REVIEW_CATEGORIES
+                    and row["assignment_context_same_observed"]
+                    and row["classification"] not in (
+                        "UNKNOWN_event_cursor_or_source_rotation",
+                        "UNKNOWN_progress_cursor_or_source_rotation",
+                        "UNKNOWN_worker_desired_state_changed")):
                 attention.append({
                     "from_window": pair["from_window"],
                     "to_window": pair["to_window"],
