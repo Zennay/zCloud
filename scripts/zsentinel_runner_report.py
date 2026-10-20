@@ -652,10 +652,145 @@ def render_timeline(pairs, observations):
     )
 
 
-def save_private(path, markup):
+
+def _handoff_text(value, maximum=192):
+    """Restrict the printable operator handoff to bounded, inert plain text."""
+    if value is None:
+        return "onbekend"
+    raw = str(value)[:maximum]
+    return "".join(ch if (ch.isalnum() or ch in " .,:@+%/()_-→") else "?"
+                   for ch in raw)
+
+
+def _handoff_number(value, suffix=""):
+    """No untrusted JSON value can masquerade as a measured number."""
+    import math
+    if type(value) in (int, float) and math.isfinite(value) and 0 <= value < 1e10:
+        return f"{value:g}{suffix}"
+    return "onbekend"
+
+
+def render_private_handoff(data):
+    """One self-contained markdown handoff from the admitted offline timeline.
+
+    Source-bound operator instructions only, never claim, merge, dispatch or
+    resume authority. Do not include raw process args or stored host tokens.
+    """
+    summary = data.get("timeline_footprint")
+    comparisons = data.get("timeline")
+    if not isinstance(summary, dict) or not isinstance(comparisons, list):
+        raise ValueError("Markdown handoff requires complete offline timeline")
+    if not 2 <= len(comparisons) <= 11 or summary.get("samples") != len(comparisons) + 1:
+        raise ValueError("Incompatible timeline evidence")
+    beginning = _handoff_text(comparisons[0].get("previous_utc"))
+    ending = _handoff_text(comparisons[-1].get("current_utc"))
+    actions = timeline_owner_actions(summary, comparisons)
+    rows = [
+        "# zSentinel | privé runner-hersteloverdracht",
+        "",
+        f"Bronvenster: {beginning} → {ending} (UTC; uitsluitend lokaal opgeslagen bronmomenten).",
+        f"Observaties: {summary['samples']} | Vergelijkingen: {len(comparisons)}.",
+        "Status: GEEN GECONFIRMEERD HERSTEL. Alleen systemd-/hostobservaties; "
+        "GitHub-jobtoewijzing, CI, claims en productie moeten afzonderlijk bevestigd worden.",
+        "",
+        "## Veilige vervolgacties voor bevoegde eigenaar",
+    ]
+    for title, advice, status in actions[:3]:
+        rows.extend([
+            f"### {_handoff_text(title)}",
+            f"Probleem/actie: {_handoff_text(advice, 500)}",
+            f"Status: {_handoff_text(status)}; geen service-, worker-, queue- of GitHub-actie uitgevoerd.",
+            "",
+        ])
+    rows.extend([
+        "## Bronbereik en capaciteitsdruk",
+        f"- Onvolledige runnerinventaris: {summary['incomplete_service_samples']} meetmomenten.",
+        f"- Ontbrekende capaciteitsbron: {summary['unknown_capacity_samples']} meetmomenten.",
+        f"- Swap >=80%: {summary['swap_high_samples']} meetmomenten.",
+        f"- Rootruimte >=90% niet beschikbaar: {summary['root_high_samples']} meetmomenten.",
+        f"- Load >1,35× beschikbare CPU-cores: {summary['load_high_samples']} meetmomenten.",
+        "Dit zijn aantallen momentopnames, geen tijdsduur, crashfrequentie of vrijgegeven resourcebudget.",
+        "",
+        "## Herhaald geobserveerde gefaalde runner-services",
+    ])
+    failed = summary.get("failed_observations", [])
+    if failed:
+        for entry in failed[:20]:
+            rows.append("- " + _handoff_text(entry["unit"]) + ": "
+                        + str(entry["failed_samples"]) + " × failed in "
+                        + str(entry["seen_samples"]) + " bronobservaties; "
+                        "niet gelijk aan evenveel crashes.")
+    else:
+        rows.append("- Geen failed-bronregel aangetroffen; geen bewijs dat alle runners gezond zijn.")
+    rows.extend(["", "## Historische overgangen"])
+    for index, pair in enumerate(comparisons, start=1):
+        reboot = pair.get("host_reboot_observed") is True
+        same_boot = pair.get("same_boot_verified") is True
+        coverage = pair.get("complete_service_coverage") is True
+        continuity = ("VPS boot gewijzigd" if reboot else
+                      "Zelfde Linux-boot" if same_boot else "Bootidentiteit ONBEKEND")
+        rows.append(f"### Stap {index}: {_handoff_text(pair.get('previous_utc'))} → "
+                    f"{_handoff_text(pair.get('current_utc'))}")
+        rows.append("Bron: " + continuity + " | runnerinventaris: "
+                    + ("volledig binnen limieten" if coverage else "GEDEELTELIJK/ONBEKEND") + ".")
+        metrics = (pair.get("capacity_comparison") or {}).get("metrics", [])
+        for m in metrics[:4]:
+            name = m.get("metric")
+            if name not in {"host_load", "memory_available_gib",
+                            "swap_used_percent", "disk_unavailable_percent"}:
+                continue
+            diff = m.get("difference")
+            if m.get("comparable") is True and type(diff) in (int, float):
+                import math
+                detail = f"{diff:+g}" if math.isfinite(diff) else "onbekend"
+            else:
+                detail = "niet vergelijkbaar"
+            rows.append("- Capaciteit " + name + ": " + detail + ".")
+        coach = pair.get("coach_comparison") or {}
+        if coach.get("same_boot_policy_comparable") is True:
+            before, after = coach.get("previous") or {}, coach.get("current") or {}
+            rows.append("- Trainer CPUQuota: "
+                        + _handoff_number(before.get("quota"), "%") + " → "
+                        + _handoff_number(after.get("quota"), "%")
+                        + "; CPUWeight: " + _handoff_number(before.get("weight"))
+                        + " → " + _handoff_number(after.get("weight")) + ".")
+        else:
+            rows.append("- Trainer CPU-instellingen: niet betrouwbaar vergelijkbaar.")
+        transitions = pair.get("transitions") or []
+        if transitions:
+            for event in transitions[:40]:
+                label = {
+                    "newly_observed": "nieuw waargenomen",
+                    "no_longer_observed": "niet meer waargenomen",
+                    "service_state_changed": "servicestatus gewijzigd",
+                    "previous_source_gap": "vorige bron gedeeltelijk",
+                    "current_source_gap": "huidige bron gedeeltelijk",
+                }.get(event.get("change"), "onzekere overgang")
+                rows.append("- " + _handoff_text(event.get("unit")) + ": " + label
+                            + "; GitHub-job/herstel ONBEKEND.")
+        else:
+            rows.append("- Geen servicestatusverschil waargenomen binnen de bronlimieten.")
+        rows.append("")
+    rows.extend([
+        "## Vertrouwen en autorisatie",
+        "- Alle data komen uit door de operator eerder gemaakte eigenaar-private JSON-bonnen.",
+        "- Geen actuele GitHub-API-, systemd- of hostopvraag uitgevoerd tijdens offline replay.",
+        "- De bron kan gedeeltelijk zijn; geen impliciete claim-, herstart- of releasebevoegdheid.",
+        "- Een actieve runner-service bewijst geen toegewezen job, success CI, merge of productieherstel.",
+        "- Vereiste onafhankelijke review, exacte-head checks, eigenaarclaims en releasegates blijven gelden.",
+        "",
+    ])
+    content = "\n".join(rows)
+    if len(content.encode("utf-8")) > 128 * 1024:
+        raise ValueError("Private handoff exceeds the artifact limit")
+    return content
+
+
+def save_private(path, markup, extension=".html"):
     target = Path(path)
-    if not target.name or target.name in {".", ".."} or target.suffix != ".html":
-        raise ValueError("Choose a new .html report filename")
+    if extension not in {".html", ".md"} or (
+            not target.name or target.name in {".", ".."} or target.suffix != extension):
+        raise ValueError("Choose a new private output filename with the correct suffix")
     raw = markup.encode("utf-8")
     if len(raw) > 128 * 1024:
         raise ValueError("Report size limit exceeded")
@@ -683,7 +818,9 @@ def save_private(path, markup):
 
 def main():
     parser = argparse.ArgumentParser(description="Private one-shot zSentinel runner incident workbench")
-    parser.add_argument("--output", required=True, help="NEW private 0600 .html report (never overwritten)")
+    parser.add_argument("--output", required=True, help="NEW private 0600 output (never overwritten)")
+    parser.add_argument("--format", choices=("html", "markdown"), default="html",
+                        help="Offline timeline may be exported as a private Markdown owner handoff")
     parser.add_argument("--previous", help="Optional owner-private T0 JSON, same-host and <=72 hours")
     parser.add_argument("--t0", help="Offline replay: first owner-private JSON receipt")
     parser.add_argument("--t1", help="Offline replay: later owner-private JSON receipt")
@@ -695,6 +832,8 @@ def main():
         parser.error("Choose one: --t0 and --t1, --previous, or --timeline")
     if args.timeline and not 3 <= len(args.timeline) <= 12:
         parser.error("--timeline requires 3–12 chronological private receipts")
+    if args.format == "markdown" and not args.timeline:
+        parser.error("--format markdown requires offline --timeline; never produce guessed live evidence")
     try:
         if args.timeline:
             data = offline_timeline_report(args.timeline)
@@ -707,8 +846,12 @@ def main():
                 from zsentinel_runner_snapshot import packet, changes, load_private
                 current = packet(data)
                 data["comparison"] = changes(load_private(args.previous), current)
-        markup = render(data)
-        save_private(args.output, markup)
+        if args.format == "markdown":
+            markup = render_private_handoff(data)
+            save_private(args.output, markup, extension=".md")
+        else:
+            markup = render(data)
+            save_private(args.output, markup)
     except (OSError, ValueError, KeyError, TypeError, UnicodeError):
         # Do not echo report paths, unit command lines or operator-private details.
         parser.exit(1, "Kon geen privé rapport maken; controleer veilige doelmap en rechten.\n")
