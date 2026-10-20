@@ -309,6 +309,7 @@ def collect_targeted_windows(project, issue_number, registry, budget,
     summary.update({
         "window_end": last["window_end"],
         "search_examined": sum(p["search_examined"] for p in pages),
+        "candidate_pr_numbers": sorted(observed_candidates),
         "next_page": last["next_page"],
         "auto_pages_requested": auto_pages,
         "auto_pages_observed": len(pages),
@@ -317,8 +318,10 @@ def collect_targeted_windows(project, issue_number, registry, budget,
             "window_start": p["window_start"], "window_end": p["window_end"],
             "search_examined": p["search_examined"],
             "next_page": p["next_page"]} for p in pages],
-        "search_complete": False,
-        "cross_page_source": "NONATOMIC_GITHUB_SEARCH",
+        "search_complete": (first["search_complete"] and not partials
+                            if len(pages) == 1 else False),
+        "cross_page_source": ("SINGLE_GITHUB_SEARCH_PAGE" if len(pages) == 1
+                              else "NONATOMIC_GITHUB_SEARCH"),
     })
     if len(pages) > 1:
         partials.append({"project": project, "reason": "NONATOMIC_SEARCH_PAGINATION"})
