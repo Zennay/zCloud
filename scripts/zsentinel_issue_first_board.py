@@ -186,6 +186,7 @@ def main():
                                  for issue in item["observed_issue_refs"]) or "none observed"
                 print(f"{item['repo']}#{item['number']}: {item['status']}; "
                       f"issue refs={refs}; review={item['review']}; CI={item['checks']}; "
+                      f"workflows={item.get('workflows', 'UNKNOWN')}; "
                       f"next={'; '.join(item['actions'])}")
             for issue in unmatched:
                 print(f"OPEN_UNLINKED_OBSERVED {issue['priority']} "
