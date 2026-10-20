@@ -198,8 +198,10 @@ strong.value{font-size:1.5rem}code{overflow-wrap:anywhere}
 een steekproef bewijst geen issue-sluiting, PR-merge, vrij eigenaarschap,
 geslaagde CI, review of herstel. Controleer huidige GitHub/Notion-bronnen
 voordat een eigenaar werk claimt of merge-/release-acties onderneemt.</aside>
-<p><a href="""" + e(change["url"]) + """" target="_blank"
-rel="noopener noreferrer">Origineel GitHub-issue</a></p>
+<p>Origineel GitHub-issue: """ +
+'<a href="' + e(change["url"]) +
+'" target="_blank" rel="noopener noreferrer">' +
+e(change["url"]) + '</a>' + """</p>
 <section><h2>Oorspronkelijke bron</h2>
 <p>Ouder: """ + e(change["old_time"]) + """ · <code>""" +
 e(change["old_manifest"]) + """</code></p><p>Nieuwer: """ +
