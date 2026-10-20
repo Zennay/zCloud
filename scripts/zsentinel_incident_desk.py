@@ -631,4 +631,6 @@ $("downloadBrief").onclick=()=>{
 };
 isFresh();render();
 </script></html>"""
-    return html.replace("__SOURCE__", payload).replace("__BRANCH_PANEL__", branch_panel)
+    # Fill the trusted static markup first. Never replace marker-like words
+    # inside a subsequently embedded and escaped external incident payload.
+    return html.replace("__BRANCH_PANEL__", branch_panel).replace("__SOURCE__", payload)
