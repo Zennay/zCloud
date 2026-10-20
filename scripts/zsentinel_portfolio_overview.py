@@ -695,6 +695,8 @@ def main():
     parser.add_argument("--notion-data-source")
     parser.add_argument("--notion-claims-export", type=Path,
                         help="private saved connector active-status snapshot, not live ownership")
+    parser.add_argument("--disk-hotspots-root", type=Path)
+    parser.add_argument("--disk-hotspots-output", type=Path)
     parser.add_argument("--observe-vps-capacity", action="store_true")
     parser.add_argument("--observe-local-runner", action="store_true",
                         help="read-only bounded Linux /proc inspection of canonical zCloud listener/worker processes")
@@ -727,6 +729,12 @@ def main():
     window_lock = None
     ledger_lock = None
     try:
+        if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
+            raise ValueError("disk scan requires both root and private HTML output")
+        if args.disk_hotspots_root is not None and args.format not in ("html", "json", "text"):
+            raise ValueError("disk scan supports html, json, text only")
+        if args.disk_hotspots_output is not None and args.disk_hotspots_output.suffix != ".html":
+            raise ValueError("disk scan private output must end in .html")
         if args.github_only:
             if args.database is not None:
                 raise ValueError("--github-only requires omitting --database")
@@ -751,10 +759,17 @@ def main():
         if len(history_files) > 7 or len({p.resolve() for p in history_files}) != len(history_files):
             raise ValueError('at most seven distinct chronological previous reports')
         sources = [args.state, args.window_state, args.database,
-                   args.worker_events_database, args.desk_output]
+                   args.worker_events_database, args.desk_output,
+                   args.disk_hotspots_output]
         if any(p.resolve() == q.resolve() for p in history_files
                for q in sources if q is not None):
             raise ValueError('compare sources must differ from live state')
+        if args.disk_hotspots_output is not None and any(
+                args.disk_hotspots_output.resolve() == p.resolve()
+                for p in [args.state, args.window_state, args.database,
+                          args.worker_events_database, args.desk_output,
+                          args.output, *history_files] if p is not None):
+            raise ValueError("disk report path overlaps private state or input")
         if args.output is not None and any(
                 args.output.resolve() == v.resolve()
                 for v in [*sources, *history_files] if v is not None):
