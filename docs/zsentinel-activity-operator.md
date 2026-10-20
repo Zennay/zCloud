@@ -601,6 +601,33 @@ retry GitHub CI, modify a runner or deploy anything. The normal current
 exact-head CI, independent review, branch protection, runtime writer and
 production release requirements remain mandatory.
 
+### Afzonderlijke, brongetrouwe PR-sluitingsgebeurtenissen
+
+Dezelfde bestaande GitHub-Activity-import heeft nu een eigen **`pr_closed`**
+gebeurtenis voor iedere in het begrensde bronvenster waargenomen PR die
+door GitHub als `closed` zonder `merged_at` wordt gerapporteerd.
+Het event gebruikt de echte GitHub-`closed_at` bron-UTC, een eigen
+stabiele namespaced event-ID en een rechtstreekse canonieke PR-link.
+Een gemergede PR veroorzaakt **geen** `pr_closed`-event, maar uitsluitend
+het al bestaande `pr_merged`-event op `merged_at`.
+
+De read-only CLI, Markdown-overdracht, offline HTML-operatorpagina en
+de bestaande Activity-dashboardimport accepteren deze aparte gebeurtenis.
+De import weigert een sluiting als de PR-bron tegelijkertijd
+`merged=true`, `main_merged=true`, een afwijkende
+`pr_lifecycle` of een ander tijdstip claimt. Alle weergaven
+markeren sluiten zonder merge uitdrukkelijk als **NIET OPGELEVERD**.
+Het beperkte uitvoervenster verdeelt beschikbare eventplekken nu
+afzonderlijk over PR-updates, PR-sluitingen, workflowobservaties en
+main-commits, om te voorkomen dat een drukke reeks PR-updates alle
+sluitingen uit een korte menselijke review verdringt.
+
+Oudere JSON-bronnen zonder dit event blijven importeerbaar en
+toveren oude `pr_updated`-records niet automatisch om tot een sluiting.
+Dit blijft een **niet-atomaire, begrensde GitHub-observatie**:
+een bronvenster zonder sluitingsgebeurtenis bewijst niet dat elders
+geen PR is gesloten. Sluiting ≠ merge; merge ≠ bewezen productie-release.
+
 ### PR gesloten zonder merge is geen productoplevering
 
 De onafhankelijke GitHub PR-observer leest `state`, `closed_at` en
