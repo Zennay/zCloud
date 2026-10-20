@@ -502,6 +502,46 @@ def markdown(report):
         lines.append("Geen actie in de beperkte steekproef; brongebrek is geen groen licht.")
     if report["items_truncated"]:
         lines.append("Meer items niet getoond; geen volledige werkvoorraad.")
+    historical = report.get("historical_owner_rechecks", [])
+    if type(historical) is not list or len(historical) > 5:
+        raise ValueError("unbounded historical owner Markdown")
+    if historical or report.get("historical_rechecks_truncated") is True:
+        lines.extend(["", "## HISTORISCH · NIET ACTUEEL WAARGENOMEN",
+                      "Alleen eerdere privéledgerbron. Geen nieuw incident, "
+                      "geen verzending, geen automatische herstelactie."])
+        for card in historical:
+            if (card.get("kind") != "historical_owner_recheck"
+                    or card.get("current_source_observed") is not False
+                    or card.get("historical_reconciliation_required") is not True
+                    or card.get("live_alert_authorized") is not False
+                    or card.get("claim_authorized") is not False
+                    or card.get("retry_authorized") is not False
+                    or card.get("merge_authorized") is not False
+                    or card.get("deploy_authorized") is not False):
+                raise ValueError("unsafe historical owner Markdown")
+            lines.append("- HISTORISCH " + _md(card.get("priority"), 5) +
+                         " " + _md(card.get("project"), 40) +
+                         " · laatst gezien " +
+                         _md(card.get("historical_source_last_seen_utc"), 40))
+            lines.append("  Eigenaar moet historische blokkade opnieuw verifiëren: " +
+                         _md(card.get("next_step")))
+            job = card.get("exact_github_job")
+            if job:
+                if (type(job) is not dict
+                        or type(job.get("run_id")) is not int
+                        or type(job.get("job_id")) is not int
+                        or not SAFE_SHA.fullmatch(str(job.get("head_sha", "")))):
+                    raise ValueError("untrusted historical Markdown GitHub job")
+                lines.append("  Oude exacte job: run " + str(job["run_id"]) +
+                             ", job " + str(job["job_id"]) +
+                             ", HEAD " + job["head_sha"])
+                if card.get("exact_github_job_url"):
+                    lines.append("  GitHub-job (historisch): " +
+                                 card["exact_github_job_url"])
+                    lines.append("  GitHub-commit: " +
+                                 card["exact_github_commit_url"])
+        if report.get("historical_rechecks_truncated") is True:
+            lines.append("Historische lijst afgekapt; geen verborgen item is opgelost.")
     lines.extend(["", "Eigenaar moet actuele claims, exacte PR-head, CI, reviews "
                   "en releasebevoegdheid apart verifiëren.", ""])
     return "\n".join(lines)
