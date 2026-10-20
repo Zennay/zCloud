@@ -161,35 +161,65 @@ def verify_default_contains_merge(repo, merged_sha, observed_head):
 
 
 def live_claim(project, claim_key, owner, head_sha):
-    if not owner or not claim_key:
+    """Read-only snapshot admission: exactly one valid exclusive mainwriter.
+
+    zCloud can have several independent worker claims for one project. Those
+    claims are not an invitation to take ownership. A *second live mainwriter*
+    capability for the same canonical project, or ambiguous active metadata,
+    makes the merge unsafe regardless of the requested claim's own validity.
+    """
+    if not owner or not claim_key or not isinstance(head_sha, str):
         return False
     try:
         db = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=3)
         db.row_factory = sqlite3.Row
-        row = db.execute(
-            "SELECT owner_id, lease_until, metadata_json FROM task_claims "
-            "WHERE project_id=? AND claim_key=?", (project, claim_key)).fetchone()
-        db.close()
-        if not row or row["owner_id"] != owner:
+        db.execute("PRAGMA query_only=ON")
+        try:
+            db.execute("BEGIN")
+            rows = db.execute(
+                "SELECT claim_key, owner_id, lease_until, metadata_json "
+                "FROM task_claims WHERE project_id=? LIMIT 1001", (project,)
+            ).fetchall()
+            db.rollback()
+        finally:
+            db.close()
+        if len(rows) >= 1001:
+            return False  # incomplete owner inventory is not merge authority
+        now = dt.datetime.now(dt.timezone.utc)
+        wanted = None
+        for row in rows:
+            lease = row["lease_until"]
+            if not isinstance(lease, str):
+                return False
+            expiration = dt.datetime.fromisoformat(lease.replace("Z", "+00:00"))
+            if expiration.tzinfo is None:
+                expiration = expiration.replace(tzinfo=dt.timezone.utc)
+            if expiration <= now:
+                continue
+            meta = json.loads(row["metadata_json"] or "{}")
+            if not isinstance(meta, dict):
+                return False
+            scope = meta.get("conflict_scope")
+            if not isinstance(scope, dict):
+                return False
+            capabilities = scope.get("capabilities")
+            if (not isinstance(capabilities, list)
+                    or not all(isinstance(cap, str) for cap in capabilities)):
+                return False
+            is_writer = any(cap in {"mainwriter", "main-merge"} for cap in capabilities)
+            if row["claim_key"] == claim_key:
+                if wanted is not None:
+                    return False
+                wanted = (row, meta, is_writer)
+            elif is_writer:
+                # Different lease with a live writer capability => conflicting.
+                # Never displace the other worker or assume their work is stale.
+                return False
+        if wanted is None:
             return False
-        expiration = dt.datetime.fromisoformat(row["lease_until"].replace("Z", "+00:00"))
-        if expiration.tzinfo is None:
-            expiration = expiration.replace(tzinfo=dt.timezone.utc)
-        if expiration <= dt.datetime.now(dt.timezone.utc):
-            return False
-        meta = json.loads(row["metadata_json"] or "{}")
-        if not isinstance(meta, dict):
-            return False
-        scope = meta.get("conflict_scope")
-        if not isinstance(scope, dict):
-            return False
-        capabilities = scope.get("capabilities")
-        if (not isinstance(capabilities, list)
-                or not all(isinstance(cap, str) for cap in capabilities)):
-            return False
-        if not any(cap in {"mainwriter", "main-merge"} for cap in capabilities):
-            return False
-        return meta.get("sha") == head_sha
+        row, meta, is_writer = wanted
+        return bool(row["owner_id"] == owner and is_writer
+                    and meta.get("sha") == head_sha)
     except (OSError, ValueError, sqlite3.Error, TypeError, KeyError, AttributeError):
         return False
 
