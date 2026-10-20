@@ -40,6 +40,14 @@ def suggested_actions(packet):
             "Laat hun huidige eigenaren de scopes en PR-overlap vastleggen; start geen nieuwe parallelle lane.",
             "HOLD_PARALLEL_ADMISSION",
         ))
+    missing_claim_scope = _number(packet.get("active_claim_scopes_not_declared"))
+    if missing_claim_scope:
+        result.append(action(
+            "active-claim-scope-unknown", "urgent",
+            f"{missing_claim_scope} geldige lokale leases missen een bestands-/capabilityscope.",
+            "Laat de bestaande claimeigenaar het schrijfbereik bevestigen; geef geen nieuwe schrijflane vrij.",
+            "HOLD_CLAIM_SCOPE_RECONCILIATION",
+        ))
     if packet.get("claimed_without_local_lease_observation") is True:
         result.append(action(
             "owner-not-observed", "urgent",
