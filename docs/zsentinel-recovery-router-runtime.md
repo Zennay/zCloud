@@ -3390,3 +3390,34 @@ als onvolledige steekproef gelabeld.
 Alle wijzigingen zijn enkel broncode op de bestaande open product-PR.
 Verplichte onafhankelijke review, exacte HEAD-CI, branches en
 releasebevoegdheid blijven nodig voordat main of productie verandert.
+
+
+### Privé incidentenbalie: brongebonden historische eigenaarbriefing
+
+De bestaande scriptvrije bronvulling + offline JavaScript incidentenbalie
+(`--format desk`) heeft een afzonderlijke sectie voor eerdere P0/P1
+menselijke blokkades waarvan het actuele bronbewijs ontbreekt.
+Het oude bronincident blijft in de historische lijst; de aparte
+`historical_owner_recheck_candidates`-shortlist is uit precies die
+oorspronkelijke privéledger-rijen opgebouwd. Bij renderen vergelijkt de
+balie incidentidentiteit, project, ernst, reden, laatst gezien-moment,
+exacte GitHub-run/job/SHA en alle expliciete niet-autorisatievlaggen.
+Afwijkende of dubbele historische bronnen worden geweigerd.
+
+Een operator kan de historische lijst alleen **lokaal** voorvertonen en
+daarna bewust als `zsentinel-historical-owner-rechecks.md` downloaden.
+De overdracht vermeldt zowel de originele incidentbronvingerafdruk als
+een aparte SHA-256 over de geselecteerde historische bronregels en het
+zichtbare truncatiesignaal. De Markdown noemt voor elk getoond incident
+de laatst bekende project-/prioriteitsinformatie, exacte oude GitHub
+run/job/HEAD (indien destijds waargenomen), en de veilige menselijke
+vervolgactie om de huidige bron en eigenaar onafhankelijk te controleren.
+Voor het daadwerkelijke downloaden wordt dezelfde statische
+bronbriefing opnieuw gecontroleerd tegenover de voorvertoning.
+
+**Dit is een privé, handmatige kennisoverdracht.** Het maakt geen
+kalenderagenda aan, verstuurt geen e-mail of push, verandert geen
+incidentledgerstatus, neemt geen werk of bestanden over, draait geen CI
+opnieuw en is geen bewijs van herstel. De bestaande actuele
+menselijke incidentbriefing blijft gescheiden, en de huidige incidenten
+en hun eerder opgeslagen privéstatussen behouden hun bronhash.
