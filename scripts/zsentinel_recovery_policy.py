@@ -1442,10 +1442,10 @@ def main(argv=None):
         if (not args.case_input or not args.view_project or args.view_issue is None
                 or args.prepare_merge_review or args.candidate_pr_number is not None
                 or args.through_priority is not None or args.fail_on_hold
-                or args.format not in ("json", "markdown")):
+                or args.format not in ("json", "markdown", "html")):
             parser.error(
                 "--live-candidates requires --case-input, --view-project, "
-                "--view-issue and --format json|markdown; no conflicting action modes"
+                "--view-issue and --format json|markdown|html; no conflicting action modes"
             )
     if args.prepare_merge_review:
         if (not args.case_input or not args.view_project or args.view_issue is None
@@ -1500,6 +1500,7 @@ def main(argv=None):
                 from zsentinel_pr_live_read import (
                     observe_candidate_prs,
                     markdown as live_candidates_markdown,
+                    owner_html as live_candidates_html,
                     GitHubReadError,
                 )
                 selected = select_case_view(
@@ -1512,7 +1513,8 @@ def main(argv=None):
                 except GitHubReadError as exc:
                     raise PolicyInputError("live PR source: " + str(exc)) from exc
                 output = (
-                    live_candidates_markdown(live) if args.format == "markdown"
+                    live_candidates_html(live) if args.format == "html"
+                    else live_candidates_markdown(live) if args.format == "markdown"
                     else json.dumps(live, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
                 )
                 if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
