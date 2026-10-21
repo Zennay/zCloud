@@ -750,9 +750,23 @@ def collect_workorders(board):
             "merge_authorized": False, "deploy_authorized": False,
         })
     cards.sort(key=lambda x: (x["rank"], x["project"], x["number"]))
+    review_summary = {
+        "pending_review_requested_prs": sum(
+            bool(card["pending_review_requests"] and
+                 (card["pending_review_requests"]["individuals"] or
+                  card["pending_review_requests"]["teams"])) for card in cards),
+        "no_open_review_request_observed_prs": sum(
+            card["pending_review_requests"] is not None and
+            card["pending_review_requests"]["individuals"] == 0 and
+            card["pending_review_requests"]["teams"] == 0 for card in cards),
+        "review_request_source_unknown_prs": sum(
+            card["pending_review_requests"] is None for card in cards),
+        "review_requests_are_not_approvals": True,
+    }
     receipt = {
         "schema": SCHEMA, "source_observed_at_utc": observed_at,
         "project_set": list(project_ids), "items": cards,
+        "review_request_worklist_summary": review_summary,
         "source_observation_stale": source_stale,
         "source_freshness_budget_seconds": SOURCE_FRESHNESS_SECONDS,
         "historical_comparison_status": history_status,
@@ -1032,6 +1046,18 @@ def render_html(bundle):
     if bundle.get("selection_is_not_full_open_pr_backlog") is True:
         parts.append("<p class=\"notice warning\">ONVOLLEDIGE SELECTIE: "
                      "meer open PRs en bestandsbotsingen mogelijk.</p>")
+    summary = bundle.get("review_request_worklist_summary")
+    if type(summary) is not dict or summary.get("review_requests_are_not_approvals") is not True:
+        raise ValueError("missing source-bound review worklist overview")
+    parts.append(
+        "<section class=\"notice\" aria-label=\"Reviewverzoeken overzicht\">"
+        "<strong>Reviewverzoeken in geselecteerde PRs (geen approvals)</strong>"
+        "<p>Reeds aangevraagd: " + e(summary["pending_review_requested_prs"]) +
+        " · geen open verzoek gezien: " +
+        e(summary["no_open_review_request_observed_prs"]) +
+        " · bron onbekend: " +
+        e(summary["review_request_source_unknown_prs"]) +
+        ". Controleer GitHub voordat je iets aanvraagt of samenvoegt.</p></section>")
     if bundle["items"]:
         change_labels = {
             "changed_gate_receipt": "Gatebewijs gewijzigd bij dezelfde HEAD",
@@ -1304,6 +1330,19 @@ def render_markdown(bundle):
             "niet voor mergebesluit.\n")
     if bundle["selection_is_not_full_open_pr_backlog"]:
         lines.append("**ONVOLLEDIGE SELECTIE:** overige open PRs/botsingen onbekend.\n")
+    summary = bundle.get("review_request_worklist_summary")
+    if type(summary) is not dict or summary.get("review_requests_are_not_approvals") is not True:
+        raise ValueError("missing source-bound review worklist overview")
+    lines += [
+        "## Reviewverzoeken in bestaande PRs",
+        "Aangevraagd bij reviewers: " + str(summary["pending_review_requested_prs"]) +
+        " PRs · geen open verzoek gezien: " +
+        str(summary["no_open_review_request_observed_prs"]) +
+        " PRs · onbekende bron: " +
+        str(summary["review_request_source_unknown_prs"]) + " PRs.",
+        "Een aangevraagde review is nooit een onafhankelijke goedkeuring.",
+        "",
+    ]
     change_counts = {
         "changed_gate_receipt": 0, "changed_or_uncertain_head": 0,
         "incomplete_gate_source": 0, "newly_selected_not_new_pr": 0,
