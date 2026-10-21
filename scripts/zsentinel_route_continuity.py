@@ -503,9 +503,20 @@ def main(argv=None):
                     '<meta name="referrer" content="no-referrer">'
                     '<meta http-equiv="Content-Security-Policy" '
                     'content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'">'
+                    '<meta name="viewport" content="width=device-width,initial-scale=1">'
                     '<title>zSentinel routing bronvergelijking</title>'
-                    '<style>body{font:1rem system-ui;background:#111c2c;color:#f2f6fc;'
-                    'max-width:900px;margin:auto;padding:2rem}li{margin:.4rem}</style>'
+                    '<style>:root{color-scheme:dark}*{box-sizing:border-box}'
+                    'body{font:1rem/1.5 system-ui;background:#111c2c;color:#f2f6fc;'
+                    'max-width:980px;margin:auto;padding:clamp(1rem,4vw,2.5rem)}'
+                    'h2{font-size:1.35rem}h3{font-size:1.05rem;margin:.35rem 0}'
+                    '.panel{padding:1rem;margin:.7rem 0;border:1px solid #526176;'
+                    'border-radius:10px;background:#192a3b}'
+                    '.panel.warn{border-left:5px solid #eab16b}'
+                    '.panel.read{border-left:5px solid #94c9e7}'
+                    '.tag{display:inline-block;border:1px solid #abc1d0;'
+                    'border-radius:20px;padding:.15rem .55rem;font-size:.75rem}'
+                    '.muted{color:#b5cadb}p{overflow-wrap:anywhere}'
+                    'li{margin:.4rem}</style>'
                     '</head><body><main>' + as_html(result) + '</main></body></html>')
             suffix = "html"
         elif args.format == "csv":
