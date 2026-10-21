@@ -526,19 +526,29 @@ def render_html(board):
                 or notion.get("file_scope_verified") is not False
                 or notion.get("can_dispatch") is not False):
             raise ValueError("untrusted Notion visibility")
+        verifying = notion.get("verifying_project_min")
+        if verifying is not None and (
+                type(verifying) is not dict or set(verifying) !=
+                set(notion["active_project_min"])):
+            raise ValueError("untrusted per-project Notion verifying status")
         notion_panel = (
-            '<section aria-label="Notion bestaand actief werk"><h2>'
-            'Notion: bestaand actief projectwerk</h2><p>'
+            '<section aria-label="Notion bestaand onafgerond werk"><h2>'
+            'Notion: bestaand onafgerond projectwerk</h2><p>'
             'Bron: ' + escape(str(notion.get("coverage", "unknown"))) +
-            '. Actieve statussen zijn geen bestandseigendom of vrije claim. '
-            'De telling is een ondergrens, ook bij lege projecten. '
-            'Bij bronweigering blijft alles ONBEKEND; zelfstandig '
-            'GitHub-productoverzicht blijft werken.</p><ul>' +
-            "".join('<li>' + escape(pid) + ': ' +
-                    ('minstens ' + str(value) + ' actief'
-                     if value is not None else 'ONBEKEND') + '</li>'
-                    for pid, value in notion["active_project_min"].items()) +
-            '</ul></section>'
+            '. Claimed, Running en Verifying zijn statusaanwijzingen, '
+            'geen geverifieerde lease of vrijgave. Onbekende projecten '
+            'blijven ONBEKEND; zelfstandige GitHub-productbron blijft bruikbaar.'
+            '</p><ul>' +
+            "".join(
+                '<li>' + escape(pid) + ': ' +
+                ('minstens ' + str(value) + ' onafgerond'
+                 if value is not None else 'ONBEKEND') +
+                (' · Verifying ≥' + str(verifying[pid]) +
+                 ' · eigenaar/review hercontroleren'
+                 if verifying is not None and verifying[pid] is not None
+                 else '') + '</li>'
+                for pid, value in notion["active_project_min"].items()
+            ) + '</ul></section>'
         )
     queue = board.get("queue_pressure_observation")
     queue_panel = ""
