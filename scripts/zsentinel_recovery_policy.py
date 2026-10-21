@@ -1395,6 +1395,56 @@ def markdown(report):
     return "\n".join(lines)
 
 
+
+def policy_html(report):
+    """Render one policy decision as a static, offline, script-free HTML card."""
+    esc = lambda value: html.escape(str(value), quote=True)
+    decision = report["decision"]
+    held = decision == "HOLD"
+    parts = [
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">",
+        "<title>zSentinel recovery policy decision</title>",
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;background:#f8fafc;color:#172538}section{background:white;border:1px solid #ccd5e0;border-left:5px solid #a75a14;border-radius:.5rem;padding:1rem;margin:1rem 0;overflow-wrap:anywhere}section.ready{border-left-color:#286454}h1{font-size:1.6rem}h2{font-size:1.1rem}li{margin:.5rem 0}a{color:#1458a1}code{overflow-wrap:anywhere}.muted{color:#4a596f}</style>",
+        "</head><body><header><h1>zSentinel recovery policy decision</h1>",
+        "<p><strong>Advisory only.</strong> Supplied evidence is not independently verified and no action was executed.</p></header>",
+        "<section" + ("" if held else " class='ready'") + "><h2>Decision: " + esc(decision) + "</h2><ul>",
+        "<li>Project: <strong>" + esc(report["project_id"]) + "</strong></li>",
+        "<li>Incident: <strong>" + esc(report["incident_id"]) + "</strong></li>",
+        "<li>Proposed action: <strong>" + esc(report["action"]) + "</strong></li>",
+        "<li>Source observed (UTC): " + esc(report["observed_at_utc"]) + "</li>",
+        "<li>Source age at evaluation: " + esc(report["source_age_seconds"]) + " seconds</li>",
+        "<li>Source: <a href='" + esc(report["source_url"]) + "'>" + esc(report["source_url"]) + "</a></li>",
+        "</ul></section>",
+    ]
+    if report["blockers"]:
+        parts.extend(["<section><h2>Holds to resolve</h2><ul>"])
+        for item in report["blockers"]:
+            parts.append("<li><strong>" + esc(item["code"]) + ":</strong> " +
+                         esc(item["message"]) + "</li>")
+        parts.append("</ul></section>")
+    else:
+        parts.append(
+            "<section class='ready'><h2>Remaining release boundary</h2>"
+            "<p>The supplied fields meet this local policy profile. This is not approval or execution; "
+            "current owner authorization and applicable GitHub/release gates remain authoritative.</p></section>"
+        )
+    if report["required_evidence"]:
+        parts.append("<section><h2>Required evidence</h2><ul>")
+        for field in report["required_evidence"]:
+            parts.append("<li><code>" + esc(field) + "</code></li>")
+        parts.append("</ul></section>")
+    parts.extend([
+        "<section><h2>Side-effect boundary</h2>",
+        "<p>Evidence independently verified: <strong>no</strong>. "
+        "Claim, retry, merge, deployment and runner operation performed: <strong>no</strong>.</p></section>",
+        "<footer><p class='muted'>Refresh current source evidence before acting. A policy decision is not a release authorization.</p></footer>",
+        "</body></html>\n",
+    ])
+    return "".join(parts)
+
+
 def markdown_batch(batch):
     lines = [
         "# zSentinel recovery policy batch",
@@ -1836,8 +1886,8 @@ def main(argv=None):
             return 2
     if not args.input:
         parser.error("either --input, --batch-input, --case-input or --template is required")
-    if args.format in ("workorders", "html", "csv"):
-        parser.error("--format workorders/html/csv requires --batch-input or --case-input")
+    if args.format in ("workorders", "csv"):
+        parser.error("--format workorders/csv requires --batch-input or --case-input")
     if any((args.project_id, args.incident_id, args.source_url, args.owner)):
         parser.error("template identity options require --template")
     try:
@@ -1845,7 +1895,9 @@ def main(argv=None):
         data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                           parse_constant=_reject_constant)
         report = evaluate(data, args.max_age_minutes)
-        output = markdown(report) if args.format == "markdown" else (
+        output = (
+            markdown(report) if args.format == "markdown" else
+            policy_html(report) if args.format == "html" else
             json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         )
         encoded = output.encode("utf-8")
