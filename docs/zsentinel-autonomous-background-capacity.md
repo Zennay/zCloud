@@ -180,6 +180,10 @@ validate runner recovery.
 
 Voor operators zonder JSON is er daarnaast `python3 scripts/zsentinel_background_priority.py --preview --human`: een Nederlandstalig één-scherms overzicht van het CPU-advies, de concrete oorzaken (actieve GitHub-jobs, systeemload, swap en schijfruimte), huidige systemd-quota/gewicht waar uitleesbaar, en de expliciete melding dat de preview niets heeft gewijzigd. `--human` zonder `--preview` wordt geweigerd. Beide weergaven lezen alleen; geen periodieke controle wordt gestart.
 
+### Two-stage promotion also covers mixed quota/weight states
+
+The intermediate `100% CPUQuota / CPUWeight 40` rung is required whenever the coach is below 100% quota **or** its current weight is below 40. In particular, a mixed state such as `100% / 25` must not jump directly to `175% / 70` after one low-pressure window. It first reaches `100% / 40`, then starts a fresh independent five-minute observation window before any further increase. Immediate reductions remain immediate, and an unknown or changed cgroup still resets or blocks promotion.
+
 ## Why the CPU band was selected
 
 The preview and private on-host state now include a bounded array of

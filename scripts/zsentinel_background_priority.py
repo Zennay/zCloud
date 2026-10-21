@@ -107,10 +107,10 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
         # silently boosted because we cannot prove its present limits.
         return None, None, "unreadable-current-cgroup", None
     current_quota = actual_quota * 100
-    # Never jump from a throttled 60% coach directly to 175% on
-    # one approval window: recover via 100%/40 weight, then require
-    # another independent five-minute low-pressure window for 175%.
-    if recommended_quota > 100 and current_quota < 99.8:
+    # Never jump from a throttled quota OR sub-40 CPUWeight directly to
+    # 175%/70. Reach the 100%/40 intermediate rung first, then require a
+    # separate five-minute low-pressure window for the final promotion.
+    if recommended_quota > 100 and (current_quota < 99.8 or actual_weight < 40):
         recommended_quota = 100
         recommended_weight = min(recommended_weight, 40)
     if recommended_quota < current_quota - 0.2:
