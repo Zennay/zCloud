@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from html import escape
+import csv
 import hashlib
+import io
 import json
 import re
 
@@ -312,6 +314,109 @@ def collect_workorders(board):
     return receipt
 
 
+
+
+def render_csv(bundle):
+    """Bounded private owner worklist for manual spreadsheet/filter workflows.
+
+    Each line remains a sourced observation, never a merge instruction. A
+    potentially active Excel formula is made inert before csv.writer quotes it.
+    """
+    if (type(bundle) is not dict or bundle.get("schema") != SCHEMA
+            or type(bundle.get("items")) is not list
+            or len(bundle["items"]) > MAX_PRS
+            or any(bundle.get(k) is not False for k in (
+                "claim_authorized", "merge_authorized",
+                "deploy_authorized", "writes_performed"))):
+        raise ValueError("invalid private owner CSV")
+    fields = (
+        "record_type", "project", "pr_number", "pr_url",
+        "head_sha_at_observation", "current_source_verified", "rank",
+        "category", "blocker", "human_next_step", "source_observed_at_utc",
+        "source_sha256", "link", "detail",
+    )
+    def inert(value):
+        value = "" if value is None else str(value)
+        if any(ord(ch) < 32 and ch not in "\t\n\r" for ch in value):
+            raise ValueError("invalid private CSV cell")
+        if len(value) > 2000:
+            raise ValueError("oversized private CSV cell")
+        # Quotes are not sufficient to prevent spreadsheet formula execution.
+        if value.lstrip(" \t\r\n\ufeff").startswith(("=", "+", "-", "@")):
+            return "'" + value
+        return value
+
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream, lineterminator="\n", quoting=csv.QUOTE_ALL)
+    writer.writerow(fields)
+    observed = bundle["source_observed_at_utc"]
+    source_hash = bundle["source_digest_sha256"]
+    def add(kind, card=None, **extra):
+        row = {
+            "record_type": kind, "source_observed_at_utc": observed,
+            "source_sha256": source_hash,
+        }
+        if card is not None:
+            row.update({
+                "project": card["project"], "pr_number": card["number"],
+                "pr_url": _same_repo_url(card["url"], card["repository"]),
+                "head_sha_at_observation": card["head_sha"],
+                "current_source_verified": bool(card["source_current"]),
+                "rank": card["rank"], "category": card["category"],
+                "blocker": card["blocker"],
+                "human_next_step": card["human_next_step"],
+            })
+        row.update(extra)
+        writer.writerow([inert(row.get(key)) for key in fields])
+    add("receipt", detail=(
+        "BOUNDED READ-ONLY SOURCE; NOT a full PR inventory, ownership proof, "
+        "required-CI set, review, merge or deploy approval. "
+        "Historical observation=" +
+        str(bundle.get("source_observation_stale") is True) +
+        "; incomplete selection=" +
+        str(bundle.get("selection_is_not_full_open_pr_backlog") is True)))
+    for card in bundle["items"]:
+        repo = card["repository"]
+        pr_url = _same_repo_url(card["url"], repo)
+        add("pr", card, link=pr_url + "/files", detail=(
+            "CURRENT STATUS NOT VERIFIED" if not card["source_current"]
+            else "EXACT HEAD AT SOURCE MOMENT; NOT MERGE AUTHORITY"))
+        for check in card["check_links"][:MAX_CHECKS]:
+            link = check["url"]
+            if not (re.fullmatch(
+                    re.escape("https://github.com/" + repo + "/runs/") +
+                    r"[1-9][0-9]*", link) or
+                    (card["head_sha"] and link ==
+                     "https://github.com/" + repo + "/commit/" +
+                     card["head_sha"] + "/checks")):
+                raise ValueError("unsafe exact-head check link")
+            add("check", card, link=link, detail=(
+                check["kind"] + " | " + check["name"] + " | " + check["state"]))
+        if card["check_links_hidden"]:
+            add("coverage_warning", card, detail=(
+                "Additional non-green checks not shown: " +
+                str(card["check_links_hidden"])))
+        for related in card["related_prs"][:8]:
+            add("related_pr", card, link=_same_repo_url(related, repo),
+                detail="Observed shared-file hint; Git merge conflict UNKNOWN")
+        for path in card["overlap_paths"][:MAX_PATHS]:
+            add("overlap_path", card, detail=edit_path(path))
+        if card["overlap_paths_hidden"]:
+            add("coverage_warning", card, detail=(
+                "Open-PR scope and shared-file evidence incomplete; "
+                "absence is not clearance"))
+        for number in card["unverified_issue_hints"][:MAX_ISSUE_HINTS]:
+            if type(number) is not int or not 0 < number < 100000000:
+                raise ValueError("invalid issue hint")
+            add("issue_hint_unverified", card,
+                link="https://github.com/" + repo + "/issues/" + str(number),
+                detail="PR text only; link identity/status/fix unverified")
+        for warning in card["source_warnings"][:16]:
+            add("source_warning", card, detail=warning)
+    data = "\ufeff" + stream.getvalue()
+    if len(data.encode("utf-8")) > 512 * 1024:
+        raise ValueError("private workorder CSV exceeds limit")
+    return data
 
 def render_html(bundle):
     """One-file, script-free private owner desk; never a live merge console."""
