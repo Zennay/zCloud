@@ -932,6 +932,8 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     # Priority before kind: make owner/incident work visible before new intake.
     order = {"P0": 0, "P1": 1, "P2": 2}
     kind_order = {"fresh_incident": 0, "worker_owner_review": 1,
+                  "github_refresh_auth_owner_hold": 1,
+                  "github_repository_access_owner_hold": 1,
                   "queue_current_owner_review": 2,
                   "queue_lease_window_review": 3,
                   "incident_dependency_owner_hold": 4,
