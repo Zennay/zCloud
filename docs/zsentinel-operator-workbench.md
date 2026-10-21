@@ -2785,3 +2785,12 @@ The private JSON handoff format remains v5 and stores the human project
 contact/date for later manual restoration on the **same board**. These
 local timestamps are not evidence that an original GitHub issue, worker,
 lease, CI job or production deployment is healthy or resolved.
+
+
+## Recovery policy request from a saved issue
+
+Selecting an issue now exposes a **Recovery policy request** section with an explicit proposed-action selector and a private JSON download. This makes the policy contract accessible from the existing visual operator workbench without requiring the operator to copy identifiers by hand.
+
+The generated request uses the saved canonical GitHub issue/PR URL and the original issue-inbox observation timestamp. It does not replace that timestamp with the current browser time, so stale saved evidence stays stale when evaluated. Project and incident identifiers are normalized to bounded slugs; owner remains null; every policy evidence field remains null/unknown. The request therefore defaults to HOLD until the operator records actual evidence.
+
+The export is local-only: no GitHub/Notion request, claim write, CI retry, merge, deployment or runner restart occurs. The policy evaluator's positive result is only READY_FOR_HUMAN_REVIEW, never action authority. The generated JSON is compatible with scripts/zsentinel_recovery_policy.py on the companion recovery-policy branch.
