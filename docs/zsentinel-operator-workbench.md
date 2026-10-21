@@ -3723,6 +3723,28 @@ merge, or deploy authorization: those flags are false and must remain so
 until separately verified by the authorized human/runtime owner.
 This is not a scheduler input or an automated queue writer.
 
+### Machine-readable JSON handoff from the same merge-first export
+
+Select `--format json` and a new `.json` output path to emit the same
+source-bound owner rows as a structured object rather than parsing CSV or HTML:
+
+```sh
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board /private/saved-product-board.json \
+  --pr-dossier /private/saved-pr-dossier.zip \
+  --format json --output /private/merge-first-existing-prs.json
+```
+
+The `zsentinel-merge-first-owner-export-v1` envelope includes the original
+board SHA256 and UTC observation, export-time advisory age labels, each archived
+manifest SHA256, missing-batch coverage, and all bounded owner records. Its
+`claim_authorized`, `dispatch_authorized`, `required_ci_verified`,
+`independent_review_verified`, `main_merge_verified`, `deploy_authorized`,
+and `live_state_verified` fields are explicitly `false`. The output is
+create-only/private, capped at one MiB, and never represents a live GitHub,
+Notion, worker, queue or release check. The JSON envelope is a portable human
+handoff, not a scheduler or queue-writer input.
+
 
 
 ### Print-ready owner view from the same offline CLI
