@@ -99,6 +99,7 @@ def issue_difference(older, newer, issue_url):
         issue_link_fields = (
             ("head_at_last_issue_link", "HEAD when issue link last observed"),
             ("gate_at_last_issue_link", "gate when issue link last observed"),
+            ("time_at_last_issue_link", "source UTC when issue link last observed"),
             ("priority_at_last_issue_link", "priority when issue link last observed"),
             ("pr_observed_after_link_absent", "PR observed after issue link disappeared"),
         )
