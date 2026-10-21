@@ -1,0 +1,81 @@
+name: zCloud project bottleneck proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_project_bottleneck_report.py
+      - tests/test_project_bottleneck_report.py
+      - tests/test_project_bottleneck_workflow.py
+      - .github/workflows/zcloud-project-bottleneck-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-project-bottleneck-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest             tests.test_project_bottleneck_report             tests.test_project_bottleneck_workflow             -v
+
+      - name: Prove live bottleneck read is bounded and read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_root=/home/ubuntu/zennay-cloud
+          test -f "$runtime_root/history.db"
+          test -f "$runtime_root/projects.json"
+          output="$(
+            python3 scripts/zcloud_project_bottleneck_report.py               --db "$runtime_root/history.db"               --projects "$runtime_root/projects.json"               --contracts project-contracts.json               --project cloud
+          )"
+          python3 - "$output" <<'PY'
+          import json
+          import sys
+
+          payload = json.loads(sys.argv[1])
+          projects = payload.get("projects")
+          if not isinstance(projects, list) or len(projects) != 1:
+              raise SystemExit("expected exactly one cloud bottleneck result")
+          item = projects[0]
+          if item.get("project_id") != "cloud":
+              raise SystemExit("live proof returned wrong project")
+          if item.get("state") not in {"running", "waiting", "blocked", "idle"}:
+              raise SystemExit("live proof returned invalid state")
+          if not isinstance(item.get("bottleneck_code"), str) or not item["bottleneck_code"]:
+              raise SystemExit("live proof omitted bottleneck_code")
+          forbidden = {"evidence", "blocker_text", "completion_criteria", "title"}
+          if forbidden.intersection(item):
+              raise SystemExit("live proof exposed forbidden payload fields")
+          print("ZCLOUD_PROJECT_BOTTLENECK_PROOF=" + json.dumps(payload, sort_keys=True, separators=(",", ":")))
+          PY
