@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from html import escape
 from io import StringIO
 from pathlib import Path
@@ -358,8 +359,8 @@ def main(argv=None):
     parser.add_argument("--board", type=Path, required=True)
     parser.add_argument("--pr-dossier", action="append", type=Path,
                         help="Optional original private PR archive ZIP; repeat 1-12")
-    parser.add_argument("--format", choices=("csv", "html"), default="csv",
-                        help="P0-first owner CSV or standalone print-ready HTML")
+    parser.add_argument("--format", choices=("csv", "html", "json"), default="csv",
+                        help="P0-first CSV, printable HTML or structured source-only JSON")
     parser.add_argument("--output", type=Path, required=True,
                         help="New private create-only destination")
     args = parser.parse_args(argv)
@@ -377,13 +378,48 @@ def main(argv=None):
         rows = prepare_rows(view, sha, saved)
         if args.format == "csv":
             stream = StringIO()
-            writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\r\n")
+            writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\\r\\n")
             writer.writeheader()
             for row in rows:
                 writer.writerow({key: _cell(row.get(key)) for key in FIELDS})
             payload = stream.getvalue()
-        else:
+        elif args.format == "html":
             payload = render_private_html(rows)
+        else:
+            exported_at = datetime.now(timezone.utc)
+            archives = saved["source_snapshots"] if saved is not None else []
+            board_age = (rows[0]["board_age_at_export"] if rows else
+                         source_freshness(
+                             [{"latest_observed_utc": view["observed_at_utc"]}],
+                             evaluated_at=exported_at)["status"])
+            archive_age = (rows[0]["archive_age_at_export"] if rows else
+                           source_freshness(archives, evaluated_at=exported_at)["status"]
+                           if archives else "not-provided")
+            envelope = {
+                "schema": "zsentinel-merge-first-owner-export-v1",
+                "source": "validated_saved_board_and_optional_saved_pr_archives",
+                "exported_at_utc": exported_at.isoformat(),
+                "original_board_sha256": sha,
+                "board_observed_at_utc": view["observed_at_utc"],
+                "board_age_at_export": board_age,
+                "archive_age_at_export": archive_age,
+                "device_clock_authoritative": False,
+                "source_archive_manifest_sha256s": [
+                    item["original_review_manifest_sha256"] for item in archives],
+                "saved_archive_batches_missing": any(
+                    bool(item["missing_batch_indexes"]) for item in archives),
+                "record_count": len(rows),
+                "records": rows,
+                "claim_authorized": False,
+                "dispatch_authorized": False,
+                "required_ci_verified": False,
+                "independent_review_verified": False,
+                "main_merge_verified": False,
+                "deploy_authorized": False,
+                "live_state_verified": False,
+            }
+            payload = json.dumps(
+                envelope, ensure_ascii=False, sort_keys=True, indent=2) + "\\n"
         if len(payload.encode("utf-8")) > MAX_CSV_BYTES:
             raise ValueError("private owner export exceeds one MiB size limit")
         write_create_only(args.output, payload)
