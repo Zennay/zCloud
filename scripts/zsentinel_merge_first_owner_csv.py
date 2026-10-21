@@ -37,7 +37,7 @@ FIELDS = (
     "historical_gate_labels", "sampled_board_unknown_gates",
     "pr_missing_last_saved_snapshot", "issue_link_missing_in_saved_source",
     "historical_candidates_truncated", "unlinked_in_saved_archive",
-    "source_archive_manifest_sha256s",
+    "source_archive_manifest_sha256s", "saved_pr_archive_supplied",
     "saved_archive_batches_missing", "human_next_step_only",
     "claim_authorized", "dispatch_authorized", "required_ci_verified",
     "independent_review_verified", "main_merge_verified", "deploy_authorized",
@@ -159,6 +159,7 @@ def prepare_rows(view, board_sha, saved, exported_at=None):
         "archive_age_at_export": archive_age,
         "device_clock_authoritative": False,
         "source_archive_manifest_sha256s": manifests,
+        "saved_pr_archive_supplied": bool(archives),
         "saved_archive_batches_missing": missing_batches,
         "claim_authorized": False, "dispatch_authorized": False,
         "required_ci_verified": False, "independent_review_verified": False,
@@ -286,12 +287,14 @@ def render_private_html(rows, source_metadata=None):
     board_sha = metadata.get("original_board_sha256", "UNKNOWN")
     board_moment = metadata.get("board_observed_at_utc", "UNKNOWN")
     manifests = metadata.get("source_archive_manifest_sha256s", "not-provided")
+    archive_supplied = metadata.get("saved_pr_archive_supplied", "UNKNOWN")
     missing_batches = metadata.get("saved_archive_batches_missing", "UNKNOWN")
     parts.append(
         '<section aria-label="Original source custody"><h2>Original source custody</h2>'
         '<p>Original board SHA256: ' + escape(str(board_sha)) +
         ' · source UTC: ' + escape(str(board_moment)) + '</p>'
-        '<p>Saved archive manifest SHA256(s): ' + escape(str(manifests)) +
+        '<p>Saved PR archive supplied: ' + escape(str(archive_supplied)) +
+        ' · manifest SHA256(s): ' + escape(str(manifests)) +
         ' · missing batches: ' + escape(str(missing_batches)) + '</p>'
         '<p>Board age at export: ' + escape(str(board_age)) +
         ' · historical PR archive age: ' + escape(str(archive_age)) +
@@ -353,6 +356,7 @@ def render_private_html(rows, source_metadata=None):
                      ' · UTC ' + escape(str(row["board_observed_at_utc"])) +
                      '</small><small>Saved archive manifest SHA256s: ' +
                      escape(str(row["source_archive_manifest_sha256s"])) +
+                     ' · archive supplied: ' + escape(str(row["saved_pr_archive_supplied"])) +
                      '</small><small>Missing saved batches: ' +
                      escape(str(row["saved_archive_batches_missing"])) +
                      '; historic gate labels: ' +
@@ -406,6 +410,7 @@ def main(argv=None):
             "board_age_at_export": board_age,
             "archive_age_at_export": archive_age,
             "source_archive_manifest_sha256s": " | ".join(archive_manifests) or "not-provided",
+            "saved_pr_archive_supplied": bool(archives),
             "saved_archive_batches_missing": missing_archive_batches,
         }
         rows = prepare_rows(view, sha, saved, exported_at=exported_at)
@@ -437,7 +442,8 @@ def main(argv=None):
                     "issue_link_missing_in_saved_source": False,
                     "historical_candidates_truncated": False,
                     "unlinked_in_saved_archive": False,
-                    "source_archive_manifest_sha256s": " | ".join(archive_manifests),
+                    "source_archive_manifest_sha256s": " | ".join(archive_manifests) or "not-provided",
+                    "saved_pr_archive_supplied": bool(archives),
                     "saved_archive_batches_missing": missing_archive_batches,
                     "human_next_step_only": (
                         "Inspect live issue/PR inventory; empty saved selection is not live backlog clearance"),
@@ -468,6 +474,7 @@ def main(argv=None):
                 "archive_age_at_export": archive_age,
                 "device_clock_authoritative": False,
                 "source_archive_manifest_sha256s": archive_manifests,
+                "saved_pr_archive_supplied": bool(archives),
                 "saved_archive_batches_missing": missing_archive_batches,
                 "record_count": len(rows),
                 "records": rows,
