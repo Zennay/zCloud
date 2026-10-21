@@ -30,7 +30,29 @@ OBSERVED = "observed_current_head_partial_gate_evidence"
 UNKNOWN = "github_source_unavailable_or_head_changed"
 # Only the canonical live gate collector may supply a saved human action.
 # Never render arbitrary instructions embedded in a local receipt as advice.
-HUMAN_GATE_STEPS = frozenset({
+HUMAN_GATE_LABELS_NL = {
+    "owner_finish_draft_before_merge_review":
+        "Concept-PR: bevoegde eigenaar maakt reviewklaar.",
+    "owner_resolve_current_base_conflicts":
+        "Mergeconflict op de huidige basis: bevoegde PR-eigenaar herstelt de branch.",
+    "wait_for_github_mergeability_evaluation":
+        "GitHub heeft mergeability nog niet bepaald: nieuwe bron nodig.",
+    "inspect_incomplete_current_head_gate_source":
+        "Onvolledige GitHub gatebron: volledig bewijs opnieuw ophalen.",
+    "inspect_current_head_failed_checks_with_owner":
+        "Mislukte huidige checks: met bevoegde PR-eigenaar herstellen.",
+    "wait_for_existing_current_head_checks":
+        "Bestaande huidige checks zijn nog niet afgerond.",
+    "owner_address_exact_head_review_changes":
+        "Onafhankelijke reviewer vraagt wijzigingen; eigenaar handelt af.",
+    "verify_missing_current_head_checks_and_rules":
+        "Geen huidige checks waargenomen: CI/branchregels apart controleren.",
+    "request_independent_current_head_review":
+        "Onafhankelijke review op de actuele HEAD nodig.",
+    "verify_required_rules_ownership_and_release_separately":
+        "Vereiste branchregels, eigenaar en release apart verifiëren.",
+}
+HUMAN_GATE_STEPS = frozenset(HUMAN_GATE_LABELS_NL)
     "owner_finish_draft_before_merge_review",
     "owner_resolve_current_base_conflicts",
     "wait_for_github_mergeability_evaluation",
@@ -310,7 +332,8 @@ def human(report, markdown=False):
                 if markdown else action["url"])
         lines.append("- " + str(action["manifest_position"]) + ". " + link +
                      " · [" + action["historic_gate_category"] + "] " +
-                     action["human_next_gate"] + " · geen mergevrijgave")
+                     HUMAN_GATE_LABELS_NL.get(action["human_next_gate"], "Actueel bronbewijs nodig.") +
+                     " · geen mergevrijgave")
     if report["manual_review_queue_hidden_after_24"]:
         lines.append(str(report["manual_review_queue_hidden_after_24"]) +
                      " extra PR's buiten compacte shortlist, zie volledige bronbatches.")
@@ -319,7 +342,8 @@ def human(report, markdown=False):
                      " · bron UTC " + batch["observed_at_utc"])
         for row in batch["prs"]:
             name = ("[" + row["url"] + "](" + row["url"] + ")") if markdown else row["url"]
-            lines.append("- " + name + " · [" + row["historic_gate_category"] + "] " + row["next_human_gate"] +
+            lines.append("- " + name + " · [" + row["historic_gate_category"] + "] " +
+                         HUMAN_GATE_LABELS_NL.get(row["next_human_gate"], "Actueel bronbewijs nodig.") +
                          (" · VEROUDERD (>15 min)" if row["saved_source_stale_over_15_minutes"] else "") +
                          " · MERGE NEE")
     lines.append("\nGeen claims, workflows, GitHub-writes, merge of deploy uitgevoerd.")
@@ -332,7 +356,8 @@ def html(report):
         items = []
         for row in batch["prs"]:
             url = escape(row["url"], quote=True)
-            step = escape(row["next_human_gate"])
+            step = escape(HUMAN_GATE_LABELS_NL.get(row["next_human_gate"],
+                                                       "Actueel bronbewijs nodig."))
             category = escape(row["historic_gate_category"])
             head = escape(row["exact_head_observed"] or "onbekend")
             note = " · oud bronbewijs" if row["saved_source_stale_over_15_minutes"] else ""
