@@ -295,3 +295,29 @@ receipts preserve earlier sampled facts explicitly as stale/historical.
 Source-level syntax was parsed without running any QA/regression suite; a
 source commit or parse check is not exact-head CI, owner approval or production
 verification. Merging and releasing remain independent protected operations.
+
+### 21 October — preserve busy GitHub pages and respect provider-wide throttling
+
+A bounded multi-project Activity sample now shares its **200-event display budget**
+across observed projects, explicitly loaded browser pages and PR / Actions /
+canonical-main categories. A chatty newest page cannot independently consume
+every entry while leaving the requested older page blank. Retained events still
+carry source timestamps and immutable identities; dropped events remain
+unknown, not proof they never happened. The page control shows the retained
+count and continues to disclose that the sample is bounded.
+
+The unauthenticated manual browser reader honors GitHub 429 and GitHub 403
+**only if** the latter contains a confirmed rate-limit signal
+(`X-RateLimit-Remaining: 0` or `Retry-After`). Its strictly capped global,
+in-memory pause applies to subsequent reads across projects (between two
+minutes and one hour, never persisted). A plain ambiguous 403 remains scoped
+to that source and does not assert all projects are inaccessible. The panel
+makes the global pause visible, disables manual public reads during the
+cooldown, and preserves existing observations; it neither sends a retry nor
+starts a background scheduler. Response body and raw rate headers are never
+shown or committed. The existing per-project two-minute backoff and bounded
+request policy remain in place.
+
+These behaviors are on the existing Activity product PR #1550 only. They
+confer no authorization for recovery actions, protected merges, checkout
+writes, credential access or production deployment.
