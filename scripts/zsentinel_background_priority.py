@@ -479,6 +479,10 @@ def _scoped_runner_inventory(user_scope=False):
     partial = len(result.stdout) > 20000
     for line in result.stdout[:20000].splitlines():
         fields = line.strip().split()
+        # systemctl prepends a marker ("●") for failed/errored units in
+        # otherwise plain --no-legend output. Never silently hide P0 failures.
+        if fields and fields[0] == "●":
+            fields = fields[1:]
         if len(fields) < 4 or not RUNNER_UNIT.fullmatch(fields[0]):
             continue
         name, state, detail = fields[0], fields[2], fields[3]
