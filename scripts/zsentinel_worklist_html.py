@@ -13,6 +13,17 @@ import re
 
 from zsentinel_issue_action_board import MAX_CARDS, ORDER, PR, ISSUE
 
+# These are historical source observations, never the current GitHub decision.
+GATE_LABELS = {
+    "not_observed": "Geen waarneming in deze bron",
+    "observed_failed": "Check mislukt in opgeslagen bron",
+    "observed_pending": "Check wacht in opgeslagen bron",
+    "observed_partial_no_release_permission": "Gedeeltelijke bron; geen mergevrijgave",
+    "issue_source_stale": "Issuebron verouderd; opnieuw raadplegen",
+    "source_clock_incoherent": "Bronklokken inconsistent; opnieuw raadplegen",
+    "inconsistent_existing_pr_gate_sources": "PR-gatebronnen tegenstrijdig",
+}
+
 
 def source_head_link(pr_url, head):
     """Render only an admitted historical exact commit, never merge approval."""
@@ -147,7 +158,7 @@ def render_html(board, max_rows=20):
             extra = "".join(
                 "<li><a target='_blank' rel='noopener noreferrer' href='" +
                 h(url) + "'>PR " + h(url.rsplit("/", 1)[-1]) + " ↗</a> · " +
-                h(state) +
+                h(GATE_LABELS[state]) + ' (' + h(state) + ')' +
                 (" · bestandsoverlap" if data["file_overlap_observed"] else "") +
                 (" · bronbeweging" if data["source_movement_observed"] else "") +
                 "<br>" + source_head_link(url, data.get("source_head_observed")) +
@@ -218,8 +229,9 @@ def render_html(board, max_rows=20):
              "Bekijk alle bronissues van deze PR</button>" if pr else "") +
             "</p>" + alt_html +
             "<p class='source'>" + h(note) +
-            " · actuele CI/review: " +
-                h(row["candidate_exact_head_gate_state"]) +
+            " · opgeslagen CI/review (niet actueel): " +
+                h(GATE_LABELS.get(row["candidate_exact_head_gate_state"],
+                                  row["candidate_exact_head_gate_state"])) +
                 " · actuele owner/merge: ONBEKEND</p>"
             "<div class='controls'><label>Lokale vervolgstatus"
             "<select class='local-state'>"
@@ -245,7 +257,7 @@ def render_html(board, max_rows=20):
             escape(candidate["url"], quote=True) + "'>PR #" +
             escape(candidate["url"].rsplit("/", 1)[-1]) + "</a> · " +
             source_head_link(candidate["url"], candidate.get("source_head_observed")) +
-            " · gate " + escape(candidate["gate_state"]) +
+            " · gate " + escape(GATE_LABELS[candidate["gate_state"]]) +
             (" · bestandsoverlap gezien" if candidate["file_overlap_observed"] else "") +
             (" · historische beweging gezien" if candidate["source_movement_observed"] else "") +
             " <button type='button' class='focus-alternative' data-focus-pr='" +
@@ -376,7 +388,7 @@ def render_html(board, max_rows=20):
             " gekoppelde issuevermelding(en) in deze beperkte overdracht; " +
             str(primary_visible) + " als primaire reviewkandidaat"
             "<p class='source'>" + source_head_link(pr, group_head) +
-            "<br>Exacte-HEAD bron: " + escape(observed_gate) +
+            "<br>Opgeslagen exact-HEAD-gate: " + escape(GATE_LABELS[observed_gate]) +
             " · " + escape(human_gate) +
             (" · Bestandsoverlap waargenomen" if
              group["any_file_overlap_observed"] else "") +
@@ -451,6 +463,15 @@ const collisionLabels={
  owner:'Eigenaar bepalen',
  coordinate:'Afstemmen met PR-eigenaren',
  followup:'Opvolging vastgelegd (niet opgelost)'
+};
+const gateLabels={
+ not_observed:'Geen waarneming in deze bron',
+ observed_failed:'Check mislukt in opgeslagen bron',
+ observed_pending:'Check wacht in opgeslagen bron',
+ observed_partial_no_release_permission:'Gedeeltelijke bron; geen mergevrijgave',
+ issue_source_stale:'Issuebron verouderd; opnieuw raadplegen',
+ source_clock_incoherent:'Bronklokken inconsistent; opnieuw raadplegen',
+ inconsistent_existing_pr_gate_sources:'PR-gatebronnen tegenstrijdig'
 };
 const collisionExport=document.getElementById('collision-export');
 const collisionOpenExport=document.getElementById('collision-open-export');
@@ -607,7 +628,8 @@ function onePrHandoff(){
   '- Bestaande PR: [Open op GitHub]('+url+')',
   '- Waargenomen bron HEAD: '+safeText(head),
   '- Waargenomen broncommit: '+(head==='ONBEKEND'?'ONBEKEND':'[GitHub commit]('+repoUrl+'/commit/'+head+')'),
-  '- Waargenomen gate: '+safeText(p.dataset.gate),
+  '- Waargenomen gate: '+safeText(gateLabels[p.dataset.gate]||p.dataset.gate)+
+    ' ('+safeText(p.dataset.gate)+')',
   '- Menselijke gates: '+safeText(p.dataset.next),
   '- Bestandsoverlap in bron: '+safeText(p.dataset.overlap),
   '- Historische bronbeweging: '+safeText(p.dataset.movement),
@@ -700,7 +722,7 @@ function exportCollisionHandoff(onlyUnresolved,focusIssue=null){
    const head=group&&group.dataset.head;
    lines.push('- [Bestaande PR #'+pr.split('/').pop()+']('+pr+')',
     '  - Geobserveerde bron HEAD: '+safeText(head||'ONBEKEND'),
-    '  - Gate: '+safeText(group?group.dataset.gate:'ONBEKEND'));
+    '  - Gate: '+safeText(group?(gateLabels[group.dataset.gate]||group.dataset.gate):'ONBEKEND'));
    if(group){
     lines.push('  - Menselijke gatevervolgstap: '+safeText(group.dataset.next),
       '  - PR-bestandsoverlap in de bron: '+safeText(group.dataset.overlap),
@@ -754,7 +776,7 @@ document.getElementById('export').addEventListener('click',function(){
   parts.push('  - Waargenomen bron HEAD: '+safeText(p.dataset.head||'ONBEKEND'));
   if(p.dataset.head)parts.push('  - Broncommit: [GitHub commit]('+
     url.split('/pull/')[0]+'/commit/'+p.dataset.head+')');
-  parts.push('  - Waargenomen gatebron: '+safeText(p.dataset.gate)+
+  parts.push('  - Waargenomen gatebron: '+safeText(gateLabels[p.dataset.gate]||p.dataset.gate)+
    ' (geen autorisatie)');
   parts.push('  - Handmatige PR-status: '+prLabels[p.querySelector('.pr-local-state').value]);
   const note=p.querySelector('.pr-note').value.trim();
