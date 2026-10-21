@@ -10,6 +10,7 @@ from html import escape
 import os
 from pathlib import Path
 import subprocess
+import stat
 import time
 
 from zsentinel_background_priority import (
