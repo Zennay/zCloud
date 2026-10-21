@@ -698,6 +698,14 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <option value="park-blocker">Parked blocker</option>
 <option value="ready-for-new-product-work">Candidate only · verify live claims</option>
 </select></label>
+<label>Historical PR source<select id="historicalPrFilter">
+<option value="">All issues · do not infer current PR status</option>
+<option value="linked">Saved existing PR reference</option>
+<option value="multiple">Several historical PR candidates</option>
+<option value="lost-link">PR issue-link disappeared in saved samples</option>
+<option value="missing-pr">PR absent from last saved snapshot</option>
+<option value="source-unknown">No saved PR link · UNKNOWN</option>
+</select></label>
 <label>Follow-up status<select id="followupStatus">
 <option value="">All manual states</option>
 <option value="overdue">Past manual review date</option>
@@ -1090,10 +1098,27 @@ function filtered(){
  const decision=document.getElementById('disposition').value;
  const change=document.getElementById('change').value;
  const followupStatus=document.getElementById('followupStatus').value;
+ const historicalPrFilter=document.getElementById('historicalPrFilter').value;
+ const historicalMatches=card=>{
+  if(!historicalPrFilter)return true;
+  const item=savedPrHistory.issues[card.issue];
+  if(historicalPrFilter==='source-unknown')return !item;
+  if(!item)return false;
+  if(historicalPrFilter==='linked')return item.source_pr_total>0;
+  if(historicalPrFilter==='multiple')return item.multiple_existing_prs;
+  if(historicalPrFilter==='lost-link')
+   return item.issue_links_lost_while_pr_sampled>0||
+    item.prs.some(pr=>pr.pr_observed_after_issue_link_absent||
+                        pr.issue_link_missing_last_source);
+  if(historicalPrFilter==='missing-pr')
+   return item.prs_missing_last_saved_snapshot>0;
+  return false;
+ };
  const kinds=change&&baseline?new Map(changesSinceBaseline().map(x=>[x.issue,x.kind])):null;
  return board.cards.filter(c=>(!p||p===c.priority)&&(!project||project===c.project)&&
    (!decision||decision===(handoffs.get(c.issue)?.decision||'investigate'))&&
    followupStateMatches(handoffs.get(c.issue),followupStatus)&&
+   historicalMatches(c)&&
    (!change||(kinds&&(change==='new-or-changed'?
      ['new-observation','changed-evidence'].includes(kinds.get(c.issue)):
      kinds.get(c.issue)===change)))&&
@@ -2633,6 +2658,16 @@ function drawList(){
    b.setAttribute('aria-current',c.issue===selected?'true':'false');
    b.append(elem('span',c.issue,'issue-id'),elem('span',c.title),
      elem('span',c.priority+' · '+c.project,'meta'));
+   const history=savedPrHistory.issues[c.issue];
+   if(savedPrHistory.sources_provided){
+    const label=history?
+      (history.source_pr_total+' archived PR candidate(s)'+
+       (history.issue_links_lost_while_pr_sampled?' · lost issue link':'')+
+       (history.prs_missing_last_saved_snapshot?' · last source missing PR':'')+
+       (history.multiple_existing_prs?' · multiple PRs':'')+
+       ' · source-only'):'Archived PR link UNKNOWN · no release inference';
+    b.append(elem('small',label,'meta'));
+   }
    b.onclick=()=>openObservedIssue(c.issue);li.append(b);issueList.append(li);
  });
  document.getElementById('info').textContent=board.cards.length+' bounded issue cards · '+view.length+
@@ -3015,7 +3050,8 @@ document.getElementById('recoveryNextProject').addEventListener('click',()=>{
   (due?' · manual review due '+due:' · no manual review date entered')+
   '. Local navigation only; verify current PRs, active claims, branch rules and owner before acting.';
 });
-['search','priority','project','disposition','change','followupStatus'].forEach(id=>document.getElementById(id).addEventListener(
+['search','priority','project','disposition','change','followupStatus',
+ 'historicalPrFilter'].forEach(id=>document.getElementById(id).addEventListener(
  'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
 document.getElementById('export').onclick=()=>{
  saveSelection();
