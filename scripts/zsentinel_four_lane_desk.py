@@ -1030,7 +1030,7 @@ def main():
     parser.add_argument("--runner-processes", action="store_true",
                         help="Read only local /proc listener presence; no job or online proof")
     parser.add_argument("--host-pressure", action="store_true",
-                        help="Read bounded local host RAM/swap/load hints only; never admits workers")
+                        help="Read bounded host RAM/swap/load and root disk headroom; never admits workers")
     parser.add_argument("--format", choices=("text", "json", "html", "markdown"), default="text")
     parser.add_argument("--output", help="New owner-private file: .html or .md")
     args = parser.parse_args()
