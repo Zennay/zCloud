@@ -147,6 +147,7 @@ def render(report: dict) -> str:
                 "  - Eigenaar: " + _md(card.get("owner", "unknown")),
                 "  - Probleem: " + _md(card.get("problem", "")),
                 "  - Actie: " + _md(card.get("action", "")),
+                "  - Vereist bewijs: " + _md("; ".join(card.get("required_evidence", [])) or "niet gespecificeerd"),
                 "  - Bevindingen: " + _md(", ".join(card.get("finding_codes", [])) or "geen bevestigd"),
             ]
     else:
