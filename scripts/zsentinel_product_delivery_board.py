@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import stat
 import sys
-import tempfile
+import secrets
 
 SCHEMAS = {
     "inbox": "zsentinel-product-issue-inbox-v1",
@@ -25,6 +25,7 @@ ISSUE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$")
 URL = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[1-9][0-9]{0,8}$")
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
 MAX_INPUT = 2 * 1024 * 1024
+MAX_OUTPUT_BYTES = 6 * 1024 * 1024
 
 
 def unique(pairs):
@@ -513,16 +514,121 @@ table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;pa
 
 
 def write_create_only(path, payload):
-    temporary = None
+    """Atomically publish one private UTF-8 report without clobbering a target."""
+    if not isinstance(path, Path) or not isinstance(payload, str):
+        raise ValueError("invalid private report arguments")
+    destination = Path(os.path.abspath(os.fspath(path)))
+    if destination.name in ("", ".", ".."):
+        raise ValueError("invalid private report filename")
+    data = payload.encode("utf-8")
+    if not 1 <= len(data) <= MAX_OUTPUT_BYTES:
+        raise ValueError("private report is empty or exceeds its byte limit")
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise ValueError("private directory-bound no-follow writes unsupported")
+
+    parent = destination.parent
+    before = parent.lstat()
+    if (not stat.S_ISDIR(before.st_mode) or before.st_uid != os.geteuid()
+            or stat.S_IMODE(before.st_mode) & 0o077):
+        raise ValueError("private output directory must be owned by current user and inaccessible to group/others")
+    directory_fd = os.open(
+        parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
+        getattr(os, "O_CLOEXEC", 0))
+    temporary_name = None
+    temporary_identity = None
+    published = False
+    published_identity = None
+    fd = None
+
+    def remove_if_owned(name, identity):
+        if name is None or identity is None:
+            return
+        try:
+            current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) == identity:
+                os.unlink(name, dir_fd=directory_fd)
+        except OSError:
+            pass
+
     try:
-        fd, name = tempfile.mkstemp(prefix=".zsentinel-board-", dir=path.parent)
-        temporary = Path(name)
-        with os.fdopen(fd, "w", encoding="utf-8") as output:
-            output.write(payload)
-        os.link(temporary, path)
+        actual = os.fstat(directory_fd)
+        if (not stat.S_ISDIR(actual.st_mode)
+                or (actual.st_dev, actual.st_ino) != (before.st_dev, before.st_ino)
+                or actual.st_uid != os.geteuid()
+                or stat.S_IMODE(actual.st_mode) & 0o077):
+            raise ValueError("private output directory was replaced or became accessible to group/others")
+
+        for _ in range(8):
+            candidate = ".zsentinel-board-" + secrets.token_hex(16)
+            try:
+                fd = os.open(
+                    candidate,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW |
+                    getattr(os, "O_CLOEXEC", 0),
+                    0o600, dir_fd=directory_fd)
+                temporary_name = candidate
+                break
+            except FileExistsError:
+                continue
+        if fd is None or temporary_name is None:
+            raise FileExistsError("could not allocate a unique private report inode")
+
+        info = os.fstat(fd)
+        temporary_identity = (info.st_dev, info.st_ino)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ValueError("temporary report inode is not private and regular")
+        os.fchmod(fd, 0o600)
+        output = os.fdopen(fd, "wb")
+        fd = None
+        with output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+
+        current_temp = os.stat(
+            temporary_name, dir_fd=directory_fd, follow_symlinks=False)
+        if ((current_temp.st_dev, current_temp.st_ino) != temporary_identity
+                or not stat.S_ISREG(current_temp.st_mode)
+                or current_temp.st_nlink != 1
+                or stat.S_IMODE(current_temp.st_mode) & 0o077):
+            raise ValueError("temporary report inode changed before publication")
+        current_dir = os.fstat(directory_fd)
+        if (current_dir.st_uid != os.geteuid()
+                or stat.S_IMODE(current_dir.st_mode) & 0o077):
+            raise ValueError("private output directory permissions changed before publication")
+
+        os.link(
+            temporary_name, destination.name,
+            src_dir_fd=directory_fd, dst_dir_fd=directory_fd,
+            follow_symlinks=False)
+        published = True
+        published_identity = temporary_identity
+        current_target = os.stat(
+            destination.name, dir_fd=directory_fd, follow_symlinks=False)
+        if ((current_target.st_dev, current_target.st_ino) != published_identity
+                or not stat.S_ISREG(current_target.st_mode)
+                or current_target.st_nlink != 2
+                or current_target.st_uid != os.geteuid()
+                or stat.S_IMODE(current_target.st_mode) & 0o077):
+            raise ValueError("published report inode changed or is not private")
+        remove_if_owned(temporary_name, temporary_identity)
+        temporary_name = None
+        os.fsync(directory_fd)
+    except BaseException:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        remove_if_owned(temporary_name, temporary_identity)
+        if published:
+            remove_if_owned(destination.name, published_identity)
+        raise
     finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+        os.close(directory_fd)
+    return len(data)
 
 
 def main(argv=None):
