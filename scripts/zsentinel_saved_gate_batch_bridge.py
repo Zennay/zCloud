@@ -634,12 +634,12 @@ def main(argv=None):
     parser.add_argument("--receipt", type=Path, action="append", required=True)
     parser.add_argument("--allow-partial", action="store_true",
                         help="Import only supplied, source-bound batches; label missing batches UNKNOWN")
-    parser.add_argument("--format", choices=("json", "markdown", "html", "csv", "portfolio-csv", "portfolio-json", "portfolio-markdown", "portfolio-html", "portfolio-pr-csv", "portfolio-pr-markdown", "portfolio-pr-html", "portfolio-zip"), default="json",
+    parser.add_argument("--format", choices=("json", "markdown", "html", "csv", "portfolio-csv", "portfolio-json", "portfolio-markdown", "portfolio-html", "portfolio-pr-csv", "portfolio-pr-markdown", "portfolio-pr-html", "portfolio-pr-zip", "portfolio-zip"), default="json",
                         help="Private browser import, full Markdown, offline HTML, PR/project CSV, project-only Markdown or owner-neutral portfolio JSON")
     parser.add_argument("--project",
                         help="Exact source-observed repository (e.g. Zennay/zCloud); only --format portfolio-*")
     parser.add_argument("--pr-url",
-                        help="Canonical existing GitHub PR URL to export with --format portfolio-pr-markdown or portfolio-pr-html")
+                        help="Canonical existing GitHub PR URL for portfolio-pr-markdown, portfolio-pr-html or portfolio-pr-zip")
     parser.add_argument("--previous", type=Path,
                         help="Prior private JSON bridge for same-manifest PR change view (HTML or Markdown)")
     parser.add_argument("--output", type=Path, required=True)
@@ -652,9 +652,15 @@ def main(argv=None):
             raise ValueError("Previous observation requires a human-readable handoff")
         if args.project is not None and not args.format.startswith("portfolio-"):
             raise ValueError("Project scope is supported only by portfolio output formats")
-        if (args.pr_url is None) != (args.format not in ("portfolio-pr-markdown", "portfolio-pr-html")):
+        if (args.pr_url is None) != (args.format not in ("portfolio-pr-markdown", "portfolio-pr-html", "portfolio-pr-zip")):
             raise ValueError("One canonical --pr-url is required only for one-PR portfolio output")
-        if args.format == "portfolio-pr-html":
+        if args.format == "portfolio-pr-zip":
+            from zsentinel_saved_gate_package import private_single_pr_package
+            selected, _ = canonical_manifest(review, raw)
+            rendered = private_single_pr_package(
+                selected, result, pr_url=args.pr_url,
+                project=args.project)
+        elif args.format == "portfolio-pr-html":
             from zsentinel_saved_gate_portfolio import portfolio_single_pr_html
             selected, _ = canonical_manifest(review, raw)
             rendered = portfolio_single_pr_html(
