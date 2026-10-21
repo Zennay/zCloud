@@ -1631,7 +1631,8 @@ const SAFE_WORKER_COMPOSER_HINTS=Object.freeze({
   'previous-queue-send-after-reload-manual-review':'This browser tab previously dispatched the same queue before reload. Preserve the original claim and conversation; no duplicate Send or New chat.',
   'generation-unconfirmed-manual-review-no-retry':'After five minutes the browser still cannot confirm generation. A remote execution is possible; review the original task before any new dispatch.',
   'dispatch-ledger-unavailable':'The tab could not save its conservative sent-queue marker. No Send click was allowed; inspect browser storage or use a newly authorized assignment.',
-  'new-chat-transition-operator-action-required':'One in-tab New chat attempt did not produce a usable composer. No further retry or prompt dispatch was authorized.'
+  'new-chat-transition-operator-action-required':'One in-tab New chat attempt did not produce a usable composer. No further retry or prompt dispatch was authorized.',
+  'command-ack-backlog-manual-review':'A worker cannot safely acknowledge a prior browser command. No further command dispatch is allowed until the original command is reconciled.'
 });
 function composerHint(row){
   if(row?.kind==='composer-restored')return 'Composer visible again; claim and generation still unverified.';
