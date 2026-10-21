@@ -474,6 +474,7 @@ document.getElementById('export').addEventListener('click',function(){
  const parts=['# zSentinel · private handmatige opvolging','',
   'Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
   'PR-bron UTC: '+safeText(document.getElementById('pr-time').textContent),
+  'Exact privé bron-token: '+safeText(document.body.dataset.sourceToken),
   'Geen claim-, merge-, CI-, review- of deployautorisatie.',''];
  for(const [index,t] of tickets.entries()){
   const issue=t.dataset.issue;
@@ -531,6 +532,7 @@ document.getElementById('session-save').addEventListener('click',function(){
   schema:'zsentinel-local-handoff-v2',
   source_token:document.body.dataset.sourceToken,
   saved_at:new Date().toISOString(),
+  focused_pr:focusedPr,
   entries:rows, pr_entries:prRows,
   merge_authorized:false,claim_authorized:false,remote_writes_performed:false
  },null,2);
@@ -555,7 +557,9 @@ document.getElementById('session-import').addEventListener('change',async functi
      !Array.isArray(restored.entries)||restored.entries.length!==tickets.length||
      (currentSession&&(!Array.isArray(restored.pr_entries)||
        restored.pr_entries.length!==prs.length))||
-     (oldSession&&Object.prototype.hasOwnProperty.call(restored,'pr_entries')))
+     (oldSession&&Object.prototype.hasOwnProperty.call(restored,'pr_entries'))||
+     (currentSession&&Object.prototype.hasOwnProperty.call(restored,'focused_pr')&&
+      restored.focused_pr!==null&&!prs.some(p=>p.dataset.pr===restored.focused_pr)))
     throw new Error('Deze sessie hoort niet bij dezelfde bronopname');
   const allowed=new Set(Object.keys(labels));
   for(let i=0;i<tickets.length;i++){
@@ -581,6 +585,11 @@ document.getElementById('session-import').addEventListener('change',async functi
    for(let i=0;i<prs.length;i++){
      prs[i].querySelector('.pr-local-state').value=restored.pr_entries[i].status;
      prs[i].querySelector('.pr-note').value=restored.pr_entries[i].note;
+   }
+   if(Object.prototype.hasOwnProperty.call(restored,'focused_pr')){
+    focusedPr=restored.focused_pr;
+    focusIndex=-1;
+    search.value='';priority.value='';project.value='';state.value='';prState.value='';
    }
   }
   refresh();
