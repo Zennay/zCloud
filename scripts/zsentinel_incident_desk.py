@@ -1130,7 +1130,9 @@ def private_action_briefing(decision, source):
         cards = issues["issues"]
         for row in cards[:8]:
             pri, pid, url = row["priority"], row["project_id"], row["issue_url"]
-            lines.append("- " + md(pri, 16) + " · " + md(pid, 80) +
+            lines.append("- " + ("HISTORISCHE BRON · " if issues["coverage"] == "stale" else
+                                  "PARTIËLE BRON · ") +
+                         md(pri, 16) + " · " + md(pid, 80) +
                          " · [issue](" + url + ")")
             for pr in row["open_pr_candidates"][:3]:
                 lines.append("  - Bestaand PR-kandidaat: " + pr)
@@ -1138,6 +1140,9 @@ def private_action_briefing(decision, source):
             lines.append("- Geen issue in deze begrensde steekproef; geen all-clear.")
         lines.append("- Brondekking: " + md(issues["coverage"], 24) +
                      "; actieve bestandsclaims niet geverifieerd.")
+        if issues["coverage"] in ("stale", "degraded"):
+            lines.append("- EIGENAARACTIE: controleer actuele issue/PR-bron opnieuw; "
+                         "oude links bewijzen geen huidige prioriteit of vrij werk.")
     else:
         lines.append("- Niet opgevraagd; P0/P1 issues en eigenaars ONBEKEND.")
     lines += ["", "## 3. GitHub run-/runnerroute · nooit autonoom herstarten"]
@@ -1154,13 +1159,32 @@ def private_action_briefing(decision, source):
             url = ("https://github.com/" + row["repository"] +
                    "/actions/runs/" + str(row["run_id"]) +
                    "/job/" + str(row["job_id"]))
+            observed_job = _stamp(row["observed_at"])
+            stale_job = (datetime.now(timezone.utc) -
+                         datetime.fromisoformat(observed_job)) > timedelta(minutes=10)
+            stage = row.get("job_assignment_stage", "ONBEKEND")
             lines.append("- " + md(row["project_id"], 80) + " · [run/job](" +
                          url + ") · HEAD " + row["head_sha"] +
+                         " · bronobservatie " + observed_job +
+                         (" · VEROUDERD (>10m)" if stale_job else " · recente bron") +
                          " · " + md(row["job_status"], 30) +
-                         " · runnerlabel " + md(row["runner_route"], 25))
-            lines.append("  - Toewijzing: " +
-                         md(row.get("job_assignment_stage", "ONBEKEND"), 60) +
+                         " · runnerroute " + md(row["runner_route"], 25))
+            lines.append("  - Toewijzing bij bronmoment: " + md(stage, 60) +
                          "; runnergezondheid en recovery ONBEKEND.")
+            if stale_job:
+                lines.append("  - EIGENAARACTIE: lees dezelfde job opnieuw; "
+                             "een oude toewijzing of queue is geen actuele storing.")
+            elif row["job_status"] in ("waiting", "pending"):
+                lines.append("  - EIGENAARACTIE: controleer GitHub-approval, omgeving "
+                             "en jobadmissie. GEEN bewezen runnerstoring.")
+            elif row["runner_route"] == "self_hosted" and (
+                    stage == "queued_without_runner_assignment"):
+                lines.append("  - EIGENAARACTIE: verifieer self-hosted labels, "
+                             "listenerregistratie en repositorytoegang; geen "
+                             "automatische runnerherstart.")
+            else:
+                lines.append("  - EIGENAARACTIE: verifieer exacte jobstatus/labels "
+                             "en afzonderlijke PR-HEAD/CI-gates; geen herstelbewijs.")
     else:
         lines.append("- Geen exact-jobbron geselecteerd; geen runnerdiagnose.")
     lines += ["", "## 4. Notion-status en workercontinuïteit · geen leasebewijs"]
@@ -1203,15 +1227,25 @@ def private_action_briefing(decision, source):
     q = decision.get("live_queue_pressure")
     if type(q) is dict and q.get("coverage") in ("current", "incomplete", "stale"):
         t = q["totals"]
-        lines.append("- Queue-" + md(q["coverage"], 20) + ": " +
-                     str(t["queued_items"]) + " wachtend, " +
+        observed_queue = _stamp(q["observed_at"])
+        queue_current = q["coverage"] == "current" and (
+            datetime.now(timezone.utc) -
+            datetime.fromisoformat(observed_queue) <= timedelta(minutes=5))
+        lines.append("- " + ("ACTUELE BEGRENZDE BRON" if queue_current else
+                             "HISTORISCHE / ONVOLLEDIGE BRON · NIET ACTUEEL") +
+                     " · Queue-" + md(q["coverage"], 20) +
+                     " · bronmoment " + observed_queue + ": " +
+                     str(t["queued_items"]) + " eerder waargenomen wachtend, " +
                      str(t["owned_items"]) + " bezet, " +
                      str(t["high_claim_attempt_items"]) + " met ≥3 claimpogingen.")
-        lines.append("- Lease onzeker/verlopen/inconsistent: " +
+        lines.append("- Leaseklok onbekend/verlopen/inconsistent in bron: " +
                      str(t["unverifiable_owner_lease_rows"]) + "/" +
                      str(t["expired_owner_lease_rows"]) + "/" +
                      str(t["inconsistent_owner_lease_window_rows"]) +
                      ". Geen release/retry; eerst actuele eigenaar.")
+        if not queue_current:
+            lines.append("- EIGENAARACTIE: lees verse queue/lease-bron. "
+                         "Eerdere aantallen zijn geen huidige taakbezetting.")
     else:
         lines.append("- Queue-/leasebron ONBEKEND. Geen vrije scope afleiden.")
     for item in source["incidents"][:30]:
