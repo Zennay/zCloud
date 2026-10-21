@@ -67,6 +67,54 @@ def render(report: dict) -> str:
             lines.append(f"| {_md(key)} | {_md(value)} |")
         lines.append("")
         lines.append("Dit is hostbrede, momentane vraag; geen bewijs welke worker de oorzaak is.")
+    for section, key, fields in (
+        ("Extern archief", "archive_readiness", (
+            ("Mount", "mount"), ("Status", "state"), ("Filesystem", "mount_type"),
+            ("rclone read-only", "rclone_read_only"),
+            ("Schrijven toegestaan", "archive_write_authorized"),
+            ("Overdracht uitgevoerd", "transfer_performed"))),
+        ("Bescherming lopend werk", "worker_safety", (
+            ("Workerbewijs", "state"), ("Claimed queue rows", "queued_claims"),
+            ("Durable claims", "durable_claims"),
+            ("Fresh generating slots", "fresh_generating_slots"),
+            ("Event sample compleet", "events_sample_complete"),
+            ("Safe idle bewezen", "safe_idle_verified"))),
+    ):
+        data = report.get(key)
+        if data is None:
+            continue
+        lines += ["", "## " + section, "", "| Signaal | Waarneming |", "|---|---|"]
+        for label, field in fields:
+            lines.append("| " + _md(label) + " | " + _md(data.get(field, "unknown")) + " |")
+        lines.append("Geen workeronderbreking, archiefwrite of claim-/queuewijziging is geautoriseerd.")
+    storage = report.get("storage_inventory")
+    if storage is not None:
+        lines += ["", "## Begrensde opslaginventaris", ""]
+        for row in storage.get("measured", []):
+            lines.append("- " + _md(row.get("category", "unknown")) +
+                         ": " + _md(row.get("size_gib", "unknown")) + " GiB")
+        if storage.get("incomplete"):
+            lines.append("Onvolledig/niet gemeten: " + _md(", ".join(storage["incomplete"])))
+        lines.append("Scope: " + _md(storage.get("scope", "unknown")) +
+                     "; geen bestanden gewijzigd of verwijderd.")
+    comparison = report.get("comparison")
+    if comparison is not None:
+        lines += ["", "## Verandering sinds vorige bronopname", ""]
+        for key, label in (("new_findings", "Nieuw"),
+                           ("resolved_findings", "Verdwenen in bron"),
+                           ("recovery_unverified_findings", "Herstel niet geverifieerd"),
+                           ("still_present", "Nog aanwezig")):
+            lines.append("- " + label + ": " + _md(", ".join(comparison.get(key, [])) or "geen"))
+        trend = comparison.get("host_pressure_trend")
+        if trend is not None:
+            lines.append("CPU/PSI-trend: " + _md(trend.get("status", "unknown")) +
+                         " · " + _md(trend.get("trend", "unknown")) +
+                         " (twee bronopnames, geen doorlopend toezicht).")
+            for metric in trend.get("metrics", []):
+                lines.append("- " + _md(metric.get("label", metric.get("metric", "unknown"))) +
+                             ": " + _md(metric.get("previous", "unknown")) +
+                             " → " + _md(metric.get("current", "unknown")) +
+                             " (Δ " + _md(metric.get("delta", "unknown")) + ")")
     lines += ["", "## Bevindingen", ""]
     if report["findings"]:
         for finding in report["findings"]:
@@ -89,6 +137,16 @@ def render(report: dict) -> str:
             ]
     else:
         lines.append("- Geen eigenaarshandoff beschikbaar; actuele eigenaar blijft onbekend.")
+    lines += ["", "## Geordende hersteladviezen", ""]
+    for action in report.get("recovery_priorities", []):
+        lines += [
+            "- **" + _md(action.get("code", "unknown")) + " — " +
+            _md(action.get("owner", "unknown")) + "**",
+            "  - Reden: " + _md(action.get("reason", "")),
+            "  - Volgende stap: " + _md(action.get("next_action", "")),
+            "  - Hostwijziging: " + _md(action.get("changes_host", "unknown")) +
+            " · autorisatie vereist: " + _md(action.get("authorization_required", "unknown")),
+        ]
     lines += ["", "## Releasebeslisbord", "",
               "| Gate | Status | Eigenaar | Betekenis |",
               "|---|---|---|---|"]
