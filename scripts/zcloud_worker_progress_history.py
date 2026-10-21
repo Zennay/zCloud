@@ -32,6 +32,14 @@ SAFE_REASON_CODES = frozenset({
     "composer-draft-preserved",
     "composer-text-not-confirmed",
     "composer-changed-before-send",
+    # Producer PR #1552: bounded no-duplicate-dispatch manual review states.
+    # Exact constant allowlist only; never reflect arbitrary browser reasons.
+    "assignment-changed-before-send",
+    "conversation-load-failed-manual-review",
+    "previous-queue-send-after-reload-manual-review",
+    "generation-unconfirmed-manual-review-no-retry",
+    "dispatch-ledger-unavailable",
+    "new-chat-transition-operator-action-required",
 })
 MAX_ROWS = 40
 
