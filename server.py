@@ -5446,12 +5446,25 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({'chatgpt_runners':runner_statuses(target_cfg=target_cfg),'chatgpt_firefox':firefox_runner_status(),'time':now()})
         if u.path=='/api/portfolio-queue':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
-            include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
+            # Opt-in compact, authenticated read model for zSentinel's
+            # local/private operator inbox. Never return prompt/metadata,
+            # raw portfolio rows or worker/allocation state in this view.
+            # Same existing caller authorization; no new URL or writer.
+            inbox_mode=str(q.get('operator_inbox',['0'])[0]).lower() in ('1','true','yes')
+            include_done=(not inbox_mode and str(q.get('all',['0'])[0]).lower() in ('1','true','yes'))
             items=portfolio_queue_items(include_done)
+            delivery_policy=product_queue_snapshot(items)
+            if inbox_mode:
+                return self.reply({
+                    'backend':'sqlite',
+                    'operator_inbox_snapshot':True,
+                    'delivery_policy':delivery_policy,
+                    'time':now(),
+                })
             return self.reply({
                 'backend':'sqlite',
                 'items':items,
-                'delivery_policy':product_queue_snapshot(items),
+                'delivery_policy':delivery_policy,
                 'active_lane_conflict_observation':portfolio_queue_conflict_snapshot(),
                 'allocation':global_worker_allocation(),
                 'time':now(),
