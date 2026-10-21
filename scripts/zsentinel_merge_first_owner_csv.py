@@ -11,18 +11,21 @@ import csv
 from html import escape
 from io import StringIO
 from pathlib import Path
+from datetime import datetime, timezone
 import re
 import sys
 
 from zsentinel_operator_workbench import read_source_and_sha, validated_view
 from zsentinel_product_delivery_board import write_create_only
-from zsentinel_saved_dossier_timeline import build_timeline
+from zsentinel_saved_dossier_timeline import build_timeline, source_freshness
 from zsentinel_saved_issue_timeline import issue_worklist
 
 RANK = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
 MAX_CSV_BYTES = 1024 * 1024
 FIELDS = (
-    "original_board_sha256", "board_observed_at_utc", "priority",
+    "original_board_sha256", "board_observed_at_utc",
+    "board_age_at_export", "archive_age_at_export",
+    "device_clock_authoritative", "priority",
     "source_issue_urls", "source_issue_titles", "project_scope",
     "pr_reference_state", "pr_url", "linked_issue_count",
     "multiple_issues_share_pr", "issue_has_alternative_prs",
@@ -58,6 +61,13 @@ def prepare_rows(view, board_sha, saved):
     ):
         raise ValueError("historical PR source cannot authorize work")
     archives = saved["source_snapshots"] if saved is not None else []
+    # Advisory source age is calculated at export time, not board creation.
+    exported_at = datetime.now(timezone.utc)
+    board_age = source_freshness(
+        [{"latest_observed_utc": view["observed_at_utc"]}],
+        evaluated_at=exported_at)["status"]
+    archive_age = (source_freshness(archives, evaluated_at=exported_at)["status"]
+                   if archives else "not-provided")
     manifests = " | ".join(row["original_review_manifest_sha256"] for row in archives)
     missing_batches = any(bool(row["missing_batch_indexes"]) for row in archives)
     historical = {row["issue_url"]: row for row in (saved["issues"] if saved else [])}
@@ -111,6 +121,9 @@ def prepare_rows(view, board_sha, saved):
     shared = {
         "original_board_sha256": board_sha,
         "board_observed_at_utc": view["observed_at_utc"],
+        "board_age_at_export": board_age,
+        "archive_age_at_export": archive_age,
+        "device_clock_authoritative": False,
         "source_archive_manifest_sha256s": manifests,
         "saved_archive_batches_missing": missing_batches,
         "claim_authorized": False, "dispatch_authorized": False,
@@ -195,6 +208,11 @@ def render_private_html(rows):
         'review, main merge and production release: NOT VERIFIED.</p>',
         '<p>' + str(len(rows)) + ' source-bound records, including issues '
         'without an observed PR. A missing PR is UNKNOWN, not a clear queue.</p>',
+        '<p>Original board age at export (local device clock, not live proof): ' +
+        escape(str(rows[0]["board_age_at_export"] if rows else "unknown")) +
+        ' · historical PR archive age: ' +
+        escape(str(rows[0]["archive_age_at_export"] if rows else "unknown")) +
+        '. Even a recent-snapshot is NOT GitHub or worker validation.</p>',
     ]
     for row in rows:
         priority = escape(str(row["priority"]))
