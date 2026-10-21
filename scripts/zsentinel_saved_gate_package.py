@@ -14,6 +14,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from zsentinel_saved_gate_portfolio import (
     portfolio_page_html, portfolio_markdown, portfolio_pr_csv, portfolio_json,
     portfolio_single_pr_html, portfolio_single_pr_markdown, project_worklist,
+    single_pr_related_peers,
 )
 
 MAX_ENTRY_BYTES = 1024 * 1024
@@ -98,6 +99,24 @@ def private_single_pr_package(selected, integrated, *, pr_url, project=None):
     if len(matches) != 1:
         raise ValueError("Single PR package source selection is not unique")
     group, item = matches[0]
+    peer_issues = single_pr_related_peers(
+        selected, integrated, pr_url=pr_url)
+    peer_count = len({peer["url"] for peers in peer_issues.values()
+                      for peer in peers})
+    peer_receipt = {
+        "schema": "zsentinel-private-single-pr-related-source-prs-v1",
+        "source": "saved_bounded_manifest_and_gate_batches_not_live",
+        "selected_pr_url": pr_url,
+        "original_review_manifest_sha256":
+            integrated["original_review_manifest_sha256"],
+        "linked_issue_peer_prs": peer_issues,
+        "total_distinct_other_prs_observed": peer_count,
+        "complete_current_pr_inventory_verified": False,
+        "shared_file_scope_verified": False,
+        "issue_fixed_verified": False,
+        "claim_authorized": False,
+        "merge_authorized": False,
+    }
     receipt = {
         "schema": "zsentinel-private-single-pr-dossier-zip-v1",
         "source": "saved_manifest_and_exact_head_gate_batch_evidence_not_live",
@@ -107,6 +126,7 @@ def private_single_pr_package(selected, integrated, *, pr_url, project=None):
         "source_gate": item["gate_source"],
         "source_batch_index": item["batch_index"],
         "observed_linked_issue_count": len(item["linked_issue_urls"]),
+        "observed_other_prs_sharing_source_issues": peer_count,
         "original_review_manifest_sha256":
             integrated["original_review_manifest_sha256"],
         "original_board_sha256": integrated["original_board_sha256"],
@@ -125,6 +145,9 @@ def private_single_pr_package(selected, integrated, *, pr_url, project=None):
     data = {
         "single-pr-dossier.html": html,
         "single-pr-actions.md": markdown,
+        "linked-peer-prs.json": (
+            json.dumps(peer_receipt, ensure_ascii=False, sort_keys=True, indent=2) +
+            "\n").encode("utf-8"),
         "source-receipt.json": (
             json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2) +
             "\n").encode("utf-8"),
