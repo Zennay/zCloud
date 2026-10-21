@@ -757,6 +757,12 @@ De optionele historische PR-gatevergelijking toont nu wijzigingen in de reviewer
 
 Het product adviseert alleen menselijk vervolgwerk: geen automatische reviewverzoeken, merge, issueafhandeling, CI-rerun, claim, worker-/VPS-ingreep of deploy. Protected main, onafhankelijke review, actieve eigenaarsclaims en exacte-HEAD vereiste CI blijven aparte autorisatievoorwaarden.
 
+### 21 oktober · Merge-first actielijst en privé-CSV zijn consistent
+
+De geprioriteerde operator-actielijst toont nu expliciet hoeveel reviewverzoeken voor personen en teams in de huidige, aan exact HEAD gebonden bron openstaan. Dit staat in de gewone tekst/Markdown, de aparte offline HTML-actielijst, de machineleesbare JSON en in de optionele privé-CSV. De CSV heeft de afzonderlijke kolommen `pending_review_individuals_observed`, `pending_review_teams_observed` en `pending_review_request_fingerprint_sha256` in `current_gate_observation`; de primaire `merge_first_action`-regel bevat eveneens de aantallen. Bij ontbrekende of veranderde bron zijn ze **leeg/onbekend** in plaats van kunstmatig nul. Het gaat uitsluitend om observatie, niet om een ingediende goedkeuring of eigenaarsvrijgave.
+
+De bestaande `csv_formula_inert`, bounded-uitvoer, create-only privé bestandsrechten en nul-autorisatievelden blijven ongewijzigd. Er worden geen GitHub reviewverzoeken aangemaakt en geen CI/jobs geretriggerd. Geobserveerde reviewer- of CI-verandering wordt nooit zonder benodigde exacte-HEAD checks, onafhankelijke review en protected-main/releasebevoegdheid tot merge-promotie verheven.
+
 ### Direct Dutch triage without exporting JSON
 
 The same bounded CLI supports `--format text` for an immediately readable
