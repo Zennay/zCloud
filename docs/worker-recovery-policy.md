@@ -272,7 +272,27 @@ python3 scripts/zsentinel_recovery_policy.py \
 The original case may cover `all` or a single project; a requested
 project outside its source scope is rejected. An explicit slice with no
 matching source observations also fails closed instead of producing a
-misleading empty or green backlog. A successful sliced report preserves the
+misleading empty or green backlog. For a single existing issue, add `--view-issue <number>` **together**
+with `--view-project`. This selects one source-linked issue card and
+its already referenced candidate PRs for an owner handoff:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json \
+  --view-project cloud --view-issue 1326 \
+  --format markdown > private-issue-1326-handoff.md
+```
+
+Issue numbers are repository-local. Requiring a project alongside the issue
+number prevents ambiguous cross-project selection. If the imported historical
+case lacks that issue (including because of a truncated source), the selector
+fails closed rather than manufacturing a current clean bill of health.
+The source-only view explicitly records `selected_issue_number` in JSON
+and a dedicated CSV column; HTML, Markdown and text display it as
+`project/issue-number` along with hidden historical record counts.
+
+A successful sliced report preserves the
 original case/issue/queue source clocks and source coverage, includes a
 `source_case_view` JSON field recording the selected project, priority cap,
 total original incidents, number hidden, `projection_only=true` and
