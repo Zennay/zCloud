@@ -30,7 +30,7 @@ def project_labels(registry_path: Path, canonical: dict):
     JSON and silently skipped mismatched registry entries. An incomplete
     mapping could hide a live worker claim behind an UNKNOWN project.
     """
-    from zsentinel_product_issue_inbox import canonical_projects, MAX_CONFIG_BYTES
+    from zsentinel_product_issue_inbox import MAX_CONFIG_BYTES
     from zsentinel_recovery_router import read_json
     if (not isinstance(registry_path, Path) or not isinstance(canonical, dict)
             or not canonical or len(canonical) > 18):
@@ -38,16 +38,17 @@ def project_labels(registry_path: Path, canonical: dict):
     entries = read_json(registry_path, MAX_CONFIG_BYTES, "Notion project register")
     if not isinstance(entries, list):
         raise ValueError("invalid canonical project registry")
-    # Pin this relation map to the same GitHub project set already admitted
-    # by the issue/PR collector, rather than accepting another registry.
-    if canonical_projects(registry_path) != canonical:
-        raise ValueError("Notion registry no longer matches canonical GitHub scope")
+    # Only the single bounded inode above defines the Notion relation map.
+    # Do not open the same path a second time: the source could be replaced
+    # between snapshots with a different Notion mapping and unchanged IDs.
     result = {}
     seen_projects = set()
     for entry in entries:
         if not isinstance(entry, dict) or entry.get("id") not in canonical:
             raise ValueError("unregistered Notion relation project")
         slug, url = entry["id"], entry.get("notion_url")
+        if entry.get("repo_url") != "https://github.com/" + canonical[slug]:
+            raise ValueError("Notion relation does not match canonical GitHub repository")
         match = NOTION_PROJECT_URL.fullmatch(url) if isinstance(url, str) else None
         if not match or slug in seen_projects:
             raise ValueError("invalid or duplicate project Notion relation")
