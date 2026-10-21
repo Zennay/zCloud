@@ -20,6 +20,37 @@ def action(identifier, severity, problem, next_step, status):
 def _number(value):
     return value if type(value) is int and 0 <= value <= 1000000 else 0
 
+def _runner_pressure_context(packet):
+    """Correlate only two LOCAL observations; never infer remote job status."""
+    proc = packet.get("runner_processes")
+    if not isinstance(proc, dict):
+        return " Runnerprocessen niet bemonsterd."
+    families = proc.get("families")
+    if not isinstance(families, dict):
+        return " Runnerprocesbron onbekend."
+    cloud = families.get("zCloud")
+    if not isinstance(cloud, dict):
+        return " zCloud-runnerbron ontbreekt."
+    listeners = _number(cloud.get("listeners"))
+    workers = _number(cloud.get("workers"))
+    if listeners:
+        return (
+            " Er is lokaal een zCloud-listener gezien; dit bevestigt geen "
+            "GitHub-registratie, toewijzing of succesvolle job."
+        )
+    if workers:
+        return (
+            " Er is lokaal een zCloud-worker zonder waargenomen listener; "
+            "onderbreek de actieve job niet."
+        )
+    if proc.get("source_complete") is True:
+        return (
+            " De complete lokale processnapshot zag geen zCloud-listener; "
+            "remote runnerregistratie blijft apart te verifiëren."
+        )
+    return " De lokale runnerprocesbron is onvolledig."
+
+
 def suggested_actions(packet):
     """Return a bounded prioritized list; observation is never authorization."""
     result = []
@@ -175,10 +206,11 @@ def suggested_actions(packet):
                 "host-pressure-owner-review",
                 "urgent" if hint == "HIGH_LOCAL_PRESSURE" else "review",
                 "De lokale host heeft verhoogde RAM-, swap-, CPU- of schijfruimtedruk; "
-                "dit is geen bewijs dat een GitHub-job vastzit.",
+                "dit is geen bewijs dat een GitHub-job vastzit."
+                + _runner_pressure_context(packet),
                 "Behoud bestaande jobs en claims. Vergelijk cgroup-limieten, "
                 "runner-toewijzing en workerprogressie met de bevoegde eigenaar "
-                "vóór capaciteitsverhoging of serviceactie.",
+                "vóór capaciteitsverhoging, opslagopschoning of serviceactie.",
                 "HOLD_CAPACITY_OWNER_REVIEW",
             ))
     # Runner /proc only corroborates local process presence. It cannot prove
