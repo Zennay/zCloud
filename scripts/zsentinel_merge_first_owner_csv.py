@@ -42,6 +42,9 @@ FIELDS = (
     "claim_authorized", "dispatch_authorized", "required_ci_verified",
     "independent_review_verified", "main_merge_verified", "deploy_authorized",
     "live_state_verified",
+    "selection_repository", "selection_priority", "selection_record_type",
+    "source_record_count", "selected_record_count",
+    "excluded_source_record_count", "selection_filter_applied",
 )
 
 
@@ -258,6 +261,54 @@ def prepare_rows(view, board_sha, saved, exported_at=None):
     return rows
 
 
+def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"):
+    """Narrow a fully admitted historical owner list without granting ownership.
+
+    Repository identity always comes from canonical issue/PR URLs, not from
+    inconsistent internal project slugs. A missing match never means that
+    the complete live issue/PR inventory was checked.
+    """
+    if repository is not None and not re.fullmatch(
+        r"Zennay/[A-Za-z0-9_.-]{1,100}", repository
+    ):
+        raise ValueError("repository filter must be canonical Zennay/<repo>")
+    if priority is not None and priority not in RANK:
+        raise ValueError("unrecognized owner priority filter")
+    if record_type not in ("all", "existing-pr", "issue-without-pr", "unlinked-pr"):
+        raise ValueError("unrecognized owner record type")
+    result = []
+    for row in rows:
+        original = row["pr_url"] or row["source_issue_urls"].split(" | ", 1)[0]
+        source_repo = original.split("/pull/", 1)[0].split("/issues/", 1)[0]
+        if repository and source_repo != "https://github.com/" + repository:
+            continue
+        if priority and row["priority"] != priority:
+            continue
+        state = row["pr_reference_state"]
+        if record_type == "existing-pr" and not row["pr_url"]:
+            continue
+        if record_type == "issue-without-pr" and row["pr_url"]:
+            continue
+        if record_type == "unlinked-pr" and state != "historical_pr_without_sampled_issue_link":
+            continue
+        result.append(row)
+    return result
+
+
+def selection_metadata(total, rows, *, repository=None, priority=None,
+                       record_type="all"):
+    """Explicit whole-source vs selected coverage for every export format."""
+    return {
+        "selection_repository": repository or "ALL_SOURCE_REPOSITORIES",
+        "selection_priority": priority or "ALL_SOURCE_PRIORITIES",
+        "selection_record_type": record_type,
+        "source_record_count": total,
+        "selected_record_count": len(rows),
+        "excluded_source_record_count": total - len(rows),
+        "selection_filter_applied": bool(repository or priority or record_type != "all"),
+    }
+
+
 def render_private_html(rows, source_metadata=None):
     """One standalone script-free private owner worklist; source evidence only."""
     parts = [
@@ -289,6 +340,28 @@ def render_private_html(rows, source_metadata=None):
     manifests = metadata.get("source_archive_manifest_sha256s", "not-provided")
     archive_supplied = metadata.get("saved_pr_archive_supplied", "UNKNOWN")
     missing_batches = metadata.get("saved_archive_batches_missing", "UNKNOWN")
+    selection = {key: metadata.get(key, "UNKNOWN") for key in (
+        "selection_repository", "selection_priority", "selection_record_type",
+        "source_record_count", "selected_record_count",
+        "excluded_source_record_count", "selection_filter_applied")}
+    parts.append(
+        '<section aria-label="Owner selection and bounded coverage">'
+        '<h2>Owner selection · saved source scope</h2>'
+        '<p>Repository: ' + escape(str(selection["selection_repository"])) +
+        ' · priority: ' + escape(str(selection["selection_priority"])) +
+        ' · record type: ' + escape(str(selection["selection_record_type"])) + '</p>'
+        '<p>Source records before filtering: ' +
+        escape(str(selection["source_record_count"])) +
+        ' · displayed: ' + escape(str(selection["selected_record_count"])) +
+        ' · excluded from this selection: ' +
+        escape(str(selection["excluded_source_record_count"])) + '</p>'
+        '<p>Filtered: ' + escape(str(selection["selection_filter_applied"])) +
+        '. Excluded or absent entries are UNKNOWN, not fixed, merged or free.</p>'
+        '</section>'
+    )
+    if not rows:
+        parts.append('<p role="status">No saved records match this selection. '
+                     'This is NOT a current PR inventory or backlog clearance.</p>')
     parts.append(
         '<section aria-label="Original source custody"><h2>Original source custody</h2>'
         '<p>Original board SHA256: ' + escape(str(board_sha)) +
@@ -379,6 +452,13 @@ def main(argv=None):
                         help="Optional original private PR archive ZIP; repeat 1-12")
     parser.add_argument("--format", choices=("csv", "html", "json"), default="csv",
                         help="P0-first CSV, printable HTML or structured source-only JSON")
+    parser.add_argument("--repository",
+                        help="Optional canonical repository filter, e.g. Zennay/zCloud")
+    parser.add_argument("--priority", choices=tuple(RANK),
+                        help="Filter P0/P1/P2/Unspecified after full source admission")
+    parser.add_argument("--record-type", default="all",
+                        choices=("all", "existing-pr", "issue-without-pr", "unlinked-pr"),
+                        help="Select saved PRs, absent sampled PR links or unlinked PRs")
     parser.add_argument("--output", type=Path, required=True,
                         help="New private create-only destination")
     args = parser.parse_args(argv)
@@ -413,7 +493,17 @@ def main(argv=None):
             "saved_pr_archive_supplied": bool(archives),
             "saved_archive_batches_missing": missing_archive_batches,
         }
-        rows = prepare_rows(view, sha, saved, exported_at=exported_at)
+        admitted_rows = prepare_rows(view, sha, saved, exported_at=exported_at)
+        rows = select_owner_rows(
+            admitted_rows, repository=args.repository, priority=args.priority,
+            record_type=args.record_type)
+        selection = selection_metadata(
+            len(admitted_rows), rows, repository=args.repository,
+            priority=args.priority, record_type=args.record_type)
+        # Keep complete-source coverage explicit, even in a single selected row.
+        html_metadata.update(selection)
+        for row in rows:
+            row.update(selection)
         if args.format == "csv":
             if not rows:
                 # A header-only file loses provenance and can be misread as a
@@ -456,6 +546,8 @@ def main(argv=None):
                     "live_state_verified": False,
                 }]
             stream = StringIO()
+            for row in rows:
+                row.update(selection)
             writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\r\n")
             writer.writeheader()
             for row in rows:
@@ -477,6 +569,7 @@ def main(argv=None):
                 "saved_pr_archive_supplied": bool(archives),
                 "saved_archive_batches_missing": missing_archive_batches,
                 "record_count": len(rows),
+                **selection,
                 "records": rows,
                 "claim_authorized": False,
                 "dispatch_authorized": False,
