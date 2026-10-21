@@ -17,7 +17,8 @@ concurrency:
 
 jobs:
   source-gate:
-    runs-on: ubuntu-latest
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 8
     steps:
       - name: Admit immutable same-repo owner source before checkout
