@@ -55,13 +55,14 @@ def _fold(line):
     return "\r\n".join(result)
 
 
-def human_calendar(decision, *, include_historical=False):
+def human_calendar(decision, *, include_historical=False, historical_replay=False):
     """Offline ICS with fresh human incidents and opt-in historical owner checks.
 
     Historical entries use the original review deadline, never an invented
     future alarm. Importing the file remains a deliberate operator action.
     """
-    if (type(include_historical) is not bool or not isinstance(decision, dict)
+    if (type(include_historical) is not bool or type(historical_replay) is not bool
+            or not isinstance(decision, dict)
             or type(decision.get("schema_version")) is not int
             or decision["schema_version"] != 1
             or decision.get("mutations_performed") is not False
@@ -99,6 +100,7 @@ def human_calendar(decision, *, include_historical=False):
         "X-WR-CALNAME:zSentinel - alleen menselijke blokkades",
         "X-ZSENTINEL-SOURCE-UTC:" + observed_utc,
         "X-ZSENTINEL-NO-AUTHORITY:TRUE",
+        "X-ZSENTINEL-HISTORICAL-REPLAY:" + ("TRUE" if historical_replay else "FALSE"),
     ]
     seen = set()
     for alert in alerts:
@@ -130,13 +132,16 @@ def human_calendar(decision, *, include_historical=False):
         # Preserve the source deadline, including overdue incidents. Never
         # pretend a new later due time or owner acknowledgement exists.
         uid = hashlib.sha256((pid + ":" + key).encode("utf-8")).hexdigest()[:32]
-        summary = _calendar_text(severity + " zSentinel " + pid + " - " + problem)
+        summary = _calendar_text(("HISTORISCH " if historical_replay else "") +
+                                 severity + " zSentinel " + pid + " - " + problem)
         description = _calendar_text(
             "Actie eigenaar: " + action + "\nStatus: " + status +
             "\nBronmoment UTC: " + observed.isoformat() +
             "\nBron: onvolledig/actueel alleen voor het onderzochte venster." +
             "\nControleer opnieuw of eigenaar, issue en gates nog actueel zijn." +
-            "\nDit is een handmatig geimporteerde herinnering. Geen live herstelbewijs.")
+            ("\nHISTORISCHE REPLAY: geen actuele observatie of nieuwe melding."
+             if historical_replay else
+             "\nDit is een handmatig geimporteerde herinnering. Geen live herstelbewijs."))
         lines += [
             "BEGIN:VEVENT", "UID:" + uid + "@zsentinel.local",
             "DTSTAMP:" + stamp,
@@ -146,10 +151,16 @@ def human_calendar(decision, *, include_historical=False):
             "STATUS:TENTATIVE", "CLASS:PRIVATE", "TRANSP:TRANSPARENT",
             # The receiving calendar MAY show a private reminder, but no
             # notification is sent by zSentinel. Import is always voluntary.
-            "BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-PT15M",
-            "DESCRIPTION:" + _calendar_text("zSentinel menselijke beoordeling: " + pid),
-            "END:VALARM", "END:VEVENT",
         ]
+        # Archived operator exports must never cause clients to fire overdue
+        # reminders on import. A historic VEVENT is readable, not a live alert.
+        if not historical_replay:
+            lines.extend([
+                "BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-PT15M",
+                "DESCRIPTION:" + _calendar_text("zSentinel menselijke beoordeling: " + pid),
+                "END:VALARM",
+            ])
+        lines.append("END:VEVENT")
     if include_historical:
         rechecks = decision.get("historical_owner_recheck_candidates", [])
         historical = decision.get("historical_unresolved", {})
