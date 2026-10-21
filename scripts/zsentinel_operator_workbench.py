@@ -1888,7 +1888,7 @@ function acceptBaseline(data){
   const gateClock=sourceInstant(clocks.prs);
   if(gateClock===null||gateClock>earlier)throw Error('earlier PR gate source is after its board');
   prObservedAt=clocks.prs;
-  const prPattern=/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]{0,8}$/;
+  const prPattern=/^https:\\/\\/github\\.com\\/[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+\\/pull\\/[1-9][0-9]{0,8}$/;
   for(const row of savedPrs){
    if(!row||Array.isArray(row)||typeof row!=='object'||
       typeof row.url!=='string'||!prPattern.test(row.url)||observedPrs.has(row.url)||
