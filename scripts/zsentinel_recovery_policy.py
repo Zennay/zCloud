@@ -717,6 +717,50 @@ def workorders_csv(batch):
     return out.getvalue()
 
 
+def case_markdown(batch):
+    """Three-line P0-first human handoff with canonical, source-only links.
+
+    This is a historical local case, never a current GitHub/Notion/worker
+    status or permission to merge. The imported case schema already admits
+    only bounded issue/PR URLs from a single repository.
+    """
+    lines = [
+        "# zSentinel — private recovery-case owner handoff", "",
+        "**Historical HOLD-only evidence; no live source verification or action.**",
+        "",
+        "- Case exported (UTC): " + batch["source_generated_at_utc"],
+        "- Issue source (UTC): " +
+        (batch["source_issues_observed_at_utc"] or "UNKNOWN"),
+        "- Queue source (UTC): " +
+        (batch["source_queue_observed_at_utc"] or "UNKNOWN"),
+        "- Policy evaluated (UTC): " + batch["evaluated_at_utc"],
+        "- Source scope: " + batch["source_project_scope"],
+        "",
+    ]
+    for row in batch["owner_workorders"]:
+        urls = row["source_urls"]
+        links = (
+            "[original issue](" + urls[0] + ")" +
+            "".join(" · [candidate PR " + str(index) + " (unverified)](" +
+                    url + ")" for index, url in enumerate(urls[1:], start=1))
+            if row["incident_id"].startswith("issue-") and urls else
+            "No shareable issue/PR source receipt; verify private queue ownership"
+        )
+        lines.extend([
+            "## " + row["priority"] + " · " + row["project_id"] +
+            " / " + row["incident_id"],
+            "",
+            "- **Problem:** " + ", ".join(row["problem_codes"]) + " · " + links,
+            "- **Action:** " + row["next_step"] +
+            " · owner: UNKNOWN · required: " +
+            ", ".join(row["required_evidence"]),
+            "- **Status:** HOLD · unverified historical evidence; "
+            "no claim, retry, merge, deploy or runner restart authorized.",
+            "",
+        ])
+    return chr(10).join(lines)
+
+
 def workorders_html(batch):
     """Static, offline, script-free owner cockpit for a validated batch."""
     esc = lambda value: html.escape(str(value), quote=True)
@@ -1220,8 +1264,7 @@ def main(argv=None):
             report = evaluate_recovery_case(data)
             output = (workorders_csv(report) if args.format == "csv" else
                       workorders_html(report) if args.format == "html" else
-                      "# zSentinel case workorders\n\n" + workorders_text(report)
-                      if args.format == "markdown" else
+                      case_markdown(report) if args.format == "markdown" else
                       workorders_text(report) if args.format == "workorders" else
                       json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
             if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
