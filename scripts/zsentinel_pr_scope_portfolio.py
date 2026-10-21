@@ -872,6 +872,11 @@ def merge_first_attention(board):
                 GATE_LABELS.get(gate["human_next_gate_step"],
                                 "Bekijk GitHub-bewijs met de PR-eigenaar.")
                 if current else "Herlees de actuele PR bron, claim geen merge."),
+            "pending_review_requests": ({
+                "individuals": gate["pending_individual_review_requests_observed"],
+                "teams": gate["pending_team_review_requests_observed"],
+                "not_an_approval": True,
+            } if current else None),
             "non_green_jobs": blockers[:24],
             "non_green_jobs_hidden": max(0, len(blockers) - 24) +
                 (gate["observed_actionable_check_runs_hidden"] +
@@ -1260,6 +1265,11 @@ def as_html(board):
                     str(gate["observed_exact_head_changes_requested"]) +
                     " · onafhankelijke approvals gezien " +
                     str(gate["observed_independent_exact_head_approvals"]) +
+                    " · review aangevraagd bij " +
+                    str(gate["pending_individual_review_requests_observed"]) +
+                    " personen / " +
+                    str(gate["pending_team_review_requests_observed"]) +
+                    " teams (geen approval)" +
                     " · " + escape(GATE_LABELS.get(
                         gate["human_next_gate_step"], "Bron onvolledig.")))
             detail = (
