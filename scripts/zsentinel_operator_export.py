@@ -46,7 +46,9 @@ Vanaf deze map:
   python3 zsentinel_runner_report.py --format json --t0 T0.json --t1 T1.json --output inbox-vergelijking.json
   python3 zsentinel_runner_report.py --format json --timeline T0.json T1.json T2.json --output inbox-historie.json
 
-Rapporten en de nieuwe gestructureerde JSON-eigenaarinbox worden create-only (0600)\ngemaakt in bestaande veilige doelmappen. JSON noemt bronmoment,\nbeperkte capaciteit/servicetellingen en maximaal drie handmatige acties.\nDe JSON-inbox activeert GEEN herstel of workflow. Ook Markdown kan direct\nvanuit de eenmalige live bron of twee historische bonnetjes worden gemaakt;\nook één opgeslagen privébon kan offline opnieuw als rapport worden getoond.\nHistorische bronmomenten blijven uitdrukkelijk niet actueel.\n
+Rapporten en de nieuwe gestructureerde JSON-eigenaarinbox worden create-only (0600)\ngemaakt in bestaande veilige doelmappen. JSON noemt bronmoment,\nbeperkte capaciteit/servicetellingen en maximaal drie handmatige acties.\nDe JSON-inbox activeert GEEN herstel of workflow. Ook Markdown kan direct\nvanuit de eenmalige live bron of twee historische bonnetjes worden gemaakt;\nook één opgeslagen privébon kan offline opnieuw als rapport worden getoond.\nHistorische bronmomenten blijven uitdrukkelijk niet actueel.
+Bij --previous is alleen de nieuwe meting actueel gelezen: de T0-bron blijft
+expliciet historisch, ook in JSON, Markdown en het GitHub-issueconcept.\n
 Het nieuwe --bundle maakt een verse 0700 map met incident.html,\nowner-handoff.md, owner-inbox.json, github-owner-issue-draft.md en\nMANIFEST.json; ieder bestand is 0600.
 De drie rapporten delen dezelfde bronobservatie.
 Het incident.html start met lokale navigatie naar de eigenaaroverdracht,
