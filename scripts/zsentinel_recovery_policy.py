@@ -481,7 +481,7 @@ def markdown(report):
         "- Proposed action: " + report["action"],
         "- Decision: **" + report["decision"] + "**",
         "- Source observation: " + report["observed_at_utc"],
-        "- Source: " + report["source_url"],
+        "- Source: <code>" + html.escape(report["source_url"], quote=True) + "</code>",
         "- Evidence independently verified: no",
         "- Action executed: no",
         "",
