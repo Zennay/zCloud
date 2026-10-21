@@ -138,17 +138,25 @@ def _scope_pairs(view, repo):
             raise ValueError("scope collision source URL mismatch")
         conflicts = row.get("path_conflicts")
         count = row.get("path_conflict_count_observed")
+        truncated = row.get("path_conflicts_truncated")
         if (type(conflicts) is not list or len(conflicts) > 24
-                or type(count) is not int or count < len(conflicts)
-                or row.get("path_conflicts_truncated") not in (True, False)):
+                or type(count) is not int or count < 1 or count < len(conflicts)
+                or type(truncated) is not bool):
             raise ValueError("scope collision count or preview invalid")
-        if row["path_conflicts_truncated"] != (count > len(conflicts)):
+        if truncated != (count > len(conflicts)):
             raise ValueError("scope collision preview completeness mismatch")
         for item in conflicts:
             if type(item) is not dict or item.get("relation") not in allowed:
                 raise ValueError("scope collision relation invalid")
-            key = (a, b, _scope_path(item.get("left_path")),
-                   _scope_path(item.get("right_path")), item["relation"])
+            left_path = _scope_path(item.get("left_path"))
+            right_path = _scope_path(item.get("right_path"))
+            if (item["relation"] == "left_file_conflicts_with_right_descendant"
+                    and not right_path.startswith(left_path + "/")):
+                raise ValueError("left-file ancestor relation does not match paths")
+            if (item["relation"] == "right_file_conflicts_with_left_descendant"
+                    and not left_path.startswith(right_path + "/")):
+                raise ValueError("right-file ancestor relation does not match paths")
+            key = (a, b, left_path, right_path, item["relation"])
             if key in result:
                 raise ValueError("duplicate scope collision path pair")
             result.add(key)
