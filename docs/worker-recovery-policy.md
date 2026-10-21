@@ -196,10 +196,23 @@ No live queue is read, no active claim is modified and no recovery action is run
 
 The structured case report now carries the original case export UTC, observed
 queue UTC (or UNKNOWN), source-case-stale flag, and effective queue-stale flag.
-HTML and compact owner workorders show **both** source clocks and the later
-local evaluation time. A newly rendered handoff can no longer describe an old
+HTML and compact owner workorders show **the case, issue and queue source clocks**
+and the later local evaluation time. A newly rendered handoff can no longer describe an old
 offline import as a freshly observed production state. Raw queue task/worker
 identifiers remain unavailable and there are no executable controls.
+
+A second integration boundary consumes the Activity exporter's source-coverage
+fields. The issue sample count must exactly match exported issues and both the
+issue sample truncation and queue sample completeness flags must be actual
+booleans. Cases with missing or contradictory coverage are refused; valid
+but **partial** issue/queue samples remain available as HOLD-only cards with
+explicit `issue_sample_truncated`, `queue_source_incomplete` or
+`queue_sample_truncated` problem codes. An old or absent issue observation
+is labeled `issue_source_stale_or_unknown`. Affected cards now direct the owner
+to refresh that source before evaluating claims and existing PRs; complete,
+fresh independent project groups remain visible. This imports existing source
+metadata and does not add provider reads, runner restarts, workflow dispatches,
+queue mutations or permission changes.
 
 The conversion ranks P0 before P1–P3, puts issue/PR examination first within
 a priority, and requires checking real GitHub source/required CI plus current
