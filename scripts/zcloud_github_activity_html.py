@@ -12,7 +12,9 @@ from html import escape
 import re
 import sys
 
-from zcloud_github_activity_digest import safe_receipt, digest, PROVIDER_ADMISSIONS
+from zcloud_github_activity_digest import (
+    safe_receipt, digest, PROVIDER_ADMISSIONS, snapshot_freshness,
+)
 
 
 CSS = """
@@ -159,6 +161,26 @@ def html_page(data: dict) -> str:
                       "</div>" + warning + "<details open><summary>Show observed events (" +
                       str(len(rows)) + ")</summary>" + body + "</details></section>")
     observed = escape(safe_time(data.get("observed_at")))
+    freshness = snapshot_freshness(data.get("observed_at"))
+    if freshness["state"] == "recent":
+        freshness_panel = (
+            "<p class='status'>Snapshot freshness: recent · age " +
+            str(freshness["age_seconds"] // 60) +
+            " minutes (six-hour limit).</p>")
+    elif freshness["state"] == "stale":
+        freshness_panel = (
+            "<p class='warning' role='alert'><b>STALE SNAPSHOT:</b> source observation " +
+            escape(freshness["observed_at"]) + " is " +
+            str(freshness["age_seconds"] // 3600) +
+            " hours old. Refresh the read-only source before drawing current Activity conclusions.</p>")
+    elif freshness["state"] == "future_clock_skew":
+        freshness_panel = (
+            "<p class='warning' role='alert'><b>UNKNOWN SNAPSHOT FRESHNESS:</b> source timestamp " +
+            escape(freshness["observed_at"]) +
+            " is more than two minutes in the future; inspect clock/source integrity.</p>")
+    else:
+        freshness_panel = (
+            "<p class='warning' role='alert'><b>UNKNOWN SNAPSHOT FRESHNESS:</b> missing or invalid source timestamp; this is not a current observation.</p>")
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<meta name='referrer' content='no-referrer'>"
@@ -167,7 +189,8 @@ def html_page(data: dict) -> str:
             "</style></head><body><header><p class='meta'>ZCLOUD · READ-ONLY OPERATOR VIEW</p>"
             "<h1>GitHub activity</h1><p>PRs, Actions, canonical-main commit SHAs and bounded branch heads. "
             "No credentials, private content, deployment claims or automatic refresh.</p>"
-            "<p class='meta'>Observed " + observed + " · UTC</p>"
+            "<p class='meta'>Observed " + observed + " · UTC</p>" +
+            freshness_panel +
             "<p class='warning'>This is a bounded GitHub snapshot, not the live zCloud dashboard. "
             "Only one bounded branch-head page is included; full branch history, private branches and runner/deployment status are not synchronized. "
             "Successful CI is not a deploy; a GitHub PR merge may target a different base. "
