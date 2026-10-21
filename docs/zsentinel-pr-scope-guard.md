@@ -2538,3 +2538,16 @@ spreadsheetformule inert. De bestaande CSV-quoting, bestandslimieten en
 create-only/private-0600 schrijfcontracten blijven ongewijzigd. Dit is
 defensieve export-sanitatie, geen wijziging van de GitHub-bron of van
 merge-/claim-/deployrechten.
+
+
+## 21 oktober · gedeelde PR met afwijkende HEAD-waarnemingen blijft zichtbaar
+
+De issue-first werkbak groepeert dezelfde bestaande PR wanneer meerdere
+productissues ernaar verwijzen. Als één issuebron verouderd is en daardoor
+geen bruikbare HEAD heeft terwijl een andere bron wel een HEAD waarnam, wordt
+de groeps-HEAD nu **ONBEKEND/INCONSISTENT** gemaakt in plaats van de volledige
+P0/P1-werkbak af te breken of één HEAD te kiezen. De issuekaarten en andere
+PR-groepen blijven beschikbaar; de menselijke vervolgstap is de actuele issue-
+en PR-bron opnieuw te lezen. De offline cockpit toont nu per gedeelde PR ook
+de waargenomen gatebron en die vervolgstap. Een opgeslagen SHA blijft een
+bronmomentopname, nooit actuele HEAD-, eigenaars- of mergevrijgave.
