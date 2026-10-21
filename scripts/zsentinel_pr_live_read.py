@@ -820,7 +820,9 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
             elif before["observed_draft"]:
                 owner_action = "finish_existing_draft_with_authorized_owner"
                 review_rank = 3
-            elif (before_reference not in (
+            elif (base["source_relationship"] !=
+                    "issue_timeline_cross_reference" and
+                    before_reference not in (
                     "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
                     ) and before_title_reference not in (
                     "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
@@ -985,6 +987,22 @@ def owner_html(report):
                     " · live HEAD/checks/reviews UNKNOWN</li>"
                 )
             rows.append("</ul></section>")
+    timeline = report["issue_timeline_cross_references"]
+    if timeline["performed"]:
+        rows.append(
+            "<section><h2>Official issue timeline references</h2><p>"
+            "GitHub cross-references found: " +
+            esc(timeline["candidate_count_in_window"]) +
+            " · sampled events: " + esc(timeline["events_scanned"]) +
+            " · pages: " + esc(timeline["pages_scanned"]) +
+            "/" + esc(timeline["max_pages"]) +
+            " · partial/unknown: " + esc(timeline["partial_or_unknown"]) +
+            (" · source unavailable: " + esc(timeline["source_error"])
+             if timeline["source_error"] else "") +
+            ". Links are evidence of GitHub references, NOT evidence "
+            "that an issue was fixed, owner accepted work, or PR merged "
+            "into the protected default branch.</p></section>"
+        )
     discovery = report["optional_unlinked_discovery"]
     if discovery["performed"]:
         rows.append(
@@ -1074,7 +1092,9 @@ def owner_html(report):
             "<dt>Reference origin</dt><dd>" +
             esc(row["candidate_origin"]) + " · " +
             esc(row["source_relationship"]) +
-            " · draft in corresponding sample: " + esc(row["source_draft"]) +
+            " · draft in corresponding sample: " +
+            esc(row["source_draft"] if row["source_draft"] is not None
+                else "UNKNOWN") +
             "</dd>",
             "<dt>Current PR description text</dt><dd>" +
             esc(row.get("pr_body_issue_text_observation", "UNKNOWN")) +
@@ -1220,6 +1240,21 @@ def markdown(report):
                 ") · " + hint["source"] + " · no live-read attempted"
             )
         lines.append("")
+    timeline = report["issue_timeline_cross_references"]
+    if timeline["performed"]:
+        lines.extend([
+            "## Official GitHub issue cross-references",
+            "",
+            "- Timeline events sampled: " + str(timeline["events_scanned"]),
+            "- Cross-reference PRs in window: " +
+            str(timeline["candidate_count_in_window"]),
+            "- Pages scanned: " + str(timeline["pages_scanned"]) +
+            "/" + str(timeline["max_pages"]),
+            "- Source partial/unknown: " + str(timeline["partial_or_unknown"]),
+            "- Source error: " + (timeline["source_error"] or "none"),
+            "- Reference implies fix, merge or owner permission: NO",
+            "",
+        ])
     discovery = report["optional_unlinked_discovery"]
     if discovery["performed"]:
         lines.extend([
@@ -1300,7 +1335,9 @@ def markdown(report):
             "- Current PR title issue text: " +
             row.get("pr_title_issue_text_observation", "UNKNOWN"),
             "- Text mention proves current PR-issue link: NO",
-            "- Historical draft: " + str(row["source_draft"]),
+            "- Source snapshot draft: " + (
+                str(row["source_draft"]) if row["source_draft"] is not None
+                else "UNKNOWN"),
             "- Live draft: " + str(row.get("observed_draft", "UNKNOWN")),
             "- Required CI: UNKNOWN (sampled check runs are not branch rules)",
             "- Independent review and active owner: UNKNOWN",
