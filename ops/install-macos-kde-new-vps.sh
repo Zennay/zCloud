@@ -59,7 +59,8 @@ if [[ -n "$SOUND_URL" ]]; then
   THEME_INDEX="$(find "$SOURCE_DIR/sounds" -type f -path '*/bigsur/index.theme' -print -quit)"
   if [[ -n "$THEME_INDEX" ]]; then
     as_desktop mkdir -p "$TARGET_HOME/.local/share/sounds"
-    cp -a "$(dirname "$THEME_INDEX")" "$TARGET_HOME/.local/share/sounds/bigsur"
+    mkdir -p "$TARGET_HOME/.local/share/sounds/bigsur"
+    cp -a "$(dirname "$THEME_INDEX")/." "$TARGET_HOME/.local/share/sounds/bigsur/"
     chown -R "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.local/share/sounds/bigsur"
   else
     echo "Sound archive downloaded but theme folder not found; continuing."
@@ -78,6 +79,9 @@ if [[ -n "$KWRITE" ]]; then
     as_desktop "$KWRITE" --file kdeglobals --group Sounds --key Theme bigsur
   fi
   as_desktop "$KWRITE" --file plasmarc --group Theme --key name WhiteSur-dark
+  if fc-match -f '%{family}' Inter 2>/dev/null | grep -qi '^Inter'; then
+    as_desktop "$KWRITE" --file kdeglobals --group General --key font 'Inter,10,-1,5,50,0,0,0,0,0'
+  fi
 else
   echo "kwriteconfig was not found. Select themes in KDE System Settings."
 fi
