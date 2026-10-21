@@ -197,10 +197,15 @@ def _validate(payload: dict):
             detail = "Ontbreekt: " + ", ".join(missing) + " · actieve status: " + status
         elif kind == "repeated_claim_attempts":
             attempts = row.get("claim_attempts_observed")
+            capped = row.get("claim_attempts_capped")
             if (not _safe_int(attempts, minimum=3, maximum=1_000_000_000)
+                    or type(capped) is not bool
+                    or (capped and attempts != 1_000_000_000)
                     or row.get("attempts_are_not_task_failures") is not True):
                 raise ValueError("onbetrouwbare herhaalclaim")
-            detail = "Geobserveerde claims: " + str(attempts) + " (geen bewezen fout)"
+            comparator = "minstens " if capped else ""
+            detail = ("Geobserveerde claims: " + comparator + str(attempts)
+                      + " (geen bewezen fout)")
         else:
             owners = row.get("active_claims_visible")
             if not _safe_int(owners, maximum=1_000_000):
