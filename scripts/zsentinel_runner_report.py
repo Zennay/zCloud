@@ -422,17 +422,24 @@ retry, servicewijziging, GitHub-actie of portfolio-claim is uitgevoerd.</p></sec
 Alleen bedoeld als privé operatoroverzicht, niet als productie- of releasebewijs.</footer></main></body></html>"""
 
 
-def offline_comparison_data(previous, current):
-    """Render from the same already-admitted private receipts, without re-reading."""
-    from zsentinel_runner_snapshot import changes
-    comparison = changes(previous, current)
+def offline_receipt_data(current):
+    """Admit one owner-private historical receipt with NO live host/provider read."""
+    from zsentinel_runner_snapshot import _parsed, _unit_states, SCHEMA
+    if type(current) is not dict or current.get("schema") != SCHEMA:
+        raise ValueError("Unknown stored source schema")
+    # The single-observation path must not silently skip validation normally
+    # performed by changes(T0,T1) when a second observation is available.
+    _parsed(current.get("observation_utc"))
+    if not isinstance(current.get("host"), str) or not current["host"]:
+        raise ValueError("Stored source has no canonical host")
+    _unit_states(current)
     rec = current.get("cpu_recommendation")
     capacity = current.get("capacity")
     if not isinstance(rec, dict) or not isinstance(capacity, dict):
         raise ValueError("Incomplete stored capacity receipt")
     coach = current.get("coach_state")
     if not isinstance(coach, dict):
-        # Older stored T1 may lack coach detail. Never infer live settings.
+        # Older receipts have no verified coach details.
         coach = {"observed": False, "active": None, "quota": None,
                  "weight": None, "recommendation_matches": None}
     quota, weight = rec.get("quota_percent"), rec.get("weight")
@@ -451,11 +458,24 @@ def offline_comparison_data(previous, current):
         "time": current["observation_utc"].replace("T", " ").replace("Z", " UTC"),
         "host": capacity, "units": current["units"], "coach": coach,
         "quota": quota, "weight": weight, "reasons": reasons,
-        "comparison": comparison,
         "offline_replay": True,
+        "comparison": None,
     }
 
 
+def offline_comparison_data(previous, current):
+    """Render a saved T0/T1 comparison, reusing the strict single source."""
+    from zsentinel_runner_snapshot import changes
+    comparison = changes(previous, current)
+    result = offline_receipt_data(current)
+    result["comparison"] = comparison
+    return result
+
+
+def offline_receipt_report(path):
+    """Owner-private historical replay: zero systemd, process or GitHub reads."""
+    from zsentinel_runner_snapshot import load_private
+    return offline_receipt_data(load_private(path))
 
 
 def offline_comparison_report(t0_path, t1_path):
@@ -979,6 +999,8 @@ def render_private_json_handoff(data):
             "comparison_count": int(data.get("comparison") is not None),
         }
         source_kind = ("private-offline-pair" if data.get("offline_replay") is True
+                       and data.get("comparison") is not None else
+                       "private-offline-receipt" if data.get("offline_replay") is True
                        else "local-read-only-current")
 
     # A missing observation is UNKNOWN, never zero healthy/failed runners.
@@ -1109,7 +1131,8 @@ def render_private_immediate_handoff(data):
     """
     import json
     evidence = json.loads(render_private_json_handoff(data))
-    if evidence["source"] not in {"local-read-only-current", "private-offline-pair"}:
+    if evidence["source"] not in {"local-read-only-current", "private-offline-pair",
+                                  "private-offline-receipt"}:
         raise ValueError("Immediate handoff requires current or saved T0/T1 evidence")
     source = evidence["source"]
     window = evidence["window"]
@@ -1243,6 +1266,7 @@ def main():
     parser.add_argument("--output", required=True, help="NEW private 0600 output (never overwritten)")
     parser.add_argument("--format", choices=("html", "markdown", "json"), default="html",
                         help="Private HTML, JSON or Markdown owner handoff from current, T0/T1 or offline timeline")
+    parser.add_argument("--receipt", help="Replay one previously saved owner-private JSON (no current host read)")
     parser.add_argument("--previous", help="Optional owner-private T0 JSON, same-host and <=72 hours")
     parser.add_argument("--t0", help="Offline replay: first owner-private JSON receipt")
     parser.add_argument("--t1", help="Offline replay: later owner-private JSON receipt")
@@ -1250,7 +1274,7 @@ def main():
                         help="Offline historical view of 3–12 ordered private receipts")
     args = parser.parse_args()
     if (bool(args.t0) != bool(args.t1) or
-            sum(bool(x) for x in (args.previous, args.t0, args.timeline)) > 1):
+            sum(bool(x) for x in (args.previous, args.t0, args.timeline, args.receipt)) > 1):
         parser.error("Choose one: --t0 and --t1, --previous, or --timeline")
     if args.timeline and not 3 <= len(args.timeline) <= 12:
         parser.error("--timeline requires 3–12 chronological private receipts")
@@ -1259,6 +1283,8 @@ def main():
             data = offline_timeline_report(args.timeline)
         elif args.t0:
             data = offline_comparison_report(args.t0, args.t1)
+        elif args.receipt:
+            data = offline_receipt_report(args.receipt)
         else:
             data = collect()
             if args.previous:
