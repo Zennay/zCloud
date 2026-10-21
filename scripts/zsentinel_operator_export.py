@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from html import escape
 import stat
 
 SOURCES = (
@@ -348,8 +349,64 @@ def compare_worktree(package_dir, source_dir):
     )
 
 
+def render_comparison_html(data):
+    """Static, offline owner-readable status; no scripts, remote content or links."""
+    entries = [*data["changes"], data["operator_instructions"]]
+    cards = []
+    for row in entries:
+        title = row.get("module", row.get("filename"))
+        changed = row["changed"]
+        cards.append(
+            "<article class='item'><h2>" + escape(title) + "</h2>"
+            "<p><strong>" + ("GEWIJZIGD" if changed else "identiek") +
+            "</strong> · vergelijking, geen releasegoedkeuring</p>"
+            "<dl><dt>Bron A bytes</dt><dd>" + str(row["a_bytes"]) +
+            "</dd><dt>Bron B bytes</dt><dd>" + str(row["b_bytes"]) +
+            "</dd><dt>Bron A SHA-256</dt><dd><code>" +
+            escape(row["a_sha256"]) + "</code></dd>"
+            "<dt>Bron B SHA-256</dt><dd><code>" +
+            escape(row["b_sha256"]) + "</code></dd></dl></article>"
+        )
+    local = data["source_b"] == "local-checkout-B"
+    origin = (
+        "A is een geverifieerd eigenaar-privépakket, B de tweemaal gelezen "
+        "lokale checkout (GEEN bewezen Git-commit, installatie of live status)."
+        if local else
+        "A en B zijn lokaal geverifieerde privébronpakketten, niet extern gevalideerd."
+    )
+    total_changed = data["changed_modules"] + int(
+        data["operator_instructions"]["changed"])
+    return (
+        "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta name='referrer' content='no-referrer'>"
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
+        "style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; "
+        "img-src 'none'; form-action 'none'; base-uri 'none'\">"
+        "<title>zSentinel · privaat bronverschil</title>"
+        "<style>body{font:16px/1.55 system-ui;background:#142033;color:#eef4fd;"
+        "max-width:960px;padding:22px;margin:auto}h1{font-size:1.7rem}"
+        "h2{font-size:1.1rem;margin:0}main{display:grid;grid-template-columns:"
+        "repeat(auto-fit,minmax(min(100%,380px),1fr));gap:12px}"
+        ".item{border:1px solid #8093aa;border-radius:10px;padding:16px;"
+        "background:#1c2a40}.warn{border-left:4px solid #edc16d;"
+        "padding:12px;background:#293247}dt{margin-top:8px;font-weight:bold}"
+        "dd{margin:0;overflow-wrap:anywhere}code{font-size:.83rem}</style></head><body>"
+        "<h1>zSentinel · vergelijking van operatorbron</h1>"
+        "<p class='warn'><strong>ALLEEN LOKALE BRONOPNAME.</strong> " +
+        escape(origin) + " Dit is GEEN CI-, review-, claim-, merge-, "
+        "installatie- of herstelautorisatie. Geen externe verbindingen.</p>"
+        "<p><strong>" + str(total_changed) + " van " + str(len(entries)) +
+        " bronbestanden gewijzigd.</strong> Controleer daarna exact GitHub "
+        "HEAD, verplichte checks en bevoegde eigenaar.</p><main>" +
+        "".join(cards) + "</main></body></html>"
+    )
+
+
 def render_comparison(data, format_name):
     """Emit only fixed safe module basenames and checksums; never private paths."""
+    if format_name == "html":
+        return render_comparison_html(data)
     if format_name == "json":
         return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2)
     lines = [
@@ -403,7 +460,8 @@ def render_comparison(data, format_name):
 
 def save_private_comparison(output, rendered, format_name):
     """Create a single new 0600 owner-private operator handoff, no overwrite."""
-    expected_suffix = {"text": ".txt", "markdown": ".md", "json": ".json"}[format_name]
+    expected_suffix = {"text": ".txt", "markdown": ".md",
+                       "json": ".json", "html": ".html"}[format_name]
     if (not isinstance(output, Path) or not output.name
             or output.name in {".", ".."} or output.suffix != expected_suffix):
         raise ValueError("private comparison extension required")
@@ -443,10 +501,10 @@ def main():
                          help="Another existing private bundle A, only with --verify-dir B")
     compare.add_argument("--compare-source-dir", type=Path,
                          help="Read local checkout B against --verify-dir private bundle A")
-    parser.add_argument("--compare-format", choices=("text", "markdown", "json"),
+    parser.add_argument("--compare-format", choices=("text", "markdown", "json", "html"),
                         default="text", help="Offline operator comparison output")
     parser.add_argument("--compare-output", type=Path,
-                        help="Optional NEW owner-private 0600 .txt/.md/.json comparison file")
+                        help="Optional NEW owner-private 0600 .txt/.md/.json/.html comparison file")
     args = parser.parse_args()
     comparing = args.compare_dir is not None or args.compare_source_dir is not None
     if comparing and args.verify_dir is None:
