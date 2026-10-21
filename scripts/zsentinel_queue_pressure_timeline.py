@@ -34,6 +34,84 @@ def _moment(raw):
     return dt.astimezone(timezone.utc)
 
 
+def _unknown_blocked_queue(coverage="not_supplied"):
+    return {
+        "coverage": coverage, "aggregate_coverage": coverage,
+        "sampled_at_utc": None, "total_items_observed": None,
+        "project_groups_complete": False, "project_groups": [],
+        "source_fresh_when_saved": False, "claim_authorized": False,
+    }
+
+
+def _observed_blocked_queue(queue, sampled, source_fresh_when_saved):
+    raw = queue.get("blocked_queue")
+    if raw is None:
+        return _unknown_blocked_queue()
+    if (type(raw) is not dict
+            or raw.get("claim_ownership_verified") is not False
+            or raw.get("queue_write_authorized") is not False
+            or raw.get("automatic_retry_authorized") is not False):
+        raise ValueError("blocked queue history refuses action authority")
+    coverage = raw.get("coverage")
+    if coverage in ("not_supplied", "not_observed"):
+        if (raw.get("total_items_observed") is not None
+                or raw.get("project_groups") != []
+                or raw.get("sample_truncated") is not True):
+            raise ValueError("unobserved blocked queue cannot imply zero")
+        return _unknown_blocked_queue(coverage)
+    if (coverage not in ("complete", "partial", "stale")
+            or raw.get("aggregate_coverage") not in ("complete", "partial")
+            or raw.get("source_coverage") not in ("current", "stale", "incomplete")
+            or type(raw.get("total_items_observed")) is not int
+            or not 0 <= raw["total_items_observed"] <= MAX_VALUE
+            or type(raw.get("project_groups")) is not list
+            or len(raw["project_groups"]) > 250
+            or type(raw.get("sample_truncated")) is not bool
+            or type(raw.get("invalid_group_rows")) is not int
+            or not 0 <= raw["invalid_group_rows"] <= 251):
+        raise ValueError("invalid blocked queue historical source")
+    blocked_at = _moment(raw.get("observed_at"))
+    if blocked_at != sampled:
+        raise ValueError("blocked queue and active queue source moments differ")
+    groups, identities = [], set()
+    for row in raw["project_groups"]:
+        if type(row) is not dict:
+            raise ValueError("invalid blocked queue history group")
+        pid, priority, count = row.get("project_id"), row.get("priority"), row.get("items")
+        if (type(pid) is not str or not PROJECT_ID.fullmatch(pid)
+                or priority not in PRIORITIES
+                or type(count) is not int or not 1 <= count <= MAX_VALUE
+                or (pid, priority) in identities):
+            raise ValueError("invalid or duplicated blocked queue group")
+        identities.add((pid, priority))
+        groups.append({"project_id": pid, "priority": priority, "items": count})
+    group_total = sum(row["items"] for row in groups)
+    if coverage == "complete":
+        if (raw["aggregate_coverage"] != "complete" or raw["sample_truncated"]
+                or raw["invalid_group_rows"] != 0
+                or group_total != raw["total_items_observed"]):
+            raise ValueError("complete blocked queue groups disagree with total")
+    elif coverage == "partial":
+        if (raw["aggregate_coverage"] != "partial" or not raw["sample_truncated"]
+                or group_total > raw["total_items_observed"]):
+            raise ValueError("partial blocked queue coverage contradicts groups")
+    elif (raw["source_coverage"] != "stale" or groups
+          or not raw["sample_truncated"]):
+        raise ValueError("stale blocked queue exposes current project detail")
+    fresh = (source_fresh_when_saved and raw["source_coverage"] == "current"
+             and coverage in ("complete", "partial"))
+    return {
+        "coverage": coverage, "aggregate_coverage": raw["aggregate_coverage"],
+        "source_coverage": raw["source_coverage"],
+        "sampled_at_utc": blocked_at.isoformat(),
+        "total_items_observed": raw["total_items_observed"],
+        "project_groups_complete": coverage == "complete" and fresh,
+        "project_groups": groups if fresh else [],
+        "source_fresh_when_saved": fresh,
+        "claim_authorized": False,
+    }
+
+
 def observed_queue(decision, source_time):
     """Retain only aggregate, non-authorizing source-bound observations."""
     queue = decision.get("live_queue_pressure")
@@ -57,6 +135,7 @@ def observed_queue(decision, source_time):
             "coverage": coverage, "sampled_at_utc": None,
             "totals": None, "sample_is_complete": False,
             "project_groups_complete": False, "project_groups": [],
+            "blocked_queue": _unknown_blocked_queue(),
             "claim_authorized": False,
         }
     opaque_identity = queue.get("source_file_identity_sha256_private")
@@ -104,6 +183,7 @@ def observed_queue(decision, source_time):
         and -timedelta(minutes=2) <= source_time - sampled <= timedelta(minutes=5))
     if coverage == "current" and not source_fresh_when_saved:
         raise ValueError("queue source incorrectly labelled current")
+    blocked_queue = _observed_blocked_queue(queue, sampled, source_fresh_when_saved)
     sample_complete = queue.get("sample_is_complete")
     truncated = queue.get("project_groups_truncated")
     if type(sample_complete) is not bool or type(truncated) is not bool:
@@ -175,8 +255,47 @@ def observed_queue(decision, source_time):
             "observed" if window_present else "unknown_legacy"),
         "project_groups_complete": not truncated and coverage == "current",
         "project_groups": clean_groups,
+        "blocked_queue": blocked_queue,
         "source_fresh_when_saved": source_fresh_when_saved,
         "claim_authorized": False,
+    }
+
+
+def _blocked_queue_delta(left, right):
+    unknown = {
+        "coverage": "UNKNOWN_source_gap",
+        "from_total": None, "to_total": None, "delta": None,
+        "project_deltas": None, "count_change_is_not_resolution_proof": True,
+        "claim_authorized": False, "retry_authorized": False,
+    }
+    if (type(left) is not dict or type(right) is not dict
+            or left.get("source_fresh_when_saved") is not True
+            or right.get("source_fresh_when_saved") is not True
+            or type(left.get("total_items_observed")) is not int
+            or type(right.get("total_items_observed")) is not int):
+        return unknown
+    from_total, to_total = left["total_items_observed"], right["total_items_observed"]
+    project_deltas = None
+    if (left.get("project_groups_complete") is True
+            and right.get("project_groups_complete") is True):
+        before = {(row["project_id"], row["priority"]): row["items"]
+                  for row in left["project_groups"]}
+        after = {(row["project_id"], row["priority"]): row["items"]
+                 for row in right["project_groups"]}
+        project_deltas = [{
+            "project_id": project, "priority": priority,
+            "blocked_rows_delta_not_resolution_proof":
+                after.get((project, priority), 0) - before.get((project, priority), 0),
+            "task_recovery_verified": False, "claim_authorized": False,
+        } for project, priority in sorted(
+            set(before) | set(after),
+            key=lambda key: (PRIORITIES.index(key[1]), key[0]))]
+    return {
+        "coverage": "complete_groups" if project_deltas is not None else "total_only",
+        "from_total": from_total, "to_total": to_total,
+        "delta": to_total - from_total, "project_deltas": project_deltas,
+        "count_change_is_not_resolution_proof": True,
+        "claim_authorized": False, "retry_authorized": False,
     }
 
 
@@ -205,6 +324,8 @@ def summarize_queue_windows(source_windows):
                 "observed_increased_queue_references": [],
                 "observed_increased_refs_total": None,
                 "observed_increased_refs_truncated": False,
+                "blocked_queue_comparison": _blocked_queue_delta(
+                    left.get("blocked_queue"), right.get("blocked_queue")),
                 "positive_refs_only_not_an_exhaustive_retry_inventory": True,
                 "owner_review_required": True,
             })
@@ -280,6 +401,8 @@ def summarize_queue_windows(source_windows):
             row["project_id"], row["private_queue_ref"]))
         comparisons.append({
             "from_window": before["index"], "to_window": after["index"],
+            "blocked_queue_comparison": _blocked_queue_delta(
+                left.get("blocked_queue"), right.get("blocked_queue")),
             "observed_increased_queue_references": observed_same_ref[:12],
             "observed_increased_refs_total": len(observed_same_ref),
             "observed_increased_refs_truncated": len(observed_same_ref) > 12,
@@ -373,6 +496,10 @@ def summarize_queue_windows(source_windows):
             row["deltas"] is not None for row in comparisons),
         "unknown_pairs": sum(
             row["deltas"] is None for row in comparisons),
+        "blocked_queue_compared_pairs": sum(
+            row["blocked_queue_comparison"]["delta"] is not None for row in comparisons),
+        "blocked_queue_unknown_pairs": sum(
+            row["blocked_queue_comparison"]["delta"] is None for row in comparisons),
         "comparisons_are_aggregate_samples_not_retry_counts": True,
         "source_partial": True,
         "owner_claim_verified": False,
