@@ -54,6 +54,43 @@ to make these labels turn green.
 
 ## Private four-lane operator desk
 
+### 21 October · changed-project owner handoff and interactive drilldown
+
+For a **short, private owner handoff containing only changed projects**,
+reuse a prior private baseline and choose the additional existing-CLI mode:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --previous-owner-snapshot /PRIVATE-OWNER-DIRECTORY/owner-before.json \
+  --format change-brief \
+  --output /PRIVATE-OWNER-DIRECTORY/changed-projects.md
+```
+
+This mode requires the previous baseline explicitly, creates a **new**
+owner-private `.md` file using the already implemented create-only
+`O_EXCL`/`O_NOFOLLOW`/`0600` writer and makes no queue, lease, provider
+or service modifications. The report includes one P0-first/P1-second card
+per **changed** project: old/new/delta across all six P0/P1 queue fields,
+human-only owner triage, links to the canonical existing GitHub PR and
+issue inboxes, and an exact comparison time window. Counts can decrease
+without an issue being fixed; count increases do not prove a worker outage.
+No item is assigned automatically, and QA-only rows still cannot be
+separated reliably by the aggregate.
+
+If the private endpoints are incomparable (different local database,
+partial source, stale or reversed timestamps), the change brief is
+explicitly `NOT_COMPARABLE` and contains **no** spurious per-project
+differences. If they compare but no counts changed, it says precisely
+that, without claiming no external work occurred.
+
+The existing **HTML timeline table** is also now directly actionable:
+project names jump to the already present detailed offline owner card,
+which shows the current source-bound owner decision and GitHub links.
+This keeps the fast P0/P1 trend overview and the detailed owner handoff
+in one no-JavaScript, read-only, source-limited workflow. External
+Notion claims, protected-main review/CI gates and actual runtime remain
+unverified until the authorized operator checks them.
+
 ### 21 October · private local P0/P1 portfolio comparison
 
 The read-only four-lane desk now offers a complete two-observation portfolio
