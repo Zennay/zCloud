@@ -37,6 +37,8 @@ HUMAN_GATE_LABELS_NL = {
         "Mergeconflict op de huidige basis: bevoegde PR-eigenaar herstelt de branch.",
     "wait_for_github_mergeability_evaluation":
         "GitHub heeft mergeability nog niet bepaald: nieuwe bron nodig.",
+    "wait_for_requested_independent_review":
+        "Onafhankelijke review is al aangevraagd; wacht op beslissing.",
     "inspect_incomplete_current_head_gate_source":
         "Onvolledige GitHub gatebron: volledig bewijs opnieuw ophalen.",
     "inspect_current_head_failed_checks_with_owner":
@@ -108,6 +110,9 @@ def _gate_class(item: dict, observed: bool, old: bool) -> str:
             or item.get("legacy_status_pending_observed", 0) > 0):
         return "observed_checks_waiting"
     if item["observed_independent_exact_head_approvals"] < 1:
+        if (item.get("pending_individual_review_requests_observed", 0) or
+                item.get("pending_team_review_requests_observed", 0)):
+            return "saved_review_requested_waiting"
         return "saved_review_needed"
     return "verify_live_branch_and_owner_rules"
 
@@ -200,9 +205,20 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 # signals; they remain unknown instead of being upgraded to
                 # conflict-free evidence.
                 for key in ("merge_conflict_observed", "mergeability_not_yet_evaluated",
-                            "draft_state_stable_on_second_read"):
+                            "draft_state_stable_on_second_read",
+                            "pending_review_requests_stable_on_second_read"):
                     if key in item and type(item[key]) is not bool:
-                        raise ValueError("invalid saved draft/conflict evidence")
+                        raise ValueError("invalid saved draft/review/conflict evidence")
+                for key in ("pending_individual_review_requests_observed",
+                            "pending_team_review_requests_observed"):
+                    if key in item and (type(item[key]) is not int or
+                                        not 0 <= item[key] <= 100):
+                        raise ValueError("invalid bounded pending review count")
+                if "pending_review_request_evidence_sha256" in item and (
+                    type(item["pending_review_request_evidence_sha256"]) is not str or
+                    re.fullmatch(r"[a-f0-9]{64}",
+                                 item["pending_review_request_evidence_sha256"]) is None):
+                    raise ValueError("invalid pending review source fingerprint")
                 if any(item[k] < 0 for k in (
                         "observed_checks_pending", "observed_checks_not_successful",
                         "observed_independent_exact_head_approvals")):
@@ -215,6 +231,10 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 "checks_failed_observed": item["observed_checks_not_successful"] if observed else None,
                 "independent_exact_head_approvals_observed": (
                     item["observed_independent_exact_head_approvals"] if observed else None),
+                "pending_individual_review_requests_observed": (
+                    item.get("pending_individual_review_requests_observed") if observed else None),
+                "pending_team_review_requests_observed": (
+                    item.get("pending_team_review_requests_observed") if observed else None),
                 "next_human_gate": item["human_next_gate_step"] if observed else "recollect_exact_head_source",
                 "historic_gate_category": _gate_class(item, observed, age > 900),
                 "saved_source_stale_over_15_minutes": age > 900,
