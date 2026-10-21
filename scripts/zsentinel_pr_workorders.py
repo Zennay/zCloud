@@ -92,7 +92,7 @@ def _markdown(value):
         else char
         for char in value
     )
-    return re.sub(r"([\\\[\]_*`<>])", r"\\\1", visible)
+    return re.sub(r"([\\\[\]_*`<>~|])", r"\\\1", visible)
 
 def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None):
     """Return exact shared files and distinct file/directory scope conflicts."""
