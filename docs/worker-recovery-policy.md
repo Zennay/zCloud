@@ -350,15 +350,39 @@ request bounds, and never starts Actions or calls merge/claim/deploy endpoints.
 
 The observation scope is **one exact project/issue and at most three
 canonical, same-repository PR links** already validated against the
-original Activity case. Each candidate has a bounded current PR GET,
+original Activity case. The same command also supports a portable,
+script-free offline HTML operator desk:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json \
+  --view-project cloud --view-issue 1518 --live-candidates \
+  --format html > private-live-pr-1518.html
+```
+
+The HTML has a restrictive Content-Security-Policy, escaped labels,
+direct canonical PR links, expandable sampled check/review evidence and
+clear UNKNOWN/HOLD signals. No remote assets, client-side API requests,
+tracking scripts or external style resources are included.
+
+Each candidate has a bounded current PR GET,
 a sample of at most 30 exact-HEAD check runs, at most 30 reviews, and a
 second PR GET to detect an intervening HEAD/state change: **at most 12 GETs
-across all candidates**. If a request or provider admission fails, that
-candidate remains `UNKNOWN_PROVIDER`, not absent or merged. A PR that
+across all candidates**. If an initial PR read or the final HEAD/state re-read fails, the
+candidate remains `UNKNOWN_PROVIDER`, not absent or merged. If the core
+PR source remains readable but a **secondary** check-run/review endpoint
+fails without an account-admission denial, the second PR read still
+retains the verified current PR HEAD and marks the specific check/review
+source explicitly UNKNOWN; the remaining release gates do not become
+green. GitHub 401/403/429 admission denial stops attempts for the
+remainder of that one bounded source collection rather than repeatedly
+hammering a blocked provider. JSON, Markdown and HTML disclose
+`get_attempts`, UNKNOWN candidate counts and secondary-source gaps. A PR that
 moves HEAD or changes draft/merge state during collection is not treated
 as a stable, current observation.
 
-JSON and Markdown reveal the actual observed PR HEAD, open/closed,
+JSON, Markdown and the portable HTML desk reveal the actual observed PR HEAD, open/closed,
 draft, reported merge, and the **sampled** check-run states/review
 categories. Required-branch checks, branch protection, independent review
 approval, current worker/Notion owner and merge eligibility stay explicitly
