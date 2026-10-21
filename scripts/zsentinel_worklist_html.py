@@ -757,7 +757,7 @@ function exportOutstandingPrHandoff(){
   +'de actuele PR-HEAD, complete verplichte CI, onafhankelijke review en '
   +'branch protection op GitHub voor een eventuele bevoegde merge. '
   +'Dit document schrijft niets naar GitHub, Notion of productie.','');
- privateDownload('zsentinel-prs-open-prive-eigenaaroverdracht.md',lines.join('\\n')+'\\n');
+ privateDownload('zsentinel-prs-open-prive-eigenaaroverdracht.md',lines.join('\n')+'\n');
 }
 document.getElementById('pr-review-export').addEventListener('click',exportOutstandingPrHandoff);
 
