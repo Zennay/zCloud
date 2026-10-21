@@ -165,6 +165,14 @@ jobs:
             echo "::error::Runtime background differs from approved source; refusing to overwrite owner work."
             exit 1
           fi
+          # The approved version may already be staged from an earlier
+          # authorized run whose live reload was deferred. Never rewrite an
+          # identical installed file just to try the separate reload again.
+          if cmp -s -- firefox-extension/background.js "$live/background.js"; then
+            echo "WORKER_TAB_GUARD_ALREADY_CURRENT=1"
+            python3 scripts/zsentinel_release_receipt.py --component addon --outcome already-current
+            exit 0
+          fi
           # A running or unknown worker must not see a new installed add-on
           # before the safe-idle decision. Unknown evidence refuses the write.
           python3 scripts/zsentinel_addon_idle_gate.py
