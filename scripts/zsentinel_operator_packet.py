@@ -113,7 +113,7 @@ def build_packet(report):
 
 def write_packet(destination: Path, report):
     """Create exactly one private file, pinning the destination directory inode."""
-    if (type(destination) is not Path or destination.suffix != ".zip"
+    if (not isinstance(destination, Path) or destination.suffix != ".zip"
             or not destination.is_absolute() or destination.name in ("", ".", "..")):
         raise ValueError("operator packet needs a new absolute .zip path")
     payload = build_packet(report)
