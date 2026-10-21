@@ -441,6 +441,24 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
     source_url = issue["source_urls"][0]
     historical_candidates = len(candidates)
     saved_candidates = candidates[:]
+    # Saved URLs may later be shown as navigation-only links during a
+    # focused review. Validate all of them, not just the live-read subset.
+    source_urls = issue.get("source_urls")
+    if not isinstance(source_urls, list) or not source_urls:
+        raise GitHubReadError("issue has no canonical source URL")
+    current_issue_match = ISSUE_URL.fullmatch(source_urls[0])
+    if current_issue_match is None:
+        raise GitHubReadError("issue source URL is not canonical")
+    issue_repo_url = source_urls[0].split("/issues/", 1)[0]
+    for row in saved_candidates:
+        if not isinstance(row, dict):
+            raise GitHubReadError("historical PR candidate must be an object")
+        url = row.get("url")
+        match = REPO_URL.fullmatch(url) if isinstance(url, str) else None
+        if (match is None or url.split("/pull/", 1)[0] != issue_repo_url
+                or type(row.get("number")) is not int
+                or row["number"] != int(match[3])):
+            raise GitHubReadError("historical PR navigation identity invalid")
     # Historical candidates retain priority. Newly discovered hints fill
     # only unused live-read slots; overflow is navigation-only with UNKNOWN
     # live status, never an implicit claim or deliverable.
