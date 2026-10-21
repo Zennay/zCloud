@@ -3102,3 +3102,51 @@ inside its `changed_source_fields` column.
 Neither comparison refreshes data from GitHub or Notion. All gate and queue
 values are historical saved observations; they do not prove current PR state,
 worker ownership, queue availability, merge clearance or release authority.
+
+
+## 21 oktober · historisch issue eerst volgen door meerdere PR-dossiers
+
+De bestaande offline `scripts/zsentinel_saved_dossier_timeline.py` kan
+een reeks van twee tot twaalf chronologisch gesorteerde, reeds afgesloten
+private PR-dossier-ZIP's vergelijken. Het product had wel een algemene
+`changed_issues`-tag, maar kon niet laten zien *welke* issuekoppelingen
+toegevoegd of niet meer geobserveerd waren. Ook kon de operator niet meteen
+de PR-historie van een geselecteerd productissue isoleren.
+
+Die twee onderdelen zijn nu geïntegreerd op de bestaande product-PR #1560:
+
+- Per opeenvolgende werkelijk **geobserveerde** PR-bron: exacte canonieke
+  issue-URLs die later wel, respectievelijk niet meer gekoppeld waren.
+  Een overgeslagen steekproef staat expliciet gemarkeerd: het moment waarop
+  een koppeling daadwerkelijk veranderde blijft ONBEKEND.
+- JSON bewaart per PR de geobserveerde nieuwe/niet-meer-gekoppelde
+  issue-URLs, bronindexen en beide cumulatieve aantallen. De bestaande
+  Markdown, scriptvrije HTML en Excel-leesbare CSV tonen dezelfde
+  bronverschillen. Canonieke issue-links in HTML openen alleen de
+  oorspronkelijke GitHub-issues; er is geen JavaScript of netwerklezing.
+- Nieuw `--issue https://github.com/Zennay/zCloud/issues/1518` beperkt
+  de weergave tot PRs die in **minstens één** van de opgeslagen
+  bronmomenten aan dat issue waren gekoppeld. Combineer met de al bestaande
+  `--priority`, `--change` en paginering: de volledig ingelezen
+  broninventaris en bron-SHA's blijven ongewijzigd.
+
+Voorbeeld op een al vertrouwde operatorhost met reeds opgeslagen bronnen en
+een private bestaande map:
+
+```sh
+umask 077
+python3 scripts/zsentinel_saved_dossier_timeline.py \
+  --source /private/zsentinel/pr-a.zip \
+  --source /private/zsentinel/pr-b.zip \
+  --issue https://github.com/Zennay/zCloud/issues/1518 \
+  --format html --output /private/zsentinel/issue-1518-pr-history.html
+```
+
+**Geen bewijs van afronding:** de oude dossiers worden offline gelezen,
+zonder nieuwe GitHub-/Notion-/queue-query. Een PR die uit een steekproef
+verdwijnt is niet bewezen gesloten of gemerged; een issuekoppeling die
+verdwijnt is niet bewezen opgelost; een nieuwe koppeling is geen bewijs
+van open issue-ownership. De operator moet vóór actie actuele GitHub HEAD,
+verplichte CI, reviews, protected-main, Notion/queue-eigenaarschap en
+releasebevoegdheid onafhankelijk bevestigen. Deze uitbreiding maakt geen
+claim, dispatch, merge, CI-herstart, VPS-mutatie of deploy mogelijk.
