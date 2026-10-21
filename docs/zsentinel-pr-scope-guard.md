@@ -20,7 +20,11 @@ de bestaande PR- en projectwerkstromen:
    activiteitssignaal, dekkingsgrenzen, menselijke vervolgstap,
    lokale privé-opvolging, alle bekende PR-kandidaten, hun geobserveerde
    HEAD/commitlink en historische gate, andere bij dezelfde PR genoemde
-   issues en afzonderlijke PR-/botsingsnotities. Ontbrekende PR-groepen
+   issues en afzonderlijke PR-/botsingsnotities. De bron-HEAD en gate
+   van een issue-eigen PR-kandidaat blijven in het dossier aanwezig, ook
+   als die PR-groep door de begrensde werkbakpagina niet getoond wordt.
+   Bij afwijkende HEADs wordt bewust **BRONCONFLICT** getoond in plaats
+   van een onbetrouwbare commitlink. PRs zonder betrouwbaar bronbewijs
    en onvolledige bronvermeldingen blijven **ONBEKEND**.
 3. **Download open P0/P1 issue-overdracht** maakt een gebundelde,
    P0-eerst gerangschikte overdracht van alle in deze bronpagina lokaal
