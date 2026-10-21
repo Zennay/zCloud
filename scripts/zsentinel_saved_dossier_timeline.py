@@ -693,6 +693,36 @@ def html_content(report):
         'geen live issuefix of eigenaarschap.</p>'
         if issue_filter else ""
     )
+    focus = report.get("issue_focus_summary")
+    focus_html = ""
+    if focus is not None:
+        if (focus.get("schema") != "zsentinel-issue-source-followup-v1"
+                or focus.get("live_issue_state_verified") is not False
+                or focus.get("current_owner_claim_verified") is not False
+                or focus.get("merge_authorized") is not False
+                or focus.get("deploy_authorized") is not False
+                or focus.get("issue_url") != issue_filter):
+            raise ValueError("Invalid source-only issue overview")
+        bars = "".join(
+            "<li>Bron " + str(row["source_index"]) + ": <strong>" +
+            str(row["observed_linked_prs"]) + "</strong> gekoppelde PRs" +
+            (" · batches ontbreken" if row["original_batches_missing"] else "") +
+            "</li>" for row in focus["per_source_observed_linked_pr_counts"])
+        focus_html = (
+            '<section aria-label="Geselecteerd issue historische PR-overdracht">'
+            '<h2>Historische issue-overdracht</h2><p><strong>' +
+            str(focus["matched_saved_prs"]) +
+            " ooit gekoppelde PRs in huidige filters</strong> · " +
+            str(focus["linked_in_last_observed_pr_sample"]) +
+            " nog gekoppeld in hun laatste PR-steekproef · " +
+            str(focus["linked_in_final_source_snapshot"]) +
+            " nog gekoppeld in de laatste totale steekproef.</p><p>" +
+            str(focus["prs_absent_from_final_source_snapshot"]) +
+            " PRs ontbreken in de laatste steekproef. Geen enkel aantal " +
+            "bewijst afronding, actuele ownership of merge.</p>" +
+            "<details><summary>Geobserveerde koppelingen per bronmoment</summary><ol>" +
+            bars + "</ol></details></section>"
+        )
     freshness_age = (str(freshness["age_hours"]) + " uur"
                      if freshness["age_hours"] is not None else "ONBEKEND")
     freshness_notice = (
@@ -725,7 +755,8 @@ str(paging["page"]) + "/" + str(paging["total_pages"]) + """</strong> · """ +
 str(paging["shown_source_pr_candidates"]) + " getoond van " +
 str(paging["matched_source_pr_candidates"]) + " filtersmatches; " +
 str(paging["source_pr_candidates_total"]) + """ PRs in de bron.
-Niet-getoond is niet opgelost.</p>""" + issue_filter_html + "".join(cards) + """
+Niet-getoond is niet opgelost.</p>""" + issue_filter_html +
+focus_html + "".join(cards) + """
 <footer>Controleer de actuele GitHub HEAD, CI, reviews, Notion-eigenaar,
 protected-main en de echte merge-commit voordat een release mag plaatsvinden.
 Geen API-calls, geen automatische claims of dispatch.</footer>
