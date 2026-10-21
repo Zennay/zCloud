@@ -1490,7 +1490,7 @@ def main(argv=None):
                     report, project=args.view_project,
                     issue_number=args.view_issue, pr_number=args.candidate_pr_number,
                 )
-                output = json.dumps(request, ensure_ascii=False, indent=2, sort_keys=True) + "\\n"
+                output = json.dumps(request, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
                 if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
                     raise PolicyInputError("output exceeds 128 KiB")
                 sys.stdout.write(output)
