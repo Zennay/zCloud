@@ -83,6 +83,22 @@ The JSON report now exposes ordered `recovery_priorities` with codes, accountabl
 
 This workflow is intentionally not wired into existing production GitHub Actions jobs, owned by #580/#1089 and #1447. It does not depend on a GitHub token or make any network request.
 
+## Private Markdown owner handoff
+
+Use the new `--format markdown` output when a human owner needs a compact
+report for an internal issue or Notion note:
+
+```sh
+python3 scripts/zcloud_vps_preflight.py --host-pressure --worker-safety --format markdown
+```
+
+The Markdown output carries the observed checkout/runner/resource values,
+optional CPU/PSI counters, findings, ordered owner handoff and full release
+decision board. It is stdout-only by default; save only to a private destination.
+All fields remain read-only observations and the report explicitly says it does
+not prove an active claim, free worker, required branch rules, review or release
+approval. It adds no network requests or runtime actions.
+
 ## Optional offline HTML operator view
 
 ```sh

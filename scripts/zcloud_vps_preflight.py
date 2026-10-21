@@ -15,6 +15,7 @@ import sys
 from datetime import datetime, timezone, timedelta
 from zcloud_vps_host_pressure import host_pressure_snapshot, pressure_findings
 from zcloud_vps_pressure_trend import compare_host_pressure
+from zcloud_vps_preflight_markdown import render as render_markdown
 
 RUNNER_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
 TRAINING_FREE_RESERVE_BYTES = 10 * 1024 ** 3
@@ -996,7 +997,7 @@ def main() -> int:
                         help="Read-only portfolio queue and browser-event admission snapshot; cannot prove safe idle")
     parser.add_argument("--previous-report", type=Path, default=None,
                         help="Compare with a saved bounded JSON report; never modifies the prior file")
-    parser.add_argument("--format", choices=("text", "json", "html", "brief"), default="text",
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "brief"), default="text",
                         help="Output as console text, JSON, offline HTML, or three-line owner handoff")
     parser.add_argument("--expected-main-sha", default=None,
                         help="Exact independently fetched 40-character main commit SHA (no network requests)")
@@ -1015,6 +1016,8 @@ def main() -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
     elif args.format == "html":
         print(render_html(report))
+    elif args.format == "markdown":
+        print(render_markdown(report))
     elif args.format == "brief":
         print("zSentinel owner handoff · read-only · NOT release authorized")
         print("Observation: " + report["observed_at"])
