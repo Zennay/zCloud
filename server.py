@@ -4988,10 +4988,54 @@ class Handler(BaseHTTPRequestHandler):
                 if pid not in [p['id'] for p in data['projects']]:return self.reply({'error':'Onbekend project'},404)
                 days={'24h':1,'7d':7,'30d':30,'all':0}.get(q.get('range',['7d'])[0],7)
                 return self.reply(history(pid,days))
-            if u.path=='/api/activity':
+            if u.path in ('/api/activity','/api/activity-page'):
+                # Keep the old array API compatible while removing the global
+                # 80-row starvation problem (#1518). The new paged endpoint
+                # offers explicit, source-limited coverage and safe cursors.
+                project_ids=([pid] if pid else sorted(PROJECT_INDEX))
+                if pid and pid not in PROJECT_INDEX:return self.reply({'error':'Onbekend project'},404)
+                if u.path=='/api/activity-page':
+                    try:
+                        limit=int(q.get('limit',['80'])[0])
+                        raw_cursor=q.get('cursor',[''])[0]
+                        if len(raw_cursor)>4096:raise ValueError('cursor exceeds budget')
+                        cursor=json.loads(raw_cursor) if raw_cursor else None
+                        with connect() as c:
+                            c.execute('BEGIN')
+                            page=zcloud_activity_fair_page.fair_page(
+                                c,project_ids,page_size=limit,cursor=cursor
+                            )
+                    except (TypeError,ValueError):
+                        return self.reply({'error':'Ongeldige paginaselectie of bron-tijdstempel'},400)
+                    return self.reply(page)
                 with connect() as c:
-                    rows=c.execute('SELECT * FROM events WHERE (?="" OR project=?) ORDER BY ts DESC LIMIT 80',(pid,pid)).fetchall()
-                return self.reply([dict(r) for r in rows])
+                    c.execute('BEGIN')
+                    try:
+                        page=zcloud_activity_fair_page.fair_page(c,project_ids)
+                        ids=[item['id'] for item in page['events']]
+                        if ids:
+                            marks=','.join('?' for _ in ids)
+                            rows=c.execute(
+                                'SELECT * FROM events WHERE id IN ('+marks+')',ids
+                            ).fetchall()
+                            by_id={row['id']:dict(row) for row in rows}
+                            result=[by_id[eid] for eid in ids if eid in by_id]
+                        else:
+                            result=[]
+                    except ValueError:
+                        # Corrupt legacy event timestamps must not take down
+                        # the original dashboard route; preserve the previous
+                        # bounded fallback. /api/activity-page surfaces the
+                        # explicit coverage failure instead.
+                        logging.warning('Activity fair source unavailable: malformed event timestamp')
+                        rows=c.execute(
+                            'SELECT * FROM events WHERE (?="" OR project=?) ORDER BY ts DESC LIMIT 80',
+                            (pid,pid),
+                        ).fetchall()
+                        result=[dict(row) for row in rows]
+                # Release the SQLite read snapshot BEFORE socket I/O to avoid
+                # slow HTTP readers extending the database read transaction.
+                return self.reply(result)
             if u.path=='/api/host-history':
                 with connect() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
                 return self.reply([dict(r) for r in reversed(rows)])
