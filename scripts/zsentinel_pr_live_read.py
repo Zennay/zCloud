@@ -31,6 +31,7 @@ MAX_DISCOVERY_BODY_BYTES = 2 * 1024 * 1024
 MAX_CANDIDATES = 3
 MAX_LIST_PAGE = 30
 MAX_DISCOVERY_PAGES = 4  # Bounded open-PR inventory; never an exhaustive ownership claim.
+MAX_DISCOVERY_HINTS = 12  # Navigation-only hints; at most 3 can get live PR reads.
 
 
 class GitHubReadError(ValueError):
@@ -372,7 +373,7 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
     )
     candidates = [
         {key: val for key, val in item.items() if key != "source_window_position"}
-        for item in matched_candidates[:MAX_CANDIDATES]
+        for item in matched_candidates[:MAX_DISCOVERY_HINTS]
     ]
     return candidates, {
         "performed": True,
@@ -386,6 +387,7 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
         "candidate_text_matches_in_page": matched_total,
         "candidate_records_returned": len(candidates),
         "candidate_selection_order": "closing_keyword_first_then_source_window_order",
+        "discovery_hint_limit": MAX_DISCOVERY_HINTS,
         "title_only_matches_in_window": sum(
             item["candidate_origin"].endswith("_title_only")
             for item in matched_candidates
@@ -413,10 +415,6 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
     candidates = issue.get("candidate_prs", [])
     if not isinstance(candidates, list) or len(candidates) > MAX_CANDIDATES:
         raise GitHubReadError("unbounded or absent candidate source")
-    if discover_unlinked and candidates:
-        raise GitHubReadError(
-            "original issue already has sampled PRs; use normal live PR review"
-        )
     if not candidates and not discover_unlinked:
         raise GitHubReadError(
             "issue has no sampled PR; use explicit bounded discovery or refresh source"
@@ -438,6 +436,12 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
     }
     source_url = issue["source_urls"][0]
     historical_candidates = len(candidates)
+    # Historical candidates retain priority. Newly discovered hints fill
+    # only unused live-read slots; overflow is navigation-only with UNKNOWN
+    # live status, never an implicit claim or deliverable.
+    historical_urls = {row.get("url") for row in candidates if isinstance(row, dict)}
+    if len(historical_urls) != len(candidates):
+        raise GitHubReadError("duplicate or malformed historical PR candidate identity")
     discovery = {
         "performed": False,
         "source_page_may_be_incomplete": True,
@@ -449,10 +453,41 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         # Operator-directed, maximum four open-PR page GETs, then the
         # same bounded, double-read candidate observation as normal.
         # A matching body phrase is never considered an authorized issue link.
-        candidates, discovery = _discover_sampled_open_prs(
+        discovered, discovery = _discover_sampled_open_prs(
             source_url, token=token,
         )
         extra_get_attempts = discovery["pages_scanned"]
+        new_references = [
+            row for row in discovered if row["url"] not in historical_urls
+        ]
+        slots_remaining = MAX_CANDIDATES - len(candidates)
+        candidates = candidates + new_references[:slots_remaining]
+        discovery["historical_candidate_count"] = historical_candidates
+        discovery["previously_referenced_hints_deduplicated"] = (
+            len(discovered) - len(new_references)
+        )
+        discovery["new_live_candidates_selected"] = min(
+            slots_remaining, len(new_references)
+        )
+        discovery["navigation_only_count"] = len(
+            new_references[slots_remaining:]
+        )
+        discovery["navigation_only_hints"] = [
+            {
+                "number": row["number"],
+                "url": row["url"],
+                "source_relationship": row["relationship_at_source"],
+                "candidate_origin": row["candidate_origin"],
+                "live_read_performed": False,
+                "live_state": "UNKNOWN",
+                "merge_authorized": False,
+                "claim_authorized": False,
+            } for row in new_references[slots_remaining:]
+        ]
+        discovery["candidate_slot_limit_reached"] = (
+            len(candidates) == MAX_CANDIDATES and
+            bool(new_references[slots_remaining:])
+        )
     issue_match = ISSUE_URL.fullmatch(source_url)
     if issue_match is None:
         raise GitHubReadError("source issue is not a canonical repository issue")
@@ -660,6 +695,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         "observed_at_utc": utc(),
         "candidate_count": len(candidates),
         "source_candidate_count": historical_candidates,
+        "live_discovered_count": max(0, len(candidates) - historical_candidates),
         "optional_unlinked_discovery": discovery,
         "observations": observations, "sample_scope_only": True,
         "suggested_owner_review_order": [
