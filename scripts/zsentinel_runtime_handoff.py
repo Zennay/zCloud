@@ -136,11 +136,10 @@ def build_handoff(decision, registry=None, queue_trend=None):
                 raise ValueError("untrusted VPS overload reason")
             card = _card(
                 "P1", "cloud", "vps_capacity_owner_review",
-                "VPS bron bevestigt capaciteitsdruk: " +
-                ", ".join(reasons) +
-                ". Bevoegde host/runner-eigenaar controleert veilige "
-                "opslag-, swap- en actieve jobruimte; geen cache-delete, "
-                "service-restart, workerstop of automatische opschaling.",
+                "VPS capaciteitsdruk (" + ", ".join(reasons[:2]) +
+                (" + meer" if len(reasons) > 2 else "") +
+                "). Hosteigenaar beoordeelt vrije ruimte en actieve jobs. "
+                "GEEN cleanup, service-restart of workerstop.",
                 source="validated_recent_readonly_vps_capacity",
                 ref="https://github.com/Zennay/zCloud/issues/1326")
             card["observed_capacity_state"] = "overloaded"
@@ -418,7 +417,8 @@ def build_handoff(decision, registry=None, queue_trend=None):
     order = {"P0": 0, "P1": 1, "P2": 2}
     kind_order = {"fresh_incident": 0, "worker_owner_review": 1,
                   "queue_current_owner_review": 2,
-                  "queue_lease_window_review": 3, "open_product_issue": 4}
+                  "queue_lease_window_review": 3,
+                  "vps_capacity_owner_review": 4, "open_product_issue": 5}
     cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
                               c.get("review_by_utc", "9999"),
                               0 if c.get("existing_pr_urls") else 1,
@@ -431,6 +431,7 @@ def build_handoff(decision, registry=None, queue_trend=None):
                      if isinstance(sources.get("github_jobs"), str)
                      else "bounded_exact_job_receipts_only",
                      "queue": queue_coverage, "workers": worker_coverage,
+                     "vps_capacity": capacity_coverage,
                      "issues": issue_coverage, "notion": _short(sources.get("notion"), 80)},
         "priority_items": cards[:MAX_ITEMS],
         "current_queue_lease_owner_summary": current_queue,
