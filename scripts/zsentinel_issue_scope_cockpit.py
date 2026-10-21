@@ -719,7 +719,11 @@ def output_text(report, markdown=False):
                                  str(live_gate["observed_checks_not_successful"]) +
                                  " · exact-head onafhankelijke approvals gezien: " +
                                  str(live_gate["observed_independent_exact_head_approvals"]) +
-                                 " · legacy statussen: " +
+                                 " · review aangevraagd bij " +
+                                 str(live_gate.get("pending_individual_review_requests_observed", "?")) +
+                                 " personen en " +
+                                 str(live_gate.get("pending_team_review_requests_observed", "?")) +
+                                 " teams (geen goedkeuring) · legacy statussen: " +
                                  str(live_gate.get("legacy_status_contexts_observed", 0)) +
                                  " contexten (" +
                                  str(live_gate.get("legacy_status_pending_observed", 0)) +
@@ -954,7 +958,11 @@ def output_html(report):
                 str(live_gate["observed_checks_not_successful"]) +
                 " · onafhankelijke HEAD-approvals gezien: " +
                 str(live_gate["observed_independent_exact_head_approvals"]) +
-                " · legacy statuscontexten: " +
+                " · review aangevraagd bij " +
+                str(live_gate.get("pending_individual_review_requests_observed", "?")) +
+                " personen en " +
+                str(live_gate.get("pending_team_review_requests_observed", "?")) +
+                " teams (geen goedkeuring) · legacy statuscontexten: " +
                 str(live_gate.get("legacy_status_contexts_observed", 0)) +
                 " (" + str(live_gate.get("legacy_status_pending_observed", 0)) +
                 " lopend, " +
