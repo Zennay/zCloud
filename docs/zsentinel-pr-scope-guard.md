@@ -2522,3 +2522,19 @@ alleen op reeds weergegeven kaarten en meervoudige-PR-issues; hij haalt geen
 nieuwe brondata op, bewaart geen status stilzwijgend en verandert geen claims.
 Zo kan een operator de P0/P1- en bestaande-PR-prioriteit behouden en daarna
 gericht de stilste bronissues bekijken.
+
+
+## 21 oktober · gedeelde Unicode-veilige CSV-formulesanering
+
+De vier bestaande private CSV-routes (directe PR-conflictenkaart,
+multi-projectportfolio, samengevoegde PR-vensters en merge-first
+eigenaarwerkopdrachten) gebruiken nu dezelfde
+`csv_formula_inert`-helper uit `zsentinel_pr_scope_guard.py`.
+Formuleherkenning kijkt door opeenvolgende Unicode-witruimte, zero-width
+tekens, BOM en andere Unicode-format-/separator-markeringen heen voordat
+`=`, `+`, `-` of `@` wordt beoordeeld. De oorspronkelijke broncel blijft
+behouden; alleen een apostrof vóór de cel maakt een mogelijk actieve
+spreadsheetformule inert. De bestaande CSV-quoting, bestandslimieten en
+create-only/private-0600 schrijfcontracten blijven ongewijzigd. Dit is
+defensieve export-sanitatie, geen wijziging van de GitHub-bron of van
+merge-/claim-/deployrechten.
