@@ -274,10 +274,11 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
     )
     if not isinstance(payload, list) or len(payload) > MAX_LIST_PAGE:
         raise GitHubReadError("bounded GitHub open-PR page has invalid shape")
-    candidates, seen, matched_total = [], set(), 0
+    candidates, seen, matched_total, skipped_rows = [], set(), 0, 0
     for row in payload:
         if not isinstance(row, dict):
-            raise GitHubReadError("GitHub open-PR page has malformed entries")
+            skipped_rows += 1
+            continue
         identity = row.get("number")
         base = row.get("base")
         if (type(identity) is not int or not 1 <= identity <= 100000000
@@ -286,9 +287,11 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
                 or base["repo"].get("full_name") != full_name
                 or row.get("state") != "open"
                 or type(row.get("draft")) is not bool):
-            raise GitHubReadError("GitHub open-PR candidate scope is inconsistent")
+            skipped_rows += 1
+            continue
         if identity in seen:
-            raise GitHubReadError("GitHub open-PR page repeated one candidate")
+            skipped_rows += 1
+            continue
         seen.add(identity)
         status, _ = _body_issue_reference(row, full_name, int(number))
         if status not in (
@@ -313,6 +316,7 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
         "first_page_limit": MAX_LIST_PAGE,
         "candidate_text_matches_in_page": matched_total,
         "candidate_records_returned": len(candidates),
+        "skipped_or_malformed_first_page_rows": skipped_rows,
         "candidate_list_truncated": matched_total > len(candidates),
         "source_page_may_be_incomplete": True,
         "existing_repair_absence_verified": False,
