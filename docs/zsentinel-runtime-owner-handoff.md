@@ -451,8 +451,10 @@ afhankelijkheden zijn beoordeeld. Dezelfde status verschijnt in de standaard
 tekstuitvoer en offline HTML. Ook oudere opgeslagen beslissingen zonder
 dependency-coverageveld worden fail-closed als onbekend weergegeven.
 
-Alleen `coverage=complete` staat toe dat de handoff een concreet totaal aantal
-HOLD-taken presenteert. Deze status is gebaseerd op expliciete complete
+Alleen `coverage=complete` staat toe dat de handoff een concreet totaal presenteert
+van verder routeerbare wachtrijtaken die door incidentafhankelijkheden worden
+tegengehouden. Al geclaimde/actieve, niet-geschikte, menselijk afgeschermde of
+taken zonder geldige bestandsscope vallen buiten deze kandidaat-telling. Deze status is gebaseerd op expliciete complete
 inventarissen, verse observatietijden en bekende actieve claimscopes; het blijft
 advies en verleent geen claim-, retry-, merge- of deployrecht. De implementatie
 staat op de bestaande PR #1563 en vereist nog steeds de originele exacte-head
