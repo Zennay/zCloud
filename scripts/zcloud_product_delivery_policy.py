@@ -260,6 +260,12 @@ def product_queue_snapshot(items, max_visible=8):
     active_missing_claim_expiry = 0
     active_claim_evidence_examples = []
     active_claim_evidence_example_count = 0
+    # A repeated claim is *not* a failed task. This read-only index merely
+    # gives the original owner concrete evidence to inspect before retrying.
+    repeated_claim_attempts_observed = 0
+    repeated_active_claim_attempts_observed = 0
+    repeated_queued_claim_attempts_observed = 0
+    repeated_claim_workorders = []
     queued_visible = 0
     held_ineligible = 0
     held_slot_occupied = 0
@@ -289,6 +295,9 @@ def product_queue_snapshot(items, max_visible=8):
                 "active_missing_worker_slot_visible": 0,
                 "active_missing_claim_start_visible": 0,
                 "active_missing_claim_expiry_visible": 0,
+                "repeated_claim_attempts_visible": 0,
+                "repeated_active_claim_attempts_visible": 0,
+                "repeated_queued_claim_attempts_visible": 0,
                 "queued_rows_visible": 0, "queued_product_candidates_visible": 0,
                 "queued_qa_only_held": 0,
                 "queued_invalid_or_unknown_held": 0,
@@ -298,6 +307,33 @@ def product_queue_snapshot(items, max_visible=8):
             })
             activity["visible_rows"] += 1
         status = str(item.get("status") or "").strip().casefold()
+        attempts = item.get("attempts")
+        # Do not accept bool, float, negative, string, or an unauthenticated
+        # rendered 'failure' counter as observed durable claim attempts.
+        if (status in ("queued", "claimed", "running", "verifying")
+                and type(attempts) is int and attempts >= 3):
+            repeated_claim_attempts_observed += 1
+            if activity is not None:
+                activity["repeated_claim_attempts_visible"] += 1
+            if status == "queued":
+                repeated_queued_claim_attempts_observed += 1
+                if activity is not None:
+                    activity["repeated_queued_claim_attempts_visible"] += 1
+            else:
+                repeated_active_claim_attempts_observed += 1
+                if activity is not None:
+                    activity["repeated_active_claim_attempts_visible"] += 1
+            repeated_claim_workorders.append({
+                "project_id": project,
+                "queue_id": str(item.get("queue_id") or "")[:160],
+                "priority": str(item.get("priority") or "")[:4],
+                "status": status,
+                "claim_attempts_observed": min(attempts, 1000000000),
+                "claim_attempts_capped": attempts > 1000000000,
+                "owner_action": "review_attempt_history_no_automatic_retry",
+                "attempts_are_not_task_failures": True,
+                "not_claimed_or_authorized": True,
+            })
         if status in ("claimed", "running", "verifying"):
             active_owner_rows += 1
             if activity is not None:
@@ -431,6 +467,7 @@ def product_queue_snapshot(items, max_visible=8):
         -(row["active_missing_worker_slot_visible"] > 0
           or row["active_missing_claim_start_visible"] > 0
           or row["active_missing_claim_expiry_visible"] > 0),
+        -(row["repeated_claim_attempts_visible"] > 0),
         -(row["active_claimed_running_verifying_visible"] > 0
           and row["queued_product_candidates_visible"] > 0),
         -row["queued_product_candidates_visible"],
@@ -443,6 +480,8 @@ def product_queue_snapshot(items, max_visible=8):
                 or row["active_missing_claim_start_visible"]
                 or row["active_missing_claim_expiry_visible"]):
             next_step = "owner_reconcile_active_claim_evidence_before_any_new_work"
+        elif row["repeated_claim_attempts_visible"]:
+            next_step = "owner_review_attempt_history_no_automatic_retry"
         elif row["active_claimed_running_verifying_visible"]:
             next_step = "check_active_claims_before_any_new_work"
         elif row["queued_product_candidates_visible"]:
@@ -452,6 +491,29 @@ def product_queue_snapshot(items, max_visible=8):
         else:
             next_step = "no_product_candidate_observed"
         row["operator_next_step"] = next_step
+    # Show one high-attempt original task per project first, then the highest
+    # remaining observed count. Never let one noisy project suppress every
+    # other human recovery lead in the bounded owner list.
+    repeated_claim_workorders.sort(key=lambda row: (
+        -row["claim_attempts_observed"], row["project_id"], row["queue_id"],
+    ))
+    fair_repeated_claim_workorders = []
+    seen_retry_projects = set()
+    for row in repeated_claim_workorders:
+        if row["project_id"] in seen_retry_projects:
+            continue
+        seen_retry_projects.add(row["project_id"])
+        fair_repeated_claim_workorders.append(row)
+        if len(fair_repeated_claim_workorders) >= max_visible:
+            break
+    if len(fair_repeated_claim_workorders) < max_visible:
+        selected = {row["queue_id"] for row in fair_repeated_claim_workorders}
+        for row in repeated_claim_workorders:
+            if row["queue_id"] in selected:
+                continue
+            fair_repeated_claim_workorders.append(row)
+            if len(fair_repeated_claim_workorders) >= max_visible:
+                break
     return {
         "policy": "product-delivery-2026-10-17",
         "source_coverage": "visible_api_rows_only_not_full_queue",
@@ -461,6 +523,14 @@ def product_queue_snapshot(items, max_visible=8):
         "active_missing_worker_slot_visible": active_missing_worker_slot,
         "active_missing_claim_start_visible": active_missing_claim_start,
         "active_missing_claim_expiry_visible": active_missing_claim_expiry,
+        "repeated_claim_attempts_observed": repeated_claim_attempts_observed,
+        "repeated_active_claim_attempts_observed": repeated_active_claim_attempts_observed,
+        "repeated_queued_claim_attempts_observed": repeated_queued_claim_attempts_observed,
+        "repeated_claim_workorders": fair_repeated_claim_workorders,
+        "repeated_claim_workorders_truncated": (
+            len(repeated_claim_workorders) > len(fair_repeated_claim_workorders)
+        ),
+        "repeated_claims_are_not_failures_or_retry_authority": True,
         "active_claim_evidence_is_advisory_only": True,
         "active_claim_evidence_examples": active_claim_evidence_examples,
         "active_claim_evidence_examples_truncated": (
