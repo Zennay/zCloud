@@ -239,6 +239,7 @@ def render_html(board, max_rows=20):
             "' data-issue='" + escape(card["issue_url"], quote=True) +
             "' data-title='" + escape(card["title"], quote=True) +
             "' data-priority='" + escape(card["priority"], quote=True) +
+            "' data-activity='" + escape(card["activity_signal"], quote=True) +
             "' data-prs='" + escape(" ".join(c["url"] for c in candidates), quote=True) +
             "'><strong>" + escape(card["priority"]) + "</strong> · " +
             "<a target='_blank' rel='noopener noreferrer' href='" +
@@ -414,6 +415,7 @@ const tickets=Array.from(document.querySelectorAll('article.ticket[data-issue]')
 const prs=Array.from(document.querySelectorAll('.pr-work[data-pr]'));
 const search=document.getElementById('q'), priority=document.getElementById('priority');
 const project=document.getElementById('project'), state=document.getElementById('state');
+const activity=document.getElementById('activity');
 const visible=document.getElementById('visible'), prState=document.getElementById('pr-state');
 const focusBar=document.getElementById('focus-bar'),focusTitle=document.getElementById('focus-title');
 const focusClear=document.getElementById('focus-clear');
@@ -449,6 +451,7 @@ function refresh(){
    (!collisionOnly.checked||t.dataset.collision==='yes')&&
    (!q||text.includes(q))&&(!priority.value||priority.value===t.dataset.priority)&&
    (!project.value||project.value===t.dataset.project)&&
+   (!activity.value||(activity.value==='unknown'?['source_clock_incoherent','activity_timestamp_unknown'].includes(t.dataset.activity):activity.value===t.dataset.activity))&&
    (!state.value||state.value===t.querySelector('.local-state').value);
   t.hidden=!show;if(show)count++;
  }
@@ -470,7 +473,8 @@ function refresh(){
   const show=(!focusedPr||c.dataset.prs.split(' ').includes(focusedPr))&&
     (!q||source.includes(q))&&
     (!priority.value||priority.value===c.dataset.priority)&&
-    (!project.value||project.value===c.dataset.project);
+    (!project.value||project.value===c.dataset.project)&&
+    (!activity.value||(activity.value==='unknown'?['source_clock_incoherent','activity_timestamp_unknown'].includes(c.dataset.activity):activity.value===c.dataset.activity));
   c.hidden=!show;if(show)collisionsShown++;
  }
  collisionVisible.textContent=collisionsShown+' van '+collisionRows.length+
@@ -491,7 +495,7 @@ function focusOnPr(url){
  const target=prs.find(p=>p.dataset.pr===url);
  if(!target)return;
  focusedPr=url;focusIndex=-1;
- search.value='';priority.value='';project.value='';state.value='';prState.value='';
+ search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';
  refresh();
  focusBar.scrollIntoView({block:'start'});
  focusClear.focus();
@@ -515,12 +519,12 @@ focusNext.addEventListener('click',()=>{
  open[focusIndex].scrollIntoView({block:'start'});
  open[focusIndex].focus();
 });
-for(const c of [search,priority,project,state,prState,collisionOnly])c.addEventListener('input',refresh);
+for(const c of [search,priority,project,activity,state,prState,collisionOnly])c.addEventListener('input',refresh);
 for(const t of tickets)t.querySelector('.local-state').addEventListener('change',refresh);
 for(const p of prs)p.querySelector('.pr-local-state').addEventListener('change',refresh);
 for(const c of collisionRows)c.querySelector('.collision-state').addEventListener('change',refresh);
 document.getElementById('reset').addEventListener('click',function(){
- focusedPr=null;focusIndex=-1;collisionOnly.checked=false;search.value='';priority.value='';project.value='';state.value='';prState.value='';refresh();
+ focusedPr=null;focusIndex=-1;collisionOnly.checked=false;search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';refresh();
 });
 function safeText(value){
  return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#\x60~])/g,'\\$1').slice(0,720);
@@ -793,7 +797,7 @@ document.getElementById('session-import').addEventListener('change',async functi
    if(Object.prototype.hasOwnProperty.call(restored,'focused_pr')){
     focusedPr=restored.focused_pr;
     focusIndex=-1;
-    search.value='';priority.value='';project.value='';state.value='';prState.value='';
+    search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';
    }
   }
   refresh();
@@ -909,6 +913,12 @@ refresh();
         "<option>Unspecified</option></select></label>"
         "<label>Project<select id='project'><option value=''>Alles</option>" +
         p_opts + "</select></label>"
+        "<label>Issue-activiteit<select id='activity'><option value=''>Alle signalen</option>"
+        "<option value='quiet_over_7_days_observed_claims_unknown'>Geen update &gt;7d · dekking compleet</option>"
+        "<option value='quiet_over_7_days_partial_pr_coverage'>Geen update &gt;7d · dekking onvolledig</option>"
+        "<option value='recent_issue_activity_observed'>Issue recent bijgewerkt</option>"
+        "<option value='recent_linked_pr_activity_observed'>Gekoppelde PR recent bijgewerkt</option>"
+        "<option value='unknown'>Activiteit onbekend</option></select></label>"
         "<label>Handmatige status<select id='state'><option value=''>Alles</option>"
         "<option value='open'>Nog te bekijken</option>"
         "<option value='owner'>Wacht op eigenaar</option>"

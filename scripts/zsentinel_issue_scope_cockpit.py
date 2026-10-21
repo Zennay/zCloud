@@ -966,6 +966,7 @@ def output_html(report):
             "' data-project='" + escape(row["project"], quote=True) +
             "' data-history='" + ("changed" if row.get("historical_linked_pr_activity_observed")
                                    else "not-observed") +
+            "' data-activity='" + escape(row["activity"]["signal"], quote=True) +
             "'><small>" + escape(row["priority"]) + " · " +
             escape(row["project"]) + "</small><h2><a rel='noopener noreferrer' href='" +
             escape(row["url"], quote=True) + "'>" + escape(row["title"]) +
@@ -1013,6 +1014,13 @@ def output_html(report):
         "".join("<option value='" + escape(p, quote=True) + "'>" +
                 escape(p) + "</option>" for p in report["chosen_projects"]) +
         "</select></label>" +
+        "<label>Issue-activiteit<select id='filter-activity'>"
+        "<option value=''>Alle signalen</option>"
+        "<option value='quiet_over_7_days_observed_claims_unknown'>Geen update &gt;7d · dekking compleet</option>"
+        "<option value='quiet_over_7_days_partial_pr_coverage'>Geen update &gt;7d · dekking onvolledig</option>"
+        "<option value='recent_issue_activity_observed'>Issue recent bijgewerkt</option>"
+        "<option value='recent_linked_pr_activity_observed'>Gekoppelde PR recent bijgewerkt</option>"
+        "<option value='unknown'>Activiteit onbekend</option></select></label>" +
         ("<label>PR-historie<select id='filter-history'>" +
          "<option value=''>Alle productissues</option>" +
          "<option value='changed'>Met waargenomen PR-wijziging</option>" +
@@ -1026,6 +1034,7 @@ def output_html(report):
 const search=document.getElementById('filter-search');
 const priority=document.getElementById('filter-priority');
 const project=document.getElementById('filter-project');
+const activity=document.getElementById('filter-activity');
 const history=document.getElementById('filter-history');
 const count=document.getElementById('filter-count');
 const cards=Array.from(document.querySelectorAll('article[data-project]'));
@@ -1036,18 +1045,19 @@ function update(){
     const ok=(!term || card.textContent.toLocaleLowerCase('nl').includes(term)) &&
       (!priority.value || card.dataset.priority===priority.value) &&
       (!project.value || card.dataset.project===project.value) &&
+      (!activity.value || (activity.value==='unknown' ? ['source_clock_incoherent','activity_timestamp_unknown'].includes(card.dataset.activity) : card.dataset.activity===activity.value)) &&
       (!history || !history.value || card.dataset.history===history.value);
     card.hidden=!ok;
     if(ok) shown++;
   }
   count.textContent=shown+' van '+cards.length+' productissues zichtbaar';
 }
-for(const el of [search,priority,project,history])if(el)el.addEventListener('input',update);
+for(const el of [search,priority,project,activity,history])if(el)el.addEventListener('input',update);
 for(const link of document.querySelectorAll('a[data-open-issue]')){
   link.addEventListener('click',function(){
     const card=document.getElementById(link.dataset.openIssue);
     if(!card)return;
-    search.value=''; priority.value=''; project.value='';
+    search.value=''; priority.value=''; project.value=''; activity.value='';
     if(history)history.value='';
     update();
     card.scrollIntoView({block:'start'});

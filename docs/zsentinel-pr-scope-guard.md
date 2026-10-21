@@ -2335,3 +2335,11 @@ PR-gates. Een stil issue kan dus nooit een P0/P1- of falende bestaande PR
 wegdrukken; binnen dezelfde tier worden issues zonder recente activiteit
 eerder zichtbaar voor menselijke triage. Het signaal wijst geen eigenaar aan
 en geeft geen toestemming om werk te claimen of een worker te onderbreken.
+
+De twee offline issue-werkbakken bieden ook een lokale filter op het
+activiteitssignaal (stilte >7 dagen met complete/onvolledige PR-dekking,
+recente issue-update, recente gekoppelde PR of onbekende bron). De filter werkt
+alleen op reeds weergegeven kaarten en meervoudige-PR-issues; hij haalt geen
+nieuwe brondata op, bewaart geen status stilzwijgend en verandert geen claims.
+Zo kan een operator de P0/P1- en bestaande-PR-prioriteit behouden en daarna
+gericht de stilste bronissues bekijken.
