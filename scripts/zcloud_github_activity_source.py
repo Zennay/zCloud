@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only GitHub PR/merge/Actions activity for zCloud issue #1518.
+"""Read-only GitHub PR/merge/Actions/main/branch-head activity for issue #1518.
 
 Run locally or in an approved backend process. No SQLite, queue, deploy, browser,
 credential persistence, HTML scraping, or runtime/owner mutation.
@@ -186,11 +186,13 @@ def bounded_events(
         "status": "partial",
         "github_pr": "unavailable",
         "github_ci": "unavailable",
-        "github_branches": "not_synchronized",
+        "github_branches": "unavailable",
         "github_main_commits": "unavailable",
         "local_vps": "not_observed",
-        "pages": {"pulls": 0, "actions": 0, "commits": 0},
-        "page_limit_reached": {"pulls": False, "actions": False, "commits": False},
+        "branch_rows_skipped": 0,
+        "pages": {"pulls": 0, "actions": 0, "commits": 0, "branches": 0},
+        "page_limit_reached": {"pulls": False, "actions": False, "commits": False,
+                               "branches": False},
         "errors": errors,
     }
 
@@ -292,7 +294,6 @@ def bounded_events(
                 coverage["page_limit_reached"]["pulls"] = True
         coverage["github_pr"] = ("bounded_truncated" if coverage["page_limit_reached"]["pulls"]
                                  else "bounded_window")
-        coverage["github_branches"] = "observed_pr_heads_only"
     except ValueError as error:
         errors.append(str(error))
         # Partial pages cannot be treated as complete coverage.
@@ -376,6 +377,46 @@ def bounded_events(
         if coverage["pages"]["commits"]:
             coverage["github_main_commits"] = "partial"
 
+    # One explicit, bounded branch-head page extends the source beyond PR heads.
+    # Observation time is not branch creation or last-commit time; no ownership
+    # or merge authority is inferred. A full page may omit older branch names.
+    try:
+        rows = reader.get(repo, "branches", {"per_page": 100, "page": 1})["data"]
+        if not isinstance(rows, list):
+            raise ValueError("github_branches_invalid")
+        skipped = 0
+        for branch in rows:
+            if not isinstance(branch, dict):
+                skipped += 1
+                continue
+            branch_ref = branch.get("name")
+            commit = branch.get("commit")
+            branch_sha = commit.get("sha") if isinstance(commit, dict) else None
+            if (not isinstance(branch_ref, str) or len(branch_ref) > 80
+                    or not re.fullmatch(r"[A-Za-z0-9._/-]{1,80}", branch_ref)
+                    or branch_ref.startswith("/") or branch_ref.endswith("/")
+                    or "//" in branch_ref or ".." in branch_ref or branch_ref.endswith(".")
+                    or any(not part or part.endswith(".lock") for part in branch_ref.split("/"))
+                    or not isinstance(branch_sha, str) or not SHA_RE.fullmatch(branch_sha)):
+                skipped += 1
+                continue
+            add("branch_head", branch_ref + ":" + branch_sha, observed,
+                branch_ref=branch_ref, sha=branch_sha,
+                main_merged=False, branch_owner_verified=False,
+                url=f"https://github.com/{repo}/tree/{branch_ref}",
+                deploy_verified=False, worker_resumed=False)
+        coverage["pages"]["branches"] = 1
+        coverage["page_limit_reached"]["branches"] = len(rows) >= 100
+        coverage["branch_rows_skipped"] = skipped
+        coverage["github_branches"] = (
+            "bounded_partial" if skipped else
+            "bounded_truncated" if coverage["page_limit_reached"]["branches"] else
+            "bounded_window"
+        )
+    except ValueError as error:
+        errors.append(str(error))
+        coverage["github_branches"] = "unavailable"
+
     # A GitHub-reported PR merge is not proof that its exact merge commit is
     # reachable from canonical main. A matching SHA in the bounded main
     # commit history is positive reachability evidence, NOT live deployment.
@@ -407,7 +448,7 @@ def bounded_events(
     coverage["github_pr_target_is_reported"] = True
 
     if not errors:
-        coverage["status"] = "partial_sources"  # GitHub branch coverage absent.
+        coverage["status"] = "partial_sources"  # bounded sources; no complete-history claim.
         coverage["synced_at"] = stamp(observed)
     elif any(coverage[source] != "unavailable" for source in ("github_pr", "github_ci", "github_main_commits")):
         coverage["status"] = "partial_error"
@@ -503,14 +544,15 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
         item["first_observed_at"] = stamp(first_seen or observed)
         item["new_since_previous"] = (item["id"] not in prior) if prior is not None else None
     events = sorted(deduped.values(), key=lambda x: (x["source_at"], x["id"]), reverse=True)
-    # Interleave four bounded source categories within each project. A noisy
+    # Interleave five bounded source categories within each project. A noisy
     # PR-update or CI stream cannot consume every slot before a genuine
-    # GitHub close-without-merge is made visible to the operator.
+    # close-without-merge or branch-head observation is visible to the operator.
     buckets = {(project, kind): [] for project in selected
-               for kind in ("pr", "closed", "ci", "commit")}
+               for kind in ("pr", "closed", "ci", "commit", "branch")}
     for item in events:
         category = ("ci" if item["kind"] == "ci_run" else
                     "commit" if item["kind"] == "main_commit" else
+                    "branch" if item["kind"] == "branch_head" else
                     "closed" if item["kind"] == "pr_closed" else "pr")
         buckets[(item["project"], category)].append(item)
     fair = []
@@ -518,7 +560,7 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
     while len(fair) < max_events:
         advanced = False
         for project in selected:
-            for category in ("pr", "closed", "ci", "commit"):
+            for category in ("pr", "closed", "ci", "commit", "branch"):
                 key = (project, category)
                 index = positions[key]
                 if index >= len(buckets[key]):
@@ -565,7 +607,7 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
         "previous_snapshot_compared": prior is not None,
         "truncated": len(events) > max_events,
         "coverage": coverage,
-        "feed_complete": False,  # no branch/backfill/runtime proof
+        "feed_complete": False,  # bounded branch page; no backfill/runtime proof
         "authorizes_repair": False,
         "authorizes_merge": False,
         "authorizes_deploy": False,
