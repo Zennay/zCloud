@@ -22,6 +22,28 @@ De `--format desk`-route vereist een **nieuw** outputbestand in een bestaande pr
 
 Voor een handmatig opgeslagen Notion-snapshot kan de eigenaar `--notion-claims-export /secure/notion-snapshot.json` gebruiken in plaats van `--read-notion-claims`. Die bron krijgt expliciet het label **handmatig opgeslagen / herkomst niet geverifieerd**. Een geweigerde, gedeeltelijke of afwezige live-bron krijgt een eigen **ONBEKEND**-melding, geen nulclaim.
 
+
+## Live-cockpit en portfolio met privébronnen
+
+De twee bestaande zelfstandige CLI's volgen nu dezelfde private-output-regel als de refresh-CLI. **Wanneer** een Notion-bron of `--worker-events-database` is ingeschakeld, accepteert `--format html/json/text` uitsluitend een expliciet `--output`-bestand. Een extra `--desk-output`, `--owner-packet-output` of `--handoff-output` is **niet** voldoende: die sidecars schakelen de normale stdout-uitvoer niet uit.
+
+```sh
+# Privé HTML met dezelfde read-only brongegevens; geen stdout met inhoud:
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /secure/existing-zcloud.sqlite3 \
+  --project cloud --read-notion-claims \
+  --worker-events-database /secure/existing-history.sqlite3 \
+  --format html --output /secure/operator-only/live-private-new.html
+
+# Of uitsluitend de interactieve privébalie:
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /secure/existing-zcloud.sqlite3 \
+  --worker-events-database /secure/existing-history.sqlite3 \
+  --format desk --desk-output /secure/operator-only/portfolio-desk-new.html
+```
+
+Bij weggelaten gevoelige opt-in bronnen blijft de bestaande openbare, bronbegrensde stdout-route beschikbaar. Deze weigering geldt alleen voor privéstatusdetails. De uitvoerrechten en de bestaande CI-/review-/releasegates veranderen niet.
+
 ## Wat de werkbank laat zien
 
 - **Huidige incidentkaarten:** prioriteit, bronstatus, menselijke vervolgstap en lokaal bewaarde notities tot een expliciete privé-export.
