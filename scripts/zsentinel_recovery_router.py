@@ -1603,6 +1603,9 @@ def operator_text(result):
                 raise ValueError("invalid blocked-queue text aggregate")
             lines.append("  - " + row["priority"] + " " + row["project_id"] +
                          ": " + str(row["items"]) + " status=blocked")
+        if len(groups) > 10:
+            lines.append("  Nog " + str(len(groups) - 10) +
+                         " project/prioriteitgroepen niet getoond in deze tekstweergave.")
         if blocked.get("sample_truncated") is True:
             lines.append("  Projectverdeling onvolledig; geen all-clear of dispatch.")
     lines.append("VPS resource admission: " + result["vps_resource_admission"]["state"] +
