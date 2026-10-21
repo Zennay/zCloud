@@ -330,6 +330,12 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
                 "Respect observed local active/ambiguous claims; independently "
                 "confirm current owner and inspect exact-HEAD existing PR gates"
             )
+        elif local_status == "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED":
+            item["operator_action"] = (
+                "No active/expired lease was observed locally; verify Notion "
+                "and other worker ownership before any claim, then inspect "
+                "exact-HEAD existing PR gates"
+            )
         else:
             item["operator_action"] = (
                 "Inspect selected existing PR and exact-HEAD review/CI/claim gates"
@@ -1111,8 +1117,14 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
                 "ambigue lokale claims en bevestig onafhankelijk de huidige "
                 "eigenaar voordat je mutaties overweegt.</p>"
             )
-        elif target_claims["status"] not in {
-                "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED"}:
+        elif target_claims["status"] == "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED":
+            target_section += (
+                "<p><strong>Volgende veilige stap:</strong> er is geen actieve/"
+                "verlopen lokale lease waargenomen, maar dit bewijst geen vrije "
+                "eigenaar. Controleer Notion en andere workers voordat je een "
+                "claim overweegt.</p>"
+            )
+        else:
             target_section += (
                 "<p><strong>Volgende veilige stap:</strong> herstel of vernieuw "
                 "de vertrouwde claimbron; ontbrekende/onvolledige data bewijst "
