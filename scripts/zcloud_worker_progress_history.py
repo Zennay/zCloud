@@ -41,6 +41,8 @@ SAFE_REASON_CODES = frozenset({
     "dispatch-ledger-unavailable",
     "new-chat-transition-operator-action-required",
     "command-ack-backlog-manual-review",
+    "command-ack-ledger-unavailable",
+    "command-ack-pending-no-new-send",
 })
 MAX_ROWS = 40
 
