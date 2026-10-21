@@ -233,7 +233,7 @@ def _admit(report):
         if (len(stamps) != report["window_count"]
                 or any(type(stamp) is not str
                        or not re.fullmatch(
-                           r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z",
+                           r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
                            stamp)
                        for stamp in stamps)):
             raise ValueError("missing canonical routing window timestamps")
