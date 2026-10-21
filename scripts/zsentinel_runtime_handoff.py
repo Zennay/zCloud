@@ -189,6 +189,110 @@ def _observed_pr_owner_cards(pr_desk, registry):
     return cards, "bounded_%d_open_prs_other_prs_unknown" % len(cards)
 
 
+
+def _notion_owner_status_summary(observed, source_mode, registry):
+    """Handoff positive incomplete work statuses, never claim/lease authority.
+
+    This deliberately does not inspect Notion rows, send notifications, choose
+    a worker, or modify the primary P0-first priority action queue.
+    """
+    blank = {
+        "coverage": "not_requested_or_unavailable",
+        "observed_at_utc": None,
+        "source_age_seconds": None,
+        "projects": [],
+        "unregistered_work_status_min": None,
+        "items_truncated": False,
+        "owner_verified": False,
+        "live_lease_verified": False,
+        "can_dispatch": False,
+        "can_release_claim": False,
+    }
+    if observed is None:
+        return blank
+    mode = {
+        "claim_status_observed_no_file_ownership":
+            ("notion_readonly_data_source_pages", ("current_pages_only", "incomplete")),
+        "private_connector_snapshot_unverified_origin":
+            ("user_supplied_notion_connector_export_unverified_origin",
+             ("saved_single_page_not_live_current_claims_unknown",)),
+    }.get(source_mode)
+    if (mode is None or type(observed) is not dict
+            or observed.get("source") != mode[0]
+            or observed.get("coverage") not in mode[1]
+            or any(observed.get(key) is not False for key in
+                   ("claim_scope_verified", "task_inventory_verified",
+                    "can_dispatch", "can_release_claim"))
+            or type(registry) is not dict):
+        raise ValueError("untrusted Notion handoff work-status source")
+    if mode[0] == "user_supplied_notion_connector_export_unverified_origin" and (
+            observed.get("origin_authenticity_verified") is not False
+            or observed.get("live_claim_ownership_verified") is not False):
+        raise ValueError("private snapshot cannot grant live owner status")
+    stamp = observed.get("observed_at")
+    if type(stamp) is not str or len(stamp) > 45:
+        raise ValueError("invalid handoff Notion source timestamp")
+    try:
+        when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("invalid handoff Notion observation date") from exc
+    if when.tzinfo is None or when.utcoffset() is None:
+        raise ValueError("Notion timestamp must have timezone")
+    age = int((datetime.now(timezone.utc) - when.astimezone(timezone.utc)).total_seconds())
+    if age < -120:
+        raise ValueError("Notion timestamp is in future")
+    counts = observed.get("active_project_counts")
+    verifying = observed.get("verifying_project_counts")
+    count = observed.get("active_count")
+    verifying_total = observed.get("verifying_count")
+    if (type(counts) is not dict or len(counts) > 50
+            or type(verifying) is not dict or len(verifying) > 50
+            or type(count) is not int or not 0 <= count <= 400
+            or type(verifying_total) is not int
+            or not 0 <= verifying_total <= count
+            or any(type(k) is not str or len(k) > 100
+                   or type(v) is not int or not 0 < v <= 400
+                   for k, v in counts.items())
+            or any(type(k) is not str or type(v) is not int
+                   or not 0 < v <= counts.get(k, -1)
+                   for k, v in verifying.items())
+            or sum(counts.values()) != count
+            or sum(verifying.values()) != verifying_total):
+        raise ValueError("inconsistent Notion owner status aggregates")
+    known = []
+    unknown_total = 0
+    for pid, total in counts.items():
+        if pid not in registry:
+            unknown_total += total
+            continue
+        _project(pid)
+        review = verifying.get(pid, 0)
+        known.append({
+            "project": pid, "observed_unfinished_min": total,
+            "observed_verifying_min": review,
+            "next_step": ("Controleer bestaande PR en verificatie-eigenaar vóór nieuw werk."
+                          if review else
+                          "Controleer actieve taakclaim, scope en bestaande PR."),
+            "live_owner_verified": False,
+            "review_required": True, "can_claim": False,
+        })
+    known.sort(key=lambda x: (-bool(x["observed_verifying_min"]),
+                               -x["observed_verifying_min"],
+                               -x["observed_unfinished_min"], x["project"]))
+    return {
+        **blank,
+        "coverage": ("saved_snapshot_origin_unverified"
+                     if source_mode == "private_connector_snapshot_unverified_origin"
+                     else ("live_readonly_incomplete"
+                           if observed["coverage"] == "incomplete"
+                           else "live_readonly_bounded")),
+        "observed_at_utc": when.astimezone(timezone.utc).isoformat(timespec="seconds"),
+        "source_age_seconds": max(0, age),
+        "projects": known[:12],
+        "unregistered_work_status_min": unknown_total,
+        "items_truncated": len(known) > 12,
+    }
+
 def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     """Prioritize exact incidents, owner/lease conflicts, and open product work.
 
@@ -202,6 +306,8 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     if not isinstance(sources, dict) or not isinstance(incidents, list) or len(incidents) > 200:
         raise ValueError("handoff requires assembled live source provenance")
     cards = []
+    notion_owner_status = _notion_owner_status_summary(
+        decision.get("notion_claims_observation"), sources.get("notion"), registry)
     pr_cards, pr_coverage = _observed_pr_owner_cards(pr_desk, registry)
     for item in incidents:
         if not isinstance(item, dict) or item.get("severity") not in ("P0", "P1", "P2"):
@@ -546,6 +652,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                      "issues": issue_coverage, "prs": pr_coverage,
                      "notion": _short(sources.get("notion"), 80)},
         "priority_items": cards[:MAX_ITEMS],
+        "notion_owner_status_review": notion_owner_status,
         "current_queue_lease_owner_summary": current_queue,
         "queue_claim_conflict_total_observed": conflict_total,
         "queue_claim_conflicts_sample_truncated": conflict_truncated,
