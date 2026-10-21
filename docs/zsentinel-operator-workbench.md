@@ -2501,3 +2501,27 @@ main-branch integration. No new QA suite or manual test run was introduced.
 The project recovery desk now sorts already-admitted **human investigation leads** as follows: potentially expired leases (owner reconciliation required), P0 product blockers, recurring claim cycles, P1 product blockers, and routine source rechecks. The priority is a *visual review order*, never a recovery or dispatch order. Each visible queue-pressure figure is accompanied by its **original queue source timestamp in UTC**, even if the later board and HTML report were generated at another time. Queue items without an accepted fresh retry-source timestamp are rejected rather than silently presented as valid current evidence. The private Markdown handoff includes the original timestamp and the same non-authorizing warning, including for projects with zero issue cards.
 
 Original source clock and freshness flags must match exactly, with no unknown source families, future capture or missing retry provenance for admitted queue pressure. Empty or outdated queue sources remain **UNKNOWN**, not healthy. The page still never asserts active ownership, true failure counts, permission to reclaim expired leases, or any successful merge/deploy. All existing branch CI, review and real production gates stay unchanged; nothing was dispatched or executed as a QA suite.
+
+
+### Private project-scoped recovery handoff (21 October continuation)
+
+The **Project** filter is now shared by the saved issue cards and the
+issue-independent Project recovery panel. Choosing a project hides other
+projects' recovery leads without changing their admitted evidence. The
+panel's visible-count indicator follows this local selection; users can
+select a project even if there are no issue cards for it.
+
+The explicit **Preview current filtered briefing** route also applies the
+selected project to project-level recovery leads, while other issue filters
+(search, priority and human disposition) continue to apply only to issue
+cards. With no Project filter, its heading warns that the full saved
+portfolio is included. With a Project filter, the handoff clearly names the
+selected project and does not export other projects' queue-pressure context.
+A filtered project with zero captured issues can still produce a private
+human-only recovery briefing from its admitted project operation. This is
+particularly important for recovery work that has no P0/P1 GitHub issue.
+
+All source data remains immutable and local. The project selection neither
+confirms ownership nor dispatches tasks, reclaims leases, alters gate states,
+requests CI, merges or deploys. Selecting no visible issue card is never
+proof that the project has no unfinished work.
