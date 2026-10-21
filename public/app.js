@@ -3109,6 +3109,31 @@ function exportCombinedActivityTimeline(){
            ' · missing events UNKNOWN':'')+
         (last?' · latest event '+clean(last.ts):' · event timestamp unknown'):
       'GitHub NOT OBSERVED in this bounded snapshot'));
+    // Manual public page/source diagnostics are a separate bounded source.
+    // Export only fixed vocabulary and numeric counts; never an HTTP error,
+    // provider payload, authentication value or raw user-provided field.
+    if(source&&Array.isArray(source.sourceCoverage)&&source.sourceCoverage.length===3){
+      const statuses=source.sourceCoverage.map((entry,index)=>{
+        const name=['PR','Actions','main'][index];
+        const status=['bounded_full','bounded_end','unavailable'].includes(entry?.status)
+          ?entry.status:'unavailable';
+        const count=Number.isSafeInteger(entry?.rows)&&entry.rows>=0
+          ?Math.min(entry.rows,[20,20,15][index]):null;
+        return name+' '+status+(count===null?'':' ('+count+' observed records)');
+      });
+      lines.push('  - Manual public source page: '+(
+        Number.isInteger(source.page)&&source.page>=1&&source.page<=5
+          ?source.page:'unverified')+
+        ' · '+statuses.join(' · '),
+        '  - Next safe operator step: '+(
+          source.status!=='partial_sources'
+            ?'Confirm GitHub access/rate limit; preserve prior evidence without treating missing records as zero.'
+            :source.morePossible===true&&source.page<5
+              ?'An operator may explicitly read the next bounded page after the cooldown.'
+              :'The observed page window ended or page limit was reached; do not assume full repository coverage.'));
+    }else if(source){
+      lines.push('  - Endpoint-level page coverage not included in this receipt; no current completeness claim.');
+    }
   }
   lines.push('','Missing provider coverage is unknown, not zero. An Actions run is not production proof.','');
   const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'});
