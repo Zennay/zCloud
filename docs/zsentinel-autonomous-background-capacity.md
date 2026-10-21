@@ -417,6 +417,39 @@ Historische replay doet **geen** actuele Linux-/systemd-probes, GitHub-calls,
 claimwijzigingen, runner-herstart, model-/broker- of productieactie. Het
 rapport bewijst geen GitHub-jobassignment, succesvolle CI, training of merge.
 
+## 21 oktober · offline vergelijking van twee volledige operatorbronpakketten
+
+Bij overdracht of voorbereiding op een geautoriseerde installatie kan de
+operator voortaan twee **bestaande, eigen privé sourcebundels** rechtstreeks
+vergelijken met de reeds bestaande exporter. Hiervoor is geen nieuwe
+GitHub-/VPS-bronopvraag, workeractie, timer, runner, systemd-service of
+uitvoering van de drie gebundelde modules nodig.
+
+```bash
+# Draai vanaf een broncheckout waar scripts/zsentinel_operator_export.py staat.
+python3 scripts/zsentinel_operator_export.py \
+  --verify-dir "$HOME/private-recovery/pakket-B" \
+  --compare-dir "$HOME/private-recovery/pakket-A" \
+  --compare-format markdown
+# --compare-format text (standaard) of json is eveneens mogelijk.
+```
+
+Beide bronpakketten worden **afzonderlijk** eigenaar-privé en byte-voor-byte
+tegen hun eigen SHA-256-manifest gecontroleerd. De operator krijgt per vaste
+module de vergelijking **GEWIJZIGD/identiek**, byteomvang en beide SHA-256
+vingerafdrukken, met een totale gewijzigde-moduleteller. JSON bevat ook
+expliciet `source_order_proven=false`, `external_source_verified=false`,
+`release_authorized=false` en `installed_or_live_verified=false`.
+
+De namen A en B zeggen niets over de chronologie van commits, geldige reviews
+of wat daadwerkelijk op de VPS draait; een onderling identiek pakket kan
+allebei oud zijn. De read-only vergelijking vermeldt uitsluitend bekende
+modulebasenamen en geen privé-bestandspaden of broninhoud op stdout. Ontbrekende,
+gecorrumpeerde, niet-private of onbekende bronbestanden blokkeren de vergelijking.
+De benodigde GitHub exact-HEAD CI, onafhankelijke review, branch protection
+en aangewezen runtime-eigenaar blijven ongewijzigd verplicht. Dit commando
+maakt geen nieuwe bundel en verleent geen merge- of deploybevoegdheid.
+
 ## Samenhangend privé operatorpakket (geen installatie)
 
 Een normale toekomstige runtime-installatie van het basis CPU-prioriteitscript
