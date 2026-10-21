@@ -472,6 +472,8 @@ def render_csv(bundle):
         "source_sha256", "link", "detail",
         "change_since_previous_observation", "new_evidence_since_previous",
         "repeat_hold_deferred", "historical_next_step",
+        "previous_source_observed_at_utc", "historical_comparison_status",
+        "historical_observation_interval_seconds",
     )
     def inert(value):
         value = "" if value is None else str(value)
@@ -493,6 +495,12 @@ def render_csv(bundle):
         row = {
             "record_type": kind, "source_observed_at_utc": observed,
             "source_sha256": source_hash,
+            "previous_source_observed_at_utc":
+                bundle["previous_source_observed_at_utc"],
+            "historical_comparison_status":
+                bundle["historical_comparison_status"],
+            "historical_observation_interval_seconds":
+                bundle["historical_observation_interval_seconds"],
         }
         if card is not None:
             row.update({
@@ -622,6 +630,18 @@ def render_html(bundle):
         "geen huidige eigenaar, vereiste CI, onafhankelijke review of merge- en "
         "deployrecht.</p></header>",
     ]
+    if bundle["previous_source_observed_at_utc"]:
+        parts.append("<p class=\"meta\">Vorige bronopname (UTC): " +
+                     e(bundle["previous_source_observed_at_utc"]) +
+                     " · tussenruimte: " +
+                     e(bundle["historical_observation_interval_seconds"]) +
+                     " seconden · dekking: " +
+                     e(bundle["historical_comparison_status"]) +
+                     "</p><p>Geen bewijs voor een ononderbroken toestand "
+                     "tussen beide meetmomenten.</p>")
+    elif bundle["historical_comparison_status"] == "not_requested":
+        parts.append("<p class=\"meta\">Geen eerder bronbestand ter "
+                     "vergelijking meegegeven.</p>")
     if bundle.get("source_observation_stale") is True:
         parts.append("<p class=\"notice warning\"><strong>HISTORISCHE BRON "
                      "(&gt;6 uur).</strong> HEAD, reviews en CI opnieuw bekijken; "
@@ -804,6 +824,9 @@ def render_markdown(bundle):
         "# zSentinel · privé-werkopdrachten bestaande product-PRs",
         "",
         "Bronmoment (UTC): " + bundle["source_observed_at_utc"],
+        ("Vorige bronmoment (UTC): " +
+         (bundle["previous_source_observed_at_utc"] or "niet meegegeven") +
+         " · vergelijkingsdekking: " + bundle["historical_comparison_status"]),
         "Bronbewijs SHA256: `" + bundle["source_digest_sha256"] + "`",
         "",
         "**Dit is uitsluitend een handmatige overdracht.** Opgeslagen GitHub-bewijs "
