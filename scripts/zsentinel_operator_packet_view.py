@@ -114,8 +114,21 @@ def open_packet(path: Path):
                 "source_state": _short(row.get("evidence"), 80),
             } for row in report["priority_items"]
         ],
-        "historical_owner_rechecks": len(
-            report.get("historical_owner_rechecks", [])),
+        "historical_source_incomplete": report.get("historical_source_incomplete") is True,
+        "historical_rechecks_truncated": report.get("historical_rechecks_truncated") is True,
+        "historical_owner_rechecks": [
+            {
+                "priority": row["priority"],
+                "project": row["project"],
+                "last_seen_utc": row["historical_source_last_seen_utc"],
+                "owner_next_step": _short(row["next_step"], 220),
+                "current_source_observed": False,
+                "historical_reconciliation_required": True,
+                "exact_old_job_url": row.get("exact_github_job_url"),
+                "exact_old_commit_url": row.get("exact_github_commit_url"),
+                "recovery_authorized": False,
+            } for row in report.get("historical_owner_rechecks", [])
+        ],
     }
 
 
@@ -149,8 +162,16 @@ def main():
         if report["items_truncated"]:
             print("Extra eigenaaracties afgekapt: bron blijft onvolledig.")
         if report["historical_owner_rechecks"]:
-            print("Historische, NIET actuele hercontroles: " +
-                  str(report["historical_owner_rechecks"]))
+            print("HISTORISCH · NIET ACTUEEL WAARGENOMEN; eigenaar hercontroleert bron:")
+            for row in report["historical_owner_rechecks"]:
+                print("  " + row["priority"] + " " + row["project"] +
+                      " · laatst gezien " + row["last_seen_utc"])
+                print("    " + row["owner_next_step"])
+                if row["exact_old_job_url"]:
+                    print("    Oude exacte job, NIET actuele status: " +
+                          row["exact_old_job_url"])
+        if report["historical_rechecks_truncated"]:
+            print("Historische lijst afgekapt: niet-getoonde incidenten zijn NIET opgelost.")
     return 0
 
 
