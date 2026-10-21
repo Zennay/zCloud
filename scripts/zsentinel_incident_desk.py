@@ -107,7 +107,7 @@ def _source(decision):
     runtime_keys = ("live_github_read", "live_sources",
                     "live_queue_pressure", "worker_progress_observation",
                     "notion_claims_observation", "open_product_issue_triage",
-                    "pr_delivery")
+                    "pr_delivery", "pr_gate_continuity")
     operational_sources = {key: decision[key] for key in runtime_keys
                            if key in decision}
     context_sha = None
@@ -1129,6 +1129,10 @@ def private_action_briefing(decision, source):
                 lines.append("  - Onafhankelijke HEAD-review: ONBEKEND.")
     else:
         lines.append("- PR-bron niet gekozen; geen nul-PR- of mergevrijgavebewijs.")
+    if decision.get("pr_gate_continuity") is not None:
+        from zsentinel_pr_hold_continuity import text_summary
+        lines.extend(["", "## 1a. Bestaande PR’s · bronvergelijking",
+                      text_summary(decision["pr_gate_continuity"]), ""])
     lines += ["", "## 2. Open productissues · hoogste prioriteit"]
     issues = decision.get("open_product_issue_triage")
     if type(issues) is dict and issues.get("source") == "github_readonly_issue_inbox":
