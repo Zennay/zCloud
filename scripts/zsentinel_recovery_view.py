@@ -232,6 +232,114 @@ def queue_group_table(groups, truncated, sample_complete):
             "".join(rows) + '</tbody></table></div></details>')
 
 
+def blocked_queue_panel(source):
+    """Render bounded status=blocked aggregates without treating them as failures."""
+    if source is None:
+        source = {
+            "coverage": "not_supplied", "aggregate_coverage": "not_supplied",
+            "source_coverage": "not_supplied", "observed_at": None,
+            "total_items_observed": None, "project_groups": [],
+            "sample_truncated": True, "invalid_group_rows": None,
+            "claim_ownership_verified": False, "queue_write_authorized": False,
+            "automatic_retry_authorized": False,
+        }
+    allowed = ("not_supplied", "not_observed", "complete", "partial", "stale")
+    if (type(source) is not dict or source.get("coverage") not in allowed
+            or source.get("aggregate_coverage") not in
+               ("not_supplied", "not_observed", "complete", "partial")
+            or source.get("source_coverage") not in
+               ("not_supplied", "current", "stale", "incomplete")
+            or type(source.get("claim_ownership_verified")) is not bool
+            or source["claim_ownership_verified"] is not False
+            or type(source.get("queue_write_authorized")) is not bool
+            or source["queue_write_authorized"] is not False
+            or type(source.get("automatic_retry_authorized")) is not bool
+            or source["automatic_retry_authorized"] is not False
+            or type(source.get("sample_truncated")) is not bool
+            or type(source.get("project_groups")) is not list
+            or len(source["project_groups"]) > 250):
+        raise ValueError("untrusted blocked-queue panel")
+    coverage = source["coverage"]
+    groups = source["project_groups"]
+    total = source.get("total_items_observed")
+    invalid = source.get("invalid_group_rows")
+    if coverage in ("not_supplied", "not_observed"):
+        if total is not None or groups or source["sample_truncated"] is not True:
+            raise ValueError("unknown blocked-queue source cannot imply zero")
+        if coverage == "not_supplied" and source["aggregate_coverage"] != "not_supplied":
+            raise ValueError("missing blocked-queue source has contradictory coverage")
+        if coverage == "not_observed" and source["aggregate_coverage"] != "not_observed":
+            raise ValueError("unobserved blocked-queue source has contradictory coverage")
+        summary = ("Status=blocked niet waargenomen; aantal ONBEKEND, niet nul."
+                   if coverage == "not_supplied" else
+                   "De wachtrijbron is niet gelezen; status=blocked blijft ONBEKEND, niet nul.")
+    else:
+        if (type(total) is not int or not 0 <= total <= 10**9
+                or type(invalid) is not int or not 0 <= invalid <= 251
+                or source.get("observed_at") is None
+                or not isinstance(source.get("observed_at"), str)
+                or len(source["observed_at"]) > 45):
+            raise ValueError("invalid blocked-queue count or source moment")
+        identities = set()
+        group_sum = 0
+        for row in groups:
+            if (type(row) is not dict
+                    or type(row.get("project_id")) is not str
+                    or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", row["project_id"])
+                    or row.get("priority") not in ("P0", "P1", "P2", "P3")
+                    or type(row.get("items")) is not int
+                    or not 1 <= row["items"] <= 10**9
+                    or (row["project_id"], row["priority"]) in identities):
+                raise ValueError("invalid blocked-queue project aggregate")
+            identities.add((row["project_id"], row["priority"]))
+            group_sum += row["items"]
+        if coverage == "complete":
+            if (source["aggregate_coverage"] != "complete"
+                    or source["sample_truncated"] or invalid != 0 or group_sum != total
+                    or source["source_coverage"] == "stale"):
+                raise ValueError("blocked-queue complete coverage contradicts source")
+        elif coverage == "partial":
+            if (source["aggregate_coverage"] != "partial"
+                    or not source["sample_truncated"] or group_sum > total):
+                raise ValueError("blocked-queue partial coverage contradicts source")
+        elif coverage == "stale":
+            if (source["aggregate_coverage"] not in ("complete", "partial")
+                    or source["source_coverage"] != "stale" or groups
+                    or not source["sample_truncated"]):
+                raise ValueError("stale blocked-queue source exposes current detail")
+        if coverage == "stale":
+            summary = ("VEROUDERD bronmoment " + source["observed_at"] +
+                       " · " + str(total) +
+                       " status=blocked-rijen toen waargenomen; geen actuele status. "
+                       "Projectdetails verborgen.")
+        elif coverage == "partial":
+            summary = (str(total) + " status=blocked-rijen waargenomen; "
+                       "projectverdeling onvolledig, menselijke broncontrole nodig.")
+        elif total == 0:
+            summary = ("0 status=blocked-rijen waargenomen op " +
+                       source["observed_at"] +
+                       ". Dit bewijst niet dat alle productblokkades zijn opgelost.")
+        else:
+            summary = (str(total) + " status=blocked-rijen waargenomen op " +
+                       source["observed_at"] +
+                       "; alleen handmatige eigenaarbeoordeling, geen automatische retry.")
+    rows = "".join(
+        "<tr><td>" + phrase(row["project_id"], 80) + "</td><td>" +
+        phrase(row["priority"], 5) + "</td><td>" + str(row["items"]) + "</td></tr>"
+        for row in groups
+    )
+    table = ('<div class="wrap"><table><thead><tr><th>Project</th><th>Prioriteit</th>'
+             '<th>Rijen met status blocked</th></tr></thead><tbody>' +
+             rows + '</tbody></table></div>' if rows else "")
+    source_note = (" · broninventaris " + phrase(source.get("source_coverage"), 20)
+                   if coverage not in ("not_supplied", "not_observed") else "")
+    return ('<section aria-label="Geblokkeerde wachtrij-items"><h2>Parkeerstatus · blocked</h2>'
+            '<p>' + phrase(summary, 360) + source_note + '</p>' +
+            table +
+            '<p class="muted">Dit zijn queue-rijen met status=blocked, geen bewezen fouten of '
+            'retry-opdrachten. Geen claimvrijgave, automatische retry of dispatch.</p></section>')
+
+
 def html_view(decision, registry=None):
     if not isinstance(decision, dict) or decision.get("schema_version") != 1:
         raise ValueError("not a canonical zSentinel decision")
@@ -738,6 +846,7 @@ def html_view(decision, registry=None):
         raise ValueError("invalid queue pressure detail contract")
     group_html = queue_group_table(queue_groups, queue["project_groups_truncated"],
                                    queue["sample_is_complete"])
+    blocked_queue_panel_html = blocked_queue_panel(queue.get("blocked_queue"))
     queue_summary = (
         "Wachtend: " + str(queue_totals.get("queued_items", 0)) +
         " · Actief: " + str(queue_totals.get("owned_items", 0)) +
@@ -1238,6 +1347,7 @@ def html_view(decision, registry=None):
             + section(queue_cards if queue_coverage == "current" else [],
                       "Geen actuele individuele wachtrijincidenten. Claimherstel blijft handmatig geautoriseerd.")
             + '</section>'
+            + blocked_queue_panel_html
             + branch_panel
             + held_panel
             + gate_hold_panel
