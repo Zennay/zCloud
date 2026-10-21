@@ -3756,7 +3756,7 @@ python scripts/zsentinel_recovery_refresh.py private-observation.json \
   --queue-database /path/to/existing-history.db \
   --worker-events-database /path/to/existing-history.db \
   --worker-project cloud --worker-project supa \
-  --format html
+  --format html --output /path/to/private/zsentinel-recovery.html
 ```
 
 The worker observer uses its existing bounded, indexed, `mode=ro`,
@@ -3804,7 +3804,7 @@ python scripts/zsentinel_recovery_refresh.py private-observation.json \
   --queue-database /path/to/existing-history.db \
   --worker-events-database /path/to/existing-history.db \
   --worker-project cloud --worker-project supa \
-  --format html
+  --format html --output /path/to/private/zsentinel-recovery.html
 ```
 
 Notion results are only `Claimed`, `Running` and `Verifying` status
