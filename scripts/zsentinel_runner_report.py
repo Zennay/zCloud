@@ -313,6 +313,53 @@ def render(data):
     if units.get("runner_units_truncated") or not units.get("runner_units_observed"):
         cards.insert(0, '<p class="warning">Brontoegang/overzicht is onvolledig. '
                         'Niet-waargenomen betekent niet gezond of verwijderd.</p>')
+    # User-manager runner units are a second, independent read-only source.
+    # Older private receipts did not capture this field: unknown, not empty.
+    from zsentinel_runner_snapshot import _user_unit_states
+    user_observed = units.get("user_runner_units_observed") is True
+    user_entries = _user_unit_states({"units": units})
+    user_cards = []
+    if not user_observed:
+        user_cards.append('<p class="warning">User-systemd runnerbron ONBEKEND. '
+                          'Deze bron was mogelijk niet beschikbaar in de opgenomen versie.</p>')
+    elif not user_entries:
+        user_cards.append('<p class="warning">Geen user-systemd runners waargenomen '
+                          '(geen bewijs dat er geen GitHub runners zijn).</p>')
+    else:
+        for name, row in sorted(user_entries.items(), key=lambda entry: (
+                0 if entry[1]["state"] == "failed" else
+                1 if entry[1]["state"] == "inactive" else 2,
+                entry[0])):
+            style, title, advice = classify(row)
+            cause = (" · " + escape(row["reason"]) if row.get("reason") else "")
+            user_cards.append(
+                '<article class="card ' + style + '"><h3>' + escape(title) +
+                ' · user-systemd</h3><p class="unit">' + escape(name) +
+                '</p><p>systemd --user: ' + escape(row["state"]) +
+                '/' + escape(row["detail"]) + cause +
+                '</p><p class="advice">' + escape(advice) + '</p></article>'
+            )
+    if units.get("user_runner_units_truncated") or not user_observed:
+        user_cards.insert(0, '<p class="warning">User-systemd bronbereik '
+                          'onvolledig of onbekend; niet-waargenomen is geen herstelbewijs.</p>')
+    user_previous = data.get("comparison")
+    user_deltas = user_previous.get("user_transitions", []) if isinstance(
+        user_previous, dict) else []
+    user_transition_items = "".join(
+        '<li><code>' + escape(row["unit"]) + '</code> · ' +
+        escape(row["change"]) + ' (geen bevestigde GitHub-job)</li>'
+        for row in user_deltas[:20]
+    )
+    user_transition_panel = (
+        '<section class="panel"><h2>Gebruikersservicebron T0/T1</h2><p>' +
+        ('Begrensde waargenomen verschillen, geen herstelbewijs.'
+         if user_previous.get("complete_user_service_coverage") is True
+         else 'Een of beide bronmomenten zijn onvolledig/onbekend.')
+         + '</p><ul>' + (user_transition_items or
+         '<li>Geen vergelijkbare wijzigingen binnen de bron aangetoond.</li>') +
+        '</ul></section>'
+        if isinstance(user_previous, dict) else ''
+    )
 
     reasons = ", ".join(REASON_NL.get(r, "Onbekende observatie")
                         for r in data["reasons"]) or "Geen druk gemeten (uitsluitend momentopname)"
@@ -422,6 +469,11 @@ def render(data):
 {timeline_html}
 <h2>GitHub-runner-servicestatus</h2><p class="muted">{escape(overview)}</p>
 <div class="grid">{"".join(cards)}</div>
+<h2>Gebruikersservices (aparte systemd --user manager)</h2>
+<p class="muted">Deze bron wordt onafhankelijk van systeemservices gelezen;
+gelijke servicenamen uit verschillende managers worden niet samengevoegd.</p>
+<div class="grid">{"".join(user_cards)}</div>
+{user_transition_panel}
 <section class="panel"><h2>Prioriteit en veilige herstelvolgorde</h2><ol>{plans}</ol>
 <p>Dit zijn leesadviezen, geen bewijs van toestemming tot herstart, dispatch of merge.</p></section>
 <section class="panel"><h2>Bevoegde vervolgactie</h2>
