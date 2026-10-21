@@ -504,6 +504,16 @@ source bounds, and unauthorized-action flags.
 
 This opt-in path costs at most **14 canonical GitHub GETs**: one open-PR
 list page, one original issue GET, then at most four GETs per candidate.
+In a direct read-only source inspection of the current zCloud repository
+on 21 October 2026, the first open-PR list page was **1,008,465 bytes**:
+larger than the ordinary 160 KiB API-response bound. The actual
+discovery-only PR-list GET therefore has a separate, fixed **2 MiB**
+ceiling; every individual PR, exact-HEAD check and review GET retains
+the original 160 KiB ceiling. This is one page and not a pagination
+crawler, and an over-limit response still fails closed as UNKNOWN.
+The same current zCloud page contained 30 sampled PRs and three textual
+mentions of existing issue #1518 during direct read-only inspection;
+these are **candidates, not verified issue links or product fixes**.
 The result preserves `source_candidate_count=0` separately from the
 up to three newly observed `candidate_count`, and carries
 `optional_unlinked_discovery` with the scanned page length, matched
