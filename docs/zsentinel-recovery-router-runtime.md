@@ -11,7 +11,9 @@ laten zien: nieuw waargenomen kandidaten, onveranderde kandidaten,
 overgangen tussen `incident_dependency_hold`, `gate_hold`,
 `shortlist_hold` en `advisory_suggestion`, plus kandidaten die niet opnieuw
 voorkomen. De vorige snapshot moet chronologisch vóór de huidige liggen
-en maximaal 72 uur oud zijn; anders blijft de vorige bron ONBEKEND.
+en maximaal 72 uur oud zijn. De huidige routerbeslissing mag bovendien
+niet ouder zijn dan tien minuten. Bij een oude of onvergelijkbare bron
+blijft de overgang ONBEKEND, zonder nieuw werk of vrijgave te suggereren.
 
 De vergelijking houdt de verschillende bronklokken van de lokale
 SQLite-waarneming en de later samengestelde routerbeslissing uit elkaar.
