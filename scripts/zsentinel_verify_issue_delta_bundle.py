@@ -15,7 +15,9 @@ import os
 from pathlib import Path
 import re
 import stat
+import struct
 import sys
+import zlib
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 MAX_MEMBER_BYTES = 48 * 1024
@@ -239,7 +241,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         result = verify_bundle(_read_bounded_file(args.bundle))
-    except (OSError, ValueError, TypeError, KeyError, BadZipFile, OverflowError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, BadZipFile, OverflowError,
+            EOFError, RuntimeError, struct.error, zlib.error) as exc:
         print("Bundle verification refused: " + type(exc).__name__, file=sys.stderr)
         return 3
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))
