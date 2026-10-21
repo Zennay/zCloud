@@ -170,8 +170,10 @@ def render_html(board, max_rows=20):
             h(row["title"]) + "</a></h2>"
             "<p><strong>" + h(row["category_nl"]) + "</strong></p>"
             "<p>" + h(row["human_next_step_nl"]) + "</p>"
-            "<p class='links'>" + pr_link + "</p>" +
-            alt_html +
+            "<p class='links'>" + pr_link +
+            (" <button class='focus-from-issue' type='button'>"
+             "Bekijk alle bronissues van deze PR</button>" if pr else "") +
+            "</p>" + alt_html +
             "<p class='source'>" + h(note) +
             " · actuele CI/review: " +
                 h(row["candidate_exact_head_gate_state"]) +
@@ -287,6 +289,7 @@ def render_html(board, max_rows=20):
             " · actuele owner/merge: ONBEKEND</p>"
             "<details><summary>Bekijk bronissues (geen fixbewijs)</summary><ul>" +
             refs + "</ul></details>"
+            "<button class='focus-pr' type='button'>Bekijk gekoppelde issues in werkbak</button>"
             "<div class='pr-controls'><label>Privé PR-opvolging"
             "<select class='pr-local-state'>"
             "<option value='open'>Nog te beoordelen</option>"
@@ -325,6 +328,9 @@ const prs=Array.from(document.querySelectorAll('.pr-work[data-pr]'));
 const search=document.getElementById('q'), priority=document.getElementById('priority');
 const project=document.getElementById('project'), state=document.getElementById('state');
 const visible=document.getElementById('visible'), prState=document.getElementById('pr-state');
+const focusBar=document.getElementById('focus-bar'),focusTitle=document.getElementById('focus-title');
+const focusClear=document.getElementById('focus-clear');
+let focusedPr=null;
 const prLabels={open:'Nog te beoordelen',review:'Wacht op review/CI',
  owner:'Wacht op huidige eigenaar',coordinate:'Afstemming tussen PRs nodig',
  followup:'Opvolging vastgelegd'};
@@ -336,7 +342,9 @@ function refresh(){
  for(const t of tickets){
   const text=[t.dataset.title,t.dataset.issue,t.dataset.pr,t.dataset.prs,
    t.dataset.project,t.dataset.category,t.dataset.next].join(' ').toLocaleLowerCase('nl');
-  const show=(!q||text.includes(q))&&(!priority.value||priority.value===t.dataset.priority)&&
+  const linked=[t.dataset.pr,...t.dataset.prs.trim().split(' ').filter(Boolean)];
+  const show=(!focusedPr||linked.includes(focusedPr))&&
+   (!q||text.includes(q))&&(!priority.value||priority.value===t.dataset.priority)&&
    (!project.value||project.value===t.dataset.project)&&
    (!state.value||state.value===t.querySelector('.local-state').value);
   t.hidden=!show;if(show)count++;
@@ -345,7 +353,7 @@ function refresh(){
  for(const p of prs){
   const content=[p.dataset.pr,p.dataset.issues,p.dataset.project,
     p.dataset.gate].join(' ').toLocaleLowerCase('nl');
-  const show=(!q||content.includes(q))&&
+  const show=(!focusedPr||p.dataset.pr===focusedPr)&&(!q||content.includes(q))&&
     (!priority.value||priority.value===p.dataset.priority)&&
     (!project.value||project.value===p.dataset.project)&&
     (!prState.value||prState.value===p.querySelector('.pr-local-state').value);
@@ -353,12 +361,30 @@ function refresh(){
  }
  visible.textContent=count+' van '+tickets.length+' issuekaarten en '+
    prCount+' van '+prs.length+' bestaande PR-groepen zichtbaar';
+ focusBar.hidden=!focusedPr;
+ if(focusedPr)focusTitle.textContent='PR '+focusedPr.split('/').pop()+
+   ': '+count+' gekoppelde bronissues in dit dossier. Geen fix- of mergebewijs.';
 }
+function focusOnPr(url){
+ const target=prs.find(p=>p.dataset.pr===url);
+ if(!target)return;
+ focusedPr=url;
+ search.value='';priority.value='';project.value='';state.value='';prState.value='';
+ refresh();
+ focusBar.scrollIntoView({block:'start'});
+ focusClear.focus();
+}
+for(const p of prs)p.querySelector('.focus-pr').addEventListener('click',()=>focusOnPr(p.dataset.pr));
+for(const t of tickets){
+ const button=t.querySelector('.focus-from-issue');
+ if(button)button.addEventListener('click',()=>focusOnPr(t.dataset.pr));
+}
+focusClear.addEventListener('click',()=>{focusedPr=null;refresh();document.getElementById('q').focus();});
 for(const c of [search,priority,project,state,prState])c.addEventListener('input',refresh);
 for(const t of tickets)t.querySelector('.local-state').addEventListener('change',refresh);
 for(const p of prs)p.querySelector('.pr-local-state').addEventListener('change',refresh);
 document.getElementById('reset').addEventListener('click',function(){
- search.value='';priority.value='';project.value='';state.value='';prState.value='';refresh();
+ focusedPr=null;search.value='';priority.value='';project.value='';state.value='';prState.value='';refresh();
 });
 function safeText(value){
  return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#\x60~])/g,'\\$1').slice(0,720);
@@ -553,12 +579,15 @@ refresh();
         ".pr-panel{border:1px solid #70879f;border-radius:10px;padding:16px;"
         "margin:18px 0;background:#172338}.pr-panel ol{padding-left:24px}"
         ".pr-work{padding:12px;border-bottom:1px solid #526a83}"
-        ".pr-work[hidden]{display:none}"
+        ".pr-work[hidden],.focus-bar[hidden]{display:none}"
         ".pr-controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
         "gap:14px;margin:12px 0}.pr-note{width:100%;box-sizing:border-box}"
         ".controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
         "gap:16px}.controls textarea{width:100%;box-sizing:border-box;resize:vertical}"
         ".source,.warning{color:#ebce9b}.links a{margin-right:10px}"
+        ".focus-bar{position:sticky;top:0;background:#293950;border:2px solid #ebce9b;"
+        "padding:12px;border-radius:9px;z-index:2;display:flex;align-items:center;"
+        "gap:12px;flex-wrap:wrap}"
         "@media(max-width:640px){.controls,.pr-controls{grid-template-columns:1fr}}"
         "</style></head><body data-source-token='" + source_token +
         "' data-legacy-source-token='" + legacy_token +
@@ -592,6 +621,10 @@ refresh();
         "<label>Heropen lokale sessie<input id='session-import' type='file' "
         "accept='.json,application/json'></label></div>"
         "<p id='visible' aria-live='polite'></p>"
-        "<p id='session-status' aria-live='polite'></p>" + hidden +
+        "<p id='session-status' aria-live='polite'></p>"
+        "<div id='focus-bar' class='focus-bar' role='status' hidden>"
+        "<strong id='focus-title'></strong>"
+        "<button id='focus-clear' type='button'>Terug naar alle bronissues</button></div>"
+        "<p>Filters en PR-focus veranderen de privé-export niet: deze bevat alle bronkaarten.</p>" + hidden +
         "<main>" + groups_panel + "".join(output) + "</main>" + script + "</body></html>"
     )
