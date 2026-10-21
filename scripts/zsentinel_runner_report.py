@@ -772,7 +772,29 @@ def timeline_owner_actions(summary, comparisons):
                or summary.get("latest_pressure_high") is None
                or any(pair.get("same_boot_verified") is not True
                       for pair in comparisons))
+    # OOM increments apply to every process on this Linux host. They can flag
+    # current capacity risk, but cannot prove a particular runner crashed.
+    oom_rising = any(
+        isinstance(pair, dict)
+        and isinstance(pair.get("memory_oom_comparison"), dict)
+        and pair["memory_oom_comparison"].get(
+            "oom_counter_same_boot_comparable") is True
+        and type(pair["memory_oom_comparison"].get(
+            "kernel_oom_kills_delta")) is int
+        and pair["memory_oom_comparison"]["kernel_oom_kills_delta"] > 0
+        for pair in comparisons[:11]
+    )
     tasks = []
+    if oom_rising and stressed_latest and not failed_latest:
+        tasks.append((
+            "P0 · kernelbrede OOM-toename bij actuele VPS-druk",
+            "De Linux-kernel telt extra OOM-kills binnen een bevestigd "
+            "zelfde-bootvenster en de laatste bron toont hostdruk. Laat "
+            "de bevoegde eigenaar geheugen/swap en betrokken processen "
+            "eerst beoordelen; dit bewijst GEEN GitHub-runnercrash en "
+            "staat geen herstart toe.",
+            "HOST OOM-DRUK · EIGENAAR NODIG",
+        ))
     if failed_latest and stressed_latest:
         oom_recent = any(
             entry.get("unit") in failed_latest
