@@ -26,7 +26,7 @@ MIN_SNAPSHOTS = 2
 MAX_SNAPSHOTS = 12
 MAX_PR_IDS = 600
 MAX_OUTPUT = 1024 * 1024
-ISSUE_FILTER = re.compile(r"https://github\\.com/Zennay/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}\\Z")
+ISSUE_FILTER = re.compile(r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}\Z")
 TAGS = ("changed_head", "changed_gate", "changed_issues",
         "reappeared_in_sample", "missing_between_samples", "last_sample_missing")
 
