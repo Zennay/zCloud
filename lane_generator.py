@@ -705,11 +705,12 @@ def generate_execution_lanes(project, backlog, claims=()):
             "reason": "queued_worker_slot_reserved",
             "overlap": {"capabilities": [], "files": []},
         })
-        if assigned not in unknown_reserved_scopes:
+        if any(_recovery_scope_from_item(assigned).values()):
             occupied_scopes.append({
                 "queue_id": str(assigned.get("queue_id") or ""),
                 "lane_id": lane_id,
                 "scope": assigned["scope"],
+                "reserved_queued_slot": True,
             })
 
     # Existing active work is authoritative: preserve it and reserve its write
@@ -829,7 +830,9 @@ def generate_execution_lanes(project, backlog, claims=()):
             if overlap["capabilities"] or overlap["files"]:
                 conflicts.append({
                     "kind": "queue",
-                    "reason": "queue_scope_conflict",
+                    "reason": ("queued_worker_slot_scope_conflict"
+                               if occupied.get("reserved_queued_slot")
+                               else "queue_scope_conflict"),
                     "queue_id": occupied["queue_id"],
                     "lane_id": occupied["lane_id"],
                     "overlap": overlap,
@@ -875,6 +878,10 @@ def generate_execution_lanes(project, backlog, claims=()):
             "active_profile_mismatch_count": len(mismatched_active_profiles),
             "unknown_claim_scope_count": unknown_claim_scopes,
             "unknown_assigned_scope_count": len(unknown_reserved_scopes),
+            "assigned_slot_scope_conflict_count": sum(
+                entry.get("reason") == "queued_worker_slot_scope_conflict"
+                for entry in blocked_by
+            ),
             "untrusted_active_lease_count": len(untrusted_active_leases),
             "serialized_unscoped_queue_admitted": (
                 bool(unscoped_queued_writer_reserved)
