@@ -4,11 +4,11 @@
 
 De operator hoefde voor dezelfde opgeslagen bronnen drie zelfstandige CLI's uit
 te voeren en handmatig de bron-SHA door te geven. De nieuwe
-[\`zsentinel_operator_bundle.py\`](../scripts/zsentinel_operator_bundle.py)
+[`zsentinel_operator_bundle.py`](../scripts/zsentinel_operator_bundle.py)
 combineert de **bestaande** bronadmissie, read-only triage, interactieve
 offline HTML-werkbak en optionele PR-eigenaarsoverdracht in één aanroep:
 
-\`\`\`sh
+```sh
 # Bestaande map vooraf zelf aanmaken met modus 0700.
 mkdir -m 700 -p "$HOME/zsentinel-private"
 python3 scripts/zsentinel_operator_bundle.py \
@@ -18,23 +18,23 @@ python3 scripts/zsentinel_operator_bundle.py \
   --pr-dossier ./saved-pr-batch.zip \
   --output-dir "$HOME/zsentinel-private" \
   --name zsentinel-20261021-a --owner-handoff
-\`\`\`
+```
 
 De output bevat, met één onderling consistente bron:
 
-- **\`zsentinel-20261021-a.board.json\`** — originele begrensde
+- **`zsentinel-20261021-a.board.json`** — originele begrensde
   triagegegevens; SHA-256 staat in het CLI-resultaat.
-- **\`zsentinel-20261021-a.desk.html\`** — interactieve private issue-werkbak
+- **`zsentinel-20261021-a.desk.html`** — interactieve private issue-werkbak
   met dezelfde origineel berekende board-SHA, notities en historische
   bestaande-PR-kaarten.
-- **\`zsentinel-20261021-a.owner.md\`** — optionele P0-first
+- **`zsentinel-20261021-a.owner.md`** — optionele P0-first
   bestaande-PR-handoff met bronmoment, dekking, historische gate-receipts,
   ontbrekend bewijs en concrete handmatige vervolgstap.
 
-De vlaggen \`--branches\` en \`--claims\` voegen optioneel de eerder
+De vlaggen `--branches` en `--claims` voegen optioneel de eerder
 opgeslagen overeenkomstige bron-snapshots toe. Bij ontbrekende bronnen wordt
-**UNKNOWN** behouden. De normale \`--limit\` en \`--max-age-hours\` begrenzen
-de selectie; \`--pr-dossier\` accepteert maximaal twaalf bewaarde archieven.
+**UNKNOWN** behouden. De normale `--limit` en `--max-age-hours` begrenzen
+de selectie; `--pr-dossier` accepteert maximaal twaalf bewaarde archieven.
 
 Alle outputs worden **voor schrijven** opgebouwd en toegelaten. Het bestaande
 veilige bestandsmechanisme vereist een door de operator beheerde 0700-map,
@@ -42,7 +42,7 @@ maakt uitsluitend nieuwe 0600-bestanden aan en overschrijft niets.
 Bij onvoorziene fout tijdens het publiceren wordt het reeds gepubliceerde
 immutable bronbestand niet zonder veilige identiteitcontrole verwijderd;
 controleer dan expliciet welke output is aangemaakt en gebruik een **nieuwe**
-\`--name\`. De twee of drie producten zijn niet bewijs van actuele GitHub,
+`--name`. De twee of drie producten zijn niet bewijs van actuele GitHub,
 runtime/Notion-claims, CI, review, merge of deploy. Er zijn geen providerwrites,
 jobs, auto-claims, QA-suites of workflowtriggers toegevoegd.
 
