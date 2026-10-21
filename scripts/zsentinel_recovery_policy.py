@@ -457,6 +457,28 @@ def evaluate_batch(data, max_age_minutes):
         seen.add(identity)
         results.append({"index": index, "report": report})
 
+    # Multiple possible actions for the same incident are alternatives,
+    # not independent authorizations. Never publish simultaneous READY
+    # decisions for one unresolved incident (e.g. retry and root-fix).
+    by_incident = {}
+    for item in results:
+        report = item["report"]
+        by_incident.setdefault((report["project_id"], report["incident_id"]), []).append(item)
+    for proposals in by_incident.values():
+        if len(proposals) <= 1:
+            continue
+        actions = sorted(item["report"]["action"] for item in proposals)
+        for item in proposals:
+            report = item["report"]
+            report["blockers"].append({
+                "code": "competing_incident_routes",
+                "message": "Multiple proposed routes for this incident need one owner decision: "
+                           + ", ".join(actions) + ".",
+            })
+            if "incident_route_selection" not in report["required_evidence"]:
+                report["required_evidence"].append("incident_route_selection")
+            report["decision"] = "HOLD"
+
     decisions = [item["report"]["decision"] for item in results]
     return {
         "schema_version": 1,
