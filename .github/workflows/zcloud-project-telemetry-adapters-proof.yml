@@ -8,6 +8,7 @@ on:
       - server.py
       - public/enhancements.js
       - tests/test_evidence_progress.py
+      - tests/test_zcloud_project_telemetry_adapters_proof_workflow.py
       - .github/workflows/zcloud-project-telemetry-adapters-proof.yml
     types: [opened, synchronize, reopened]
   workflow_dispatch:
@@ -16,33 +17,70 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-project-telemetry-adapters-proof-${{ github.event.pull_request.number || github.ref }}
+  group: zcloud-project-telemetry-adapters-proof-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
   cancel-in-progress: true
 
 jobs:
-  proof:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.actor == 'Zennay' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, zcloud, vps]
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Checkout exact zCloud candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
 
-      - name: Verify exact candidate and permanent VPS runner
+      - name: Verify exact zCloud candidate
         shell: bash
         run: |
           set -euo pipefail
-          test "$(id -un)" = ubuntu
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+
+      - name: Validate telemetry proof trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_project_telemetry_adapters_proof_workflow
+
+      - name: Prove telemetry adapter contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile enhancements.py tests/test_evidence_progress.py
+          node --check public/enhancements.js
+          python3 -m unittest -v tests.test_evidence_progress
+          echo "ZCLOUD_PROJECT_TELEMETRY_ADAPTERS_HOSTED_GREEN=1"
+
+  proof:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout exact trusted zCloud revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact revision and permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
           python3 scripts/zcloud_vps_runner_guard.py --json
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
-          fi
+
+      - name: Validate telemetry proof trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_project_telemetry_adapters_proof_workflow
 
       - name: Prove telemetry adapter contract
         shell: bash
