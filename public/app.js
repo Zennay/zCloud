@@ -962,6 +962,8 @@ function validateGitHubActivityReceipt(value){
 // scheduled workers, a write endpoint, or a background polling loop.
 let PUBLIC_GITHUB_BUSY=false;
 const PUBLIC_GITHUB_LAST_FETCH=new Map();
+// Each page is fetched only by a deliberate operator click. No background crawl.
+const PUBLIC_GITHUB_PAGE=new Map(),PUBLIC_GITHUB_VIEW_PAGE=new Map();
 async function publicGitHubGET(repository,suffix){
   if(!/^[A-Za-z0-9_.-]{1,100}$/.test(repository))throw Error('Invalid canonical repository');
   const url='https://api.github.com/repos/Zennay/'+repository+'/'+suffix;
@@ -1003,21 +1005,27 @@ function fairPublicGitHubHistory(rows,coverage,limit=200){
   }
   return result.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts));
 }
-async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
+async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,older=false){
   if(PUBLIC_GITHUB_BUSY)return;
   const selected=selectedOverride||(DATA?.projects||[]).find(p=>p.id===filter);
   if(!selected){IMPORTED_GITHUB_ERROR='Select one project before fetching public GitHub evidence.';if(!quiet)render();return}
   const m=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(selected.repo_url||'');
   if(!m){IMPORTED_GITHUB_ERROR='This project has no canonical public GitHub repository.';if(!quiet)render();return}
   const repo=m[1],projectId=selected.id;
+  const lastPage=PUBLIC_GITHUB_PAGE.get(projectId)||0;
+  if(older&&(lastPage<1||lastPage>=5)){
+    IMPORTED_GITHUB_ERROR='Read the newest public GitHub page first; at most five manually requested pages are supported.';
+    if(!quiet)render();return;
+  }
+  const readPage=older?lastPage+1:1;
   if(Date.now()-(PUBLIC_GITHUB_LAST_FETCH.get(projectId)||0)<120000){
     IMPORTED_GITHUB_ERROR='Public GitHub may be rate limited. Recheck is limited to once per project every two minutes.';
     if(!quiet)render();return;
   }
   PUBLIC_GITHUB_BUSY=true;PUBLIC_GITHUB_LAST_FETCH.set(projectId,Date.now());
-  if(!quiet){IMPORTED_GITHUB_ERROR='Reading public PR, CI and main-commit evidence…';render();}
-  const suffixes=['pulls?state=all&sort=updated&direction=desc&per_page=20',
-    'actions/runs?per_page=20','commits?sha=main&per_page=15'];
+  if(!quiet){IMPORTED_GITHUB_ERROR='Reading public PR, CI and main-commit page '+readPage+'…';render();}
+  const suffixes=['pulls?state=all&sort=updated&direction=desc&per_page=20&page='+readPage,
+    'actions/runs?per_page=20&page='+readPage,'commits?sha=main&per_page=15&page='+readPage];
   const outcomes=await Promise.allSettled(suffixes.map(suffix=>publicGitHubGET(repo,suffix)));
   const events=[],seen=new Set();
   const push=(kind,ts,url,description)=>{
@@ -1034,7 +1042,7 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
     if(seen.has(id))return;
     seen.add(id);
     events.push({project:projectId,id,kind,ts:new Date(parsed).toISOString(),url,
-      description,firstSeen:false});
+      description,firstSeen:false,sourcePage:readPage});
   };
   try{
     const commits=outcomes[2].status==='fulfilled'&&Array.isArray(outcomes[2].value)?outcomes[2].value:[];
@@ -1100,7 +1108,7 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
     // Only compare two independently successful bounded three-source reads.
     const comparablePrior=previousCoverage?.status==='partial_sources'
       &&previousCoverage.staleEvidence!==true;
-    if(good===3&&comparablePrior){
+    if(!older&&good===3&&comparablePrior){
       const previousIds=new Set(previousRows.map(row=>row.id)
         .filter(id=>typeof id==='string'));
       for(const event of events)event.firstSeen=!previousIds.has(event.id);
@@ -1115,7 +1123,10 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
     // with older copies carrying the same canonical project/kind/GitHub ID.
     // Keep earlier events only when not reobserved, explicitly historical.
     const freshIds=new Set(events.map(row=>row.id));
-    const retainedProjectRows=good===3?events:[
+    // An older page extends the same manually observed window; it must not
+    // erase newer pages or count older data as newly created GitHub work.
+    const retainedProjectRows=good===3?(older?
+      [...events,...previousRows.filter(row=>!freshIds.has(row.id))]:events):[
       ...events,
       ...previousRows.filter(row=>!freshIds.has(row.id))
         .map(row=>({...row,staleUnverified:true}))
@@ -1124,7 +1135,8 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
       [...previousGitHub.events.filter(row=>row.project!==projectId&&coveredIds.has(row.project)),
        ...retainedProjectRows],githubCoverage);
     IMPORTED_GITHUB_ACTIVITY={observedAt:sampledAt,events:githubEvents,coverage:githubCoverage};
-    IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); prior observations retained and may be stale. ':'Public GitHub source sample ready; ')+
+    if(good===3){PUBLIC_GITHUB_PAGE.set(projectId,readPage);PUBLIC_GITHUB_VIEW_PAGE.set(projectId,readPage);}
+    IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); prior observations retained and may be stale. ':'Public GitHub page '+readPage+' observed; ')+
       'branch-only work and private repositories are not covered. Not a live deployment receipt.';
     return {project:projectId,readable:good,attempted:true};
   }catch(_error){
@@ -1192,7 +1204,10 @@ async function readVpsGitHubActivity(){
 function githubActivityImportPanel(){
   const snapshot=IMPORTED_GITHUB_ACTIVITY;
   const visible=new Set((DATA?.projects||[]).map(p=>p.id));
-  const rows=(snapshot?.events||[]).filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
+  const loadedPage=filter?(PUBLIC_GITHUB_PAGE.get(filter)||0):0;
+  const viewedPage=filter?(PUBLIC_GITHUB_VIEW_PAGE.get(filter)||1):1;
+  const rows=(snapshot?.events||[]).filter(a=>visible.has(a.project)&&(!filter||a.project===filter)
+    &&(!filter||loadedPage===0||(a.sourcePage||1)===viewedPage));
   const selectedCoverage=(snapshot?.coverage||[]).filter(c=>visible.has(c.project)&&(!filter||c.project===filter));
   const counts=selectedCoverage.map(c=>c.project+': '+c.status+
       (c.staleEvidence?' · STALE observation from '+c.observedAt:'')).join(' · ')||'No GitHub receipt loaded';
@@ -1209,6 +1224,11 @@ function githubActivityImportPanel(){
   return '<div class="panel"><div class="panel-header"><div><h2>GitHub evidence · optional local import</h2>'+
     '<p class="panel-subtitle">PRs, CI and main commits from an operator-generated bounded read-only snapshot. Not automatically synchronized.</p></div></div>'+
     '<button type="button" class="runner-action" data-github-public-refresh '+(PUBLIC_GITHUB_BUSY?'disabled aria-busy="true"':'')+'>Read public GitHub for selected project</button> '+
+    (loadedPage>0?'<button type="button" class="runner-action" data-github-public-older '+
+      (PUBLIC_GITHUB_BUSY||loadedPage>=5?'disabled':'')+'>Read older GitHub page ('+(loadedPage+1)+'/5)</button> '+
+      '<span class="detail-note">Showing GitHub page '+viewedPage+' of '+loadedPage+' manually loaded (20 PRs, 20 Actions, 15 commits per page). Not a complete history.</span> '+
+      (viewedPage>1?'<button type="button" class="runner-action" data-github-view-newer>Newer loaded page</button> ':'')+
+      (viewedPage<loadedPage?'<button type="button" class="runner-action" data-github-view-older>Older loaded page</button> ':''):'')+
     '<button type="button" class="runner-action" data-vps-github-refresh '+
     (VPS_GITHUB_BUSY?'disabled aria-busy="true"':'')+'>Read VPS GitHub</button> '+
     (VPS_GITHUB_ERROR?'<p class="detail-note" role="status">'+esc(VPS_GITHUB_ERROR)+'</p>':'')+
@@ -3127,7 +3147,7 @@ const retryVps=e.target.closest('[data-retry-vps-read]');if(retryVps){e.preventD
   }return}
 const triageExpand=e.target.closest('[data-zsentinel-triage-expand]');if(triageExpand){e.preventDefault();
   ZSENTINEL_TRIAGE_EXPANDED=!ZSENTINEL_TRIAGE_EXPANDED;render();return}
-const zSentinelExport=e.target.closest('[data-zsentinel-export]');if(zSentinelExport){e.preventDefault();exportZSentinelHandoff();return}const zSentinelAll=e.target.closest('[data-zsentinel-all-read]');if(zSentinelAll){e.preventDefault();void readZSentinelAllProjects();return}const zSentinelRead=e.target.closest('[data-zsentinel-source-read]');if(zSentinelRead){e.preventDefault();void readZSentinelSources();return}const localPage=e.target.closest('[data-local-activity-next]');if(localPage){e.preventDefault();void readPagedLocalActivity();return}const deliveryRefresh=e.target.closest('[data-delivery-queue-refresh]');if(deliveryRefresh){e.preventDefault();void refreshDeliveryQueue();return}const progressRefresh=e.target.closest('[data-worker-progress-refresh]');if(progressRefresh){e.preventDefault();void refreshWorkerProgress();return}const issueRefresh=e.target.closest('[data-public-issues-refresh]');if(issueRefresh){e.preventDefault();void refreshPublicProductIssues();return}const publicRefresh=e.target.closest('[data-github-public-refresh]');if(publicRefresh){e.preventDefault();void refreshPublicGitHubEvidence();return}const priorityToggle=e.target.closest('[data-product-issues-toggle]');if(priorityToggle){e.preventDefault();IMPORTED_ISSUE_SHOW_ALL=!IMPORTED_ISSUE_SHOW_ALL;render();return}const issueClear=e.target.closest('[data-product-issues-clear]');if(issueClear){e.preventDefault();IMPORTED_PRODUCT_ISSUES=null;IMPORTED_PRODUCT_ERROR='';IMPORTED_ISSUE_SHOW_ALL=false;render();return}const githubClear=e.target.closest('[data-github-receipt-clear]');if(githubClear){e.preventDefault();IMPORTED_GITHUB_ACTIVITY=null;IMPORTED_GITHUB_ERROR='';render();return}const localRead=e.target.closest('[data-local-source-read]');if(localRead){e.preventDefault();const id=localRead.dataset.localSourceRead;if(route==='activity'&&!ACTIVITY_COVERAGE.pending
+const zSentinelExport=e.target.closest('[data-zsentinel-export]');if(zSentinelExport){e.preventDefault();exportZSentinelHandoff();return}const zSentinelAll=e.target.closest('[data-zsentinel-all-read]');if(zSentinelAll){e.preventDefault();void readZSentinelAllProjects();return}const zSentinelRead=e.target.closest('[data-zsentinel-source-read]');if(zSentinelRead){e.preventDefault();void readZSentinelSources();return}const localPage=e.target.closest('[data-local-activity-next]');if(localPage){e.preventDefault();void readPagedLocalActivity();return}const deliveryRefresh=e.target.closest('[data-delivery-queue-refresh]');if(deliveryRefresh){e.preventDefault();void refreshDeliveryQueue();return}const progressRefresh=e.target.closest('[data-worker-progress-refresh]');if(progressRefresh){e.preventDefault();void refreshWorkerProgress();return}const issueRefresh=e.target.closest('[data-public-issues-refresh]');if(issueRefresh){e.preventDefault();void refreshPublicProductIssues();return}const publicRefresh=e.target.closest('[data-github-public-refresh]');if(publicRefresh){e.preventDefault();void refreshPublicGitHubEvidence();return}const publicOlder=e.target.closest('[data-github-public-older]');if(publicOlder){e.preventDefault();void refreshPublicGitHubEvidence(null,false,true);return}const pageNewer=e.target.closest('[data-github-view-newer]');if(pageNewer&&filter){e.preventDefault();PUBLIC_GITHUB_VIEW_PAGE.set(filter,Math.max(1,(PUBLIC_GITHUB_VIEW_PAGE.get(filter)||1)-1));render();return}const pageOlder=e.target.closest('[data-github-view-older]');if(pageOlder&&filter){e.preventDefault();PUBLIC_GITHUB_VIEW_PAGE.set(filter,Math.min(PUBLIC_GITHUB_PAGE.get(filter)||1,(PUBLIC_GITHUB_VIEW_PAGE.get(filter)||1)+1));render();return}const priorityToggle=e.target.closest('[data-product-issues-toggle]');if(priorityToggle){e.preventDefault();IMPORTED_ISSUE_SHOW_ALL=!IMPORTED_ISSUE_SHOW_ALL;render();return}const issueClear=e.target.closest('[data-product-issues-clear]');if(issueClear){e.preventDefault();IMPORTED_PRODUCT_ISSUES=null;IMPORTED_PRODUCT_ERROR='';IMPORTED_ISSUE_SHOW_ALL=false;render();return}const githubClear=e.target.closest('[data-github-receipt-clear]');if(githubClear){e.preventDefault();IMPORTED_GITHUB_ACTIVITY=null;IMPORTED_GITHUB_ERROR='';PUBLIC_GITHUB_PAGE.clear();PUBLIC_GITHUB_VIEW_PAGE.clear();render();return}const localRead=e.target.closest('[data-local-source-read]');if(localRead){e.preventDefault();const id=localRead.dataset.localSourceRead;if(route==='activity'&&!ACTIVITY_COVERAGE.pending
   &&(DATA?.projects||[]).some(p=>p.id===id)){filter=id;history.replaceState(null,'','#activity?project='+encodeURIComponent(id));render();void refreshProjectActivity(routeVersion,true)}return}
 const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
