@@ -13,7 +13,10 @@ from datetime import datetime, timezone
 from html import escape
 from io import StringIO
 import json
+import os
 from pathlib import Path
+import secrets
+import stat
 import sys
 from zipfile import BadZipFile
 
@@ -21,7 +24,9 @@ from zsentinel_saved_issue_archive import read_issue_dossier
 from zsentinel_saved_issue_delta import (
     admit_comparable_source_pair, issue_difference, save_private_html,
 )
-from zsentinel_saved_gate_dossier import PROJECT, _save_private_handoff
+from zsentinel_saved_gate_dossier import (
+    PROJECT, _open_private_extract_parent, _save_private_handoff,
+)
 from zsentinel_saved_dossier_timeline import source_freshness
 
 PRIORITIES = ("P0", "P1", "P2", "Unspecified")
@@ -271,6 +276,55 @@ def _csv_cell(value):
     return text
 
 
+def _save_private_structured(destination: Path, content: str, suffix: str) -> None:
+    """Atomically publish a new owner-only CSV/JSON file without replacing existing output."""
+    if (suffix not in (".csv", ".json") or destination.suffix.lower() != suffix
+            or destination.name in (".", "..")):
+        raise ValueError("Structured output extension does not match its format")
+    data = content.encode("utf-8")
+    if not 1 <= len(data) <= MAX_BYTES:
+        raise ValueError("Private structured output exceeds size budget")
+    parentfd = _open_private_extract_parent(destination.parent)
+    stage = ".zsentinel-issue-portfolio-" + secrets.token_hex(12) + ".tmp"
+    stagefd = None
+    identity = None
+    try:
+        stagefd = os.open(stage, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
+                          os.O_NOFOLLOW, 0o600, dir_fd=parentfd)
+        opened = os.fstat(stagefd)
+        identity = (opened.st_dev, opened.st_ino)
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.geteuid()
+                or stat.S_IMODE(opened.st_mode) & 0o077):
+            raise ValueError("Unable to create private structured output")
+        pending = memoryview(data)
+        while pending:
+            written = os.write(stagefd, pending)
+            if written <= 0:
+                raise OSError("Private structured output did not progress")
+            pending = pending[written:]
+        os.fsync(stagefd)
+        current = os.stat(stage, dir_fd=parentfd, follow_symlinks=False)
+        if (not stat.S_ISREG(current.st_mode)
+                or (current.st_dev, current.st_ino) != identity):
+            raise ValueError("Private structured staging identity changed")
+        # A hard link publishes complete content and refuses to overwrite a destination.
+        os.link(stage, destination.name, src_dir_fd=parentfd,
+                dst_dir_fd=parentfd, follow_symlinks=False)
+        os.fsync(parentfd)
+    finally:
+        if stagefd is not None:
+            os.close(stagefd)
+        if identity is not None:
+            try:
+                current = os.stat(stage, dir_fd=parentfd, follow_symlinks=False)
+                if (current.st_dev, current.st_ino) == identity:
+                    os.unlink(stage, dir_fd=parentfd)
+                    os.fsync(parentfd)
+            except OSError:
+                pass
+        os.close(parentfd)
+
+
 def render_json(report):
     """Serialize the complete selected historical delta with provenance and non-authority flags."""
     value = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\\n"
@@ -516,9 +570,9 @@ def main(argv=None):
         elif args.format == "markdown":
             _save_private_handoff(args.output, render_markdown(chosen))
         elif args.format == "csv":
-            _save_private_handoff(args.output, render_csv(chosen))
+            _save_private_structured(args.output, render_csv(chosen), ".csv")
         else:
-            _save_private_handoff(args.output, render_json(chosen))
+            _save_private_structured(args.output, render_json(chosen), ".json")
         print("Private historical issue-to-PR portfolio page created: " +
               str(chosen["display"]["shown"]) + " shown of " +
               str(chosen["display"]["total"]) + " issues")
