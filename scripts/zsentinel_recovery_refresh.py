@@ -262,13 +262,15 @@ def main():
         if args.desk_output is not None and args.format not in ("desk", "html"):
             raise ValueError("--desk-output accepts only desk or html operator formats")
         if args.desk_output is not None:
-            # Do not create a private HTML report on top of a pending
-            # cursor or dedup ledger: a subsequent atomic JSON write could
-            # otherwise clobber the report after its exclusive creation.
-            private_inputs = [args.state]
-            if any(item is not None and args.desk_output.resolve() == item.resolve()
+            # Never let a report path alias a source, registry or private
+            # ledger; output creation must not destroy the evidence it summarizes.
+            private_inputs = [
+                Path(args.bundle), args.registry, args.state, args.queue_database,
+                args.worker_events_database, args.notion_claims_export, args.output,
+            ]
+            if any(item is not None and args.desk_output.resolve() == Path(item).resolve()
                    for item in private_inputs):
-                raise ValueError("desk-output must differ from private ledger/cursor paths")
+                raise ValueError("desk-output must differ from every source, ledger and report path")
         if args.state is not None:
             ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
