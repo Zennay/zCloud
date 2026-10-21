@@ -14,7 +14,9 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from zsentinel_issue_delivery import build_workboard, render_html, render_markdown
+from zsentinel_issue_delivery import (
+    build_workboard, canonical_issue_action, render_html, render_markdown,
+)
 from zsentinel_issue_progress import load_private_prior, _source
 from zsentinel_product_issue_inbox import ROOT, canonical_projects, collect
 
@@ -75,6 +77,7 @@ def combine_workboards(snapshots, registry, now=None):
                 raise ValueError("invalid bounded per-window GitHub receipt")
         snapshots_at.append(observed)
         age = int(max(0, (now - observed).total_seconds()))
+        inherited_notion_warnings = 0
         windows.append({
             "index": index + 1,
             "projects": list(projects),
@@ -100,15 +103,33 @@ def combine_workboards(snapshots, registry, now=None):
             if row["issue_url"] in seen_urls:
                 raise ValueError("duplicate issue identity")
             seen_urls.add(row["issue_url"])
-            # Strip previous comparisons and Notion-derived actions, which
-            # are source-specific and cannot be re-authorized by aggregation.
+            # Saved Notion owner warnings are *historical*. Never reproduce
+            # them as a fresh claim/lease/status fact in a combined workboard.
+            # Reconstruct the immutable issue route from the canonical source,
+            # rather than naively stripping only the old numeric properties.
+            base_action = canonical_issue_action(row.get("next_step"))
+            current_action = row.get("action")
+            notion_overlay = (row.get("notion_active_work_min") is not None
+                              or row.get("notion_verifying_work_min") is not None)
+            if type(current_action) is not str or not current_action.endswith(base_action):
+                raise ValueError("saved issue action differs from canonical route")
+            if current_action != base_action:
+                if (not notion_overlay
+                        or not current_action.startswith("Notion toont minstens ")
+                        or len(current_action) > len(base_action) + 360):
+                    raise ValueError("unrecognized saved source-specific action")
+                inherited_notion_warnings += 1
             cleaned = dict(row)
             cleaned.pop("notion_active_work_min", None)
+            cleaned.pop("notion_verifying_work_min", None)
+            cleaned["action"] = base_action
             cleaned["source_window"] = index + 1
             cleaned["source_observed_at_utc"] = observed.isoformat()
             cleaned["source_age_seconds"] = age
             cleaned["source_stale"] = age > 600
             all_items.append(cleaned)
+        windows[-1]["historical_notion_action_overlays_dropped"] = inherited_notion_warnings
+        windows[-1]["notion_owner_recheck_required_if_acting"] = True
         listed = snapshot.get("recent_open_product_prs", [])
         if type(listed) is not list or len(listed) > 8 * len(projects) + 3:
             raise ValueError("unbounded existing PR source list")
@@ -193,6 +214,9 @@ def combine_workboards(snapshots, registry, now=None):
         "projects": projects,
         "source_windows": windows,
         "source_window_count": len(windows),
+        "historical_notion_action_overlays_dropped": sum(
+            w["historical_notion_action_overlays_dropped"] for w in windows),
+        "historical_notion_not_current_lease_evidence": True,
         "coverage": coverage,
         "project_summary": counts,
         "issue_count": len(ordered),
