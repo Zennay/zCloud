@@ -760,6 +760,7 @@ def text_view(data):
         out.append("  Vervolg: " + item["next_step"])
     if data["owner_review_shortlist_partial"]:
         out.append("  ONVOLLEDIG: shortlist of lokale projectbron; controleer de bron.")
+    out.extend(portfolio_changes_lines(data))
     out.append("Open lokale P0/P1-queue per echt project (adviserend):")
     for item in data["portfolio_urgent_local"]:
         out.append(
@@ -1192,7 +1193,8 @@ def html_view(data):
         "<th scope='col'>P0 wacht</th><th scope='col'>P1 wacht</th>"
         "<th scope='col'>P0 actief</th><th scope='col'>P1 actief</th>"
         "</tr></thead><tbody>" + portfolio_rows + "</tbody></table></div>"
-        + portfolio_note + "</section>" + project_cards_html(data)
+        + portfolio_note + "</section>" + portfolio_changes_html(data)
+        + project_cards_html(data)
         + host_section + runner_section
         + "<section class='notice'><h2>Grenzen en "
         "vervolgactie</h2><ul>" + details + "</ul></section>"
@@ -1252,7 +1254,8 @@ def markdown_view(data):
         lines.extend(("", "## Hostdruk (adviserend)", "",
                       pressure_sentence(data["host_pressure"]),
                       "Geen autorisatie voor extra workers of serviceacties.", ""))
-    lines.extend(("", "## Prioritaire eigenaaroverdracht (lokaal; niet geclaimd)", ""))
+    lines.extend(("", *portfolio_changes_lines(data, markdown=True),
+                  "", "## Prioritaire eigenaaroverdracht (lokaal; niet geclaimd)", ""))
     for item in data["owner_review_shortlist"]:
         inbox = github_inbox_urls(item["project"])
         name = item["project"]
@@ -1512,6 +1515,29 @@ def project_owner_brief(data, project_id):
             "Dit is GEEN bewijs dat GitHub geen open issues heeft, "
             "Notion geen actieve claims heeft of het project klaar is.",
         ))
+    history = data.get("portfolio_previous_comparison")
+    if history is not None:
+        lines.extend(("", "## Verschil tussen lokale bronmomenten", "",
+                      "**Vergelijkbaarheid:** " + history["status"],
+                      history["note"]))
+        if history["status"] == "COMPARABLE_ENDPOINTS":
+            match = next(
+                (item for item in history["changed_projects"]
+                 if item["project_id"] == project_id), None)
+            if match is None:
+                lines.append(
+                    "Geen lokaal P0/P1-countverschil op de twee eindpunten; "
+                    "geen bewijs van ongewijzigd tussentijds werk."
+                )
+            else:
+                delta = match["delta"]
+                lines.extend((
+                    "**Bronverschilsignaal:** " + match["kind"],
+                    "**P0 wacht:** " + f"{delta['queued_p0']:+d}",
+                    "**P1 wacht:** " + f"{delta['queued_p1']:+d}",
+                    "**P0 actief:** " + f"{delta['in_flight_p0']:+d}",
+                    "**P1 actief:** " + f"{delta['in_flight_p1']:+d}",
+                ))
     links = github_inbox_urls(name)
     lines.extend(("", "## Bestaande productbronnen", ""))
     if links:
@@ -1576,6 +1602,7 @@ def portfolio_owner_book(data):
             "- Geen lokaal P0/P1-wachtwerk in deze steekproef; "
             "er kunnen elders wel open issues of actieve claims zijn."
         )
+    contents.extend(("", *portfolio_changes_lines(data, markdown=True), ""))
     contents.extend((
         "",
         "## Dossiers per echt project",
