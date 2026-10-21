@@ -1638,11 +1638,15 @@ def markdown(report):
 
 CSV_FIELDS = (
     "record_type", "handoff_schema", "source_created_at_utc",
-    "source_coverage_json", "priority", "project", "kind", "next_step",
-    "evidence", "issue_url", "existing_pr_urls", "exact_github_job_run_id",
-    "exact_github_job_id", "exact_github_job_head_sha",
-    "exact_github_job_url", "exact_github_commit_url", "review_by_utc",
-    "review_overdue_at_export", "claim_authorized", "retry_authorized",
+    "source_coverage_json", "observed_action_card_count", "items_truncated",
+    "all_sources_complete", "historical_recheck_count",
+    "historical_rechecks_truncated", "priority", "project", "kind",
+    "next_step", "evidence", "issue_url", "existing_pr_urls",
+    "exact_github_job_run_id", "exact_github_job_id",
+    "exact_github_job_head_sha", "exact_github_job_url",
+    "exact_github_commit_url", "review_by_utc", "review_overdue_at_export",
+    "current_source_observed", "historical_reconciliation_required",
+    "live_alert_authorized", "claim_authorized", "retry_authorized",
     "merge_authorized", "deploy_authorized", "owner_verification_required",
 )
 
@@ -1675,23 +1679,43 @@ def csv_export(report):
         raise ValueError("invalid runtime owner CSV source")
     items = report.get("priority_items")
     coverage = report.get("coverage")
+    historical = report.get("historical_owner_rechecks", [])
     if (not isinstance(items, list) or len(items) > MAX_ITEMS
-            or not isinstance(coverage, dict) or len(coverage) > 8):
-        raise ValueError("unbounded runtime owner CSV source")
+            or not isinstance(coverage, dict) or len(coverage) > 8
+            or type(report.get("items_truncated")) is not bool
+            or type(report.get("all_sources_complete")) is not bool
+            or report.get("all_sources_complete") is not False
+            or type(report.get("historical_rechecks_truncated")) is not bool
+            or not isinstance(historical, list) or len(historical) > 5):
+        raise ValueError("unbounded or incomplete runtime owner CSV metadata")
     # Reuse the existing canonical renderer's detailed card/URL/authorization
     # validation; rendering it is local and has no provider or filesystem effects.
     handoff_html(report)
     stamp = _short(report.get("created_at_utc"), 40)
     coverage_json = json.dumps(
         coverage, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    metadata = {
+        "handoff_schema": SCHEMA,
+        "source_created_at_utc": stamp,
+        "source_coverage_json": coverage_json,
+        "observed_action_card_count": len(items),
+        "items_truncated": report["items_truncated"],
+        "all_sources_complete": report["all_sources_complete"],
+        "historical_recheck_count": len(historical),
+        "historical_rechecks_truncated": report["historical_rechecks_truncated"],
+        "live_alert_authorized": False,
+        "claim_authorized": False,
+        "retry_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "owner_verification_required": True,
+    }
     rows = []
     for item in items:
         job = item.get("exact_github_job")
         rows.append({
+            **metadata,
             "record_type": "owner_action",
-            "handoff_schema": SCHEMA,
-            "source_created_at_utc": stamp,
-            "source_coverage_json": coverage_json,
             "priority": item.get("priority"),
             "project": item.get("project"),
             "kind": item.get("kind"),
@@ -1706,23 +1730,31 @@ def csv_export(report):
             "exact_github_commit_url": item.get("exact_github_commit_url"),
             "review_by_utc": item.get("review_by_utc"),
             "review_overdue_at_export": item.get("review_overdue_at_export"),
-            "claim_authorized": False,
-            "retry_authorized": False,
-            "merge_authorized": False,
-            "deploy_authorized": False,
-            "owner_verification_required": True,
+            "current_source_observed": None,
+            "historical_reconciliation_required": False,
+        })
+    for item in historical:
+        job = item.get("exact_github_job")
+        rows.append({
+            **metadata,
+            "record_type": "historical_owner_recheck",
+            "priority": item["priority"],
+            "project": item["project"],
+            "kind": item["kind"],
+            "next_step": item.get("next_step"),
+            "evidence": item["evidence"],
+            "exact_github_job_run_id": job.get("run_id") if job else None,
+            "exact_github_job_id": job.get("job_id") if job else None,
+            "exact_github_job_head_sha": job.get("head_sha") if job else None,
+            "exact_github_job_url": item.get("exact_github_job_url"),
+            "exact_github_commit_url": item.get("exact_github_commit_url"),
+            "current_source_observed": False,
+            "historical_reconciliation_required": True,
         })
     if not rows:
         rows.append({
+            **metadata,
             "record_type": "metadata_only_no_action_cards",
-            "handoff_schema": SCHEMA,
-            "source_created_at_utc": stamp,
-            "source_coverage_json": coverage_json,
-            "claim_authorized": False,
-            "retry_authorized": False,
-            "merge_authorized": False,
-            "deploy_authorized": False,
-            "owner_verification_required": True,
         })
     stream = StringIO()
     writer = csv.DictWriter(
