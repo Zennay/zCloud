@@ -7,10 +7,16 @@ required reviews, merge authorization or production completion.
 """
 import re
 
+# A single GitHub action may link several issues: "Fixes: #12, #13 and #14".
+# These are candidate *references* only; GitHub issue state, reviews and
+# exact-head gates must still be observed independently.
 REF = re.compile(
-    r"\b(?:close[ds]?|fix(?:e[ds])?|resolve[ds]?|addresses|refs?)\s+\#([1-9][0-9]{0,6})\b",
+    r"\b(?:close[ds]?|fix(?:e[ds])?|resolve[ds]?|addresses|refs?)"
+    r"\s*:?\s+\#([1-9][0-9]{0,6})(?![0-9])"
+    r"((?:\s*(?:,|&|\band\b|\bor\b)\s*\#(?:[1-9][0-9]{0,6})(?![0-9]))*)",
     re.IGNORECASE,
 )
+CONTINUATION_REF = re.compile(r"\#([1-9][0-9]{0,6})(?![0-9])")
 TITLE_ISSUE_REF = re.compile(r"(?<![A-Za-z0-9_])#([1-9][0-9]{0,6})(?![0-9])")
 PRIO_TITLE = re.compile(r"^\s*(?:\[)?P([01])(?:\]|\b|\s*[-:])", re.IGNORECASE)
 LABELS_P0 = {"p0", "priority:p0", "priority/p0", "critical", "severity:critical",
@@ -95,9 +101,20 @@ def references(body, existing, repo=None):
         return []
     if len(body) > 128000:
         return []
-    return sorted({int(match) for match in REF.findall(body)
-                   if int(match) in existing} |
-                  set(canonical_issue_references(body, existing, repo)))[:20]
+    linked = set(canonical_issue_references(body, existing, repo))
+    for number, continuation in REF.findall(body):
+        # Only the original GitHub action and its contiguous #N list count.
+        # Do not match unrelated prose, other repository shorthand or bare
+        # numbers following a list separator.
+        for candidate in (number, *CONTINUATION_REF.findall(continuation)):
+            parsed = int(candidate)
+            if parsed in existing:
+                linked.add(parsed)
+            if len(linked) >= 20:
+                break
+        if len(linked) >= 20:
+            break
+    return sorted(linked)[:20]
 
 
 def title_references(title, existing, repo=None):
