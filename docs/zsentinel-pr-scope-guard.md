@@ -1,5 +1,36 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 21 oktober · één projectgerichte privé-overdracht uit bestaande merge-eerst werkbak
+
+De bestaande brongebonden offline werkbak heeft nu een knop **Download
+privéoverdracht voor project ...**. Kies eerst één van de projectwaarden
+uit de bestaande `Project`-filter. Dit is geen remote projectlookup of
+autoclaim: de filteropties komen alleen van gevalideerde issuekaarten in
+de opgeslagen, begrensde bronpagina. Zonder selectie is de knop uitgeschakeld.
+
+De nieuwe projectexport bevat uit **exact dezelfde opgeslagen bron-token**:
+- alle binnen de bronpagina zichtbare projectissues met prioriteit, bronroute,
+  originele issue-URL en aanbevolen menselijke vervolgstap;
+- alle bij diezelfde projectissues gegroepeerde bestaande PRs met bron-HEAD,
+  historische gatecode in mensentaal, overlappingssignalen, gekoppelde
+  bronissues en lokale menselijke PR-opvolging;
+- alle bronissues met meerdere PR-kandidaten, inclusief de handmatige
+  botsingsstatus en lokale privénotities, zonder bestandsbotsing/fix af te leiden;
+- issue/PR-bronmomenten, exacte privé brontoken, bronafkapping,
+  en een expliciete actuele claim/CI/review/branch-protection checklist.
+
+De inhoud **volgt niet** de actuele zoekfilters, PR-focus of
+botsingsfilters: de knop levert de complete *geselecteerde projectsubset*
+binnen dezelfde beperkte bronpagina. Issues buiten die pagina worden
+niet verzonnen en de export zegt expliciet dat het volledige echte project
+of de actuele GitHub/Notion-stand daarmee niet bevestigd is.
+De bestaande browser-lokale Markdown-download wordt hergebruikt; het
+pakket bevat geen live bronverzoeken, remote opslag, automatische owner
+change, CI-retry, QA-suite, merge of deploy. Alle lokale statusnotities
+blijven onderdeel van de export en mogen nooit als GitHub-review of
+werkelijk gesloten issue worden geïnterpreteerd.
+
+
 ## 21 oktober · openstaande PR-eigenaarsopvolging als gerichte werkstroom
 
 De bestaande offline, source-token-gebonden merge-eerst werkbak heeft nu
