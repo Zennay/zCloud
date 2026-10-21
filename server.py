@@ -3453,7 +3453,7 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
     """Resume one parked task after an authenticated operator records resolution evidence."""
     queue_id=str(queue_id or '').strip()
     note=re.sub(r'[\x00-\x1f\x7f]+',' ',str(resolution_note or ''))
-    note=re.sub(r'\s+',' ',note).strip()
+    note=re.sub(r'\s+',' ',note).strip()[:1200]
     actor=re.sub(r'[^A-Za-z0-9_.:@ -]+','',str(actor or '')).strip()[:100]
     if not queue_id:
         raise ValueError('queue_id is verplicht')
@@ -3473,7 +3473,13 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
         if (not project or str(project.get('status') or 'active')!='active'
                 or str(project.get('queue_mode') or '').lower()=='human-gated'):
             raise ValueError('Project is niet actief of is menselijk afgeschermd; hervatten geweigerd')
-        receipt=f'Operator {actor} attests dependency cleared: {note}'[:4000]
+        previous_blocker=str(row['blocker'] or '')[:1000]
+        previous_evidence=str(row['evidence'] or '')[:1200]
+        receipt=(
+            f'Previous blocker: {previous_blocker}\n'
+            f'Previous evidence: {previous_evidence}\n'
+            f'Operator {actor} attests dependency cleared: {note}'
+        )[:4000]
         cur=c.execute("""UPDATE portfolio_queue
                          SET status='queued',eligible=1,evidence=?,blocker='',
                              worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
@@ -3494,6 +3500,8 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
             evidence={
                 'queue_id':queue_id,
                 'actor':actor,
+                'previous_blocker':previous_blocker,
+                'previous_evidence':previous_evidence,
                 'operator_attestation':note,
                 'dependency_independently_verified':False,
             },
