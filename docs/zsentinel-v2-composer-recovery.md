@@ -142,3 +142,14 @@ The v2 engine now separates these outcomes:
 - `send-blocked` now counts as acknowledged for deduplication only after a successful `/runner-status` response. A transient status outage must not permanently suppress the sole operator-visible reason; retries occur only during existing polls.
 
 **Release/ownership:** these are source improvements on [existing #1552](https://github.com/Zennay/zCloud/pull/1552) and the matching readonly operator guidance is in [existing Activity #1550](https://github.com/Zennay/zCloud/pull/1550). They do not assert actual delivery, close a GitHub issue, retry CI, mutate SQLite outside the previously existing user-facing command-result endpoint or authorize a merge/deploy. The original required CI, independent review and owner-managed browser release remain mandatory.
+
+
+## 21 October · Private cross-tab sent-queue witness
+
+A sessionStorage-only marker protects reloads of one original tab, but disappears when Firefox/Violentmonkey opens a replacement tab or the browser restarts. The same queued database assignment could otherwise be dispatched again without independent evidence that the prior send failed.
+
+Before the irreversible Send click, the actual v2 engine now saves the same small `{worker, queue}` *may-have-dispatched* receipt both in its tab's `sessionStorage` and in **Violentmonkey-private, worker-keyed `GM_setValue` storage**, which survives browser/tab replacement. No prompt, model response, GitHub token, user message, claim metadata or secret is stored. A new document consults both sources through `GM_getValue`; either source identifying the same worker and queue blocks re-dispatch, while invalid/unavailable private storage fails closed. The existing in-document prompt continuation remains allowed after the first confirmed local Send, and a genuinely **different** queue ID can proceed through the normal fresh assignment checks.
+
+This is deliberately not an automatic acknowledgement or task completion: a marker is written **before** clicking and may conservatively block a send which was never accepted. The owner must examine the original queue receipt and browser conversation and issue a distinct authorized assignment if work should restart. Clearing the store without adjudicating the original dispatch risks duplicate execution. No automatic timeout deletes evidence. User-facing Activity continues to describe `previous-queue-send-after-reload-manual-review` as unverified and human-only.
+
+These source changes are bundled into the **existing** PR #1552; no QA suite, live browser update, force, lease take-over or deployment is claimed.
