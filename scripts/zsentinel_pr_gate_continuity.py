@@ -15,6 +15,7 @@ from zsentinel_pr_scope_delta import _clock, MAX_AGE_SECONDS
 SCHEMA = "zsentinel-pr-gate-episode-comparison-v1"
 BOARD = "zsentinel-portfolio-pr-collision-board-v1"
 SHA = re.compile(r"^[a-f0-9]{40}$")
+DIGEST = re.compile(r"^[a-f0-9]{64}$")
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
 MAX_ITEMS = 4
@@ -37,6 +38,10 @@ GATE_KEYS = (
     "legacy_contexts_observed", "legacy_status_superseded_attempts_observed",
     "human_next_gate_step", "check_runs_evidence_sha256",
     "legacy_status_evidence_sha256", "exact_head_review_evidence_sha256",
+    "pending_individual_review_requests_observed",
+    "pending_team_review_requests_observed",
+    "pending_review_requests_stable_on_second_read",
+    "pending_review_request_evidence_sha256",
 )
 
 
@@ -160,11 +165,23 @@ def _gate_rows(board, repos):
             # allowed for comparison, but must NEVER qualify as unchanged.
             for field in ("check_runs_evidence_sha256",
                           "legacy_status_evidence_sha256",
-                          "exact_head_review_evidence_sha256"):
+                          "exact_head_review_evidence_sha256",
+                          "pending_review_request_evidence_sha256"):
                 val = row.get(field)
                 if val is not None and (type(val) is not str or
-                                        SHA.fullmatch(val) is None):
-                    raise ValueError("malformed pinned source fingerprint")
+                                        DIGEST.fullmatch(val) is None):
+                    raise ValueError("malformed pinned SHA-256 source fingerprint")
+            # Old saved observations lacked review-request evidence. They
+            # remain comparable but can never prove an unchanged hold.
+            for key in ("pending_individual_review_requests_observed",
+                        "pending_team_review_requests_observed"):
+                val = row.get(key)
+                if val is not None and (type(val) is not int or
+                                        not 0 <= val <= 100):
+                    raise ValueError("invalid pending review count")
+            request_stable = row.get("pending_review_requests_stable_on_second_read")
+            if request_stable is not None and type(request_stable) is not bool:
+                raise ValueError("invalid review-request source stability")
             for key in ("check_page_complete", "review_page_may_be_truncated",
                         "legacy_status_source_may_be_truncated",
                         "check_runs_sample_complete_and_terminal"):
@@ -234,6 +251,7 @@ BLOCKER_NEXT_STEP = {
     "check_source_not_terminal": "wait_for_existing_ci_without_retrigger",
     "no_ci_check_or_legacy_context_seen": "inspect_missing_current_source_with_owner",
     "independent_review_not_seen": "request_independent_review_for_current_head",
+    "independent_review_requested_waiting": "wait_for_requested_independent_review",
     "github_mergeability_not_determined": "inspect_current_pr_at_source",
     "branch_rules_ownership_and_release_not_verified":
         "verify_protected_main_rules_ownership_and_release",
@@ -257,6 +275,8 @@ NEXT_STEP_LABELS = {
         "Wacht op bestaande CI; geen extra workflow-herstart.",
     "request_independent_review_for_current_head":
         "Vraag onafhankelijke review voor de huidige exacte HEAD.",
+    "wait_for_requested_independent_review":
+        "Review is al aangevraagd; wacht op de onafhankelijke beslissing.",
     "verify_protected_main_rules_ownership_and_release":
         "Controleer bestaande protected-main, eigenaar en releasevoorwaarden.",
     "verify_pr_status_before_concluding_closed":
@@ -321,11 +341,16 @@ def compare_gate_episodes(previous, current):
             and row.get("legacy_status_source_may_be_truncated") is False
             and row.get("observed_actionable_check_runs_hidden") == 0
             and row.get("observed_actionable_legacy_contexts_hidden") == 0
+            and row.get("pending_review_requests_stable_on_second_read") is True
+            and all(type(row.get(key)) is int and 0 <= row[key] <= 100
+                    for key in ("pending_individual_review_requests_observed",
+                                "pending_team_review_requests_observed"))
             and all(type(row.get(key)) is str
-                    and SHA.fullmatch(row[key]) is not None for key in (
+                    and DIGEST.fullmatch(row[key]) is not None for key in (
                         "check_runs_evidence_sha256",
                         "legacy_status_evidence_sha256",
-                        "exact_head_review_evidence_sha256"))
+                        "exact_head_review_evidence_sha256",
+                        "pending_review_request_evidence_sha256"))
             for row in (past, now))
         if past is None:
             change = "newly_selected_in_current_sample_not_new_pr"
@@ -343,7 +368,9 @@ def compare_gate_episodes(previous, current):
             for field, human_label in (
                     ("check_runs_evidence_sha256", "Nieuwe Check Run poging of conclusie"),
                     ("legacy_status_evidence_sha256", "Legacy context of statuspoging gewijzigd"),
-                    ("exact_head_review_evidence_sha256", "Individuele reviewbon gewijzigd")):
+                    ("exact_head_review_evidence_sha256", "Individuele reviewbon gewijzigd"),
+                    ("pending_review_request_evidence_sha256",
+                     "Aangevraagde reviewers/teams gewijzigd")):
                 if past[field] != now[field]:
                     source_evidence_changes.append(human_label)
         rows.append({
