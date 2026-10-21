@@ -104,6 +104,8 @@ def _pr_summary(payload, full_name, number):
         "observed_state": state, "observed_draft": draft,
         "reported_merged": merged, "target_branch": base_ref,
         "exact_head_sha": sha, "head_verified_by_live_get": True,
+        "exact_head_checks_url": "https://github.com/" + full_name + "/commit/" + sha + "/checks",
+        "pr_files_url": "https://github.com/" + full_name + "/pull/" + str(number) + "/files",
         "mergeable_hint": payload.get("mergeable") if type(payload.get("mergeable")) is bool else None,
         "updated_at_source": payload.get("updated_at") if isinstance(payload.get("updated_at"), str) else None,
     }
@@ -346,6 +348,15 @@ def owner_html(report):
             "<dt>Next human action</dt><dd>" + esc(row["next_human_step"]) +
             "</dd></dl>",
         ])
+        if observed:
+            rows.append(
+                "<p><a href='" + esc(row["exact_head_checks_url"]) +
+                "' target='_blank' rel='noopener noreferrer'>Inspect checks "
+                "for this observed exact HEAD</a> · <a href='" +
+                esc(row["pr_files_url"]) +
+                "' target='_blank' rel='noopener noreferrer'>Review PR changes"
+                "</a></p>"
+            )
         checks = row.get("check_runs")
         if checks:
             rows.extend([
@@ -412,6 +423,8 @@ def markdown(report):
             "",
             "- Live read: " + row["status"],
             "- Observed HEAD: " + row.get("exact_head_sha", "UNKNOWN"),
+            "- Exact-HEAD checks: " + row.get("exact_head_checks_url", "UNKNOWN"),
+            "- PR changed files: " + row.get("pr_files_url", "UNKNOWN"),
             "- Observed state: " + row.get("observed_state", "UNKNOWN"),
             "- Historical source link: " + row["source_relationship"],
             "- Historical draft: " + str(row["source_draft"]),
