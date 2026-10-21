@@ -557,3 +557,19 @@ continues to report Notion/external ownership as `NOT_OBSERVED`, owner
 availability as `NOT_INFERABLE`, and authorization as `NOT_GRANTED`.
 Malformed lease timestamps remain ambiguous; oversized claim inventories
 remain truncated/unknown. No lease is renewed, deleted, reclaimed or written.
+
+
+### Per-issue recovery cards carry the local lease signal
+
+The cross-project P0/P1 issue inbox now carries the same validated, aggregate
+local-claim observation on each issue card, using the canonical repo→project
+mapping. This puts an expired-lease lead beside the existing PR/CI handoff
+instead of requiring the operator to mentally join a separate panel. HTML,
+text and JSON/private snapshots use the same project-level counts; no
+owner IDs, claim keys, raw metadata or row identifiers are copied.
+
+These counts are **project-wide context**, not an issue-specific lease match.
+The inbox does not promote an issue, alter PR ranking, release a claim, or
+infer that a worker stopped. Unknown project mappings and malformed/missing
+source fields remain UNKNOWN; a stale local lease still requires independent
+Notion/worker/queue inspection and explicit authorization before recovery.
