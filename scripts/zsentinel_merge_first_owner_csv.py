@@ -473,13 +473,158 @@ def render_private_html(rows, source_metadata=None):
     return ''.join(parts)
 
 
+
+def _markdown_evidence(value):
+    """Render saved human text as inert Markdown, showing hidden controls.
+
+    Issue titles and action labels are evidence, never markdown instructions.
+    Keep URLs in dedicated canonical link slots instead of allowing inline
+    Markdown to be supplied by source fields.
+    """
+    if value is None:
+        return "UNKNOWN"
+    raw = str(value)
+    visible = []
+    for char in raw:
+        category = unicodedata.category(char)
+        if category in ("Cc", "Cf", "Zl", "Zp", "Cs") or (
+            char.isspace() and char != " "
+        ):
+            visible.append("⟦U+" + format(ord(char), "04X") + "⟧")
+        elif char in "\\\`*_{}[]()#+-.!|>~":
+            visible.append("\\" + char)
+        else:
+            visible.append(char)
+    return "".join(visible)
+
+
+def render_private_markdown(rows, source_metadata):
+    """Human-readable private owner packet with original source provenance.
+
+    Bounded historical observations are NEVER current CI/claim authorization.
+    """
+    metadata = source_metadata
+    lines = [
+        "# zSentinel — Existing PR owner handoff (saved evidence only)",
+        "",
+        "**NOT LIVE:** This is an offline historical selection, not current "
+        "GitHub, ownership, CI, approval, main merge or deployment evidence.",
+        "",
+        "## Original source custody",
+        "",
+        "- Board SHA-256: `" + _markdown_evidence(
+            metadata["original_board_sha256"]) + "`",
+        "- Board observed UTC: " + _markdown_evidence(
+            metadata["board_observed_at_utc"]),
+        "- Board age at export: " + _markdown_evidence(
+            metadata["board_age_at_export"]),
+        "- Saved PR archive supplied: " + str(
+            metadata["saved_pr_archive_supplied"]).lower(),
+        "- Saved PR manifest SHA-256(s): " + _markdown_evidence(
+            metadata["source_archive_manifest_sha256s"]),
+        "- Archive age: " + _markdown_evidence(
+            metadata["archive_age_at_export"]),
+        "- Missing archive batches: " + str(
+            metadata["saved_archive_batches_missing"]).lower(),
+        "",
+        "## Exact human selection (not a live inventory)",
+        "",
+        "- Repository: " + _markdown_evidence(
+            metadata["selection_repository"]),
+        "- Priority: " + _markdown_evidence(metadata["selection_priority"]),
+        "- Record type: " + _markdown_evidence(
+            metadata["selection_record_type"]),
+        "- Selected PR: " + _markdown_evidence(metadata["selection_pr_url"]),
+        "- Selected issue: " + _markdown_evidence(metadata["selection_issue_url"]),
+        "- Fully admitted saved records: " + str(metadata["source_record_count"]),
+        "- Selected records: " + str(metadata["selected_record_count"]),
+        "- Excluded by selection: " + str(
+            metadata["excluded_source_record_count"]),
+        "",
+        "**Selection exclusions and unobserved records remain UNKNOWN, "
+        "never cleared, claimed or completed.**",
+        "",
+    ]
+    if not rows:
+        lines.extend([
+            "No records matched these saved filters. Inspect current "
+            "GitHub and Notion before taking any action.",
+            "",
+        ])
+    for idx, row in enumerate(rows, 1):
+        lines.extend([
+            "## " + str(idx) + ". " + _markdown_evidence(row["priority"]) +
+            " — " + ("Saved existing PR" if row["pr_url"] else
+                      "PR relationship UNKNOWN"),
+            "",
+            "**Project:** " + _markdown_evidence(row["project_scope"]),
+            "",
+            "**Original issue titles:** " + _markdown_evidence(
+                row["source_issue_titles"]),
+            "",
+        ])
+        for issue in filter(None, row["source_issue_urls"].split(" | ")):
+            if not re.fullmatch(
+                r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}",
+                issue,
+            ):
+                raise ValueError("noncanonical saved issue URL")
+            lines.append("- [Inspect original issue](" + issue + ")")
+        if row["pr_url"]:
+            url = row["pr_url"]
+            if not re.fullmatch(
+                r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
+                url,
+            ):
+                raise ValueError("noncanonical saved PR URL")
+            lines.append("- [Inspect existing PR](" + url + ")")
+        else:
+            lines.append("- No observed PR in this bounded saved source; "
+                         "check current PR inventory before creating new work.")
+        lines.extend([
+            "",
+            "- Historical PR state: " + _markdown_evidence(
+                row["pr_reference_state"]),
+            "- Original board HEAD(s): " + _markdown_evidence(
+                row["board_heads_observed"] or "UNKNOWN"),
+            "- Saved archive HEAD(s): " + _markdown_evidence(
+                row["archive_heads_observed"] or "UNKNOWN"),
+            "- Historical gate labels: " + _markdown_evidence(
+                row["historical_gate_labels"] or "UNKNOWN"),
+            "- Historical missing batches: " + str(
+                row["saved_archive_batches_missing"]).lower(),
+            "- Multiple candidates for linked issue: " + str(
+                row["issue_has_alternative_prs"]).lower(),
+            "- Missing from final saved snapshot: " + str(
+                row["pr_missing_last_saved_snapshot"]).lower(),
+            "- Historical HEAD variation is NOT a merge conflict: " + str(
+                row["head_variation_is_historical_not_merge_conflict"]).lower(),
+            "- **Human next step only:** " + _markdown_evidence(
+                row["human_next_step_only"]),
+            "",
+        ])
+    lines.extend([
+        "## Authorizations",
+        "",
+        "Claim = false; CI verified = false; independent review verified = false; "
+        "dispatch = false; main merge verified = false; deploy = false; "
+        "live state verified = false.",
+        "",
+        "**Before an action:** independently refresh exact live GitHub HEAD, "
+        "issue status, current Notion and queue owner claims, required CI, "
+        "independent review, branch protection and deployment authorization.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--board", type=Path, required=True)
     parser.add_argument("--pr-dossier", action="append", type=Path,
                         help="Optional original private PR archive ZIP; repeat 1-12")
-    parser.add_argument("--format", choices=("csv", "html", "json"), default="csv",
-                        help="P0-first CSV, printable HTML or structured source-only JSON")
+    parser.add_argument("--format", choices=("csv", "html", "json", "markdown"), default="csv",
+                        help="P0-first CSV, printable HTML, structured JSON or private Markdown")
     parser.add_argument("--repository",
                         help="Optional canonical repository filter, e.g. Zennay/zCloud")
     parser.add_argument("--priority", choices=tuple(RANK),
@@ -495,7 +640,8 @@ def main(argv=None):
                         help="New private create-only destination")
     args = parser.parse_args(argv)
     try:
-        if args.output.suffix != "." + args.format:
+        expected_suffix = ".md" if args.format == "markdown" else "." + args.format
+        if args.output.suffix != expected_suffix:
             raise ValueError("output suffix must match selected format")
         sources = [args.board, *(args.pr_dossier or [])]
         if len(sources) > 13 or len({str(x.resolve()) for x in sources + [args.output]}) != len(sources) + 1:
@@ -589,6 +735,8 @@ def main(argv=None):
             payload = stream.getvalue()
         elif args.format == "html":
             payload = render_private_html(rows, html_metadata)
+        elif args.format == "markdown":
+            payload = render_private_markdown(rows, html_metadata)
         else:
             envelope = {
                 "schema": "zsentinel-merge-first-owner-export-v1",
