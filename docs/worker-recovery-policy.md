@@ -490,7 +490,7 @@ python3 scripts/zsentinel_recovery_policy.py \
   --format html --output /private/zsentinel-issue-1326.html
 ```
 
-Use `--format markdown` for a human-readable three-line incident handoff,
+Use `--format markdown` for a human-readable issue/PR owner handoff,
 or `--format json` for a versioned machine-readable **read-only** observation.
 The optional `--live-focus-pr N` restricts the expensive double-read to
 one PR whose number was actually observed in the current bounded timeline or
@@ -503,7 +503,10 @@ open-PR list and at most three PR/check/review observations, under the
 existing **20-GET upper bound**. It never performs a claim, retry,
 workflow dispatch, merge, deployment, runner restart, SQLite mutation or
 Notion write. Partial/failed GitHub sources remain UNKNOWN, never `no
-repair exists`. The JSON field `observation_mode=direct_live_issue_readonly`
+repair exists`. A GitHub 401/403/429 in timeline or list discovery
+stops further reads (including issue/PR detail GETs) in the same run;
+already observed hints remain non-authorizing and provider denial is
+explicit. This also conserves GitHub quota when permissions are unavailable. The JSON field `observation_mode=direct_live_issue_readonly`
 and `historical_case_provenance.historical_case_provided=false` make the
 absence of a saved dossier explicit; no fake case timestamp or past
 owner confirmation is constructed. A closed issue or GitHub cross-reference
