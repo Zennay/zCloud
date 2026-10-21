@@ -518,6 +518,14 @@ def main():
             provenance["existing_prs_gets"] = (
                 pr_delivery["request_count"] +
                 (discovered["calls"] if discovered is not None else 0))
+            # Keep the live operator's full bounded GET disclosure honest
+            # after enabling an additional GitHub source family.
+            if (type(provenance.get("max_github_gets")) is not int
+                    or provenance["max_github_gets"] < 0
+                    or type(provenance["existing_prs_gets"]) is not int
+                    or not 0 <= provenance["existing_prs_gets"] <= 18):
+                raise ValueError("untrusted live GitHub request budget")
+            provenance["max_github_gets"] += provenance["existing_prs_gets"]
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
         decision, ledger = plan(bundle, previous)
