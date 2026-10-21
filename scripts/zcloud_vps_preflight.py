@@ -767,6 +767,31 @@ def compare_snapshot(path: Path, current: dict) -> dict:
             raise ValueError("invalid snapshot")
         snapshot_age_seconds = int((current_time - previous_time).total_seconds())
         stale_baseline = snapshot_age_seconds > MAX_PREVIOUS_REPORT_AGE_SECONDS
+        before_scope, current_scope = prior.get("source_scope"), current.get("source_scope")
+        same_scope = (
+            type(before_scope) is dict and type(current_scope) is dict
+            and before_scope.get("state") == "local_boot_checkout_observed"
+            and current_scope.get("state") == "local_boot_checkout_observed"
+            and before_scope.get("attested") is False
+            and current_scope.get("attested") is False
+            and before_scope.get("release_authorized") is False
+            and current_scope.get("release_authorized") is False
+            and type(before_scope.get("fingerprint_sha256")) is str
+            and re.fullmatch(r"[0-9a-f]{64}", before_scope["fingerprint_sha256"]) is not None
+            and before_scope["fingerprint_sha256"] == current_scope.get("fingerprint_sha256")
+        )
+        scope_status = (
+            "same_operator_supplied_boot_checkout" if same_scope else
+            "different_observed_source_scope" if (
+                type(before_scope) is dict and type(current_scope) is dict
+                and before_scope.get("state") == "local_boot_checkout_observed"
+                and current_scope.get("state") == "local_boot_checkout_observed"
+                and re.fullmatch(r"[0-9a-f]{64}",
+                                 str(before_scope.get("fingerprint_sha256"))) is not None
+                and re.fullmatch(r"[0-9a-f]{64}",
+                                 str(current_scope.get("fingerprint_sha256"))) is not None
+            ) else "scope_unavailable_or_legacy_baseline"
+        )
         rows = prior.get("findings")
         if not isinstance(rows, list) or len(rows) > 100:
             raise ValueError("invalid snapshot")
@@ -846,7 +871,7 @@ def compare_snapshot(path: Path, current: dict) -> dict:
     # a report older than one day is not a current recovery observation.
     confirmed_resolved = sorted(
         code for code in disappeared
-        if not stale_baseline and reobserved(code))
+        if not stale_baseline and same_scope and reobserved(code))
     not_reobserved = sorted(disappeared - set(confirmed_resolved))
     return {
         "new_findings": sorted(set(new) - set(old)),
@@ -863,12 +888,22 @@ def compare_snapshot(path: Path, current: dict) -> dict:
         "baseline_bytes": len(raw_baseline),
         "baseline_integrity": "single_open_nofollow_stable_inode_duplicate_json_rejected",
         "snapshot_freshness": ("stale_baseline_no_resolution_credit" if stale_baseline
-                                else "fresh_within_24h"),
-        "resolution_credit_allowed": not stale_baseline,
+                                else "source_scope_unverified_no_resolution_credit"
+                                if not same_scope else "fresh_same_scope_within_24h"),
+        "source_scope_comparison": scope_status,
+        "resolution_credit_allowed": not stale_baseline and same_scope,
         "source": "local_operator_supplied_snapshot",
-        "host_pressure_trend": compare_host_pressure(
-            prior.get("host_pressure"), current.get("host_pressure"),
-            (current_time - previous_time).total_seconds()),
+        "host_pressure_trend": (
+            compare_host_pressure(
+                prior.get("host_pressure"), current.get("host_pressure"),
+                (current_time - previous_time).total_seconds())
+            if same_scope else {
+                "status": "source_scope_not_bound",
+                "trend": "unknown", "metrics": [],
+                "elapsed_seconds": snapshot_age_seconds,
+                "source": "operator_supplied_local_snapshots_unverified",
+                "release_authorized": False,
+            }),
     }
 
 
