@@ -672,3 +672,6 @@ The incident-level CSV keeps its stable owner-workorder row and adds `proposal_r
 ## Stable recommendation codes for integrations
 
 Every single-action report now includes `recommended_next_step_code` alongside the human-readable recommendation. Codes are stable routing hints such as `refresh_source`, `resolve_claim_with_owner`, `refresh_exact_head_gates`, `wait_for_capacity_and_runtime_evidence`, and `choose_one_incident_route`. JSON exposes the field directly; Markdown/HTML show it next to the instruction; the CSV per-route JSON carries both. Competing routes update both fields after the batch HOLD is added. Codes never grant action authority.
+
+
+Missing ownership is not treated as an approval request to an already-known person. When `owner_missing` or `human_owner_missing` is present, the next-step text instructs the operator to identify the responsible owner from current source evidence without inventing ownership; the machine code is `identify_authorized_owner`. Only a known owner with missing approval maps to `request_authorized_owner_approval`.
