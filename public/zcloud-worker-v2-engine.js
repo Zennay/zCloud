@@ -141,6 +141,10 @@
     return true;
   }
   function resetComposerRepair(queueId=""){
+    // A new queue assignment needs its own operator blocker receipt. The
+    // previous assignment's last reason must not suppress an identical issue
+    // in this distinct lease, but do not emit duplicate events on each poll.
+    if(composerRepairQueueId!==queueId)lastBlock="";
     missingComposerSince=0;
     composerRepairAttempted=false;
     composerRepairQueueId=queueId;
