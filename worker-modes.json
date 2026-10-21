@@ -9,7 +9,7 @@
     "phase": "Cross-project open-work recovery",
     "status": "active",
     "priority": "high",
-    "next_step": "Find the highest-impact stalled worker or blocked delivery; fix the root cause safely, clear required integration gates, verify work resumed, and preserve an exact next step for any unfinished work.",
+    "next_step": "Merge a free existing product PR first when exact-head CI, independent review, branch protection and owner authorization permit it. Otherwise unblock the highest-impact stalled worker or delivery safely, preserve active claims and all release/security gates, avoid QA/regression suites, and continue independent product work while dependencies wait.",
     "milestone_revision": "zsentinel-unblock-first-20261019",
     "milestones": [
       {
