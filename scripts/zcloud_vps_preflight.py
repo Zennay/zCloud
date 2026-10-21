@@ -771,6 +771,24 @@ def render_html(report: dict) -> str:
         f'<p>{esc(a["reason"])}</p><p>{esc(a["next_action"])}</p></li>'
         for a in report["recovery_priorities"]
     )
+    handoff_html = (
+        '<section aria-labelledby="owner-handoff"><h2 id="owner-handoff">'
+        'zSentinel · owner recovery handoff</h2>'
+        '<p class="muted">Three lines per observed blocker. Advisory only: '
+        'no recovery, claim, or release occurred.</p><ol>'
+        + "".join(
+            '<li class="finding">'
+            '<p><strong>Problem (' + esc(card["code"]) + '):</strong> ' +
+            esc(card["problem"]) + '</p>'
+            '<p><strong>Action (' + esc(card["owner"]) + '):</strong> ' +
+            esc(card["action"]) + '</p>'
+            '<p><strong>Status:</strong> ' + esc(card["status"]) +
+            ' · ' + esc(card["trend"]) + ' · ' +
+            esc(", ".join(card["finding_codes"]) or "external owner gates") + '</p>'
+            '</li>'
+            for card in report.get("owner_handoff", [])
+        ) + '</ol></section>'
+    )
     comparison = report.get("comparison")
     if comparison is None:
         comparison_html = ""
@@ -871,6 +889,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 {archive_html}
 {worker_html}
 {release_html}
+{handoff_html}
 <section aria-labelledby="findings"><h2 id="findings">Release blockers and warnings</h2><ul>{findings}</ul></section>
 <section aria-labelledby="recovery"><h2 id="recovery">Owner-gated recovery priorities</h2><ol>{actions}</ol></section>
 <p class="disclaimer"><strong>Not an approval.</strong> This report cannot prove protected-main review,
