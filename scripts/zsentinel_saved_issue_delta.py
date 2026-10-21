@@ -285,7 +285,7 @@ e(old_freshness["status"].upper()) + " (" + e(age_text(old_freshness)) +
 ") → " + e(new_freshness["status"].upper()) + " (" + e(age_text(new_freshness)) +
 ") · drempel " + str(new_freshness["stale_after_hours"]) +
 " uur · evaluatie UTC " + e(new_freshness["evaluated_at_utc"]) +
-". Recent betekent niet live; actuele bronhercontrole blijft verplicht.</p></section>
+""". Recent betekent niet live; actuele bronhercontrole blijft verplicht.</p></section>
 <div class="cards"><section><strong class="value">""" +
 str(len(change["first_seen"])) + """</strong><p>Nieuw waargenomen PR-links
 in de latere bron, niet bewezen nieuw geopend.</p></section>
