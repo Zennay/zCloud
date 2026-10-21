@@ -298,6 +298,52 @@ def render_comparison(comparison):
     )
 
 
+
+def render_user_timeline(pairs):
+    """A separate bounded user-manager historical panel; never merge scopes."""
+    from zsentinel_runner_snapshot import RUNNER_UNIT
+    if pairs is None:
+        return ""
+    if not isinstance(pairs, list) or not 1 <= len(pairs) <= 11:
+        raise ValueError("Unbounded user-manager history")
+    rows = []
+    source_gaps = 0
+    omitted = 0
+    for index, pair in enumerate(pairs, start=1):
+        if not isinstance(pair, dict):
+            raise ValueError("Invalid user history source")
+        observed = pair.get("user_transitions", [])
+        if not isinstance(observed, list) or len(observed) > 40:
+            raise ValueError("Too many user-manager changes")
+        if pair.get("complete_user_service_coverage") is not True:
+            source_gaps += 1
+        for item in observed:
+            name, kind = item.get("unit"), item.get("change")
+            if (item.get("scope") != "user" or not isinstance(name, str)
+                    or len(name) > 160 or not RUNNER_UNIT.fullmatch(name)
+                    or kind not in {"newly_observed", "no_longer_observed",
+                                    "service_state_changed", "previous_source_gap",
+                                    "current_source_gap"}):
+                raise ValueError("Invalid user-manager observation")
+            if len(rows) >= 40:
+                omitted += 1
+                continue
+            rows.append(
+                "<li>Venster " + str(index) + " · <code>" + escape(name) +
+                "</code> · " + escape(kind) + " · geen GitHub-jobherstelbewijs</li>"
+            )
+    return (
+        '<section class="panel"><h2>Gebruikersservicehistorie (systemd --user)</h2>'
+        '<p>Onafhankelijke namespace: ' + str(source_gaps) + '/' +
+        str(len(pairs)) + ' bronvensters GEDEELTELIJK of ONBEKEND. '
+        'Geen automatische herstart, GitHub-toewijzing of herstelconclusie.</p>'
+        '<ul>' + ("".join(rows) or '<li>Geen vastgestelde overgang. '
+                'Niet gelijk aan bewezen gezonde runners.</li>') +
+        '</ul><p>Extra oudere waarnemingen niet getoond: ' +
+        str(omitted) + '.</p></section>'
+    )
+
+
 def render(data):
     host = data["host"]
     units = data["units"]
@@ -305,6 +351,7 @@ def render(data):
     history = render_comparison(data.get("comparison"))
     timeline_html = render_timeline(data.get("timeline"), data.get("timeline_observations", 0))
     footprint_html = render_timeline_footprint(data.get("timeline_footprint"))
+    user_timeline_html = render_user_timeline(data.get("timeline"))
     cards = []
     if not units["runner_units_observed"]:
         cards.append('<p class="warning">Runner-services konden niet worden uitgelezen. Geen bewijs van herstel.</p>')
@@ -480,6 +527,7 @@ def render(data):
 {history}
 {footprint_html}
 {timeline_html}
+{user_timeline_html}
 <h2>GitHub-runner-servicestatus</h2><p class="muted">{escape(overview)}</p>
 <div class="grid">{"".join(cards)}</div>
 <h2>Gebruikersservices (aparte systemd --user manager)</h2>
@@ -1018,6 +1066,20 @@ def render_private_handoff(data):
                             + "; GitHub-job/herstel ONBEKEND.")
         else:
             rows.append("- Geen servicestatusverschil waargenomen binnen de bronlimieten.")
+        user_transitions = pair.get("user_transitions", [])
+        if not isinstance(user_transitions, list) or len(user_transitions) > 40:
+            raise ValueError("Unbounded user-manager history")
+        rows.append("- Gebruikersmanager bron: " +
+                    ("volledig binnen limiet" if pair.get(
+                        "complete_user_service_coverage") is True else
+                     "GEDEELTELIJK/ONBEKEND") + ".")
+        for event in user_transitions[:40]:
+            if event.get("scope") != "user":
+                raise ValueError("Incorrect user-manager source label")
+            rows.append("- user-systemd / " +
+                        _handoff_text(event.get("unit")) + ": " +
+                        _handoff_text(event.get("change")) +
+                        "; geen GitHub-job- of herstelbewijs.")
         rows.append("")
     rows.extend([
         "## Vertrouwen en autorisatie",
