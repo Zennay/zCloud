@@ -196,6 +196,8 @@ def project_runner_prompt(project_id, name):
             'MERGE EERST: controleer de bestaande vrij werkbare PRs, herstel echte conflicten en falende verplichte checks; merge pas bij exact-head CI, branch protection, vereiste onafhankelijke review en eigenaarstoestemming. Controleer merged=true en de nieuwe default-branch commit. '
             'PRIORITEIT 2: pak bestaande onafgemaakte of mergeklare PRs op in de echte projecten volgens actuele claims; maak drafts reviewklaar, los echte blokkades op en merge zelfstandig zodra GitHub exact-head checks, vereiste reviews en branch protection toestaat. Bevestig merged-status plus default-branch commit; een nieuwe PR is geen oplevering. Geen bypass of source merge als live deploy voorstellen. Werk daarna open bugs, issues en features af. '
             'Leg bij een externe HOLD de exact getroffen PR, SHA, eigenaar, concrete oorzaak en hervatvoorwaarde vast; neem nooit een actieve claim over. '
+            'Markeer BLOCKED alleen met concrete dependency-evidence: de oorspronkelijke queue-taak blijft geparkeerd en is niet hetzelfde als DROPPED. '
+            'Een hervatting vereist een geauthenticeerde operatornotitie; hervat nooit automatisch op basis van een oude heartbeat of historische status. '
             'Geen nieuwe QA-, regressie- of testsuites schrijven, uitbreiden of draaien; hooguit een build, bestaande CI-status of directe functionele inspectie. Raak verplichte gates niet aan. '
             'Als een onderdeel wacht op CI, review of VPS, kies meteen ander vrij uitvoerbaar herstelwerk in een ander project. '
             'Voer meerdere concrete fixes na elkaar uit en stop niet bij een statuscheck, nieuwe taak, enkele commit of een groene heartbeat. '
@@ -246,9 +248,11 @@ def _worker_work_package_brief(project_id, queue_item):
         f' HOOFDOPDRACHT VAN DEZE CLAIM: {title}. '
         + (f'Acceptatie-samenvatting: {criteria} ' if criteria else '')
         + 'Lees de volledige queue-/Notioncriteria en houd dit werkpakket vast tot een werkende end-to-end '
-        'mijlpaal: implementatie, integratie, tests en main-merge indien toegestaan. '
+        'mijlpaal: implementatie, integratie, bestaande verplichte CI of directe functionele inspectie en main-merge indien toegestaan. '
         'Maak geen afzonderlijke micro-PRs of nieuwe QA-only taken als ditzelfde werk nog openstaat. '
-        'Een deelstap is CONTINUE, niet DONE; bij een externe gate blijft uitsluitend de getroffen stap open.'
+        'Schrijf of draai geen nieuwe QA-/regressiesuites en omzeil geen bestaande verplichte CI. '
+        'Een deelstap is CONTINUE, niet DONE; bij een externe gate wordt uitsluitend de getroffen queue-taak geparkeerd, '
+        'terwijl onafhankelijke uitvoerbare taken doorgaan. Hervat de geparkeerde taak pas na expliciet vastgelegde bevestiging dat de afhankelijkheid is opgelost.'
     )
 
 
@@ -3019,12 +3023,13 @@ def portfolio_queue_health():
         queued=c.execute("SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status='queued'").fetchone()[0]
         projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue
                               WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
+        blocked=c.execute("SELECT COUNT(*) FROM portfolio_queue WHERE status='blocked'").fetchone()[0]
         dropped=c.execute("SELECT COUNT(*) FROM portfolio_queue WHERE status='dropped'").fetchone()[0]
         attention=c.execute("SELECT COUNT(*) FROM portfolio_attention WHERE status='open'").fetchone()[0]
     target=max(6,max(1,int(GLOBAL_CHATGPT_WORKER_LIMIT))*PORTFOLIO_QUEUE_MIN_READY_PER_WORKER)
     return {
-        'ready':int(ready),'queued':int(queued),'projects':int(projects),'dropped':int(dropped),
-        'attention':int(attention),'target_ready':int(target),
+        'ready':int(ready),'queued':int(queued),'projects':int(projects),
+        'blocked':int(blocked),'dropped':int(dropped),
         'healthy':int(ready)>=min(target,max(1,len([p for p in PROJECT_INDEX.values() if str(p.get('queue_mode') or '').lower()!='human-gated']))),
         'notion_attention_url':PORTFOLIO_ATTENTION_NOTION_URL,
     }
@@ -3434,16 +3439,63 @@ def portfolio_queue_drop(queue_id,evidence=''):
                          WHERE queue_id=? AND status NOT IN ('done','dropped')""",
                       (str(evidence or '')[:4000],str(evidence or '')[:2000],ts,queue_id))
         dropped=bool(cur.rowcount)
-    # A dropped item is intentionally retired, but an active project must not
-    # lose its runnable inventory until the next scheduler tick. Refill from
-    # the canonical project state immediately without resurrecting this queue_id.
+    # An intentional drop is terminal. A dependency hold uses the separate
+    # blocked state and can only return to the queue after an operator attests
+    # that the dependency has cleared.
     audit=portfolio_queue_audit(refill=True)
     return {'dropped':dropped,'queue_id':queue_id,'queue_audit':audit}
+
+
+def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
+    """Resume one parked task after an authenticated operator records resolution evidence."""
+    queue_id=str(queue_id or '').strip()
+    note=re.sub(r'[\x00-\x1f\x7f]+',' ',str(resolution_note or ''))
+    note=re.sub(r'\s+',' ',note).strip()
+    actor=re.sub(r'[^A-Za-z0-9_.:@ -]+','',str(actor or '')).strip()[:100]
+    if not queue_id:
+        raise ValueError('queue_id is verplicht')
+    if len(note)<12:
+        raise ValueError('Geef een concrete notitie van minimaal 12 tekens over de opgeloste afhankelijkheid')
+    if not actor:
+        raise ValueError('Een geauthenticeerde operator is vereist')
+    ts=now()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        row=c.execute("""SELECT * FROM portfolio_queue
+                         WHERE queue_id=? AND status='blocked' AND eligible=0""",
+                      (queue_id,)).fetchone()
+        if not row:
+            return {'resumed':False,'queue_id':queue_id,'reason':'not-blocked-or-already-resumed'}
+        project=PROJECT_INDEX.get(str(row['project_id'] or '')) or {}
+        if (not project or str(project.get('status') or 'active')!='active'
+                or str(project.get('queue_mode') or '').lower()=='human-gated'):
+            raise ValueError('Project is niet actief of is menselijk afgeschermd; hervatten geweigerd')
+        receipt=f'Operator {actor} attests dependency cleared: {note}'[:4000]
+        cur=c.execute("""UPDATE portfolio_queue
+                         SET status='queued',eligible=1,evidence=?,blocker='',
+                             worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
+                         WHERE queue_id=? AND status='blocked' AND eligible=0""",
+                      (receipt,ts,queue_id))
+        if cur.rowcount!=1:
+            return {'resumed':False,'queue_id':queue_id,'reason':'state-changed'}
+    # This is an explicit operator attestation, not an independent dependency check.
+    # Normal scheduler capacity, lease, project-cap and memory guards still apply.
+    return {
+        'resumed':True,'queue_id':queue_id,'status':'queued',
+        'project_id':str(row['project_id']),'priority':str(row['priority']),
+        'resume_basis':'operator_attestation_not_independently_verified',
+        'note':'Task returned to normal queue selection; no worker or slot was forced.',
+    }
+
 
 def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=None):
     result=str(result or '').strip().upper()
     if result not in ('DONE','BLOCKED','CONTINUE'):
         raise ValueError('queue result moet DONE, BLOCKED of CONTINUE zijn')
+    evidence_text=re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+',' ',str(evidence or '')).strip()
+    if result=='BLOCKED' and len(evidence_text)<12:
+        raise ValueError('BLOCKED requires a concrete dependency and resume condition')
+    evidence=evidence_text[:4000]
     queue_id=str(queue_id or '').strip()
     try: slot=int(global_slot)
     except Exception: raise ValueError('geldige global worker slot vereist')
@@ -3460,8 +3512,9 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
                       (str(evidence or '')[:4000],ts,queue_id))
         elif result=='BLOCKED':
-            # BLOCKED is a transition, never runnable queue inventory.
-            c.execute("""UPDATE portfolio_queue SET status='dropped',eligible=0,evidence=?,blocker=?,
+            # Preserve the exact dependency-bound task for explicit resumption.
+            # It is parked, not runnable, while unrelated work can be allocated.
+            c.execute("""UPDATE portfolio_queue SET status='blocked',eligible=0,evidence=?,blocker=?,
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
                       (str(evidence or '')[:4000],str(evidence or '')[:2000],ts,queue_id))
         else:
@@ -3484,10 +3537,11 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             child_criteria=str(next_task.get('completion_criteria') or '').strip()
             child_criteria += (
                 (' ' if child_criteria else '') +
-                'Queue sizing rule: execute this as a substantial multi-step work package, not an isolated micro-task. '
+                'Queue sizing rule: execute this as a substantial multi-step product work package, not an isolated micro-task. '
                 'After each successful implementation step, continue into the next safe adjacent write-capable step in the same '
-                'project area. DONE requires at least three material implementation actions or one clearly large end-to-end change '
-                'spanning multiple files/components, plus automated test/build/run evidence, unless a real human/external gate stops progress.'
+                'project area. DONE requires a complete integrated product outcome and a short build, existing mandatory CI status, '
+                'or direct functional inspection. Do not write or run new QA/regression suites; never bypass existing required CI. '
+                'BLOCKED requires the concrete dependency and resume condition; the exact task is parked while independent work continues.'
             )
             created=portfolio_queue_enqueue(
                 next_task.get('project_id') or row['project_id'],
@@ -3513,7 +3567,7 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             else ''
         ) or (str(row['title']) if result=='CONTINUE' else '')
         project=PROJECT_INDEX.get(str(row['project_id'])) or {}
-        receipt_status={'DONE':'success','BLOCKED':'failure','CONTINUE':'in_progress'}[result]
+        receipt_status={'DONE':'success','BLOCKED':'in_progress','CONTINUE':'in_progress'}[result]
         with connect() as c:
             project_runtime.record_receipt(
                 c,
@@ -4719,6 +4773,16 @@ class Handler(BaseHTTPRequestHandler):
                     if action=='drop':
                         item=portfolio_queue_drop(payload.get('queue_id'),payload.get('evidence') or '')
                         return self.reply({'ok':True,'result':item,'time':now()})
+                    if action=='resume_blocked':
+                        item=portfolio_queue_resume_blocked(
+                            payload.get('queue_id'),
+                            payload.get('resolution_note') or payload.get('evidence') or '',
+                            request_actor(self),
+                        )
+                        return self.reply({
+                            'ok':bool(item.get('resumed')),
+                            'result':item,'time':now(),
+                        },200 if item.get('resumed') else 409)
                     return self.reply({'error':'Ongeldige portfolio-queue actie'},400)
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
