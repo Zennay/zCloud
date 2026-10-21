@@ -1389,7 +1389,7 @@ def save_private_incident_bundle(path, data):
     if "<main>" not in report_html:
         raise ValueError("Missing local report navigation insertion point")
     report_html = report_html.replace("<main>", "<main>" + navigation, 1)
-    report_markdown = "Incidentreferentie: \`" + reference + "\`\\n\\n" + report_markdown
+    report_markdown = "Incidentreferentie: `" + reference + "`\n\n" + report_markdown
     rendered = {
         "incident.html": report_html.encode("utf-8"),
         "owner-handoff.md": report_markdown.encode("utf-8"),
