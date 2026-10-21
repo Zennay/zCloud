@@ -7,7 +7,11 @@ a release. Missing evidence always blocks automated authorisation.
 from __future__ import annotations
 
 from collections import Counter
+import csv
+import io
 import re
+
+from zsentinel_pr_scope_guard import csv_formula_inert
 
 PR = re.compile(r"^https://github\.com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}$")
 ISSUE = re.compile(r"^https://github\.com/Zennay/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
@@ -520,3 +524,119 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
         "geen claim-/merge-/dispatch- of deployautorisatie.",
     ])
     return "\n".join(lines) + "\n"
+
+def render_merge_first_csv(board, max_rows=20):
+    """Private, Excel-safe issue/PR work orders from the same saved source.
+
+    The exporter never refreshes GitHub/Notion, resolves claims or approves
+    merging. PR rows precede individual issue rows, and all partial source
+    coverage and current authorization uncertainty remain explicit.
+    """
+    if (type(board) is not dict or board.get("schema") !=
+            "zsentinel-merge-first-human-inbox-v1"
+            or type(max_rows) is not int or not 1 <= max_rows <= MAX_CARDS
+            or any(board.get(key) is not False for key in
+                   ("merge_authorized", "claim_authorized",
+                    "automatic_dispatch", "release_authorized",
+                    "writes_performed", "current_claims_verified"))
+            or type(board.get("cards")) is not list or
+               len(board["cards"]) > MAX_CARDS
+            or type(board.get("pr_groups")) is not list or
+               len(board["pr_groups"]) > 5 * MAX_CARDS):
+        raise ValueError("untrusted human-only issue/PR export source")
+    observed_issues = board["cards"][:max_rows]
+    visible = {row["issue_url"]: row for row in observed_issues}
+    if len(visible) != len(observed_issues):
+        raise ValueError("duplicate issue in private CSV worklist")
+
+    header = [
+        "kind", "priority", "project", "issue_url", "issue_title",
+        "pr_url", "observed_pr_head", "observed_pr_gate",
+        "related_issue_count_observed", "related_issue_urls_visible",
+        "human_action_category", "human_next_step",
+        "issue_activity_signal", "issue_updated_at",
+        "issue_source_observed_at_utc", "pr_source_observed_at_utc",
+        "issue_coverage", "pr_coverage",
+        "current_owner_verified", "claim_authorized",
+        "merge_authorized", "deploy_authorized",
+        "source_scope_note",
+    ]
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\\r\\n")
+
+    def emit(values):
+        # Strings are human/workspace-facing, and even an issue title can
+        # start a spreadsheet formula after invisible Unicode prefixes.
+        cells = []
+        for value in values:
+            text = "" if value is None else str(value)
+            text = re.sub(r"[\\x00-\\x1f\\x7f]", " ", text)
+            cells.append(csv_formula_inert(text))
+        writer.writerow(cells)
+
+    writer.writerow(header)
+    # A PR mentioned on several issue cards is one integration review
+    # opportunity, never several independent implementation assignments.
+    for group in board["pr_groups"]:
+        matches = [url for url in group["linked_issue_urls_in_source"]
+                   if url in visible]
+        if not matches:
+            continue
+        pr_url = group.get("pr_url")
+        if type(pr_url) is not str or PR.fullmatch(pr_url) is None:
+            raise ValueError("noncanonical PR in human worklist CSV")
+        project_names = sorted({visible[url]["project"] for url in matches})
+        sources_complete = (len(matches) == group["linked_issue_count_observed"]
+                            and group.get("source_head_receipts_consistent") is True)
+        issue_scope_complete = all(
+            visible[url]["issue_reference_sample_complete"] for url in matches
+        )
+        pr_scope_complete = all(
+            visible[url]["pr_file_scope_sample_complete"] for url in matches
+        )
+        emit([
+            "existing_pr_first", group["highest_priority"],
+            " / ".join(project_names), "", "", pr_url,
+            group.get("source_head_observed"),
+            group["group_gate_source_state"],
+            group["linked_issue_count_observed"],
+            " | ".join(matches),
+            "existing_pr_owner_review", group["human_next_gate_step"],
+            "", "", board.get("observed_issue_source_at_utc"),
+            board.get("observed_pr_source_at_utc"),
+            "sample_complete" if issue_scope_complete else "partial",
+            "sample_complete" if pr_scope_complete else "partial",
+            "NO", "NO", "NO", "NO",
+            "bounded_current_sample_not_full_inventory" if not sources_complete
+            else "all_observed_linked_issues_visible_owner_gates_unknown",
+        ])
+    for card in observed_issues:
+        candidate = card["candidate_existing_pr_url"]
+        if candidate is not None and PR.fullmatch(candidate) is None:
+            raise ValueError("noncanonical selected PR")
+        if ISSUE.fullmatch(card["issue_url"]) is None:
+            raise ValueError("noncanonical issue in CSV worklist")
+        emit([
+            "issue", card["priority"], card["project"],
+            card["issue_url"], card["title"], candidate,
+            next((item["source_head_observed"] for item in
+                  card["all_existing_pr_candidates_in_sample"]
+                  if item["url"] == candidate), None),
+            card["candidate_exact_head_gate_state"],
+            card["existing_pr_count_in_sample"],
+            " | ".join(item["url"] for item in
+                       card["all_existing_pr_candidates_in_sample"]),
+            card["category"], card["human_next_step_nl"],
+            card["activity_signal"], card["issue_updated_at"],
+            board.get("observed_issue_source_at_utc"),
+            board.get("observed_pr_source_at_utc"),
+            "sample_complete" if card["issue_reference_sample_complete"]
+            else "partial",
+            "sample_complete" if card["pr_file_scope_sample_complete"]
+            else "partial",
+            "NO", "NO", "NO", "NO",
+            "no_live_owner_or_branch_rule_proof; "
+            "source_window_limited" if len(board["cards"]) > max_rows else
+            "no_live_owner_or_branch_rule_proof",
+        ])
+    return output.getvalue()
