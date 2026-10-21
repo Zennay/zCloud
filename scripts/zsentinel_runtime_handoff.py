@@ -112,7 +112,9 @@ def _observed_pr_owner_cards(pr_desk, registry):
                  "resolve_exact_head_review_with_owner",
                  "fix_exact_head_ci_with_owner",
                  "inspect_unlisted_status_contexts_with_owner",
-                 "resolve_hosted_billing_with_account_owner"}
+                 "resolve_hosted_billing_with_account_owner",
+                 "request_independent_review",
+                 "confirm_branch_protection_and_release_with_owner"}
     for row in rows:
         if (type(row) is not dict
                 or row.get("source") != "github_exact_pr_readonly"
