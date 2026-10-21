@@ -821,6 +821,8 @@ def main():
     parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk", "handoff"), default="html")
     parser.add_argument("--show-owner-handoff", action="store_true",
                         help="opt-in P0-first incident/worker/issue strip inside existing portfolio HTML")
+    parser.add_argument("--owner-handoff-output", type=Path,
+                        help="optional separate new private .csv owner-action export; requires --show-owner-handoff")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
     parser.add_argument("--output", type=Path,
@@ -870,6 +872,11 @@ def main():
         if args.show_owner_handoff and args.format not in (
                 "html", "handoff", "json", "text"):
             raise ValueError("--show-owner-handoff requires html, handoff, json or text")
+        if args.owner_handoff_output is not None:
+            if not args.show_owner_handoff:
+                raise ValueError("--owner-handoff-output requires --show-owner-handoff")
+            if args.owner_handoff_output.suffix != ".csv":
+                raise ValueError("--owner-handoff-output must be a new .csv file")
         if args.output is not None and args.format not in ("html", "json", "text", "handoff"):
             raise ValueError("--output supports only html, json, text or human handoff")
         if args.compare_with is not None and args.format not in ("html", "json", "text", "handoff"):
@@ -879,21 +886,31 @@ def main():
             raise ValueError('at most seven distinct chronological previous reports')
         sources = [args.state, args.window_state, args.database,
                    args.worker_events_database, args.desk_output,
-                   args.disk_hotspots_output, args.disk_hotspots_previous]
+                   args.disk_hotspots_output, args.disk_hotspots_previous,
+                   args.owner_handoff_output]
         if any(p.resolve() == q.resolve() for p in history_files
                for q in sources if q is not None):
             raise ValueError('compare sources must differ from live state')
+        if args.owner_handoff_output is not None and any(
+                args.owner_handoff_output.resolve() == p.resolve()
+                for p in [args.state, args.window_state, args.database,
+                          args.worker_events_database, args.queue_previous,
+                          args.worker_previous, args.notion_claims_export,
+                          args.registry, args.output, args.desk_output,
+                          args.disk_hotspots_output, args.disk_hotspots_previous,
+                          *history_files] if p is not None):
+            raise ValueError("owner handoff CSV must differ from all inputs and outputs")
         if args.disk_hotspots_previous is not None and any(
                 args.disk_hotspots_previous.resolve() == p.resolve()
                 for p in [args.state, args.window_state, args.database,
                           args.worker_events_database, args.desk_output,
-                          args.output, *history_files] if p is not None):
+                          args.output, args.owner_handoff_output, *history_files] if p is not None):
             raise ValueError("previous disk snapshot overlaps a live source or output")
         if args.disk_hotspots_output is not None and any(
                 args.disk_hotspots_output.resolve() == p.resolve()
                 for p in [args.state, args.window_state, args.database,
                           args.worker_events_database, args.desk_output,
-                          args.output, *history_files] if p is not None):
+                          args.output, args.owner_handoff_output, *history_files] if p is not None):
             raise ValueError("disk report path overlaps private state or input")
         if args.output is not None and any(
                 args.output.resolve() == v.resolve()
@@ -1453,6 +1470,14 @@ def main():
             write_private_output(
                 args.output, rendered,
                 "md" if args.format in ("text", "handoff") else args.format)
+        if args.owner_handoff_output is not None:
+            if owner_handoff is None:
+                raise ValueError("owner handoff CSV requested without a built owner handoff")
+            from zsentinel_private_output import write_private_output
+            from zsentinel_runtime_handoff import serialize as serialize_owner_handoff
+            write_private_output(
+                args.owner_handoff_output,
+                serialize_owner_handoff(owner_handoff, ".csv"), "csv")
         if args.desk_output is not None:
             from zsentinel_incident_desk import write_private_html, review_html
             private_desk = rendered if args.format == "desk" else review_html(decision)
