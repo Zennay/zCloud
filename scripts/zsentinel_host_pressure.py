@@ -116,6 +116,17 @@ def observe_host_pressure():
             "pressure_hint": hint,
         })
     except (OSError, ValueError, UnicodeError, OverflowError):
+        # A transient/malformed meminfo or loadavg must not erase real severe
+        # kernel PSI or disk evidence. Remain explicitly PARTIAL: neither
+        # missing RAM data nor missing CPU count may be treated as healthy.
+        disk_hint = report["root_disk"].get("pressure_hint")
+        psi_hint = report["psi"].get("pressure_hint")
+        if disk_hint != "UNKNOWN" or psi_hint != "UNKNOWN":
+            report["status"] = "HOST_PARTIAL"
+            if disk_hint == "HIGH" or psi_hint == "HIGH":
+                report["pressure_hint"] = "HIGH_LOCAL_PRESSURE"
+            elif disk_hint == "ELEVATED" or psi_hint == "ELEVATED":
+                report["pressure_hint"] = "ELEVATED_LOCAL_PRESSURE"
         return report
     return report
 
@@ -123,7 +134,19 @@ def observe_host_pressure():
 def pressure_sentence(report):
     """Concise, private operator-visible resource fact; no admission claim."""
     if report.get("status") != "HOST_SNAPSHOT_OBSERVED":
-        return "Hostdruk: niet betrouwbaar waargenomen; worker-toelating ONBEKEND."
+        disk = report.get("root_disk") or {}
+        disk_note = (
+            f"root beschikbaar {disk['available_gib']} GiB, "
+            f"{disk['unavailable_percent']}% onbeschikbaar"
+            if disk.get("status") == "ROOT_STATVFS_OBSERVED"
+            else "root-schijfruimte onbekend"
+        )
+        return (
+            f"Hostdruk: PARTIËLE BRON ({report.get('pressure_hint', 'UNKNOWN')}); "
+            "RAM/load onbekend; " + disk_note + ". "
+            + psi_sentence(report.get("psi"))
+            + " Geen autorisatie voor nieuwe workers of herstarts."
+        )
     disk = report.get("root_disk") or {}
     disk_line = (
         "root beschikbaar " + str(disk["available_gib"]) + " GiB; "
