@@ -17,6 +17,8 @@
 .resource-row strong{font-size:13px}
 .resource-row small{display:block;color:var(--muted);font-size:11px;margin-top:3px}
 .resource-row select{background:#10141b;color:var(--text);border:1px solid #323946;border-radius:7px;padding:7px 9px;font-size:12px}
+.resource-row:has(select[data-resource-priority]:disabled)::after{content:'Saving priority…';grid-column:1/-1;justify-self:end;margin-top:-8px;color:var(--muted);font-size:10px;line-height:1.3}
+.resource-row:has(select[data-resource-priority]:disabled) select[data-resource-priority]{cursor:wait;opacity:.65}
 .alert-list{padding:10px 23px 18px}
 .alert-row{padding:11px 0;border-bottom:1px solid var(--edge);display:flex;gap:12px;justify-content:space-between}
 .alert-row:last-child{border:0}
