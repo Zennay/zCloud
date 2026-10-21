@@ -2752,7 +2752,7 @@ def portfolio_attention_items(include_resolved=False):
                                        updated_at DESC, attention_id""").fetchall()
     return [dict(row) for row in rows]
 
-def portfolio_attention_add(project_id,action,detail='',source_url='',severity='attention',attention_id=None):
+def portfolio_attention_add(project_id,action,detail='',source_url='',severity='attention',attention_id=None,connection=None):
     project_id=str(project_id or '').strip().lower()
     action=str(action or '').strip()
     if project_id not in PROJECT_INDEX:
@@ -2766,7 +2766,7 @@ def portfolio_attention_add(project_id,action,detail='',source_url='',severity='
         attention_id=project_id+'-'+digest
     attention_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(attention_id).strip())[:160]
     ts=now()
-    with connect() as c:
+    def write(c):
         c.execute("""INSERT INTO portfolio_attention(
             attention_id,project_id,action,detail,severity,source_url,status,created_at,updated_at,resolved_at
         ) VALUES(?,?,?,?,?,?, 'open',?,?,NULL)
@@ -2776,7 +2776,13 @@ def portfolio_attention_add(project_id,action,detail='',source_url='',severity='
             updated_at=excluded.updated_at,resolved_at=NULL""",
             (attention_id,project_id,action,str(detail or '')[:4000],severity,str(source_url or ''),ts,ts))
         row=c.execute('SELECT * FROM portfolio_attention WHERE attention_id=?',(attention_id,)).fetchone()
-    return dict(row)
+        return dict(row)
+    # Callers holding a queue transition use their existing transaction;
+    # standalone Attention creation keeps the previous connection lifecycle.
+    if connection is not None:
+        return write(connection)
+    with connect() as c:
+        return write(c)
 
 def portfolio_attention_resolve(attention_id):
     attention_id=str(attention_id or '').strip()
@@ -3534,6 +3540,7 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
     try: slot=int(global_slot)
     except Exception: raise ValueError('geldige global worker slot vereist')
     ts=now()
+    attention=None
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         row=c.execute("""SELECT * FROM portfolio_queue
@@ -3555,16 +3562,18 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             c.execute("""UPDATE portfolio_queue SET status='queued',eligible=1,evidence=?,
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
                       (str(evidence or '')[:4000],ts,queue_id))
-    attention=None
-    if result=='BLOCKED' and _blocker_needs_human(evidence):
-        attention=portfolio_attention_add(
-            row['project_id'],
-            _attention_action_for_blocker(row['project_id'],row['title'],evidence),
-            str(evidence or '')[:4000],
-            row['source_url'] or (PROJECT_INDEX.get(row['project_id']) or {}).get('notion_url') or '',
-            'urgent' if str(row['priority']).upper()=='P0' else 'attention',
-            attention_id='queue:'+queue_id,
-        )
+        if result=='BLOCKED' and _blocker_needs_human(evidence):
+            # Atomically park the task and open human Attention. Failure in
+            # either write must roll back both rather than lose the escalation.
+            attention=portfolio_attention_add(
+                row['project_id'],
+                _attention_action_for_blocker(row['project_id'],row['title'],evidence),
+                str(evidence or '')[:4000],
+                row['source_url'] or (PROJECT_INDEX.get(row['project_id']) or {}).get('notion_url') or '',
+                'urgent' if str(row['priority']).upper()=='P0' else 'attention',
+                attention_id='queue:'+queue_id,
+                connection=c,
+            )
     created=None
     if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
         try:
