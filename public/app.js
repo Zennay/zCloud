@@ -315,7 +315,7 @@ function blockedQueuePanel(){
           +'</div><button type="button" data-resume-blocked="'+esc(item.queue_id)+'">Resume after confirmation</button></article>';
       }).join('')+'</div>'
       :'<p class="blocked-queue-state">No dependency-blocked tasks are currently recorded. A failed read is never shown as zero.</p>';
-  return '<section class="blocked-queue-panel"><div class="blocked-queue-head"><div><span class="eyebrow">DEPENDENCY HOLDS</span><h2>'+count+' parked task'+(count===1?'':'s')+'</h2><p>Only the dependent task is parked. Independent work can continue; resume requires an explicit operator note that the dependency is cleared.</p></div><span class="blocked-queue-count">'+(loaded?count:'—')+'</span></div>'+body+(count>12?'<p class="blocked-queue-state">Showing 12 of '+count+' parked tasks.</p>':'')+'</section>';
+  return '<section class="blocked-queue-panel"><div class="blocked-queue-head"><div><span class="eyebrow">DEPENDENCY HOLDS</span><h2>'+(loaded?count+' parked task'+(count===1?'':'s'):'Parked tasks')+'</h2><p>Only the dependent task is parked. Independent work can continue; resume requires an explicit operator note that the dependency is cleared.</p></div><span class="blocked-queue-count">'+(loaded?count:'—')+'</span></div>'+body+(loaded&&count>12?'<p class="blocked-queue-state">Showing 12 of '+count+' parked tasks.</p>':'')+'</section>';
 }
 async function resumeBlockedQueue(queueId,button){
   const item=(BLOCKED_QUEUE||[]).find(row=>row.queue_id===queueId&&row.status==='blocked');
@@ -329,7 +329,10 @@ async function resumeBlockedQueue(queueId,button){
     const response=await fetch('/api/portfolio-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'resume_blocked',queue_id:queueId,resolution_note:note.trim()}),signal:AbortSignal.timeout(10000)});
     const result=await response.json().catch(()=>({}));
     if(!response.ok||!result.ok)throw new Error(result.error||result.result?.reason||'Could not resume the parked task');
+    BLOCKED_QUEUE=(BLOCKED_QUEUE||[]).filter(row=>row.queue_id!==queueId);
+    BLOCKED_QUEUE_ERROR='';
     button.textContent='Queued';
+    render();
     await refresh(true);
   }catch(error){button.disabled=false;button.textContent=previous;window.alert(error.message||'Could not resume the parked task.')}
 }
