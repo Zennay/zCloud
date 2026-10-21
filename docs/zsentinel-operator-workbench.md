@@ -2964,3 +2964,21 @@ Selecting an issue now exposes a **Recovery policy request** section with an exp
 The generated request uses the saved canonical GitHub issue/PR URL and the original issue-inbox observation timestamp. It does not replace that timestamp with the current browser time, so stale saved evidence stays stale when evaluated. Project and incident identifiers are normalized to bounded slugs; owner remains null; every policy evidence field remains null/unknown. The request therefore defaults to HOLD until the operator records actual evidence.
 
 The export is local-only: no GitHub/Notion request, claim write, CI retry, merge, deployment or runner restart occurs. The policy evaluator's positive result is only READY_FOR_HUMAN_REVIEW, never action authority. The generated JSON is compatible with scripts/zsentinel_recovery_policy.py on the companion recovery-policy branch.
+
+## 21 October · continue with another project when one recovery lead is parked
+
+The project-recovery desk now has **Next non-parked project candidate (P0 first)**.
+It skips only projects that the operator has locally marked `park-blocker`;
+it does not infer that any other project is free, unowned, healthy, or safe to
+mutate. The queue prioritizes sampled P0 projects, then P1, then manually
+recorded review-date urgency and observed queue pressure. The summary separates
+non-parked candidates from locally parked projects and explicitly says that
+current PRs, active claims, branch rules and owner authority must be rechecked.
+
+Selecting a candidate clears the project filter, opens the recovery list,
+scrolls to that project's human follow-up controls, and focuses its local
+decision selector. Existing issue-level notes are saved before navigation.
+This avoids remaining stuck on one locally parked recovery lead while making
+the next project visible; it is navigation only, not a worker dispatch or
+claim release. Local `park-blocker` status is not proof that the original
+incident is resolved.
