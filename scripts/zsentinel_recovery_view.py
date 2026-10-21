@@ -720,7 +720,10 @@ def html_view(decision, registry=None):
             window_html +
             ('<ul>' + ''.join(rows) + '</ul>' if rows else
              '<p class="empty">Geen actieve regels in deze waarneming; geen bewijs van vrije scope.</p>') +
-            ('<p>Voorbeelden afgekapt na 30.</p>' if notion["items_truncated"] else '')
+            ('<p>Voorbeelden afgekapt na 30; zichtbaar per waargenomen '
+             'Claimed/Running/Verifying-status afgewisseld. De volledige '
+             'bron blijft mogelijk onvolledig; geen vrije-werkconclusie.</p>'
+             if notion["items_truncated"] else '')
         )
     elif notion_mode == "degraded_unavailable_no_claim_authority":
         notion_panel = '<p class="empty">Notion-bron niet bereikbaar; status onbekend (niet nul).</p>'
