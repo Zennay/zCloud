@@ -369,7 +369,17 @@ def project_operations_html(view: dict) -> str:
             ' · Current owner: UNKNOWN (' +
             escape(row["claim_context"]) + ')' +
             '<br>Suggested human investigation: ' +
-            escape(row["recommended_next_step"]) + '</li>'
+            escape(row["recommended_next_step"]) +
+            '<label>Local human follow-up <select data-recovery-choice="' +
+            escape(row["project"], quote=True) + '">' +
+            '<option value="investigate">Investigate (not a live owner)</option>' +
+            '<option value="coordinate-owner">Coordinate current owner</option>' +
+            '<option value="park-blocker">Park external blocker</option>' +
+            '</select></label>' +
+            '<label>Private operator note (local only; max 500 chars)' +
+            '<textarea data-recovery-note="' +
+            escape(row["project"], quote=True) +
+            '" maxlength="500" rows="2" placeholder="Cause, owner input and next recheck"></textarea></label></li>'
         )
     return (
         '<section class="portfolio" id="projectRecoveryDesk">'
@@ -758,6 +768,8 @@ function dueState(info){
   'due today UTC':'scheduled by operator';
 }
 let selected=null;const handoffs=new Map();
+const recoveryHandoffs=new Map();
+const recoveryDecisions=new Set(['investigate','coordinate-owner','park-blocker']);
 const batchSelection=new Set();let batchPreview=null,batchUndo=null;
 function clearBatchUndo(){
  batchUndo=null;document.getElementById('batchUndo').disabled=true;
@@ -2042,6 +2054,9 @@ function currentBrief(){
      'Observed claim context: '+line(row.claim_context,50)+
        ' (not a present owner lease)',
      'Human investigation: '+line(row.recommended_next_step,650),
+     'Local operator decision: '+line(recoveryHandoffs.get(row.project)?.decision||'investigate',40)+
+       ' (human note only, never a claim)',
+     'Private operator note: '+line(recoveryHandoffs.get(row.project)?.note||'not entered',500),
      'Required: independently verify current claims, exact-head CI, review and release permission.',
      '');
   });
@@ -2280,6 +2295,31 @@ document.addEventListener('keydown',event=>{
  if(event.key==='j'||event.key==='k'){
    event.preventDefault();navigateObserved(event.key==='j'?1:-1);
  }
+});
+function syncRecoveryControls(){
+ document.querySelectorAll('[data-recovery-choice]').forEach(select=>{
+  select.value=recoveryHandoffs.get(select.dataset.recoveryChoice)?.decision||'investigate';
+ });
+ document.querySelectorAll('[data-recovery-note]').forEach(area=>{
+  area.value=recoveryHandoffs.get(area.dataset.recoveryNote)?.note||'';
+ });
+}
+document.getElementById('projectRecoveryDesk').addEventListener('input',event=>{
+ const target=event.target;
+ const project=target?.dataset?.recoveryChoice||target?.dataset?.recoveryNote;
+ if(!project||!board.project_operations.some(item=>item.project===project))return;
+ const old=recoveryHandoffs.get(project)||{decision:'investigate',note:''};
+ const next={...old};
+ if(target.dataset.recoveryChoice){
+  if(!recoveryDecisions.has(target.value))return;
+  next.decision=target.value;
+ }else{
+  next.note=target.value.slice(0,500);
+ }
+ if(next.decision==='investigate'&&!next.note)recoveryHandoffs.delete(project);
+ else recoveryHandoffs.set(project,next);
+ setUnsaved(true);invalidateBrief();
+ status.textContent='Local project follow-up changed; export private handoff to preserve it.';
 });
 ['search','priority','project','disposition','change','followupStatus'].forEach(id=>document.getElementById(id).addEventListener(
  'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
