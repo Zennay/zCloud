@@ -1320,8 +1320,11 @@ def main() -> int:
                         help="Output as console text, JSON, offline HTML, or three-line owner handoff")
     parser.add_argument("--expected-main-sha", default=None,
                         help="Exact independently fetched 40-character main commit SHA (no network requests)")
-    parser.add_argument("--output", type=Path, default=None,
-                        help="Create a NEW private 0600 report of the selected format; never overwrite")
+    saved = parser.add_mutually_exclusive_group()
+    saved.add_argument("--output", type=Path, default=None,
+                       help="Create a NEW private 0600 report of the selected format; never overwrite")
+    saved.add_argument("--bundle-dir", type=Path, default=None,
+                       help="Create a NEW private 0700 snapshot folder: JSON, HTML, Markdown, brief and digest manifest")
     args = parser.parse_args()
     if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
         parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
@@ -1333,7 +1336,18 @@ def main() -> int:
         except ValueError as exc:
             print(f"PREVIOUS_REPORT_INVALID: {exc}", file=sys.stderr)
             return 2
-    if args.output is None:
+    if args.bundle_dir is not None:
+        try:
+            save_private_bundle(args.bundle_dir, report, args)
+        except (OSError, ValueError, UnicodeError):
+            # The directory and any contents are private operator paths.
+            print("PRIVATE_PREFLIGHT_BUNDLE_NOT_CREATED: destination unavailable, "
+                  "already exists or rendering failed; no existing bundle replaced.",
+                  file=sys.stderr)
+            return 2
+        print("Private zSentinel VPS bundle created (0700, no replace).",
+              file=sys.stderr)
+    elif args.output is None:
         render_report_to_stdout(report, args)
     else:
         try:
