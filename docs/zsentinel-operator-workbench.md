@@ -3558,3 +3558,22 @@ fresh live source verification, exact-head mandatory CI, independent review,
 active owner/lease check, branch protection, verified merge SHA and authorized
 release. These portable worklists are never permission to act.
 
+
+
+### Reconcile two independently admitted issue-to-PR views
+
+The standalone **single-issue Markdown and printable HTML** receipts now include
+**both** separately admitted source perspectives: the original board's at-most
+three `open_pr_candidates` with any board-bound sampled exact-head gate
+observations, **and** the historical ZIP issue-to-PR timeline with up to twelve
+candidates. A PR that appears in the original issue board but not in the
+historical ZIP window must not disappear from a handoff merely because that
+archive's sample happened to exclude it.
+
+The original board's sampled HEAD and gate labels are explicitly marked as
+saved observations; the historical timeline retains its own distinct source
+provenance and missing-source warnings. The exports do not coalesce those
+observations into one asserted current PR state or treat their absence as
+permission to create a competing repair PR. The existing JSON handoff schema
+remains unchanged; this is a human-visible source-custody integration.
+
