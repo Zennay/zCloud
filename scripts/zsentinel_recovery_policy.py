@@ -1928,7 +1928,9 @@ def main(argv=None):
     parser.add_argument("--candidate-pr-number", type=int,
                         help="sampled issue repair PR number, for --prepare-merge-review")
     parser.add_argument("--live-candidates", action="store_true",
-                        help="read up to 3 live GitHub candidate PRs for one source-linked issue; advisory only")
+                        help="read up to 3 source-linked live PRs for one issue; advisory only")
+    parser.add_argument("--live-focus-pr", type=int,
+                        help="read one exact historically saved or newly discovered PR number; --live-candidates only")
     parser.add_argument("--discover-existing", "--discover-unlinked",
                         dest="discover_unlinked", action="store_true",
                         help="opt-in bounded open-PR discovery alongside historical issue references; advisory only")
@@ -1943,6 +1945,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.discover_unlinked and not args.live_candidates:
         parser.error("--discover-existing requires --live-candidates")
+    if args.live_focus_pr is not None and (
+            not args.live_candidates or
+            not 1 <= args.live_focus_pr <= 100000000):
+        parser.error("--live-focus-pr requires --live-candidates and a positive PR number")
     if args.live_candidates:
         if (not args.case_input or not args.view_project or args.view_issue is None
                 or args.prepare_merge_review or args.candidate_pr_number is not None
@@ -2016,6 +2022,7 @@ def main(argv=None):
                         selected, token=os.environ.get("GITHUB_TOKEN") or None,
                         source_case=report,
                         discover_unlinked=args.discover_unlinked,
+                        focus_pr_number=args.live_focus_pr,
                     )
                 except GitHubReadError as exc:
                     raise PolicyInputError("live PR source: " + str(exc)) from exc
