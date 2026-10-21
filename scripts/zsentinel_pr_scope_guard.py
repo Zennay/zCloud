@@ -335,8 +335,14 @@ def selected_source_pr(repo, number, token, expanded_files=False):
 
 
 def overlaps(wanted, changed):
-    # A path ending in '/' explicitly denotes a directory, otherwise one file.
-    return changed.startswith(wanted) if wanted.endswith("/") else changed == wanted
+    """Detect exact and file/directory ancestor collisions in either direction."""
+    # A path ending in "/" denotes a directory. Git trees cannot contain a file
+    # and a directory at the same path, or a file where the other path needs an
+    # ancestor directory. Compare segment boundaries so "src2" never matches
+    # "src/".
+    target = wanted.rstrip("/")
+    return (changed == target or changed.startswith(target + "/")
+            or target.startswith(changed + "/"))
 
 
 def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
