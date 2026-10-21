@@ -157,8 +157,15 @@ def issue_local_claim_evidence(project, local_claims):
     expired = counts["expired_local_leases_observed"]
     writers = counts["active_local_writers_observed"]
     ambiguous = counts["ambiguous_active_leases"]
+    observed_statuses = {
+        "LOCAL_ACTIVE_CLAIMS_OBSERVED", "EXPIRED_LOCAL_LEASES_OBSERVED",
+        "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED",
+    }
+    if status in observed_statuses and any(
+            type(value) is not int for value in counts.values()):
+        return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
     if status == "EXPIRED_LOCAL_LEASES_OBSERVED" and not (
-            active == 0 and type(expired) is int and expired > 0
+            active == 0 and expired > 0
             and writers == 0 and ambiguous == 0):
         return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
     if status == "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED" and not (
