@@ -2921,10 +2921,15 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
             'Fix blockers, broken workers and open issues across OTHER portfolio projects',
             'P1',
             'PRIORITY 1: pick the highest-impact unowned actionable blocker in one of the 13 real projects. '
-            'Fix the underlying failure with code, tests, runtime verification and scoped permissions. '
+            'Fix the underlying failure with a concrete product change and scoped permissions. '
+            'Inspect the result briefly through a build, existing CI status or direct functional inspection; '
+            'do not write, expand or run QA/regression suites. Preserve mandatory security, review, CI and release gates. '
             'Read current Notion HQ/handoff and GitHub issues, PRs, CI, worker claims and deployment evidence '
             'for the affected real project. Do not create a zSentinel product roadmap, '
             'zSentinel QA tasks or zSentinel feature PRs. Do not steal existing ownership or skip gates. '
+            'MERGE FIRST: finish a free existing product PR before opening a new branch; merge only when exact-head '
+            'required CI, independent review, branch protection and owner authorization permit it. '
+            'If a dependency waits, park only that PR and continue safe independent product work. '
             'PRIORITY 2: move to another safe unowned open issue, broken workflow or unfinished feature '
             'in a real project; implement multiple material fixes across projects without waiting on a blocked task.',
             project.get('notion_url') or '',
