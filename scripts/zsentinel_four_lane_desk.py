@@ -1689,7 +1689,7 @@ def main():
         )
         if args.format == "owner-snapshot":
             snapshot_json = json.dumps(owner_snapshot(packet), ensure_ascii=False,
-                                       indent=2, sort_keys=True) + "\\n"
+                                       indent=2, sort_keys=True) + "\n"
             save_private(args.output, snapshot_json, ".json")
             print("Privé minimaal eigenaarssnapshot gemaakt (0600); geen queue- of bronwijziging.")
         elif args.format == "html":
