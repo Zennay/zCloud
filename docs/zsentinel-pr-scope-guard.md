@@ -1,5 +1,44 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 21 oktober · compleet botsingswerkblad voor PRs die hetzelfde issue noemen
+
+De bestaande offline privé **merge-eerst werkbak** bevat nu een afzonderlijk
+paneel **Issues met meerdere bestaande PRs**. Het is bedoeld voor bevoegde
+eigenaren die herhaald werk en verloren PR-context willen voorkomen:
+
+- Het paneel toont uitsluitend bronissues binnen de bestaande begrensde
+  `--worklist-limit`-pagina waarvoor twee of meer **verschillende
+  bestaande PR-kandidaten** zijn waargenomen. Iedere PR behoudt haar
+  canonieke GitHub-link, opgeslagen commit-HEAD (of ONBEKEND),
+  gatebron, bestandsoverlapindicator en bronbewegingindicator.
+  De indicatoren maken geen claims over daadwerkelijk opgeloste issues,
+  mergebevoegdheid, huidige leases of eigenaars.
+- Vanuit elke PR in het botsingspaneel kan de operator direct
+  **Open PR-werkbak** kiezen, met de al bestaande private PR→issue
+  drilldown en handmatige notities.
+- Zoekterm, project en prioriteit filteren ook het botsingspaneel.
+  **Alleen issues/PRs met meerdere PR-kandidaten** is een filter voor
+  de bestaande issuekaarten en PR-groepen. Het scherm toont expliciet
+  hoeveel botsingsgevallen van de beperkte bron nog zichtbaar zijn;
+  `Wis filters` herstelt het volledige lokale bronvenster.
+- Met **Download PR-botsingsdossier (Markdown)** exporteert de operator
+  **alle** botsingsgevallen uit het oorspronkelijk opgeslagen begrensde
+  bronvenster, ook als een UI-filter of individuele PR-focus actief is.
+  Ieder dossier vermeldt opgeslagen bronklokken en exacte private
+  `source_token`, issueprioriteit en originele links, alle betrokken
+  PR-links en opgeslagen HEAD/gates, en eventueel lokale handmatige
+  issue-/PR-statussen en privé-notities. Een lege lijst bewijst slechts
+  dat in dit **beperkte, opgeslagen venster** geen dubbele PR-vermelding
+  is aangetroffen. Het zegt niets over buitenbeeld/actuele bron.
+- Download is uitsluitend een lokale browser-Blob; geen GitHub
+  comment, Notion-mutation, claim, workflow-dispatch, merge of deploy.
+  De bestaande volledige bronoverdracht blijft compleet en de
+  aparte PR-dossiers blijven beschikbaar.
+
+De werkbak gebruikt uitsluitend bestaande, vooraf toegelaten
+`zsentinel-merge-first-human-inbox-v1` bronkaarten. Geen extra
+GitHub-/Notion-/VPS-read, nieuw authorisatieritueel of QA-suite.
+
 ## 21 oktober · één PR uit een brongebonden interactieve werkbak overdragen
 
 De bestaande offline HTML-werkbak ondersteunt nu een samenhangend traject
