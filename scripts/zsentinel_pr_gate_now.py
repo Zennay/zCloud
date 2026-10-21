@@ -17,6 +17,7 @@ import stat
 import sys
 
 from zsentinel_pr_scope_guard import github_json, REPO, SHA
+from zsentinel_private_report_writer import write_private_report
 
 SCHEMA = "zsentinel-current-pr-gate-observation-v1"
 MAX_PRS = 4
@@ -492,21 +493,7 @@ def main(argv=None):
         if args.output is None:
             sys.stdout.write(rendered)
         else:
-            target = args.output
-            if target.is_dir():
-                raise ValueError("output must be a newly created file")
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            flags |= getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(target, flags, 0o600)
-            try:
-                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                    stream.write(rendered)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-            except Exception:
-                # Creation was exclusive. Never overwrite an existing output.
-                target.unlink(missing_ok=True)
-                raise
+            write_private_report(args.output, rendered)
             # Never print private source content or path in a shared log.
             print("Created private read-only PR gate receipt (0600); no merges or GitHub writes.",
                   file=sys.stderr)
