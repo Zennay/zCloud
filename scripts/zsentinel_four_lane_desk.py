@@ -94,12 +94,11 @@ def owner_review_suggestions(portfolio, maximum=6):
     """Read-only P0-first human owner queue; never grants a worker claim."""
     suggestions = []
     for item in portfolio:
-        queued = item["queued_p0"] or item["queued_p1"]
+        queued = item["queued_p0"] + item["queued_p1"]
         if not queued:
             continue
         priority = "P0" if item["queued_p0"] else "P1"
-        eligible = (item["eligible_queued_p0"] if priority == "P0"
-                    else item["eligible_queued_p1"])
+        eligible = item["eligible_queued_p0"] + item["eligible_queued_p1"]
         suggestions.append({
             "project": item["project"], "priority": priority,
             "queued_local": queued, "eligible_hint_local": eligible,
