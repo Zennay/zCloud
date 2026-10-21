@@ -6,7 +6,10 @@ release, CI completion or permission to claim, retry, merge or dispatch.
 """
 from __future__ import annotations
 
+import argparse
+import json
 import re
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from html import escape
 
@@ -142,7 +145,9 @@ def _insert(index, row, category):
                   "claim_authorized": False, "dispatch_authorized": False}
 
 
-def compare(previous, current, *, now=None):
+def compare(previous, current, *, now=None, allow_historical=False):
+    if type(allow_historical) is not bool:
+        raise ValueError("historical comparison needs explicit boolean")
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("timezone-aware comparison time required")
@@ -152,7 +157,8 @@ def compare(previous, current, *, now=None):
     new = _index(newer)
     if new["observed"] > now + timedelta(minutes=2):
         raise ValueError("future current routing observation")
-    if now - new["observed"] > timedelta(minutes=10):
+    source_is_historical = now - new["observed"] > timedelta(minutes=10)
+    if source_is_historical and not allow_historical:
         # An archived JSON export may be valid history but not a live
         # operator task transition. Do not present old state as new routing.
         return _result("current_routing_source_stale", new,
@@ -191,8 +197,9 @@ def compare(previous, current, *, now=None):
         if key not in new["rows"]:
             missing.append(value)
     return {
-        **_result("bounded_source_comparison", new,
-                  previous_at=old["observed"], fresh=True),
+        **_result(("historical_bounded_source_comparison" if source_is_historical
+                   else "bounded_source_comparison"), new,
+                  previous_at=old["observed"], fresh=not source_is_historical),
         "prior_coverage_complete": old["complete"],
         "previous_source_examples_truncated": old["sample_truncated"],
         "newly_observed": created[:12],
@@ -219,6 +226,7 @@ def _result(coverage, newer, previous_at, fresh):
         "observed_at_utc": stamp(newer["observed"]),
         "previous_observed_at_utc": stamp(previous_at),
         "current_coverage_complete": newer["complete"],
+        "current_source_recent_at_comparison": fresh,
         "current_source_examples_truncated": newer["sample_truncated"],
         "current_state_counts": newer["counts"],
         "newly_observed": [], "unchanged_observed": [],
@@ -239,9 +247,12 @@ def as_text(report):
             or report.get("merge_authorized") is not False):
         raise ValueError("untrusted routing comparison")
     lines = ["zSentinel · routeringsveranderingen (alleen advies)"]
-    if report["coverage"] != "bounded_source_comparison":
+    if report["coverage"] not in ("bounded_source_comparison",
+                                   "historical_bounded_source_comparison"):
         lines.append("Vorige routeringsbron ontbreekt of is onvergelijkbaar; veranderingen ONBEKEND.")
         return "\n".join(lines)
+    if report["coverage"] == "historical_bounded_source_comparison":
+        lines.append("HISTORISCHE REPLAY: huidige claim/CI/lease en echte routing zijn ONBEKEND; niet uitvoeren.")
     lines.append("Bronmomenten: " + report["previous_observed_at_utc"] +
                  " → " + report["observed_at_utc"])
     lines.append("Nieuwe waarnemingen: " + str(report["newly_observed_count"]) +
@@ -270,3 +281,50 @@ def as_html(report):
             'of vrijgegeven. Er zijn geen queue-, worker- of releaseacties uitgevoerd.</p>'
             '<ul>' + "".join('<li>' + escape(line) + '</li>' for line in lines[1:]) +
             '</ul></section>')
+
+
+def main(argv=None):
+    """Standalone offline operator comparison; never fetch live data or mutate it."""
+    parser = argparse.ArgumentParser(description="zSentinel privé routing snapshot comparison (read-only)")
+    parser.add_argument("--previous", required=True, type=Path,
+                        help="existing private 0600 portfolio JSON snapshot")
+    parser.add_argument("--current", required=True, type=Path,
+                        help="later saved private portfolio JSON snapshot")
+    parser.add_argument("--format", choices=("json", "html", "text"), default="html")
+    parser.add_argument("--output", type=Path, required=True,
+                        help="new create-only private .json, .html or .md file")
+    args = parser.parse_args(argv)
+    try:
+        paths = [args.previous.resolve(), args.current.resolve(), args.output.resolve()]
+        if len(set(paths)) != 3:
+            raise ValueError("private source and output files must be distinct")
+        from zsentinel_blocker_continuity import _read
+        from zsentinel_private_output import write_private_output
+        before, after = _read(args.previous), _read(args.current)
+        # Historical-only is an explicit request in this OFFLINE command.
+        # Never present an archived comparison as current admission.
+        result = compare(before, after, allow_historical=True)
+        if args.format == "json":
+            body = json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2)
+            suffix = "json"
+        elif args.format == "html":
+            body = ('<!doctype html><html lang="nl"><head><meta charset="utf-8">'
+                    '<meta name="referrer" content="no-referrer">'
+                    '<meta http-equiv="Content-Security-Policy" '
+                    'content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'">'
+                    '<title>zSentinel routing bronvergelijking</title>'
+                    '<style>body{font:1rem system-ui;background:#111c2c;color:#f2f6fc;'
+                    'max-width:900px;margin:auto;padding:2rem}li{margin:.4rem}</style>'
+                    '</head><body><main>' + as_html(result) + '</main></body></html>')
+            suffix = "html"
+        else:
+            body = as_text(result)
+            suffix = "md"
+        write_private_output(args.output, body, suffix)
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        parser.exit(2, "zSentinel offline routing comparison unavailable: " + str(exc) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
