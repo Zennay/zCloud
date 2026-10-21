@@ -25,6 +25,7 @@ from zsentinel_pr_scope_guard import (
 
 from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
 from zsentinel_pr_gate_continuity import compare_gate_episodes, render_gate_episodes
+from zsentinel_private_report_writer import write_private_report
 
 MAX_PROJECTS = 3
 MAX_PRS_PER_PROJECT = 16
@@ -1696,21 +1697,9 @@ def main(argv=None):
         if args.output is None:
             sys.stdout.write(rendered)
         else:
-            # Exclusive local creation. Do not overwrite another worker's
-            # reports and never echo private path or GitHub source in logs.
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            flags |= getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(args.output, flags, 0o600)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as sink:
-                    if not stat.S_ISREG(os.fstat(sink.fileno()).st_mode):
-                        raise ValueError("private report output is not a regular file")
-                    sink.write(rendered)
-                    sink.flush()
-                    os.fsync(sink.fileno())
-            except Exception:
-                args.output.unlink(missing_ok=True)
-                raise
+            # Exclusive local creation through the shared directory-FD writer.
+            # Never echo private path or GitHub source in logs.
+            write_private_report(args.output, rendered)
             print("Created private 0600 read-only zSentinel operator artifact; no remote writes.",
                   file=sys.stderr)
         if (args.inspect_current_pr_gates and
