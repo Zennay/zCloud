@@ -24,8 +24,9 @@ python3 scripts/zsentinel_operator_workbench.py \
 
 Voor een concreet openstaand product-PR hoef je niet langer een volledige
 portfolio-export te delen. De bestaande offline bronbridge biedt nu
-`--format portfolio-pr-markdown --pr-url` én
-`--format portfolio-pr-html --pr-url`: beide valideren eerst **het
+`--format portfolio-pr-markdown --pr-url`,
+`--format portfolio-pr-html --pr-url` én
+`--format portfolio-pr-zip --pr-url`: alle drie valideren eerst **het
 complete oorspronkelijke manifest en alle reeds opgeslagen batchbewijzen**,
 zoekt vervolgens één canonieke PR in die bron en maakt een afzonderlijk,
 brongebonden privé-Markdown-dossier. Een niet-waargenomen PR geeft een fout,
@@ -44,8 +45,9 @@ Bij meerdere vooraf opgeslagen batches herhaal je `--receipt` zoals in het
 bestaande bridgecontract; ontbrekende batches zijn alleen met de bestaande
 expliciete `--allow-partial` optie toegestaan en blijven **UNKNOWN**.
 Het optionele `--project Zennay/zCloud` moet bij de bron-PR passen.
-`--pr-url` is uitsluitend toegestaan bij de twee
-`portfolio-pr-markdown`/`portfolio-pr-html`-formaten; alle andere formaten
+`--pr-url` is uitsluitend toegestaan bij de drie
+`portfolio-pr-markdown`/`portfolio-pr-html`/`portfolio-pr-zip`-formaten;
+alle andere formaten
 behouden hun eerdere invoercontract. Voor een **mobiel leesbare, scriptvrije
 HTML-pagina** gebruik je dezelfde invoerbronnen en vervang je in bovenstaand
 commando alleen `--format portfolio-pr-markdown` door
@@ -58,6 +60,17 @@ bron-SHA256's en de menselijke vervolgactie in aparte toegankelijke kaarten.
 Een strenge Content Security Policy verbiedt scripts, netwerkverzoeken,
 afbeeldingen en formulieren; externe GitHub-links openen alleen na een
 vrijwillige klik. Printweergave blijft leesbaar.
+
+Wie één brongebonden dossier met zowel HTML als Markdown als
+één privébestand wil overdragen, gebruikt ook
+`--format portfolio-pr-zip --pr-url https://github.com/Zennay/zCloud/pull/1560`
+en bijvoorbeeld `--output ./private-pr-1560-owner-handoff.zip`.
+De ZIP bevat vaste namen (`single-pr-dossier.html`,
+`single-pr-actions.md`, `source-receipt.json` en
+`source-checksums.json`). De checksum-index bindt de drie oorspronkelijke
+inhoudsbestanden aan SHA256 en het exacte reviewmanifest. Alle ZIP-leden
+hebben vaste veilige metadata en 0600-permissies. Het bestaande create-only
+0600/no-follow/bounded-output-contract wordt niet vervangen.
 
 Het bestand bevat de exacte originele reviewmanifest- en board-SHA256,
 UTC-broninterval, ouderdom bij export, alle batchdekkingsgaten,
