@@ -513,6 +513,7 @@ def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None)
     seen = set()
     branch_suppressed = []
     dependency_holds = []
+    gate_holds = []
     for task in tasks:
         if not isinstance(task, dict):
             raise ValueError("task must be an object")
@@ -570,12 +571,38 @@ def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None)
             raise ValueError("invalid task.required_gates")
         if "none" in requirements and len(requirements) != 1:
             raise ValueError("none cannot be combined with other required_gates")
-        if set(requirements) & blocked["gates"]:
+        blocked_required_gates = sorted(set(requirements) & blocked["gates"])
+        if blocked_required_gates:
+            gate_holds.append({
+                "id": ident, "project_id": pid, "priority": tier,
+                "reason": "required_gate_blocked",
+                "required_gates": sorted(set(requirements)),
+                "blocked_required_gates": blocked_required_gates,
+                "capacity_state": None,
+                "claim_authorized": False, "dispatch_authorized": False,
+            })
             continue
         if "self_hosted" in requirements and capacity["state"] != "advisory_headroom":
+            gate_holds.append({
+                "id": ident, "project_id": pid, "priority": tier,
+                "reason": "self_hosted_capacity_not_advisory_headroom",
+                "required_gates": sorted(set(requirements)),
+                "blocked_required_gates": [],
+                "capacity_state": capacity["state"],
+                "claim_authorized": False, "dispatch_authorized": False,
+            })
             continue
-        # Unknown compute destination is not evidence of non-VPS work.
+        # Unknown compute destination is not evidence of non-VPS work. Surface
+        # the otherwise-eligible task as a human HOLD instead of silently losing it.
         if task.get("requires_vps") is not False and "self_hosted" not in requirements:
+            gate_holds.append({
+                "id": ident, "project_id": pid, "priority": tier,
+                "reason": "compute_destination_not_explicitly_routable",
+                "required_gates": sorted(set(requirements)),
+                "blocked_required_gates": [],
+                "capacity_state": None,
+                "claim_authorized": False, "dispatch_authorized": False,
+            })
             continue
         recommendations.append({
             "id": ident,
@@ -599,8 +626,10 @@ def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None)
         disjoint.append(candidate)
         if len(disjoint) == MAX_RECOMMENDATIONS:
             break
+    gate_holds.sort(key=lambda item: (
+        PRIORITY[item["priority"]], item["project_id"], item["id"], item["reason"]))
     return (disjoint, complete, branch_ownership, branch_suppressed,
-            dependency_holds, sorted(coverage_reasons))
+            dependency_holds, gate_holds, sorted(coverage_reasons))
 
 
 def triage_issue_inbox(inbox, now):
@@ -1081,7 +1110,7 @@ def plan(bundle, previous=None, now=None):
         if entry["status"] == "exact_job_completed_source_reconciled"
     }
     (routes, routing_inventory_complete, branches, branch_suppressed,
-     dependency_holds, routing_coverage_reasons) = eligible_tasks(
+     dependency_holds, gate_holds, routing_coverage_reasons) = eligible_tasks(
         bundle, blocked, now, capacity, exact_reconciled_dependencies)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
     queue_triage = queue_pressure_summary(bundle.get("queue_pressure"), now)
@@ -1167,6 +1196,18 @@ def plan(bundle, previous=None, now=None):
             "samples_truncated": len(dependency_holds) > 8,
             "exact_reconciliation_required": True,
             "claim_authorized": False,
+        },
+        "routing_gate_holds": {
+            # These are tasks that passed claim/dependency/branch admission but
+            # cannot be proposed until their execution gates/destination clear.
+            "coverage": "complete" if routing_inventory_complete else "incomplete_or_stale",
+            "coverage_reasons": routing_coverage_reasons,
+            "count": len(gate_holds),
+            "examples": gate_holds[:8],
+            "samples_truncated": len(gate_holds) > 8,
+            "exact_gate_recheck_required": True,
+            "claim_authorized": False,
+            "dispatch_authorized": False,
         },
         "recent_branch_ownership": {
             "supplied": branches["supplied"],
@@ -1269,6 +1310,84 @@ def operator_text(result):
                          "owner must inspect current source.")
         if holds["samples_truncated"]:
             lines.append("Further incident dependency HOLD examples omitted.")
+    gate_report = result.get("routing_gate_holds")
+    if gate_report is None:
+        gate_report = {
+            "coverage": "incomplete_or_stale", "coverage_reasons": [],
+            "count": 0, "examples": [], "samples_truncated": False,
+            "exact_gate_recheck_required": True,
+            "claim_authorized": False, "dispatch_authorized": False,
+        }
+    gate_examples = gate_report.get("examples") if type(gate_report) is dict else None
+    gate_coverage = gate_report.get("coverage") if type(gate_report) is dict else None
+    gate_reasons = gate_report.get("coverage_reasons") if type(gate_report) is dict else None
+    allowed_gate_reasons = {
+        "claim_inventory_not_complete", "task_inventory_not_complete",
+        "claim_observation_missing", "task_observation_missing",
+        "claim_observation_stale_or_future", "task_observation_stale_or_future",
+        "active_claim_scope_unknown",
+    }
+    if (type(gate_report) is not dict
+            or gate_coverage not in ("complete", "incomplete_or_stale")
+            or type(gate_reasons) is not list or len(gate_reasons) > 7
+            or any(reason not in allowed_gate_reasons for reason in gate_reasons)
+            or (gate_coverage == "complete" and gate_reasons)
+            or type(gate_report.get("count")) is not int
+            or not 0 <= gate_report["count"] <= MAX_TASKS
+            or type(gate_examples) is not list or len(gate_examples) > 8
+            or len(gate_examples) > gate_report["count"]
+            or gate_report.get("samples_truncated") is not (
+                gate_report["count"] > len(gate_examples))
+            or gate_report.get("exact_gate_recheck_required") is not True
+            or gate_report.get("claim_authorized") is not False
+            or gate_report.get("dispatch_authorized") is not False):
+        raise ValueError("untrusted routing gate-hold report")
+    if gate_coverage == "complete":
+        lines.append("Otherwise-eligible tasks held by execution gates/capacity: " +
+                     str(gate_report["count"]) + " (no claim/dispatch)")
+    else:
+        lines.append("Execution gate/capacity holds: UNKNOWN — task/claim inventory incomplete or stale; zero is not an all-clear.")
+    for item in gate_examples:
+        if (type(item) is not dict
+                or type(item.get("id")) is not str or not SLUG.fullmatch(item["id"])
+                or type(item.get("project_id")) is not str or not SLUG.fullmatch(item["project_id"])
+                or item.get("priority") not in PRIORITY
+                or item.get("reason") not in (
+                    "required_gate_blocked", "self_hosted_capacity_not_advisory_headroom",
+                    "compute_destination_not_explicitly_routable")
+                or item.get("claim_authorized") is not False
+                or item.get("dispatch_authorized") is not False):
+            raise ValueError("invalid routing gate-hold example")
+        required = item.get("required_gates")
+        blocked_gates_for_task = item.get("blocked_required_gates")
+        cap_state = item.get("capacity_state")
+        if (type(required) is not list or not 1 <= len(required) <= 3
+                or any(gate not in ("github_hosted", "self_hosted", "none") for gate in required)
+                or len(set(required)) != len(required)
+                or ("none" in required and len(required) != 1)
+                or type(blocked_gates_for_task) is not list
+                or len(blocked_gates_for_task) > 2
+                or len(set(blocked_gates_for_task)) != len(blocked_gates_for_task)
+                or any(gate not in ("github_hosted", "self_hosted") for gate in blocked_gates_for_task)
+                or not set(blocked_gates_for_task).issubset(required)):
+            raise ValueError("invalid gate-hold requirements")
+        reason = item["reason"]
+        if (reason == "required_gate_blocked"
+                and (not blocked_gates_for_task or cap_state is not None)
+                or reason == "self_hosted_capacity_not_advisory_headroom"
+                and ("self_hosted" not in required or blocked_gates_for_task
+                     or cap_state not in ("unavailable", "stale", "overloaded"))
+                or reason == "compute_destination_not_explicitly_routable"
+                and ("self_hosted" in required or blocked_gates_for_task or cap_state is not None)):
+            raise ValueError("contradictory gate-hold reason")
+        lines.append("- HOLD " + item["priority"] + " " + item["project_id"] + "/" +
+                     item["id"] + " · " + reason +
+                     (" · blocked gates=" + ",".join(blocked_gates_for_task)
+                      if blocked_gates_for_task else "") +
+                     (" · VPS capacity=" + cap_state if cap_state else "") +
+                     " · owner must recheck exact gate/source; no claim or dispatch")
+    if gate_report["samples_truncated"]:
+        lines.append("Further execution gate/capacity HOLD examples omitted; source count retained.")
     lines.append(f"Human-only watch candidates (NOT delivered): {len(result['watch_alert_candidates'])}")
     old_owner = result.get("historical_owner_recheck_candidates", [])
     lines.append("Historical human owner rechecks (NO notification, NO current incident): " +
