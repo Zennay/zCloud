@@ -159,12 +159,41 @@ jobs:
             echo "Worker extension location differs from the verified VPS layout; refuse replacing unknown code."
             exit 1
           fi
-          # Update the source and running extension profile independently,
-          # without a service restart, cache eviction or tab reassignment.
-          install -m 0644 firefox-extension/background.js "$source/background.js"
-          install -m 0644 firefox-extension/background.js "$live/background.js"
-          cmp firefox-extension/background.js "$source/background.js"
-          cmp firefox-extension/background.js "$live/background.js"
+          # The approved runtime checkout must ALREADY match the source.
+          # Never edit its tracked background file as a side effect of activation.
+          if ! cmp -s -- firefox-extension/background.js "$source/background.js"; then
+            echo "::error::Runtime background differs from approved source; refusing to overwrite owner work."
+            exit 1
+          fi
+          # Only the installed add-on is replaced. Stage and preserve the old
+          # bytes in its own directory, so rename and rollback are same-FS.
+          # An interrupted process can leave an approved new file in place,
+          # but never a partially copied live background.js.
+          live_dir="${live%/*}"
+          staged="$(mktemp "$live_dir/.background.zsentinel.new.XXXXXXXX")"
+          backup="$(mktemp "$live_dir/.background.zsentinel.old.XXXXXXXX")"
+          swapped=0
+          cleanup_live_install() {
+            rc=$?
+            if test "$rc" -ne 0 && test "$swapped" -eq 1; then
+              if ! mv -f -- "$backup" "$live/background.js"; then
+                echo "::error::Failed to restore previous live add-on; operator intervention required."
+              fi
+            fi
+            rm -f -- "$staged" "$backup"
+          }
+          trap cleanup_live_install EXIT
+          install -m 0644 firefox-extension/background.js "$staged"
+          cmp -- firefox-extension/background.js "$staged"
+          cp -p -- "$live/background.js" "$backup"
+          # A late remote-main change denies the live write, not just the
+          # earlier checkout and admission step.
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
+          mv -f -- "$staged" "$live/background.js"
+          swapped=1
+          cmp -- firefox-extension/background.js "$live/background.js"
           echo "WORKER_TAB_GUARD_INSTALLED=1"
           echo "Worker extension source installed; no active tabs touched during install."
 
