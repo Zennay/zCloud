@@ -872,8 +872,8 @@ def main():
             raise ValueError("--show-owner-handoff requires html, handoff, json or text")
         if args.output is not None and args.format not in ("html", "json", "text", "handoff"):
             raise ValueError("--output supports only html, json, text or human handoff")
-        if args.compare_with is not None and args.format not in ("html", "json", "text"):
-            raise ValueError("--compare-with supports only html, json or text")
+        if args.compare_with is not None and args.format not in ("html", "json", "text", "handoff"):
+            raise ValueError("--compare-with supports html, json, text or owner handoff")
         history_files = args.compare_with or []
         if len(history_files) > 7 or len({p.resolve() for p in history_files}) != len(history_files):
             raise ValueError('at most seven distinct chronological previous reports')
@@ -1251,6 +1251,14 @@ def main():
                 from zsentinel_runner_cross_source import as_text as runner_cross_text
                 rendered = ("## zSentinel · exacte runner en lokale VPS-observatie\n\n" +
                             runner_cross_text(runner_cross_source) + "\n\n" + rendered)
+            if continuity is not None:
+                from zsentinel_blocker_continuity import as_text as blocker_history_text
+                rendered = ("## zSentinel · continuïteit van blokkades\n\n" +
+                            blocker_history_text(continuity) + "\n\n" + rendered)
+            if routing_transition is not None:
+                from zsentinel_route_continuity import as_text as routing_history_text
+                rendered = ("## zSentinel · veranderingen in werkroutering\n\n" +
+                            routing_history_text(routing_transition) + "\n\n" + rendered)
         elif args.format == "json":
             rendered = json.dumps({
                 "portfolio": summary, "selected_window": window_index,
