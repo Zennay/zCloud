@@ -288,6 +288,45 @@ case's counts as though they came from the filtered slice. HTML, Markdown,
 text and CSV expose the sampled draft and relationship hints with explicit
 "at source" and "verify live" wording.
 
+### Issue to existing PR: private HOLD-first merge review worksheet
+
+To continue an already referenced PR without inventing a new work item, a
+human operator can take the **existing historical case and one sampled PR**
+directly into the policy evaluator's canonical `merge_pr` evidence schema:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json \
+  --view-project cloud --view-issue 1518 \
+  --prepare-merge-review --candidate-pr-number 1550 \
+  > private-pr-1550-merge-review.json
+
+python3 scripts/zsentinel_recovery_policy.py \
+  --input private-pr-1550-merge-review.json --format markdown
+```
+
+The numbers above are **an illustration of the command shape**: the
+specified issue and PR must actually be present as a valid same-repository
+reference in the selected source. The command never discovers or assumes
+a current PR owner. Missing candidates, ambiguous cross-project issue
+selection and unknown issue source timestamps fail closed. Only original
+`--case-input` data may be used with `--prepare-merge-review`; a
+`--view-project`, `--view-issue` and `--candidate-pr-number` are all
+mandatory, and this export only accepts JSON format.
+
+The generated JSON is a **normal bounded single-policy request**, not a
+GitHub-ready merge instruction. Its `source_url` is the sampled exact
+canonical PR URL and `observed_at_utc` preserves the **original issue
+source observation** rather than stamping a stale source with the current
+clock. Every evidence field remains `null`, the owner remains `null`,
+and `source_verified` is never manufactured. The subsequent policy
+evaluation will therefore **HOLD** until a human checks fresh authoritative
+GitHub PR state, exact-head required CI, independent review, unresolved
+threads, branch protection, ownership and active claims. The operator may
+complete that separately verified worksheet, but this tooling itself
+never invokes merge, retry, claim or deploy.
+
 ### Project- and priority-focused historical owner views
 
 Use `--view-project <project-id>` and/or `--through-priority P0|P1|P2|P3`
