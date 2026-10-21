@@ -465,9 +465,17 @@ def main():
                     # Preserve explicit pins; missing discovery NEVER
                     # advertises a complete portfolio or an empty backlog.
                     source["pr_discovery"] = "degraded_unavailable_no_owner_proof"
+                    discovered = {
+                        "coverage": [{"project_id": project, "status": "degraded"}
+                                     for project in pr_discovery_projects],
+                        "calls": 0, "selection": [],
+                        "all_open_prs_observed": False,
+                        "merge_authorized": False,
+                        "writes_performed": False, "owner_verified": False,
+                    }
             pr_delivery = observe_prs(registry, pr_selections, token=token)
             pr_delivery["open_pr_discovery"] = discovered if discovered is not None else {
-                "coverage": "not_requested_or_unavailable",
+                "coverage": "not_requested",
                 "all_open_prs_observed": False, "merge_authorized": False,
             }
             source["pr_source"] = "github_bounded_existing_prs_readonly"
@@ -544,6 +552,9 @@ def main():
             rendered = (json.dumps(routed, sort_keys=True, indent=2)
                         if args.format == "json" else
                         operator_text(routed) + "\\nGitHub coverage: " + source["github_coverage"])
+            if args.format == "text" and pr_delivery is not None:
+                from zsentinel_pr_delivery import handoff_markdown
+                rendered += "\\n\\n" + handoff_markdown(pr_delivery)
         action_content = None
         if args.action_output is not None:
             from zsentinel_incident_desk import private_action_output
