@@ -1,5 +1,35 @@
 # zSentinel · Private Product Delivery Workbench
 
+## 21 oktober · expliciete repository-scope herstelt historische PR's bij leeg issueboard
+
+De bestaande archief-only export verloor een werkelijk in de **volledig
+toegelaten privé-PR-bron** opgenomen PR zonder issuekoppeling zodra het
+huidige opgeslagen issueboard nul issuekaarten voor die repository had.
+Dat maakte een leeg issueboard ten onrechte gelijk aan een lege lijst
+bestaande herbruikbare PR's.
+
+Met een door de operator **expliciet** gekozen canonieke
+`--repository Zennay/<repo>` neemt de merge-first CLI nu ook de
+`unlinked_prs` uit dát eerder gevalideerde archief mee, ook als er geen
+enkele issuekaart voor die repository in de gekozen boardbron zit.
+Zonder expliciete repositorykeuze blijft de conservatieve scope uit de
+oorspronkelijke issuekaarten ongewijzigd; losse gearchiveerde PR's uit
+andere repositories worden niet automatisch ingeladen.
+
+```sh
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./empty-for-target-repository.json \
+  --pr-dossier ./previously-saved-prs.zip \
+  --repository Zennay/zCloud --record-type unlinked-pr \
+  --format markdown --output ./private-explicit-unlinked-zcloud.md
+```
+
+De output blijft `historical_pr_without_sampled_issue_link` en
+`saved_peer_inventory_current=false`, nooit een live GitHub-status of
+releaseautorisatie. Een PR die niet in deze historische bron is opgenomen
+wordt niet gefabriceerd; controleer echte actuele open PRs en claims
+vóór nieuwe implementatie, integratie of merge.
+
 ## 21 oktober · gedeelde issuekoppelingen maken hergebruikbare PR's direct bereikbaar
 
 De brongebonden eigenaarsexport benoemt nu bij ieder gekoppeld bestaand PR
