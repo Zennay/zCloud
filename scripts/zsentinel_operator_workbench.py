@@ -2071,6 +2071,13 @@ function currentBrief(){
     'Claim context: '+line(card.claim_context,100),
     'Observed PRs: '+(card.open_pr_candidates.length?
       card.open_pr_candidates.join(' | '):'none in bounded snapshot'),
+    'Saved exact-head gate source (NOT live authority): '+
+      (card.pr_gate_observations.length?
+       card.pr_gate_observations.map(pr=>pr.url+' at '+pr.source_observed_at_utc+
+         ' HEAD '+pr.head_sha+' native checks success observed '+pr.observed_check_success+
+         ' approvals observed '+pr.observed_approvals+
+         ' unresolved '+(pr.blocking_unknowns.join(', ')||'none recorded')).join(' | '):
+       'none available; current HEAD and required CI/reviews UNKNOWN'),
     'Missing evidence: '+(card.evidence_gaps.length?
       card.evidence_gaps.map(g=>line(g,300)).join('; '):'live owner, exact CI and release gates remain unverified'),
     'Recommended investigation: '+line(card.recommended_next_step,650));
@@ -2225,7 +2232,21 @@ function drawDetail(){
    elem('h3','Proposed next investigation'),elem('p',card.recommended_next_step));
  const prs=elem('div');prs.append(elem('h3','Existing PR references (not ownership proof)'));
  if(!card.open_pr_candidates.length)prs.append(elem('p','No candidate PR in this bounded snapshot.'));
- card.open_pr_candidates.forEach(u=>prs.append(elem('p')).lastChild.append(link(u,u)));
+ card.open_pr_candidates.forEach(u=>{
+  const item=elem('p');item.append(link(u,u));prs.append(item);
+  const snapshot=card.pr_gate_observations.find(x=>x.url===u);
+  if(snapshot){
+   const report=elem('p','Original PR gate observation at '+snapshot.source_observed_at_utc+
+    ' · HEAD '+snapshot.head_sha+' · observed native checks '+snapshot.observed_check_success+
+    ' · legacy statuses '+(snapshot.legacy_context_success===null?'UNKNOWN':snapshot.legacy_context_success)+
+    ' · independent approvals seen '+snapshot.observed_approvals+
+    ' · GitHub mergeable observed '+snapshot.mergeable_observed+
+    ' · unresolved gate labels '+(snapshot.blocking_unknowns.join(', ')||'none recorded')+
+    '. Saved sample only; current HEAD, branch protection, ownership, CI, review and deployment remain UNVERIFIED.',
+    'meta');
+   prs.append(report);
+  }else prs.append(elem('small','No admitted exact-head PR observation in this saved source; inspect live GitHub.'));
+ });
  detail.append(prs);
  const gaps=elem('div');gaps.append(elem('h3','Missing evidence and gates'));
  const ul=elem('ul');
