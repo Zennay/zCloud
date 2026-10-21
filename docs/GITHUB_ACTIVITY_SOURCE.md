@@ -272,3 +272,26 @@ cannot be hidden accidentally merely because the browser's last public page
 selector pointed at page 2 or 3. This is display isolation, not a provider
 merge, claim handoff or live-recovery proof. All source windows remain
 bounded and never authorize repair, merge, deploy or operator impersonation.
+
+### 21 October operator handoff — actionable GitHub admission
+
+Activity's scoped **combined timeline Markdown export** now carries the same
+per-endpoint bounded window observations as the on-screen GitHub panel: PR,
+Actions and canonical main page, fixed enum status, numeric sampled count,
+manual page number and the next safe human step. The operator can see whether
+an explicit next-page request is meaningful or GitHub admission must be
+reviewed first. This handoff does **not** represent a separate live provider
+check, continuous observation, guaranteed completeness, independent PR review
+or proof of deployment.
+
+Public browser requests also label their fixed, non-sensitive failure classes
+per endpoint: HTTP 429 confirmed throttling; 403 permission/secondary limit
+unknown (never automatically assumed to be global); 401 authentication required;
+404 source inaccessible; other network/provider errors unknown. The browser
+never includes GitHub response bodies, raw transport exception messages,
+credentials or untrusted source text in these status labels. All incomplete
+receipts preserve earlier sampled facts explicitly as stale/historical.
+
+Source-level syntax was parsed without running any QA/regression suite; a
+source commit or parse check is not exact-head CI, owner approval or production
+verification. Merging and releasing remain independent protected operations.
