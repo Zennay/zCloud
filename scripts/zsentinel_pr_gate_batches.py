@@ -31,6 +31,9 @@ UNKNOWN = "github_source_unavailable_or_head_changed"
 # Only the canonical live gate collector may supply a saved human action.
 # Never render arbitrary instructions embedded in a local receipt as advice.
 HUMAN_GATE_STEPS = frozenset({
+    "owner_finish_draft_before_merge_review",
+    "owner_resolve_current_base_conflicts",
+    "wait_for_github_mergeability_evaluation",
     "inspect_incomplete_current_head_gate_source",
     "inspect_current_head_failed_checks_with_owner",
     "wait_for_existing_current_head_checks",
@@ -77,6 +80,10 @@ def _gate_class(item: dict, observed: bool, old: bool) -> str:
         return "source_unavailable"
     if old:
         return "saved_evidence_stale"
+    if item.get("draft_at_read") is True:
+        return "saved_draft"
+    if item.get("merge_conflict_observed") is True:
+        return "observed_merge_conflict"
     if (item.get("check_runs_page_complete") is not True
             or item.get("legacy_status_source_may_be_truncated") is not False
             or item.get("review_page_may_be_truncated") is not False):
@@ -84,8 +91,6 @@ def _gate_class(item: dict, observed: bool, old: bool) -> str:
     if (item["observed_checks_not_successful"] > 0
             or item.get("legacy_status_failure_or_error_observed", 0) > 0):
         return "observed_check_failure"
-    if item.get("draft_at_read") is True:
-        return "saved_draft"
     if item.get("observed_exact_head_changes_requested", 0) > 0:
         return "observed_review_changes"
     if (item["observed_checks_pending"] > 0
@@ -180,6 +185,13 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 ):
                     if type(item.get(key)) is not bool:
                         raise ValueError("invalid saved source-coverage flag")
+                # Older stored observations did not expose these distinct
+                # signals; they remain unknown instead of being upgraded to
+                # conflict-free evidence.
+                for key in ("merge_conflict_observed", "mergeability_not_yet_evaluated",
+                            "draft_state_stable_on_second_read"):
+                    if key in item and type(item[key]) is not bool:
+                        raise ValueError("invalid saved draft/conflict evidence")
                 if any(item[k] < 0 for k in (
                         "observed_checks_pending", "observed_checks_not_successful",
                         "observed_independent_exact_head_approvals")):
