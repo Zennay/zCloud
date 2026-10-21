@@ -86,6 +86,9 @@
 .blocked-queue-copy p{margin:5px 0;color:#aaa3ba;font-size:11px;line-height:1.5;overflow-wrap:anywhere}
 .blocked-queue-copy small{display:block;color:#817a91;font-size:10px;line-height:1.45}
 .blocked-queue-item button{flex:0 0 auto;border:1px solid #5a5273;background:#252033;color:#e0d5ff;border-radius:8px;padding:8px 11px;font-size:11px}
-.blocked-queue-state{margin-top:14px}
+.blocked-queue-state{margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.blocked-queue-state button{border:1px solid #66577e;background:#292238;color:#e3d8fb;border-radius:8px;padding:8px 11px;font-size:12px;min-height:38px}
+.blocked-queue-state button:hover,.blocked-queue-state button[aria-pressed="true"]{border-color:#b89be7;background:#342748;color:#fff}
+@media(max-width:760px){.blocked-queue-state button{min-height:44px;flex:1 1 auto}}
 
 @media(max-width:760px){.attention-panel,.blocked-queue-panel{padding:16px;margin-bottom:18px}.attention-head h2,.blocked-queue-head h2{font-size:17px}.attention-item,.blocked-queue-item{align-items:flex-start;flex-direction:column}.attention-item button,.blocked-queue-item button{width:100%;min-height:40px}.attention-count,.blocked-queue-count{min-width:32px;height:32px}}
