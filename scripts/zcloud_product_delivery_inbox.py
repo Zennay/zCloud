@@ -309,6 +309,20 @@ def _compare_snapshots(old_payload, old_rows, old_truncated,
             "queue": row["queue"],
             "priority": row["priority"],
             "kind": row["kind"],
+            # All values are derived from strict validated source receipts.
+            # Preserve both observed contexts for a meaningful owner handoff.
+            "before": (None if old is None else {
+                "priority": old["priority"],
+                "kind": old["kind"],
+                "detail": old["detail"],
+                "step": old["step"],
+            }),
+            "after": (None if new is None else {
+                "priority": new["priority"],
+                "kind": new["kind"],
+                "detail": new["detail"],
+                "step": new["step"],
+            }),
         })
     return {
         "old_time": old_time.strftime("%Y-%m-%d %H:%M UTC"),
@@ -347,6 +361,10 @@ def _render_comparison_html(comparison):
         '<p><strong>Geen geverifieerd herstel.</strong> '
         'Afwezigheid uit een begrensd overzicht kan ook door andere '
         'prioriteit of afgekapt bronbereik komen.</p>'
+        '<p>Vorig venster afgekapt: ' +
+        ('ja' if comparison["old_truncated"] else 'nee') +
+        ' · huidig venster afgekapt: ' +
+        ('ja' if comparison["new_truncated"] else 'nee') + '</p>'
         '<p class="subtle">Nog zichtbaar: ' + str(counts["still_observed"]) +
         ' · context gewijzigd: ' + str(counts["changed_visible_context"]) +
         ' · nieuw zichtbaar: ' + str(counts["newly_observed"]) +
@@ -355,12 +373,25 @@ def _render_comparison_html(comparison):
     )
     parts = []
     for row in comparison["changes"]:
+        contexts = []
+        for label, source in (
+                ("Vroeger zichtbaar", row["before"]),
+                ("Nu zichtbaar", row["after"])):
+            if source is None:
+                contexts.append('<p>' + esc(label) +
+                                ': niet in dit begrensde venster</p>')
+            else:
+                contexts.append(
+                    '<p><strong>' + esc(label) + ':</strong> ' +
+                    esc(source["priority"]) + ' · ' +
+                    esc(KINDS[source["kind"]][0]) +
+                    ' · ' + esc(source["detail"]) + '</p>'
+                )
         parts.append(
             '<article class="notice"><div class="eyebrow">' +
             esc(DELTA_LABELS[row["state"]]) + '</div><strong>' +
             esc(row["project"]) + ' · ' + esc(row["queue"]) +
-            '</strong><p>' + esc(row["priority"]) + ' · ' +
-            esc(KINDS[row["kind"]][0]) + '</p></article>'
+            '</strong>' + ''.join(contexts) + '</article>'
         )
     return headings + (
         '<section aria-label="Veranderde geobserveerde taken">' +
@@ -386,6 +417,10 @@ def _render_comparison_markdown(comparison):
         "Nieuw zichtbaar: " + str(counts["newly_observed"]),
         "Niet meer zichtbaar, onbevestigd: " +
         str(counts["no_longer_in_visible_window_unverified"]),
+        "Vorig zichtvenster afgekapt: " +
+        ("ja" if comparison["old_truncated"] else "nee"),
+        "Huidig zichtvenster afgekapt: " +
+        ("ja" if comparison["new_truncated"] else "nee"),
         "",
     ]
     for row in comparison["changes"]:
@@ -394,6 +429,14 @@ def _render_comparison_markdown(comparison):
         lines.append("- " + DELTA_LABELS[row["state"]] + ": " +
                      row["project"] + " / " + row["queue"] +
                      " (" + row["priority"] + ")")
+        for label, source in (
+                ("Eerder", row["before"]), ("Huidig", row["after"])):
+            if source is None:
+                lines.append("  - " + label + ": niet in dit bronvenster")
+            else:
+                lines.append("  - " + label + ": " + source["priority"] +
+                             " / " + KINDS[source["kind"]][0] +
+                             " / " + source["detail"])
     lines.append("")
     return lines
 
