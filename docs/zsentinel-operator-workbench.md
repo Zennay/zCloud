@@ -20,6 +20,46 @@ python3 scripts/zsentinel_operator_workbench.py \
 3. Open the HTML locally, on mobile or desktop. Search and filter the *already observed* real issues by project or priority. Each card links to the original GitHub issue, its bounded existing PR references, known evidence gaps and the owner's recommended next investigation. Choose a **human-only disposition**: investigate, inspect/integrate existing PR, coordinate owner, park external blocker, or candidate for new product implementation (requiring independent fresh claim verification).
 4. Add a private note for an issue. **Download private human handoff** to create a source-bound `zsentinel-human-handoff.json` in your browser. If you close the page, **Reopen own handoff** restores precisely that file only if the SHA-256 of the original board, observation timestamp, entire known issue inventory and read-only authorization flags match. Wrong, malformed, overlong or foreign handoffs leave the current notes alone. There is no automatic persistence, autosave, external API call or output to Notion.
 
+## Nieuw: één bestaande PR als privé eigenaarsoverleg exporteren
+
+Voor een concreet openstaand product-PR hoef je niet langer een volledige
+portfolio-export te delen. De bestaande offline bronbridge biedt nu
+`--format portfolio-pr-markdown --pr-url`: zij valideert eerst **het
+complete oorspronkelijke manifest en alle reeds opgeslagen batchbewijzen**,
+zoekt vervolgens één canonieke PR in die bron en maakt een afzonderlijk,
+brongebonden privé-Markdown-dossier. Een niet-waargenomen PR geeft een fout,
+niet een "geen problemen" of reeds gemergede status.
+
+```sh
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./private-review.json \
+  --receipt ./private-gates-01.json \
+  --format portfolio-pr-markdown \
+  --pr-url https://github.com/Zennay/zCloud/pull/1560 \
+  --output ./private-pr-1560-owner-handoff.md
+```
+
+Bij meerdere vooraf opgeslagen batches herhaal je `--receipt` zoals in het
+bestaande bridgecontract; ontbrekende batches zijn alleen met de bestaande
+expliciete `--allow-partial` optie toegestaan en blijven **UNKNOWN**.
+Het optionele `--project Zennay/zCloud` moet bij de bron-PR passen.
+`--pr-url` is uitsluitend toegestaan bij
+`--format portfolio-pr-markdown`; alle andere formaten behouden hun
+eerdere invoercontract.
+
+Het bestand bevat de exacte originele reviewmanifest- en board-SHA256,
+UTC-broninterval, ouderdom bij export, alle batchdekkingsgaten,
+de waargenomen bron-HEAD en bijpassende onveranderlijke commitlink, actieve
+gate-waarnemingen uit de opgeslagen bron, gekoppelde issue-URLs en een
+**menselijke vervolgstap**. Het bestand meldt uitdrukkelijk dat de huidige
+PR-status, eigenaar, vereiste CI, review, beschermd `main` en productie
+**niet** door deze historische bron zijn bevestigd.
+
+Bestaande create-only `0600`-output, maximale bestandsgrootte,
+no-follow write en toestemminggrenzen van de bridge blijven ongewijzigd.
+Dit is geen nieuwe CI-run, netwerkscanner, workerclaim, merge- of deployroute.
+De gebruiker moet de huidige GitHub-/Notion-bewijzen apart controleren.
+
 ## Merge-first: exact waargenomen bron-HEAD en ontbrekende gatebewijzen
 
 De bestaande opgeslagen PR-batch kan nu in de **projectpagina** én de
