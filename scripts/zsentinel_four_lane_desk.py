@@ -90,6 +90,33 @@ def html_inbox_links(project):
     )
 
 
+def owner_review_suggestions(portfolio, maximum=6):
+    """Read-only P0-first human owner queue; never grants a worker claim."""
+    suggestions = []
+    for item in portfolio:
+        queued = item["queued_p0"] or item["queued_p1"]
+        if not queued:
+            continue
+        priority = "P0" if item["queued_p0"] else "P1"
+        eligible = (item["eligible_queued_p0"] if priority == "P0"
+                    else item["eligible_queued_p1"])
+        suggestions.append({
+            "project": item["project"], "priority": priority,
+            "queued_local": queued, "eligible_hint_local": eligible,
+            "active_local": item["in_flight_p0"] + item["in_flight_p1"],
+            "source": "read_only_local_queue",
+            "current_owner_verified": False,
+            "claim_authorized": False,
+            "merge_authorized": False,
+            "next_step": (
+                "Controleer actuele Notion-claims en bestaande GitHub PRs/issues; "
+                "behoud alle actieve eigenaars. Kies pas vrij productwerk na "
+                "exacte bron- en bevoegdheidscontrole."
+            ),
+        })
+    return suggestions[:maximum], len(suggestions) > maximum
+
+
 def psi_html_table(psi):
     """Private, bounded table of direct kernel stalls; UNKNOWN is not zero."""
     if not isinstance(psi, dict) or psi.get("status") != "OBSERVED":
@@ -526,6 +553,8 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         "profile": "portfolio-recovery",
         "observed_queue": observed,
         "portfolio_urgent_local": portfolio,
+        "owner_review_shortlist": owner_review_suggestions(portfolio)[0],
+        "owner_review_shortlist_partial": owner_review_suggestions(portfolio)[1],
         "portfolio_priority_partial": portfolio_partial,
         "portfolio_unknown_project_groups": unknown_project_groups,
         "queue_partial": queue_partial,
@@ -622,6 +651,17 @@ def text_view(data):
         out.append(text_report(data["runner_processes"]))
     if data.get("host_pressure") is not None:
         out.append(pressure_sentence(data["host_pressure"]))
+    out.append("Prioritaire eigenaaroverdracht (NIET vrijgegeven, lokale bron):")
+    for item in data["owner_review_shortlist"]:
+        out.append(
+            f"  {item['priority']} {item['project']}: "
+            f"{item['queued_local']} wacht lokaal, "
+            f"eligible-hint {item['eligible_hint_local']}, "
+            f"{item['active_local']} actief; huidige eigenaar ONBEKEND."
+        )
+        out.append("  Vervolg: " + item["next_step"])
+    if data["owner_review_shortlist_partial"]:
+        out.append("  ONVOLLEDIG: meer urgente projecten buiten deze zes kaarten.")
     out.append("Open lokale P0/P1-queue per echt project (adviserend):")
     for item in data["portfolio_urgent_local"]:
         out.append(
@@ -860,6 +900,30 @@ def html_view(data):
             "</tr></thead><tbody>" + families + "</tbody></table></div>"
             + incomplete + "</section>"
         )
+    owner_cards = "".join(
+        "<article><div class='eyebrow'>Lokale owner triage · geen claimvrijgave</div>"
+        "<h3>" + html.escape(item["priority"]) + " · "
+        + html.escape(item["project"]) + "</h3><p>"
+        + str(item["queued_local"]) + " wacht lokaal; "
+        + str(item["eligible_hint_local"]) + " eligible-hint; "
+        + str(item["active_local"]) + " lokaal actief.</p><p>"
+        + html.escape(item["next_step"]) + "</p>"
+        + html_inbox_links(item["project"]) + "</article>"
+        for item in data["owner_review_shortlist"]
+    )
+    owner_panel = (
+        "<section class='notice'><h2>Eerst beoordelen · menselijke eigenaaroverdracht</h2>"
+        "<p>Gesorteerd op lokaal wachtende P0, daarna P1. "
+        "Dit zijn GEEN vrije claims of actuele GitHub/Notion-waarnemingen.</p>"
+        "<div class='grid'>" + owner_cards + "</div>"
+        + ("<p class='warn'>Meer projecten buiten deze beperkte shortlist; "
+           "raadpleeg de volledige lokale wachtrijtabel.</p>"
+           if data["owner_review_shortlist_partial"] else "")
+        + ("<p>Geen lokaal wachtende P0/P1-projecten in deze bron; "
+           "geen bewijs dat er geen open GitHub-issues zijn.</p>"
+           if not owner_cards else "")
+        + "</section>"
+    )
     portfolio_rows = "".join(
         "<tr><th scope='row'>" + html.escape(item["project"])
         + html_inbox_links(item["project"]) + "</th>"
@@ -927,7 +991,7 @@ def html_view(data):
         "<p>Actueel lokaal bronmoment: "
         + html.escape(data["observed_utc"]) + "</p>"
         + admission_banner + host_notice + "</header><div class='grid'>"
-        + "".join(cards) + "</div><section class='notice'>"
+        + "".join(cards) + "</div>" + owner_panel + "<section class='notice'>"
         "<h2>Veilige herstelacties</h2><p>Elke kaart: probleem, actie en status. Alleen advies.</p>"
         "<div class='grid'>" + action_cards + "</div></section><section class='notice'>"
         "<h2>Portfolio · urgente lokale wachtrij</h2>"
@@ -995,6 +1059,23 @@ def markdown_view(data):
         lines.extend(("", "## Hostdruk (adviserend)", "",
                       pressure_sentence(data["host_pressure"]),
                       "Geen autorisatie voor extra workers of serviceacties.", ""))
+    lines.extend(("", "## Prioritaire eigenaaroverdracht (lokaal; niet geclaimd)", ""))
+    for item in data["owner_review_shortlist"]:
+        inbox = github_inbox_urls(item["project"])
+        name = item["project"]
+        if inbox:
+            name += f" ([open PRs]({inbox[0]}) · [open issues]({inbox[1]}))"
+        lines.extend((
+            "",
+            "### " + item["priority"] + " · " + name,
+            "- **Wacht lokaal:** " + str(item["queued_local"]),
+            "- **Eligible-hint lokaal:** " + str(item["eligible_hint_local"]),
+            "- **Actief lokaal (niet overnemen):** " + str(item["active_local"]),
+            "- **Huidige externe eigenaar:** ONBEKEND.",
+            "- **Vervolg:** " + item["next_step"],
+        ))
+    if data["owner_review_shortlist_partial"]:
+        lines.extend(("", "Shortlist onvolledig: raadpleeg de tabel met alle lokale urgenties."))
     lines.extend(("", "## Urgente portfolio-queue (lokale bron)", "",
                   "| Project | P0 wacht | P1 wacht | P0 actief | P1 actief |",
                   "| --- | ---: | ---: | ---: | ---: |"))
