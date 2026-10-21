@@ -182,7 +182,7 @@ def _utc(value):
         return None
 
 
-def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases, missing_local_claim, active_profile_mismatch, local_config_mismatch):
+def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases, missing_local_claim, active_profile_mismatch, local_config_mismatch, local_config_unverified):
     """Map a local lane observation to human-only admission guidance.
 
     This deliberately never claims a task and is not an admission token.
@@ -201,8 +201,14 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
     if local_config_mismatch:
         return {
             "code": "HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH",
-            "label": "Lokale configuratie gebruikt niet het voorgestelde vierbaanprofiel",
-            "next_step": "Laat de runtime-eigenaar eerst het lokaal geobserveerde contract en de geladen serviceconfiguratie vergelijken.",
+            "label": "Vierbaanprofiel of maximum van vier workers ontbreekt",
+            "next_step": "Laat de runtime-eigenaar profiel en ai_worker_cap=4 met de geladen serviceconfiguratie vergelijken; wijzig geen actieve claims.",
+        }
+    if local_config_unverified:
+        return {
+            "code": "HOLD_LOCAL_CONTRACT_UNVERIFIED",
+            "label": "Lokaal vier-workercontract niet betrouwbaar gelezen",
+            "next_step": "Vraag de runtime-eigenaar om een geldig lokaal projectcontract en controleer de geladen serviceconfiguratie; geen nieuwe schrijver vrijgeven.",
         }
     if expired_local_leases:
         return {
@@ -265,6 +271,8 @@ def observe_local_contract(path):
         "status": "NOT_OBSERVED",
         "profile": "UNKNOWN",
         "worker_cap": None,
+        "required_worker_cap": 4,
+        "profile_deviation_reason": "LOCAL_CONTRACT_NOT_OBSERVED",
         "matches_proposed_profile": "NOT_INFERABLE",
         "loaded_runtime_profile": "NOT_VERIFIED",
     }
@@ -294,9 +302,21 @@ def observe_local_contract(path):
             packet["status"] = "UNTRUSTED_SOURCE"
             return packet
         packet["profile"] = profile
-        packet["worker_cap"] = cap if type(cap) is int and 0 <= cap <= 8 else None
+        # The correct lane name with a worker cap of one is not a
+        # four-worker contract. Preserve the distinction in every view.
+        if type(cap) is not int or not 0 <= cap <= 8:
+            packet["status"] = "UNTRUSTED_SOURCE"
+            packet["profile_deviation_reason"] = "INVALID_WORKER_CAP"
+            return packet
+        packet["worker_cap"] = cap
+        packet["profile_deviation_reason"] = (
+            "MATCH_LOCAL_CONTRACT" if profile == "portfolio-recovery" and cap == 4
+            else "LANE_PROFILE_MISMATCH" if profile != "portfolio-recovery"
+            else "FOUR_WORKER_CAP_MISMATCH"
+        )
         packet["matches_proposed_profile"] = (
-            "MATCH_LOCAL_FILE" if profile == "portfolio-recovery"
+            "MATCH_LOCAL_FILE"
+            if packet["profile_deviation_reason"] == "MATCH_LOCAL_CONTRACT"
             else "MISMATCH_LOCAL_FILE"
         )
         packet["status"] = "OBSERVED_LOCAL_FILE"
@@ -480,6 +500,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
     local_config_mismatch = (
         local_contract["matches_proposed_profile"] == "MISMATCH_LOCAL_FILE"
     )
+    local_config_unverified = local_contract["status"] != "OBSERVED_LOCAL_FILE"
     # Diagnostic only. The dispatch path itself remains governed by the
     # existing lane generator and actual external claim/release gates.
     active_items = [
@@ -511,6 +532,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         or portfolio_partial or unknown_project_groups
         or inconsistent_queue_claim_windows or untrusted_active_leases
         or active_profile_mismatch or local_config_mismatch
+        or local_config_unverified
     )
     missing_local_claim = (
         sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0
@@ -522,6 +544,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             lane, source_complete, cross_lane_coverage,
             collision_counts[lane["lane_id"]], expired, missing_local_claim,
             active_profile_mismatch, local_config_mismatch,
+            local_config_unverified,
         )
         visible.append({
             "id": lane["lane_id"],
@@ -584,6 +607,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         "active_legacy_profile_claims_observed": active_profile_mismatch,
         "deployed_four_lane_profile": "NOT_VERIFIED",
         "local_contract_evidence": local_contract,
+        "local_contract_reconciliation_required": local_config_mismatch or local_config_unverified,
         "active_claim_scopes_not_declared": unknown_claim_scopes,
         "untrusted_active_leases_observed": untrusted_active_leases,
         "runtime_active_filtered_by_eligibility": runtime_shadowed_active,
@@ -614,7 +638,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             or runtime_shadowed_active or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
             or active_profile_mismatch or local_config_mismatch
-            or any(collision_counts.values())
+            or local_config_unverified or any(collision_counts.values())
             or missing_local_claim
         ),
     }
@@ -824,7 +848,9 @@ def text_view(data):
     config = data["local_contract_evidence"]
     out.append(
         "Lokaal contract: " + config["status"] + "; profiel "
-        + config["profile"] + "; voorgesteld portfolio-recovery; geladen service NIET geverifieerd."
+        + config["profile"] + "; worker-cap " + str(config["worker_cap"])
+        + "/4 vereist; " + config["profile_deviation_reason"]
+        + "; geladen service NIET geverifieerd."
     )
     if data["active_legacy_profile_claims_observed"]:
         out.append("MIGRATIE-HOLD: "
@@ -978,8 +1004,10 @@ def html_view(data):
     config = data["local_contract_evidence"]
     if config["matches_proposed_profile"] == "MISMATCH_LOCAL_FILE":
         warnings.append(
-            "Het lokale projectcontract gebruikt profiel " + config["profile"]
-            + " in plaats van portfolio-recovery. Dit is geen bewijs van het geladen serviceprofiel."
+            "Het lokale projectcontract heeft profiel " + config["profile"]
+            + " met worker-cap " + str(config["worker_cap"])
+            + " in plaats van portfolio-recovery én ai_worker_cap=4. "
+              "Dit is geen bewijs van het geladen serviceprofiel."
         )
     elif config["status"] != "OBSERVED_LOCAL_FILE":
         warnings.append("Lokaal projectcontract niet betrouwbaar waargenomen; live profiel onbekend.")
