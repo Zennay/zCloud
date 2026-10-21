@@ -8,8 +8,11 @@ issue closure, released owner claim or live recovery. No GitHub/Notion writes.
 from __future__ import annotations
 
 import argparse
+import csv
 from datetime import datetime, timezone
 from html import escape
+from io import StringIO
+import json
 from pathlib import Path
 import sys
 from zipfile import BadZipFile
@@ -253,6 +256,116 @@ def render_markdown(report):
     return value
 
 
+def _csv_cell(value):
+    """Keep spreadsheet exports inert even if a future source field starts with a formula marker."""
+    if value is None:
+        return ""
+    if type(value) is bool:
+        text = "true" if value else "false"
+    elif isinstance(value, (dict, list, tuple)):
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    else:
+        text = str(value)
+    if text.lstrip(" \\t\\r\\n")[:1] in ("=", "+", "-", "@"):
+        return "'" + text
+    return text
+
+
+def render_json(report):
+    """Serialize the complete selected historical delta with provenance and non-authority flags."""
+    value = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\\n"
+    if not value or len(value.encode("utf-8")) > MAX_BYTES:
+        raise ValueError("Private portfolio JSON exceeds size budget")
+    return value
+
+
+def render_csv(report):
+    """Emit one spreadsheet-safe row per selected issue and repeat source provenance."""
+    display = report["display"]
+    old_freshness = report["old_source_freshness"]
+    new_freshness = report["new_source_freshness"]
+    fields = (
+        "schema", "source", "source_scope",
+        "old_manifest_sha256", "new_manifest_sha256",
+        "old_latest_observed_utc", "new_latest_observed_utc",
+        "old_freshness_status", "old_freshness_age_hours",
+        "old_freshness_stale_after_hours", "old_freshness_evaluated_at_utc",
+        "new_freshness_status", "new_freshness_age_hours",
+        "new_freshness_stale_after_hours", "new_freshness_evaluated_at_utc",
+        "old_sample_missing_batches", "new_sample_missing_batches",
+        "old_sample_issues", "new_sample_issues", "total_distinct_source_issues",
+        "newly_sampled_issues_total", "not_seen_in_newer_sample_total",
+        "changed_existing_issue_prs_total", "unchanged_sampled_issues_total",
+        "filter_priority", "filter_repository", "filter_changed_only",
+        "page", "page_size", "total_pages", "shown", "matched",
+        "issue_url", "repository", "priority", "old_priority", "new_priority", "kind",
+        "newly_sampled_prs_json", "not_seen_prs_json", "changed_prs_json",
+        "unchanged_prs", "last_sample_missing_batches",
+        "current_issue_open_status_verified", "claim_verified", "merge_verified",
+        "deploy_verified", "sample_absence_is_not_resolution",
+        "worker_claim_authorized", "required_ci_review_verified",
+        "merged_on_main_verified", "live_verified",
+    )
+    out = StringIO(newline="")
+    writer = csv.DictWriter(out, fieldnames=fields, lineterminator="\\r\\n",
+                            quoting=csv.QUOTE_MINIMAL)
+    writer.writeheader()
+    for issue in report["issues"]:
+        record = {
+            "schema": report["schema"], "source": report["source"],
+            "source_scope": report.get("source_scope"),
+            "old_manifest_sha256": report["old_manifest_sha256"],
+            "new_manifest_sha256": report["new_manifest_sha256"],
+            "old_latest_observed_utc": report["old_latest_observed_utc"],
+            "new_latest_observed_utc": report["new_latest_observed_utc"],
+            "old_freshness_status": old_freshness["status"],
+            "old_freshness_age_hours": old_freshness["age_hours"],
+            "old_freshness_stale_after_hours": old_freshness["stale_after_hours"],
+            "old_freshness_evaluated_at_utc": old_freshness["evaluated_at_utc"],
+            "new_freshness_status": new_freshness["status"],
+            "new_freshness_age_hours": new_freshness["age_hours"],
+            "new_freshness_stale_after_hours": new_freshness["stale_after_hours"],
+            "new_freshness_evaluated_at_utc": new_freshness["evaluated_at_utc"],
+            "old_sample_missing_batches": report["old_sample_missing_batches"],
+            "new_sample_missing_batches": report["new_sample_missing_batches"],
+            "old_sample_issues": report["old_sample_issues"],
+            "new_sample_issues": report["new_sample_issues"],
+            "total_distinct_source_issues": report["total_distinct_source_issues"],
+            "newly_sampled_issues_total": report["counts"]["newly_sampled_issues"],
+            "not_seen_in_newer_sample_total": report["counts"]["not_seen_in_newer_sample"],
+            "changed_existing_issue_prs_total": report["counts"]["changed_existing_issue_prs"],
+            "unchanged_sampled_issues_total": report["counts"]["unchanged_sampled_issues"],
+            "filter_priority": display["priority"],
+            "filter_repository": display["repository"],
+            "filter_changed_only": display["change_only"],
+            "page": display["page"], "page_size": display["page_size"],
+            "total_pages": display["total_pages"], "shown": display["shown"],
+            "matched": display["matched"],
+            "issue_url": issue["issue_url"], "repository": issue["repository"],
+            "priority": issue["priority"], "old_priority": issue["old_priority"],
+            "new_priority": issue["new_priority"], "kind": issue["kind"],
+            "newly_sampled_prs_json": issue["newly_sampled_prs"],
+            "not_seen_prs_json": issue["not_seen_prs"],
+            "changed_prs_json": issue["changed_prs"],
+            "unchanged_prs": issue["unchanged_prs"],
+            "last_sample_missing_batches": issue["last_sample_missing_batches"],
+            "current_issue_open_status_verified": issue["current_issue_open_status_verified"],
+            "claim_verified": issue["claim_verified"],
+            "merge_verified": issue["merge_verified"],
+            "deploy_verified": issue["deploy_verified"],
+            "sample_absence_is_not_resolution": report["sample_absence_is_not_resolution"],
+            "worker_claim_authorized": report["worker_claim_authorized"],
+            "required_ci_review_verified": report["required_ci_review_verified"],
+            "merged_on_main_verified": report["merged_on_main_verified"],
+            "live_verified": report["live_verified"],
+        }
+        writer.writerow({name: _csv_cell(record[name]) for name in fields})
+    value = out.getvalue()
+    if not value or len(value.encode("utf-8")) > MAX_BYTES:
+        raise ValueError("Private portfolio CSV exceeds size budget")
+    return value
+
+
 def render_html(report):
     e = lambda x: escape(str(x), quote=True)
     old_freshness = report["old_source_freshness"]
@@ -370,7 +483,7 @@ def main(argv=None):
     parser.add_argument("--changed-only", action="store_true")
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--page-size", type=int, default=30)
-    parser.add_argument("--format", choices=("html", "markdown"), default="html")
+    parser.add_argument("--format", choices=("html", "markdown", "csv", "json"), default="html")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
@@ -382,10 +495,18 @@ def main(argv=None):
             source, priority=args.priority, repository=args.repository,
             change_only=args.changed_only,
             page=args.page, page_size=args.page_size)
+        if args.format == "csv" and args.output.suffix.lower() != ".csv":
+            raise ValueError("CSV output must use .csv extension")
+        if args.format == "json" and args.output.suffix.lower() != ".json":
+            raise ValueError("JSON output must use .json extension")
         if args.format == "html":
             save_private_html(args.output, render_html(chosen))
-        else:
+        elif args.format == "markdown":
             _save_private_handoff(args.output, render_markdown(chosen))
+        elif args.format == "csv":
+            _save_private_handoff(args.output, render_csv(chosen))
+        else:
+            _save_private_handoff(args.output, render_json(chosen))
         print("Private historical issue-to-PR portfolio page created: " +
               str(chosen["display"]["shown"]) + " shown of " +
               str(chosen["display"]["total"]) + " issues")
