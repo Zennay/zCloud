@@ -474,6 +474,13 @@ def main():
                     source["issue_source"] = "github_readonly_selected_projects"
                     source["issue_projects"] = requested
                     source["issue_requests_attempted"] = enriched["issue_inbox"]["request_count"]
+                    if enriched["issue_inbox"].get("stopped_after_rate_or_auth_denial") is True:
+                        # Issue collector's global stop is reserved for a
+                        # confirmed provider quota. Do not send another PR GET
+                        # on the same token after this source receipt.
+                        provider_denial = "rate_limit_confirmed"
+                        source["provider_admission_denial"] = provider_denial
+                        source["provider_denial_discovered_in"] = "github_issue_inbox"
             except (ValueError, OSError) as exc:
                 enriched.pop("issue_inbox", None)
                 source["issue_source"] = "degraded_not_fetched"
@@ -501,6 +508,14 @@ def main():
                         registry, pr_discovery_projects, token=token,
                         limit=3 - len(pr_selections), exclude=pr_selections)
                     pr_selections.extend(discovered["selection"])
+                    if any(
+                        type(entry) is dict
+                        and entry.get("provider_admission") == "rate_limit_confirmed"
+                        for entry in discovered["coverage"]
+                    ):
+                        provider_denial = "rate_limit_confirmed"
+                        source["provider_admission_denial"] = provider_denial
+                        source["provider_denial_discovered_in"] = "github_pr_discovery"
                 except (OSError, ValueError, TypeError, KeyError):
                     # Preserve explicit pins; missing discovery NEVER
                     # advertises a complete portfolio or an empty backlog.
