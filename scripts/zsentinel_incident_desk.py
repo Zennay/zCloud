@@ -101,6 +101,26 @@ def _source(decision):
         ("P0", "P1", "P2", "P3").index(x["priority"]),
         not x["human"], x["review_by"], x["id"]))
     canonical_inputs = {"time": source_time, "incidents": items}
+    # A change in GitHub runner, queue lease, browserworker or Notion context
+    # must invalidate same-source private notes even if incident IDs match.
+    # The explicit older-source notes carry route can still be used by a human.
+    runtime_keys = ("live_github_read", "live_sources",
+                    "live_queue_pressure", "worker_progress_observation",
+                    "notion_claims_observation")
+    operational_sources = {key: decision[key] for key in runtime_keys
+                           if key in decision}
+    context_sha = None
+    if operational_sources:
+        try:
+            context_json = json.dumps(
+                operational_sources, ensure_ascii=True, sort_keys=True,
+                separators=(",", ":"), allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("noncanonical private operational source") from exc
+        if len(context_json.encode("utf-8")) > 4 * 1024 * 1024:
+            raise ValueError("private operational evidence exceeds bounded handoff scope")
+        context_sha = hashlib.sha256(context_json.encode("utf-8")).hexdigest()
+        canonical_inputs["operator_context_sha256"] = context_sha
     owner_source = decision.get("recent_branch_ownership")
     # Preserve the original handoff identity for reports without a new branch
     # observation. A supplied owner snapshot changes the handoff identity,
@@ -209,6 +229,7 @@ def _source(decision):
             "owner_rechecks_truncated": recheck_partial,
             "owner_rechecks_sha256": owner_source_sha,
             "observed_at": source_time, "incidents": items,
+            "operator_context_sha256": context_sha,
             "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             "source_partial": True, "authorizes_actions": False}
 
@@ -1239,6 +1260,7 @@ function makeBrief(){
  "> Bron is een gedeeltelijke momentopname; verdwenen/ontbrekende issues zijn niet opgelost.",
  "",
  "- Bron SHA-256: "+source.fingerprint,
+ "- Operationele broncontext SHA-256: "+(source.operator_context_sha256||"niet aangeleverd"),
  "- Bronmoment UTC: "+source.observed_at,
  "- Huidige filterselectie: "+selectedRows.length+" menselijke incidenten",
  "- Eigenaarfilter: "+mdText($("owner").value||"alle"),
