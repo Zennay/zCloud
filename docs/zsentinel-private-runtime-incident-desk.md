@@ -195,3 +195,38 @@ De privé-overdracht is nu **op de volledige geselecteerde operationele broncont
 Dit is een **privé operatorproduct** en geen live autonome hersteldienst. Alle claim-, queue-, lease-, CI-retry-, worker-resume-, GitHub-dispatch-, service-, release- en deployrechten blijven **false**. Een werkitem op `Running` betekent niet dat een pad wordt bezet door die Notionregel; een afwezige regel geeft geen vrijgave.
 
 Code staat uitsluitend op de bestaande zSentinel-PR-branch totdat de actuele exacte HEAD door verplichte GitHub-checks, onafhankelijke review en branch protection komt en bevoegd wordt gemerged. Geen QA-/regressie-/testsuites toegevoegd of handmatig uitgevoerd.
+
+## GitHub-bronweigering, schijnbaar vastgelopen jobs en veilige overdracht
+
+De geïntegreerde `zsentinel_recovery_refresh.py` leest uitsluitend bestaande
+vastgepinde GitHub Actions-runs en jobs (maximaal acht paren; maximaal zestien
+GET-verzoeken). Bij een HTTP 401 (`authentication_required`) of een door GitHub
+bevestigde uitgeputte rate-limit (`rate_limit_confirmed`) stopt de ververser
+met verdere verzoeken voor hetzelfde token. Ook nog niet bevraagde jobrecords
+worden als **gedegradeerd en ONBEKEND** gemarkeerd; oude succes-, faal- en
+runnerreceipts worden niet hergebruikt als nieuwe observatie. Een HTTP 403 zonder
+bewezen rate-limit is juist een **projectgebonden**
+`forbidden_or_rate_limit_unknown`: dit bewijst geen accountbrede billingfout,
+en andere repositorybronnen hoeven niet automatisch geblokkeerd te worden.
+
+Een privé JSON-uitvoer maakt `requests_attempted_actual`,
+`requests_attempted_max`, `provider_admission_denial`,
+`skipped_due_to_provider_denial` en per project de vaste
+`admission_category` zichtbaar. De bestaande offline HTML-cockpit toont
+expliciet de verantwoordelijke menselijke herstelactie en het aantal overgeslagen
+bronnen. Zonder geldige run/job-evidence kan geen incident worden verheven tot
+geverifieerde runnerstoring of afgerond werk.
+
+Daarnaast weigert de collector een tegenstrijdige joblifecycle: een nog
+wachtende of draaiende job met een finale conclusie, een voltooiingstijd bij
+niet-voltooide status, of jobtijden in de verkeerde volgorde. Toegestane
+`started_at`- en `completed_at`-waarden staan alleen als bronmetadata in
+privé JSON; ze bewijzen geen scheduler- of workerherstel. GitHub kan tussen het
+run-GET en het job-GET van status veranderen. In dat geval moet de operator
+later **een nieuw bronmoment** ophalen, niet op basis van de oude snapshot
+herstarten of CI opnieuw starten.
+
+De herstelroute geeft op basis van deze observaties nooit zelfstandig claims,
+GitHub-reruns, runner-restarts, Notion-acties, betaalde capaciteit, merges of
+deploys vrij. Bevoegde eigenaren en exacte-head CI/review blijven de enige
+operationele poorten.
