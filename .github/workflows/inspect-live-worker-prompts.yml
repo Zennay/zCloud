@@ -2,30 +2,89 @@ name: Inspect live worker prompts
 # retrigger: inspect live assignment metadata after canary 2026-10-04
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-live-worker-prompts.yml"
+      - "tests/test_inspect_live_worker_prompts_workflow.py"
   push:
     branches: [main]
     paths:
       - ".github/workflows/inspect-live-worker-prompts.yml"
+      - "tests/test_inspect_live_worker_prompts_workflow.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: inspect-live-worker-prompts-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
+  cancel-in-progress: false
+
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact zCloud candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact zCloud candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+
+      - name: Validate live-prompt diagnostic trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_inspect_live_worker_prompts_workflow
+
   inspect:
+    if: github.event_name != 'pull_request' && github.repository == 'Zennay/zCloud'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
     steps:
-      - name: Print live runner prompts
+      - name: Checkout exact zCloud revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify permanent VPS runner and exact revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Print sanitized live runner prompt metadata
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, urllib.request
+          import hashlib
+          import json
+          import urllib.request
+
           with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-targets", timeout=8) as r:
               payload=json.load(r)
           rows=[]
           for key,cfg in (payload.get("projects") or {}).items():
+              prompt=cfg.get("prompt")
+              prompt_text=prompt if isinstance(prompt,str) else ""
               rows.append({
                   "key": key,
                   "base": cfg.get("base_project_id"),
@@ -37,9 +96,11 @@ jobs:
                   "desired_state": cfg.get("desired_state"),
                   "queue_id": (cfg.get("queue_item") or {}).get("queue_id"),
                   "queue_slot": (cfg.get("queue_item") or {}).get("worker_slot"),
-                  "prompt": cfg.get("prompt"),
+                  "prompt_present": bool(prompt_text),
+                  "prompt_length": len(prompt_text),
+                  "prompt_sha256": hashlib.sha256(prompt_text.encode("utf-8")).hexdigest() if prompt_text else None,
               })
-          print("LIVE_PROMPTS_JSON="+json.dumps(rows,ensure_ascii=False))
+          print("LIVE_PROMPT_METADATA_JSON="+json.dumps(rows,ensure_ascii=False,sort_keys=True))
           PY
 
       - name: Prove live server drift is only the known prompt function
@@ -94,3 +155,4 @@ jobs:
           if not remainder_equal:
               raise SystemExit("live server drift is broader than the two worker prompt functions")
           PY
+          echo "ZCLOUD_LIVE_PROMPT_DIAGNOSTIC_GREEN=1"
