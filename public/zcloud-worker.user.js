@@ -375,23 +375,76 @@
       return true;
     }finally{sending=false;markBusy()}
   }
-  // A command-result POST can fail AFTER Send was accepted by ChatGPT.
-  // Never re-execute the same pending command merely to retry its receipt.
-  const pendingCommandAcks=new Map(),MAX_PENDING_COMMAND_ACKS=16;
+  // A successfully submitted browser command and its zCloud receipt are
+  // different operations. Keep only pending acknowledgements in private
+  // userscript storage so browser restart cannot turn a lost ACK into Send.
+  const MAX_PENDING_COMMAND_ACKS=16;
+  const COMMAND_ACK_KEY="zcloud-v2-pending-command-acks:"+id;
+  const COMMAND_COMPLETED_RESULT="single-tab worker v2 action";
+  const COMMAND_REFUSED_RESULT="v2 preserved tab; in-tab rotation limited to error or one-hour idle";
+  let commandAckStorageInvalid=false;
+  function loadCommandAcks(){
+    try{
+      if(typeof GM_getValue!=="function"||typeof GM_setValue!=="function")
+        throw Error("missing private userscript storage");
+      const saved=GM_getValue(COMMAND_ACK_KEY,null);
+      if(saved===null)return new Map();
+      if(typeof saved!=="string"||saved.length>4096)throw Error("invalid receipt size");
+      const rows=JSON.parse(saved);
+      if(!Array.isArray(rows)||rows.length>MAX_PENDING_COMMAND_ACKS)
+        throw Error("invalid receipt list");
+      const receipts=new Map();
+      for(const row of rows){
+        if(!Array.isArray(row)||row.length!==2||
+           !Number.isSafeInteger(row[0])||row[0]<=0||
+           (row[1]!=="completed"&&row[1]!=="failed")||
+           receipts.has(row[0]))throw Error("invalid receipt");
+        receipts.set(row[0],{
+          status:row[1],
+          result:row[1]==="completed"?COMMAND_COMPLETED_RESULT:COMMAND_REFUSED_RESULT
+        });
+      }
+      return receipts;
+    }catch(_){
+      commandAckStorageInvalid=true;
+      return new Map();
+    }
+  }
+  const pendingCommandAcks=loadCommandAcks();
+  function persistCommandAcks(){
+    try{
+      if(commandAckStorageInvalid||pendingCommandAcks.size>MAX_PENDING_COMMAND_ACKS)
+        throw Error("receipt ledger unavailable");
+      const contents=JSON.stringify([...pendingCommandAcks].map(
+        ([commandId,receipt])=>[commandId,receipt.status]));
+      GM_setValue(COMMAND_ACK_KEY,contents);
+      if(GM_getValue(COMMAND_ACK_KEY,null)!==contents)
+        throw Error("receipt was not confirmed in private storage");
+      return true;
+    }catch(_){
+      commandAckStorageInvalid=true;
+      return false;
+    }
+  }
   async function flushCommandAcks(){
+    if(commandAckStorageInvalid)return false;
     for(const [commandId,receipt] of pendingCommandAcks){
       try{
         await api("/runner-command-result","POST",{
           command_id:commandId,status:receipt.status,result:receipt.result
         });
-        pendingCommandAcks.delete(commandId);
       }catch(_){return false}
+      pendingCommandAcks.delete(commandId);
+      if(!persistCommandAcks())return false;
     }
     return true;
   }
   async function commands(){
-    // Retry only the existing command-result writer on normal heartbeat.
-    // An unavailable acknowledgement never authorizes another Send click.
+    // Retry only the original receipt on an existing heartbeat. An unknown
+    // private ledger is NEVER evidence that a queued Send may be repeated.
+    if(commandAckStorageInvalid){
+      await blocked("command-ack-ledger-unavailable");return;
+    }
     if(!(await flushCommandAcks()))return;
     let result;try{result=await api("/runner-commands")}catch(_){return}
     const incoming=(result.commands||[]).filter(c=>c&&Number(c.id||0)>lastCommand&&
@@ -409,24 +462,29 @@
       }
       const commandId=Number(command.id);
       if(!Number.isSafeInteger(commandId)||commandId<=lastCommand)continue;
-      // Legacy watchdogs queue new_chat after a stale heartbeat, which used
-      // to steal a tab straight after Send. Never reset for these commands.
+      // Legacy new_chat cannot steal an active tab. Its failed receipt is
+      // durable before the API update; never click a fresh chat for it.
       if(action==="new_chat"){
         lastCommand=commandId;
         pendingCommandAcks.set(commandId,{
-          status:"failed",
-          result:"v2 preserved tab; in-tab rotation limited to error or one-hour idle"
+          status:"failed",result:COMMAND_REFUSED_RESULT
         });
+        if(!persistCommandAcks()){
+          await blocked("command-ack-ledger-unavailable");return;
+        }
         if(!(await flushCommandAcks()))return;
         continue;
       }
       if(!(await send("database-"+action)))continue;
-      // Mark the command handled BEFORE the acknowledgement POST. Otherwise
-      // a lost API reply can replay it when browser awaiting becomes false.
+      // The Send outcome may be unknown remotely. Save only the already
+      // performed browser action, not the prompt, before posting its ACK.
       lastCommand=commandId;
       pendingCommandAcks.set(commandId,{
-        status:"completed",result:"single-tab worker v2 action"
+        status:"completed",result:COMMAND_COMPLETED_RESULT
       });
+      if(!persistCommandAcks()){
+        await blocked("command-ack-ledger-unavailable");return;
+      }
       if(!(await flushCommandAcks()))return;
     }
   }
