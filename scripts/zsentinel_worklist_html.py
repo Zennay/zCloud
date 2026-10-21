@@ -314,7 +314,7 @@ def render_html(board, max_rows=20):
             "</select></label><label>Privé botsingsnotitie (geen GitHub-status)"
             "<textarea class='collision-note' maxlength='500' rows='2' "
             "placeholder='Eigenaar/contact of apart te controleren PR'></textarea>"
-            "</label></div><button type='button' class='collision-export-one'>Download privéoverdracht voor dit issue</button></li>"
+            "</label><label>Privé opvolgdatum (lokale agenda, geen GitHub-deadline)<input class='collision-due' type='date' min='2000-01-01' max='2100-12-31'></label><span class='collision-due-badge' aria-live='polite'></span></div><button type='button' class='collision-export-one'>Download privéoverdracht voor dit issue</button></li>"
         )
     visible_issues = {card["issue_url"] for card in cards[:max_rows]}
     visible_project = {card["issue_url"]: card["project"]
@@ -493,6 +493,7 @@ const collisionRows=Array.from(document.querySelectorAll('li.collision[data-issu
 const collisionVisible=document.getElementById('collision-visible');
 const collisionStateFilter=document.getElementById('collision-state-filter');
 const collisionNext=document.getElementById('collision-next');
+const overdueNext=document.getElementById('collision-overdue-next');
 let collisionIndex=-1;
 const collisionLabels={
  unreviewed:'Nog niet beoordeeld',
@@ -500,6 +501,27 @@ const collisionLabels={
  coordinate:'Afstemmen met PR-eigenaren',
  followup:'Opvolging vastgelegd (niet opgelost)'
 };
+function validFollowupDate(value){
+ if(typeof value!=='string')return false;
+ if(value==='')return true;
+ if(!/^20[0-9]{2}-[0-9]{2}-[0-9]{2}$/.test(value))return false;
+ const parsed=new Date(value+'T00:00:00Z');
+ return !Number.isNaN(parsed.getTime())&&parsed.toISOString().slice(0,10)===value&&value<='2100-12-31';
+}
+function todayLocal(){
+ const now=new Date();
+ return [now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),
+  String(now.getDate()).padStart(2,'0')].join('-');
+}
+function followupDate(c){return c.querySelector('.collision-due').value;}
+function overdue(c){const due=followupDate(c);
+ return Boolean(due&&due<todayLocal()&&c.querySelector('.collision-state').value!=='followup');
+}
+function dueHandoff(c){
+ const due=followupDate(c);
+ return due?'Privé geplande opvolgdatum (lokale datum; geen bron/SLA): '+due+
+  (overdue(c)?' · VERLOPEN volgens lokale apparaatdatum':''):'';
+}
 const gateLabels={
  not_observed:'Geen waarneming in deze bron',
  observed_failed:'Check mislukt in opgeslagen bron',
@@ -524,7 +546,8 @@ function localSnapshot(){
   prs:prs.map(p=>[p.dataset.pr,p.querySelector('.pr-local-state').value,
     p.querySelector('.pr-note').value]),
   collisions:collisionRows.map(c=>[c.dataset.issue,
-    c.querySelector('.collision-state').value,c.querySelector('.collision-note').value])
+    c.querySelector('.collision-state').value,c.querySelector('.collision-note').value,
+   followupDate(c)])
  });
 }
 function sessionDirty(){return localSnapshot()!==lastSavedState;}
@@ -615,12 +638,21 @@ function refresh(){
     (!activity.value||(activity.value==='unknown'?['source_clock_incoherent','activity_timestamp_unknown'].includes(c.dataset.activity):activity.value===c.dataset.activity));
   c.hidden=!show;if(show)collisionsShown++;
  }
+ for(const c of collisionRows){
+  const due=followupDate(c),badge=c.querySelector('.collision-due-badge');
+  badge.textContent=!due?'Geen lokale datum':overdue(c)?'Verlopen op '+due:
+   due===todayLocal()?'Opvolgen vandaag · '+due:'Lokale datum: '+due;
+  badge.classList.toggle('overdue',overdue(c));
+ }
+ const overdueVisible=collisionRows.filter(c=>!c.hidden&&overdue(c)).length;
+ overdueNext.disabled=overdueVisible===0;
  const unattended=collisionRows.filter(c=>c.querySelector('.collision-state').value==='unreviewed').length;
  const completed=collisionRows.filter(c=>c.querySelector('.collision-state').value==='followup').length;
  const actionable=collisionRows.filter(c=>!c.hidden&&c.querySelector('.collision-state').value!=='followup').length;
  collisionVisible.textContent=collisionsShown+' van '+collisionRows.length+
   ' meervoudige PR-bronissues zichtbaar · '+unattended+' nog niet beoordeeld · '+
-  completed+' met lokale opvolging (niet opgelost) · '+actionable+' zichtbare vervolgacties';
+  completed+' met lokale opvolging (niet opgelost) · '+actionable+' zichtbare vervolgacties · '+
+  overdueVisible+' zichtbare verlopen privédata (apparaatdatum, geen externe SLA)';
  collisionNext.disabled=actionable===0;
  visible.textContent=count+' van '+tickets.length+' issuekaarten en '+
    prCount+' van '+prs.length+' bestaande PR-groepen zichtbaar';
@@ -744,6 +776,13 @@ focusNext.addEventListener('click',()=>{
  open[focusIndex].scrollIntoView({block:'start'});
  open[focusIndex].focus();
 });
+overdueNext.addEventListener('click',()=>{
+ const due=collisionRows.filter(c=>!c.hidden&&overdue(c));
+ if(!due.length)return;
+ collisionIndex=(collisionIndex+1)%due.length;
+ due[collisionIndex].scrollIntoView({block:'start'});
+ due[collisionIndex].focus();
+});
 collisionNext.addEventListener('click',()=>{
  const active=collisionRows.filter(c=>!c.hidden&&c.querySelector('.collision-state').value!=='followup');
  if(!active.length)return;
@@ -820,6 +859,7 @@ function exportOpenIssueHandoff(){
     '- Privé afstemmingsstatus: '+safeText(collisionLabels[c.querySelector('.collision-state').value]));
    const cnote=c.querySelector('.collision-note').value.trim();
    if(cnote)lines.push('- Privé afstemmingsnotitie: '+safeText(cnote));
+   if(dueHandoff(c))lines.push('- '+dueHandoff(c));
   }
   lines.push('');
  }
@@ -882,6 +922,7 @@ function onePrHandoff(){
      ' (geen bewezen bestandsbotsing of oplossing)');
    const conflictNote=conflict.querySelector('.collision-note').value.trim();
    if(conflictNote)lines.push('  - Privé PR-afstemmingsnotitie: '+safeText(conflictNote));
+   if(dueHandoff(conflict))lines.push('  - '+dueHandoff(conflict));
   }
  }
  lines.push('','## Privé PR-eigenaarsopvolging','',
@@ -931,6 +972,7 @@ function oneIssueHandoff(t){
    '- Lokale afstemming: '+safeText(collisionLabels[c.querySelector('.collision-state').value]));
   const cnote=c.querySelector('.collision-note').value.trim();
   if(cnote)lines.push('- Privé PR-afstemmingsnotitie: '+safeText(cnote));
+  if(dueHandoff(c))lines.push('- '+dueHandoff(c));
  }
  lines.push('','## Bestaande PR-kandidaten uit opgeslagen bron','');
  if(!candidates.length)lines.push(
@@ -1192,6 +1234,7 @@ function exportCollisionHandoff(onlyUnresolved,focusIssue=null){
    collisionLabels[c.querySelector('.collision-state').value]);
   const collisionNote=c.querySelector('.collision-note').value.trim();
   if(collisionNote)lines.push('Privé botsingsnotitie: '+safeText(collisionNote));
+  if(dueHandoff(c))lines.push(dueHandoff(c));
   if(t){
    lines.push('Handmatige lokale issuestatus: '+labels[t.querySelector('.local-state').value]);
    const note=t.querySelector('textarea').value.trim();
@@ -1275,6 +1318,7 @@ document.getElementById('export').addEventListener('click',function(){
     collisionLabels[c.querySelector('.collision-state').value]);
   const note=c.querySelector('.collision-note').value.trim();
   if(note)parts.push('  - Privé botsingsnotitie: '+safeText(note));
+  if(dueHandoff(c))parts.push('  - '+dueHandoff(c));
  }
  parts.push('Statussen zijn uitsluitend handmatig, lokaal en niet op GitHub/Notion vastgelegd.');
  const blob=new Blob([parts.join('\n')+'\n'],{type:'text/markdown;charset=utf-8'});
@@ -1296,7 +1340,8 @@ document.getElementById('session-save').addEventListener('click',function(){
  const collisionEntries=collisionRows.map(c=>({
   issue:c.dataset.issue,
   status:c.querySelector('.collision-state').value,
-  note:c.querySelector('.collision-note').value.slice(0,500)
+  note:c.querySelector('.collision-note').value.slice(0,500),
+  due:followupDate(c)
  }));
  const data=JSON.stringify({
   schema:'zsentinel-local-handoff-v2',
@@ -1360,7 +1405,8 @@ document.getElementById('session-import').addEventListener('change',async functi
      const item=restored.collision_entries[i];
      if(!item||item.issue!==collisionRows[i].dataset.issue||
         !collisionAllowed.has(item.status)||
-        typeof item.note!=='string'||item.note.length>500)
+        typeof item.note!=='string'||item.note.length>500||
+        (item.due!==undefined&&!validFollowupDate(item.due)))
        throw new Error('Sessie bevat ongeldige botsingsopvolging');
     }
    }
@@ -1380,6 +1426,8 @@ document.getElementById('session-import').addEventListener('change',async functi
        restored.collision_entries[i].status;
      collisionRows[i].querySelector('.collision-note').value=
        restored.collision_entries[i].note;
+     collisionRows[i].querySelector('.collision-due').value=
+       restored.collision_entries[i].due||'';
     }
    }
    if(Object.prototype.hasOwnProperty.call(restored,'focused_pr')){
@@ -1479,9 +1527,11 @@ refresh();
         ".collision{border-bottom:1px solid #526a83;padding:14px 4px}"
         ".collision:focus{outline:3px solid #f0c976;scroll-margin:90px}"
         ".collision ul{padding-left:26px}.collision li{margin:9px 0}"
-        ".collision-controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
+        ".collision-controls{display:grid;grid-template-columns:minmax(160px,230px) 1fr minmax(160px,230px);"
         "gap:12px;padding:12px 0}.collision-note{width:100%;box-sizing:border-box}"
-        "@media(max-width:640px){.collision-controls{grid-template-columns:1fr}}"
+        ".collision-due{display:block;width:100%;box-sizing:border-box;margin-top:8px}"
+         ".collision-due-badge{align-self:center}.collision-due-badge.overdue{font-weight:bold;color:#ffd18a}"
+         "@media(max-width:640px){.collision-controls{grid-template-columns:1fr}}"
         ".focus-alternative{padding:5px 9px;margin:4px 0}"
         ".pr-controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
         "gap:14px;margin:12px 0}.pr-note{width:100%;box-sizing:border-box}"
@@ -1554,7 +1604,8 @@ refresh();
         "<p id='project-review-summary' aria-live='polite'></p>"
         "<button id='project-review-next' type='button'>Volgende project met open lokale opvolging</button>"
         "<p id='collision-visible' aria-live='polite'></p>"
-        "<button id='collision-next' type='button'>Volgende open botsingsopvolging</button>"
+        "<button id='collision-next' type='button'>Volgende open botsingsopvolging</button>" 
+         "<button id='collision-overdue-next' type='button'>Volgende verlopen privé opvolgdatum</button>"
         "<p id='session-status' aria-live='polite'></p>"
         "<p id='unsaved' role='status' aria-live='polite'></p>"
         "<div id='focus-bar' class='focus-bar' role='status' hidden>"
