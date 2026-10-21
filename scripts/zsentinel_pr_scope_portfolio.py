@@ -948,6 +948,11 @@ def attention_lines(board, markdown=False):
         lines.append("- " + row["attention_group"] + " · " + row["project"] +
                      " · " + link + " · " + row["blocker_text"])
         lines.append("  Actie: " + row["human_next_step"])
+        if row["pending_review_requests"] is not None:
+            requests = row["pending_review_requests"]
+            lines.append("  Reviewverzoek open: " + str(requests["individuals"]) +
+                         " personen, " + str(requests["teams"]) +
+                         " teams (geen goedkeuring).")
         if row["new_evidence_since_previous_sample"]:
             lines.append("  VERANDERD sinds vorige opname: " +
                          str(row["historical_gate_change"]) +
@@ -1009,6 +1014,11 @@ def attention_html(board):
                 str(row["number"]) + "</a></strong><p>" +
                 escape(row["blocker_text"]) + "</p><p><b>Volgende stap:</b> " +
                 escape(row["human_next_step"]) + "</p>" +
+                ("<p>Open reviewverzoeken: " +
+                 str(row["pending_review_requests"]["individuals"]) +
+                 " personen, " + str(row["pending_review_requests"]["teams"]) +
+                 " teams. Verzoek ≠ approval.</p>"
+                 if row["pending_review_requests"] is not None else "") +
                 movement_note + meta +
                 ("<details><summary>Open problematische CI- en statuslinks (" +
                  str(len(row["non_green_jobs"])) + ")</summary><ul>" + tasks +
@@ -1414,6 +1424,8 @@ def as_private_csv(board):
         "check_name", "check_state", "check_conclusion", "check_url",
         "prior_gate_blocker", "current_gate_blocker", "gate_episode_change",
         "gate_evidence_category", "operator_next_step",
+        "pending_review_individuals_observed", "pending_review_teams_observed",
+        "pending_review_request_fingerprint_sha256",
         "attention_rank", "attention_group",
         "historical_gate_change",
         "owner_claim_verified", "merge_authorized", "operator_notice",
@@ -1529,7 +1541,16 @@ def as_private_csv(board):
                  pr_head_sha=item.get("head_sha_observed") or "",
                  pr_base_sha=item.get("base_sha_observed") or "",
                  current_exact_head_gate_status=item["status"],
-                 operator_notice="Observed gate only; branch protection/ownership still unknown.")
+                 pending_review_individuals_observed=(
+                     item["pending_individual_review_requests_observed"] if
+                     item["status"] == "current_exact_pr_head_and_sample_match" else ""),
+                 pending_review_teams_observed=(
+                     item["pending_team_review_requests_observed"] if
+                     item["status"] == "current_exact_pr_head_and_sample_match" else ""),
+                 pending_review_request_fingerprint_sha256=(
+                     item["pending_review_request_evidence_sha256"] if
+                     item["status"] == "current_exact_pr_head_and_sample_match" else ""),
+                 operator_notice="Observed gate only; requested reviewers are NOT approvals; branch protection/ownership unknown.")
             if item["status"] != "current_exact_pr_head_and_sample_match":
                 continue
             for check in item["observed_actionable_check_runs"]:
