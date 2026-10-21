@@ -138,9 +138,14 @@ Daarnaast zijn `--format text --output NIEUW.txt` en
 `--format desk --output NIEUW.html` beschikbaar. De HTML- en
 tekst-/Markdown-overdracht bevatten een zichtbare historische
 bronwaarschuwing; ICS bewaart het daadwerkelijke originele bronmoment.
-Ook wanneer het opgeslagen bestand gisteren is gemaakt, ontstaat
-**geen nieuwe CI- of eigenaarswaarneming**. Alleen de operator kan de
-eventuele oude herinnering bewust importeren. Source-only branchfunctie:
+De historische ICS heeft `X-ZSENTINEL-HISTORICAL-REPLAY:TRUE` en benoemt
+alle P0/P1-vermeldingen expliciet als HISTORISCH. **Oude `VEVENT`-items
+bevatten geen `VALARM`**: kalenderclients kunnen bij bewust importeren
+dus geen verlopen herinneringsalarm uit deze archiefweergave afvuren.
+Dit wijzigt de afzonderlijke, bewust geëxporteerde actuele menselijke
+agenda niet; die behoudt zijn eigen reminders. Ook wanneer het opgeslagen
+bestand gisteren is gemaakt, ontstaat **geen nieuwe CI- of
+eigenaarswaarneming**. Source-only branchfunctie:
 geen scheduler, claim, auto-deploy of live service-activering.
 
 ## Historische P0/P1-incidenttijdlijn (2–8 echte bronmomenten)
