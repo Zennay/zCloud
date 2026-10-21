@@ -636,7 +636,7 @@ def compare_snapshot(path: Path, current: dict) -> dict:
     return {
         "new_findings": sorted(set(new) - set(old)),
         "resolved_findings": confirmed_resolved,
-        "not_reobserved_findings": not_reobserved,
+        "recovery_unverified_findings": not_reobserved,
         "still_present": changed,
         "severity_changes": [
             {"code": code, "previous": old[code], "current": new[code]}
@@ -695,7 +695,7 @@ def render_html(report: dict) -> str:
             '<section aria-labelledby="diff"><h2 id="diff">Changes since previous report</h2>'
             f'<dl>{item("New findings", shown(comparison["new_findings"]))}'
             f'{item("Confirmed resolved", shown(comparison["resolved_findings"]))}'
-            f'{item("Not re-observed", shown(comparison["not_reobserved_findings"]))}'
+            f'{item("Recovery unverified", shown(comparison["recovery_unverified_findings"]))}'
             f'{item("Still present", shown(comparison["still_present"]))}'
             f'{item("Severity changed", shown([x["code"] + ": " + x["previous"] + " → " + x["current"] for x in comparison["severity_changes"]]))}</dl>'
             '<p class="muted">An omitted/failed measurement never proves recovery. Previous report is locally supplied, not independent runtime attestation.</p></section>'
@@ -839,7 +839,7 @@ def main() -> int:
             change = report["comparison"]
             print(f"New findings: {', '.join(change['new_findings']) or 'none'}")
             print(f"Confirmed resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
-            print(f"Not re-observed: {', '.join(change['not_reobserved_findings']) or 'none'}")
+            print(f"Recovery unverified: {', '.join(change['recovery_unverified_findings']) or 'none'}")
             print(f"Still present: {', '.join(change['still_present']) or 'none'}")
             for entry in change["severity_changes"]:
                 print(f"Severity changed: {entry['code']} {entry['previous']} -> {entry['current']}")
