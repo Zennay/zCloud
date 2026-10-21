@@ -1440,6 +1440,13 @@ def handoff_html(report):
             ' · issue NIET als gerepareerd of gemerged bevestigd.</div>'
             for gate in gate_rows
         )
+        unchecked = item.get("uninspected_related_pr_count", 0)
+        missing_label = (
+            ' <span class="muted">· ' + str(unchecked) +
+            ' gekoppelde PR(' + ("s" if unchecked != 1 else "") +
+            ') niet exact geïnspecteerd; status ONBEKEND</span>'
+            if unchecked else ""
+        )
         job = item.get("exact_github_job")
         job_url = item.get("exact_github_job_url")
         commit_url = item.get("exact_github_commit_url")
@@ -1497,7 +1504,8 @@ def handoff_html(report):
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
                      escape(_short(item.get("next_step"))) + due_label + pr_label +
-                     link + pr_links + verified_links + linked_labels + '</li>')
+                     link + pr_links + verified_links + linked_labels +
+                     missing_label + '</li>')
     coverage = report.get("coverage", {})
     if not isinstance(coverage, dict) or len(coverage) > 8:
         raise ValueError("invalid handoff source coverage")
@@ -1753,6 +1761,10 @@ def markdown(report):
                 " · " + _md(NEXT_ACTION_NL[gate["next_step"]], 250) +
                 " · issuefix en merge NIET bewezen."
             )
+        if card.get("uninspected_related_pr_count"):
+            lines.append("   Nog niet exact geïnspecteerde PR-links: " +
+                         str(card["uninspected_related_pr_count"]) +
+                         "; status en eigenaarschap ONBEKEND.")
         if card.get("kind") == "open_pr_owner_review":
             coverage = card.get("pr_observation_coverage")
             if coverage not in ("bounded_exact_head_review_and_checks",
@@ -1918,6 +1930,10 @@ def csv_export(report):
             ": " + NEXT_ACTION_NL[gate["next_step"]]
             for gate in linked
         )
+        if item.get("uninspected_related_pr_count"):
+            linked_followup += (
+                " · " + str(item["uninspected_related_pr_count"]) +
+                " PR-links nog niet exact geïnspecteerd: ONBEKEND")
         rows.append({
             **metadata,
             "record_type": "owner_action",
