@@ -60,6 +60,39 @@ class DeploySummaryTests(unittest.TestCase):
         self.assertNotIn("Production deploy green", summary)
 
 
+    def test_failed_summary_surfaces_sanitized_safe_idle_blockers(self):
+        summary = zcloud_deploy_summary.build_summary(
+            deploy_sha="abc123",
+            deploy_decision="true",
+            prewrite_decision="true",
+            job_status="failure",
+            regression_run_id="42",
+            regression_mode="exact",
+            run_url="run",
+            artifact_name="artifact",
+            safe_idle={
+                "safe_idle": False,
+                "restored_after_timeout": True,
+                "blocking_workers": [
+                    {
+                        "worker_id": "cloud::w1",
+                        "desired_state": "draining",
+                        "generating": True,
+                        "sending": False,
+                        "drain_command_status": "pending",
+                        "conversation_id": "must-not-render",
+                    }
+                ],
+            },
+        )
+        self.assertIn("Production deploy failed", summary)
+        self.assertIn("| Safe-idle | timeout-restored |", summary)
+        self.assertIn(
+            "cloud::w1 generating=true sending=false drain=pending",
+            summary,
+        )
+        self.assertNotIn("must-not-render", summary)
+
     def test_cli_writes_summary_when_evidence_is_invalid(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -70,6 +103,7 @@ class DeploySummaryTests(unittest.TestCase):
                 "zcloud_deploy_summary.py",
                 "--output", str(output),
                 "--evidence", str(evidence),
+                "--safe-idle-state", str(root / "missing-safe-idle.json"),
                 "--deploy-sha", "abc123",
                 "--deploy-decision", "false",
                 "--prewrite-decision", "",
@@ -84,6 +118,8 @@ class DeploySummaryTests(unittest.TestCase):
             rendered = output.read_text(encoding="utf-8")
             self.assertIn("Skipped before VPS mutation", rendered)
             self.assertIn("| LKG snapshot | n/a |", rendered)
+            self.assertIn("| Safe-idle | n/a |", rendered)
+            self.assertIn("| Safe-idle blockers | n/a |", rendered)
 
 
 
