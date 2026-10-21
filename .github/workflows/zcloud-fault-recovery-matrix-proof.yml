@@ -1,0 +1,55 @@
+name: zCloud fault recovery matrix proof
+
+on:
+  pull_request:
+    paths:
+      - fault-recovery-matrix.v1.json
+      - scripts/zcloud_fault_recovery_matrix.py
+      - tests/test_fault_recovery_matrix.py
+      - docs/fault-recovery-matrix.md
+      - .github/workflows/zcloud-fault-recovery-matrix-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-fault-recovery-matrix-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  permanent-vps-proof:
+    if: ${{ github.event_name != 'pull_request' || (github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact head and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$(git rev-parse HEAD)" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Validate matrix trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_fault_recovery_matrix
+
+      - name: Execute bounded fault simulations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_fault_recovery_matrix.py --execute --require-green             | tee "$RUNNER_TEMP/zcloud-fault-recovery-matrix.json"
+          grep -q '"status":"green"' "$RUNNER_TEMP/zcloud-fault-recovery-matrix.json"
+          grep -q '"live_mutation":false' "$RUNNER_TEMP/zcloud-fault-recovery-matrix.json"
+          echo ZCLOUD_FAULT_RECOVERY_MATRIX_VPS_GREEN=1
