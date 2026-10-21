@@ -478,6 +478,47 @@ closing keywords and their absence **never prove or disprove** GitHub
 cross-reference links or authorized ownership; no title/body, issue text,
 token or private prompt is exported.
 
+### GitHub P0/P1-first live issue inbox (no saved case)
+
+zSentinel can now open a **bounded current incident inbox** from the
+repository's live GitHub issues, without a historical Notion/JSON file:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --live-inbox-repo Zennay/zCloud \
+  --format html --output /private/zsentinel-live-inbox.html
+```
+
+Also available as `--format markdown` or `--format json` for
+portable owner handoffs. The inbox is **read-only** and only accepts an
+explicit canonical `Zennay/<repo>` identity. It reads at most
+three pages of 30 **recently updated open issues**, filters the GitHub
+issue-list's pull-request records, validates every retained issue URL
+and repository, and displays at most 45 links. Maximum network cost:
+**3 GitHub GETs**; each page is individually limited to 2 MiB. A
+partial, truncated, inaccessible or unstable source never proves the
+absence of a P0 incident or authorizes creating a duplicate fix.
+
+Only explicit `P0`–`P3` or `priority:p0`–`priority:p3`
+(and slash variants) GitHub labels establish the **advisory** source
+priority; conflicts become UNKNOWN. An issue title beginning with
+`P0:` or `P1:` may appear as a clearly unverified,
+secondary **navigation hint**, not a verified priority or authority.
+The original issue title/body, user names, private labels and tokens
+are never exported; the operator receives canonical issue links,
+observed label priority, limited update timestamp, and explicit
+unknown ownership/repair/CI/merge statuses. An issue older than the
+bounded recent-source window may be missing.
+
+The inbox cannot take over an active claim or report any PR merged or
+live from issue-list data. Select an issue URL from its output and use
+`--live-issue-url` to inspect the current associated PR
+candidates with bounded timeline and open-PR reads. Both paths preserve
+the current owner/CI/protected-main/research-integrity gates. Neither
+will retry workflows, restart services, access worker secrets, alter
+Notion or SQLite, merge or deploy.
+
 ### Inspect one live GitHub issue without a saved private dossier
 
 The read-only owner desk can start immediately from an existing canonical
