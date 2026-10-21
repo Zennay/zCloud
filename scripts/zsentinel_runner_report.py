@@ -1291,6 +1291,7 @@ def save_private_incident_bundle(path, data):
         raise ValueError("Private incident artifact exceeds bounded output size")
     manifest = {
         "schema": "zsentinel.private-incident-bundle.v1",
+        "incident_ref": hashlib.sha256(rendered["owner-inbox.json"]).hexdigest()[:24],
         "source": payload["source"],
         "observation_window": payload["window"],
         "artifacts": {
@@ -1412,6 +1413,10 @@ def verify_private_incident_bundle(path):
             or manifest.get("source") != inbox.get("source")
             or manifest.get("observation_window") != inbox.get("window")):
         raise ValueError("Incident source and manifest disagree")
+    identity = hashlib.sha256(source["owner-inbox.json"]).hexdigest()[:24]
+    if (not isinstance(manifest.get("incident_ref"), str)
+            or not hmac.compare_digest(manifest["incident_ref"], identity)):
+        raise ValueError("Incident reference mismatch")
     for key in ("claim_authorized", "service_restart_authorized",
                 "github_dispatch_authorized", "merge_authorized",
                 "deploy_authorized"):
@@ -1433,7 +1438,7 @@ def verify_private_incident_bundle(path):
                 not hmac.compare_digest(expected["sha256"], digest)):
             raise ValueError("Incident source checksum mismatch")
     return {"schema": manifest["schema"], "source": manifest["source"],
-            "verified_files": len(source), "content_consistent": True,
+            "incident_ref": identity, "verified_files": len(source), "content_consistent": True,
             "cryptographic_origin_attested": False,
             "github_job_recovered": None, "production_restored": None}
 
