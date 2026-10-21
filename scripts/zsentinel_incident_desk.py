@@ -330,6 +330,170 @@ def branch_work_review_panel(decision):
 
 
 
+
+def github_exact_gate_panel(decision):
+    """One source-bound GitHub owner handoff; never equate a job with PR CI."""
+    live = decision.get("live_sources")
+    read = decision.get("live_github_read")
+    if live is not None and type(live) is not dict:
+        raise ValueError("invalid GitHub live source provenance")
+    if read is not None and type(read) is not dict:
+        raise ValueError("invalid GitHub refresh provenance")
+    source = (live.get("github_jobs") if type(live) is dict and
+              "github_jobs" in live else read)
+    discovery = live.get("ci_discovery") if type(live) is dict else None
+    if source is None and discovery is None:
+        return ('<section class="panel"><h2>GitHub · exacte jobroutes</h2>'
+                '<p class="banner">Geen actuele exacte jobbron in deze momentopname.'
+                ' Geen runner-, CI- of mergebesluit mogelijk.</p></section>')
+    if source is not None and source != "no_selected_jobs_not_a_zero_incident_claim":
+        if (type(source) is not dict
+                or type(source.get("refreshed_projects")) is not list
+                or len(source["refreshed_projects"]) > 8):
+            raise ValueError("noncanonical GitHub job source")
+    rows = (source.get("refreshed_projects", []) if type(source) is dict else [])
+    action_labels = {
+        "queued_without_runner_assignment":
+            "Controleer bij de bevoegde eigenaar de runnerlabels, online-status en repo-toegang.",
+        "terminal_without_runner_assignment":
+            "Controleer GitHub-jobannotaties; zonder uitgevoerde stap is billing NIET bewezen.",
+        "job_with_runner_assignment":
+            "Runner-ID gezien; controleer uitvoering, geen serviceherstart uit deze waarneming.",
+        "terminal_with_runner_assignment":
+            "Job kreeg runner-ID; controleer echte jobuitkomst en afzonderlijke exacte-head PR-gates.",
+        "no_runner_assignment_observed":
+            "GitHub heeft geen runner toegekend; oorzaak vereist eigenaarcontrole.",
+        "runner_assignment_missing_from_source":
+            "Toewijzing onbekend: eerst bron opnieuw lezen, geen runnerdiagnose.",
+    }
+    rank = {"queued_without_runner_assignment": 0,
+            "terminal_without_runner_assignment": 1,
+            "no_runner_assignment_observed": 2,
+            "runner_assignment_missing_from_source": 3,
+            "job_with_runner_assignment": 4,
+            "terminal_with_runner_assignment": 5}
+    details, seen = [], set()
+    for item in rows:
+        if type(item) is not dict or item.get("status") not in ("refreshed", "degraded"):
+            raise ValueError("invalid exact GitHub job status")
+        pid = item.get("project_id")
+        if type(pid) is not str or not SLUG.fullmatch(pid) or pid in seen:
+            raise ValueError("invalid duplicate GitHub project receipt")
+        seen.add(pid)
+        if item["status"] == "degraded":
+            details.append((9, '<li><strong>' + escape(pid) +
+                            '</strong> · exacte GitHub-bron ONBESCHIKBAAR,'
+                            ' geen runnerdiagnose en geen vrijgave.</li>'))
+            continue
+        repository = item.get("repository")
+        sha = item.get("head_sha")
+        run_id, job_id = item.get("run_id"), item.get("job_id")
+        stage = item.get("job_assignment_stage")
+        route = item.get("runner_route")
+        job_status = item.get("job_status")
+        labels = item.get("route_labels")
+        observed = item.get("observed_at")
+        if (item.get("source") != "github_exact_run_job"
+                or item.get("may_restart_runner") is not False
+                or type(repository) is not str
+                or not re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", repository)
+                or type(sha) is not str
+                or not re.fullmatch(r"[0-9a-f]{40}", sha)
+                or type(run_id) is not int or not 1 <= run_id <= 2**53 - 1
+                or type(job_id) is not int or not 1 <= job_id <= 2**53 - 1
+                or stage not in action_labels
+                or route not in ("self_hosted", "hosted_or_custom", "unknown")
+                or job_status not in ("queued", "in_progress", "completed", "waiting", "pending")
+                or type(item.get("runner_assigned")) is not bool
+                or type(labels) is not list or len(labels) > 16
+                or any(type(label) is not str or not 1 <= len(label) <= 64
+                       or not label.isascii() or any(ord(c) < 32 for c in label)
+                       for label in labels)):
+            raise ValueError("untrusted GitHub exact job receipt")
+        _stamp(observed)
+        complete = item.get("assignment_source_complete")
+        if (type(complete) is not bool
+                or (stage == "runner_assignment_missing_from_source") == complete
+                or stage == "queued_without_runner_assignment" and (
+                    job_status != "queued" or item["runner_assigned"])
+                or stage == "terminal_without_runner_assignment" and (
+                    job_status != "completed" or item["runner_assigned"])
+                or stage == "terminal_with_runner_assignment" and (
+                    job_status != "completed" or not item["runner_assigned"])):
+            raise ValueError("contradictory exact GitHub runner assignment")
+        canonical = item.get("canonical_zcloud_runner_assignment_observed")
+        if canonical is not None and type(canonical) is not bool:
+            raise ValueError("untrusted canonical runner identity")
+        if canonical is True and (route != "self_hosted" or
+                                  not item["runner_assigned"] or
+                                  type(item.get("runner_id_observed")) is not int):
+            raise ValueError("false canonical runner proof")
+        start = item.get("job_start_evidence", "unknown_not_proven")
+        if start not in ("completed_without_steps", "completed_with_steps",
+                         "unknown_not_proven"):
+            raise ValueError("unknown job start proof")
+        if start != "unknown_not_proven" and job_status != "completed":
+            raise ValueError("job start proof conflicts with status")
+        if item.get("no_job_steps") is not None and (
+                type(item["no_job_steps"]) is not bool or
+                (item["no_job_steps"] is True) != (start == "completed_without_steps")):
+            raise ValueError("contradictory job step receipt")
+        href = "https://github.com/" + repository + "/actions/runs/" + str(run_id) + "/job/" + str(job_id)
+        commit_href = "https://github.com/" + repository + "/commit/" + sha
+        advice = (action_labels[stage] if route == "self_hosted" else
+                  "Niet als VPS-storing presenteren; runnerlabel-/providerbron controleren.")
+        details.append((rank[stage], '<li><strong>' + escape(pid) +
+                        '</strong> · <a target="_blank" rel="noopener noreferrer" href="' +
+                        escape(href, quote=True) + '">exacte job</a>' +
+                        ' · <a target="_blank" rel="noopener noreferrer" href="' +
+                        escape(commit_href, quote=True) + '">HEAD ' +
+                        escape(sha[:12]) + '</a>' +
+                        '<p class="meta">Status: ' + escape(job_status) +
+                        ' · route: ' + escape(route) + ' · bronmoment: ' +
+                        escape(_stamp(observed)) +
+                        ' · jobstart: ' + escape(start) +
+                        ' · geobserveerde runner toegewezen: ' +
+                        ("JA" if item["runner_assigned"] else "NEE") +
+                        '</p><p>' + escape(advice) +
+                        ' Geen CI-vrijgave of automatisch herstel.</p></li>'))
+    discovery_html = ""
+    if discovery is not None:
+        if (type(discovery) is not dict or
+                discovery.get("source") not in (
+                    "github_canonical_readonly_bounded_discovery", "not_requested")
+                or discovery.get("full_repo_ci_inventory") is not False
+                or type(discovery.get("coverage")) is not list
+                or len(discovery["coverage"]) > 3):
+            raise ValueError("noncanonical bounded CI discovery")
+        coverage = []
+        allowed = ("selected_one_source_bound_job",
+                   "selected_one_source_bound_job_partial_window",
+                   "degraded_unavailable", "no_actionable_job_in_sampled_windows")
+        for row in discovery["coverage"]:
+            pid = row.get("project_id") if type(row) is dict else None
+            if (type(pid) is not str or not SLUG.fullmatch(pid)
+                    or row.get("status") not in allowed
+                    or row.get("authoritative_all_clear") is not False):
+                raise ValueError("invalid CI source-window receipt")
+            coverage.append('<li>' + escape(pid) + ' · ' +
+                            escape(row["status"]) +
+                            ' · VENSTERSTEEKPROEF, geen volledig CI-overzicht.</li>')
+        discovery_html = ('<details><summary>Beperkte GitHub CI-discovery per project</summary>'
+                          '<ul>' + ''.join(coverage) +
+                          '</ul><p>Niet-gescande workflowvensters en providerdenials'
+                          ' zijn geen groene checks. Vereiste PR-checks en'
+                          ' onafhankelijke review blijven afzonderlijk nodig.</p></details>')
+    details.sort(key=lambda pair: pair[0])
+    return ('<section class="panel" aria-label="Exact GitHub job handoff">'
+            '<h2>GitHub jobroute en CI-toegang · eigenaaractie</h2>'
+            '<p>Alleen bestaande gecontroleerde job-ID, run-ID en immutable HEAD.'
+            ' Een queued job is geen mislukte build; waiting/pending is geen'
+            ' bewijs van defecte runner. Alleen bevoegde eigenaar kan handelen.</p>'
+            '<ol>' + ''.join(html for _, html in details) + '</ol>' +
+            ('<p>Geen exacte job geselecteerd; runner en CI blijven ONBEKEND.</p>'
+             if not details else '') + discovery_html + '</section>')
+
+
 def blocked_work_owner_panel(decision):
     """Bring the existing bounded status=blocked portfolio rows into the desk.
 
@@ -690,7 +854,8 @@ def review_html(decision):
     """One offline HTML view + bounded private operator handoff in browser."""
     # Validate optional branch data before using it in the source fingerprint.
     branch_panel = branch_work_review_panel(decision)
-    runtime_panel = (queue_owner_pressure_panel(decision) +
+    runtime_panel = (github_exact_gate_panel(decision) +
+                     queue_owner_pressure_panel(decision) +
                      blocked_work_owner_panel(decision) +
                      runtime_source_panel(decision))
     source = _source(decision)
