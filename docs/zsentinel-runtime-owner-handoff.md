@@ -679,6 +679,14 @@ aangemaakte inode opgeruimd. Alle `--owner-*` exports blijven los optioneel:
 het ZIP biedt een **compleet één-bestands alternatief** voor de afzonderlijke
 JSON+CSV-export en vereist enkel `--show-owner-handoff`.
 
+
+De viewer ondersteunt nu ook `--format html`: een zelfstandige, scriptvrije
+HTML-eigenaarwerkbak met bronhash, bronmoment, P0-eerst-kaarten, issue-/PR-links
+en een aparte historische sectie. HTML bevat geen remote assets, scripts,
+forms of connecties. Redirect de stdout naar een **nieuw** privébestand zoals
+hierboven; kies een nog niet bestaand doelpad en overschrijf geen bestaand
+bronbestand. De viewer schrijft zelf niets en haalt niets op.
+
 Een ZIP met intacte hashes betekent **alleen** dat het exportpakket intern
 consistent is met het in de export vastgelegde bronmoment. Bestaande P0,
 exact-head CI, onafhankelijke PR-review, bronclaim, branch protection en
@@ -699,6 +707,11 @@ python3 scripts/zsentinel_operator_packet_view.py \
 # Voor een lokale, begrensde machineleesbare eigenaarweergave:
 python3 scripts/zsentinel_operator_packet_view.py \
   --packet /private/zsentinel/owner-packet-20261021.zip --format json
+
+# Print a standalone HTML action desk (still offline; links open only on click):
+python3 scripts/zsentinel_operator_packet_view.py \
+  --packet /private/zsentinel/owner-packet-20261021.zip --format html \
+  > /private/zsentinel/owner-desk-20261021.html
 ```
 
 De lezer weigert symlinks, niet-reguliere/te grote ZIPs, onverwachte entries,
