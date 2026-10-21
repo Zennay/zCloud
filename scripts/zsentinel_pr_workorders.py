@@ -700,6 +700,24 @@ def render_markdown(bundle):
             "niet voor mergebesluit.\n")
     if bundle["selection_is_not_full_open_pr_backlog"]:
         lines.append("**ONVOLLEDIGE SELECTIE:** overige open PRs/botsingen onbekend.\n")
+    change_counts = {
+        "changed_two_snapshots": 0, "unchanged_two_snapshots": 0,
+        "source_gap": 0, "not_compared": 0,
+    }
+    for card in bundle["items"]:
+        state = card["change_since_previous_observation"]
+        if state not in change_counts:
+            raise ValueError("untrusted historical PR comparison state")
+        change_counts[state] += 1
+    lines += [
+        "## Veranderingen sinds voorgaande PR-opname",
+        "Bronverandering: " + str(change_counts["changed_two_snapshots"]) +
+        " · zelfde HEAD/gates: " +
+        str(change_counts["unchanged_two_snapshots"]) +
+        " · bron ontbreekt: " + str(change_counts["source_gap"]) +
+        " · niet vergeleken: " + str(change_counts["not_compared"]),
+        "Twee momentopnames, geen doorlopend toezicht of CI-/reviewvrijgave.", "",
+    ]
     for card in bundle["items"]:
         lines += [
             "## " + card["project"] + " · [PR #" + str(card["number"]) +
@@ -708,6 +726,12 @@ def render_markdown(bundle):
             "**Huidige blokkade:** " + card["blocker"],
             "**Eerstvolgende menselijke actie:** " + card["human_next_step"],
             "**Categorie:** " + card["category"],
+            "**Wijziging sinds vorige opname:** " +
+            card["change_since_previous_observation"] +
+            (" · HOLD pas herbeoordelen bij nieuw bewijs"
+             if card["repeat_hold_deferred"] else "") +
+            (" · NIEUW BRONBEWIJS"
+             if card["new_evidence_since_previous_sample"] else ""),
             "**Exact PR HEAD:** `" + (card["head_sha"] or "ONBEKEND") + "`",
             "**Exact doelbranchbasis:** `" + (card["base_sha"] or "ONBEKEND") + "`",
             "**Bestandsdiff:** " + card["files_url"],
@@ -719,6 +743,10 @@ def render_markdown(bundle):
             "4. Bewaar de bestaande workerclaim; neem geen werk van een andere eigenaar over.",
             "",
         ]
+        if card["historical_next_step"]:
+            lines.append("**Historische vervolgstap:** " +
+                         card["historical_next_step"] +
+                         " (geen bewijs over tussenliggende periode).\n")
         if card["check_links"]:
             lines.append("### Directe niet-groene check-/statusbronnen")
             for check in card["check_links"]:
