@@ -684,3 +684,49 @@ reporting. A saved receipt is labelled **historical**, not fresh or fully
 covered, and never implies current job assignment, recovery or authorization.
 The output file must not exist already and is created with mode 0600. No
 in-place modification of the input source, worker state, service or cgroup.
+
+
+## Coherent, single-observation operator incident bundle
+
+The owner can now package an incident from **one** live read-only host/service
+observation or **one existing owner-private** saved receipt. Unlike exporting
+separate reports on separate invocations, all three representations derive
+from the same bounded source and incident decision:
+
+```bash
+# First provision a 0700 directory controlled by the operator.
+mkdir -m 700 "$HOME/private-recovery"  # omit if it already exists
+
+# One read-only source collection -> NEW directory with all formats.
+python3 scripts/zsentinel_runner_report.py \
+  --bundle "$HOME/private-recovery/incident-001"
+
+# Or reconstruct historical evidence without polling the VPS again.
+python3 scripts/zsentinel_runner_report.py \
+  --receipt "$HOME/private-recovery/T0.json" \
+  --bundle "$HOME/private-recovery/incident-replay-001"
+
+# Verify an existing incident folder read-only, including all file digests.
+python3 scripts/zsentinel_runner_report.py \
+  --verify-bundle "$HOME/private-recovery/incident-001"
+```
+
+Each new folder is 0700 and has exactly four mode-0600 files:
+`incident.html`, `owner-handoff.md`, `owner-inbox.json` and
+`MANIFEST.json`. The manifest records SHA-256 of each rendition,
+its bounded length, source type, and **the exact shared observation window**.
+It grants no job claim, GitHub dispatch, service restart, merge or deploy,
+and leaves real job/production recovery unknown.
+
+The read-only `--verify-bundle` command rejects missing or extra files,
+symlinks, other owners, unsafe permissions, inconsistent observation windows
+or SHA-256 mismatches. A successful check only proves consistency **within
+this owner-held folder**. It is **not** a provider-signed provenance receipt,
+a verified GitHub assignment, an independent reviewer approval, a successful
+CI job, or an authorization to act. `--bundle` and `--output` are mutually
+exclusive, and neither overwrites old evidence. The implementation renders
+in memory before creating the directory and attempts to remove a partially
+written fresh bundle if any write fails.
+
+This branch is source-only until the existing protected-main review, exact
+commit CI and authorized deployment gates all complete.
