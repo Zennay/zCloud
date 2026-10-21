@@ -410,7 +410,7 @@ a:focus-visible{outline:3px solid #f4c86c;outline-offset:3px}
 li{margin:8px 0;overflow-wrap:anywhere}details summary{cursor:pointer;padding:10px 0}
 @media print{body,aside,article{background:white;color:black}a{color:#075080}}
 </style></head><body><main><h1>Issue-eerst · hergebruik bestaande PRs</h1>
-<aside><strong>Geen actuele GitHub-issuescan.</strong> Dit zijn alleen de
+<aside><p><strong>Geen actuele GitHub-issuescan.</strong> Dit zijn alleen de
 historische bronissues die al aan waargenomen bestaande PR's gekoppeld waren.
 Open/closed, actieve eigenaren, verplichte CI/review en merge zijn onbekend.
 Ontbrekende issuekoppelingen mogen geen vrije werkclaim suggereren.</p>
