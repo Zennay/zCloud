@@ -446,6 +446,7 @@ def project_operations_html(view: dict) -> str:
         'while a bounded queue observation still shows claim pressure. '
         'These are historical human investigation leads, never worker '
         'availability, confirmed failures or permission to retry.</p>'
+        '<p id="recoveryDuePulse" role="status">No locally saved manual review dates loaded.</p>'
         '<details><summary>Inspect <span id="recoveryVisibleCount">' +
         str(len(sections)) + '</span> project-level recovery leads (offline)' +
         '</summary>'
@@ -2210,6 +2211,20 @@ function drawList(){
  });
  const recoveryCounter=document.getElementById('recoveryVisibleCount');
  if(recoveryCounter)recoveryCounter.textContent=String(recoveryCount);
+ const projects=board.project_operations.filter(row=>
+   !currentProject||row.project===currentProject);
+ const today=utcToday();
+ const overdue=projects.filter(row=>recoveryHandoffs.get(row.project)?.due &&
+   recoveryHandoffs.get(row.project).due<today).length;
+ const dueToday=projects.filter(row=>recoveryHandoffs.get(row.project)?.due===today).length;
+ const missingContact=projects.filter(row=>{
+  const entry=recoveryHandoffs.get(row.project);
+  return entry?.due&&!entry.owner;
+ }).length;
+ const pulse=document.getElementById('recoveryDuePulse');
+ if(pulse)pulse.textContent=overdue+' overdue · '+dueToday+
+   ' due today UTC · '+missingContact+' dated entries missing a contact label. '+
+   'Local human annotations only; no alerts sent or live worker ownership proven.';
  const view=filtered();issueList.replaceChildren();
  view.forEach(c=>{
    const li=elem('li'),b=elem('button');b.type='button';
@@ -2431,7 +2446,7 @@ document.getElementById('projectRecoveryDesk').addEventListener('input',event=>{
   if(label.dataset.recoveryDueLabel===project)
    label.textContent=recoveryReviewStatus(recoveryHandoffs.get(project));
  });
- setUnsaved(true);invalidateBrief();
+ setUnsaved(true);invalidateBrief();drawList();
  status.textContent='Local project follow-up changed; export private handoff to preserve it.';
 });
 document.getElementById('projectRecoveryDesk').addEventListener('click',event=>{
