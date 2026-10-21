@@ -59,6 +59,14 @@ jobs:
           set -euo pipefail
           python3 -m scripts.zcloud_deployops_pr_owner_snapshot_20261015 > "$RUNNER_TEMP/zcloud-pr-ownership-input.json"
 
+      - name: Fetch complete PR-less branch inventory without mutation
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.zcloud_deployops_prless_branch_inventory_20261021 > "$RUNNER_TEMP/zcloud-prless-branch-inventory.json"
+
       - name: Print bounded advisory result and fail on collisions or incomplete input
         shell: bash
         run: |
@@ -71,11 +79,33 @@ jobs:
           STATUS="$status" python3 - <<'PY'
           import json, os
           from pathlib import Path
-          result = json.loads((Path(os.environ["RUNNER_TEMP"]) / "zcloud-pr-ownership-result.json").read_text())
+          temp = Path(os.environ["RUNNER_TEMP"])
+          result = json.loads((temp / "zcloud-pr-ownership-result.json").read_text())
+          branches = json.loads((temp / "zcloud-prless-branch-inventory.json").read_text())
+          branch_ok = (
+              branches.get("policy") == "zcloud-deployops-prless-branch-inventory-v1"
+              and branches.get("branch_inventory_complete") is True
+              and branches.get("open_pr_inventory_complete") is True
+              and branches.get("main_sha") == result.get("main_sha") == os.environ["GITHUB_SHA"]
+              and branches.get("mutation_performed") is False
+              and branches.get("release_authorized") is False
+              and branches.get("deployment_authorized") is False
+              and type(branches.get("branches")) is list
+              and type(branches.get("prless_branches")) is list
+              and type(branches.get("prless_branch_count")) is int
+              and branches["prless_branch_count"] == len(branches["prless_branches"])
+          )
+          if not branch_ok:
+              (Path(os.environ["GITHUB_STEP_SUMMARY"])).write_text(
+                  "## zCloud owner inventory refused\n\n"
+                  "PR and branch evidence did not share a complete, stable exact-main identity. "
+                  "No ownership or release conclusion is available.\n")
+              raise SystemExit(2)
           lines = [
-              "## zCloud open-PR file ownership (advisory only)",
-              "No release, deployment or production authority. PR-less branches are NOT included.",
-              "This is a single-time GitHub read, not a durable ownership lock.",
+              "## zCloud open-PR file ownership + PR-less branch inventory (advisory only)",
+              "No release, deployment, production or branch-deletion authority.",
+              "PR-less means no same-repository open PR was observed for that branch; it does not mean abandoned or safe to delete.",
+              "Both bounded inventories were independently re-read and bound to the same exact main SHA.",
           ]
           if result.get("policy") == "zcloud-deployops-pr-owner-collision-v1":
               lines.extend([
@@ -89,7 +119,17 @@ jobs:
                   f"Conflicting PR groups: {result['conflict_group_count']}",
                   f"PRs with file conflicts: {result['conflicted_pr_count']}",
                   f"File-disjoint PRs in snapshot (NOT reviewed): {result['uncontested_pr_count']}",
+                  f"Branches checked: {branches['branches_scanned']}",
+                  f"Open PR heads checked for branch matching: {branches['open_prs_scanned']}",
+                  f"PR-less branches: {branches['prless_branch_count']}",
+                  f"Branch inventory fingerprint (unverified SHA-256): `{branches['snapshot_sha256_unverified']}`",
               ])
+              for branch_row in branches["prless_branches"][:20]:
+                  protection = "protected" if branch_row["protected"] else "not protected"
+                  lines.append(
+                      f"- PR-less branch `{branch_row['name']}` @ `{branch_row['head_sha'][:12]}` ({protection})")
+              if branches["prless_branch_count"] > 20:
+                  lines.append("Remaining PR-less branches are in the attached bounded JSON artifact.")
               for index, group in enumerate(result["conflict_groups"][:12], 1):
                   ids = ", ".join(f"#{n}" for n in group["prs"][:12])
                   if group["pr_ids_truncated"] or len(group["prs"]) > 12:
@@ -117,3 +157,15 @@ jobs:
           test -n "$current"
           test "$current" = "$GITHUB_SHA"
           exit "$status"
+
+      - name: Upload bounded read-only PR and branch inventory evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: zcloud-pr-owner-inventory-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zcloud-pr-ownership-input.json
+            ${{ runner.temp }}/zcloud-pr-ownership-result.json
+            ${{ runner.temp }}/zcloud-prless-branch-inventory.json
+          if-no-files-found: warn
+          retention-days: 14
