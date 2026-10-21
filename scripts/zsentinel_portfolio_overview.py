@@ -873,6 +873,15 @@ def main():
             raise ValueError("--inspect-hosted-no-start needs existing PR inspection")
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
+        # A sidecar owner packet or private desk does not suppress the normal
+        # portfolio stdout path. Prevent live/saved Notion and worker event
+        # observations from leaking into terminals, CI logs or browser relay.
+        if (args.worker_events_database is not None or args.read_notion_claims
+                or args.notion_claims_export is not None):
+            if args.format not in ("html", "json", "text", "desk"):
+                raise ValueError("private worker/Notion observations need html/json/text or desk")
+            if args.format != "desk" and args.output is None:
+                raise ValueError("private worker/Notion evidence needs --output; sidecar reports do not suppress stdout")
         if args.show_owner_handoff and args.format not in (
                 "html", "handoff", "json", "text"):
             raise ValueError("--show-owner-handoff requires html, handoff, json or text")
