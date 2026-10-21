@@ -527,6 +527,28 @@ def render_html(bundle):
         parts.append("<p class=\"notice warning\">ONVOLLEDIGE SELECTIE: "
                      "meer open PRs en bestandsbotsingen mogelijk.</p>")
     if bundle["items"]:
+        change_labels = {
+            "changed_two_snapshots": "Wijziging in twee bronopnames",
+            "unchanged_two_snapshots": "Zelfde HEAD/gates in twee opnames",
+            "source_gap": "Vergelijkingsbron ontbreekt",
+            "not_compared": "Geen historische vergelijking",
+        }
+        counts = {key: 0 for key in change_labels}
+        for card in bundle["items"]:
+            state = card["change_since_previous_observation"]
+            if state not in counts:
+                raise ValueError("untrusted comparison state")
+            counts[state] += 1
+        parts.append("<section class=\"notice\" aria-label=\"Historische wijzigingen\">"
+                     "<strong>Veranderingen sinds vorige opname (maximaal "
+                     "twee momentopnames; geen continu toezicht)</strong><ul>")
+        for state, label in change_labels.items():
+            parts.append("<li>" + e(label) + ": <strong>" +
+                         str(counts[state]) + "</strong></li>")
+        parts.append("</ul><p>Een ongewijzigde HOLD hoeft niet direct opnieuw "
+                     "onderzocht te worden, maar is geen releasevrijgave; "
+                     "een ontbrekende vergelijking is geen bewijs van rust.</p>"
+                     "</section>")
         parts.append("<nav aria-label=\"Inhoud PR-werkopdrachten\"><strong>"
                      "Werkvolgorde · " + str(len(bundle["items"])) +
                      " geselecteerde PRs (geen volledige repositorydekking)"
@@ -550,6 +572,16 @@ def render_html(bundle):
             ("HISTORISCH of HEAD ONBEKEND" if not card["source_current"]
              else "HEAD vastgepind bij recente bronopname") +
             "</span> · rang " + e(card["rank"]) + "</p>",
+            "<p><strong>Vergelijking:</strong> " +
+            e({
+                "changed_two_snapshots": "Nieuwe afwijking sinds vorige bronopname",
+                "unchanged_two_snapshots": "Geen HEAD/gate-wijziging tussen twee opnames",
+                "source_gap": "Vorige of huidige vergelijkingsbron ontbreekt",
+                "not_compared": "Nog geen bronvergelijking",
+            }[card["change_since_previous_observation"]]) +
+            (" · <strong>Ongewijzigde HOLD: laat liggen tot nieuw bewijs</strong>"
+             if card["repeat_hold_deferred"] else "") +
+            "</p>",
             "<p><strong>Blokkade:</strong> " + e(card["blocker"]) + "<br>"
             "<strong>Menselijke vervolgstap:</strong> " +
             e(card["human_next_step"]) + "</p>",
@@ -559,6 +591,11 @@ def render_html(bundle):
             "</code> · <a target=\"_blank\" rel=\"noopener noreferrer\" "
             "href=\"" + e(files) + "\">Bestandswijzigingen</a></p>",
         ]
+        if card.get("historical_next_step"):
+            parts.append("<p><strong>Vervolg op bronvergelijking:</strong> " +
+                         e(card["historical_next_step"]) +
+                         "</p><p class=\"meta\">Momentopnames bewijzen niet wat "
+                         "tussen de opnames gebeurde.</p>")
         if card.get("check_links"):
             parts.append("<h3>Niet-groene checkbronnen</h3><ul>")
             for check in card["check_links"]:
