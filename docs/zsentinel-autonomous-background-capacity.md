@@ -417,6 +417,38 @@ Historische replay doet **geen** actuele Linux-/systemd-probes, GitHub-calls,
 claimwijzigingen, runner-herstart, model-/broker- of productieactie. Het
 rapport bewijst geen GitHub-jobassignment, succesvolle CI, training of merge.
 
+## 21 oktober · direct opgeslagen pakket vergelijken met lokale checkout
+
+De operator kan nu één gecontroleerd privébronpakket direct vergelijken met de
+lokaal beschikbare checkout. Er is geen tweede export nodig en er wordt
+geen externe GitHub- of VPS-bron opgevraagd.
+
+```bash
+python3 scripts/zsentinel_operator_export.py \
+  --verify-dir "$HOME/private-recovery/pakket-A" \
+  --compare-source-dir scripts \
+  --compare-format html \
+  --compare-output "$HOME/private-recovery/bronverschil.html"
+```
+
+De opgeslagen pakketbron A moet intern met SHA-256 en eigenaar-private
+bronbestanden kloppen. Checkoutbron B wordt tweemaal begrensd via één
+veilig geopende Linux-directory-FD gelezen, met controle van bronmap,
+bestandsidentiteiten, bytes en wijzigingen. Dit bewijst geen atomische
+Git-revisie, schone checkout, externe trust, CI- of live-installatiestatus.
+Ontbrekend, vervangen of gewijzigd bronmateriaal wordt geweigerd.
+
+Het statische, mobiel leesbare HTML-werkblad toont vier module-/instructiekaarten,
+elk met bron A/B SHA-256, bytes en wijzigingsstatus. Het bevat geen scripts,
+externe bronnen, netwerkverzoeken of uitvoerende herstelknoppen. Het kan
+alleen in een nieuwe .html-file onder een vooraf bestaande eigenaar-private
+0700-map worden bewaard (0600, create-only, nooit overwrite). Ook text,
+markdown of json blijven beschikbaar. De source-directory-vergelijking is
+wederzijds exclusief met de historische pakket-tegen-pakketvergelijking.
+
+Een lokaal bronverschil is geen merge-, claim-, CI-, runner- of deployautorisatie.
+Alle bestaande exacte-HEAD checks, onafhankelijke review en runtime-toestemming
+blijven verplicht; geen service, model, queue, claim of systemd wordt gewijzigd.
 ## 21 oktober · offline vergelijking van twee volledige operatorbronpakketten
 
 Bij overdracht of voorbereiding op een geautoriseerde installatie kan de
