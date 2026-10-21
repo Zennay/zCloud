@@ -792,6 +792,8 @@ def render_csv(bundle):
         "head_sha_at_observation", "current_source_verified", "rank",
         "category", "blocker", "human_next_step", "source_observed_at_utc",
         "source_sha256", "link", "detail",
+        "pending_review_individuals", "pending_review_teams",
+        "pending_review_request_sha256",
         "scope_conflict_peer_pr_url", "scope_conflict_peer_head_sha",
         "scope_conflict_selected_path", "scope_conflict_peer_path",
         "scope_conflict_pairs_observed", "scope_conflict_relation",
@@ -843,6 +845,15 @@ def render_csv(bundle):
                     card["new_evidence_since_previous_sample"],
                 "repeat_hold_deferred": card["repeat_hold_deferred"],
                 "historical_next_step": card["historical_next_step"],
+                "pending_review_individuals": (
+                    card["pending_review_requests"]["individuals"]
+                    if card["pending_review_requests"] is not None else ""),
+                "pending_review_teams": (
+                    card["pending_review_requests"]["teams"]
+                    if card["pending_review_requests"] is not None else ""),
+                "pending_review_request_sha256": (
+                    card["pending_review_requests"]["evidence_sha256"]
+                    if card["pending_review_requests"] is not None else ""),
             })
         row.update(extra)
         writer.writerow([inert(row.get(key)) for key in fields])
@@ -859,6 +870,13 @@ def render_csv(bundle):
         add("pr", card, link=pr_url + "/files", detail=(
             "CURRENT STATUS NOT VERIFIED" if not card["source_current"]
             else "EXACT HEAD AT SOURCE MOMENT; NOT MERGE AUTHORITY"))
+        add("open_existing_checks", card, link=card["checks_url"],
+            detail="Reopen GitHub PR Checks; verify required exact-head CI, do not retrigger")
+        add("open_existing_review", card, link=card["review_url"],
+            detail="Review GitHub PR; pending requests are NOT submitted approvals")
+        if card["pending_review_requests"] is not None:
+            add("requested_review_state", card, link=card["review_url"],
+                detail="Observed pending review requests, never approvals; source-time only")
         if card["head_sha"] and card["base_sha"]:
             add("observed_head_commit", card,
                 link=_commit_link(card, card["head_sha"]),
