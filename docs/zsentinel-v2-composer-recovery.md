@@ -168,3 +168,9 @@ The actual browser userscript (and its matching standalone v2 engine) now saves 
 **Owner recovery procedure:** inspect the existing command row and browser conversation, verify which command result was received, then reconcile the private ledger and queue with the rightful owner. Do not clear witnesses or restart a sent queue merely because the current tab shows no response. Private ledger storage is local recovery evidence, not an independently verified queue lease or permission to complete a PR.
 
 This update stays on the existing [#1552](https://github.com/Zennay/zCloud/pull/1552); the Activity operator message allowlist remains separately integrated on existing [#1550](https://github.com/Zennay/zCloud/pull/1550). Source changes are not merged or live merely because committed, and existing independent review, exact-head CI and browser-install authorization apply.
+
+## Progress timestamps are not heartbeat timestamps
+
+The v2 producer's `progressAt` now means the last **observed generation-progress or generation-finished event**, not the time of whichever status POST happens to be sent. Ordinary heartbeat, blocked, composer and conversation-status events preserve that timestamp, so a heartbeat cannot make old generation work appear freshly progressed. The in-memory marker resets whenever the queue assignment or conversation identity changes. After a userscript reload it remains unknown until new generation evidence is observed; no timestamp is fabricated from startup or heartbeat alone.
+
+This is a producer-side correction only. It does not create a claim epoch or independently prove a live worker is healthy; the exact current queue/claim, browser evidence and existing backend/release ownership remain authoritative.
