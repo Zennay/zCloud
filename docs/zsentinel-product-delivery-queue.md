@@ -872,3 +872,19 @@ geobserveerde probleemregels waren dan worden getoond. Er staan geen
 workerpersistentietokens, browserinhoud of volledige lease-identiteiten
 in deze aanvullende kaartjes. Een ontbrekend bewijsveld blijft uitsluitend
 een **owner-review-observatie**, niet een actie- of claimautorisatie.
+
+
+#### Oude QA-labels kunnen het productbeleid niet meer omzeilen
+
+Een duidelijk met `QA:`, `QA/`, `quality-validation:`,
+`regression-validation:`, `kwaliteitsvalidatie:` of
+`regressievalidatie:` gelabelde titel blijft bij **nieuw** werk
+`qa_only / explicit_qa_title`, ook als de rest van de tekst woorden
+als `fix`, `merge` of `deploy` bevat. De eerdere heuristiek
+kon zo'n titel door één positief werkwoord alsnog als product kandidaat
+accepteren, waardoor het 17-oktoberbeleid niet betrouwbaar gold.
+Een echte productbug in een normaal productticket blijft apart
+classificeerbaar, ook als de beschrijving tests of regressies noemt.
+
+De wijziging betreft uitsluitend nieuwe task-admission; reeds actieve
+werkers en claim-/lease-identiteiten blijven onaangeroerd.
