@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 
-from zsentinel_issue_action_board import MAX_CARDS, ORDER, PR, ISSUE
+from zsentinel_issue_action_board import MAX_CARDS, ORDER, LABELS, PR, ISSUE
 
 # These are historical source observations, never the current GitHub decision.
 GATE_LABELS = {
@@ -81,6 +81,8 @@ def render_html(board, max_rows=20):
                 or re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", row["project"]) is None
                 or type(row.get("title")) is not str
                 or not 1 <= len(row["title"]) <= 180
+                or row.get("category") not in LABELS
+                or LABELS[row["category"]] != row.get("category_nl")
                 or type(row.get("category_nl")) is not str
                 or not 1 <= len(row["category_nl"]) <= 180
                 or type(row.get("human_next_step_nl")) is not str
@@ -223,6 +225,7 @@ def render_html(board, max_rows=20):
                 candidate_receipts, ensure_ascii=True, separators=(",", ":"))) +
             "' data-title='" + h(row["title"]) +
             "' data-category='" + h(row["category_nl"]) +
+            "' data-action-category='" + h(row["category"]) +
             "' data-activity='" + h(row["activity_signal"]) +
             "' data-next='" + h(row["human_next_step_nl"]) +
             "' data-issue-updated='" + h(str(row["issue_updated_at"] or "ONBEKEND")) +
@@ -473,6 +476,9 @@ const visible=document.getElementById('visible'), prState=document.getElementByI
 const nextOpenPr=document.getElementById('pr-review-next');
 const nextOpenIssue=document.getElementById('issue-review-next');
 const openIssueSummary=document.getElementById('issue-review-summary');
+const nextIndependentIssue=document.getElementById('independent-review-next');
+const independentIssueSummary=document.getElementById('independent-review-summary');
+const independentExport=document.getElementById('independent-review-export');
 const openPrSummary=document.getElementById('pr-review-summary');
 const projectExport=document.getElementById('project-export');
 const projectNext=document.getElementById('project-review-next');
@@ -505,7 +511,7 @@ const gateLabels={
 const collisionExport=document.getElementById('collision-export');
 const collisionOpenExport=document.getElementById('collision-open-export');
 let focusedPr=null,focusIndex=-1;
-let lastPrReview=null,lastProjectReview=null,lastIssueReview=null;
+let lastPrReview=null,lastProjectReview=null,lastIssueReview=null,lastIndependentReview=null;
 // The privacy-preserving baseline describes ONLY this browser's local edits;
 // never persist it automatically or mistake a completed download for a merge.
 let lastSavedState=null;
@@ -558,6 +564,16 @@ function openIssueQueue(){
  const rank={P0:0,P1:1,P2:2,Unspecified:3};
  // Historical source priority, never an inferred live issue or worker claim.
  return tickets.filter(t=>t.querySelector('.local-state').value!=='followup')
+  .sort((a,b)=>(rank[a.dataset.priority]??4)-(rank[b.dataset.priority]??4)||
+    tickets.indexOf(a)-tickets.indexOf(b));
+}
+function independentIssueQueue(){
+ const rank={P0:0,P1:1,P2:2,Unspecified:3};
+ // No PR in this bounded source is only a candidate signal, never proof that
+ // a PR, active owner, or PR-less branch does not exist.
+ return tickets.filter(t=>t.dataset.actionCategory==='owner_before_new_product_work'&&
+   !t.dataset.pr&&!t.dataset.prs.trim()&&
+   t.querySelector('.local-state').value!=='followup')
   .sort((a,b)=>(rank[a.dataset.priority]??4)-(rank[b.dataset.priority]??4)||
     tickets.indexOf(a)-tickets.indexOf(b));
 }
@@ -618,6 +634,15 @@ function refresh(){
   tickets.length+' issuekaarten · '+issueQueue.filter(t=>t.querySelector('.local-state').value==='open').length+
   ' nog niet bekeken. P0 gaat voor P1; status is geen GitHub-fix of geldige claim.';
  nextOpenIssue.disabled=issueQueue.length===0;
+const independentQueue=independentIssueQueue();
+const incompleteIndependent=independentQueue.filter(t=>
+ t.dataset.scopeComplete!=='yes'||t.dataset.referencesComplete!=='yes').length;
+independentIssueSummary.textContent=independentQueue.length+
+ ' kandidaat-issues zonder PR-waarneming in deze steekproef · '+
+ incompleteIndependent+' met onvolledige brondekking. Geen bewijs van vrije claim: '
+ +'controleer actuele PRs, PR-loze branches en actieve claims vóór productwerk.';
+nextIndependentIssue.disabled=independentQueue.length===0;
+independentExport.disabled=independentQueue.length===0;
  const reviewQueue=openProjectQueue();
  const projectsOutstanding=reviewQueue.length;
  const localOpenEntries=reviewQueue.reduce((sum,item)=>sum+item.count,0);
@@ -670,6 +695,19 @@ nextOpenIssue.addEventListener('click',()=>{
  const last=queue.findIndex(t=>t.dataset.issue===lastIssueReview);
  const target=queue[(last+1)%queue.length];
  lastIssueReview=target.dataset.issue;
+ focusedPr=null;focusIndex=-1;collisionIndex=-1;
+ collisionOnly.checked=false;collisionStateFilter.value='';
+ search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';
+ refresh();
+ target.scrollIntoView({block:'start'});
+ target.focus();
+});
+nextIndependentIssue.addEventListener('click',()=>{
+ const queue=independentIssueQueue();
+ if(!queue.length)return;
+ const last=queue.findIndex(t=>t.dataset.issue===lastIndependentReview);
+ const target=queue[(last+1)%queue.length];
+ lastIndependentReview=target.dataset.issue;
  focusedPr=null;focusIndex=-1;collisionIndex=-1;
  collisionOnly.checked=false;collisionStateFilter.value='';
  search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';
@@ -998,6 +1036,38 @@ function exportOutstandingPrHandoff(){
  privateDownload('zsentinel-prs-open-prive-eigenaaroverdracht.md',lines.join('\n')+'\n');
 }
 document.getElementById('pr-review-export').addEventListener('click',exportOutstandingPrHandoff);
+document.getElementById('independent-review-export').addEventListener('click',exportIndependentCandidates);
+
+function exportIndependentCandidates(){
+ const queue=independentIssueQueue();
+ const lines=[
+  '# zSentinel · onafhankelijke productkandidaten (P0 eerst)','',
+  '> Privé brongebonden kandidatenlijst. Geen PR-waarneming is geen bewijs dat er geen PR bestaat of dat werk vrij is.','',
+  '- Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
+  '- PR-bron UTC: '+safeText(document.getElementById('pr-time').textContent),
+  '- Exact privé brontoken: '+safeText(document.body.dataset.sourceToken),
+  '- Kandidaten zonder PR-waarneming: '+queue.length,
+  '- Filters en PR-focus veranderen deze volledige kandidaatselectie niet.',
+  '- Claims, PR-loze branches, actuele PRs, branchregels en eigenaarrechten: ONBEKEND; handmatig controleren vóór productcode wordt gewijzigd.','',
+  '## Kandidaten',''
+ ];
+ if(!queue.length)lines.push('Geen open kandidaat zonder PR-waarneming in deze bron. Dit bewijst niet dat alle issues zijn opgelost.','');
+ for(const [index,t] of queue.entries()){
+  lines.push('### '+(index+1)+'. '+safeText(t.dataset.priority)+' · '+safeText(t.dataset.project)+' · [Issue #'+t.dataset.issue.split('/').pop()+']('+t.dataset.issue+')','',
+   '- Titel: '+safeText(t.dataset.title),
+   '- Handmatige opvolging: '+safeText(labels[t.querySelector('.local-state').value]),
+   '- Menselijke vervolgstap: '+safeText(t.dataset.next),
+   '- PR-bestandsdekking: '+(t.dataset.scopeComplete==='yes'?'compleet binnen steekproef':'ONVOLLEDIG'),
+   '- Issue-PR-verwijzingsdekking: '+(t.dataset.referencesComplete==='yes'?'compleet binnen steekproef':'ONVOLLEDIG'),
+   '- Activiteitssignaal: '+safeText(t.dataset.activity)+' · issue update '+safeText(t.dataset.issueUpdated||'ONBEKEND')+
+     ' · gekoppelde PR update '+safeText(t.dataset.prUpdated||'ONBEKEND'));
+  const note=t.querySelector('textarea').value.trim();
+  if(note)lines.push('- Privé issuenotitie: '+safeText(note));
+  lines.push('');
+ }
+ lines.push('**Volgende stap:** controleer eerst de actuele open issues en PRs, actieve claims en volledige PR-loze branch-inventaris. Kies pas daarna een onafhankelijke producttaak. Deze export wijzigt niets buiten dit browservenster.','');
+ privateDownload('zsentinel-onafhankelijke-productkandidaten.md',lines.join('\n')+'\n');
+}
 
 function exportProjectHandoff(){
  const selected=project.value;
@@ -1471,6 +1541,9 @@ refresh();
         "<p id='issue-review-summary' aria-live='polite'></p>"
         "<button id='issue-review-next' type='button'>Volgende open bronissue (P0 eerst)</button>"
         "<button id='issue-review-export' type='button'>Download open P0/P1 issue-overdracht</button>"
+        "<p id='independent-review-summary' aria-live='polite'></p>"
+        "<button id='independent-review-next' type='button'>Volgende kandidaat zonder PR-waarneming (P0 eerst)</button>"
+        "<button id='independent-review-export' type='button'>Download onafhankelijke productkandidaten (Markdown)</button>"
         "<p id='pr-review-summary' aria-live='polite'></p>"
         "<button id='pr-review-next' type='button'>Volgende PR zonder lokale opvolging</button>"
         "<button id='pr-review-export' type='button'>Download open PR-eigenaaroverdracht</button>"
