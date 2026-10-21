@@ -5,8 +5,11 @@ import re
 
 
 def _md(value: object) -> str:
+    if value is None:
+        return "unknown"
     text = str(value).replace("\r", " ").replace("\n", " ")
-    return re.sub(r"([\\\\`*_{}\[\]()#+.!|<>])", r"\\\\\1", text)
+    special = r"\\*_{}\[\]()#+.!|<>" + chr(96)
+    return re.sub("([" + special + "])", r"\\\1", text)
 
 
 def render(report: dict) -> str:
