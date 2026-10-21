@@ -965,15 +965,36 @@ const PUBLIC_GITHUB_LAST_FETCH=new Map();
 // Each page is fetched only by a deliberate operator click. No background crawl.
 const PUBLIC_GITHUB_PAGE=new Map(),PUBLIC_GITHUB_VIEW_PAGE=new Map();
 const PUBLIC_GITHUB_MORE=new Map(); // More history may exist only when an observed page is full.
+let PUBLIC_GITHUB_PAUSE_UNTIL=0; // In-memory global provider cooldown, never stored.
+function pauseForConfirmedGitHubLimit(response){
+  // GitHub 429 and explicit 403 exhaustion/cooldown apply across ALL projects.
+  // Use trusted numeric headers only; never expose raw provider header text.
+  let waitMs=120000;
+  const after=response.headers?.get('Retry-After');
+  if(typeof after==='string'&&/^[0-9]{1,4}$/.test(after))
+    waitMs=Math.max(waitMs,Math.min(3600000,Number(after)*1000));
+  const reset=response.headers?.get('X-RateLimit-Reset');
+  if(typeof reset==='string'&&/^[0-9]{10}$/.test(reset))
+    waitMs=Math.max(waitMs,Math.min(3600000,Number(reset)*1000-Date.now()));
+  PUBLIC_GITHUB_PAUSE_UNTIL=Math.max(PUBLIC_GITHUB_PAUSE_UNTIL,
+    Date.now()+Math.min(3600000,waitMs));
+}
 async function publicGitHubGET(repository,suffix){
   if(!/^[A-Za-z0-9_.-]{1,100}$/.test(repository))throw Error('Invalid canonical repository');
+  if(Date.now()<PUBLIC_GITHUB_PAUSE_UNTIL)throw Error('confirmed_rate_limit');
   const url='https://api.github.com/repos/Zennay/'+repository+'/'+suffix;
   const response=await fetch(url,{method:'GET',credentials:'omit',redirect:'error',cache:'no-store',
     headers:{'Accept':'application/vnd.github+json'},signal:AbortSignal.timeout(8000)});
   if(!response.ok){
     // These fixed local categories intentionally omit response bodies, headers,
     // repository internals and network exception details.
-    const reason=response.status===429?'confirmed_rate_limit':
+    const confirmedLimit=response.status===429||
+      (response.status===403&&(response.headers?.get('X-RateLimit-Remaining')==='0'
+        ||response.headers?.get('Retry-After')!==null));
+    if(confirmedLimit)pauseForConfirmedGitHubLimit(response);
+    // Ambiguous repository-level 403 must not stop other canonical projects.
+    // A confirmed global limit must stop every subsequent operator fetch.
+    const reason=confirmedLimit?'confirmed_rate_limit':
       response.status===403?'forbidden_or_secondary_limit_unknown':
       response.status===401?'authentication_required':
       response.status===404?'repository_inaccessible':'provider_unavailable';
@@ -1040,6 +1061,12 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
   const m=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(selected.repo_url||'');
   if(!m){IMPORTED_GITHUB_ERROR='This project has no canonical public GitHub repository.';if(!quiet)render();return}
   const repo=m[1],projectId=selected.id;
+  if(Date.now()<PUBLIC_GITHUB_PAUSE_UNTIL){
+    IMPORTED_GITHUB_ERROR='GitHub confirmed a global rate-limit pause. Public source reads are paused for up to '+
+      Math.ceil((PUBLIC_GITHUB_PAUSE_UNTIL-Date.now())/60000)+
+      ' minute(s); existing observations remain available. No retry dispatched.';
+    if(!quiet)render();return;
+  }
   const lastPage=PUBLIC_GITHUB_PAGE.get(projectId)||0;
   if(older&&(lastPage<1||lastPage>=5||PUBLIC_GITHUB_MORE.get(projectId)===false)){
     IMPORTED_GITHUB_ERROR='No further GitHub page was observed, or five explicit pages are already loaded. Read the newest page to start a new bounded window.';
