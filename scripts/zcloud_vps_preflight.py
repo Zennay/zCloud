@@ -1233,6 +1233,122 @@ def save_private_bundle(directory: Path, report: dict,
 
 
 
+
+BUNDLE_ARTIFACTS = frozenset({
+    "observation.json", "preflight.html",
+    "owner-handoff.md", "owner-brief.txt",
+})
+
+
+def verify_private_bundle(directory: Path) -> dict:
+    """Check one saved operator bundle without a live VPS probe.
+
+    The manifest is operator-controlled and unsigned; byte consistency is
+    not independent provenance, host attestation, or release permission.
+    """
+    if (not isinstance(directory, Path) or
+            not hasattr(os, "O_DIRECTORY") or
+            not hasattr(os, "O_NOFOLLOW")):
+        raise ValueError("private bundle verification unavailable")
+    root_fd = os.open(
+        directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    )
+    try:
+        root_stat = os.fstat(root_fd)
+        if (not stat.S_ISDIR(root_stat.st_mode) or
+                root_stat.st_mode & 0o077):
+            raise ValueError("bundle folder must be private")
+        def read_named(name, maximum):
+            if name not in BUNDLE_ARTIFACTS and name != "manifest.json":
+                raise ValueError("unrecognized bundle artifact")
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         dir_fd=root_fd)
+            try:
+                before = os.fstat(fd)
+                if (not stat.S_ISREG(before.st_mode)
+                        or before.st_mode & 0o077
+                        or before.st_size < 1 or before.st_size > maximum):
+                    raise ValueError("invalid private bundle artifact")
+                with os.fdopen(os.dup(fd), "rb") as stream:
+                    raw = stream.read(maximum + 1)
+                after = os.fstat(fd)
+                if (len(raw) != before.st_size or len(raw) > maximum
+                        or before.st_size != after.st_size
+                        or before.st_mtime_ns != after.st_mtime_ns):
+                    raise ValueError("bundle source changed during verification")
+                return raw
+            finally:
+                os.close(fd)
+
+        def unique_object(pairs):
+            value = {}
+            for key, element in pairs:
+                if key in value:
+                    raise ValueError("duplicate manifest property")
+                value[key] = element
+            return value
+
+        manifest = json.loads(
+            read_named("manifest.json", 16 * 1024).decode("utf-8"),
+            object_pairs_hook=unique_object,
+            parse_constant=lambda _: (_ for _ in ()).throw(
+                ValueError("invalid manifest number")),
+        )
+        if (type(manifest) is not dict or
+                manifest.get("schema") != "zsentinel-private-vps-preflight-bundle-v1"
+                or manifest.get("release_authorized") is not False
+                or manifest.get("host_actions_executed") is not False
+                or manifest.get("source_scope_attested") is not False
+                or manifest.get("origin") != "one_in_memory_read_only_operator_observation"
+                or type(manifest.get("observed_at")) is not str
+                or type(manifest.get("artifacts")) is not list
+                or len(manifest["artifacts"]) != len(BUNDLE_ARTIFACTS)):
+            raise ValueError("invalid private bundle manifest")
+        found = {}
+        for record in manifest["artifacts"]:
+            if (type(record) is not dict or
+                    set(record) != {"filename", "sha256", "bytes"}
+                    or record["filename"] not in BUNDLE_ARTIFACTS
+                    or record["filename"] in found
+                    or type(record["sha256"]) is not str
+                    or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
+                    or type(record["bytes"]) is not int
+                    or not 1 <= record["bytes"] <= MAX_PRIVATE_REPORT_BYTES):
+                raise ValueError("invalid bundle file receipt")
+            found[record["filename"]] = record
+        if set(found) != BUNDLE_ARTIFACTS:
+            raise ValueError("missing bundle evidence")
+        for name in sorted(BUNDLE_ARTIFACTS):
+            raw = read_named(name, MAX_PRIVATE_REPORT_BYTES)
+            recorded = found[name]
+            if (len(raw) != recorded["bytes"] or
+                    hashlib.sha256(raw).hexdigest() != recorded["sha256"]):
+                raise ValueError("private bundle integrity mismatch")
+            if name == "observation.json":
+                snapshot = json.loads(
+                    raw.decode("utf-8"), object_pairs_hook=unique_object,
+                    parse_constant=lambda _: (_ for _ in ()).throw(
+                        ValueError("invalid observation number")),
+                )
+                if (type(snapshot) is not dict or
+                        snapshot.get("mode") != "read_only"
+                        or snapshot.get("release_authorized") is not False
+                        or snapshot.get("observed_at") != manifest["observed_at"]):
+                    raise ValueError("observation does not match manifest")
+        return {
+            "status": "local_bundle_bytes_match_unsigned_manifest",
+            "observed_at": manifest["observed_at"],
+            "artifact_count": len(BUNDLE_ARTIFACTS),
+            "independent_host_attestation": False,
+            "claim_authorized": False,
+            "release_authorized": False,
+            "actions_executed": False,
+        }
+    finally:
+        os.close(root_fd)
+
+
+
 def render_report_to_stdout(report: dict, args: argparse.Namespace) -> None:
     """Preserve existing stdout formatting across terminal and private output."""
     if args.json or args.format == "json":
