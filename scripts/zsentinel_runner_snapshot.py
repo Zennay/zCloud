@@ -260,6 +260,52 @@ def capacity_changes(previous, current):
     }
 
 
+
+def memory_oom_changes(previous, current, same_boot):
+    """Read-only host OOM evidence for T0/T1, never assign kills to runners."""
+    import math
+    a, b = previous.get("capacity"), current.get("capacity")
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        a, b = {}, {}
+    def pressure(src, name):
+        number = src.get(name)
+        return (number if src.get("memory_psi_observed") is True
+                and type(number) in (int, float) and math.isfinite(number)
+                and 0 <= number <= 100 else None)
+    before_full = pressure(a, "memory_psi_full_avg10_percent")
+    after_full = pressure(b, "memory_psi_full_avg10_percent")
+    before_some = pressure(a, "memory_psi_some_avg10_percent")
+    after_some = pressure(b, "memory_psi_some_avg10_percent")
+    before_kills = a.get("kernel_oom_kills_since_boot")
+    after_kills = b.get("kernel_oom_kills_since_boot")
+    counter_comparable = (
+        same_boot is True
+        and a.get("kernel_oom_counter_observed") is True
+        and b.get("kernel_oom_counter_observed") is True
+        and type(before_kills) is int and type(after_kills) is int
+        and 0 <= before_kills <= after_kills < 2 ** 63
+    )
+    return {
+        "memory_psi_source_comparable": (
+            before_full is not None and after_full is not None
+            and before_some is not None and after_some is not None),
+        "previous_psi_full_avg10_percent": before_full,
+        "current_psi_full_avg10_percent": after_full,
+        "previous_psi_some_avg10_percent": before_some,
+        "current_psi_some_avg10_percent": after_some,
+        "oom_counter_same_boot_comparable": counter_comparable,
+        "kernel_oom_kills_delta": (after_kills - before_kills
+                                   if counter_comparable else None),
+        "kernel_oom_incident_attributed_to_runner": False,
+        "service_restart_authorized": False,
+        "interpretation": (
+            "PSI measures host-wide memory stalls over recent seconds. "
+            "Kernel OOM kills count all host processes since boot. "
+            "Even an increase cannot identify a runner or authorize restart."
+        ),
+    }
+
+
 def coach_changes(previous, current, same_boot):
     """Compare actual read-back coach policy, never infer it from advice or JSON state."""
     def policy(bundle):
@@ -393,6 +439,7 @@ def changes(previous, current):
         "elapsed_seconds": int(elapsed),
         "capacity_comparison": capacity_changes(previous, current),
         "coach_comparison": coach_changes(previous, current, same_boot),
+        "memory_oom_comparison": memory_oom_changes(previous, current, same_boot),
         "transitions": result,
         "user_transitions": user_transitions,
         "complete_user_service_coverage": ua and ub,
