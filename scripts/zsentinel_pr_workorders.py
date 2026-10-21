@@ -28,6 +28,12 @@ MAX_PATHS = 24
 MAX_CHECKS = 24
 MAX_ISSUE_HINTS = 12
 SOURCE_FRESHNESS_SECONDS = 6 * 60 * 60
+ATTENTION_LABELS = {
+    "refresh_source": "Herlees bron en huidige HEAD",
+    "defer_unchanged_hold": "HOLD ongewijzigd: ander werk oppakken",
+    "inspect_changed_evidence": "Nieuw gatebewijs: eigenaar laten beoordelen",
+    "await_required_gates": "Wacht op verplichte gates en onafhankelijke review",
+}
 
 
 def _timestamp(value):
@@ -55,6 +61,12 @@ def _same_repo_url(value, repository):
     if match is None or match.group(1) != repository:
         raise ValueError("untrusted or external PR reference")
     return value
+
+
+def _article_anchor(card):
+    """Unique offline URL fragment across repositories with the same PR number."""
+    url = _same_repo_url(card["url"], card["repository"])
+    return "pr-" + url.removeprefix("https://github.com/").replace("/", "-")
 
 
 def _markdown(value):
@@ -404,7 +416,19 @@ def collect_workorders(board):
             notes.append("Gerelateerde PRs buiten de bounded sample worden niet getoond.")
         if not pinned:
             notes.append("Verifieer HEAD en doelbranch voordat dit als huidige taak geldt.")
+        if source_stale or not pinned or history_state in (
+                "changed_or_uncertain_head", "incomplete_gate_source",
+                "newly_selected_not_new_pr"):
+            attention_status = "refresh_source"
+        elif defer_repeat:
+            attention_status = "defer_unchanged_hold"
+        elif history_state == "changed_gate_receipt":
+            attention_status = "inspect_changed_evidence"
+        else:
+            attention_status = "await_required_gates"
         cards.append({
+            "attention_status": attention_status,
+            "attention_label": ATTENTION_LABELS[attention_status],
             "project": project, "repository": repo, "number": num,
             "url": url, "files_url": url + "/files", "head_sha": head if pinned else None,
             "base_sha": base if pinned else None,
@@ -471,6 +495,7 @@ def render_csv(bundle):
         raise ValueError("invalid private owner CSV")
     fields = (
         "record_type", "project", "pr_number", "pr_url",
+        "attention_status", "attention_label",
         "head_sha_at_observation", "current_source_verified", "rank",
         "category", "blocker", "human_next_step", "source_observed_at_utc",
         "source_sha256", "link", "detail",
@@ -515,6 +540,8 @@ def render_csv(bundle):
                 "rank": card["rank"], "category": card["category"],
                 "blocker": card["blocker"],
                 "human_next_step": card["human_next_step"],
+                "attention_status": card["attention_status"],
+                "attention_label": card["attention_label"],
                 "change_since_previous_observation":
                     card["change_since_previous_observation"],
                 "new_evidence_since_previous":
@@ -678,22 +705,35 @@ def render_html(bundle):
                      "onderzocht te worden, maar is geen releasevrijgave; "
                      "een ontbrekende vergelijking is geen bewijs van rust.</p>"
                      "</section>")
+        attention_counts = {key: 0 for key in ATTENTION_LABELS}
+        for card in bundle["items"]:
+            state = card["attention_status"]
+            if state not in attention_counts:
+                raise ValueError("unknown operator action disposition")
+            attention_counts[state] += 1
+        parts.append("<section aria-label=\"Werkvolgorde op basis van bron\" class=\"notice\">"
+                     "<strong>Wat nu aandacht vraagt (bronobservatie, geen vrijgave)</strong><ul>")
+        for state, label in ATTENTION_LABELS.items():
+            parts.append("<li>" + e(label) + ": <strong>" +
+                         str(attention_counts[state]) + "</strong></li>")
+        parts.append("</ul></section>")
         parts.append("<nav aria-label=\"Inhoud PR-werkopdrachten\"><strong>"
                      "Werkvolgorde · " + str(len(bundle["items"])) +
                      " geselecteerde PRs (geen volledige repositorydekking)"
                      "</strong><ol>")
         for summary in bundle["items"]:
-            parts.append("<li><a href=\"#pr-" + e(summary["number"]) + "\">" +
+            parts.append("<li><a href=\"#" + e(_article_anchor(summary)) + "\">" +
                          e(summary["project"]) + " · PR #" +
                          e(summary["number"]) + "</a> — " +
-                         e(summary["category"]) + "</li>")
+                         e(summary["category"]) + " · " +
+                         e(summary["attention_label"]) + "</li>")
         parts.append("</ol></nav><main>")
     for card in bundle["items"]:
         repo = card["repository"]
         url = _same_repo_url(card["url"], repo)
         files = url + "/files"
         parts += [
-            "<article id=\"pr-" + e(card["number"]) + "\"><h2>" +
+            "<article id=\"" + e(_article_anchor(card)) + "\"><h2>" +
             e(card["project"]) + " · <a target=\"_blank\" "
             "rel=\"noopener noreferrer\" href=\"" + e(url) + "\">PR #" +
             e(card["number"]) + "</a></h2>",
@@ -706,6 +746,8 @@ def render_html(bundle):
             (" · <strong>Ongewijzigde HOLD: laat liggen tot nieuw bewijs</strong>"
              if card["repeat_hold_deferred"] else "") +
             "</p>",
+            "<p><strong>Werkvolgorde:</strong> " + e(card["attention_label"]) +
+            " (bronobservatie)</p>" +
             "<p><strong>Blokkade:</strong> " + e(card["blocker"]) + "<br>"
             "<strong>Menselijke vervolgstap:</strong> " +
             e(card["human_next_step"]) + "</p>",
@@ -873,6 +915,8 @@ def render_markdown(bundle):
             "",
             "**Huidige blokkade:** " + card["blocker"],
             "**Eerstvolgende menselijke actie:** " + card["human_next_step"],
+            "**Werkvolgorde volgens bronopname:** " + card["attention_label"] +
+            " (geen merge-/claimtoestemming)",
             "**Categorie:** " + card["category"],
             "**Wijziging sinds vorige opname:** " +
             card["historical_change_label"] +
