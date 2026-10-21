@@ -428,6 +428,22 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
             "recovery_performed": False,
             "release_authorized": False,
         })
+    # A future source can add an incident code before its owner mapping is
+    # updated. Do not silently drop that historical unknown from the handoff.
+    covered = set().union(*RECOVERY_FAMILIES.values())
+    unmatched = sorted(unknown_recovery - covered)
+    if unmatched:
+        cards.append({
+            "code": "UNMAPPED_RECOVERY_UNVERIFIED",
+            "owner": "Serialized release owner / original issue owner",
+            "problem": "Previously observed source findings lack verified recovery evidence or an existing specialized owner route.",
+            "action": "Inspect the original finding with its accountable owner and reproduce only the permitted read-only observation. Do not infer safe release.",
+            "status": "recovery_unverified",
+            "trend": "source_missing_or_unmapped",
+            "finding_codes": unmatched[:64],
+            "recovery_performed": False,
+            "release_authorized": False,
+        })
     return cards[:16]
 
 
