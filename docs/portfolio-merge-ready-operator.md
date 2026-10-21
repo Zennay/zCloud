@@ -21,6 +21,47 @@ Existing P0/P1 issue classification, draft/QA exclusion,
 exact HEAD, independent review, CI and mainwriter checks are unchanged.
 These are **candidate links**, never proof a PR actually fixes the issue.
 
+## P0/P1 issue-inbox: direct van incident naar bestaande PRs
+
+De bestaande issue-first opdracht biedt nu één daadwerkelijk bruikbare
+**P0/P1 issue-inbox** in terminal, private offline HTML en JSON. De inbox
+combineert de door de geselecteerde GitHub PRs geobserveerde expliciete
+issue-referenties met de reeds opgehaalde P0/P1-issues waarvoor in die
+selectie geen PR-koppeling is gevonden. Iedere kaart toont:
+
+- de canonieke GitHub-issuelink, prioriteit en oorspronkelijke titel;
+- directe links naar geselecteerde bestaande kandidaat-PRs met hun
+  waargenomen status; de kaart noemt die links nooit een bewezen fix;
+- één duidelijke volgende stap, met read-only CLI-opdracht om bij een
+  bekende open issue ook **oudere** bestaande PRs te zoeken;
+- **eigenaarschap onbekend**, **main niet bewezen**, **live niet geverifieerd**.
+
+Gebruik bijvoorbeeld:
+
+```sh
+python3 scripts/zsentinel_issue_first_board.py --project cloud --project supa --format text
+python3 scripts/zsentinel_issue_first_board.py --project cloud --project supa --format json
+python3 scripts/zsentinel_issue_first_board.py --project cloud \
+  --output /private/new-zsentinel-issue-inbox.html
+```
+
+De optionele HTML-uitvoer blijft exclusief een nieuw lokaal privébestand
+(0600), niet een website, notifier of publieke API. JSON bevat `issue_inbox`
+met `coverage`, samenvatting, `visible`, `omitted` en maximaal 48
+kaarten. Beperkte of mislukte GitHub-leesbronnen worden als `PARTIAL_OBSERVATION`
+gemarkeerd, niet als nul issues of vrij eigenaarschap. Het maximum van
+48 getoonde kaarten, projectmapping vanuit de canonieke registry en de
+bestaande bron-/tijdbudgetten voorkomen een onbeperkte operatorfeed.
+
+De inbox zoekt niet zelfstandig nieuwe repositories en voert geen
+claim, rerun, merge of deploy uit. Een issue dat geen PR toont, is
+uitsluitend **binnen de geselecteerde, begrensde PR-bron** niet gekoppeld.
+Het is geen toestemming om een reeds elders actief werkpakket over te
+nemen. De gerichte opdracht `--project ID --issue N` bevestigt de
+actuele issue-status afzonderlijk voordat kandidaat-PRs bruikbaar
+worden gerapporteerd. Bestaande verplichte CI, reviews en
+mainwriterrechten blijven ongewijzigd.
+
 ## Portfolio-brede prioriteit, geen fictief mergebewijs
 
 De bestaande `zsentinel_issue_first_board.py --project cloud --project supa`
