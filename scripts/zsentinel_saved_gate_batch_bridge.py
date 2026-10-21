@@ -634,7 +634,7 @@ def main(argv=None):
     parser.add_argument("--receipt", type=Path, action="append", required=True)
     parser.add_argument("--allow-partial", action="store_true",
                         help="Import only supplied, source-bound batches; label missing batches UNKNOWN")
-    parser.add_argument("--format", choices=("json", "markdown", "html", "csv", "portfolio-csv", "portfolio-json", "portfolio-markdown", "portfolio-html", "portfolio-pr-csv", "portfolio-pr-markdown", "portfolio-pr-html", "portfolio-pr-zip", "portfolio-zip"), default="json",
+    parser.add_argument("--format", choices=("json", "markdown", "html", "csv", "portfolio-csv", "portfolio-json", "portfolio-markdown", "portfolio-html", "portfolio-pr-csv", "portfolio-issue-pr-csv", "portfolio-pr-markdown", "portfolio-pr-html", "portfolio-pr-zip", "portfolio-zip"), default="json",
                         help="Private browser import, full Markdown, offline HTML, PR/project CSV, project-only Markdown or owner-neutral portfolio JSON")
     parser.add_argument("--project",
                         help="Exact source-observed repository (e.g. Zennay/zCloud); only --format portfolio-*")
@@ -694,6 +694,13 @@ def main(argv=None):
             from zsentinel_saved_gate_portfolio import portfolio_json
             selected, _ = canonical_manifest(review, raw)
             rendered = portfolio_json(
+                selected, result, project=args.project).encode("utf-8")
+        elif args.format == "portfolio-issue-pr-csv":
+            # Every admitted issue-to-PR relationship, never just the first
+            # HTML-preview links. No current merge or worker claim inference.
+            from zsentinel_saved_gate_portfolio import portfolio_issue_pr_csv
+            selected, _ = canonical_manifest(review, raw)
+            rendered = portfolio_issue_pr_csv(
                 selected, result, project=args.project).encode("utf-8")
         elif args.format == "portfolio-pr-csv":
             # Full per-PR queue, including the observed blocker and issue links.
