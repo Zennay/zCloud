@@ -90,7 +90,8 @@ def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES,
             or (max_body_bytes == MAX_DISCOVERY_BODY_BYTES
                 and not (
                     "/pulls?state=open&per_page=" in path or
-                    "/timeline?per_page=" in path
+                    "/timeline?per_page=" in path or
+                    "/issues?state=open&per_page=" in path
                 ))):
         raise GitHubReadError("oversized read requires a bounded PR-list or issue-timeline page")
     if include_timeline_last_page and "/timeline?per_page=" not in path:
