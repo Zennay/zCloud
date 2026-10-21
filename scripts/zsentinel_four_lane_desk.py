@@ -256,7 +256,7 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
     ):
         return {
             "code": "HOLD_ASSIGNED_WORKER_SCOPE_CONFLICT",
-            "label": "Gereseveerd workerslot overlapt met nieuw schrijfbereik",
+            "label": "Gereserveerd workerslot overlapt met nieuw schrijfbereik",
             "next_step": "Laat de bestaande toegewezen worker eigenaar blijven en vraag bron-/bestandscope-afstemming; wijs geen tweede schrijver toe.",
         }
     if state == "blocked" and deferred_assigned and all(
@@ -539,6 +539,9 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
     unknown_assigned_scopes = max(
         (lane.get("unknown_assigned_scope_count", 0) for lane in lanes), default=0
     )
+    untrusted_assigned_profiles = max(
+        (lane.get("untrusted_assigned_profile_count", 0) for lane in lanes), default=0
+    )
     untrusted_active_leases = max(
         (lane.get("untrusted_active_lease_count", 0) for lane in lanes), default=0
     )
@@ -574,7 +577,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         len(active_items) <= 64 and not queue_partial
         and not truncated_queue_fields
         and unknown_active_scopes == 0 and unknown_claim_scopes == 0
-        and unknown_assigned_scopes == 0
+        and unknown_assigned_scopes == 0 and untrusted_assigned_profiles == 0
     )
     if cross_lane_coverage:
         for index, left in enumerate(active_items):
@@ -592,7 +595,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
     source_complete = not (
         queue_partial or claims_partial or ambiguous or truncated_queue_fields
         or unknown_active_scopes or unknown_claim_scopes or unknown_assigned_scopes
-        or runtime_shadowed_active
+        or untrusted_assigned_profiles or runtime_shadowed_active
         or portfolio_partial or unknown_project_groups
         or inconsistent_queue_claim_windows or untrusted_active_leases
         or active_profile_mismatch or local_config_mismatch
@@ -622,6 +625,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             "deferred_ineligible_packages": lane.get("deferred_ineligible_packages", 0),
             "deferred_assigned_packages": lane.get("deferred_assigned_packages", 0),
             "assigned_slot_scope_conflicts": lane.get("assigned_slot_scope_conflict_count", 0),
+            "untrusted_assigned_profile_count": lane.get("untrusted_assigned_profile_count", 0),
             "parallel_active_warning": lane.get("parallel_active_warning", False),
             "serialized_unscoped_queue_admitted": lane.get(
                 "serialized_unscoped_queue_admitted", False
@@ -680,6 +684,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         "host_admission": host_admission,
         "active_claim_scopes_not_declared": unknown_claim_scopes,
         "queued_assigned_scopes_not_declared": unknown_assigned_scopes,
+        "queued_assigned_lanes_untrusted": untrusted_assigned_profiles,
         "untrusted_active_leases_observed": untrusted_active_leases,
         "runtime_active_filtered_by_eligibility": runtime_shadowed_active,
         "active_local_leases_observed": len(claims),
@@ -706,7 +711,8 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             or inconsistent_queue_claim_windows or untrusted_active_leases
             or ambiguous or queue_partial or claims_partial
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
-            or unknown_assigned_scopes or runtime_shadowed_active or portfolio_partial or unknown_project_groups
+            or unknown_assigned_scopes or untrusted_assigned_profiles
+            or runtime_shadowed_active or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
             or active_profile_mismatch or local_config_mismatch
             or local_config_unverified or any(collision_counts.values())
@@ -931,6 +937,14 @@ def text_view(data):
         + "/4 vereist; " + config["profile_deviation_reason"]
         + "; geladen service NIET geverifieerd."
     )
+    if data["queued_assigned_lanes_untrusted"]:
+        out.append("HOLD: " + str(data["queued_assigned_lanes_untrusted"])
+                   + " reeds toegewezen wachtrijtaken missen een betrouwbare "
+                     "profiel-/laneherkomst; geen nieuwe schrijver.")
+    if data["queued_assigned_scopes_not_declared"]:
+        out.append("HOLD: " + str(data["queued_assigned_scopes_not_declared"])
+                   + " toegewezen queued taken zonder volledige schrijfscope; "
+                     "behoud huidige slottoewijzing.")
     if data["active_legacy_profile_claims_observed"]:
         out.append("MIGRATIE-HOLD: "
                    + str(data["active_legacy_profile_claims_observed"])
@@ -1099,6 +1113,16 @@ def html_view(data):
         )
     elif config["status"] != "OBSERVED_LOCAL_FILE":
         warnings.append("Lokaal projectcontract niet betrouwbaar waargenomen; live profiel onbekend.")
+    if data["queued_assigned_lanes_untrusted"]:
+        warnings.append(
+            str(data["queued_assigned_lanes_untrusted"])
+            + " queued workerreserveringen zonder betrouwbaar profiel/lane: geen nieuwe schrijvers."
+        )
+    if data["queued_assigned_scopes_not_declared"]:
+        warnings.append(
+            str(data["queued_assigned_scopes_not_declared"])
+            + " queued workerreserveringen zonder valide bestandscope: eigenaar moet reconciliëren."
+        )
     if data["expired_local_leases_observed"]:
         warnings.append(
             str(data["expired_local_leases_observed"])
