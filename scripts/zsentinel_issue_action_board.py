@@ -438,6 +438,13 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
             lines.append("  Waargenomen gatebron: " +
                          group["group_gate_source_state"] + " · " +
                          group["human_next_gate_step"])
+            if (group.get("source_head_receipts_consistent") is not True
+                    or group.get("source_head_observed") is None):
+                lines.append("  PR-HEAD: ONBEKEND/INCONSISTENT; kies geen commit op basis van deze groepsbron.")
+            else:
+                lines.append("  PR-HEAD-waarneming: " + chr(96) +
+                             group["source_head_observed"] + chr(96) +
+                             " (bronmoment; geen actuele HEAD- of mergevrijgave).")
             if group["any_file_overlap_observed"]:
                 lines.append("  Bestandscope-overlap in bron gezien: stem af met eigenaar.")
             if group["any_historical_movement_observed"]:
