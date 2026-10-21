@@ -1243,6 +1243,79 @@ def render_private_immediate_handoff(data):
     return result
 
 
+
+def render_owner_issue_draft(data):
+    """Redacted, owner-editable GitHub issue text; never posts a GitHub issue.
+
+    Build only from the admitted private inbox decision. No host name,
+    service names, PIDs, command arguments, internal URLs, credentials or
+    numeric capacity details are copied into the shareable draft.
+    """
+    import hashlib
+    import json
+
+    raw = render_private_json_handoff(data)
+    inbox = json.loads(raw)
+    if inbox.get("schema") != "zsentinel.runner-owner-inbox.v1":
+        raise ValueError("Unknown owner decision")
+    incident_ref = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+    kind = inbox["source"]
+    historical = kind.startswith("private-offline-")
+    coverage = inbox["evidence"]
+    action_items = inbox["owner_actions"][:3]
+    if not action_items:
+        raise ValueError("Owner action source is missing")
+    lines = [
+        "# [zSentinel] Runner / GitHub-toewijzing: eigenaarbeoordeling vereist",
+        "",
+        "**Status: NIET BEVESTIGD; geen runnerherstart, claimmutatie of deploy.**",
+        "",
+        "- Incidentreferentie (geen autorisatietoken): `" + incident_ref + "`",
+        "- Bron: " + ("historische privéwaarneming" if historical else
+                       "eenmalige lokale read-only waarneming") + ".",
+        "- GitHub-jobtoewijzing: ONBEKEND; apart door eigenaar controleren.",
+        "- GitHub-workflow / CI-resultaat: NIET ONDERZOCHT DOOR DIT RAPPORT.",
+        "- Runnerinventaris: " + (
+            "begrensd lokaal waargenomen"
+            if coverage.get("runner_inventory_complete") is True else
+            "ONVOLLEDIG OF ONBEKEND") + ".",
+        "- VPS-capaciteitsbron: " + (
+            "lokaal waargenomen" if coverage.get("capacity_complete") is True else
+            "ONVOLLEDIG OF ONBEKEND") + ".",
+        "",
+        "## Gevraagde actie voor bevoegde project-/runner-eigenaar",
+    ]
+    for index, item in enumerate(action_items, start=1):
+        lines += [
+            "",
+            str(index) + ". **" + _handoff_text(item["problem"], 160) + "**",
+            "   - " + _handoff_text(item["owner_action"], 500),
+            "   - Uitvoeringsstatus: NIET UITGEVOERD; eerst bron en mandaat nagaan.",
+        ]
+    lines += [
+        "",
+        "## Vereist extern bewijs vóór sluiting",
+        "",
+        "- [ ] Project, actuele taakclaim en bevoegde eigenaar bevestigd.",
+        "- [ ] Exacte GitHub-job/toewijzing en workflowstatus apart onderzocht.",
+        "- [ ] Alleen veilige geautoriseerde herstelstappen uitgevoerd indien nodig.",
+        "- [ ] Onafhankelijke bron bevestigt daadwerkelijk herstel of HOLD-oorzaak.",
+        "- [ ] PR-review, exact-head verplichte CI en releasevoorwaarden intact.",
+        "",
+        "## Privébijlage",
+        "",
+        "Het originele runnerincidentpakket blijft uitsluitend bij de operator.",
+        "Plaats GEEN private snapshots, servicelijsten, hostdetails, cgroupwaarden,",
+        "tokens, padnamen of ruwe logs in een openbare GitHub-issue.",
+        "Deze conceptmelding is geen bewijs van jobherstel of toestemming tot actie.",
+        "",
+    ]
+    output = "\n".join(lines)
+    if len(output.encode("utf-8")) > 128 * 1024:
+        raise ValueError("Shareable issue draft exceeds size limit")
+    return output
+
+
 def save_private(path, markup, extension=".html"):
     target = Path(path)
     if extension not in {".html", ".md", ".json"} or (
@@ -1289,10 +1362,12 @@ def save_private_incident_bundle(path, data):
     report_markdown = (render_private_handoff(data) if data.get("timeline") is not None
                        else render_private_immediate_handoff(data))
     report_html = render(data)
+    issue_draft = render_owner_issue_draft(data)
     rendered = {
         "incident.html": report_html.encode("utf-8"),
         "owner-handoff.md": report_markdown.encode("utf-8"),
         "owner-inbox.json": report_json.encode("utf-8"),
+        "github-owner-issue-draft.md": issue_draft.encode("utf-8"),
     }
     if any(not body or len(body) > 128 * 1024 for body in rendered.values()):
         raise ValueError("Private incident artifact exceeds bounded output size")
@@ -1387,8 +1462,13 @@ def verify_private_incident_bundle(path):
                 or stat.S_IMODE(info.st_mode) & 0o077):
             raise ValueError("Private owned bundle required")
         names = {"incident.html", "owner-handoff.md", "owner-inbox.json", "MANIFEST.json"}
-        if set(os.listdir(directory)) != names:
+        optional = "github-owner-issue-draft.md"
+        found = set(os.listdir(directory))
+        # Existing four-file bundles remain readable. New bundles include a
+        # separately redacted GitHub issue draft, always manifest-covered.
+        if found != names and found != names | {optional}:
             raise ValueError("Incomplete or unexpected incident bundle")
+        names = found
         source = {}
         for name in sorted(names):
             fd = os.open(
@@ -1455,7 +1535,7 @@ def main():
     parser.add_argument("--output", help="NEW private 0600 output (never overwritten)")
     parser.add_argument("--bundle", help="NEW owner-private folder for coherent HTML/MD/JSON incident package")
     parser.add_argument("--verify-bundle", help="Read-only checksum and private-file consistency inspection")
-    parser.add_argument("--format", choices=("html", "markdown", "json"), default="html",
+    parser.add_argument("--format", choices=("html", "markdown", "json", "issue"), default="html",
                         help="Private HTML, JSON or Markdown owner handoff from current, T0/T1 or offline timeline")
     parser.add_argument("--receipt", help="Replay one previously saved owner-private JSON (no current host read)")
     parser.add_argument("--previous", help="Optional owner-private T0 JSON, same-host and <=72 hours")
@@ -1503,6 +1583,9 @@ def main():
         elif args.format == "json":
             markup = render_private_json_handoff(data)
             save_private(args.output, markup, extension=".json")
+        elif args.format == "issue":
+            markup = render_owner_issue_draft(data)
+            save_private(args.output, markup, extension=".md")
         elif args.format == "markdown":
             markup = (render_private_handoff(data) if args.timeline else
                       render_private_immediate_handoff(data))
