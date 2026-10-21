@@ -119,6 +119,79 @@ def _read_input(path):
         os.close(fd)
 
 
+
+def _emit_output(content, destination, format_name):
+    """Emit to stdout or create one private, source-local operator artifact."""
+    if destination is None:
+        sys.stdout.write(content)
+        return
+    suffixes = {
+        "json": ".json", "markdown": ".md", "workorders": ".txt",
+        "html": ".html", "csv": ".csv",
+    }
+    if (not isinstance(destination, Path) or format_name not in suffixes
+            or destination.suffix != suffixes[format_name]):
+        raise PolicyInputError("private output extension must match the selected format")
+    try:
+        path = Path(os.path.abspath(destination))
+        data = content.encode("utf-8")
+        if not 1 <= len(data) <= MAX_OUTPUT_BYTES:
+            raise PolicyInputError("private output exceeds the 128 KiB output bound")
+        if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+            raise PolicyInputError("secure private output is unavailable on this platform")
+        parent = path.parent
+        before = parent.lstat()
+        if (not stat.S_ISDIR(before.st_mode) or before.st_uid != os.geteuid()
+                or stat.S_IMODE(before.st_mode) & 0o022):
+            raise PolicyInputError(
+                "private output directory must be owned and not writable by others")
+        directory_fd = os.open(
+            parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
+            getattr(os, "O_CLOEXEC", 0))
+        try:
+            actual = os.fstat(directory_fd)
+            if (not stat.S_ISDIR(actual.st_mode)
+                    or (actual.st_dev, actual.st_ino) != (before.st_dev, before.st_ino)
+                    or actual.st_uid != os.geteuid()
+                    or stat.S_IMODE(actual.st_mode) & 0o022):
+                raise PolicyInputError("private output directory changed during creation")
+            fd = None
+            created_inode = None
+            try:
+                fd = os.open(
+                    path.name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW |
+                    getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=directory_fd)
+                info = os.fstat(fd)
+                created_inode = (info.st_dev, info.st_ino)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise PolicyInputError("private output is not a regular file")
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "wb") as stream:
+                    fd = None
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.fsync(directory_fd)
+            except BaseException:
+                if fd is not None:
+                    os.close(fd)
+                if created_inode is not None:
+                    try:
+                        current = os.stat(
+                            path.name, dir_fd=directory_fd, follow_symlinks=False)
+                        if (current.st_dev, current.st_ino) == created_inode:
+                            os.unlink(path.name, dir_fd=directory_fd)
+                    except OSError:
+                        pass
+                raise
+        finally:
+            os.close(directory_fd)
+    except OSError as exc:
+        # Avoid leaking private path names from OSError messages.
+        raise PolicyInputError("private output destination unavailable or unsafe") from exc
+    print("Created NEW private recovery-policy artifact (0600); no action executed.",
+          file=sys.stderr)
+
 def _timestamp(value):
     if type(value) is not str or len(value) > 45:
         raise PolicyInputError("observed_at_utc must be an ISO-8601 timestamp")
@@ -1436,6 +1509,8 @@ def main(argv=None):
     parser.add_argument("--through-priority", choices=("P0", "P1", "P2", "P3"),
                         help="show up to this severity in --case-input (default P3)")
     parser.add_argument("--format", choices=("json", "markdown", "workorders", "html", "csv"), default="json")
+    parser.add_argument("--output", type=Path,
+                        help="Optional new private 0600 file; owner-controlled directory; extension must match format")
     parser.add_argument("--fail-on-hold", action="store_true", help="return exit code 2 when a valid evaluation contains any HOLD")
     parser.add_argument("--max-age-minutes", type=int, default=60,
                         help="maximum accepted observation age (1..1440; default 60)")
@@ -1485,7 +1560,7 @@ def main(argv=None):
             output = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
             if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
                 raise PolicyInputError("template exceeds 128 KiB")
-            sys.stdout.write(output)
+            _emit_output(output, args.output, "json")
             return 0
         except (OSError, UnicodeError, PolicyInputError) as exc:
             print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
@@ -1525,7 +1600,7 @@ def main(argv=None):
                 )
                 if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
                     raise PolicyInputError("live PR output exceeds 128 KiB")
-                sys.stdout.write(output)
+                _emit_output(output, args.output, args.format)
                 return 0
             if args.prepare_merge_review:
                 request = merge_review_template_from_case(
@@ -1535,7 +1610,7 @@ def main(argv=None):
                 output = json.dumps(request, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
                 if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
                     raise PolicyInputError("output exceeds 128 KiB")
-                sys.stdout.write(output)
+                _emit_output(output, args.output, "json")
                 return 0
             if args.view_project or args.through_priority or args.view_issue is not None:
                 report = select_case_view(
@@ -1550,7 +1625,7 @@ def main(argv=None):
                       json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
             if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
                 raise PolicyInputError("output exceeds 128 KiB")
-            sys.stdout.write(output)
+            _emit_output(output, args.output, args.format)
             return 2 if args.fail_on_hold and report["decision_counts"]["HOLD"] else 0
         except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
             print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
@@ -1573,7 +1648,7 @@ def main(argv=None):
             encoded = output.encode("utf-8")
             if len(encoded) > MAX_OUTPUT_BYTES:
                 raise PolicyInputError("output exceeds 128 KiB")
-            sys.stdout.write(output)
+            _emit_output(output, args.output, args.format)
             return 2 if args.fail_on_hold and report["decision_counts"]["HOLD"] > 0 else 0
         except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
             print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
@@ -1595,7 +1670,7 @@ def main(argv=None):
         encoded = output.encode("utf-8")
         if len(encoded) > MAX_OUTPUT_BYTES:
             raise PolicyInputError("output exceeds 128 KiB")
-        sys.stdout.write(output)
+        _emit_output(output, args.output, args.format)
         return 2 if args.fail_on_hold and report["decision"] == "HOLD" else 0
     except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
         print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
