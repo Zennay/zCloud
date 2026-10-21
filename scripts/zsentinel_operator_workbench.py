@@ -1942,7 +1942,59 @@ function acceptBaseline(data){
    title:c.title,next:c.recommended_next_step,
    prs:new Set(c.open_pr_candidates),gaps:new Set(c.evidence_gaps),prGates});
  }
- return {observed_at_utc:data.observed_at_utc,items,
+ const projectRows=data.project_operations===undefined?[]:data.project_operations;
+ if(!Array.isArray(projectRows)||projectRows.length>60)
+  throw Error('invalid earlier project recovery inventory');
+ const projectOperations=new Map();
+ for(const row of projectRows){
+  if(!row||Array.isArray(row)||typeof row!=='object'||
+     typeof row.project!=='string'||!/^[a-z][a-z0-9_-]{0,63}$/.test(row.project)||
+     projectOperations.has(row.project)||row.action_authorized!==false||
+     row.is_complete_inventory!==false||
+     !['partial','degraded','unavailable'].includes(row.issue_coverage)||
+     typeof row.recommended_next_step!=='string'||!row.recommended_next_step.trim()||
+     row.recommended_next_step.length>650)
+   throw Error('invalid earlier project recovery card');
+  const counts=row.issue_counts_in_sample;
+  if(!counts||Array.isArray(counts)||typeof counts!=='object'||
+     !sameJsonValue(Object.keys(counts).sort(),['P0','P1','P2','Unspecified'].sort())||
+     ['P0','P1','P2','Unspecified'].some(key=>
+      !Number.isInteger(counts[key])||counts[key]<0||counts[key]>100000000))
+   throw Error('invalid earlier sampled project priority counts');
+  const queue=row.queue_observation===undefined?null:row.queue_observation;
+  let queueAt=null,queueCopy=null;
+  if(queue!==null){
+   const clocks=data.source_times_utc,fresh=data.fresh;
+   if(!queue||Array.isArray(queue)||typeof queue!=='object'||
+      !Number.isInteger(queue.active_items)||queue.active_items<0||queue.active_items>100000000||
+      !Number.isInteger(queue.high_claim_attempts)||queue.high_claim_attempts<0||
+      queue.high_claim_attempts>queue.active_items||
+      !Number.isInteger(queue.expired_active_leases)||queue.expired_active_leases<0||
+      queue.expired_active_leases>queue.active_items||
+      !clocks||Array.isArray(clocks)||typeof clocks!=='object'||
+      !fresh||Array.isArray(fresh)||typeof fresh!=='object'||fresh.retry!==true||
+      typeof clocks.retry!=='string')
+    throw Error('earlier project queue counts lack trusted bounded source provenance');
+   const queueClock=sourceInstant(clocks.retry);
+   if(queueClock===null||queueClock>earlier)
+    throw Error('earlier project queue source is after its board');
+   queueAt=clocks.retry;
+   queueCopy={active_items:queue.active_items,
+    high_claim_attempts:queue.high_claim_attempts,
+    expired_active_leases:queue.expired_active_leases};
+  }
+  const claimIds=row.observed_claim_ids===undefined?null:row.observed_claim_ids;
+  if(claimIds!==null&&(!Array.isArray(claimIds)||claimIds.length>150))
+   throw Error('invalid earlier bounded claim-context observation');
+  projectOperations.set(row.project,{
+   project:row.project,issue_coverage:row.issue_coverage,
+   issue_counts_in_sample:{P0:counts.P0,P1:counts.P1,P2:counts.P2,Unspecified:counts.Unspecified},
+   queue_observation:queueCopy,queue_source_observed_at_utc:queueAt,
+   claim_context:claimIds&&claimIds.length?'reported_observation_only':'not_verified',
+   recommended_next_step:row.recommended_next_step
+  });
+ }
+ return {observed_at_utc:data.observed_at_utc,items,projectOperations,
   coverage:{projects:cov.projects,inbox_truncated:cov.inbox_truncated,
     cards_truncated:cov.cards_truncated,github_denial:cov.github_denial}};
 }
@@ -1993,6 +2045,43 @@ function changesSinceBaseline(){
  for(const old of baseline.items.values())if(!now.has(old.issue))
    result.push({kind:'not-observed',issue:old.issue,priority:old.priority});
  return result;
+}
+function projectChangesSinceBaseline(){
+ if(!baseline)return [];
+ const current=new Map(board.project_operations.map(row=>[row.project,row]));
+ const changes=[];
+ for(const row of board.project_operations){
+  const old=baseline.projectOperations?.get(row.project);
+  if(!old){
+   changes.push({kind:'new-observation',project:row.project,
+    changedFields:['project recovery observation newly captured']});
+   continue;
+  }
+  const changedFields=[];
+  if(old.issue_coverage!==row.issue_coverage)
+   changedFields.push('GitHub issue source coverage');
+  if(!sameJsonValue(old.issue_counts_in_sample,row.issue_counts_in_sample))
+   changedFields.push('sampled P0/P1/P2/unranked issue counts');
+  const before=old.queue_observation,after=row.queue_observation;
+  if(!before&&after)
+   changedFields.push('queue pressure observation newly available');
+  else if(before&&!after)
+   changedFields.push('queue pressure observation unavailable (UNKNOWN)');
+  else if(before&&after&&!sameJsonValue(before,after))
+   changedFields.push('sampled active/high-claim/expired-lease counts');
+  if(old.claim_context!==row.claim_context)
+   changedFields.push('reported claim context changed (not ownership)');
+  if(old.recommended_next_step!==row.recommended_next_step)
+   changedFields.push('recommended human investigation');
+  if(changedFields.length)
+   changes.push({kind:'changed-evidence',project:row.project,changedFields});
+ }
+ for(const old of (baseline.projectOperations||new Map()).values()){
+  if(!current.has(old.project))
+   changes.push({kind:'not-observed',project:old.project,
+    changedFields:['project no longer visible in current bounded source (NOT resolved)']});
+ }
+ return changes;
 }
 function refreshComparison(){
  const meta=document.getElementById('comparisonMeta');
