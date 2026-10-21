@@ -52,6 +52,13 @@ HTML-rapport toont alle drie bronnen naast de bestaande eigenaar- en releasekaar
   bevoegde release-eigenaar beslist ná de oorspronkelijke exact-HEAD CI,
   onafhankelijke review, bescherming van main en seriële productie-gates.
 
+Het operatoradvies routeert CPU-/PSI-signalen naar
+`HOST_CONCURRENCY_OWNER`: de eigenaar van gedeelde training- en
+runner-admission moet **toekomstige** overlappende zware jobs beoordelen.
+Dit is bewust een ander pad dan `CAPACITY_FIRST`, dat over RAM, swap,
+disk, reserve en cachebeheer gaat. Een hoge load is geen reden om lopende
+training of een Runner.Worker automatisch te onderbreken.
+
 Deze productaanvulling zit op bestaande PR #1540 en is niet op main of
 productie zolang GitHub de verplichte gates niet heeft vrijgegeven.
 

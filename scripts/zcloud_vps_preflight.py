@@ -318,11 +318,15 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
         })
 
     if codes & {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE", "SWAP_TELEMETRY_INCOMPLETE",
-                "MEMORY_UNOBSERVABLE", "DISK_UNOBSERVABLE", "STORAGE_TRIAGE_PARTIAL",
-                "HOST_CPU_SATURATED", "HOST_CPU_BUSY", "HOST_MEMORY_STALL", "HOST_IO_STALL", "HOST_PRESSURE_INCOMPLETE"}:
+                "MEMORY_UNOBSERVABLE", "DISK_UNOBSERVABLE", "STORAGE_TRIAGE_PARTIAL"}:
         recommend("CAPACITY_FIRST", "VPS resource owner",
                   "Insufficient or unverified resource headroom can cause repeat OOM crashes or incomplete releases.",
                   "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
+    if codes & {"HOST_CPU_SATURATED", "HOST_CPU_BUSY", "HOST_MEMORY_STALL",
+                "HOST_IO_STALL", "HOST_PRESSURE_INCOMPLETE"}:
+        recommend("HOST_CONCURRENCY_OWNER", "Shared VPS training and runner scheduler owner",
+                  "Read-only CPU or PSI evidence shows contention or an incomplete host sample, not attribution to a specific worker.",
+                  "Preserve live training and jobs. Inspect who controls future concurrent admissions and resource budgets via the existing owner before scheduling heavy new work. Do not kill, renice, pause or restart workers from this report.")
     if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS", "RUNNER_UNIT_TRANSITIONING", "RUNNER_LISTENER_DUPLICATED", "RUNNER_WORKER_PROCESS_OBSERVED"}:
         recommend("RUNNER_OWNER", "zCloud Actions runner owner (#1326)",
                   "The dedicated listener/registered runner may be unavailable independently of other project runners.",
@@ -358,9 +362,10 @@ RECOVERY_FAMILIES = {
     "CAPACITY_FIRST": frozenset({
         "LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED",
         "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE", "SWAP_TELEMETRY_INCOMPLETE",
-        "MEMORY_UNOBSERVABLE", "DISK_UNOBSERVABLE", "STORAGE_TRIAGE_PARTIAL",
-        "HOST_CPU_SATURATED", "HOST_CPU_BUSY", "HOST_MEMORY_STALL", "HOST_IO_STALL",
-        "HOST_PRESSURE_INCOMPLETE"}),
+        "MEMORY_UNOBSERVABLE", "DISK_UNOBSERVABLE", "STORAGE_TRIAGE_PARTIAL"}),
+    "HOST_CONCURRENCY_OWNER": frozenset({
+        "HOST_CPU_SATURATED", "HOST_CPU_BUSY", "HOST_MEMORY_STALL",
+        "HOST_IO_STALL", "HOST_PRESSURE_INCOMPLETE"}),
     "RUNNER_OWNER": frozenset({
         "ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE",
         "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS",
