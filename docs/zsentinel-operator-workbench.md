@@ -2641,7 +2641,7 @@ broninventaris en filtermatches blijven vermeld, zodat paginering niet
 per ongeluk 'opgelost' suggereert. Verwerking is bewust begrensd op 200
 distincte historische issues en maximaal 60 zichtbare kaarten per pagina.
 De originele SHA256-bronmanifesten, observatietijdstippen en ontbrekende
-bronbatches staan bovenaan beide operatorformaten.
+bronbatches staan bovenaan de bronmetadata van alle vier uitvoerformaten.
 
 ### Gestructureerde CSV- en JSON-overdracht
 
