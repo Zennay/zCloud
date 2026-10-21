@@ -1190,9 +1190,17 @@ def private_action_briefing(decision, source):
     lines += ["", "## 4. Notion-status en workercontinuïteit · geen leasebewijs"]
     notion = decision.get("notion_claims_observation")
     if type(notion) is dict:
+        notion_time = _stamp(notion["observed_at"])
+        notion_live = (notion.get("source") == "notion_readonly_data_source_pages"
+                       and notion.get("coverage") == "current_pages_only"
+                       and (datetime.now(timezone.utc) -
+                            datetime.fromisoformat(notion_time)) <= timedelta(minutes=10))
         lines.append("- Notionbron: " + md(notion["coverage"], 65) +
+                     " · bronmoment " + notion_time + " · " +
+                     ("RECENTE LIVE STATUSONDERGRENS" if notion_live else
+                      "NIET-LIVE, VERLOPEN OF ONVOLLEDIG: ALLEEN HISTORISCHE INDICATIE") +
                      " · " + str(notion["active_count"]) +
-                     " waargenomen Claimed/Running/Verifying-regels (alleen ondergrens).")
+                     " eerder waargenomen Claimed/Running/Verifying-regels.")
         active_counts = notion.get("active_project_counts", {})
         if type(active_counts) is dict:
             for project, count in sorted(active_counts.items())[:12]:
@@ -1200,8 +1208,13 @@ def private_action_briefing(decision, source):
                     raise ValueError("invalid Notion active project count")
                 lines.append("  - " + md(project, 80) + ": ≥" + str(count) +
                              " statusregels; bestandsclaim/owner NIET bewezen.")
-        if notion["coverage"] != "current_pages_only":
-            lines.append("  - Brondekking onvolledig of snapshot niet actueel; geen vrijgave.")
+        if not notion_live:
+            lines.append("  - EIGENAARACTIE: verifieer huidige actieve Notion-statussen "
+                         "via geautoriseerde live-bron. Een opgeslagen snapshot "
+                         "bewijst GEEN actuele owner/lease of vrije scope.")
+        else:
+            lines.append("  - Live status is slechts een indicatie; huidige "
+                         "file-eigendom en queuelease blijven ONBEKEND.")
     else:
         lines.append("- Notion-bron ONBEKEND; werkitems zijn mogelijk actief.")
     workers = decision.get("worker_progress_observation")
