@@ -1,3 +1,34 @@
+## 21 oktober · historische failure episodes per systemd-manager
+
+De eerdere dagelijkse bronhistorie telde alleen de system-scope `runner_units`
+bij `failed_observations`. Daardoor ontbrak het langdurig falen van
+gebruikersrunners in de P0/P1 prioritering, terwijl de aparte live cards
+die services al konden zien. Dit is nu op dezelfde product-PR hersteld.
+
+`timeline_footprint()` gebruikt afzonderlijke gevalideerde bronsets
+voor `systemctl` en `systemctl --user`. Per scope bewaart hij bounded
+aantallen `failed`-momentopnames, de systemd-resultaten zoals `oom-kill`,
+de laatste **waargenomen** status, en onafhankelijke volledigheid.
+`latest_user_failed_services`, `user_failed_observations` en
+`incomplete_user_service_samples` zijn nieuwe aparte keys.
+
+Een identieke systemd unitnaam is geen gedeelde bronidentiteit:
+`timeline_owner_actions()` vergelijkt uitsluitend `(scope, unit)`.
+Een recente `oom-kill` uit de user-manager wordt dus correct tot dezelfde
+bevoegde geheugenonderzoeksplicht geleid als een system-manager failure,
+maar impliceert GEEN herstart- of vrijgegeven GitHub-workflowactie.
+Ontbrekende oudere user-data blijft ONBEKEND en telt mee als gedeeltelijke
+brondekking. Geen bronrapport mag bij een ontbrekende user-manager
+beweren dat alle runners succesvol draaien.
+
+Het offline HTML-blok, de privé Markdown-handoff en de JSON-eigenaarinbox
+tonen nu apart hoe vaak user-services als failed zijn waargenomen en
+welke oorzaak de bron op het laatste moment vermeldde. `failed_samples`
+is een telling van historische observaties, **geen** aantal crashes,
+restarts of GitHub-jobmislukkingen. Geen nieuwe QA-, regressie- of
+quality-validationpackages; dezelfde bestaande exacte-head CI, reviews,
+branch protection en operationele releasebevoegdheid blijven vereist.
+
 ## 21 oktober · hostbrede OOM- en memory-PSI triage (read-only)
 
 Bij de huidige VPS stond swap volledig vol en rapporteerden twee
