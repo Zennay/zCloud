@@ -53,17 +53,6 @@ HUMAN_GATE_LABELS_NL = {
         "Vereiste branchregels, eigenaar en release apart verifiëren.",
 }
 HUMAN_GATE_STEPS = frozenset(HUMAN_GATE_LABELS_NL)
-    "owner_finish_draft_before_merge_review",
-    "owner_resolve_current_base_conflicts",
-    "wait_for_github_mergeability_evaluation",
-    "inspect_incomplete_current_head_gate_source",
-    "inspect_current_head_failed_checks_with_owner",
-    "wait_for_existing_current_head_checks",
-    "owner_address_exact_head_review_changes",
-    "verify_missing_current_head_checks_and_rules",
-    "request_independent_current_head_review",
-    "verify_required_rules_ownership_and_release_separately",
-})
 
 
 def _load_regular(path: Path, max_bytes: int) -> dict:
