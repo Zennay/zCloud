@@ -675,3 +675,6 @@ Every single-action report now includes `recommended_next_step_code` alongside t
 
 
 Missing ownership is not treated as an approval request to an already-known person. When `owner_missing` or `human_owner_missing` is present, the next-step text instructs the operator to identify the responsible owner from current source evidence without inventing ownership; the machine code is `identify_authorized_owner`. Only a known owner with missing approval maps to `request_authorized_owner_approval`.
+
+
+If the claim is active/unknown and its owner is also missing, the route is `identify_claim_owner` first; it must not assume that an identifiable current owner exists.
