@@ -929,6 +929,9 @@ def render_claim_visibility(source):
             " · lokale actieve leases=" +
             esc(result["active_local_leases_observed"] if
                 result["active_local_leases_observed"] is not None else "UNKNOWN") +
+            " · verlopen lokale leases=" +
+            esc(result["expired_local_leases_observed"] if
+                result["expired_local_leases_observed"] is not None else "UNKNOWN") +
             " · exclusieve schrijvers=" +
             esc(result["active_local_writers_observed"] if
                 result["active_local_writers_observed"] is not None else "UNKNOWN") +
@@ -1225,8 +1228,9 @@ def main():
             for project, claim in local_claims.items():
                 print(f"LOCAL_CLAIMS {project} {claim['status']}; "
                       f"leases={claim['active_local_leases_observed']}; "
+                      f"expired_leases={claim['expired_local_leases_observed']}; "
                       f"writers={claim['active_local_writers_observed']}; "
-                      "Notion/other ownership remains UNKNOWN")
+                      "expired leases are evidence only; Notion/other ownership remains UNKNOWN")
             if issue_inbox:
                 print("P0_P1_ISSUE_INBOX observed=" +
                       str(issue_inbox["total_observed_issues"]) +
