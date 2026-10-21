@@ -1280,6 +1280,7 @@ function githubActivityImportPanel(){
   const visible=new Set((DATA?.projects||[]).map(p=>p.id));
   const loadedPage=filter?(PUBLIC_GITHUB_PAGE.get(filter)||0):0;
   const viewedPage=filter?(PUBLIC_GITHUB_VIEW_PAGE.get(filter)||1):1;
+  const publicPause=Math.max(0,PUBLIC_GITHUB_PAUSE_UNTIL-Date.now());
   const rows=(snapshot?.events||[]).filter(a=>visible.has(a.project)&&(!filter||a.project===filter)
     &&(!filter||loadedPage===0||(a.sourcePage||1)===viewedPage));
   const selectedCoverage=(snapshot?.coverage||[]).filter(c=>visible.has(c.project)&&(!filter||c.project===filter));
@@ -1309,10 +1310,15 @@ function githubActivityImportPanel(){
     esc(a.url)+'">'+esc(a.description)+'</a></div><small>'+esc(date(a.ts,true))+'</small></div>').join('');
   return '<div class="panel"><div class="panel-header"><div><h2>GitHub evidence · optional local import</h2>'+
     '<p class="panel-subtitle">PRs, CI and main commits from an operator-generated bounded read-only snapshot. Not automatically synchronized.</p></div></div>'+
-    '<button type="button" class="runner-action" data-github-public-refresh '+(PUBLIC_GITHUB_BUSY?'disabled aria-busy="true"':'')+'>Read public GitHub for selected project</button> '+
+    '<button type="button" class="runner-action" data-github-public-refresh '+
+      (PUBLIC_GITHUB_BUSY||publicPause>0?'disabled aria-busy="true"':'')+
+      '>Read public GitHub for selected project</button> '+
+    (publicPause>0?'<p class="detail-note" role="status">Confirmed global GitHub rate limit: further public reads are paused for up to '+
+      Math.ceil(publicPause/60000)+' minute(s). Existing records remain visible; do not retry manually.</p>':'')+
     (loadedPage>0?'<button type="button" class="runner-action" data-github-public-older '+
-      (PUBLIC_GITHUB_BUSY||loadedPage>=5||PUBLIC_GITHUB_MORE.get(filter)===false?'disabled':'')+'>Read older GitHub page ('+(loadedPage+1)+'/5)</button> '+
-      '<span class="detail-note">Showing GitHub page '+viewedPage+' of '+loadedPage+' manually loaded (20 PRs, 20 Actions, 15 commits per page). Not a complete history.</span> '+
+      (PUBLIC_GITHUB_BUSY||publicPause>0||loadedPage>=5||PUBLIC_GITHUB_MORE.get(filter)===false?'disabled':'')+'>Read older GitHub page ('+(loadedPage+1)+'/5)</button> '+
+      '<span class="detail-note">Viewing loaded GitHub page '+viewedPage+' of '+loadedPage+
+      ' · '+rows.length+' retained events across PR, Actions and main. Shared 200-event memory cap; unavailable records are UNKNOWN, not zero.</span> '+
       (viewedPage>1?'<button type="button" class="runner-action" data-github-view-newer>Newer loaded page</button> ':'')+
       (viewedPage<loadedPage?'<button type="button" class="runner-action" data-github-view-older>Older loaded page</button> ':''):'')+
     '<button type="button" class="runner-action" data-vps-github-refresh '+
