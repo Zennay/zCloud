@@ -1016,6 +1016,7 @@ def main(argv=None):
     )
     parser.add_argument("--input", help="one bounded JSON request file path, or - for stdin")
     parser.add_argument("--batch-input", help="bounded JSON array of 1–25 independent requests, file path or - for stdin")
+    parser.add_argument("--case-input", help="private zSentinel portfolio recovery-case JSON export, file path or -")
     parser.add_argument("--template", choices=sorted(ACTIONS),
                         help="emit a fresh, fail-closed JSON request template")
     parser.add_argument("--project-id", help="project slug used by --template")
@@ -1030,7 +1031,7 @@ def main(argv=None):
     if not 1 <= args.max_age_minutes <= 1440:
         parser.error("--max-age-minutes must be between 1 and 1440")
     if args.template:
-        if args.input or args.batch_input:
+        if args.input or args.batch_input or args.case_input:
             parser.error("--template cannot be used with --input or --batch-input")
         if not all((args.project_id, args.incident_id, args.source_url)):
             parser.error("--template requires --project-id, --incident-id and --source-url")
@@ -1047,6 +1048,28 @@ def main(argv=None):
             sys.stdout.write(output)
             return 0
         except (OSError, UnicodeError, PolicyInputError) as exc:
+            print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
+            return 2
+    if args.case_input:
+        if args.input or args.batch_input:
+            parser.error("--case-input cannot be combined with other input modes")
+        if any((args.project_id, args.incident_id, args.source_url, args.owner)):
+            parser.error("template identity options require --template")
+        try:
+            raw = _read_input(args.case_input)
+            data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                              parse_constant=_reject_constant)
+            report = evaluate_recovery_case(data)
+            output = (workorders_html(report) if args.format == "html" else
+                      "# zSentinel case workorders\\n\\n" + workorders_text(report)
+                      if args.format == "markdown" else
+                      workorders_text(report) if args.format == "workorders" else
+                      json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\\n")
+            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("output exceeds 128 KiB")
+            sys.stdout.write(output)
+            return 2 if args.fail_on_hold and report["decision_counts"]["HOLD"] else 0
+        except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
             print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
             return 2
     if args.batch_input:
@@ -1072,9 +1095,9 @@ def main(argv=None):
             print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
             return 2
     if not args.input:
-        parser.error("either --input, --batch-input or --template is required")
+        parser.error("either --input, --batch-input, --case-input or --template is required")
     if args.format in ("workorders", "html"):
-        parser.error("--format workorders/html requires --batch-input")
+        parser.error("--format workorders/html requires --batch-input or --case-input")
     if any((args.project_id, args.incident_id, args.source_url, args.owner)):
         parser.error("template identity options require --template")
     try:
