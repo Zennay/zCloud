@@ -87,7 +87,7 @@ het **exacte** Git-blobfragment van beide assets:
 
 - `app.js`: `cb8ffd1e8ecd` — bevat de strikte
   `resumed=true` / `status=queued` / exact-`queue_id` afhandeling.
-- `style.css`: `11567f347b38` — bevat de bijbehorende
+- `style.css`: `8544c850441b` — bevat de bijbehorende
   Dependency holds- en Attention-presentatie.
 
 De ongewijzigde `enhancements.js` en `enhancements.css` behoudt de
@@ -133,3 +133,11 @@ Elk filterwissel zet de kaartpaginering terug naar de eerste twaalf;
 schrijft geen wachtrij-, claim- of Attention-toestand en verandert
 geen autorisatie voor hervatten. Bij geen urgente items geeft het
 scherm expliciet aan dat dit **alleen de geladen steekproef** betreft.
+
+
+De P0/P1-filter en pagineringsknoppen gebruiken een zichtbaar actieve
+status (`aria-pressed`), toetsenbordfocus via de bestaande focusring,
+en minimaal 44px aanraakhoogte op mobiel. De stylesheetpin in
+`public/index.html` is mee veranderd naar de nieuwe CSS-blob;
+oudere cached styles vormen daardoor niet stilzwijgend de nieuwe
+operatorinterface.
