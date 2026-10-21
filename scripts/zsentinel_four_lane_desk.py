@@ -247,8 +247,8 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
     if collision_count:
         return {
             "code": "HOLD_ACTIVE_SCOPE_CONFLICT",
-            "label": "Actieve schrijfscopes overlappen",
-            "next_step": "Laat de betrokken bestaande eigenaren het bestandsconflict oplossen.",
+            "label": "Actieve of gereserveerde schrijfscopes overlappen",
+            "next_step": "Laat de betrokken bestaande worker- en reserveringseigenaren het bestandsconflict oplossen.",
         }
     if state == "blocked" and any(
         record.get("reason") == "queued_worker_slot_scope_conflict"
@@ -568,20 +568,26 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         host_admission = "NO_ADDITIONAL_HOLD"
     # Diagnostic only. The dispatch path itself remains governed by the
     # existing lane generator and actual external claim/release gates.
-    active_items = [
+    # Existing queued tasks assigned to a worker slot already reserve file
+    # scopes. Compare them with live active tasks as well; otherwise two
+    # separately reserved lanes can collide without any operator warning.
+    protected_items = [
         classify_backlog_item(project, item)
-        for item in queue if str(item.get("status", "")).lower() in ACTIVE
+        for item in queue
+        if (str(item.get("status", "")).lower() in ACTIVE
+            or (str(item.get("status", "")).lower() == "queued"
+                and item.get("worker_slot") is not None))
     ]
     collision_counts = {lane_id: 0 for lane_id in LANE_NAMES}
     cross_lane_coverage = (
-        len(active_items) <= 64 and not queue_partial
+        len(protected_items) <= 64 and not queue_partial
         and not truncated_queue_fields
         and unknown_active_scopes == 0 and unknown_claim_scopes == 0
         and unknown_assigned_scopes == 0 and untrusted_assigned_profiles == 0
     )
     if cross_lane_coverage:
-        for index, left in enumerate(active_items):
-            for right in active_items[index + 1:]:
+        for index, left in enumerate(protected_items):
+            for right in protected_items[index + 1:]:
                 if left["lane_id"] == right["lane_id"]:
                     continue
                 overlap = scopes_overlap(left["scope"], right["scope"])
@@ -863,7 +869,7 @@ def text_view(data):
         if lane["new_write_admission_held"]:
             extra += " | NIEUWE SCHRIJFACTIE NIET VRIJGEGEVEN"
         if lane["active_cross_lane_scope_conflicts"]:
-            extra += " | CONFLICT MET ANDERE ACTIEVE BAAN"
+            extra += " | CONFLICT MET ANDERE ACTIEVE OF GERESERVEERDE BAAN"
         elif lane["active_cross_lane_scope_conflicts"] is None:
             extra += " | ACTIEVE SCOPEDEKKING ONVOLLEDIG"
         out.append(
@@ -1090,7 +1096,7 @@ def html_view(data):
         if lane["new_write_admission_held"]:
             warning += "<p class='warn'>Nieuwe schrijfopdracht niet vrijgegeven.</p>"
         if lane["active_cross_lane_scope_conflicts"]:
-            warning += "<p class='warn'>Actief scopeconflict met andere herstelbaan.</p>"
+            warning += "<p class='warn'>Actief of gereserveerd scopeconflict met andere herstelbaan.</p>"
         elif lane["active_cross_lane_scope_conflicts"] is None:
             warning += "<p class='warn'>Actieve scopevergelijking onvolledig.</p>"
         cards.append(
