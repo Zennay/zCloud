@@ -182,7 +182,7 @@ def _utc(value):
         return None
 
 
-def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases, missing_local_claim, active_profile_mismatch, local_config_mismatch, local_config_unverified):
+def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases, missing_local_claim, active_profile_mismatch, local_config_mismatch, local_config_unverified, host_admission):
     """Map a local lane observation to human-only admission guidance.
 
     This deliberately never claims a task and is not an admission token.
@@ -251,6 +251,18 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
             "code": "HOLD_QA_PRODUCT_POLICY",
             "label": "Alleen uitgesloten QA-werk over",
             "next_step": "Laat de wachtrijeigenaar QA apart beheren; kies echt productwerk.",
+        }
+    if state == "queued" and host_admission == "PRESSURE_HOLD":
+        return {
+            "code": "HOLD_HOST_PRESSURE",
+            "label": "Nieuwe worker uitgesteld door gemeten hostdruk",
+            "next_step": "Behoud lopende workers; laat de bevoegde host-/runner-eigenaar RAM, swap, PSI en schijfruimte beoordelen voordat een nieuwe schrijftaak start.",
+        }
+    if state == "queued" and host_admission == "HOST_SOURCE_UNVERIFIED":
+        return {
+            "code": "HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED",
+            "label": "Gevraagde hostdrukmeting niet volledig betrouwbaar",
+            "next_step": "Laat de hosteigenaar betrouwbare host-/cgroup-bronnen bevestigen; start geen extra worker op basis van ontbrekende telemetrie.",
         }
     if state == "queued":
         return {
@@ -501,6 +513,19 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         local_contract["matches_proposed_profile"] == "MISMATCH_LOCAL_FILE"
     )
     local_config_unverified = local_contract["status"] != "OBSERVED_LOCAL_FILE"
+    # Optional host observation influences *advisory* new-work HOLD only.
+    # It never interrupts existing owners and cannot grant an extra slot.
+    host_pressure = observe_host_pressure() if include_host_pressure else None
+    if host_pressure is None:
+        host_admission = "NOT_REQUESTED"
+    elif host_pressure.get("pressure_hint") in (
+        "HIGH_LOCAL_PRESSURE", "ELEVATED_LOCAL_PRESSURE"
+    ):
+        host_admission = "PRESSURE_HOLD"
+    elif host_pressure.get("status") != "HOST_SNAPSHOT_OBSERVED":
+        host_admission = "HOST_SOURCE_UNVERIFIED"
+    else:
+        host_admission = "NO_ADDITIONAL_HOLD"
     # Diagnostic only. The dispatch path itself remains governed by the
     # existing lane generator and actual external claim/release gates.
     active_items = [
@@ -544,7 +569,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             lane, source_complete, cross_lane_coverage,
             collision_counts[lane["lane_id"]], expired, missing_local_claim,
             active_profile_mismatch, local_config_mismatch,
-            local_config_unverified,
+            local_config_unverified, host_admission,
         )
         visible.append({
             "id": lane["lane_id"],
@@ -585,6 +610,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         "held_for_owner_or_source": sum(lane["admission"]["code"].startswith("HOLD_") for lane in visible),
         "local_candidate_external_gates": sum(lane["admission"]["code"] == "CANDIDATE_EXTERNAL_GATES" for lane in visible),
         "no_local_candidate_observed": sum(lane["admission"]["code"] == "NO_LOCAL_CANDIDATE" for lane in visible),
+        "held_by_optional_host_pressure": sum(lane["admission"]["code"] in ("HOLD_HOST_PRESSURE", "HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED") for lane in visible),
     }
     owner_shortlist, shortlist_partial = owner_review_suggestions(portfolio)
     # Truncated source groups can hide whole projects despite few observed cards.
@@ -608,6 +634,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         "deployed_four_lane_profile": "NOT_VERIFIED",
         "local_contract_evidence": local_contract,
         "local_contract_reconciliation_required": local_config_mismatch or local_config_unverified,
+        "host_admission": host_admission,
         "active_claim_scopes_not_declared": unknown_claim_scopes,
         "untrusted_active_leases_observed": untrusted_active_leases,
         "runtime_active_filtered_by_eligibility": runtime_shadowed_active,
@@ -655,7 +682,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
     packet["runner_processes"] = (
         observe_local_runners() if include_runner_processes else None
     )
-    packet["host_pressure"] = observe_host_pressure() if include_host_pressure else None
+    packet["host_pressure"] = host_pressure
     packet["recovery_actions"] = suggested_actions(packet)
     packet["project_owner_decisions"] = {
         project_id: project_review_status(packet, project_id)
@@ -765,7 +792,9 @@ def text_view(data):
         + " extra in dezelfde baan); " + str(summary["held_for_owner_or_source"])
         + " banen HOLD; " + str(summary["local_candidate_external_gates"])
         + " lokale kandidaten met externe gates; "
-        + str(summary["no_local_candidate_observed"]) + " zonder lokale taak."
+        + str(summary["no_local_candidate_observed"]) + " zonder lokale taak; "
+        + str(summary["held_by_optional_host_pressure"])
+        + " extra kandidaatbanen HOLD wegens optionele hostdrukmeting."
     )
     for lane in data["lanes"]:
         extra = " | MEERDERE ACTIEVE TAKEN" if lane["parallel_active_warning"] else ""
