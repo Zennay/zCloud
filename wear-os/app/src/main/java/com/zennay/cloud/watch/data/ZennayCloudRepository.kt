@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -23,7 +24,21 @@ class ZennayCloudRepository(
         parseProject(request("/api/v1/watch/project?project=$encoded").getJSONObject("project"))
     }
 
-    private companion object { const val MAX_RESPONSE_BYTES = 512 * 1024 }
+    private companion object {
+        const val MAX_RESPONSE_BYTES = 512 * 1024
+        // WorkManager polls roughly every 15 minutes, but each HTTP response
+        // should be a recent origin snapshot, never an old proxy cache.
+        const val MAX_SOURCE_AGE_MS = 15L * 60_000L
+        const val MAX_CLOCK_SKEW_MS = 2L * 60_000L
+    }
+
+    private fun sourceTimeIsRecent(value: String): Boolean = try {
+        val observedAt = Instant.parse(value).toEpochMilli()
+        val age = System.currentTimeMillis() - observedAt
+        age in -MAX_CLOCK_SKEW_MS..MAX_SOURCE_AGE_MS
+    } catch (_: Exception) {
+        false
+    }
 
     private fun request(path: String): JSONObject {
         val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
@@ -62,10 +77,13 @@ class ZennayCloudRepository(
 
     private fun parseHome(root: JSONObject): WatchSnapshot {
         val host = root.getJSONObject("host")
+        val generatedAt = root.getString("time")
+        // A cached or unparseable origin response is not a LIVE incident feed,
+        // even when its JSON includes stale=false and active_blockers.
+        val stale = root.optBoolean("stale", true) || !sourceTimeIsRecent(generatedAt)
         return WatchSnapshot(
-
-            generatedAt = root.getString("time"),
-            stale = root.optBoolean("stale", false),
+            generatedAt = generatedAt,
+            stale = stale,
             overallProgress = root.getInt("overall_progress"),
             activeProjects = root.getInt("active_projects"),
             host = HostSummary(
