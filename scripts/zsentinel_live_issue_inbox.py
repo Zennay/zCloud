@@ -145,57 +145,57 @@ def _safe_issue(item, repository, *, observed_at):
 
 
 def observe_repo_inbox(repo_full_name, *, token=None):
-    """Read recent open issues of one canonical Zennay repo, never mutate."""
+    """Recent issue inventory plus bounded P0/P1 recall when recent window ends.
+
+    The issue-only search preserves original GitHub source ordering; the
+    result is still a bounded snapshot, not an exhaustive owner assignment.
+    P0/P1 title recall is a navigation hint and must never grant authority.
+    """
     if not isinstance(repo_full_name, str):
         raise GitHubReadError("inbox repository must be owner/name")
     match = REPO.fullmatch(repo_full_name)
     if match is None:
         raise GitHubReadError("inbox repository must be Zennay/<repo>")
     name = match[1]
-    query = urlencode({"q": "repo:Zennay/" + name + " is:issue is:open"})
-    issues, seen = [], set()
+    query_prefix = "repo:Zennay/" + name + " is:issue is:open"
     observed_at = datetime.now(timezone.utc)
+    collected = {}
     total_rows = 0
     prs_excluded = 0
     invalid_excluded = 0
     source_error = None
     attempts = 0
     pages_read = 0
-    last_page_short = False
     provider_total_count = None
     provider_incomplete = False
+    recent_window_truncated = True
+    recall_performed = False
+    recall_sources = []
 
-    for page in range(1, MAX_PAGES + 1):
-        try:
-            attempts += 1
-            payload = _limited_json(
-                "/search/issues?" + query +
-                "&sort=updated&order=desc&per_page=" + str(PAGE_SIZE) +
-                "&page=" + str(page),
-                token=token, max_body_bytes=MAX_DISCOVERY_BODY_BYTES,
-            )
-        except GitHubReadError as exc:
-            source_error = str(exc)
-            break
+    def read_page(query, page):
+        nonlocal attempts
+        attempts += 1
+        payload = _limited_json(
+            "/search/issues?" + urlencode({"q": query}) +
+            "&sort=updated&order=desc&per_page=" + str(PAGE_SIZE) +
+            "&page=" + str(page),
+            token=token, max_body_bytes=MAX_DISCOVERY_BODY_BYTES,
+        )
         if not isinstance(payload, dict):
-            source_error = "GitHub issue-only search response malformed"
-            break
-        page_items = payload.get("items")
+            raise GitHubReadError("GitHub issue-only search response malformed")
+        items = payload.get("items")
         count = payload.get("total_count")
         incomplete = payload.get("incomplete_results")
-        if (not isinstance(page_items, list) or len(page_items) > PAGE_SIZE
+        if (not isinstance(items, list) or len(items) > PAGE_SIZE
                 or type(count) is not int or count < 0
                 or type(incomplete) is not bool):
-            source_error = "GitHub issue-only search coverage unavailable"
-            break
-        provider_total_count = count
-        provider_incomplete = provider_incomplete or incomplete
-        pages_read += 1
-        total_rows += len(page_items)
-        last_page_short = (
-            len(page_items) < PAGE_SIZE or page * PAGE_SIZE >= count
-        )
-        for raw in page_items:
+            raise GitHubReadError("GitHub issue-only search coverage unavailable")
+        return items, count, incomplete
+
+    def admit_rows(items, source):
+        nonlocal total_rows, prs_excluded, invalid_excluded
+        total_rows += len(items)
+        for raw in items:
             if isinstance(raw, dict) and "pull_request" in raw:
                 prs_excluded += 1
                 continue
@@ -203,16 +203,63 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             if item is None:
                 invalid_excluded += 1
                 continue
-            if item["number"] in seen:
+            if source != "recent" and (
+                    item["unverified_title_prefix_hint"] != source
+                    and item["priority_from_explicit_labels"] != source):
+                # GitHub text-search words need not start the issue title.
+                # Drop unrelated search hits rather than inventing urgency.
                 continue
-            seen.add(item["number"])
-            issues.append(item)
-        if last_page_short:
+            existing = collected.get(item["number"])
+            if existing is None:
+                item["inbox_source_windows"] = [source]
+                collected[item["number"]] = item
+            elif source not in existing["inbox_source_windows"]:
+                existing["inbox_source_windows"].append(source)
+
+    # Read recent issues first. Exact repo+issue-only filters exclude PR
+    # storms from the inventory. Any GitHub permission denial ends this
+    # entire run; no fallback retries to bypass quota or owner admission.
+    for page in range(1, MAX_PAGES + 1):
+        try:
+            items, count, incomplete = read_page(query_prefix, page)
+        except GitHubReadError as exc:
+            source_error = str(exc)
+            break
+        pages_read += 1
+        provider_total_count = count
+        provider_incomplete = provider_incomplete or incomplete
+        admit_rows(items, "recent")
+        recent_window_truncated = (
+            len(items) == PAGE_SIZE and page * PAGE_SIZE < count
+        )
+        if not recent_window_truncated:
             break
 
-    # Labels are evidence, textual title prefixes are navigation-only hints.
-    # Equal priorities retain GitHub's updated order; no untrusted free text
-    # is emitted in any output format.
+    # When all recent open issues fit, the P0/P1 search is redundant.
+    # If recent coverage is truncated or incomplete, retrieve the first
+    # page of each P0/P1 title recall separately (2 extra GETs at most).
+    # Never promote a title hint into an exact label or owner claim.
+    if source_error is None and (recent_window_truncated or provider_incomplete):
+        recall_performed = True
+        for priority in ("P0", "P1"):
+            try:
+                items, count, incomplete = read_page(
+                    query_prefix + " " + priority + " in:title", 1
+                )
+            except GitHubReadError as exc:
+                source_error = str(exc)
+                break
+            provider_incomplete = provider_incomplete or incomplete
+            recall_sources.append({
+                "priority": priority, "source_matches": count,
+                "sampled_rows": len(items),
+                "truncated": len(items) == PAGE_SIZE and count > PAGE_SIZE,
+                "provider_incomplete": incomplete,
+                "authority": False,
+            })
+            admit_rows(items, priority)
+
+    issues = list(collected.values())
     issues.sort(key=lambda x: (
         x["triage_rank"],
         0 if x["no_github_issue_update_for_72h"] is True else 1,
@@ -230,29 +277,36 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         )
         by_rank[label] = by_rank.get(label, 0) + 1
 
+    recall_partial = any(item["truncated"] or item["provider_incomplete"]
+                         for item in recall_sources)
     return {
         "schema_version": 1, "policy": "zsentinel-live-github-issue-inbox-v1",
         "repository": repo_full_name,
         "observed_at_utc": observed_at.isoformat().replace("+00:00", "Z"),
-        "observation_mode": "bounded_recent_github_open_issues",
+        "observation_mode": "bounded_recent_github_open_issues_plus_priority_recall",
         "source": "github_rest_search_issues_issue_only",
         "pages_read": pages_read, "max_pages": MAX_PAGES,
         "items_per_page": PAGE_SIZE, "source_rows_scanned": total_rows,
         "pull_requests_excluded": prs_excluded,
         "provider_total_issue_count_at_observation": provider_total_count,
         "provider_incomplete_results": provider_incomplete,
+        "recent_window_truncated": recent_window_truncated,
+        "priority_recall_performed": recall_performed,
+        "priority_recall_sources": recall_sources,
+        "priority_recall_not_authoritative": True,
         "invalid_or_inaccessible_rows_excluded": invalid_excluded,
         "total_issues_seen": len(issues), "displayed_issues": len(chosen),
         "display_truncated": len(issues) > MAX_DISPLAY,
         "source_window_full": (
-            not last_page_short and source_error is None
-            and not provider_incomplete
+            recent_window_truncated and source_error is None
         ),
         "source_partial_or_unknown": (
-            bool(source_error) or provider_incomplete or not last_page_short
+            bool(source_error) or provider_incomplete
+            or recent_window_truncated or recall_partial
         ),
         "source_error": source_error,
-        "get_attempts": attempts, "read_get_attempt_upper_bound": MAX_PAGES,
+        "get_attempts": attempts,
+        "read_get_attempt_upper_bound": MAX_PAGES + 2,
         "priority_breakdown_in_source_window": by_rank,
         "explicit_p0_p1_without_github_issue_update_72h": sum(
             row["priority_from_explicit_labels"] in ("P0", "P1")
