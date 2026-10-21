@@ -952,6 +952,61 @@ def html_view(decision, registry=None):
          if branch["samples_truncated"] else '') +
         '</section>'
     )
+    # Incident dependencies are not satisfied merely because an incident
+    # disappeared from the bounded current sample. Display source-bound holds
+    # separately from both active branch conflicts and routable work.
+    held = decision.get("incident_dependency_holds")
+    held_panel = ""
+    if held is not None:
+        examples = held.get("examples") if type(held) is dict else None
+        if (type(held) is not dict or type(held.get("count")) is not int
+                or not 0 <= held["count"] <= 250
+                or type(examples) is not list or len(examples) > 8
+                or len(examples) > held["count"]
+                or held.get("samples_truncated") is not (
+                    held["count"] > len(examples))
+                or held.get("claim_authorized") is not False
+                or held.get("exact_reconciliation_required") is not True):
+            raise ValueError("untrusted incident dependency hold coverage")
+        hold_cards = []
+        for item in examples:
+            if (type(item) is not dict
+                    or item.get("reason") != "incident_dependency_reconciliation_required"
+                    or item.get("claim_authorized") is not False
+                    or item.get("priority") not in ("P0", "P1", "P2", "P3")
+                    or type(item.get("id")) is not str
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", item["id"])
+                    or type(item.get("project_id")) is not str
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}",
+                                        item["project_id"])
+                    or type(item.get("unresolved_count")) is not int
+                    or not 1 <= item["unresolved_count"] <= 30
+                    or type(item.get("observed_blocked_count")) is not int
+                    or not 0 <= item["observed_blocked_count"] <= item["unresolved_count"]):
+                raise ValueError("invalid dependency hold example")
+            hold_cards.append(
+                '<article class="panel warn"><span class="tag">HOLD · ' +
+                phrase(item["priority"], 5) + '</span><h3>' +
+                phrase(item["project_id"], 80) + ' / ' + phrase(item["id"], 80) +
+                '</h3><p>' + str(item["unresolved_count"]) +
+                ' incidentafhankelijkheden niet exact gereconcilieerd; daarvan ' +
+                str(item["observed_blocked_count"]) +
+                ' als huidige/historische blokkade waargenomen.</p>' +
+                '<p class="muted">Bron kan ontbreken of buiten het tijdvenster vallen. '
+                'Eigenaar herbeoordeelt de originele job/claim voordat werk verdergaat. '
+                'Geen claim, retry of automatische dispatch.</p></article>'
+            )
+        held_panel = (
+            '<section><h2>Incidentafhankelijke taken op HOLD (' +
+            str(held["count"]) + ')</h2><p class="muted">Verdwenen '
+            'incidenten tellen niet als opgelost. Alleen exacte succesvolle '
+            'job-reconciliatie uit het bestaande incidentledger kan een '
+            'expliciete taakafhankelijkheid opheffen; geen bewijs van '
+            'algeheel runtime-herstel.</p>' +
+            section(hold_cards, "Geen open afhankelijke taken in de geldige taakbron.") +
+            ('<p class="muted">Niet alle HOLD-voorbeelden getoond.</p>'
+             if held["samples_truncated"] else '') + '</section>'
+        )
     # Urgent first; large portfolios keep the first five visible and make
     # remaining cards available under a native details disclosure (no JS).
     ordered_incidents = sorted(incidents, key=lambda i: (
@@ -1019,6 +1074,7 @@ def html_view(decision, registry=None):
                       "Geen actuele individuele wachtrijincidenten. Claimherstel blijft handmatig geautoriseerd.")
             + '</section>'
             + branch_panel
+            + held_panel
             + f'<section><h2>Onafhankelijke werkvoorstellen ({len(tasks)})</h2>'
             + section([task_card(row) for row in tasks],
                       "Geen claim- en gate-veilig onafhankelijk werk aangetoond.")
