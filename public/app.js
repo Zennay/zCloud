@@ -1275,8 +1275,18 @@ async function readVpsGitHubActivity(){
     const previousTime=prior?.coverage?.find(row=>row.project===project)?.observedAt||'';
     const olderThanLoaded=staleSample&&previousTime&&
       Date.parse(parsed.coverage[0].observedAt)<Date.parse(previousTime);
+    // A stale server response carries original timestamps, but the merged
+    // Activity feed must ALSO retain its uncertainty in every downstream
+    // project/PR/CI summary and private export. Never relabel an old merge
+    // event as newly observed accepted work.
+    const admitted=staleSample?{
+      ...parsed,
+      coverage:parsed.coverage.map(row=>({...row,staleEvidence:true,
+        lastAttemptAt:new Date().toISOString()})),
+      events:parsed.events.map(row=>({...row,staleUnverified:true}))
+    }:parsed;
     if(!olderThanLoaded){
-      IMPORTED_GITHUB_ACTIVITY=mergeValidatedZSentinelReceipts(prior,parsed,'github');
+      IMPORTED_GITHUB_ACTIVITY=mergeValidatedZSentinelReceipts(prior,admitted,'github');
       // The server source is a separate evidence window, not a browser
       // public-page cursor. Only reset display slices if newly admitted.
       PUBLIC_GITHUB_PAGE.delete(project);PUBLIC_GITHUB_VIEW_PAGE.delete(project);PUBLIC_GITHUB_MORE.delete(project);
