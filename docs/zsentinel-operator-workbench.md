@@ -47,6 +47,25 @@ runtime/Notion-claims, CI, review, merge of deploy. Er zijn geen providerwrites,
 jobs, auto-claims, QA-suites of workflowtriggers toegevoegd.
 
 
+### Complete en herleidbare privé-overdracht
+
+Dezelfde bundel genereert nu ook `<name>.receipt.json`, als **laatste**
+create-only bestand, nadat het board, de HTML-werkbak en optionele
+owner-Markdown zijn geschreven. De receipt bevat SHA-256 en bytegrootte van
+elk bestand, originele brontijdstempels en de expliciete toestand
+`bundle_complete=true`. Ontbreekt de receipt na een bestandsfout, dan
+is de overdracht **onvolledig** en moet de operator de gedeeltelijk
+gepubliceerde output handmatig beoordelen. Een bestaande map of bestandsnaam
+wordt nooit overschreven. De bestandsnamen uit de CLI-output zijn alleen
+veilige namen, geen volledige privépaden of onverwerkte workergegevens.
+
+De ontvanger kan na overdracht in de privémap de SHA-256 van iedere
+inhoud vergelijken met `artifacts[].sha256` in de receipt. Dat bewijst
+uitsluitend dat dezelfde opgeslagen bytes zijn ontvangen — **niet**
+dat de oorspronkelijke GitHub-, Notion- of wachtrijbron actueel,
+volledig of geautoriseerd is. Zelfs een volledige receipt verleent geen
+claim-, CI-, review-, merge- of deploybevoegdheid.
+
 ## 21 oktober · gerichte historische aandachtspunten voor P0-eigenaarsoverleg
 
 De merge-first CLI ondersteunt nu `--attention`: een specifiek
