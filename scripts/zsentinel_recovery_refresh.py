@@ -310,6 +310,8 @@ def main():
                         help="new, create-only private .html output (required only for --format desk)")
     parser.add_argument("--action-output", type=Path,
                         help="create-only 0600 private .md merge-first owner briefing from same read-only decision")
+    parser.add_argument("--owner-handoff-output", type=Path,
+                        help="private create-only .md/.json/.csv merged recovery + exact-PR owner handoff")
     args = parser.parse_args()
     ledger_lock = None
     try:
@@ -324,7 +326,7 @@ def main():
             protected = (
                 Path(args.bundle), args.registry, args.state, args.queue_database,
                 args.worker_events_database, args.notion_claims_export, args.desk_output,
-                args.action_output,
+                args.action_output, args.owner_handoff_output,
             )
             if any(item is not None and args.output.resolve() == Path(item).resolve()
                    for item in protected):
@@ -362,7 +364,7 @@ def main():
             private_inputs = [
                 Path(args.bundle), args.registry, args.state, args.queue_database,
                 args.worker_events_database, args.notion_claims_export, args.output,
-                args.action_output,
+                args.action_output, args.owner_handoff_output,
             ]
             if any(item is not None and args.desk_output.resolve() == Path(item).resolve()
                    for item in private_inputs):
@@ -372,10 +374,23 @@ def main():
                 raise ValueError("--action-output requires a new private .md path")
             inputs = (Path(args.bundle), args.registry, args.state, args.queue_database,
                       args.worker_events_database, args.notion_claims_export,
-                      args.output, args.desk_output)
+                      args.output, args.desk_output, args.owner_handoff_output)
             if any(p is not None and args.action_output.resolve() == Path(p).resolve()
                    for p in inputs):
                 raise ValueError("action-output cannot alias a source, ledger or report")
+        if args.owner_handoff_output is not None:
+            if args.owner_handoff_output.suffix not in (".md", ".json", ".csv"):
+                raise ValueError("--owner-handoff-output must be .md, .json or .csv")
+            protected = (
+                Path(args.bundle), args.registry, args.state,
+                args.queue_database, args.worker_events_database,
+                args.notion_claims_export, args.output, args.desk_output,
+                args.action_output,
+            )
+            if any(p is not None and
+                   args.owner_handoff_output.resolve() == Path(p).resolve()
+                   for p in protected):
+                raise ValueError("owner handoff cannot alias a source, ledger or report")
         if args.state is not None:
             ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
@@ -555,6 +570,14 @@ def main():
             if args.format == "text" and pr_delivery is not None:
                 from zsentinel_pr_delivery import handoff_markdown
                 rendered += "\\n\\n" + handoff_markdown(pr_delivery)
+        handoff_content = None
+        if args.owner_handoff_output is not None:
+            from zsentinel_runtime_handoff import build_handoff, serialize
+            # Reuse a single canonical router and exact-HEAD PR read. The
+            # owner packet is non-executable; no second source observation.
+            handoff_content = serialize(
+                build_handoff(routed, registry=registry, pr_desk=pr_delivery),
+                args.owner_handoff_output.suffix)
         action_content = None
         if args.action_output is not None:
             from zsentinel_incident_desk import private_action_output
@@ -570,6 +593,10 @@ def main():
         if action_content is not None:
             from zsentinel_private_output import write_private_output
             write_private_output(args.action_output, action_content, "md")
+        if handoff_content is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(args.owner_handoff_output, handoff_content,
+                                 args.owner_handoff_output.suffix.removeprefix("."))
         # A broken HTML/source cannot silently acknowledge incident history.
         if args.state:
             write_json_atomic(args.state, updated)
