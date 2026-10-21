@@ -3505,7 +3505,6 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_up
         raise ValueError('Een geauthenticeerde operator is vereist')
     # Optional optimistic source guards keep legacy operator clients usable;
     # newer dashboard clients bind the attestation to their final fresh read.
-    guards=(expected_updated_at,expected_blocker,expected_evidence)
     if expected_updated_at is not None and (
             not isinstance(expected_updated_at,str) or not 1<=len(expected_updated_at)<=80):
         raise ValueError('Ongeldig bronmoment voor geblokkeerde taak')
