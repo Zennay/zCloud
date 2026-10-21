@@ -106,7 +106,20 @@ def verify_bundle(data: bytes) -> dict:
                 raise ValueError("bundle members must be regular Unix files")
             if stat.S_IMODE(mode) != 0o600:
                 raise ValueError("bundle member permissions must be owner-only")
-            content = archive.read(info)  # CRC and decompressed size checked by zipfile
+            # Stream in bounded chunks: a hostile deflate stream may expand beyond
+            # its declared ZIP file_size, so never call archive.read() unbounded.
+            chunks = []
+            actual_size = 0
+            with archive.open(info, "r") as member:
+                while actual_size <= MAX_MEMBER_BYTES:
+                    chunk = member.read(min(8192, MAX_MEMBER_BYTES + 1 - actual_size))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    actual_size += len(chunk)
+                    if actual_size > MAX_MEMBER_BYTES:
+                        raise ValueError("bundle member exceeds the permitted decompressed size")
+            content = b"".join(chunks)
             if len(content) != info.file_size:
                 raise ValueError("bundle member size does not match ZIP metadata")
             payloads[info.filename] = content
