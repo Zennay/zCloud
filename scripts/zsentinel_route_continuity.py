@@ -290,6 +290,57 @@ def _result(coverage, newer, previous_at, fresh):
     }
 
 
+def _ordered_owner_events(report):
+    """One deterministic P0-first owner queue shared by text, HTML and CSV.
+
+    A change type is not an execution gate. Prioritize the *source task*
+    priority first, then a changed route, newly seen, missing, unchanged.
+    No list entry grants ownership or means an issue was fixed.
+    """
+    types = (
+        ("ROUTE_CHANGED", "state_transitions", 0,
+         "Controleer actuele eigenaar, claim/lease, bestaande PR en uitvoeringsgate."),
+        ("NEW_IN_SAMPLE", "newly_observed", 1,
+         "Controleer claim en bestandsscope voordat werk start."),
+        ("NOT_REOBSERVED_NOT_RESOLVED", "not_reobserved_not_resolved", 2,
+         "Controleer originele bron; een ontbrekend voorbeeld is NIET opgelost."),
+        ("UNCHANGED", "unchanged_observed", 3,
+         "Geen herhaalde herstelactie zonder nieuwe broninformatie."),
+    )
+    events = []
+    for kind, field, order, action in types:
+        rows = report.get(field)
+        if type(rows) is not list or len(rows) > 12:
+            raise ValueError("unbounded routing owner events")
+        for row in rows:
+            if (type(row) is not dict
+                    or row.get("priority") not in PRIORITY
+                    or type(row.get("project_id")) is not str
+                    or not IDENT.fullmatch(row["project_id"])
+                    or type(row.get("id")) is not str
+                    or not IDENT.fullmatch(row["id"])):
+                raise ValueError("untrusted routing owner event")
+            if kind == "ROUTE_CHANGED":
+                before, after = row.get("before_reason"), row.get("after_reason")
+            else:
+                reason = row.get("reason")
+                before = (reason if kind in (
+                    "NOT_REOBSERVED_NOT_RESOLVED", "UNCHANGED") else "")
+                after = (reason if kind in (
+                    "NEW_IN_SAMPLE", "UNCHANGED") else "")
+            if any(type(reason) is not str or reason not in KINDS
+                   for reason in (before, after) if reason):
+                raise ValueError("untrusted routing owner transition reason")
+            events.append({
+                "event": kind, "sort_order": order, "priority": row["priority"],
+                "project_id": row["project_id"], "id": row["id"],
+                "before": before, "after": after, "action": action,
+            })
+    return sorted(events, key=lambda row: (
+        PRIORITY[row["priority"]], row["sort_order"],
+        row["project_id"], row["id"]))
+
+
 def as_text(report):
     if (type(report) is not dict or report.get("schema") != SCHEMA
             or report.get("actions_performed") is not False
@@ -312,23 +363,14 @@ def as_text(report):
                  " · niet meer in steekproef: " + str(report["not_reobserved_count"]))
     if not report["prior_coverage_complete"] or not report["current_coverage_complete"]:
         lines.append("Bron ONVOLLEDIG; aantallen zijn geen volledig werkoverzicht.")
-    for row in report["newly_observed"]:
-        lines.append("- NIEUW IN BRON " + row["priority"] + " " +
-                     row["project_id"] + "/" + row["id"] + " · " +
-                     row["reason"] + " · eigenaar controleert actuele claim en PR vóór werk.")
-    for row in report["state_transitions"]:
-        lines.append("- ROUTE GEWIJZIGD " + row["priority"] + " " +
-                     row["project_id"] + "/" + row["id"] + " · " +
-                     row["before_reason"] + " → " + row["after_reason"] +
-                     " · eigenaar controleert originele taak, lease en gate; geen claim.")
-    for row in report["unchanged_observed"]:
-        lines.append("- ONGEWIJZIGD " + row["priority"] + " " +
-                     row["project_id"] + "/" + row["id"] + " · " +
-                     row["reason"] + " · zonder nieuwe bron geen herhaalde actie.")
-    for row in report["not_reobserved_not_resolved"]:
-        lines.append("- NIET MEER WAARGENOMEN " + row["priority"] + " " +
-                     row["project_id"] + "/" + row["id"] +
-                     " · geen herstel, sluiting of vrijgave bewezen.")
+    for event in _ordered_owner_events(report):
+        transition = (event["before"] + " → " + event["after"]
+                      if event["before"] and event["after"]
+                      and event["before"] != event["after"]
+                      else event["after"] or event["before"])
+        lines.append("- " + event["priority"] + " " + event["event"] + " " +
+                     event["project_id"] + "/" + event["id"] + " · " +
+                     transition + " · " + event["action"] + " Geen claim/dispatch.")
     if report["samples_truncated"] or report["current_source_examples_truncated"] or report["previous_source_examples_truncated"]:
         lines.append("Voorbeelden afgekapt; verwijderde of ongetoonde taken blijven ONBEKEND.")
     return "\n".join(lines)
@@ -343,34 +385,24 @@ def as_html(report):
                 '<p>' + escape(visible.splitlines()[-1]) +
                 '</p><p>Geen claim, vrijgave of herstelauthorisatie.</p></section>')
     historic = report["coverage"] == "historical_bounded_source_comparison"
-    def cards(rows, title, action, *, changes=False):
-        result = []
-        for row in rows:
-            scope = escape(row["project_id"]) + " / " + escape(row["id"])
-            before = (row["before_reason"] + " → " + row["after_reason"]
-                      if changes else row["reason"])
-            result.append(
-                '<article class="panel"><h4>' + escape(row["priority"]) +
-                ' · ' + scope + '</h4><p>Probleem: ' + escape(before) +
-                '</p><p>Actie: ' + escape(action) +
-                '</p><p>Status: ' + escape(title) +
-                ' · geen claim, CI-retry, merge of deploy.</p></article>')
-        return "".join(result)
-    sections = [
-        ('Gewijzigde routering', report["state_transitions"],
-         "Controleer huidige eigenaar, bestaande PR, lease en uitvoeringsgate.", True),
-        ('Nieuw waargenomen', report["newly_observed"],
-         "Controleer actuele claim en bestandsscope voordat werk start.", False),
-        ('Niet opnieuw waargenomen · NIET opgelost', report["not_reobserved_not_resolved"],
-         "Vergelijk de originele bron opnieuw; afwezigheid is geen herstelbewijs.", False),
-        ('Ongewijzigd', report["unchanged_observed"],
-         "Geen herhaalde herstelactie zonder nieuwe informatie.", False),
-    ]
-    panels = "".join(
-        '<details' + (' open' if label != "Ongewijzigd" else '') +
-        '><summary>' + escape(label) + ' (' + str(len(rows)) +
-        ' zichtbaar)</summary>' + cards(rows, label, step, changes=changes) +
-        '</details>' for label, rows, step, changes in sections if rows)
+    cards = []
+    for event in _ordered_owner_events(report):
+        before = event["before"]
+        after = event["after"]
+        route = (before + " → " + after if before and after and before != after
+                 else after or before)
+        cards.append(
+            '<article class="panel' +
+            (' warn' if event["event"] == "NOT_REOBSERVED_NOT_RESOLVED" else
+             ' read') + '"><span class="tag">' +
+            escape(event["event"]) + '</span><h3>' +
+            escape(event["priority"]) + ' · ' +
+            escape(event["project_id"]) + ' / ' + escape(event["id"]) +
+            '</h3><p>Probleem: ' + escape(route) +
+            '</p><p>Actie: ' + escape(event["action"]) +
+            '</p><p>Status: Alleen bronsignaal, geen claim, retry, merge of deploy.</p></article>'
+        )
+    panels = "".join(cards)
     note = ('HISTORISCHE REPLAY: geen actuele claim- of leasebron. '
             if historic else 'Vers assembleert tijdvenster; nog altijd slechts bronadvies. ')
     if (not report["prior_coverage_complete"]
@@ -420,41 +452,14 @@ def as_csv(report):
                          "Refresh original sources; no current claim or recovery proof.",
                          "false", "false", "false", "false"])
         return output.getvalue()
-    sections = [
-        ("ROUTE_CHANGED", report["state_transitions"],
-         "Verify original issue, current claim/lease, PR and gate before any action."),
-        ("NEW_IN_SAMPLE", report["newly_observed"],
-         "Verify source, current owner and file scope before starting work."),
-        ("NOT_REOBSERVED_NOT_RESOLVED", report["not_reobserved_not_resolved"],
-         "Recheck original source; missing sample never means freed or resolved."),
-        ("UNCHANGED", report["unchanged_observed"],
-         "Do not repeat unchanged recovery action without new evidence."),
-    ]
-    for kind_label, rows, next_step in sections:
-        for row in rows:
-            if (type(row) is not dict or row.get("priority") not in PRIORITY
-                    or type(row.get("project_id")) is not str
-                    or not IDENT.fullmatch(row["project_id"])
-                    or type(row.get("id")) is not str
-                    or not IDENT.fullmatch(row["id"])):
-                raise ValueError("untrusted transition CSV task")
-            if kind_label == "ROUTE_CHANGED":
-                before = row["before_reason"]
-                after = row["after_reason"]
-            else:
-                before = row["reason"] if kind_label in (
-                    "NOT_REOBSERVED_NOT_RESOLVED", "UNCHANGED") else ""
-                after = row["reason"] if kind_label in (
-                    "NEW_IN_SAMPLE", "UNCHANGED") else ""
-            if any(not isinstance(value, str) or value not in KINDS
-                   for value in (before, after) if value):
-                raise ValueError("untrusted transition CSV route reason")
-            writer.writerow([
-                *base, kind_label, row["priority"], row["project_id"], row["id"],
-                before, after, next_step + (" HISTORICAL REPLAY ONLY." if
-                report["coverage"] == "historical_bounded_source_comparison" else ""),
-                "false", "false", "false", "false",
-            ])
+    for event in _ordered_owner_events(report):
+        writer.writerow([
+            *base, event["event"], event["priority"], event["project_id"],
+            event["id"], event["before"], event["after"], event["action"] +
+            (" HISTORICAL REPLAY ONLY." if
+             report["coverage"] == "historical_bounded_source_comparison" else ""),
+            "false", "false", "false", "false",
+        ])
     if report["samples_truncated"] or report["current_source_examples_truncated"] or report["previous_source_examples_truncated"]:
         writer.writerow([*base, "SAMPLE_TRUNCATED_UNKNOWN", "", "", "", "",
                          "", "Additional tasks outside bounded samples remain UNKNOWN.",
