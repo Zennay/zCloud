@@ -567,6 +567,7 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         "next_step": "Obtain existing owner/release approval; never use this report as deploy authorization.",
     }
     report["release_gates"] = release_gate_matrix(report)
+    report["owner_handoff"] = operator_handoff(report)
     return report
 
 
@@ -890,8 +891,8 @@ def main() -> int:
                         help="Read-only portfolio queue and browser-event admission snapshot; cannot prove safe idle")
     parser.add_argument("--previous-report", type=Path, default=None,
                         help="Compare with a saved bounded JSON report; never modifies the prior file")
-    parser.add_argument("--format", choices=("text", "json", "html"), default="text",
-                        help="Output as console text, machine-readable JSON, or self-contained offline HTML")
+    parser.add_argument("--format", choices=("text", "json", "html", "brief"), default="text",
+                        help="Output as console text, JSON, offline HTML, or three-line owner handoff")
     parser.add_argument("--expected-main-sha", default=None,
                         help="Exact independently fetched 40-character main commit SHA (no network requests)")
     args = parser.parse_args()
@@ -901,6 +902,7 @@ def main() -> int:
     if args.previous_report is not None:
         try:
             report["comparison"] = compare_snapshot(args.previous_report, report)
+            report["owner_handoff"] = operator_handoff(report)
         except ValueError as exc:
             print(f"PREVIOUS_REPORT_INVALID: {exc}", file=sys.stderr)
             return 2
@@ -908,6 +910,14 @@ def main() -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
     elif args.format == "html":
         print(render_html(report))
+    elif args.format == "brief":
+        print("zSentinel owner handoff · read-only · NOT release authorized")
+        print("Observation: " + report["observed_at"])
+        for card in report["owner_handoff"]:
+            print("Problem [" + card["code"] + "]: " + card["problem"])
+            print("Action [" + card["owner"] + "]: " + card["action"])
+            print("Status: " + card["status"] + " · " + card["trend"] +
+                  " · " + (", ".join(card["finding_codes"]) or "external gates"))
     else:
         print(f"zCloud VPS preflight: {report['result'].upper()} (read-only; NOT a release authorization)")
         c = report["checkout"]
