@@ -66,7 +66,26 @@ def validated_view(source: dict) -> dict:
         source.get("automatic_dispatch_enabled") is not False
     ):
         raise ValueError("Source board unexpectedly authorizes privileged work")
-    when(source.get("observed_at_utc"))
+    board_moment = when(source.get("observed_at_utc"))
+    # Preserve the independent observation clock of every recovered source.
+    # A board generated later is not proof that older retry evidence is live.
+    source_clocks = source.get("source_times_utc")
+    source_fresh = source.get("fresh")
+    if (type(source_clocks) is not dict or type(source_fresh) is not dict
+            or "inbox" not in source_clocks
+            or set(source_clocks) - {"inbox", "retry", "branches", "claims", "prs"}
+            or set(source_fresh) - {"inbox", "retry", "branches", "claims", "prs"}):
+        raise ValueError("Missing bounded independent source clocks")
+    admitted_clocks = {}
+    for name, stamp in source_clocks.items():
+        parsed = when(stamp)
+        if parsed > board_moment:
+            raise ValueError("A source cannot be newer than its captured board")
+        if source_fresh.get(name) is not True and source_fresh.get(name) is not False:
+            raise ValueError("Source freshness must be explicit")
+        admitted_clocks[name] = stamp
+    if set(source_fresh) != set(admitted_clocks):
+        raise ValueError("Freshness flags and original source clocks disagree")
     cards = source.get("cards")
     if type(cards) is not list or len(cards) > MAX_CARDS:
         raise ValueError("Source board has unbounded cards")
@@ -161,6 +180,9 @@ def validated_view(source: dict) -> dict:
                        for n in counts.values())):
             raise ValueError("Invalid project issue sample")
         queue = row.get("queue_observation")
+        if queue is not None and (source_fresh.get("retry") is not True
+                                  or "retry" not in admitted_clocks):
+            raise ValueError("Project queue observation has no fresh source provenance")
         if queue is not None:
             if (type(queue) is not dict
                     or not {"active_items", "high_claim_attempts",
@@ -183,6 +205,8 @@ def validated_view(source: dict) -> dict:
                 {k: queue[k] for k in ("active_items", "high_claim_attempts",
                                        "expired_active_leases")}
                 if queue is not None else None),
+            "queue_source_observed_at_utc": (
+                admitted_clocks["retry"] if queue is not None else None),
             "claim_context": ("reported_observation_only" if claims
                               else "not_verified"),
             "recommended_next_step": action,
@@ -195,6 +219,7 @@ def validated_view(source: dict) -> dict:
             "cards": chosen,
             "coverage": safe_coverage,
             "project_operations": project_operations,
+            "project_source_observed_at_utc": admitted_clocks,
             "projects": sorted(projects | {r["project"] for r in chosen}),
             "global_gate": "live claims, exact-head CI, review and release authority unverified"}
 
