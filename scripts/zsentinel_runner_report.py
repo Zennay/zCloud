@@ -993,7 +993,14 @@ def render_private_json_handoff(data):
         }
         source_kind = "private-offline-timeline"
     else:
-        work = recovery_priorities(data)[:3]
+        # The live/offline point-in-time decision intentionally returns
+        # (title, advice) pairs; only timeline_owner_actions returns triples.
+        # Adapt at the presentation boundary. Do not invent a completed
+        # intervention or infer GitHub job status from a service observation.
+        work = [
+            (title, advice, "EIGENAAR NODIG · NIET UITGEVOERD")
+            for title, advice in recovery_priorities(data)[:3]
+        ]
         window = {
             "last_utc": _handoff_text(data.get("time")),
             "observations": 1 + int(data.get("comparison") is not None),
