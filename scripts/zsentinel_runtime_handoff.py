@@ -401,6 +401,22 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             card["observed_capacity_state"] = "overloaded"
             card["capacity_reasons"] = reasons
             cards.append(card)
+        elif capacity_coverage == "unavailable" and capacity["reason"] in {
+            "database_mount_inode_capacity_unknown",
+            "legacy_vps_inode_capacity_not_observed",
+        }:
+            # The router denied fresh self-hosted suggestions, but an absent
+            # probe must not silently disappear from the human recovery desk.
+            card = _card(
+                "P1", "cloud", "vps_capacity_source_incomplete",
+                "Databasemount inodecapaciteit is niet bewezen. VPS-eigenaar "
+                "neemt een nieuwe opt-in read-only meting op dezelfde mount. "
+                "GEEN nieuwe self-hosted job, cleanup of herstart vanuit deze kaart.",
+                source="bounded_vps_inode_capacity_unverified",
+                ref="https://github.com/Zennay/zCloud/issues/1326")
+            card["observed_capacity_state"] = "unavailable"
+            card["capacity_reasons"] = [capacity["reason"]]
+            cards.append(card)
     worker = decision.get("worker_progress_observation")
     worker_coverage = "not_requested"
     if worker is not None:

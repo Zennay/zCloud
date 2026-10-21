@@ -14,7 +14,9 @@ overloaded, ook wanneer vrije schijfbytes hoog zijn. Dit blokkeert
 uitsluitend nieuwe adviserende self-hosted werksuggesties, nooit
 bestaande claims of trainingen. Oude snapshots zonder inodes zijn
 unavailable; actuele onafhankelijke CPU/swap/disk-overbelasting
-blijft in dat geval als overloaded zichtbaar. De mobiele cockpit
+blijft in dat geval als overloaded zichtbaar. De bestaande eigenaaroverdracht maakt voor onvolledige
+inodebronnen nu ook een P1-hermetingskaart aan; onbekende brondata
+blijven niet stil achter het dashboard verborgen. De mobiele cockpit
 vertaalt deze redenen. De private runtime-eigenaaroverdracht toont
 de inode-druk als P1 VPS-capaciteit bij #1326. Geen cleanup,
 serviceherstart, dispatch, queuewrite, deploy of releaseautorisatie.
