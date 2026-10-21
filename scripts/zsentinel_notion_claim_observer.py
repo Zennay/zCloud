@@ -196,9 +196,15 @@ def observe_claims(data_source_id, token, known_projects=None):
             if len(raw) > MAX_BODY:
                 raise ValueError("Notion claim source over size limit")
             try:
-                data = json.loads(raw.decode("utf-8"))
-            except (UnicodeError, json.JSONDecodeError):
-                raise ValueError("Notion response is not valid UTF-8 JSON") from None
+                from zsentinel_product_issue_inbox import object_unique
+                data = json.loads(
+                    raw.decode("utf-8"), object_pairs_hook=object_unique,
+                    parse_constant=lambda _: (_ for _ in ()).throw(
+                        ValueError("nonstandard Notion JSON constant")))
+            except (UnicodeError, json.JSONDecodeError, ValueError):
+                # Duplicate Status/Project keys must not be resolved by
+                # JSON's last-value-wins behavior: they can hide active work.
+                raise ValueError("Notion response has ambiguous or invalid JSON") from None
             if (not isinstance(data, dict) or not isinstance(data.get("results"), list)
                     or len(data["results"]) > PAGE_SIZE):
                 raise ValueError("Invalid Notion claim page")
