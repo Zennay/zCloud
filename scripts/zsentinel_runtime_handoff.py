@@ -362,6 +362,53 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     if not isinstance(sources, dict) or not isinstance(incidents, list) or len(incidents) > 200:
         raise ValueError("handoff requires assembled live source provenance")
     cards = []
+    # Read-side authentication and repository-access failures deserve an
+    # actionable owner handoff. A proven rate-budget hold remains an
+    # informational wait (the private cockpit already displays it), never a
+    # human escalation, runner outage or authorization to rerun Actions.
+    refresh_source = decision.get("live_github_read")
+    if refresh_source is not None:
+        if type(refresh_source) is not dict:
+            raise ValueError("untrusted GitHub refresh owner source")
+        denial = refresh_source.get("provider_admission_denial")
+        if denial not in (None, "authentication_required", "rate_limit_confirmed"):
+            raise ValueError("untrusted GitHub admission owner source")
+        rows = refresh_source.get("refreshed_projects", [])
+        if type(rows) is not list or len(rows) > 8:
+            raise ValueError("unbounded GitHub refresh owner source")
+        if denial == "authentication_required":
+            cards.append(_card(
+                "P1", "cloud", "github_refresh_auth_owner_hold",
+                "GitHub-authenticatie voor runtime jobverversing geweigerd. "
+                "Bevoegde eigenaar herstelt het bron-token en herhaalt pas "
+                "daarna een begrensde read-only observatie; geen CI-rerun.",
+                source="github_token_auth_denial_not_runner_failure"))
+        denied_repos = set()
+        for row in rows:
+            if type(row) is not dict or row.get("status") not in (
+                    "refreshed", "degraded"):
+                raise ValueError("invalid GitHub owner refresh row")
+            category = row.get("admission_category")
+            if category is not None and (
+                    row["status"] != "degraded" or category not in (
+                        "authentication_required", "rate_limit_confirmed",
+                        "forbidden_or_rate_limit_unknown")):
+                raise ValueError("untrusted project GitHub admission")
+            if category != "forbidden_or_rate_limit_unknown":
+                continue
+            project = _project(row.get("project_id"))
+            if registry is not None and project not in registry:
+                raise ValueError("unknown repository in GitHub owner refresh")
+            if project in denied_repos:
+                continue
+            denied_repos.add(project)
+            if len(denied_repos) <= 3:
+                cards.append(_card(
+                    "P1", project, "github_repository_access_owner_hold",
+                    "GitHub-weigering zonder bewezen tarieflimiet. Bevoegde "
+                    "repo-eigenaar controleert toegangsrechten en API-budget; "
+                    "deze bron bewijst geen billing- of runnerstoring.",
+                    source="github_403_admission_unverified"))
     dep = decision.get("incident_dependency_holds")
     dependency_coverage = "not_supplied"
     dependency_count = None
