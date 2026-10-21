@@ -562,7 +562,7 @@ def render_merge_first_csv(board, max_rows=20):
         "source_scope_note",
     ]
     output = io.StringIO(newline="")
-    writer = csv.writer(output, lineterminator="\\r\\n")
+    writer = csv.writer(output, lineterminator="\r\n")
 
     def emit(values):
         # Strings are human/workspace-facing, and even an issue title can
@@ -570,7 +570,7 @@ def render_merge_first_csv(board, max_rows=20):
         cells = []
         for value in values:
             text = "" if value is None else str(value)
-            text = re.sub(r"[\\x00-\\x1f\\x7f]", " ", text)
+            text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
             cells.append(csv_formula_inert(text))
         writer.writerow(cells)
 
