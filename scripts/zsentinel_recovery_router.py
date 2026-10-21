@@ -1571,6 +1571,40 @@ def operator_text(result):
                      str(values["high_claim_attempt_items"]) + " · Expired leases " +
                      str(values["expired_owner_lease_rows"]) + " · Lease clock unknown " +
                       str(values["unverifiable_owner_lease_rows"]))
+    blocked = queue_report.get("blocked_queue")
+    if (type(blocked) is not dict
+            or blocked.get("coverage") not in
+               ("not_supplied", "not_observed", "complete", "partial", "stale")
+            or blocked.get("claim_ownership_verified") is not False
+            or blocked.get("queue_write_authorized") is not False
+            or blocked.get("automatic_retry_authorized") is not False):
+        raise ValueError("untrusted blocked-queue text summary")
+    if blocked["coverage"] in ("not_supplied", "not_observed"):
+        lines.append("Queue status=blocked: UNKNOWN (niet waargenomen is niet nul).")
+    else:
+        total = blocked.get("total_items_observed")
+        if type(total) is not int or not 0 <= total <= 10**9:
+            raise ValueError("invalid blocked-queue text count")
+        label = ("stale bronmoment; uitsluitend historisch" if
+                 blocked["coverage"] == "stale" else
+                 "gedeeltelijke bron" if blocked["coverage"] == "partial" else
+                 "waargenomen bron")
+        lines.append("Queue status=blocked: " + str(total) + " rijen · " + label +
+                     " · geen automatische retry/claimvrijgave.")
+        groups = blocked.get("project_groups")
+        if type(groups) is not list or len(groups) > 250:
+            raise ValueError("invalid blocked-queue text groups")
+        for row in groups[:10]:
+            if (type(row) is not dict or type(row.get("project_id")) is not str
+                    or not SLUG.fullmatch(row["project_id"])
+                    or row.get("priority") not in PRIORITY
+                    or type(row.get("items")) is not int
+                    or not 1 <= row["items"] <= 10**9):
+                raise ValueError("invalid blocked-queue text aggregate")
+            lines.append("  - " + row["priority"] + " " + row["project_id"] +
+                         ": " + str(row["items"]) + " status=blocked")
+        if blocked.get("sample_truncated") is True:
+            lines.append("  Projectverdeling onvolledig; geen all-clear of dispatch.")
     lines.append("VPS resource admission: " + result["vps_resource_admission"]["state"] +
                  " / " + result["vps_resource_admission"]["reason"])
     triage = result["open_product_issue_triage"]
