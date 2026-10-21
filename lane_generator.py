@@ -596,7 +596,15 @@ def generate_execution_lanes(project, backlog, claims=()):
         lane = classify_backlog_item(project, item)
         classified.append({**item, **lane})
     deferred_qa_by_lane = {lane["id"]: 0 for lane in lane_defs}
+    deferred_ineligible_by_lane = {lane["id"]: 0 for lane in lane_defs}
     for item in classified:
+        if (profile == "portfolio-recovery"
+                and str(item.get("status") or "queued").lower() == "queued"
+                and item.get("eligible") != 1):
+            # The real server requires eligible=1. The read-only operator
+            # desk includes ineligible rows for visibility; never promote
+            # those rows into apparently claimable worker slots.
+            deferred_ineligible_by_lane[item["lane_id"]] += 1
         if (profile == "portfolio-recovery"
                 and str(item.get("status") or "queued").lower() == "queued"
                 and _prohibited_recovery_qa(item)):
@@ -695,6 +703,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             item for item in classified
             if str(item.get("status") or "queued").lower() == "queued"
             and item["lane_id"] not in chosen_by_lane
+            and not (profile == "portfolio-recovery" and item.get("eligible") != 1)
             and not (profile == "portfolio-recovery" and _prohibited_recovery_qa(item))
         ],
         key=_queue_order,
@@ -806,6 +815,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             "queue_id": str(chosen.get("queue_id") or "") if chosen else None,
             "status": str(chosen.get("status") or "") if chosen else "blocked" if (blocked_by or deferred_qa_by_lane[lane_id]) else "idle",
             "deferred_qa_packages": deferred_qa_by_lane[lane_id],
+            "deferred_ineligible_packages": deferred_ineligible_by_lane[lane_id],
             "scope": scope,
             # Advisory reconciliation only: never take, release, or supersede
             # an existing worker claim on the strength of this count.
