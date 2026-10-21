@@ -83,6 +83,49 @@ JSON/Markdown exports remain available for deeper operator review. No source
 merge or UI observation proves live VPS release, protects a new claim, settles
 the native queue retry writer #677 or waives independent GitHub CI/review.
 
+## Private unified machine-readable recovery case
+
+The primary zSentinel product delivery board now has **Export recovery case
+.json** alongside the existing Markdown handoff. One explicit click downloads
+a privacy-minimized `zsentinel-portfolio-recovery-case-v1` file (maximum
+256 KiB) derived exclusively from the already loaded, validated sources.
+No network refresh, token use, queue claim, workflow retry or deployment
+occurs during export.
+
+It combines, with **separate source clocks and coverage**:
+
+- A bounded, fair P0/P1 issue sample (up to 100) with canonical issue URL,
+  immutable issue number, observed/historical status and up to three *source
+  references* to open PRs per issue. A mentioned or draft PR is **not** an
+  accepted fix, review, file conflict or current worker claim.
+- The existing provisional product queue admission counts and at most eight
+  visible product candidates/owner-review categories **without raw queue ID**.
+- The independent, read-only queue retry incident group cards (up to 64),
+  evidence coverage, observation freshness and source-bound worsening-group
+  deltas (up to eight). No sample claim attempts are interpreted as failures.
+- At most five **GitHub-reported** PR merges from the bounded Activity
+  observation, never asserted as a verified current-main commit or deploy.
+- An optionally imported, same-project `Zennay/zCloud` PR-less branch inventory
+  (up to 40 branches): observed source main SHA, branch name, observation
+  classification and path-overlap *counts*. A PR-less branch is not proof
+  that no other worker owns the scope. Independent inventory slices are
+  never treated as current atomic or complete GitHub ownership.
+
+The export always sets `authorization.claims_verified=false`,
+`review_verified=false`, `exact_head_required_ci_verified=false`,
+`branch_protection_verified=false`, and `claim/retry/merge/deploy=false`.
+Missing, stale, partial, incorrectly scoped or unavailable source observations
+remain explicit **unknowns**. Even a GitHub-reported PR merge does not prove
+live deployment. Keep these files private: public GitHub titles and branch
+names can still reveal project context. Do not feed this operator document to
+an automatic writer as a claim or release permission receipt.
+
+The primary button stays disabled until at least one accepted source is
+available. When the requested scope is too broad to fit 256 KiB, no truncated
+file is emitted: the operator is instructed to select one project. Regular
+exact-head GitHub CI, independent review, protected-main and production
+release gates still apply.
+
 ## Product delivery queue
 
 Choose **Read admission** to request the existing authenticated `GET /api/portfolio-queue` endpoint. The new `delivery_policy` payload comes from unified backend PR #1549 and reports:
