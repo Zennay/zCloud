@@ -215,6 +215,11 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
                            issue["repo"].casefold(), issue["number"]), issue))
     ordered = [item for _, item in sorted(fair_rows, key=lambda pair: pair[0])]
     for item in ordered:
+        selected = {pr["number"] for pr in item["linked_prs"]}
+        item["uninspected_candidate_pr_numbers"] = [
+            number for number in item["candidate_pr_numbers"]
+            if number not in selected
+        ]
         project = repo_projects.get(item["repo"])
         if (isinstance(project, str)
                 and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", project)):
@@ -222,9 +227,9 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
             item["read_only_issue_command"] = (
                 "python3 scripts/zsentinel_issue_first_board.py --project " +
                 project + " --issue " + str(item["number"]) +
-                (" --candidate-pr " + str(item["candidate_pr_numbers"][0])
-                 if item["candidate_pr_numbers"] and not item["linked_prs"]
-                 else ""))
+                (" --candidate-pr " +
+                 str(item["uninspected_candidate_pr_numbers"][0])
+                 if item["uninspected_candidate_pr_numbers"] else ""))
         else:
             item["project"] = "UNKNOWN"
             item["read_only_issue_command"] = None
@@ -235,11 +240,6 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
             if item["candidate_pr_numbers"] else
             "Search older existing PRs, then independently confirm ownership"
         )
-        selected = {pr["number"] for pr in item["linked_prs"]}
-        item["uninspected_candidate_pr_numbers"] = [
-            number for number in item["candidate_pr_numbers"]
-            if number not in selected
-        ]
         item["merged_main"] = "NOT_PROVEN"
         item["live_verified"] = False
     limited = ordered[:limit]
