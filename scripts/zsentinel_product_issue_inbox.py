@@ -65,12 +65,16 @@ def object_unique(pairs):
     return result
 
 def canonical_projects(path):
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_CONFIG_BYTES:
+    """Resolve project identity from one stable, bounded JSON inode.
+
+    The registry is the trust root for issue/PR routing. Do not stat one path
+    then open a second inode: replacement with a FIFO could block a collector
+    or replacement JSON could silently change its source repositories.
+    """
+    from zsentinel_recovery_router import read_json
+    if not isinstance(path, Path):
         raise ValueError("invalid_registry")
-    blob = path.read_bytes()
-    if len(blob) > MAX_CONFIG_BYTES:
-        raise ValueError("registry_oversized")
-    rows = json.loads(blob, object_pairs_hook=object_unique)
+    rows = read_json(path, MAX_CONFIG_BYTES, "canonical project registry")
     if not isinstance(rows, list):
         raise ValueError("invalid_registry_schema")
     result = {}
