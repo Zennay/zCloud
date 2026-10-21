@@ -650,8 +650,9 @@ def html_view(decision, registry=None):
             raise ValueError("invalid Notion claim visibility snapshot")
         rows = []
         for item in notion["items"]:
-            if (not isinstance(item, dict) or item.get("status") not in ("Claimed", "Running")):
-                raise ValueError("invalid Notion active claim")
+            if (not isinstance(item, dict)
+                    or item.get("status") not in ("Claimed", "Running", "Verifying")):
+                raise ValueError("invalid Notion active/verification status")
             rows.append('<li class="word"><strong>' + phrase(item.get("work"), 35) +
                         ' · ' + phrase(item.get("status"), 12) +
                         ' · ' + phrase(item.get("project"), 80) +
@@ -663,9 +664,60 @@ def html_view(decision, registry=None):
                   "user_supplied_notion_connector_export_unverified_origin" else
                   ("Onvolledige Notion-paginering" if notion["coverage"] == "incomplete"
                    else "Notion werkstatuspagina's opgevraagd"))
+        # The live reader can now distinguish partial status windows. Never
+        # reuse that claim for a manually saved, unauthenticated snapshot.
+        status_windows = notion.get("status_source_windows")
+        window_html = (
+            '<p class="muted">Geen afzonderlijk live bronvensterbewijs; '
+            'geen vrije-werkconclusie uit een opgeslagen momentopname.</p>'
+        )
+        if status_windows is not None:
+            expected = (("Claimed", 1), ("Running", 1), ("Verifying", 2))
+            if (notion["source"] != "notion_readonly_data_source_pages"
+                    or type(status_windows) is not list
+                    or len(status_windows) != 3):
+                raise ValueError("untrusted Notion status source windows")
+            total_pages = 0
+            total_rows = 0
+            any_partial = False
+            descriptions = []
+            for window, (expected_status, budget) in zip(status_windows, expected):
+                if (type(window) is not dict
+                        or window.get("status") != expected_status
+                        or type(window.get("pages_read")) is not int
+                        or not 1 <= window["pages_read"] <= budget
+                        or type(window.get("page_budget")) is not int
+                        or window["page_budget"] != budget
+                        or type(window.get("observed_rows")) is not int
+                        or not 0 <= window["observed_rows"] <= window["pages_read"] * 100
+                        or window.get("coverage") not in ("partial", "complete_within_source")
+                        or window.get("read_only") is not True
+                        or window.get("claim_scope_verified") is not False):
+                    raise ValueError("untrusted Notion window evidence")
+                total_pages += window["pages_read"]
+                total_rows += window["observed_rows"]
+                any_partial |= window["coverage"] == "partial"
+                descriptions.append(
+                    '<li>' + phrase(expected_status, 14) +
+                    ': ≥' + str(window["observed_rows"]) + ' werkitems, ' +
+                    str(window["pages_read"]) + '/' + str(budget) + ' pagina’s · ' +
+                    ('ONVOLLEDIG · bevoegde eigenaar hercontroleert bron'
+                     if window["coverage"] == "partial" else
+                     'gelezen binnen opgegeven venster') + '</li>'
+                )
+            if (type(notion.get("total_pages_read")) is not int
+                    or notion["total_pages_read"] != total_pages
+                    or notion["active_count"] != total_rows
+                    or (notion["coverage"] == "incomplete") != any_partial):
+                raise ValueError("Notion status windows disagree with source")
+            window_html = ('<details><summary>Notion brondekking per werkstatus'
+                           '</summary><ul>' + ''.join(descriptions) +
+                           '</ul><p>Geen autorisatie voor herstel, taakclaim, '
+                           'runner of release.</p></details>')
         notion_panel = (
-            '<p>' + phrase(caveat, 80) + ' · actieve regels: ' +
+            '<p>' + phrase(caveat, 80) + ' · onafgeronde werkregels: ' +
             str(notion["active_count"]) + ' · geen bestandsscope, claimvrijgave of dispatch.</p>' +
+            window_html +
             ('<ul>' + ''.join(rows) + '</ul>' if rows else
              '<p class="empty">Geen actieve regels in deze waarneming; geen bewijs van vrije scope.</p>') +
             ('<p>Voorbeelden afgekapt na 30.</p>' if notion["items_truncated"] else '')
