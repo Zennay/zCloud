@@ -383,8 +383,19 @@ private fun HomeScreen(
                 item {
                     SurfaceCard {
                         Label("GEGEVENS VEROUDERD", Warning)
-                        Text("Geen actuele incidentbevestiging. Ververs voordat je een blokkade als opgelost beschouwt.",
+                        Text("De bron is ouder dan toegestaan of niet verifieerbaar. " +
+                             "Geen actuele incidentbevestiging of urgente meldingen.",
                             color = TextMain, fontSize = 10.sp)
+                        Spacer(Modifier.height(7.dp))
+                        Text(
+                            "Ververs bron ›",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { scope.launch { reload() } }
+                                .padding(vertical = 8.dp),
+                            color = Accent, fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
