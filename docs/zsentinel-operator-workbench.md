@@ -3418,3 +3418,34 @@ eigenaar/leases en releasebevoegdheid opnieuw live worden vastgesteld.
 De gebruiker vroeg geen QA-suites; er zijn er ook geen geschreven
 of gedraaid. De bronimplementatie is uitsluitend direct syntactisch
 bekeken.
+
+
+## Single-issue historical PR handoff as readable Markdown
+
+In the existing `--board ... --pr-dossier ... --output ...` workbench, select a
+product issue and open **Review human-readable PR handoff (Markdown)**.
+The separate **Download reviewed Markdown handoff** control becomes available
+only after the displayed document has been reviewed. Switching the selected
+issue or changing its historical source invalidates that preview. This is an
+additional format beside the existing reviewed JSON receipt, not a replacement
+for the machine-readable handoff.
+
+The Markdown is scoped to exactly one selected issue, preserving the exact
+original board SHA256 and UTC observation, up to twelve archived ZIP source
+windows with original manifest/board SHA256s and missing-batch indexes, and up
+to twelve previously linked PRs with saved HEADs, gate classes, disappearing
+source links and missing-last-sample warnings. The source triage focus and
+human check sequence are readable without opening the whole portfolio. If an
+issue has no linked PR in the archived ZIPs, the handoff explicitly marks
+the relationship **UNKNOWN**, never PR-free. The optional omitted-reference
+count remains visible.
+
+Both the preview and the downloaded `.md` file are assembled entirely in the
+offline browser from the *already admitted* source projection and are not
+uploaded, sent, or stored automatically. The export excludes local contact
+labels, due dates, notes, other issue cards, runtime leases, and any current
+worker or release authority. It is **historical evidence**, not fresh GitHub
+CI/review/merge/claim proof. Before taking action, a responsible operator
+must refresh live GitHub and Notion/queue facts and respect independent review,
+exact-head required CI, branch protection, owner consent and release gates.
+
