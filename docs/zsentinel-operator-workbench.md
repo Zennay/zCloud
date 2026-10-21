@@ -2662,12 +2662,14 @@ python3 scripts/zsentinel_saved_issue_portfolio_delta.py \
   --output ./private-zcloud-changed-issue-delta.json
 ```
 
-CSV bevat één rij per getoond issue en herhaalt de exacte manifest-SHA256's,
+CSV bevat eerst één samenvattingsrij met de exacte manifest-SHA256's,
 waargenomen UTC-tijden, actualiteitsclassificaties, ontbrekende batches,
-filters, paginering en totale tellingen. De PR-lijsten en wijzigingsredenen
-staan als JSON-arrays in afzonderlijke CSV-kolommen, zodat relaties niet
-door komma's of verkorte zichtbare kaarten verloren gaan. Waarden met een
-spreadsheet-formuleprefix worden als tekst geneutraliseerd. JSON bewaart
+filters, paginering en totale tellingen; daarna volgt één rij per getoond
+issue. Ook bij nul filtermatches blijft de broncontext dus aanwezig. De
+PR-lijsten en wijzigingsredenen staan als JSON-arrays in afzonderlijke
+CSV-kolommen, zodat relaties niet door komma's of verkorte zichtbare kaarten
+verloren gaan. Waarden met een spreadsheet-formuleprefix worden als tekst
+geneutraliseerd. JSON bewaart
 de volledige geselecteerde structuur, inclusief de bronreceipts en
 expliciete **false**-waarden voor niet-geverifieerde issue-status,
 eigenaarschap, CI/review, merge en live herstel. Beide formaten respecteren
