@@ -907,7 +907,7 @@ python3 scripts/zsentinel_portfolio_overview.py \
 python3 scripts/zsentinel_portfolio_overview.py \
   --database /path/to/existing/zcloud.sqlite3 \
   --observe-vps-capacity --read-notion-claims --format json \
-  > /private/operator-only/portfolio.json
+  --output /private/operator-only/portfolio.json
 ```
 
 Het standaardvenster is `--window auto`: bij **iedere aanroep**
@@ -1039,7 +1039,7 @@ export NOTION_QUEUE_DATA_SOURCE_ID=<authorized-portfolio-queue-data-source-uuid>
 python3 scripts/zsentinel_live_cockpit.py \
   --database /path/to/existing/zcloud.sqlite3 \
   --project cloud --project supa \
-  --read-notion-claims --format html > /private/operator-only/zsentinel.html
+  --read-notion-claims --format html --output /private/operator-only/zsentinel.html
 
 # May be combined with --observe-vps-capacity only on the intended Linux VPS.
 ```
@@ -1635,7 +1635,7 @@ op die host dus expliciet die bestaande database als bron:
 python3 scripts/zsentinel_portfolio_overview.py \
   --database /home/ubuntu/zennay-cloud/history.db \
   --worker-events-database /home/ubuntu/zennay-cloud/history.db \
-  --window 0 --format html > /private/operator/zsentinel-live.html
+  --window 0 --format html --output /private/operator/zsentinel-live.html
 ```
 
 De `--github-only` modus blijft bewust bestaan voor een host zonder
@@ -2230,7 +2230,7 @@ python3 scripts/zsentinel_live_cockpit.py \
   --github-only \
   --project cloud \
   --worker-events-database /private/authorized/history.db \
-  --format html > /private/authorized/worker-herstel.html
+  --format html --output /private/authorized/worker-herstel.html
 ```
 
 Het door de bevoegde operator opgegeven pad is een voorbeeld. Gebruik alleen
@@ -2342,7 +2342,7 @@ Voorbeeld voor een privé-opgeslagen Notion query uit de connector:
       --project cloud --skip-ci-discovery --skip-github-issues \
       --notion-data-source 86e406fd-2c99-4ef5-8058-363c1004b3eb \
       --notion-claims-export /private/operator-only/notion-query.json \
-      --format html > /private/operator-only/zsentinel-claims.html
+      --format html --output /private/operator-only/zsentinel-claims.html
 
 De adapter accepteert alleen een reguliere bronfile zonder symlink met
 maximaal 128 KiB, geldige UTF-8/JSON zonder dubbele keys, een exacte
@@ -2403,7 +2403,7 @@ Voorbeeld voor het huidige canonieke projectvenster:
       --window auto --skip-ci-discovery --skip-github-issues \
       --notion-data-source 86e406fd-2c99-4ef5-8058-363c1004b3eb \
       --notion-claims-export /private/operator-only/notion-query.json \
-      --format text
+      --format text --output /private/operator-only/zsentinel-notion-portfolio.md
 
 Ook dit overzicht houdt echte Notion-eigenaars, actieve queueleases en
 workerherstelstatus ONBEKEND. Geen workflowdispatch, bronwrite of runtime
@@ -3744,8 +3744,10 @@ continuity from the existing SQLite history database. Opt in with
 `--worker-events-database <existing-history.db>` and one to three explicit,
 distinct canonical `--worker-project <project-id>` arguments. The selected
 projects must exist in the supplied canonical registry. No project is selected
-implicitly, and worker evidence is not added to ICS or the incident-desk
-format; when this source is requested, use `--format json`, `text` or `html`.
+implicitly, and worker evidence is never added to ICS. For the refresh CLI,
+use `--format json`, `text` or `html` with private `--output`, or select
+`--format desk --desk-output <new-private.html>` to render the same indexed
+events beside the read-only incident/queue/Notion operator cards.
 
 Examples below use a new output file in an existing directory owned by the
 operator and not group/world writable. The report writer enforces mode 0600,
@@ -3794,9 +3796,11 @@ to stdout (to avoid leaking work/worker metadata into terminal or job logs):
 - Saved connector snapshot: `--notion-claims-export <private-json>` plus
   `--notion-data-source <UUID>`. The saved source is explicitly unverified
   and cannot establish current ownership.
-- Choose one Notion mode. This option supports only JSON, text or offline HTML;
-  it is deliberately rejected with ICS, incident-desk and separate
-  `--desk-output` formats so a requested source cannot silently disappear
+- Choose one Notion mode. This option supports JSON, text or HTML with an
+  owner-private `--output`, or private `--format desk --desk-output NEW.html`.
+  ICS is rejected. A sidecar `--desk-output` with HTML alone never suppresses
+  the normal stdout path; without an explicit private `--output`, that
+  combination is refused to prevent accidental Notion/worker disclosure.
   from the rendered artifact.
 
 Example for a live, bounded read (do not put tokens in command arguments):
@@ -3819,3 +3823,24 @@ query, stale/invalid saved snapshot or incomplete source is reported as
 text identify the source state; JSON preserves the bounded observation. Neither
 a Notion status, a worker event, nor a queue lease observation proves repository
 file ownership or grants claim/retry/restart/dispatch authority.
+
+### 21 October · private-output invariant across all incident entrypoints
+
+`zsentinel_recovery_refresh.py`, `zsentinel_live_cockpit.py` and
+`zsentinel_portfolio_overview.py` all route opt-in worker/Notion detail into
+create-only mode-0600 operator outputs. Select `--format desk --desk-output
+/new/private-report.html`, or give `--output /new/private-report.html` when
+using HTML/JSON/text. A separate sidecar desk, agenda, packet or handoff
+file **does not turn off stdout**; these entrypoints now refuse private-source
+HTML/JSON/text without its own `--output`. This avoids accidentally sending
+work names, source times or browserworker metadata into terminal/CI/relay logs.
+
+The unified private incident desk additionally includes source-pinned GitHub
+run/job/HEAD links and runner-route owner actions, current/unknown queue and
+blocked-work pressure, fair P0-first product issues with existing PR candidates,
+and optionally Notion Claimed/Running/Verifying and indexed worker continuity.
+All cards are bounded, human-only and labelled with partial/stale coverage.
+Exact-source incident note imports bind to the SHA-256 of the optional
+operational sources; older notes require explicit human carry and recheck.
+For a compact runnable recipe, see
+[private runtime incident desk](zsentinel-private-runtime-incident-desk.md).
