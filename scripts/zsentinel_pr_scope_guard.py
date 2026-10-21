@@ -1038,6 +1038,9 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
     not_paired = ([pr for pr in observed if pr["number"] not in collided]
                   if fully_sampled else [])
     clusters = linked_pr_collision_clusters(observed, pairs)
+    scope_clusters = linked_pr_scope_collision_clusters(
+        observed, scope_pairs, scope_pair_counts)
+    shown_scope_clusters = scope_clusters[:MAX_SCOPE_CLUSTER_CARDS]
     return {
         "schema": "zsentinel-pr-file-collision-graph-v1",
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -1106,6 +1109,12 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "path_scope_collision_pairs_truncated": scope_pairs_truncated,
         "path_scope_examples_truncated": any(
             row["path_conflicts_truncated"] for row in scope_cards),
+        "observed_connected_path_scope_collision_clusters": len(scope_clusters),
+        "linked_pr_path_scope_collision_clusters": shown_scope_clusters,
+        "path_scope_collision_clusters_truncated": len(scope_clusters) > MAX_SCOPE_CLUSTER_CARDS,
+        "path_scope_cluster_examples_truncated": any(
+            row["path_conflicts_sample_truncated"] for row in shown_scope_clusters),
+        "scope_clusters_are_observed_edges_only_not_ownership_or_merge_authority": True,
         "observed_connected_pr_collision_clusters": len(clusters),
         "linked_pr_collision_clusters": clusters,
         "clusters_are_observed_edges_only_not_ownership_or_merge_authority": True,
