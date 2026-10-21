@@ -974,6 +974,24 @@ Downloaded notes belong to the operator and are not authorization to act on queu
 const board = """ + records + """;
 const boardSha = """ + json.dumps(board_sha) + """;
 const savedPrHistory = """ + issue_history_json + """;
+// A saved ZIP may have looked recent when the HTML was generated and be old
+// when the operator opens it later. Recompute its advisory age on this
+// device, without representing the device clock as independently verified.
+function archivedPrFreshnessNow(){
+ if(!savedPrHistory.sources_provided||!savedPrHistory.original_archive_sources.length)
+  return {status:'NOT PROVIDED',age:'UNKNOWN',clock:'local device'};
+ const last=savedPrHistory.original_archive_sources.at(-1);
+ const instant=Date.parse(last.latest_observed_utc);
+ const now=Date.now();
+ if(!Number.isFinite(instant)||!Number.isFinite(now))
+  return {status:'UNKNOWN',age:'UNKNOWN',clock:'local device'};
+ const elapsed=now-instant;
+ if(elapsed < -5*60*1000)
+  return {status:'CLOCK SKEW / SOURCE FUTURE',age:'UNKNOWN',clock:'local device'};
+ const hours=Math.round(Math.max(0,elapsed)/360000)/10;
+ return {status:elapsed>6*3600000?'STALE · REFRESH AUTHORITATIVE SOURCES':'RECENT SAVED COPY · NOT LIVE',
+         age:hours+' hours',clock:'local device'};
+}
 const historicalPrSelector=document.getElementById('historicalPrFilter');
 if(!savedPrHistory.sources_provided){
  historicalPrSelector.disabled=true;
@@ -2487,6 +2505,8 @@ function currentBrief(){
    'not loaded; no historical comparison'),
   'Historical PR ZIP source windows: '+savedPrHistory.original_archive_sources.length+
     (savedPrHistory.sources_provided?' (saved, not live)':' (not provided: PR relationships UNKNOWN)'),
+  'Saved PR archive age at this export (untrusted local clock): '+
+    archivedPrFreshnessNow().status+' · '+archivedPrFreshnessNow().age,
   'Status: observational, claims and releases NOT AUTHORIZED.',
   'Private annotations: '+(includePrivate?'EXPLICITLY INCLUDED — check recipient and destination':'EXCLUDED by default'),
   'MANDATORY: verify active owner/claim, exact-head required CI, security, review and release consent before action.',
@@ -2800,6 +2820,10 @@ function drawDetail(){
   historical.setAttribute('aria-label','Historical existing PR recovery context');
   historical.append(elem('h3','Existing PR history · saved source only'));
   const match=savedPrHistory.issues[card.issue];
+  const openedSourceAge=archivedPrFreshnessNow();
+  historical.append(elem('p','Original ZIP age at this viewing (untrusted local device clock): '+
+    openedSourceAge.status+' · '+openedSourceAge.age+
+    '. Refresh live GitHub/Notion/queue evidence before ownership or release decisions.','meta'));
   if(!match){
    historical.append(elem('p','This issue has no PR link in the supplied historical ZIP samples. This is NOT proof there is no current PR or owner.'));
   }else{
