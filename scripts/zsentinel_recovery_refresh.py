@@ -245,23 +245,20 @@ def main():
         if args.worker_project and args.worker_events_database is None:
             raise ValueError("--worker-project requires --worker-events-database")
         if args.worker_events_database is not None:
-            if args.format not in ("json", "text", "html"):
-                raise ValueError("--worker-events-database supports json, text or html output")
-            if args.desk_output is not None:
-                raise ValueError("--worker-events-database cannot be combined with --desk-output")
+            if args.format not in ("json", "text", "html", "desk"):
+                raise ValueError("--worker-events-database supports json, text, html or private desk output")
         if args.read_notion_claims and args.notion_claims_export is not None:
             raise ValueError("choose either live Notion token or saved connector snapshot")
         if args.notion_data_source and not (
                 args.read_notion_claims or args.notion_claims_export is not None):
             raise ValueError("--notion-data-source requires a Notion observation mode")
         if args.read_notion_claims or args.notion_claims_export is not None:
-            if args.format not in ("json", "text", "html"):
-                raise ValueError("Notion status observation supports json, text or html output")
-            if args.desk_output is not None:
-                raise ValueError("Notion status observation cannot be combined with --desk-output")
+            if args.format not in ("json", "text", "html", "desk"):
+                raise ValueError("Notion status observation supports json, text, html or private desk output")
         if ((args.worker_events_database is not None or args.read_notion_claims
-             or args.notion_claims_export is not None) and args.output is None):
-            raise ValueError("private Notion/worker observations require create-only --output; do not print them to stdout")
+             or args.notion_claims_export is not None)
+             and args.output is None and args.desk_output is None):
+            raise ValueError("private Notion/worker observations require a create-only private output; do not print them to stdout")
         if args.desk_output is not None and args.format not in ("desk", "html"):
             raise ValueError("--desk-output accepts only desk or html operator formats")
         if args.desk_output is not None:
