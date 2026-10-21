@@ -36,11 +36,15 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             // can assert that the known incident requires a human decision.
             .filter { it.id.isNotBlank() && it.id.length <= 256 && it.isUrgent() &&
                       it.humanActionRequired }
-            .distinctBy { IncidentSnoozeStore.notificationTag(it) }
+            // Prefer the highest urgency and newest observed episode before
+            // dropping duplicate source rows for the same project/incident.
+            // The old order kept the first (possibly obsolete) episode, so a
+            // restarted blocker could remain hidden behind a prior receipt.
             .sortedWith(compareBy<AlertItem> {
                 if (it.severity.equals("critical", true) ||
                     it.severity.equals("error", true)) 0 else 1
             }.thenByDescending { it.occurredAt.orEmpty() })
+            .distinctBy { IncidentSnoozeStore.notificationTag(it) }
         // Prior receipt formats were not project-scoped. Their ownership
         // cannot be authenticated, so do not migrate them into a different
         // project's incident suppression state. A one-time re-notification
