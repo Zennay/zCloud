@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stdout
 from html import escape
 from contextlib import closing
 import json
+import io
+import tempfile
 import hashlib
 import os
 import stat
@@ -1122,6 +1125,49 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 exact-head CI, GitHub runner registration, active leases or production readiness. Follow the
 existing #1326 runner and #580/#1089 serialized release gates. No recovery action was executed.</p>
 </main></body></html>"""
+
+
+
+MAX_PRIVATE_REPORT_BYTES = 4 * 1024 * 1024
+
+
+def save_private_report(destination: Path, rendered: str) -> None:
+    """Create one finished 0600 operator report without replacing prior work.
+
+    The only mutation is the explicitly selected *new* local report path.
+    Writing a private file never changes the observed VPS/runner/queue state.
+    A same-directory temporary inode is fsynced and hardlinked into place
+    only when its final name is still unused; no existing file is overwritten.
+    """
+    if not isinstance(destination, Path) or destination.name in ("", ".", ".."):
+        raise ValueError("invalid private report destination")
+    encoded = rendered.encode("utf-8")
+    if not encoded or len(encoded) > MAX_PRIVATE_REPORT_BYTES:
+        raise ValueError("private preflight report exceeds 4 MiB bound")
+    fd = None
+    temporary = None
+    try:
+        fd, temporary = tempfile.mkstemp(
+            prefix=".zsentinel-private-", suffix=".partial",
+            dir=destination.parent,
+        )
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            fd = None
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        # Hardlink creation fails if the target already exists, including
+        # a symlink. Unlike os.replace, link() does not overwrite owner data.
+        os.link(temporary, destination, follow_symlinks=False)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
 
 
 def main() -> int:
