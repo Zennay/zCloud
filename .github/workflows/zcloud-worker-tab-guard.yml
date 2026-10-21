@@ -206,6 +206,7 @@ jobs:
           swapped=1
           cmp -- firefox-extension/background.js "$live/background.js"
           echo "WORKER_TAB_GUARD_INSTALLED=1"
+          python3 scripts/zsentinel_release_receipt.py --component addon --outcome disk-installed
           echo "Worker extension source installed; no active tabs touched during install."
 
       - name: Activate patch only when worker browser has a safe idle window
@@ -221,10 +222,12 @@ jobs:
           # and hot-reload only the add-on, not the window or any tab.
           if ! ps -eo args= | grep -E '[f]irefox.*-start-debugger-server[[:space:]]+[0-9]+' >/dev/null; then
             echo "No running Firefox debugger: defer extension reload; never start a window."
+            python3 scripts/zsentinel_release_receipt.py --component addon --outcome reload-deferred-no-debugger
             exit 0
           fi
           if ! python3 scripts/zsentinel_addon_idle_gate.py; then
             echo "Existing worker busy/unknown: defer addon reload; no forced tab restart."
+            python3 scripts/zsentinel_release_receipt.py --component addon --outcome reload-deferred-busy
             exit 0
           fi
           # Reload only the extension, never terminate the visible Firefox
@@ -242,6 +245,8 @@ jobs:
           cmp -- firefox-extension/background.js "$live/background.js"
           if node scripts/zcloud_reload_extension.mjs; then
             echo "WORKER_TAB_GUARD_ACTIVATED_IN_PLACE=1"
+            python3 scripts/zsentinel_release_receipt.py --component addon --outcome reload-command-succeeded
           else
             echo "WORKER_TAB_GUARD_RELOAD_DEFERRED=1"
+            python3 scripts/zsentinel_release_receipt.py --component addon --outcome reload-deferred-error
           fi
