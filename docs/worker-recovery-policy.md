@@ -482,9 +482,11 @@ token or private prompt is exported.
 
 A saved zSentinel recovery case is a point-in-time observation. It may
 reference no PRs, one old PR, or up to three historical repair PRs, while
-new fixes are opened later. The normal `--live-candidates` path reviews
-only the saved candidates. The **additive** `--discover-existing` path
-also scans recent GitHub open PRs for this same repository and issue:
+new fixes are opened or closed later. The normal `--live-candidates`
+path reviews only the saved candidates. The **additive**
+`--discover-existing` path also checks the official issue timeline's
+cross-referenced PRs (including closed/merged PRs) and scans recent
+GitHub open PRs for this same repository and issue:
 
 ```sh
 umask 077
@@ -505,15 +507,26 @@ references are deduplicated against them and fill unused slots up to
 discovered PRs are still offered as **navigation-only links with live status
 UNKNOWN**; they are not silently discarded or treated as reviewed.
 
-The discovery window is strictly limited to **four pages of 30 GitHub
-open PRs** (120 rows), with at most **12 unique textual hints** retained
-for navigation. It examines the original issue number only in bounded PR
-titles and descriptions, without emitting raw titles or descriptions.
-Closing-keyword references precede ordinary text mentions; equal ranking
-preserves original GitHub source order. A short page stops pagination,
-while a full fourth page explicitly marks incomplete pagination.
-Text-only references may be false positives or omit genuine GitHub
-cross-references; they are **not verified issue→PR associations**.
+The combined source window is strictly limited to **two chronological
+timeline pages of 30 events** and **four pages of 30 open PRs**, with
+at most **12 timeline cross-reference hints and 12 text hints** retained
+for navigation. Official GitHub `cross-referenced` events are admitted
+only when the event's originating PR URL exactly belongs to the same
+canonical repository. They precede weaker title/body text matches, and
+duplicate PR identities are removed. The text source examines the issue
+number in bounded PR titles/descriptions, without emitting those
+contents. Closing-keyword references precede ordinary text mentions;
+equal ranking preserves GitHub source order. Short pages stop early;
+full final pages explicitly mark incomplete pagination. Timeline events
+prove only GitHub's reference relationship, **not** that the PR resolves
+the issue, belongs to a free worker, passed required gates or reached
+the default branch. Text hints are weaker still.
+
+The two bounded sources are independent: if GitHub rejects a later
+timeline or PR-list page, already observed cross-references or textual
+hints remain usable as navigation clues while the failed source,
+actual GET attempts and coverage are explicitly marked UNKNOWN.
+No single partial source can justify a new PR, retry, claim or merge.
 
 Each live-read PR is fetched twice and compared for immutable observed
 HEAD, state, draft flag, target and both description/title digests;
@@ -549,19 +562,21 @@ selected PR receives the live issue/PR/HEAD/check/review observation.
 Every other saved or discovered PR remains a visible **unreviewed link**
 with live status UNKNOWN. A focused read never asserts that a PR is
 merged to main, owner-approved or deployed. With discovery enabled,
-the upper GET budget reduces from 17 to **9** (4 discovery pages,
-one issue and up to four focused PR reads).
+the upper GET budget reduces from 19 to **11** (2 timeline pages,
+4 open-PR pages, one issue and up to four focused PR reads).
 
-The upper read bound is **17 GitHub GETs**: at most four list pages, one
-original issue GET and four GETs for each of three live-read candidates.
-Each list response has its own fixed 2 MiB cap; issue/PR/check/review
-reads use the existing 160 KiB cap. 401/403/429 stops further live-read
-requests; a source error never grants retry, owner reassignment, merge or
-release authority. The receipt reports the actual `get_attempts` and
-conservative `read_get_attempt_upper_bound`. A live PR reference is
-always only an owner-navigation hint until exact-head required CI,
-independent review, active claim and protected-main rules have been
-separately verified by an authorized operator.
+The upper read bound is **19 GitHub GETs**: at most two issue-timeline
+pages, four open-PR-list pages, one original issue GET and four GETs
+for each of three live-read candidates. Each timeline/list response
+has a fixed 2 MiB cap; issue/PR/check/review reads retain the 160 KiB
+cap. 401/403/429 on one discovery source prevents further pages from
+that source and records a visible UNKNOWN; it never grants a retry,
+owner reassignment, merge or release authority. The receipt records
+actual `get_attempts` and the conservative
+`read_get_attempt_upper_bound`. A live PR reference is only an
+owner-navigation lead until required exact-head CI, independent review,
+active claims and protected-main rules have been separately verified
+by an authorized operator.
 
 ### Project- and priority-focused historical owner views
 
