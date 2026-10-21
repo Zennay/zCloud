@@ -279,6 +279,10 @@ def vps_capacity(bundle, now):
     swap = metrics.get("available_swap_mib")
     disk = metrics.get("free_disk_gib")
     unavailable_disk_pct = metrics.get("disk_unavailable_percent")
+    inode_available = metrics.get("inode_available")
+    inode_total = metrics.get("inode_total")
+    inode_pct = metrics.get("inode_unavailable_percent")
+    inode_source = metrics.get("inode_source")
     if type(cores) is not int or not 1 <= cores <= 128:
         raise ValueError("invalid VPS vCPU capacity")
     for key, value, maximum in (
@@ -296,12 +300,32 @@ def vps_capacity(bundle, now):
                 or not math.isfinite(unavailable_disk_pct)
                 or not 0 <= unavailable_disk_pct <= 100):
             raise ValueError("invalid VPS disk occupancy")
+    # Preserve independently observed overload even when inode telemetry is
+    # unknown, but never promote incomplete legacy evidence to headroom.
+    inode_unknown = None
+    if inode_source == "unsupported_or_unknown_not_zero":
+        if any(metrics.get(k) is not None for k in
+               ("inode_available", "inode_total", "inode_unavailable_percent")):
+            raise ValueError("unsupported inode observation cannot carry counts")
+        inode_unknown = "database_mount_inode_capacity_unknown"
+    elif all(metrics.get(k) is None for k in
+             ("inode_source", "inode_available", "inode_total", "inode_unavailable_percent")):
+        inode_unknown = "legacy_vps_inode_capacity_not_observed"
+    elif (inode_source != "same_database_mount_statvfs"
+          or type(inode_available) is not int or type(inode_total) is not int
+          or not 1 <= inode_total <= 10**15
+          or not 0 <= inode_available <= inode_total
+          or type(inode_pct) not in (int, float)
+          or not math.isfinite(inode_pct) or not 0 <= inode_pct <= 100
+          or abs(inode_pct - 100 * (1 - inode_available / inode_total)) > 0.015):
+        raise ValueError("invalid same-database-mount inode capacity")
     overloaded = load > 1.5 * cores
     low_memory = memory < 1024
     low_swap = swap < 256
     low_disk = disk < 2
     almost_full_disk = unavailable_disk_pct is not None and unavailable_disk_pct >= 90
-    if overloaded or low_memory or low_swap or low_disk or almost_full_disk:
+    inode_pressure = inode_unknown is None and (inode_available == 0 or inode_pct >= 90)
+    if overloaded or low_memory or low_swap or low_disk or almost_full_disk or inode_pressure:
         reasons = []
         if overloaded:
             reasons.append("load_above_conservative_capacity")
@@ -313,7 +337,11 @@ def vps_capacity(bundle, now):
             reasons.append("disk_headroom_low")
         if almost_full_disk:
             reasons.append("disk_unavailable_at_least_90_percent")
+        if inode_pressure:
+            reasons.append("database_mount_inodes_unavailable_at_least_90_percent")
         return {"state": "overloaded", "reason": ",".join(reasons)}
+    if inode_unknown is not None:
+        return {"state": "unavailable", "reason": inode_unknown}
     if unavailable_disk_pct is None:
         # A legacy snapshot cannot establish safe mount headroom; a human may
         # inspect it but the self-hosted advisory router must fail closed.

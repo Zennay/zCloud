@@ -54,6 +54,19 @@ def observe_vps_capacity(database: Path):
     # Account for blocks unavailable to the unprivileged runtime (including
     # filesystem reserves); 94% occupied with 6 GiB free still matters.
     unavailable_percent = 100 * (1 - fs.f_bavail / fs.f_blocks)
+    # Byte headroom is not inode headroom; creating jobs/logs can fail despite free bytes.
+    if any(type(x) is not int or x < 0 for x in (fs.f_files, fs.f_ffree, fs.f_favail)):
+        raise ValueError("invalid database-mount inode accounting")
+    if fs.f_files > 0:
+        if fs.f_ffree > fs.f_files or fs.f_favail > fs.f_ffree:
+            raise ValueError("contradictory database-mount inode accounting")
+        inode_available = fs.f_favail
+        inode_total = fs.f_files
+        inode_unavailable_percent = round(100 * (1 - inode_available / inode_total), 2)
+        inode_source = "same_database_mount_statvfs"
+    else:
+        inode_available = inode_total = inode_unavailable_percent = None
+        inode_source = "unsupported_or_unknown_not_zero"
     vals = (load, available, swap, free, unavailable_percent)
     if any(not math.isfinite(value) or value < 0 for value in vals):
         raise ValueError("invalid host resource observation")
@@ -67,6 +80,10 @@ def observe_vps_capacity(database: Path):
             "available_swap_mib": round(swap, 1),
             "free_disk_gib": round(free, 3),
             "disk_unavailable_percent": round(unavailable_percent, 2),
+            "inode_available": inode_available,
+            "inode_total": inode_total,
+            "inode_unavailable_percent": inode_unavailable_percent,
+            "inode_source": inode_source,
         },
     }
 

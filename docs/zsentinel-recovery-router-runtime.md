@@ -1,3 +1,24 @@
+
+### 21 oktober · inode-druk voorkomt onveilige nieuwe self-hosted jobs
+
+De opt-in zsentinel_vps_resource_observer.py leest voortaan tegelijk
+met vrije bytes op dezelfde database-filesystemmount ook f_files en
+f_favail via Linux statvfs. Private JSON toont inode_total,
+inode_available, inode_unavailable_percent en inode_source.
+Tegenstrijdige tellers worden geweigerd. Filesystems zonder
+bruikbare inodetelling krijgen unsupported_or_unknown_not_zero;
+onbekend betekent NOOIT vrije inodes.
+
+De herstelrouter markeert minimaal 90% niet-beschikbare inodes als
+overloaded, ook wanneer vrije schijfbytes hoog zijn. Dit blokkeert
+uitsluitend nieuwe adviserende self-hosted werksuggesties, nooit
+bestaande claims of trainingen. Oude snapshots zonder inodes zijn
+unavailable; actuele onafhankelijke CPU/swap/disk-overbelasting
+blijft in dat geval als overloaded zichtbaar. De mobiele cockpit
+vertaalt deze redenen. De private runtime-eigenaaroverdracht toont
+de inode-druk als P1 VPS-capaciteit bij #1326. Geen cleanup,
+serviceherstart, dispatch, queuewrite, deploy of releaseautorisatie.
+
 # zSentinel · Runtime incident router (product-only)
 
 ## 20 oktober · GitHub CI zonder klassieke statuscontexten

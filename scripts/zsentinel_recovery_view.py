@@ -769,6 +769,9 @@ def html_view(decision, registry=None):
         "swap_headroom_low": "Te weinig vrije swap",
         "disk_headroom_low": "Minder dan 2 GiB schijfruimte beschikbaar",
         "disk_unavailable_at_least_90_percent": "Schijf minstens 90% niet beschikbaar",
+        "database_mount_inodes_unavailable_at_least_90_percent": "Minstens 90% inodes op databasemount niet beschikbaar",
+        "legacy_vps_inode_capacity_not_observed": "Oude VPS-meting zonder inodegegevens; geen nieuw werk toelaten",
+        "database_mount_inode_capacity_unknown": "Databasemount rapporteert geen bruikbare inodecapaciteit",
         "thresholds_met_not_release_authorization":
             "Beperkte drempels niet overschreden; geen start- of deployrecht",
         "old_snapshot_disk_occupancy_unknown_not_release_authorization":
