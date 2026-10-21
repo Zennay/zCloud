@@ -939,6 +939,22 @@ Explicitly include private operator follow-ups, contact labels and notes</label>
 <button type="button" id="downloadBrief" disabled>Download exactly this private briefing (.md)</button>
 </div>
 </section>
+<section class="portfolio" aria-label="Merge-first existing PR source reconciliation desk">
+<h2>Merge-first existing-PR reconciliation · saved evidence</h2>
+<p>Group the current <strong>source-filtered</strong> product issues by previously
+observed PR. Show where one PR is linked to several issues, where one issue
+has competing PR references, and where separately saved exact HEADs differ.
+These are candidate source relationships, never current claims, merge
+eligibility or evidence of code conflict. Local human follow-up filters
+are not used here.</p>
+<p id="mergeFirstSummary" role="status">Historical PR relations not yet grouped.</p>
+<div id="mergeFirstRows" class="portfolio"></div>
+<button type="button" id="mergeFirstReview">Preview source-only PR owner CSV</button>
+<div id="mergeFirstPanel" hidden>
+<pre id="mergeFirstPreview"></pre>
+<button type="button" id="mergeFirstDownload" disabled>Download reviewed PR owner CSV</button>
+</div>
+</section>
 <section class="brief" aria-label="Print-ready source-only portfolio existing PR desk">
 <h2>Print-ready product issue / existing-PR worklist</h2>
 <p>Turn the currently selected issue filters into a portable, static HTML owner
