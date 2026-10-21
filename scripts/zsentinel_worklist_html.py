@@ -7,11 +7,14 @@ work scheduling, automatic approval or release permissions.
 from __future__ import annotations
 
 from html import escape
+import base64
 import hashlib
 import json
 import re
 
-from zsentinel_issue_action_board import MAX_CARDS, ORDER, LABELS, PR, ISSUE
+from zsentinel_issue_action_board import (
+    MAX_CARDS, ORDER, LABELS, PR, ISSUE, render_merge_first_csv,
+)
 
 # These are historical source observations, never the current GitHub decision.
 GATE_LABELS = {
@@ -1346,6 +1349,10 @@ collisionOverdueExport.addEventListener('click',()=>exportCollisionHandoff(true,
 document.getElementById('collision-calendar-export').addEventListener('click',exportCollisionCalendar);
 for(const c of collisionRows)c.querySelector('.collision-export-one').addEventListener('click',
  ()=>exportCollisionHandoff(false,c.dataset.issue));
+document.getElementById('download-merge-first-csv').addEventListener('click',function(){
+ const bytes=Uint8Array.from(atob('__PRIVATE_MERGE_FIRST_CSV_BASE64__'),c=>c.charCodeAt(0));
+ privateDownload('zsentinel-merge-first-pr-en-issues.csv',bytes,'text/csv;charset=utf-8');
+});
 document.getElementById('export').addEventListener('click',function(){
  const parts=['# zSentinel · private handmatige opvolging','',
   'Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
@@ -1580,6 +1587,12 @@ refresh();
     project_names = sorted({r["project"] for r in cards[:max_rows]})
     p_opts = "".join("<option value='" + escape(name, quote=True) + "'>" +
                      escape(name) + "</option>" for name in project_names)
+    # Embed the exact same already validated, read-only source snapshot as
+    # the CLI CSV output. Only a local, user-triggered Blob download is enabled.
+    csv_payload = base64.b64encode(
+        render_merge_first_csv(board, max_rows).encode("utf-8")
+    ).decode("ascii")
+    script = script.replace("__PRIVATE_MERGE_FIRST_CSV_BASE64__", csv_payload)
     return (
         "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -1672,6 +1685,7 @@ refresh();
          "<button id='collision-calendar-export' type='button'>Download opvolging als agenda (.ics)</button>"+
          "<p id='collision-calendar-status' aria-live='polite'></p>"
         "<button id='export' type='button'>Download privéoverdracht (Markdown)</button>"
+        "<button id='download-merge-first-csv' type='button'>Download PR + issue werkbak (CSV)</button>"
         "<button id='session-save' type='button'>Bewaar lokale sessie (JSON)</button>"
         "<label>Heropen lokale sessie<input id='session-import' type='file' "
         "accept='.json,application/json'></label></div>"
