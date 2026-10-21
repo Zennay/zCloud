@@ -74,9 +74,17 @@ def prepare_rows(view, board_sha, saved):
             raise ValueError("more than fifteen source references for one issue")
         if not refs:
             unknown.append(card)
+        # Board "project" is an internal slug (e.g. cloud), not the
+        # GitHub owner/repository. The already validated issue URL is
+        # authoritative for repository identity.
+        repository_url, _, issue_number = card["url"].partition("/issues/")
+        if not issue_number or not repository_url.startswith("https://github.com/"):
+            raise ValueError("original board issue lacks canonical repository")
         for url in refs:
-            if not url.startswith("https://github.com/" + card["project"] + "/pull/"):
-                raise ValueError("cross-project saved PR candidate")
+            if not re.fullmatch(
+                re.escape(repository_url) + r"/pull/[1-9][0-9]{0,8}", url
+            ):
+                raise ValueError("cross-repository or noncanonical saved PR candidate")
             slot = mapped.setdefault(url, {
                 "url": url, "issues": {}, "board_heads": set(),
                 "archive_heads": set(), "gates": set(),
