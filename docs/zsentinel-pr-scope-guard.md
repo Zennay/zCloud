@@ -2091,3 +2091,18 @@ uitsluitend nieuw/private aangemaakt, niet in-place overschreven.
 Voor alle weergaven geldt: twee waarnemingen tonen **niet** de ononderbroken
 toestand daartussen, geen actuele claims, geen branch-protection-vrijgave,
 geen onafhankelijke review en geen productie-releasebevoegdheid.
+
+### 21 oktober · historisch bronmoment versus latere live gateherlezing
+
+De eerdere portfolio-observatie en de later opnieuw gelezen huidige PR-gates
+hebben elk een **eigen UTC-tijdstempel**. Bij het integreren van de historische
+wijzigingsweergave is voorkomen dat het tijdstempel van de initiële
+`board.observed_at_utc` abusievelijk vergeleken wordt met de latere
+`current_live_pr_gate_observation.observed_at_utc`. De historische
+`compare_gate_episodes` receipt moet overeenkomen met de **initiële**
+portfolio-opname waarop die comparator feitelijk werkt; het concrete
+exacte-HEAD checkbewijs blijft daarnaast de **latere** gateherlezing.
+Dit voorkomt een onterechte foutmelding zodra een live scan daadwerkelijk
+langer duurt dan de eerste bronopname. De CSV/HTML/Markdown tonen beide
+contexten waar beschikbaar, zonder te claimen dat de tussenperiode continu
+is gecontroleerd. Geen nieuwe polling, QA-suite of vrijgavepad.
