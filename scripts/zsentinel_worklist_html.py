@@ -1416,7 +1416,9 @@ refresh();
         "issue_time": str(ts_issue), "pr_time": str(ts_pr),
         "visible_pr_groups": group_source,
         "visible_rows": [
-            (row["issue_url"], row["candidate_existing_pr_url"],
+            (row["issue_url"], row["project"], row["priority"],
+             row.get("category"), row["pr_file_scope_sample_complete"],
+             row["issue_reference_sample_complete"], row["candidate_existing_pr_url"],
              row.get("candidate_exact_head_gate_state"),
              tuple((candidate["url"], candidate["gate_state"],
                     candidate.get("source_head_observed"),
