@@ -27,6 +27,8 @@ SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 MAX_GROUPS = 300
 MAX_SAMPLES = 20
 MAX_HOURS = 72
+# Saved offline observations must not masquerade as current after six hours.
+MAX_CURRENT_AGE_HOURS = 6
 PRIORITIES = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 STATUSES = ("queued", "claimed", "running", "verifying")
 
@@ -150,6 +152,9 @@ def compare(previous, current, now=None):
             or time1 > now + timedelta(minutes=2)
             or time0 > now + timedelta(minutes=2)):
         raise ValueError("snapshots must be chronologically ordered and from the exact same SQLite file")
+    # Offline snapshots can be structurally valid but too old to represent current queue state.
+    current_snapshot_age_seconds = max(0, int((now - time1).total_seconds()))
+    current_snapshot_stale = now - time1 > timedelta(hours=MAX_CURRENT_AGE_HOURS)
     common_keys = refs0.keys() & refs1.keys()
     increases = []
     for identity in common_keys:
@@ -234,6 +239,9 @@ def compare(previous, current, now=None):
         "schema": SCHEMA,
         "previous_observed_at_utc": time0.isoformat(),
         "current_observed_at_utc": time1.isoformat(),
+        "current_snapshot_age_seconds": current_snapshot_age_seconds,
+        "current_snapshot_stale": current_snapshot_stale,
+        "current_snapshot_max_age_seconds": MAX_CURRENT_AGE_HOURS * 3600,
         "coverage": "matched_private_active_sample_only",
         "stage": stage,
         "action": action,
@@ -276,11 +284,21 @@ def public_summary(report):
                 "automatic_retry_authorized", "lease_release_authorized",
                 "worker_restart_authorized", "active_owners_displaced"))
             or type(report.get("observed_same_item_attempt_increases")) is not int
-            or type(report.get("observed_claim_attempt_increment_min")) is not int):
+            or type(report.get("observed_claim_attempt_increment_min")) is not int
+            or type(report.get("current_observed_at_utc")) is not str
+            or not 1 <= len(report["current_observed_at_utc"]) <= 45
+            or type(report.get("current_snapshot_age_seconds")) is not int
+            or report["current_snapshot_age_seconds"] < 0
+            or type(report.get("current_snapshot_stale")) is not bool
+            or report.get("current_snapshot_max_age_seconds") != MAX_CURRENT_AGE_HOURS * 3600):
         raise ValueError("untrusted queue churn evidence")
     return {
         "schema": "zsentinel-queue-claim-trend-public-v1",
         "coverage": report["coverage"],
+        "current_observed_at_utc": report["current_observed_at_utc"],
+        "current_snapshot_age_seconds": report["current_snapshot_age_seconds"],
+        "current_snapshot_stale": report["current_snapshot_stale"],
+        "current_snapshot_max_age_seconds": report["current_snapshot_max_age_seconds"],
         "stage": report["stage"],
         "same_item_attempt_increases_observed": report["observed_same_item_attempt_increases"],
         "claim_attempt_increment_min_not_failures": report["observed_claim_attempt_increment_min"],
@@ -301,7 +319,17 @@ def public_summary(report):
 def human_text(report):
     summary = public_summary(report)
     count = summary["same_item_attempt_increases_observed"]
-    return ("zSentinel queue #677 | probleem: " +
+    age = summary["current_snapshot_age_seconds"]
+    age_label = str(age // 3600) + "u " + str((age % 3600) // 60) + "m"
+    freshness = (
+        "VEROUDERD: dit is uitsluitend historische trendinformatie; vernieuw de "
+        "read-only bron vóór een uitspraak over de huidige wachtrij."
+        if summary["current_snapshot_stale"] else
+        "Bronmoment valt binnen de maximale ouderdom van 6 uur.")
+    return ("zSentinel queue #677 | bronmoment: " +
+            summary["current_observed_at_utc"] + " | leeftijd: " + age_label +
+            "\nBRONSTATUS: " + freshness +
+            "\nPROBLEEM: " +
             ("bij " + str(count) + " dezelfde actieve items steeg de claimpogingenteller."
              if count else "geen herhaalde claimpoging binnen de begrensde overlap bewezen.") +
             "\nACTIE: " + report["action"] +
@@ -313,8 +341,16 @@ def human_text(report):
 
 def public_html(report):
     r = public_summary(report)
+    age = r["current_snapshot_age_seconds"]
+    age_label = str(age // 3600) + "u " + str((age % 3600) // 60) + "m"
+    freshness = (
+        '<p><strong>VEROUDERD BRONMOMENT</strong> · Alleen historische trend; '
+        'lees de actuele read-only wachtrij opnieuw vóór operationele conclusies.</p>'
+        if r["current_snapshot_stale"] else
+        '<p>Bronmoment ' + escape(r["current_observed_at_utc"]) +
+        ' · leeftijd ' + age_label + ' · maximaal 6 uur oud.</p>')
     return ('<section aria-label="zSentinel queue claimpogingen">'
-            '<h2>Queue · claimpogingen (#677)</h2>'
+            '<h2>Queue · claimpogingen (#677)</h2>' + freshness +
             '<p><strong>' +
             str(r["same_item_attempt_increases_observed"]) +
             '</strong> eerder herkende actieve items met extra claimpogingen. '
