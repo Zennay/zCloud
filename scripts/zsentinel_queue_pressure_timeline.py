@@ -114,9 +114,30 @@ def observed_queue(decision, source_time):
                     active - counts["queued"]):
             raise ValueError("incoherent historical queue group")
         clean_groups.append({"project_id": pid, "priority": priority, **counts})
+    saved_rows = queue.get("samples")
+    if type(saved_rows) is not list or len(saved_rows) > 20:
+        raise ValueError("missing bounded positive queue row observations")
+    positive_rows, seen_refs = [], set()
+    for row in saved_rows:
+        if type(row) is not dict:
+            raise ValueError("malformed private queue row")
+        ref, pid, priority = (row.get("queue_ref"), row.get("project_id"),
+                              row.get("priority"))
+        count = row.get("claim_attempts")
+        if (type(ref) is not str or re.fullmatch(r"[a-f0-9]{16}", ref) is None
+                or ref in seen_refs or type(pid) is not str
+                or PROJECT_ID.fullmatch(pid) is None or priority not in PRIORITIES
+                or type(count) is not int or not 0 <= count <= MAX_VALUE):
+            raise ValueError("invalid duplicated or unbounded queue reference")
+        seen_refs.add(ref)
+        positive_rows.append({"queue_ref": ref, "project_id": pid,
+                              "priority": priority, "claim_attempts": count})
+    if coverage != "current" and saved_rows:
+        raise ValueError("stale queue contains current item detail")
     return {
         "coverage": coverage,
         "sampled_at_utc": sampled.isoformat(),
+        "positive_queue_refs": positive_rows,
         "totals": clean,
         "sample_is_complete": sample_complete,
         "source_file_identity_sha256_private": opaque_identity,
@@ -149,6 +170,10 @@ def summarize_queue_windows(source_windows):
                 "from_window": before["index"], "to_window": after["index"],
                 "comparison": "UNKNOWN_source_gap",
                 "deltas": None, "project_deltas": None, "claim_authorized": False,
+                "observed_increased_queue_references": [],
+                "observed_increased_refs_total": None,
+                "observed_increased_refs_truncated": False,
+                "positive_refs_only_not_an_exhaustive_retry_inventory": True,
                 "owner_review_required": True,
             })
             continue
@@ -186,8 +211,36 @@ def summarize_queue_windows(source_windows):
                     "task_recovery_verified": False,
                     "owner_claim_verified": False,
                 })
+        before_refs = {r["queue_ref"]: r for r in left["positive_queue_refs"]}
+        after_refs = {r["queue_ref"]: r for r in right["positive_queue_refs"]}
+        observed_same_ref = []
+        for ref in sorted(set(before_refs) & set(after_refs)):
+            old, new = before_refs[ref], after_refs[ref]
+            # A changed project/prio is not a scoped continuity proof.
+            if (old["project_id"], old["priority"]) != (
+                    new["project_id"], new["priority"]):
+                continue
+            increase = new["claim_attempts"] - old["claim_attempts"]
+            if increase > 0:
+                observed_same_ref.append({
+                    "private_queue_ref": ref,
+                    "project_id": new["project_id"],
+                    "priority": new["priority"],
+                    "previous_attempts": old["claim_attempts"],
+                    "current_attempts": new["claim_attempts"],
+                    "observed_attempt_increase": increase,
+                    "same_reference_not_same_claim_proof": True,
+                    "retry_authorized": False,
+                })
+        observed_same_ref.sort(key=lambda row: (
+            PRIORITIES.index(row["priority"]), -row["observed_attempt_increase"],
+            row["project_id"], row["private_queue_ref"]))
         comparisons.append({
             "from_window": before["index"], "to_window": after["index"],
+            "observed_increased_queue_references": observed_same_ref[:12],
+            "observed_increased_refs_total": len(observed_same_ref),
+            "observed_increased_refs_truncated": len(observed_same_ref) > 12,
+            "positive_refs_only_not_an_exhaustive_retry_inventory": True,
             "comparison": "observed_aggregate_delta_not_task_recovery",
             "deltas": differences,
             "project_deltas": project_deltas,

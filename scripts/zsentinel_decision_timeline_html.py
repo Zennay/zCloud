@@ -184,6 +184,22 @@ for(const delta of queue.adjacent_comparisons){
   }
   details.append(list);
  }
+ const matches=delta.observed_increased_queue_references;
+ if(matches.length){
+  const refList=el("ol");
+  for(const ref of matches){
+   refList.append(el("li",null,ref.priority+" · "+ref.project_id+
+    " · privéref "+ref.private_queue_ref+" · claimpogingen "+
+    ref.previous_attempts+" → "+ref.current_attempts+
+    " · eigenaar controleert actuele rij, GEEN retrybewijs."));
+  }
+  const section=el("details");
+  section.append(el("summary",null,
+   "Waargenomen positieve rijwijzigingen: "+
+   delta.observed_increased_refs_total+
+   (delta.observed_increased_refs_truncated?" · AFGKAPT":"")));
+  section.append(refList);details.append(section);
+ }
  $("queueDeltas").append(details);
 }
 if(queue.sustained_owner_attention_truncated){
@@ -253,6 +269,16 @@ function queueMarkdown(){
      " · verlopen lease-rijen "+g.expired_owner_lease_rows_delta+
      " (eigenaar onderzoekt; GEEN automatische retry)");
    }
+  }
+  out.push("- Positieve bronref-claimwijzigingen: "+
+   (row.observed_increased_refs_total===null?"ONBEKEND":
+    row.observed_increased_refs_total+
+    (row.observed_increased_refs_truncated?" (AFGEKAPT)":""))+
+   "; géén bewijs dat een job gefaald heeft.");
+  for(const ref of row.observed_increased_queue_references){
+   out.push("- "+ref.priority+" "+ref.project_id+" · privéref "+
+    ref.private_queue_ref+" · claimpogingen "+ref.previous_attempts+
+    " → "+ref.current_attempts+"; huidige claim bij eigenaar controleren.");
   }
   out.push("");
  }

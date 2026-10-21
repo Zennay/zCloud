@@ -230,6 +230,26 @@ of per-projectgroepen en verwarring tussen originele observatietijd en het
 moment van latere rapportexport. De oorspronkelijke bron-UTC en
 niet-autorisatiestatus blijven bij ieder venster zichtbaar.
 
+### 21 oktober · concrete positieve claimpogingsverschillen per rij
+
+Twee adjacent, actuele, identieke SQLite-databasebronnen vergelijken
+nu optioneel maximaal twintig bestaande privacybewuste queue-referenties
+met elkaar. Alleen **dezelfde SHA256-afgekorte rijreferentie met identiek
+project en prioriteit** én een hogere gemeten attempts-teller wordt in
+de eigenaaroverdracht getoond. Het systeem toont maximaal twaalf
+positieve verschillen per paar met een apart totaal en truncatievlag.
+De code leest geen extra SQLite-rijen; er is geen nieuw queue- of
+API-request en geen claim-, retry-, of dienstmutatie.
+
+Bij één onvolledig bronmoment blijft de uitvoer ONBEKEND. Verdwenen
+rijreferenties of lagere tellers worden niet als hersteld beschouwd,
+en de op maximaal twintig problemen begrensde lijst is geen volledige
+queue-inventaris. De private mobiele HTML toont de referenties
+expliciet binnen de betreffende oude bronvensters, en de Markdown- en
+tekstoverdrachten bevatten dezelfde positieve signalen voor de
+bevoegde eigenaar. Hogere claimpogingen zijn **geen mislukte runs**,
+geen bewijs van dezelfde workerlease en geen aanleiding voor blind retry.
+
 ### 21 oktober · historische bronidentiteit blijft bewaard
 
 De herstelrouter draagt nu de al door de SQLite-observer uitgegeven

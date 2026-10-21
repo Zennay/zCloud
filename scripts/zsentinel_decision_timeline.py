@@ -185,6 +185,15 @@ def render_text(report):
                 (pair["from_window"], pair["to_window"],
                  delta["queued_items"], delta["high_claim_attempt_items"],
                  delta["expired_owner_lease_rows"]))
+    for pair in report["queue_pressure_history"]["adjacent_comparisons"]:
+        if pair["observed_increased_refs_total"] is None:
+            continue
+        lines.append("Wachtrijvensters %d-%d: %d geobserveerde positieve claimpogingstijgingen (geen faalbewijs)" % (
+            pair["from_window"], pair["to_window"], pair["observed_increased_refs_total"]))
+        for row in pair["observed_increased_queue_references"]:
+            lines.append("  %s %s private bronref %s: %d → %d pogingen; eigenaar verifieert actuele lease" % (
+                row["priority"], row["project_id"], row["private_queue_ref"],
+                row["previous_attempts"], row["current_attempts"]))
     for pair in report["worker_continuity_history"]["adjacent_comparisons"]:
         lines.append("Worker venster %d → %d · %s · vergeleken slots %d" %
                      (pair["from_window"], pair["to_window"],
@@ -237,7 +246,24 @@ def render_markdown(report):
         for pair in report["queue_pressure_history"]["adjacent_comparisons"]
     ] + [
         "",
-        "## Aanhoudende eigenaarssignalen (geen identiek taakbewijs)", "",
+        "## Brongebonden toenemende claimpogingen per privé-wachtrijreferentie", "",
+    ] + [
+        "- Vensters " + str(pair["from_window"]) + "–" +
+        str(pair["to_window"]) + ": " +
+        ("ONBEKEND door bronhiaat" if pair["observed_increased_refs_total"] is None else
+         str(pair["observed_increased_refs_total"]) + " positieve verschillen" +
+         (" (AFGEKAPT)" if pair["observed_increased_refs_truncated"] else "")) +
+        ". Bronreferenties bewijzen geen mislukte retries of claimrechten."
+        for pair in report["queue_pressure_history"]["adjacent_comparisons"]
+    ] + [
+        "- " + row["priority"] + " " + row["project_id"] +
+        " · privéref " + row["private_queue_ref"] +
+        ": " + str(row["previous_attempts"]) + " → " +
+        str(row["current_attempts"]) + " claimpogingen; eigenaar controleert originele rij."
+        for pair in report["queue_pressure_history"]["adjacent_comparisons"]
+        for row in pair["observed_increased_queue_references"]
+    ] + [
+        "", "## Aanhoudende eigenaarssignalen (geen identiek taakbewijs)", "",
         "Volledige bronreeksen van drie: " +
         str(report["queue_pressure_history"]["eligible_complete_three_window_sequences"]) +
         "; groepen " + str(report["queue_pressure_history"]["sustained_owner_attention_total"]) +
