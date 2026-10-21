@@ -3495,3 +3495,22 @@ PR ZIP evidence: history and SHA256 provenance can be shared without
 also disclosing local notes or contacts. The original JSON handoff
 formats are not changed.
 
+
+
+### Saved PR source age is recalculated when opened
+
+The operator workbench may be created while a historical PR ZIP appears fresh
+and opened much later, after that label has expired. The selected-issue PR
+panel and the multi-issue Markdown owner handoff now re-evaluate the most
+recent admitted archive observation against the browser's *current device
+clock* whenever they are opened or exported. More than six hours old is
+shown as `STALE · REFRESH AUTHORITATIVE SOURCES`; a more-than-five-minute
+future observation is shown as a clock/source skew warning, not a
+negative age or a valid freshness claim.
+
+This is a **local freshness reminder only**: the browser clock itself is not
+trusted authoritative evidence, and even a recently saved ZIP can have stale
+GitHub approvals, PR HEADs, issue status or worker leases. Original archive
+hashes, timestamps and underlying source admission remain unchanged. There
+is no network refresh, privileged action, lease acquisition, CI retry or deploy.
+
