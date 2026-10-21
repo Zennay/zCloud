@@ -548,6 +548,8 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         "no_local_candidate_observed": sum(lane["admission"]["code"] == "NO_LOCAL_CANDIDATE" for lane in visible),
     }
     owner_shortlist, shortlist_partial = owner_review_suggestions(portfolio)
+    # Truncated source groups can hide whole projects despite few observed cards.
+    shortlist_partial = shortlist_partial or portfolio_partial or bool(unknown_project_groups)
     packet = {
         "schema": "zsentinel.four-lane-desk.v1",
         "observed_utc": now.replace(microsecond=0).isoformat(),
@@ -662,7 +664,7 @@ def text_view(data):
         )
         out.append("  Vervolg: " + item["next_step"])
     if data["owner_review_shortlist_partial"]:
-        out.append("  ONVOLLEDIG: meer urgente projecten buiten deze zes kaarten.")
+        out.append("  ONVOLLEDIG: shortlist of lokale projectbron; controleer de bron.")
     out.append("Open lokale P0/P1-queue per echt project (adviserend):")
     for item in data["portfolio_urgent_local"]:
         out.append(
@@ -917,8 +919,8 @@ def html_view(data):
         "<p>Gesorteerd op lokaal wachtende P0, daarna P1. "
         "Dit zijn GEEN vrije claims of actuele GitHub/Notion-waarnemingen.</p>"
         "<div class='grid'>" + owner_cards + "</div>"
-        + ("<p class='warn'>Meer projecten buiten deze beperkte shortlist; "
-           "raadpleeg de volledige lokale wachtrijtabel.</p>"
+        + ("<p class='warn'>Shortlist of lokale projectbron onvolledig; "
+           "controleer de oorspronkelijke projectbron.</p>"
            if data["owner_review_shortlist_partial"] else "")
         + ("<p>Geen lokaal wachtende P0/P1-projecten in deze bron; "
            "geen bewijs dat er geen open GitHub-issues zijn.</p>"
@@ -1076,7 +1078,7 @@ def markdown_view(data):
             "- **Vervolg:** " + item["next_step"],
         ))
     if data["owner_review_shortlist_partial"]:
-        lines.extend(("", "Shortlist onvolledig: raadpleeg de tabel met alle lokale urgenties."))
+        lines.extend(("", "Shortlist of lokale projectbron onvolledig: geen volledig projectbeeld."))
     lines.extend(("", "## Urgente portfolio-queue (lokale bron)", "",
                   "| Project | P0 wacht | P1 wacht | P0 actief | P1 actief |",
                   "| --- | ---: | ---: | ---: | ---: |"))
