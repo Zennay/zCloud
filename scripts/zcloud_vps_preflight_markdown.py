@@ -102,7 +102,11 @@ def render(report: dict) -> str:
                      "; geen bestanden gewijzigd of verwijderd.")
     comparison = report.get("comparison")
     if comparison is not None:
-        lines += ["", "## Verandering sinds vorige bronopname", ""]
+        lines += ["", "## Verandering sinds vorige bronopname", "",
+                  "- Baselineversheid: " + _md(comparison.get("snapshot_freshness", "unknown")),
+                  "- Leeftijd baseline (seconden): " + _md(comparison.get("snapshot_age_seconds", "unknown")),
+                  "- Herstelconclusies toegestaan: " + _md(comparison.get("resolution_credit_allowed", "unknown")),
+                  ""]
         for key, label in (("new_findings", "Nieuw"),
                            ("resolved_findings", "Verdwenen in bron"),
                            ("recovery_unverified_findings", "Herstel niet geverifieerd"),
