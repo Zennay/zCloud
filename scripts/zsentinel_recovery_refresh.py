@@ -259,6 +259,9 @@ def main():
                 raise ValueError("Notion status observation supports json, text or html output")
             if args.desk_output is not None:
                 raise ValueError("Notion status observation cannot be combined with --desk-output")
+        if ((args.worker_events_database is not None or args.read_notion_claims
+             or args.notion_claims_export is not None) and args.output is None):
+            raise ValueError("private Notion/worker observations require create-only --output; do not print them to stdout")
         if args.desk_output is not None and args.format not in ("desk", "html"):
             raise ValueError("--desk-output accepts only desk or html operator formats")
         if args.desk_output is not None:
