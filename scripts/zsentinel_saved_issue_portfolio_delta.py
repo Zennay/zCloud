@@ -8,6 +8,7 @@ issue closure, released owner claim or live recovery. No GitHub/Notion writes.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 import sys
@@ -18,6 +19,7 @@ from zsentinel_saved_issue_delta import (
     admit_comparable_source_pair, issue_difference, save_private_html,
 )
 from zsentinel_saved_gate_dossier import PROJECT, _save_private_handoff
+from zsentinel_saved_dossier_timeline import source_freshness
 
 PRIORITIES = ("P0", "P1", "P2", "Unspecified")
 RANK = {p: i for i, p in enumerate(PRIORITIES)}
@@ -26,11 +28,18 @@ MAX_DISPLAY = 60
 MAX_BYTES = 48 * 1024
 
 
-def portfolio_delta(previous, current):
+def portfolio_delta(previous, current, *, stale_after_hours=6, evaluated_at=None):
     """A complete bounded inventory of original issue references, not status."""
     old_sha, new_sha = admit_comparable_source_pair(previous, current)
     _, _, old_receipt, old_issues, old_sources = previous
     _, _, new_receipt, new_issues, new_sources = current
+    evaluated_at = evaluated_at or datetime.now(timezone.utc)
+    old_freshness = source_freshness(
+        [{"latest_observed_utc": old_sources[-1]["latest_observed_utc"]}],
+        stale_after_hours=stale_after_hours, evaluated_at=evaluated_at)
+    new_freshness = source_freshness(
+        [{"latest_observed_utc": new_sources[-1]["latest_observed_utc"]}],
+        stale_after_hours=stale_after_hours, evaluated_at=evaluated_at)
     old_map = {item["issue_url"]: item for item in old_issues}
     new_map = {item["issue_url"]: item for item in new_issues}
     urls = sorted(set(old_map) | set(new_map))
@@ -104,6 +113,8 @@ def portfolio_delta(previous, current):
         "new_manifest_sha256": new_sha,
         "old_latest_observed_utc": old_sources[-1]["latest_observed_utc"],
         "new_latest_observed_utc": new_sources[-1]["latest_observed_utc"],
+        "old_source_freshness": old_freshness,
+        "new_source_freshness": new_freshness,
         "old_sample_missing_batches":
             len(old_sources[-1]["missing_batch_indexes"]),
         "new_sample_missing_batches":
@@ -157,6 +168,10 @@ def selected_page(report, *, priority=None, repository=None,
 
 def render_markdown(report):
     s = report["display"]
+    old_freshness = report["old_source_freshness"]
+    new_freshness = report["new_source_freshness"]
+    def age_text(item):
+        return str(item["age_hours"]) + " uur" if item["age_hours"] is not None else "ONBEKEND"
     lines = [
         "# zSentinel · historisch portfolio-issue hersteloverzicht", "",
         "> ALLEEN PRIVÉ BRONSTEEKPROEVEN, NIET LIVE. Weggevallen items bewijzen "
@@ -165,6 +180,12 @@ def render_markdown(report):
         " · manifest SHA256 " + report["old_manifest_sha256"],
         "- Nieuwere bron: " + report["new_latest_observed_utc"] +
         " · manifest SHA256 " + report["new_manifest_sha256"],
+        "- Actualiteit oud/nieuw: " + old_freshness["status"].upper() +
+        " (" + age_text(old_freshness) + ") → " +
+        new_freshness["status"].upper() + " (" + age_text(new_freshness) +
+        "); drempel " + str(new_freshness["stale_after_hours"]) + " uur",
+        "- Evaluatie UTC: " + new_freshness["evaluated_at_utc"] +
+        " · beide bronnen zijn historisch; live hercontrole vóór actie verplicht",
         "- Ontbrekende bronbatches: " +
         str(report["old_sample_missing_batches"]) + " → " +
         str(report["new_sample_missing_batches"]),
@@ -232,6 +253,10 @@ def render_markdown(report):
 
 def render_html(report):
     e = lambda x: escape(str(x), quote=True)
+    old_freshness = report["old_source_freshness"]
+    new_freshness = report["new_source_freshness"]
+    def age_text(item):
+        return str(item["age_hours"]) + " uur" if item["age_hours"] is not None else "ONBEKEND"
     names = {
         "newly_sampled": "Nieuw waargenomen",
         "not_seen": "Niet meer waargenomen · NIET opgelost",
@@ -309,7 +334,13 @@ geslaagde CI/review, merge of deployment.</aside>""" + (
     "</code><br>Ontbrekende bronbatches: " +
     str(report["old_sample_missing_batches"]) + " → " +
     str(report["new_sample_missing_batches"]) +
-    "</p><p><strong>" + str(d["shown"]) + " getoond</strong> van " +
+    "</p><p><strong>Bronactualiteit oud/nieuw:</strong> " +
+    e(old_freshness["status"].upper()) + " (" + e(age_text(old_freshness)) +
+    ") → " + e(new_freshness["status"].upper()) + " (" +
+    e(age_text(new_freshness)) + ") · drempel " +
+    str(new_freshness["stale_after_hours"]) + " uur · evaluatie UTC " +
+    e(new_freshness["evaluated_at_utc"]) +
+    ". Recent betekent niet live; controleer actuele eigenaar/CI/merge.</p><p><strong>" + str(d["shown"]) + " getoond</strong> van " +
     str(d["matched"]) + " filtersmatches; " + str(d["total"]) +
     " unieke bronissues; pagina " + str(d["page"]) + "/" +
     str(d["total_pages"]) + ". Projectfilter: " +
@@ -330,6 +361,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--previous", type=Path, required=True)
     parser.add_argument("--current", type=Path, required=True)
+    parser.add_argument("--stale-after-hours", type=int, default=6,
+                        help="Mark saved evidence stale after 1..168 hours (default: 6)")
     parser.add_argument("--priority", choices=PRIORITIES)
     parser.add_argument("--repository", help="Filter canonical Zennay/repo")
     parser.add_argument("--changed-only", action="store_true")
@@ -341,7 +374,8 @@ def main(argv=None):
     try:
         earlier = read_issue_dossier(args.previous)
         later = read_issue_dossier(args.current)
-        source = portfolio_delta(earlier, later)
+        source = portfolio_delta(
+            earlier, later, stale_after_hours=args.stale_after_hours)
         chosen = selected_page(
             source, priority=args.priority, repository=args.repository,
             change_only=args.changed_only,
