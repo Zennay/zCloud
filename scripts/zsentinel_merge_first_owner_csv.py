@@ -352,7 +352,10 @@ def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"
         raise ValueError("repository filter must be canonical Zennay/<repo>")
     if priority is not None and priority not in RANK:
         raise ValueError("unrecognized owner priority filter")
-    if record_type not in ("all", "existing-pr", "issue-without-pr", "unlinked-pr"):
+    if record_type not in (
+        "all", "existing-pr", "issue-without-pr", "unlinked-pr",
+        "archive-only-linked-pr"
+    ):
         raise ValueError("unrecognized owner record type")
     if pr_url is not None and not re.fullmatch(
         r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
@@ -382,6 +385,8 @@ def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"
         if record_type == "issue-without-pr" and row["pr_url"]:
             continue
         if record_type == "unlinked-pr" and state != "historical_pr_without_sampled_issue_link":
+            continue
+        if record_type == "archive-only-linked-pr" and not row["archive_only_issue_count"]:
             continue
         result.append(row)
     # Exact PR/issue packets must exist in the admitted source selection.
@@ -828,8 +833,9 @@ def main(argv=None):
     parser.add_argument("--priority", choices=tuple(RANK),
                         help="Filter P0/P1/P2/Unspecified after full source admission")
     parser.add_argument("--record-type", default="all",
-                        choices=("all", "existing-pr", "issue-without-pr", "unlinked-pr"),
-                        help="Select saved PRs, absent sampled PR links or unlinked PRs")
+                        choices=("all", "existing-pr", "issue-without-pr", "unlinked-pr",
+                                 "archive-only-linked-pr"),
+                        help="Select saved PRs, unmatched issue links, unlinked PRs or archive-only linked PRs")
     parser.add_argument("--inspect-pr-url",
                         help="Create a source-observed exact-PR owner packet")
     parser.add_argument("--inspect-issue-url",
