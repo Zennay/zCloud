@@ -711,6 +711,63 @@ function privateDownload(filename,source){
  a.href=url;a.download=filename;a.click();
  window.setTimeout(()=>URL.revokeObjectURL(url),3000);
 }
+function exportOpenIssueHandoff(){
+ const queue=openIssueQueue().filter(t=>t.dataset.priority==='P0'||t.dataset.priority==='P1');
+ const lines=[
+  '# zSentinel · P0/P1 open issue-eigenaarsoverdracht','',
+  '> Offline, historisch, uitsluitend handmatige opvolging. Bronmeldingen autoriseren geen actuele claim, code-overname, CI-retry, review, merge of deploy.','',
+  '- Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
+  '- PR-bron UTC: '+safeText(document.getElementById('pr-time').textContent),
+  '- Exact bron-token: '+safeText(document.body.dataset.sourceToken),
+  '- Open P0/P1-issues IN DIT beperkte bronvenster: '+queue.length,
+  '- P0: '+queue.filter(t=>t.dataset.priority==='P0').length,
+  '- P1: '+queue.filter(t=>t.dataset.priority==='P1').length,
+  '- Alleen lokaal op opvolging genoteerde issues en overige prioriteiten zijn uitgesloten; niet opgelost of gesloten verklaard.',
+  '- Schermfilters, PR-focus en projectselectie beïnvloeden deze brongebonden lijst niet.',
+  '- Claims en gates moeten opnieuw bij actuele bron worden gecontroleerd.',''
+ ];
+ if(!queue.length)lines.push(
+  'Geen lokaal open P0/P1-issue in deze steekproef. Dit bewijst NIET dat het project geen open P0/P1-issues heeft.','');
+ for(const [index,t] of queue.entries()){
+  const issue=t.dataset.issue;
+  const candidates=[t.dataset.pr,...t.dataset.prs.trim().split(' ').filter(Boolean)].filter(Boolean);
+  lines.push(
+   '## '+(index+1)+'. [Issue #'+issue.split('/').pop()+']('+issue+')','',
+   '- Project: '+safeText(t.dataset.project)+' · '+safeText(t.dataset.priority),
+   '- Titel: '+safeText(t.dataset.title),
+   '- Historisch activiteitssignaal: '+safeText(t.dataset.activity),
+   '- Bron issue-update: '+safeText(t.dataset.issueUpdated||'ONBEKEND'),
+   '- Bron laatste gekoppelde PR-update: '+safeText(t.dataset.prUpdated||'ONBEKEND'),
+   '- Bronroute: '+safeText(t.dataset.category),
+   '- Aanbevolen eigenaarstap: '+safeText(t.dataset.next),
+   '- Lokale opvolging: '+safeText(labels[t.querySelector('.local-state').value]),
+   '- PR-bestandsdekking compleet binnen steekproef: '+(t.dataset.scopeComplete==='yes'?'JA':'NEE'),
+   '- PR-verwijzingsdekking compleet binnen steekproef: '+(t.dataset.referencesComplete==='yes'?'JA':'NEE')
+  );
+  const note=t.querySelector('textarea').value.trim();
+  if(note)lines.push('- Privé issuenotitie: '+safeText(note));
+  if(!candidates.length)lines.push('- Bestaande PRs: ONBEKEND; geen kandidaat in beperkt venster.');
+  for(const pr of candidates){
+   const p=prs.find(group=>group.dataset.pr===pr);
+   lines.push('  - [Bestaande PR #'+pr.split('/').pop()+']('+pr+') · geobserveerde HEAD '+
+    safeText(p&&p.dataset.head||'ONBEKEND')+' · gate '+
+    safeText(p?(gateLabels[p.dataset.gate]||p.dataset.gate):'ONBEKEND')+
+    (p?' · lokale opvolging '+safeText(prLabels[p.querySelector('.pr-local-state').value]):''));
+  }
+  const c=collisionRows.find(row=>row.dataset.issue===issue);
+  if(c){
+   lines.push('- Meerdere PR-kandidaten: menselijke afstemming nodig (geen bewezen bestandsoverlap).',
+    '- Privé afstemmingsstatus: '+safeText(collisionLabels[c.querySelector('.collision-state').value]));
+   const cnote=c.querySelector('.collision-note').value.trim();
+   if(cnote)lines.push('- Privé afstemmingsnotitie: '+safeText(cnote));
+  }
+  lines.push('');
+ }
+ lines.push('**Menselijke releasegrens:** actuele claims, HEAD, verplichte exacte-head CI, onafhankelijke review en branch protection verifiëren vóór ieder besluit. Geen externe wijzigingen door deze export.','');
+ privateDownload('zsentinel-open-p0-p1-issue-eigenaaroverdracht.md',lines.join('\n')+'\n');
+}
+document.getElementById('issue-review-export').addEventListener('click',exportOpenIssueHandoff);
+
 function onePrHandoff(){
  const p=prs.find(group=>group.dataset.pr===focusedPr);
  if(!p)return;
@@ -1381,6 +1438,7 @@ refresh();
         "<p id='visible' aria-live='polite'></p>"
         "<p id='issue-review-summary' aria-live='polite'></p>"
         "<button id='issue-review-next' type='button'>Volgende open bronissue (P0 eerst)</button>"
+        "<button id='issue-review-export' type='button'>Download open P0/P1 issue-overdracht</button>"
         "<p id='pr-review-summary' aria-live='polite'></p>"
         "<button id='pr-review-next' type='button'>Volgende PR zonder lokale opvolging</button>"
         "<button id='pr-review-export' type='button'>Download open PR-eigenaaroverdracht</button>"
