@@ -82,7 +82,7 @@ def _cell(value):
     return result
 
 
-def prepare_rows(view, board_sha, saved, exported_at=None):
+def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None):
     if saved is not None and (
         saved.get("owner_claim_verified") is not False
         or saved.get("main_merge_verified") is not False
@@ -112,6 +112,13 @@ def prepare_rows(view, board_sha, saved, exported_at=None):
     selected_repositories = {
         card["url"].split("/issues/", 1)[0] for card in view["cards"]
     }
+    if repository_scope is not None:
+        if not re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", repository_scope):
+            raise ValueError("repository scope must be canonical Zennay/<repo>")
+        # Explicitly selected archival-only repositories must remain visible
+        # even when this bounded issue board contains ZERO issue cards from
+        # that repository. No implicit cross-project inventory expansion.
+        selected_repositories.add("https://github.com/" + repository_scope)
     for card in view["cards"]:
         current = historical.get(card["url"])
         archive_refs = {p["pr_url"]: p for p in
@@ -798,7 +805,9 @@ def main(argv=None):
             "saved_pr_archive_supplied": bool(archives),
             "saved_archive_batches_missing": missing_archive_batches,
         }
-        admitted_rows = prepare_rows(view, sha, saved, exported_at=exported_at)
+        admitted_rows = prepare_rows(
+            view, sha, saved, exported_at=exported_at,
+            repository_scope=args.repository)
         rows = select_owner_rows(
             admitted_rows, repository=args.repository, priority=args.priority,
             record_type=args.record_type, pr_url=args.inspect_pr_url,
