@@ -735,6 +735,11 @@ def html_view(decision, registry=None):
                       "claims en runtimeherstel moeten onafhankelijk worden bevestigd.")
     notion = decision.get("notion_claims_observation")
     notion_panel = '<p class="empty">Niet opgevraagd; actuele eigendom onbekend.</p>'
+    if notion is None and isinstance(live, dict) and live.get("notion") == "degraded_unavailable_no_claim_authority":
+        notion_panel = (
+            '<p class="banner">NOTIONBRON ONBEKEND — de expliciet gevraagde live- of '
+            'snapshotbron was niet beschikbaar of onvolledig. Er is geen nulclaim, '
+            'geen eigenaarbewijs en geen toestemming tot claim, dispatch of herstel.</p>')
     if notion is not None:
         if (not isinstance(notion, dict)
                 or notion.get("source") not in (
