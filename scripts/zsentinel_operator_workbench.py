@@ -927,9 +927,12 @@ No personal notes, no credentials, no permission to claim, merge or deploy.</p>
 </section>
 <section class="brief" aria-label="Private project handoff brief">
 <h2>Source-bound, human-only project briefing</h2>
-<p>Review all visible cards, owner gaps and your human dispositions before exporting
-a private Markdown briefing. It includes any private notes you entered: check the
-recipient and download destination. It cannot claim, merge, release or contact a project.</p>
+<p>Review selected source evidence before exporting a private Markdown briefing.
+Contact labels, dates, private notes and local follow-up states are <strong>excluded
+by default</strong>. Opt in explicitly if the recipient needs them. The briefing
+cannot claim, merge, release or contact a project.</p>
+<label><input type="checkbox" id="briefIncludePrivate">
+Explicitly include private operator follow-ups, contact labels and notes</label>
 <button type="button" id="previewBrief">Preview current filtered briefing</button>
 <div id="briefPanel" hidden>
 <pre id="briefContent"></pre>
@@ -2464,6 +2467,7 @@ function line(value,limit=500){
  return String(value??'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/[<>\x60]/g,'').slice(0,limit).trim();
 }
 function currentBrief(){
+ const includePrivate=document.getElementById('briefIncludePrivate').checked;
  const rows=filtered().slice().sort((a,b)=>{
   const ranks={'P0':0,'P1':1,'P2':2,'Unspecified':3};
   return ranks[a.priority]-ranks[b.priority] ||
@@ -2482,25 +2486,26 @@ function currentBrief(){
   'Comparison baseline: '+(baseline?baseline.sha+' observed '+baseline.observed_at_utc:
    'not loaded; no historical comparison'),
   'Status: observational, claims and releases NOT AUTHORIZED.',
+  'Private annotations: '+(includePrivate?'EXPLICITLY INCLUDED — check recipient and destination':'EXCLUDED by default'),
   'MANDATORY: verify active owner/claim, exact-head required CI, security, review and release consent before action.',
   ''
  ];
  let group=null;
  rows.forEach(card=>{
   if(card.project!==group){group=card.project;lines.push('## Project '+line(group,80),'');}
-  const human=handoffs.get(card.issue);
+  const human=includePrivate?handoffs.get(card.issue):null;
   lines.push('### '+line(card.issue,110)+' · '+line(card.priority,20),
     'Original: '+card.url,
     'Original issue title: '+line(card.title,180),
-    'Human disposition: '+line(human?.decision||'investigate',40)+' (not an owner claim)',
-    'Manual follow-up contact: '+line(human?.owner||'not entered',80)+' (label only, not a GitHub or Notion assignee)',
-    'Manual UTC review date: '+(human?.due||'not entered')+' · '+
-      (manualGateDecisions.has(human?.decision)?dueState(human):'not a human escalation'),
-    'Manual follow-up lifecycle: '+(human?.followup_status==='local-complete'?
+    'Human disposition: '+(includePrivate?line(human?.decision||'investigate',40):'OMITTED (private)')+' (not an owner claim)',
+    'Manual follow-up contact: '+(includePrivate?line(human?.owner||'not entered',80):'OMITTED (private)')+' (label only, not a GitHub or Notion assignee)',
+    'Manual UTC review date: '+(includePrivate?(human?.due||'not entered'):'OMITTED (private)')+' · '+
+      (includePrivate?(manualGateDecisions.has(human?.decision)?dueState(human):'not a human escalation'):'OMITTED'),
+    'Manual follow-up lifecycle: '+(!includePrivate?'OMITTED (private)':human?.followup_status==='local-complete'?
       'CLOSED LOCALLY — original issue still UNVERIFIED':'open / no completion proof'),
-    'Last local toggle UTC: '+(human?.followup_changed_at_utc||'not recorded')+
+    'Last local toggle UTC: '+(includePrivate?(human?.followup_changed_at_utc||'not recorded'):'OMITTED (private)')+
       ' (device clock only, not an external receipt)',
-    'Human handoff provenance: '+(human?.carried_from?
+    'Human handoff provenance: '+(!includePrivate?'OMITTED (private)':human?.carried_from?
       'manually carried from older board SHA256 '+human.carried_from+'; REVERIFY owner and gate':
       'entered on current board or not provided'),
     'Claim context: '+line(card.claim_context,100),
@@ -2546,12 +2551,12 @@ function currentBrief(){
      'Observed claim context: '+line(row.claim_context,50)+
        ' (not a present owner lease)',
      'Human investigation: '+line(row.recommended_next_step,650),
-     'Local operator decision: '+line(recoveryHandoffs.get(row.project)?.decision||'investigate',40)+
+     'Local operator decision: '+(includePrivate?line(recoveryHandoffs.get(row.project)?.decision||'investigate',40):'OMITTED (private)')+
        ' (human note only, never a claim)',
-     'Manual contact label (not assignee): '+line(recoveryHandoffs.get(row.project)?.owner||'not entered',80),
-     'Manual UTC review date: '+line(recoveryHandoffs.get(row.project)?.due||'not entered',10),
-     'Human follow-up: '+recoveryReviewStatus(recoveryHandoffs.get(row.project)),
-     'Private operator note: '+line(recoveryHandoffs.get(row.project)?.note||'not entered',500),
+     'Manual contact label (not assignee): '+(includePrivate?line(recoveryHandoffs.get(row.project)?.owner||'not entered',80):'OMITTED (private)'),
+     'Manual UTC review date: '+(includePrivate?line(recoveryHandoffs.get(row.project)?.due||'not entered',10):'OMITTED (private)'),
+     'Human follow-up: '+(includePrivate?recoveryReviewStatus(recoveryHandoffs.get(row.project)):'OMITTED (private)'),
+     'Private operator note: '+(includePrivate?line(recoveryHandoffs.get(row.project)?.note||'not entered',500):'OMITTED (private)'),
      'Required: independently verify current claims, exact-head CI, review and release permission.',
      '');
   });
@@ -3745,6 +3750,7 @@ document.getElementById('applyIssueImport').onclick=()=>{
  status.textContent='Imported exactly one private human follow-up into this browser tab. Other issue notes and all external claims, statuses and permissions remain unchanged.';
 };
 
+document.getElementById('briefIncludePrivate').addEventListener('change',invalidateBrief);
 document.getElementById('previewBrief').onclick=()=>{
  saveSelection();
  viewedBrief=currentBrief();
