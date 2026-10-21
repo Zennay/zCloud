@@ -1,0 +1,190 @@
+name: Supa DekaMarkt fallback feasibility
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/supa-runner-recovery-probe.yml"
+
+concurrency:
+  group: supa-dekamarkt-fallback-feasibility
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  capture-dekamarkt:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      SUPA_SHA: 5120038fa121e35fd13e30284800b87d007a3a45
+    steps:
+      - name: Verify bounded route
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          echo "runner=${RUNNER_NAME:-unknown}"
+          echo "supa_sha=$SUPA_SHA"
+
+      - name: Check out exact current Supa M1 stacked head
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/Supa
+          ref: 5120038fa121e35fd13e30284800b87d007a3a45
+          path: supa-exact
+          persist-credentials: false
+
+      - name: Verify exact Supa source identity
+        shell: bash
+        working-directory: supa-exact
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "expected=$SUPA_SHA"
+          echo "actual=$actual"
+          test "$actual" = "$SUPA_SHA"
+
+      - name: Capture three fixed public DekaMarkt pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/dekamarkt-feasibility"
+          mkdir -p "$out/html"
+
+          cat >"$out/capture.mjs" <<'NODE'
+          import { createHash } from 'node:crypto'
+          import { writeFile } from 'node:fs/promises'
+
+          const output = process.env.CAPTURE_OUT
+          const maxBytes = 5 * 1024 * 1024
+          const sources = [
+            {
+              id: 'dekamarkt-product-halfvolle-melk',
+              kind: 'product',
+              url: 'https://www.dekamarkt.nl/producten/zuivel-kaas/melk-karnemelk/zuivelmeester-halfvolle-melk-1-liter/115873',
+            },
+            {
+              id: 'dekamarkt-category-melk',
+              kind: 'catalog',
+              url: 'https://www.dekamarkt.nl/producten/zuivel-kaas/melk-karnemelk',
+            },
+            {
+              id: 'dekamarkt-offers',
+              kind: 'offers',
+              url: 'https://www.dekamarkt.nl/aanbiedingen',
+            },
+          ]
+
+          function inspectHtml(html) {
+            const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim() ?? null
+            const jsonLd = [...html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)]
+              .map((match) => {
+                try { return JSON.parse(match[1].trim()) }
+                catch { return { __parseError: true } }
+              })
+            const visible = html
+              .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+              .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/&nbsp;/g, ' ')
+              .replace(/&amp;/g, '&')
+              .replace(/\s+/g, ' ')
+              .trim()
+            return {
+              title,
+              jsonLdCount: jsonLd.length,
+              jsonLdTypes: jsonLd.map((value) => value?.['@type'] ?? null),
+              visibleTextLength: visible.length,
+              visibleTextPreview: visible.slice(0, 1200),
+            }
+          }
+
+          const startedAt = new Date().toISOString()
+          const results = []
+          for (const source of sources) {
+            const capturedAt = new Date().toISOString()
+            try {
+              const response = await fetch(source.url, {
+                redirect: 'follow',
+                credentials: 'omit',
+                headers: { accept: 'text/html,application/xhtml+xml' },
+              })
+              const finalUrl = response.url
+              const parsed = new URL(finalUrl)
+              if (parsed.protocol !== 'https:' || parsed.hostname !== 'www.dekamarkt.nl') {
+                throw new Error(`redirect escaped allowed DekaMarkt host: ${finalUrl}`)
+              }
+              const contentType = response.headers.get('content-type') ?? ''
+              if (!contentType.toLowerCase().includes('text/html')) {
+                throw new Error(`unexpected content type: ${contentType}`)
+              }
+              const buffer = Buffer.from(await response.arrayBuffer())
+              if (buffer.length > maxBytes) {
+                throw new Error(`response exceeds 5 MiB: ${buffer.length}`)
+              }
+              const html = buffer.toString('utf8')
+              const sha256 = createHash('sha256').update(buffer).digest('hex')
+              const file = `${source.id}.html`
+              await writeFile(`${output}/html/${file}`, html, 'utf8')
+              results.push({
+                ...source,
+                requestedUrl: source.url,
+                finalUrl,
+                capturedAt,
+                status: response.status,
+                success: response.ok,
+                contentType,
+                bytes: buffer.length,
+                sha256,
+                file,
+                inspection: inspectHtml(html),
+              })
+            } catch (error) {
+              results.push({
+                ...source,
+                requestedUrl: source.url,
+                finalUrl: null,
+                capturedAt,
+                status: null,
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+              })
+            }
+          }
+
+          const manifest = {
+            schemaVersion: 1,
+            evidenceType: 'bounded-public-source-feasibility',
+            supermarket: 'dekamarkt',
+            startedAt,
+            completedAt: new Date().toISOString(),
+            bounded: true,
+            sourceCount: sources.length,
+            successCount: results.filter((r) => r.success).length,
+            failureCount: results.filter((r) => !r.success).length,
+            safety: {
+              login: false,
+              credentials: false,
+              privateApiCalls: false,
+              antiBotBypass: false,
+              recursiveCrawl: false,
+              targetCount: sources.length,
+            },
+            supaSha: process.env.SUPA_SHA,
+            results,
+          }
+          await writeFile(`${output}/manifest.json`, JSON.stringify(manifest, null, 2) + '\n')
+          console.log(JSON.stringify(manifest, null, 2))
+          NODE
+
+          CAPTURE_OUT="$out" node "$out/capture.mjs"
+
+      - name: Upload DekaMarkt feasibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supa-dekamarkt-fallback-feasibility
+          path: dekamarkt-feasibility/
+          if-no-files-found: error
+          retention-days: 14
