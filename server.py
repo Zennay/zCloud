@@ -86,13 +86,13 @@ FEATURE_FLAG_DEFINITIONS = {
 }
 WORKER_LANES = (
     'kritieke pad / eerstvolgende veilige projectgate',
-    'bugfix-implementatie, regressieherstel en gerichte tests',
-    'data, provider-validatie, preprocessing en provenance',
+    'bugfix- en feature-implementatie',
+    'data-integratie, preprocessing en provenance',
     'VPS-infra, performance, concurrency en resourceveiligheid',
-    'stress-tests, transactiekosten, diagnostics en challenge-simulaties',
-    'voorbereidend werk voor de volgende generatie zonder verborgen OOS-resultaten',
+    'productprestaties, transactiekosten en operationele diagnose',
+    'voorbereidend productwerk zonder verborgen OOS-resultaten',
     'telemetrie, documentatie en reproduceerbaarheid',
-    'uitvoerbare issues oplossen zonder bestaand werk te dupliceren',
+    'uitvoerbare productissues oplossen zonder bestaand werk te dupliceren',
 )
 def _load_project_registry():
     """Load presentation metadata and hydrate runtime fields from the canonical contract."""
@@ -2792,7 +2792,8 @@ def _blocker_needs_human(evidence):
     markers=(
         'human','user action','manual approval','physical','watch','participant','maintainer',
         'credential','api key','secret','oauth approval','review submission','external gate',
-        'needs_human','wait_human'
+        'independent review','required review','branch protection','owner consent',
+        'billing owner','permission required','needs_human','wait_human'
     )
     return any(marker in text for marker in markers)
 
