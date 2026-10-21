@@ -79,6 +79,12 @@ def prepare_rows(view, board_sha, saved):
         raise ValueError("duplicate archived issue")
     mapped = {}
     unknown = []
+    # A private archive may cover additional repositories. Keep unlinked
+    # PRs only when their canonical repository has a selected original
+    # issue-card counterpart; never broaden a handoff through ZIP scope.
+    selected_repositories = {
+        card["url"].split("/issues/", 1)[0] for card in view["cards"]
+    }
     for card in view["cards"]:
         current = historical.get(card["url"])
         archive_refs = {p["pr_url"]: p for p in
@@ -197,6 +203,8 @@ def prepare_rows(view, board_sha, saved):
         if pr_url in mapped:
             continue  # Original issue board had an independent PR link.
         repo = pr_url.split("/pull/", 1)[0]
+        if repo not in selected_repositories:
+            continue  # Outside selected board issue repository scope.
         if not re.fullmatch(
             r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}", repo
         ):
