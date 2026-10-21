@@ -90,7 +90,79 @@ def _attach_verified_job(card, raw, registry, review_by):
     return card
 
 
-def build_handoff(decision, registry=None, queue_trend=None):
+
+def _observed_pr_owner_cards(pr_desk, registry):
+    """Reuse an already-read exact-head PR desk. Never infer merge authority."""
+    if pr_desk is None:
+        return [], "not_requested"
+    if (type(pr_desk) is not dict
+            or pr_desk.get("schema") != "zsentinel-pr-delivery-desk-v1"
+            or pr_desk.get("source") != "github_canonical_readonly_bounded_pr_gets"
+            or any(pr_desk.get(flag) is not False for flag in
+                   ("merge_authorized", "deploy_authorized",
+                    "owner_verified", "writes_performed"))):
+        raise ValueError("untrusted existing PR delivery source")
+    rows = pr_desk.get("items")
+    if type(rows) is not list or len(rows) > 3:
+        raise ValueError("unbounded existing PR source")
+    from zsentinel_pr_delivery import NEXT_ACTION_NL
+    cards = []
+    seen = set()
+    remediate = {"finish_existing_draft_with_owner",
+                 "resolve_exact_head_review_with_owner",
+                 "fix_exact_head_ci_with_owner",
+                 "inspect_unlisted_status_contexts_with_owner",
+                 "resolve_hosted_billing_with_account_owner"}
+    for row in rows:
+        if (type(row) is not dict
+                or row.get("source") != "github_exact_pr_readonly"
+                or any(row.get(flag) is not False for flag in
+                       ("action_authorized", "merge_authorized",
+                        "deploy_authorized", "owner_verified"))):
+            raise ValueError("untrusted PR owner action")
+        project = _project(row.get("project_id"))
+        repo = registry.get(project) if type(registry) is dict else None
+        number = row.get("pr_number")
+        if (type(repo) is not str or not SAFE_REPOSITORY.fullmatch(repo)
+                or type(number) is not int or not 1 <= number <= 100000000
+                or (project, number) in seen):
+            raise ValueError("unknown or duplicate existing PR owner action")
+        seen.add((project, number))
+        url = "https://github.com/" + repo + "/pull/" + str(number)
+        if row.get("repository") != repo or row.get("url") != url:
+            raise ValueError("cross-repository PR source mismatch")
+        action = row.get("next_step")
+        if action not in NEXT_ACTION_NL:
+            raise ValueError("unknown PR owner action")
+        coverage = row.get("coverage")
+        if coverage not in ("bounded_exact_head_review_and_checks",
+                            "source_incomplete_or_changed",
+                            "not_queried_after_auth_or_rate_limit"):
+            raise ValueError("unverified PR source coverage")
+        card = _card(
+            "P1" if action in remediate else "P2", project,
+            "open_pr_owner_review",
+            "Bestaande PR #" + str(number) + ": " + NEXT_ACTION_NL[action],
+            source="bounded_canonical_readonly_pr_observation")
+        card["existing_pr_urls"] = [url]
+        card["pr_observation_coverage"] = coverage
+        card["pr_gate_next_step"] = action
+        card["exact_head_required_ci_verified"] = False
+        card["independent_review_policy_verified"] = False
+        if coverage == "bounded_exact_head_review_and_checks":
+            head = row.get("head_sha")
+            ci, reviews = row.get("ci"), row.get("reviews")
+            if (type(head) is not str or not SAFE_SHA.fullmatch(head)
+                    or type(ci) is not dict or ci.get("head_sha") != head
+                    or type(reviews) is not dict
+                    or reviews.get("head_sha") != head):
+                raise ValueError("PR owner card needs consistent exact HEAD")
+            card["pr_observed_head_sha"] = head
+        cards.append(card)
+    return cards, "bounded_%d_open_prs_other_prs_unknown" % len(cards)
+
+
+def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     """Prioritize exact incidents, owner/lease conflicts, and open product work.
 
     The handoff does not infer absence of work from a missing/partial source.
@@ -103,6 +175,7 @@ def build_handoff(decision, registry=None, queue_trend=None):
     if not isinstance(sources, dict) or not isinstance(incidents, list) or len(incidents) > 200:
         raise ValueError("handoff requires assembled live source provenance")
     cards = []
+    pr_cards, pr_coverage = _observed_pr_owner_cards(pr_desk, registry)
     for item in incidents:
         if not isinstance(item, dict) or item.get("severity") not in ("P0", "P1", "P2"):
             raise ValueError("malformed fresh incident")
@@ -421,12 +494,15 @@ def build_handoff(decision, registry=None, queue_trend=None):
                          "historical_reconciliation_required": True,
                          "live_alert_authorized": False})
             historical.append(card)
+    # Reuse the very same bounded GitHub read; no extra fetch or release action.
+    cards.extend(pr_cards)
     # Priority before kind: make owner/incident work visible before new intake.
     order = {"P0": 0, "P1": 1, "P2": 2}
     kind_order = {"fresh_incident": 0, "worker_owner_review": 1,
                   "queue_current_owner_review": 2,
                   "queue_lease_window_review": 3,
-                  "vps_capacity_owner_review": 4, "open_product_issue": 5}
+                  "vps_capacity_owner_review": 4,
+                  "open_pr_owner_review": 5, "open_product_issue": 6}
     cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
                               c.get("review_by_utc", "9999"),
                               0 if c.get("existing_pr_urls") else 1,
@@ -440,7 +516,8 @@ def build_handoff(decision, registry=None, queue_trend=None):
                      else "bounded_exact_job_receipts_only",
                      "queue": queue_coverage, "workers": worker_coverage,
                      "vps_capacity": capacity_coverage,
-                     "issues": issue_coverage, "notion": _short(sources.get("notion"), 80)},
+                     "issues": issue_coverage, "prs": pr_coverage,
+                     "notion": _short(sources.get("notion"), 80)},
         "priority_items": cards[:MAX_ITEMS],
         "current_queue_lease_owner_summary": current_queue,
         "queue_claim_conflict_total_observed": conflict_total,
