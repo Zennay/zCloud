@@ -40,12 +40,16 @@ def issue_worklist(report):
         # the union of all snapshot numbers to both would be false evidence.
         issue_seen_at = {}
         issue_priorities = {}
+        latest_issue_link_sources = {}
         for seen in candidate["observations"]:
             if seen["priority"] not in RANK:
                 raise ValueError("Unrecognized historical PR priority")
             for url in seen["linked_issue_urls"]:
                 issue_seen_at.setdefault(url, set()).add(seen["snapshot_index"])
                 issue_priorities.setdefault(url, []).append(seen["priority"])
+                prev = latest_issue_link_sources.get(url)
+                if prev is None or seen["snapshot_index"] > prev["snapshot_index"]:
+                    latest_issue_link_sources[url] = seen
         if not issue_seen_at:
             unlinked.append({
                 "url": candidate["url"],
@@ -74,8 +78,15 @@ def issue_worklist(report):
             if url.split("/issues/")[0] != "https://github.com/" + candidate["repository"]:
                 raise ValueError("Source issue belongs to a different repository")
             issue["observed_in_snapshots"].update(issue_snapshots)
+            linked_at = latest_issue_link_sources[url]
             issue["linked_existing_prs"].append({
                 "issue_ref_observed_in_snapshots": sorted(issue_snapshots),
+                "head_at_last_issue_link": linked_at["observed_head"],
+                "gate_at_last_issue_link": linked_at["primary_gate"],
+                "time_at_last_issue_link": linked_at["observed_utc"],
+                "pr_observed_after_link_absent": (
+                    candidate["last_seen_snapshot"] >
+                    linked_at["snapshot_index"]),
                 "issue_ref_last_seen_snapshot": max(issue_snapshots),
                 "issue_ref_absent_in_last_snapshot":
                     max(issue_snapshots) != len(report["source_snapshots"]),
@@ -221,7 +232,12 @@ def html_content(result):
                 '</a> — issue-link ' + e(p["issue_link_priority"]) +
                 ' · laatste PR-bron ' + e(p["source_priority"]) + ' · gate ' +
                 e(p["observed_primary_gate"]) +
-                ' · HEAD ' + e(p["observed_head"] or "ONBEKEND") +
+                ' · PR-laatste HEAD ' + e(p["observed_head"] or "ONBEKEND") +
+                ' · issue-link HEAD ' +
+                e(p["head_at_last_issue_link"] or "ONBEKEND") +
+                ' · gate bij issue-link ' + e(p["gate_at_last_issue_link"]) +
+                (' · PR later zonder deze issuelink bemonsterd (NIET dezelfde fix)'
+                 if p["pr_observed_after_link_absent"] else '') +
                 ' · issue-link bronmoment(en) ' +
                 e(", ".join(map(str, p["issue_ref_observed_in_snapshots"]))) +
                 (' · Issueverband niet meer in laatste bron (ONBEKEND)'
