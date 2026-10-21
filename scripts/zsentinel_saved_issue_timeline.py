@@ -415,7 +415,7 @@ historische bronissues die al aan waargenomen bestaande PR's gekoppeld waren.
 Open/closed, actieve eigenaren, verplichte CI/review en merge zijn onbekend.
 Ontbrekende issuekoppelingen mogen geen vrije werkclaim suggereren.</p>
 <p><strong>Bronactualiteit: """ + e(freshness["status"].upper()) + " · leeftijd " + e(freshness_age) + " · drempel " + str(freshness["stale_after_hours"]) + " uur · laatste waarneming UTC " + e(freshness["latest_observed_utc"] or "ONBEKEND") + ".</strong> " + e(freshness_warning) + " Evaluatiemoment UTC: " + e(freshness["evaluated_at_utc"]) + ". Een recente snapshot is geen live status.</p></aside>"""
-<details><summary>Bronherkomst · SHA256 en steekproefdekking</summary><ol>""" +
+"""<details><summary>Bronherkomst · SHA256 en steekproefdekking</summary><ol>""" +
 "".join(source_cards) + """</ol><p>Bron-hashes identificeren opgeslagen
 manifesten, niet de huidige GitHub-status.</p></details><p>
 """ + str(selection["shown_source_issues"]) + " issues getoond van " +
