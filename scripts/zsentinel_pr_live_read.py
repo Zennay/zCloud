@@ -257,13 +257,83 @@ def _review_summary(rows):
     }
 
 
-def observe_candidate_prs(issue, *, token=None, source_case=None):
+def _discover_sampled_open_prs(issue_url, *, token=None):
+    """Best-effort same-repo, issue-text hints from one open-PR page.
+
+    A missing first-page mention does NOT prove there is no existing PR.
+    GitHub's issue cross-reference graph is not reconstructed here.
+    """
+    match = ISSUE_URL.fullmatch(issue_url)
+    if match is None:
+        raise GitHubReadError("discovery issue identity is not canonical")
+    owner, repo, number = match.groups()
+    full_name = owner + "/" + repo
+    path = "/repos/" + quote(owner, safe="") + "/" + quote(repo, safe="")
+    payload = _limited_json(
+        path + "/pulls?state=open&per_page=" + str(MAX_LIST_PAGE), token=token
+    )
+    if not isinstance(payload, list) or len(payload) > MAX_LIST_PAGE:
+        raise GitHubReadError("bounded GitHub open-PR page has invalid shape")
+    candidates, seen, matched_total = [], set(), 0
+    for row in payload:
+        if not isinstance(row, dict):
+            raise GitHubReadError("GitHub open-PR page has malformed entries")
+        identity = row.get("number")
+        base = row.get("base")
+        if (type(identity) is not int or not 1 <= identity <= 100000000
+                or not isinstance(base, dict)
+                or not isinstance(base.get("repo"), dict)
+                or base["repo"].get("full_name") != full_name
+                or row.get("state") != "open"
+                or type(row.get("draft")) is not bool):
+            raise GitHubReadError("GitHub open-PR candidate scope is inconsistent")
+        if identity in seen:
+            raise GitHubReadError("GitHub open-PR page repeated one candidate")
+        seen.add(identity)
+        status, _ = _body_issue_reference(row, full_name, int(number))
+        if status not in (
+            "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
+        ):
+            continue
+        matched_total += 1
+        if len(candidates) < MAX_CANDIDATES:
+            candidates.append({
+                "number": identity,
+                "url": "https://github.com/" + full_name + "/pull/" + str(identity),
+                "draft_at_source": row["draft"],
+                "relationship_at_source": (
+                    "closing_keyword_only" if status == "CLOSING_KEYWORD_TEXT_OBSERVED"
+                    else "text_reference_only"
+                ),
+                "candidate_origin": "sampled_open_pr_first_page_text_only",
+            })
+    return candidates, {
+        "performed": True,
+        "first_page_rows": len(payload),
+        "first_page_limit": MAX_LIST_PAGE,
+        "candidate_text_matches_in_page": matched_total,
+        "candidate_records_returned": len(candidates),
+        "candidate_list_truncated": matched_total > len(candidates),
+        "source_page_may_be_incomplete": True,
+        "existing_repair_absence_verified": False,
+        "issue_pr_relationship_verified": False,
+    }
+
+
+def observe_candidate_prs(issue, *, token=None, source_case=None,
+                          discover_unlinked=False):
     """Read exactly an admitted issue's referenced PRs; leave each result untrusted."""
     candidates = issue.get("candidate_prs", [])
     if not isinstance(candidates, list) or len(candidates) > MAX_CANDIDATES:
         raise GitHubReadError("unbounded or absent candidate source")
-    if not candidates:
-        raise GitHubReadError("issue has no sampled PR; refresh/discover existing work first")
+    if discover_unlinked and candidates:
+        raise GitHubReadError(
+            "original issue already has sampled PRs; use normal live PR review"
+        )
+    if not candidates and not discover_unlinked:
+        raise GitHubReadError(
+            "issue has no sampled PR; use explicit first-page discovery or refresh source"
+        )
     if (type(source_case) is not dict
             or source_case.get("policy") != "zsentinel-recovery-case-handoff-v1"):
         raise GitHubReadError(
@@ -280,6 +350,22 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
         "current_issue_pr_link_verified": False,
     }
     source_url = issue["source_urls"][0]
+    historical_candidates = len(candidates)
+    discovery = {
+        "performed": False,
+        "source_page_may_be_incomplete": True,
+        "existing_repair_absence_verified": False,
+        "issue_pr_relationship_verified": False,
+    }
+    extra_get_attempts = 0
+    if discover_unlinked:
+        # Optional operator-directed discovery only: one first-page GET,
+        # then the same bounded, double-read candidate observation as normal.
+        # A matching body phrase is never considered an authorized issue link.
+        extra_get_attempts = 1
+        candidates, discovery = _discover_sampled_open_prs(
+            source_url, token=token,
+        )
     issue_match = ISSUE_URL.fullmatch(source_url)
     if issue_match is None:
         raise GitHubReadError("source issue is not a canonical repository issue")
@@ -299,7 +385,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
     }
     observations = []
     provider_paused = False
-    total_gets_attempted = 0
+    total_gets_attempted = extra_get_attempts
     try:
         total_gets_attempted += 1
         current_issue = _issue_summary(
@@ -323,6 +409,9 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
             "url": url, "number": number,
             "source_draft": candidate["draft_at_source"],
             "source_relationship": candidate["relationship_at_source"],
+            "candidate_origin": candidate.get(
+                "candidate_origin", "historical_case_issue_reference"
+            ),
             "advisory_only": True, "action_authorized": False,
             "status": "UNKNOWN",
             "ownership_verified": False, "merge_authorized": False,
@@ -469,7 +558,8 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
         "historical_case_provenance": provenance,
         "observed_at_utc": utc(),
         "candidate_count": len(candidates),
-        "source_candidate_count": issue["candidate_count"],
+        "source_candidate_count": historical_candidates,
+        "optional_unlinked_discovery": discovery,
         "observations": observations, "sample_scope_only": True,
         "suggested_owner_review_order": [
             {"number": row["number"], "url": row["url"],
@@ -482,7 +572,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
             )
         ],
         "provider_admission_paused": provider_paused,
-        "read_get_attempt_upper_bound": 1 + 4 * len(candidates),
+        "read_get_attempt_upper_bound": 1 + extra_get_attempts + 4 * len(candidates),
         "get_attempts": total_gets_attempted,
         "live_observations": sum(row["status"] == "LIVE_PARTIAL_READ"
                                  for row in observations),
