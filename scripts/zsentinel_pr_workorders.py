@@ -518,6 +518,16 @@ def render_csv(bundle):
                 detail=("BOUNDED HISTORICAL COMPARISON; NO UNINTERRUPTED "
                         "STATE OR RELEASE CLEARANCE. Code: " +
                         str(card["historical_change_code"])))
+        for category in card["historical_changed_gate_evidence_categories"]:
+            add("changed_gate_evidence", card, link=pr_url, detail=category)
+        for change in card["historical_changed_job_links"]:
+            add("changed_check", card, link=change["url"], detail=(
+                change["kind"] + " | " + change["label"] +
+                " | historical source; check current state directly"))
+        if card["historical_changed_job_links_hidden"]:
+            add("coverage_warning", card, detail=(
+                "Historical check changes not shown: " +
+                str(card["historical_changed_job_links_hidden"])))
         for check in card["check_links"][:MAX_CHECKS]:
             link = check["url"]
             if not (re.fullmatch(
@@ -673,6 +683,24 @@ def render_html(bundle):
                          e(card["historical_next_step"]) +
                          "</p><p class=\"meta\">Momentopnames bewijzen niet wat "
                          "tussen de opnames gebeurde.</p>")
+        if card["historical_changed_gate_evidence_categories"]:
+            parts.append("<h3>Gewijzigde gatebewijssoorten</h3><ul>")
+            for evidence in card["historical_changed_gate_evidence_categories"]:
+                parts.append("<li>" + e(evidence) + "</li>")
+            parts.append("</ul>")
+        if card["historical_changed_job_links"]:
+            parts.append("<h3>Checkverschillen tussen twee bronmomenten</h3><ul>")
+            for change in card["historical_changed_job_links"]:
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" "
+                             "href=\"" + e(change["url"]) + "\">" +
+                             e(change["label"]) + "</a> · " +
+                             e(change["kind"]) + "</li>")
+            parts.append("</ul>")
+        if card["historical_changed_job_links_hidden"]:
+            parts.append("<p class=\"notice warning\">Nog " +
+                         e(card["historical_changed_job_links_hidden"]) +
+                         " historische checkverschillen niet getoond; geen "
+                         "volledige gate-inventaris.</p>")
         if card.get("check_links"):
             parts.append("<h3>Niet-groene checkbronnen</h3><ul>")
             for check in card["check_links"]:
