@@ -2,6 +2,52 @@
 
 The [source-bound product delivery board](zsentinel-product-delivery-board.md) is a deliberately non-authorizing, offline summary of existing P0/P1 issue discovery, queue retry pressure, recent PR-less branches, optional explicit Notion claims and exact-head PR observations. The new **Product Delivery Workbench** turns one saved JSON board into an interactive, still fully local operator workspace.
 
+## 21 oktober · projectgerichte issue-/PR-botsingswerkbak uit privé bronmomenten
+
+De bestaande historische, issue-eerst dossier-CLI heeft nu een **gerichte
+menselijke herstelwerkbak**. Dezelfde 1–12 eerder veilig geopende privé-ZIP
+bronmomenten blijven de enige bron. Kies een project en een historisch
+aandachtspunt zonder actuele rechten of status te suggereren:
+
+```sh
+python3 scripts/zsentinel_saved_issue_timeline.py \
+  --source ./saved-older.zip --source ./saved-newer.zip \
+  --project Zennay/zCloud --attention multiple-prs \
+  --format html --output ./private-multiple-prs.html
+
+python3 scripts/zsentinel_saved_issue_timeline.py \
+  --source ./saved-older.zip --source ./saved-newer.zip \
+  --project Zennay/zCloud --attention lost-issue-link \
+  --format zip --output ./private-lost-link-handoff.zip
+```
+
+De drie aandachtspunten zijn `multiple-prs` (meer dan één bestaande PR
+noemt hetzelfde issue in de opgeslagen waarnemingen),
+`lost-issue-link` (een eerdere issuekoppeling verdwijnt uit de
+eindsteekproef, ook als de PR nog wel wordt bemonsterd), en
+`missing-final-pr` (een eerder bemonsterde gekoppelde PR ontbreekt
+in de laatste beperkte steekproef). **Geen** van deze labels bewijst
+bestandsconflict, claimvrijgave, gesloten issue, merge of actieve eigenaar.
+
+`--project` accepteert uitsluitend een canonieke `Zennay/<repo>` scope.
+`--priority P0|P1|P2|Unspecified` kan gecombineerd worden met de
+aandachtsfocus en bestaande begrensde paginering. `--inspect-issue`
+blijft exact één bekend canoniek issue vereisen en is niet te combineren
+met een aandachtspunt. Een gefilterd projectdossier laat geen
+ongekoppelde PRs van andere projecten zien; bij focus worden
+ongekoppelde PRs helemaal weggelaten, nooit als 'afgehandeld' gemarkeerd.
+
+De selectie is in de HTML en Markdown zichtbaar en wordt in JSON/CSV
+opgenomen; bij ZIP staan exact die geselecteerde HTML/Markdown/CSV/
+bronreceipts plus SHA256-checksums in het bestaande private archief.
+De nieuwe ZIP-manifestvelden `selected_project`,
+`historical_attention_focus`, `selected_issue_count`,
+`matched_issue_count_in_selected_scope` en
+`source_total_issue_count` maken de **weggelaten historische
+steekproefscope** expliciet. Alle bestandscreatie blijft alleen op een
+nieuwe privé bestemming (O_EXCL, O_NOFOLLOW, 0600, groottebudget).
+Geen live API, Notion-/lease-/queuewrite, merge, deploy of CI-retry.
+
 ## Operator flow
 
 1. Generate a private **JSON** board using existing merged CLI and the issue inbox once its exact-head PR is integrated. You may omit optional retry/branch/claim/PR source files, but missing evidence remains unknown.
