@@ -12,7 +12,7 @@ import html
 import json
 import re
 from datetime import datetime, timezone
-from urllib.parse import quote
+from urllib.parse import urlencode
 
 from zsentinel_pr_live_read import (
     GitHubReadError, MAX_DISCOVERY_BODY_BYTES, _limited_json, utc,
@@ -148,7 +148,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
     if match is None:
         raise GitHubReadError("inbox repository must be Zennay/<repo>")
     name = match[1]
-    api = "/repos/Zennay/" + quote(name, safe="")
+    query = urlencode({"q": "repo:Zennay/" + name + " is:issue is:open"})
     issues, seen = [], set()
     observed_at = datetime.now(timezone.utc)
     total_rows = 0
@@ -158,25 +158,40 @@ def observe_repo_inbox(repo_full_name, *, token=None):
     attempts = 0
     pages_read = 0
     last_page_short = False
+    provider_total_count = None
+    provider_incomplete = False
 
     for page in range(1, MAX_PAGES + 1):
         try:
             attempts += 1
             payload = _limited_json(
-                api + "/issues?state=open&per_page=" + str(PAGE_SIZE) +
-                "&sort=updated&direction=desc&page=" + str(page),
+                "/search/issues?" + query +
+                "&sort=updated&order=desc&per_page=" + str(PAGE_SIZE) +
+                "&page=" + str(page),
                 token=token, max_body_bytes=MAX_DISCOVERY_BODY_BYTES,
             )
         except GitHubReadError as exc:
             source_error = str(exc)
             break
-        if not isinstance(payload, list) or len(payload) > PAGE_SIZE:
-            source_error = "GitHub open issue page malformed or oversized"
+        if not isinstance(payload, dict):
+            source_error = "GitHub issue-only search response malformed"
             break
+        page_items = payload.get("items")
+        count = payload.get("total_count")
+        incomplete = payload.get("incomplete_results")
+        if (not isinstance(page_items, list) or len(page_items) > PAGE_SIZE
+                or type(count) is not int or count < 0
+                or type(incomplete) is not bool):
+            source_error = "GitHub issue-only search coverage unavailable"
+            break
+        provider_total_count = count
+        provider_incomplete = provider_incomplete or incomplete
         pages_read += 1
-        total_rows += len(payload)
-        last_page_short = len(payload) < PAGE_SIZE
-        for raw in payload:
+        total_rows += len(page_items)
+        last_page_short = (
+            len(page_items) < PAGE_SIZE or page * PAGE_SIZE >= count
+        )
+        for raw in page_items:
             if isinstance(raw, dict) and "pull_request" in raw:
                 prs_excluded += 1
                 continue
@@ -216,15 +231,19 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         "repository": repo_full_name,
         "observed_at_utc": observed_at.isoformat().replace("+00:00", "Z"),
         "observation_mode": "bounded_recent_github_open_issues",
-        "source": "github_rest_issues_list",
+        "source": "github_rest_search_issues_issue_only",
         "pages_read": pages_read, "max_pages": MAX_PAGES,
         "items_per_page": PAGE_SIZE, "source_rows_scanned": total_rows,
         "pull_requests_excluded": prs_excluded,
+        "provider_total_issue_count_at_observation": provider_total_count,
+        "provider_incomplete_results": provider_incomplete,
         "invalid_or_inaccessible_rows_excluded": invalid_excluded,
         "total_issues_seen": len(issues), "displayed_issues": len(chosen),
         "display_truncated": len(issues) > MAX_DISPLAY,
         "source_window_full": not last_page_short and source_error is None,
-        "source_partial_or_unknown": bool(source_error) or not last_page_short,
+        "source_partial_or_unknown": (
+            bool(source_error) or provider_incomplete or not last_page_short
+        ),
         "source_error": source_error,
         "get_attempts": attempts, "read_get_attempt_upper_bound": MAX_PAGES,
         "priority_breakdown_in_source_window": by_rank,
@@ -258,6 +277,10 @@ def markdown(report):
         "- Open-issue source pages: " + str(report["pages_read"]) +
         "/" + str(report["max_pages"]),
         "- Source rows scanned: " + str(report["source_rows_scanned"]),
+        "- Provider reported open issues: " +
+        str(report["provider_total_issue_count_at_observation"] or "UNKNOWN"),
+        "- GitHub search incomplete results: " +
+        str(report["provider_incomplete_results"]),
         "- Issues visible: " + str(report["total_issues_seen"]),
         "- Issues displayed: " + str(report["displayed_issues"]),
         "- Source partial/unknown: " + str(report["source_partial_or_unknown"]),
@@ -323,7 +346,11 @@ def html_view(report):
         "</code> · observed: " + esc(report["observed_at_utc"]) + "</p>",
         "<p>Pages " + esc(report["pages_read"]) + "/" +
         esc(report["max_pages"]) + " · scanned rows " +
-        esc(report["source_rows_scanned"]) + " · issues " +
+        esc(report["source_rows_scanned"]) + " · provider count " +
+        esc(report["provider_total_issue_count_at_observation"] or "UNKNOWN") +
+        " · incomplete provider results: " +
+        esc(report["provider_incomplete_results"]) +
+        " · issues observed " +
         esc(report["total_issues_seen"]) + " · displayed " +
         esc(report["displayed_issues"]) + "</p>",
         "<p>Explicit P0/P1 with no issue update for 72h: " +
