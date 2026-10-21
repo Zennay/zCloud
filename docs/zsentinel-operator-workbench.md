@@ -87,12 +87,18 @@ python3 scripts/zsentinel_saved_dossier_timeline.py \
 Beide CLI's gebruiken nu dezelfde gedeelde tijdstempelregels en leggen
 status, leeftijd, evaluatie-UTC en gekozen drempel vast in hun output.
 De vergelijkende portfolio-inbox geeft de actualiteit van beide bronmomenten
-naast elkaar weer en gebruikt dezelfde begrensde drempel:
+naast elkaar weer en gebruikt dezelfde begrensde drempel. Ook een dossier voor
+één exact geselecteerd issue gebruikt diezelfde status, leeftijd en evaluatieklok:
 
 ```sh
 python3 scripts/zsentinel_saved_issue_portfolio_delta.py \
   --previous ./saved-older.zip --current ./saved-newer.zip \
   --stale-after-hours 6 --format html --output ./private-issue-delta.html
+
+python3 scripts/zsentinel_saved_issue_delta.py \
+  --previous ./saved-older.zip --current ./saved-newer.zip \
+  --issue https://github.com/Zennay/zCloud/issues/1326 \
+  --stale-after-hours 6 --format markdown --output ./private-single-issue.md
 ```
 
 Geen filter, versheidslabel of ZIP-receipt bewijst eigenaar, claimvrijgave,
