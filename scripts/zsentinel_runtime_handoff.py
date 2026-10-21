@@ -1086,6 +1086,30 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     }
 
 
+def _pr_continuity_label(card):
+    """No delta means NOT measured, not a released worker or a green PR."""
+    state = card.get("pr_continuity_state")
+    if state is None:
+        return ""
+    labels = {
+        "exact_head_changed_REINSPECT_GATE":
+            "Sinds privé-bron: exacte HEAD gewijzigd, controleer CI/reviews opnieuw",
+        "same_head_owner_step_changed_REVIEW_GATE":
+            "Sinds privé-bron: eigenaaractie gewijzigd, huidige releasegate bekijken",
+        "same_observed_head_and_owner_step_NOT_ALL_CLEAR":
+            "Zelfde waargenomen HEAD/eigenaaractie, geen algemeen groen bewijs",
+        "newly_in_bounded_sample_NOT_NEW_PR":
+            "Nu voor het eerst in beperkt bronvenster, geen nieuwe PR bewezen",
+        "partial_exact_source_NO_GATE_DELTA":
+            "PR-bron onvolledig, daadwerkelijke gatewijziging ONBEKEND",
+        "incomparable_source_times_NO_GATE_DELTA":
+            "Privé-bronmomenten niet vergelijkbaar, gatewijziging ONBEKEND",
+    }
+    if state not in labels or card.get("kind") != "open_pr_owner_review":
+        raise ValueError("untrusted exact PR continuity label")
+    return labels[state]
+
+
 def _pr_gate_brief(card):
     """Display sampled exact-head gate evidence without granting permission."""
     observed = card.get("pr_observed_gate_counts")
@@ -1522,6 +1546,9 @@ def handoff_html(report):
             brief = _pr_gate_brief(item)
             if brief:
                 pr_label += " · " + escape(brief)
+            continuity = _pr_continuity_label(item)
+            if continuity:
+                pr_label += " · " + escape(continuity)
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
                      escape(_short(item.get("next_step"))) + due_label + pr_label +
@@ -1801,6 +1828,9 @@ def markdown(report):
             brief = _pr_gate_brief(card)
             if brief:
                 lines.append("   Gate-steekproef: " + _md(brief, 450))
+            continuity = _pr_continuity_label(card)
+            if continuity:
+                lines.append("   Vergeleken met privé-bron: " + _md(continuity, 180))
     if not report["priority_items"]:
         lines.append("Geen actie in de beperkte steekproef; brongebrek is geen groen licht.")
     if report["items_truncated"]:
@@ -1961,7 +1991,9 @@ def csv_export(report):
             "priority": item.get("priority"),
             "project": item.get("project"),
             "kind": item.get("kind"),
-            "next_step": (item.get("next_step") or "") + linked_followup,
+            "next_step": ((item.get("next_step") or "") + linked_followup +
+                          (" · " + _pr_continuity_label(item)
+                           if item.get("pr_continuity_state") is not None else "")),
             "evidence": item.get("evidence"),
             "issue_url": item.get("issue_url"),
             "existing_pr_urls": " | ".join(item.get("existing_pr_urls", [])),
