@@ -15,6 +15,7 @@ from html import escape
 
 SCHEMA = "zsentinel-routing-transition-v1"
 IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
+QUEUE_FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 KINDS = {
     "suggested_only_no_claim": "advisory_suggestion",
@@ -67,6 +68,36 @@ def _decision(snapshot):
     if queue_at is not None and _clock(queue_at) > _clock(data.get("observed_at_utc")) + timedelta(minutes=2):
         raise ValueError("queue observation contradicts routing source time")
     return data
+
+
+def _queue_origin(snapshot, decision):
+    """Require the same bounded SQLite source before comparing task identities.
+
+    The digest is a *private source-identity receipt*, never a claim token or
+    a user-facing database path. A GitHub-only/unknown source cannot certify
+    that matching task slugs in two saved files refer to the same queue.
+    """
+    portfolio = snapshot["portfolio"]
+    pressure = decision.get("live_queue_pressure")
+    source_kind = portfolio.get("queue_source")
+    if source_kind not in (
+            "local_sqlite_transaction_query_only",
+            "explicitly_unobserved_no_database"):
+        raise ValueError("untrusted portfolio queue source kind")
+    if (type(pressure) is not dict
+            or pressure.get("claim_ownership_verified") is not False
+            or pressure.get("coverage") not in (
+                "current", "stale", "incomplete", "not_supplied")):
+        raise ValueError("invalid private queue provenance")
+    digest = pressure.get("source_file_identity_sha256_private")
+    if digest is not None and (
+            type(digest) is not str or not QUEUE_FINGERPRINT.fullmatch(digest)):
+        raise ValueError("invalid opaque queue origin")
+    if source_kind == "explicitly_unobserved_no_database":
+        if digest is not None or pressure["coverage"] != "not_supplied":
+            raise ValueError("GitHub-only source unexpectedly claims local queue identity")
+        return None
+    return digest
 
 
 def _index(data):
@@ -157,7 +188,10 @@ def compare(previous, current, *, now=None, allow_historical=False):
     new = _index(newer)
     if new["observed"] > now + timedelta(minutes=2):
         raise ValueError("future current routing observation")
-    source_is_historical = now - new["observed"] > timedelta(minutes=10)
+    # The standalone offline export always describes saved history, even
+    # when a file is only seconds old. It has NO independent live claim check.
+    source_is_historical = (allow_historical or
+                            now - new["observed"] > timedelta(minutes=10))
     if source_is_historical and not allow_historical:
         # An archived JSON export may be valid history but not a live
         # operator task transition. Do not present old state as new routing.
@@ -168,6 +202,14 @@ def compare(previous, current, *, now=None, allow_historical=False):
         return _result("previous_routing_not_supplied", new,
                        previous_at=None, fresh=False)
     old = _index(older)
+    previous_origin = _queue_origin(previous, older)
+    current_origin = _queue_origin(current, newer)
+    if (previous_origin is None or current_origin is None
+            or previous_origin != current_origin):
+        # A same-looking task ID is not stable evidence across different
+        # queue databases, or where the source database was never observed.
+        return _result("queue_source_identity_unknown_or_changed", new,
+                       previous_at=old["observed"], fresh=False)
     if (old["observed"] >= new["observed"]
             or old["observed"] < new["observed"] - timedelta(hours=72)):
         return _result("previous_routing_too_old_or_out_of_order", new,
@@ -202,6 +244,7 @@ def compare(previous, current, *, now=None, allow_historical=False):
                   previous_at=old["observed"], fresh=not source_is_historical),
         "prior_coverage_complete": old["complete"],
         "previous_source_examples_truncated": old["sample_truncated"],
+        "same_queue_origin_verified": True,
         "newly_observed": created[:12],
         "unchanged_observed": persisting[:12],
         "state_transitions": transitioned[:12],
@@ -227,6 +270,7 @@ def _result(coverage, newer, previous_at, fresh):
         "previous_observed_at_utc": stamp(previous_at),
         "current_coverage_complete": newer["complete"],
         "current_source_recent_at_comparison": fresh,
+        "same_queue_origin_verified": False,
         "current_source_examples_truncated": newer["sample_truncated"],
         "current_state_counts": newer["counts"],
         "newly_observed": [], "unchanged_observed": [],
@@ -249,7 +293,10 @@ def as_text(report):
     lines = ["zSentinel · routeringsveranderingen (alleen advies)"]
     if report["coverage"] not in ("bounded_source_comparison",
                                    "historical_bounded_source_comparison"):
-        lines.append("Vorige routeringsbron ontbreekt of is onvergelijkbaar; veranderingen ONBEKEND.")
+        if report["coverage"] == "queue_source_identity_unknown_or_changed":
+            lines.append("Queue-oorsprong ONBEKEND of verschillend: geen taak-ID-overgangen afleidbaar.")
+        else:
+            lines.append("Vorige routeringsbron ontbreekt of is onvergelijkbaar; veranderingen ONBEKEND.")
         return "\n".join(lines)
     if report["coverage"] == "historical_bounded_source_comparison":
         lines.append("HISTORISCHE REPLAY: huidige claim/CI/lease en echte routing zijn ONBEKEND; niet uitvoeren.")
