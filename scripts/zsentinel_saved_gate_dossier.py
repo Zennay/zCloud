@@ -603,7 +603,7 @@ def render_selected_issue_handoff(manifest: dict, issue_url: str,
 
 
 def _save_private_handoff(destination: Path, content: str) -> None:
-    """Atomic create-only Markdown publication under a private operator folder."""
+    """Atomically publish a create-only Markdown handoff in a private operator folder."""
     if not destination.name.endswith(".md") or destination.name in (".", ".."):
         raise ValueError("Expected a new private .md handoff file")
     data = content.encode("utf-8")
@@ -613,6 +613,7 @@ def _save_private_handoff(destination: Path, content: str) -> None:
     stage = ".zsentinel-handoff-" + secrets.token_hex(12) + ".tmp"
     stagefd = None
     identity = None
+    published_identity = None
     try:
         flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
         stagefd = os.open(stage, flags, 0o600, dir_fd=parentfd)
@@ -620,8 +621,10 @@ def _save_private_handoff(destination: Path, content: str) -> None:
         identity = (opened.st_dev, opened.st_ino)
         if (not stat.S_ISREG(opened.st_mode)
                 or opened.st_uid != os.geteuid()
+                or opened.st_nlink != 1
                 or stat.S_IMODE(opened.st_mode) & 0o077):
             raise ValueError("Filesystem cannot make private handoff")
+        os.fchmod(stagefd, 0o600)
         pending = memoryview(data)
         while pending:
             written = os.write(stagefd, pending)
@@ -631,13 +634,35 @@ def _save_private_handoff(destination: Path, content: str) -> None:
         os.fsync(stagefd)
         check = os.stat(stage, dir_fd=parentfd, follow_symlinks=False)
         if (not stat.S_ISREG(check.st_mode)
-                or (check.st_dev, check.st_ino) != identity):
+                or (check.st_dev, check.st_ino) != identity
+                or check.st_nlink != 1
+                or check.st_uid != os.geteuid()
+                or stat.S_IMODE(check.st_mode) & 0o077):
             raise ValueError("Private staging identity drift")
+
         # Linking does not replace pre-existing files and makes only complete
         # content visible under the operator's chosen final filename.
         os.link(stage, destination.name, src_dir_fd=parentfd,
                 dst_dir_fd=parentfd, follow_symlinks=False)
+        published_identity = identity
+        target = os.stat(destination.name, dir_fd=parentfd, follow_symlinks=False)
+        if (not stat.S_ISREG(target.st_mode)
+                or (target.st_dev, target.st_ino) != published_identity
+                or target.st_nlink != 2
+                or target.st_uid != os.geteuid()
+                or stat.S_IMODE(target.st_mode) & 0o077):
+            raise ValueError("Published private handoff identity drift")
         os.fsync(parentfd)
+    except BaseException:
+        if published_identity is not None:
+            try:
+                current = os.stat(
+                    destination.name, dir_fd=parentfd, follow_symlinks=False)
+                if (current.st_dev, current.st_ino) == published_identity:
+                    os.unlink(destination.name, dir_fd=parentfd)
+            except OSError:
+                pass
+        raise
     finally:
         if stagefd is not None:
             os.close(stagefd)
