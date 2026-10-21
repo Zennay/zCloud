@@ -569,7 +569,7 @@ def main():
                         operator_text(routed) + "\\nGitHub coverage: " + source["github_coverage"])
             if args.format == "text" and pr_delivery is not None:
                 from zsentinel_pr_delivery import handoff_markdown
-                rendered += "\\n\\n" + handoff_markdown(pr_delivery)
+                rendered += "\n\n" + handoff_markdown(pr_delivery)
         handoff_content = None
         if args.owner_handoff_output is not None:
             from zsentinel_runtime_handoff import build_handoff, serialize
