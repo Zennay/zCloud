@@ -1137,9 +1137,13 @@ def render_private_immediate_handoff(data):
     source = evidence["source"]
     window = evidence["window"]
     observed = evidence["evidence"]
-    origin = ("Live eenmalig gelezen (alleen lokale host/systemd-bron)"
-              if source == "local-read-only-current" else
-              "HISTORISCHE T0/T1-bonnen (niet opnieuw live bevestigd)")
+    origin = (
+        "Live eenmalig gelezen (alleen lokale host/systemd-bron)"
+        if source == "local-read-only-current" else
+        "HISTORISCHE PRIVÉBON: één oude momentopname (niet opnieuw live bevestigd)"
+        if source == "private-offline-receipt" else
+        "HISTORISCHE T0/T1-bonnen (niet opnieuw live bevestigd)"
+    )
     coverage = ("Volledig binnen de lokale runnerlimiet"
                 if observed["runner_inventory_complete"] else
                 "GEDEELTELIJK OF ONBEKEND")
