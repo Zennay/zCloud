@@ -41,6 +41,22 @@ NEXT_STEPS = {
 }
 MISSING_FIELDS = {"worker_slot", "claimed_at", "claim_expires"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}
+ACTION_LABELS = {
+    "owner_reconcile_active_claim_evidence_before_any_new_work":
+        "Controleer de oorspronkelijke actieve claim met de eigenaar voordat nieuw werk start.",
+    "review_attempt_history_no_automatic_retry":
+        "Onderzoek de claimhistorie bij de huidige eigenaar; start geen automatische retry.",
+    "check_active_claims_before_any_new_work":
+        "Controleer actieve projecteigenaren voordat deze kandidaat wordt opgepakt.",
+    "owner_review_attempt_history_no_automatic_retry":
+        "Laat de eigenaar claim-churn onderzoeken, zonder automatische herstart.",
+    "verify_claim_scope_capacity_and_owner":
+        "Controleer Notion-eigenaar, lease, bestandsscope en capaciteit vóór toewijzing.",
+    "owner_rescope_required_for_held_work":
+        "Laat de bevoegde eigenaar het geblokkeerde werk opnieuw afbakenen.",
+    "no_product_candidate_observed":
+        "Geen direct productwerk aangetoond in deze beperkte momentopname.",
+}
 
 CSS = """
 :root{font-family:system-ui,-apple-system,sans-serif;color:#e8ebf4;background:#10131a}
@@ -236,8 +252,8 @@ def _render(payload, rows, truncated):
             '<span class="pill">Alleen owner</span></div>' +
             '<div class="key">' + esc(row["queue"]) + '</div>' +
             '<p>' + esc(row["detail"]) + '</p>' +
-            '<small>Vervolg: ' + esc(row["step"]) +
-            '. Geen claim-, retry- of mergebevoegdheid.</small></article>'
+            '<small>Vervolg: ' + esc(ACTION_LABELS[row["step"]]) +
+            ' Geen claim-, retry- of mergebevoegdheid.</small></article>'
         )
     style_hash = base64.b64encode(hashlib.sha256(CSS.encode()).digest()).decode()
     script_hash = base64.b64encode(hashlib.sha256(JS.encode()).digest()).decode()
@@ -326,7 +342,7 @@ def _render_markdown(payload, rows, truncated):
                 "- **" + clean(row["priority"]) + " / " +
                 clean(row["project"]) + "** - " + clean(row["queue"]),
                 "  - " + clean(row["detail"]),
-                "  - Owner-actie: " + clean(row["step"]),
+                "  - Owner-actie: " + clean(ACTION_LABELS[row["step"]]),
                 "  - Status: alleen handmatige beoordeling, geen overname.",
             ])
         lines.append("")
@@ -379,7 +395,8 @@ def main(argv=None):
         document = (_render(payload, rows, truncated) if opts.format == "html"
                     else _render_markdown(payload, rows, truncated))
         _private_create(opts.output, document)
-    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+    except (OSError, UnicodeError, ValueError, TypeError,
+            RecursionError, OverflowError):
         # Do not print paths, source contents, arbitrary exception payload,
         # bearer credentials, or queue IDs in stderr.
         print("zSentinel: private invoer/uitvoer geweigerd; controleer rechten, "
