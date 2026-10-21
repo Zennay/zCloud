@@ -245,3 +245,21 @@ onvolledige GitHub-dekking vóór een nieuwe implementatie. Zonder bekende
 PR wordt bij waargenomen Verifying eerst een eigenaar-/reviewhercontrole
 gevraagd in plaats van nieuwe scope toe te kennen. Er wordt nog steeds
 **niets** automatisch geclaimd, geretriggerd, gemerged of gedeployed.
+
+### Live Notion-bronvensters: recent werk krijgt voorrang
+
+De vier reeds toegestane read-only Notion-pagina-aanvragen worden voortaan
+**niet** meer verbruikt door één gezamenlijke Status-OR-resultaatlijst.
+Er is precies één venster (maximaal 100 rijen) voor `Claimed`, één
+voor `Running` en maximaal twee vensters (200 rijen) voor
+`Verifying`. Elk bronvenster sorteert op `last_edited_time` aflopend.
+Zo kan een grote historische verificatieachterstand nieuwe bezette en
+lopende taken niet uit hetzelfde globale pagineringsbudget verdringen.
+Bij resterende pagina's wordt de dekking expliciet **incomplete**;
+het weergegeven aantal blijft een ondergrens, nooit alle claims.
+
+Als een Notion-pagina tussen de afzonderlijke reads van status verandert,
+wordt de inconsistentie niet omgezet in uitvoerautorisatie: dubbele
+pagina-identiteiten worden geweigerd en afwijkende statussen markeren de
+bron als incompleet. Geen extra vraagbudget, tokens in output, claimwrite,
+runnerherstart of automatische worker-toewijzing.
