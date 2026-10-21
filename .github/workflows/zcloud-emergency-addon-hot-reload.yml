@@ -165,3 +165,4 @@ jobs:
           test "$main_pid" = "$new_pid"
           echo "FIREFOX_MAIN_PID_AFTER=$new_pid"
           echo "NO_FIREFOX_RESTART_OR_TAB_TERMINATION_ISSUED=1"
+          python3 scripts/zsentinel_release_receipt.py --component emergency-addon --outcome reload-command-succeeded
