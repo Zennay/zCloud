@@ -1,3 +1,49 @@
+## 21 oktober · hostbrede OOM- en memory-PSI triage (read-only)
+
+Bij de huidige VPS stond swap volledig vol en rapporteerden twee
+systemd-runners `Result=oom-kill`. Alleen swap/servicestatus is onvoldoende
+om te zien of de kernel daarna nieuwe OOM-kills registreert. Daarom leest
+dezelfde bestaande operatorroute nu optioneel twee **hostbrede Linux-bronnen**:
+
+* `/proc/pressure/memory`: maximaal 4096 bytes, uitsluitend `some` en
+  `full` `avg10` als percentages; ontbreken betekent ONBEKEND.
+* `/proc/vmstat`: maximaal 65536 bytes, alleen de cumulatieve `oom_kill`
+  teller. Die geldt sinds de huidige Linux-boot voor ALLE processen.
+
+`snapshot()` bewaart de geobserveerde begrensde cijfers in zijn bestaande
+momentopname. Het bestaande CPU-yieldbeleid wordt **niet** veranderd door
+de optionele PSI-bron; ontbrekende PSI is dus geen reden voor extra CPU
+en evenmin een automatische diagnose of serviceschrijfactie. De offline
+HTML toont de teller en de PSI-waarden als eigenaarcontext.
+
+De T0/T1-functie `memory_oom_changes()` rapporteert een OOM-delta uitsluitend
+wanneer beide privébronnen een geldige monotone kernelwaarde tonen én de
+bestaande private bootvingerafdruk **dezelfde boot** bevestigt. Nieuwe boot,
+ontbrekende bron, negatieve telling of ontbrekende vingerafdruk leveren
+`oom_counter_same_boot_comparable=false`, tellerdelta `null` / ONBEKEND.
+Ook wanneer de teller stijgt, is niet aangetoond dat een GitHub-runner de
+geheugenslachtoffer was; `kernel_oom_incident_attributed_to_runner=false`.
+
+De historische HTML, privé T0/T1-overdracht, directe Markdown-handoff en
+JSON-eigenaarinbox tonen nu hostbreed OOM/PSI-bewijs. Bij **geverifieerde
+OOM-toename én actuele hoge hostdruk** krijgt de bevoegde eigenaar een
+extra P0-onderzoekstaak. Dit is geen herstelautoriteit. CI, runnerlistener,
+claims en daadwerkelijke GitHub-jobtoewijzing moeten onafhankelijk worden
+gecontroleerd door de bestaande bevoegde release-/runtime-eigenaar.
+
+Operatorcommando's voor alleen-lezen momentopnames:
+
+```bash
+python3 scripts/zsentinel_background_priority.py --preview --runners --human
+python3 scripts/zsentinel_runner_report.py --format html --output /PRIVATE-NIEUW/INZICHT.html
+python3 scripts/zsentinel_runner_report.py --format json --output /PRIVATE-NIEUW/BRON.json
+python3 scripts/zsentinel_runner_report.py --t0 /PRIVATE-NIEUW/T0.json --t1 /PRIVATE-NIEUW/T1.json --output /PRIVATE-NIEUW/T0-T1.html
+```
+
+Bestanden zijn nieuw/privé (0600); bestaande snapshot- en reviewgates blijven
+verplicht. Geen systemctl restart, GitHub workflowdispatch, portfoliolease
+of productiedeploy.
+
 ## 21 oktober · systeem- én gebruikersmanager GitHub runnerherstel
 
 De herstelwerkbank las eerder alleen `systemctl list-units` zonder `--user`.
