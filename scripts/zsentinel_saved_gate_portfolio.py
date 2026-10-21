@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import datetime, timezone
 from html import escape
 from io import StringIO
 
@@ -123,6 +124,15 @@ def project_worklist(selected, integrated, *, project=None):
             raise ValueError("Project not present in this source-bound PR sample")
         return [indexed[project]]
     return ordered
+
+
+def source_age_warning(latest):
+    """Display the saved source age at export, never infer live coverage."""
+    seconds = max(0, (datetime.now(timezone.utc) - latest).total_seconds())
+    hours = round(seconds / 3600, 1)
+    if seconds >= 6 * 3600:
+        return "VEROUDERDE BRON: " + str(hours) + " uur oud bij rapportgeneratie. Controleer GitHub opnieuw."
+    return "Bron " + str(hours) + " uur oud bij rapportgeneratie. GEEN live CI-, claim- of mergebewijs."
 
 
 def source_gate_detail(candidate):
@@ -329,6 +339,7 @@ def portfolio_page_html(selected, integrated, *, project=None):
     """
     oldest, latest, missing = _admit(selected, integrated)
     projects = project_worklist(selected, integrated, project=project)
+    age_warning = source_age_warning(latest)
     scoped = sum(p["source_prs_observed"] for p in projects)
     e = lambda value: escape(str(value), quote=True)
     source_digest = e(integrated["original_review_manifest_sha256"])
@@ -382,6 +393,7 @@ Oorspronkelijke CI, reviewers, actuele claims, main-branch-regels en
 productie-autorisatie moeten afzonderlijk live gecontroleerd worden.
 Niet waargenomen PRs of projecten zijn UNKNOWN, nooit opgelost of vrij.</aside>
 <section class="provenance" aria-label="Herkomst">
+<p><strong>""" + e(age_warning) + """</strong></p>
 <h2>Vastgepinde bron</h2>
 <p>Reviewmanifest SHA256: <code>""" + source_digest + """</code><br>
 Oorspronkelijk board SHA256: <code>""" + board_digest + """</code></p>
@@ -448,13 +460,14 @@ def portfolio_pr_csv(selected, integrated, *, project=None):
     A project filter is admissible only after validating the full source.
     No free-text notes or raw GitHub responses can become CSV formulas.
     """
+    _oldest, latest, _missing = _admit(selected, integrated)
     projects = project_worklist(selected, integrated, project=project)
     stream = StringIO(newline="")
     writer = csv.writer(stream, delimiter=";", quotechar='"',
                         lineterminator="\r\n")
     writer.writerow([
         "Oorspronkelijk manifest SHA256", "Oorspronkelijk board SHA256",
-        "Bron oudste UTC", "Bron nieuwste UTC", "Project",
+        "Bron oudste UTC", "Bron nieuwste UTC", "Bronleeftijd bij export", "Project",
         "Prioriteit", "Bestaande PR", "Originele PR URL",
         "Gekoppelde issue URLs", "Bronbatch", "Gatebron",
         "Hoofdblokkade", "Gelijktijdige blokkades", "Waargenomen HEAD SHA",
@@ -469,7 +482,7 @@ def portfolio_pr_csv(selected, integrated, *, project=None):
                 integrated["original_board_sha256"],
                 integrated["earliest_observed_at_utc"],
                 integrated["latest_observed_at_utc"],
-                item["repository"], candidate["priority"],
+                source_age_warning(latest), item["repository"], candidate["priority"],
                 candidate["pr_number"], candidate["url"],
                 " | ".join(candidate["linked_issue_urls"]),
                 candidate["batch_index"], candidate["gate_source"],
@@ -492,6 +505,7 @@ def portfolio_markdown(selected, integrated, *, project=None):
     next to its own project and original linked issues. A missing source is an
     explicit follow-up, never a successful or free PR.
     """
+    _oldest, latest, _missing = _admit(selected, integrated)
     projects = project_worklist(selected, integrated, project=project)
     lines = [
         "# zSentinel — projecten en bestaande PR-opvolging",
@@ -504,6 +518,7 @@ def portfolio_markdown(selected, integrated, *, project=None):
         "- Bronboard SHA256: `" + integrated["original_board_sha256"] + "`",
         "- Oudste bron UTC: " + integrated["earliest_observed_at_utc"],
         "- Nieuwste bron UTC: " + integrated["latest_observed_at_utc"],
+        "- Bronleeftijd bij export: " + source_age_warning(latest),
         "- Waargenomen batches: " + str(integrated["observed_batch_count"]) +
         "/" + str(integrated["expected_batch_count"]),
         "- Ontbrekende batches (UNKNOWN): " +
