@@ -92,3 +92,22 @@ CI/branchregels, onafhankelijke review en Notion-/worker-eigenaarschap
 moeten nog apart gecontroleerd worden. Een geobserveerde groene check
 is geen merge-toestemming.
 
+
+### Eénknops-CSV vanuit dezelfde offline HTML-werkbak
+
+De bestaande `--format worklist-html` cockpit heeft nu ook de knop
+**Download PR + issue werkbak (CSV)**. Het bestand wordt gemaakt uit
+dezelfde gevalideerde, brongebonden werkbak die de CLI met
+`--format worklist-csv` exporteert, inclusief de beperkte zichtbare
+issuebron en unieke PR-groepen. Het exact ge-escape'te CSV-resultaat wordt
+als base64 in het bestaande lokale HTML-bestand opgenomen en uitsluitend
+via een bewuste knopklik als lokale Blob gedownload. De pagina doet geen
+nieuwe provider-read of online request en stuurt geen private operatornotities
+naar een externe dienst.
+
+De CSV bevat **waargenomen GitHub-bron**, niet de mogelijke lokale
+notities/afstemmingsbesluiten uit de HTML-sessie. Een ingeschakeld zoek- of
+projectfilter verandert de oorspronkelijke opgeslagen CSV-bron niet.
+Het blijft een privé-export zonder eigenaars-, claim-, CI-, merge- of
+deployautorisatie. De gebruiker moet bij ieder besluit eerst de live
+GitHub- en Notion-bron en verplichte releasevoorwaarden controleren.
