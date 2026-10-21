@@ -123,6 +123,54 @@ def layout_delta(left, right) -> dict:
     }
 
 
+def git_state(repo: Path) -> dict:
+    """Return sanitized candidate repository drift metadata without file names."""
+    if not (repo / ".git").exists():
+        return {"available": False, "reason": "git_metadata_missing"}
+
+    def value(*args: str) -> str | None:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        return proc.stdout.strip() if proc.returncode == 0 else None
+
+    head = value("rev-parse", "HEAD")
+    origin_main = value("rev-parse", "origin/main")
+    merge_base = (
+        value("merge-base", "HEAD", "origin/main")
+        if head and origin_main
+        else None
+    )
+    ahead = behind = None
+    if head and origin_main:
+        raw = value("rev-list", "--left-right", "--count", "origin/main...HEAD")
+        if raw:
+            try:
+                behind_text, ahead_text = raw.split()
+                behind = int(behind_text)
+                ahead = int(ahead_text)
+            except (TypeError, ValueError):
+                ahead = behind = None
+    status = value("status", "--porcelain=v1", "--untracked-files=normal")
+    dirty_count = len(status.splitlines()) if status else 0
+    branch = value("branch", "--show-current") or None
+    return {
+        "available": bool(head),
+        "head": head,
+        "origin_main": origin_main,
+        "merge_base": merge_base,
+        "ahead_of_origin_main": ahead,
+        "behind_origin_main": behind,
+        "dirty": dirty_count > 0,
+        "dirty_count": dirty_count,
+        "branch": branch,
+    }
+
+
 def repository_file_match(repo: Path, rel: str, target_sha: str | None) -> str | None:
     if not target_sha or not (repo / ".git").exists():
         return None
@@ -206,6 +254,8 @@ def build_report(root: Path, state: Path, candidate: Path) -> dict:
         "schema_version": 1,
         "snapshot_id": str(pointer["snapshot_id"]),
         "lkg_created_at": str(manifest["created_at"]),
+        "lkg_git_head": str((manifest.get("git") or {}).get("head") or "") or None,
+        "candidate_git": git_state(candidate),
         "files": files,
     }
 
