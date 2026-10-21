@@ -1915,6 +1915,8 @@ def main(argv=None):
     parser.add_argument("--input", help="one bounded JSON request file path, or - for stdin")
     parser.add_argument("--batch-input", help="bounded JSON array of 1–25 independent requests, file path or - for stdin")
     parser.add_argument("--case-input", help="private zSentinel portfolio recovery-case JSON export, file path or -")
+    parser.add_argument("--live-issue-url",
+                        help="read one canonical Zennay GitHub issue and its existing PRs directly; no saved case required")
     parser.add_argument("--template", choices=sorted(ACTIONS),
                         help="emit a fresh, fail-closed JSON request template")
     parser.add_argument("--project-id", help="project slug used by --template")
@@ -1946,17 +1948,28 @@ def main(argv=None):
     if args.discover_unlinked and not args.live_candidates:
         parser.error("--discover-existing requires --live-candidates")
     if args.live_focus_pr is not None and (
-            not args.live_candidates or
+            not (args.live_candidates or args.live_issue_url) or
             not 1 <= args.live_focus_pr <= 100000000):
-        parser.error("--live-focus-pr requires --live-candidates and a positive PR number")
+        parser.error("--live-focus-pr requires --live-candidates or --live-issue-url and a positive PR number")
     if args.live_candidates:
-        if (not args.case_input or not args.view_project or args.view_issue is None
+        if (args.live_issue_url or not args.case_input or not args.view_project or args.view_issue is None
                 or args.prepare_merge_review or args.candidate_pr_number is not None
                 or args.through_priority is not None or args.fail_on_hold
                 or args.format not in ("json", "markdown", "html")):
             parser.error(
                 "--live-candidates requires --case-input, --view-project, "
                 "--view-issue and --format json|markdown|html; no conflicting action modes"
+            )
+    if args.live_issue_url:
+        if (any((args.case_input, args.input, args.batch_input, args.template,
+                 args.live_candidates, args.discover_unlinked, args.view_project,
+                 args.view_issue is not None, args.through_priority,
+                 args.prepare_merge_review, args.candidate_pr_number,
+                 args.project_id, args.incident_id, args.source_url, args.owner,
+                 args.fail_on_hold))
+                or args.format not in ("json", "markdown", "html")):
+            parser.error(
+                "--live-issue-url is a standalone read-only JSON/Markdown/HTML mode"
             )
     if args.prepare_merge_review:
         if (not args.case_input or not args.view_project or args.view_issue is None
@@ -1996,6 +2009,28 @@ def main(argv=None):
             return 0
         except (OSError, UnicodeError, PolicyInputError) as exc:
             print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
+            return 2
+    if args.live_issue_url:
+        try:
+            from zsentinel_pr_live_read import (
+                observe_live_issue, markdown as live_issue_markdown,
+                owner_html as live_issue_html, GitHubReadError,
+            )
+            report = observe_live_issue(
+                args.live_issue_url, token=os.environ.get("GITHUB_TOKEN") or None,
+                focus_pr_number=args.live_focus_pr,
+            )
+            output = (
+                live_issue_html(report) if args.format == "html"
+                else live_issue_markdown(report) if args.format == "markdown"
+                else json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            )
+            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("live issue output exceeds 128 KiB")
+            _emit_output(output, args.output, args.format)
+            return 0
+        except (OSError, UnicodeError, GitHubReadError, PolicyInputError) as exc:
+            print("zSentinel live issue: " + str(exc), file=sys.stderr)
             return 2
     if args.case_input:
         if args.input or args.batch_input:
