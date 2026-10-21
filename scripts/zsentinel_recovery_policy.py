@@ -25,9 +25,10 @@ MAX_OUTPUT_BYTES = 128 * 1024
 MAX_BATCH_REQUESTS = 25
 UTC = timezone.utc
 SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
+QUEUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 ACTIONS = frozenset({
     "retry_ci", "route_root_fix", "assign_independent_work", "park_blocker",
-    "escalate_human", "merge_pr", "deploy", "restart_runner",
+    "resume_blocked", "escalate_human", "merge_pr", "deploy", "restart_runner",
 })
 ROOT_FIELDS = frozenset({
     "schema_version", "action", "project_id", "incident_id",
@@ -37,8 +38,10 @@ EVIDENCE_FIELDS = frozenset({
     "source_verified", "failure_kind", "attempts", "retry_budget",
     "backoff_elapsed", "active_claim", "independent_task_ready",
     "scope_disjoint", "dependency_kind", "dependency_scope",
-    "dependency_unchanged", "escalation_reason", "permission_required",
-    "irreversible_risk", "safe_routes_exhausted", "capacity", "exact_head",
+    "dependency_unchanged", "dependency_cleared", "blocked_task_id",
+    "blocked_task_preserved", "previous_blocker_preserved", "operator_attestation",
+    "escalation_reason", "permission_required", "irreversible_risk",
+    "safe_routes_exhausted", "capacity", "exact_head",
     "required_ci", "independent_review", "branch_protection", "owner_authorized",
     "root_cause_confirmed", "unresolved_review_threads", "merged_main",
     "post_merge_health", "release_approval", "runtime_owner_authorized",
@@ -62,10 +65,11 @@ ENUMS = {
 }
 BOOL_FIELDS = {
     "source_verified", "backoff_elapsed", "independent_task_ready",
-    "scope_disjoint", "dependency_unchanged", "permission_required",
-    "irreversible_risk", "safe_routes_exhausted", "owner_authorized",
-    "root_cause_confirmed", "release_approval", "runtime_owner_authorized",
-    "human_approval",
+    "scope_disjoint", "dependency_unchanged", "dependency_cleared",
+    "blocked_task_preserved", "previous_blocker_preserved", "operator_attestation",
+    "permission_required", "irreversible_risk", "safe_routes_exhausted",
+    "owner_authorized", "root_cause_confirmed", "release_approval",
+    "runtime_owner_authorized", "human_approval",
 }
 
 
@@ -266,6 +270,11 @@ def _validate(data):
             type(evidence[field]) is not str or evidence[field] not in allowed
         ):
             raise PolicyInputError(field + " has an unsupported value")
+    blocked_task_id = evidence.get("blocked_task_id")
+    if blocked_task_id is not None and (
+        type(blocked_task_id) is not str or not QUEUE_ID.fullmatch(blocked_task_id)
+    ):
+        raise PolicyInputError("blocked_task_id must be a bounded canonical queue identifier")
     for field in ("attempts", "retry_budget", "unresolved_review_threads"):
         value = evidence.get(field)
         if value is not None and (
@@ -392,6 +401,50 @@ def evaluate(data, max_age_minutes, *, now=None):
                 "capacity_not_healthy", "Healthy capacity is required to continue independent work.",
                 ("evidence.capacity",))
 
+    elif action == "resume_blocked":
+        require(type(value("blocked_task_id")) is str
+                and bool(QUEUE_ID.fullmatch(value("blocked_task_id"))),
+                "blocked_task_id_missing",
+                "Resume must identify one exact bounded blocked queue item.",
+                ("evidence.blocked_task_id",))
+        require(value("dependency_kind") in {"external", "internal"},
+                "dependency_kind_unknown",
+                "The dependency type must be known before resumption.",
+                ("evidence.dependency_kind",))
+        require(value("dependency_scope") == "single_task",
+                "dependency_scope_too_broad",
+                "Resume may only affect the exact dependent task, not a project lane.",
+                ("evidence.dependency_scope",))
+        require(value("dependency_cleared") is True
+                and value("dependency_unchanged") is False,
+                "dependency_not_confirmed_cleared",
+                "A fresh source must explicitly confirm the dependency cleared.",
+                ("evidence.dependency_cleared", "evidence.dependency_unchanged"))
+        require(value("blocked_task_preserved") is True,
+                "blocked_task_not_preserved",
+                "The original queue item must still exist in the blocked state.",
+                ("evidence.blocked_task_preserved",))
+        require(value("previous_blocker_preserved") is True,
+                "previous_blocker_evidence_missing",
+                "The original blocker and its evidence must be retained in the resume receipt.",
+                ("evidence.previous_blocker_preserved",))
+        require(value("operator_attestation") is True,
+                "operator_attestation_missing",
+                "An explicit operator must attest that the dependency is cleared.",
+                ("evidence.operator_attestation",))
+        require(value("active_claim") == "none",
+                "claim_not_clear",
+                "A blocked task can only resume when no active or unknown claim exists.",
+                ("evidence.active_claim",))
+        require(data["owner"] is not None,
+                "owner_missing",
+                "A named authorized operator is required for a resume request.",
+                ("owner",))
+        require(value("owner_authorized") is True,
+                "owner_authorization_missing",
+                "The operator must be authorized to resume this queue item.",
+                ("evidence.owner_authorized",))
+
     elif action == "escalate_human":
         reason = value("escalation_reason")
         require(reason in {"permission_required", "irreversible_risk", "safe_routes_exhausted"},
@@ -510,15 +563,16 @@ def evaluate(data, max_age_minutes, *, now=None):
             "merge_executed": False,
             "deployment_executed": False,
             "runner_restarted": False,
+            "queue_resumed": False,
         },
     }
 
 
 # Human-review ordering only; never infer incident severity or live authority.
 WORKORDER_ORDER = {
-    "merge_pr": 0, "restart_runner": 1, "route_root_fix": 2,
-    "retry_ci": 3, "deploy": 4, "escalate_human": 5,
-    "park_blocker": 6, "assign_independent_work": 7,
+    "merge_pr": 0, "restart_runner": 1, "resume_blocked": 2,
+    "route_root_fix": 3, "retry_ci": 4, "deploy": 5,
+    "escalate_human": 6, "park_blocker": 7, "assign_independent_work": 8,
 }
 
 
@@ -757,6 +811,7 @@ def evaluate_batch(data, max_age_minutes):
             "merge_executed": False,
             "deployment_executed": False,
             "runner_restarted": False,
+            "queue_resumed": False,
         },
     }
 
@@ -1241,6 +1296,7 @@ def evaluate_recovery_case(data):
             "claim_acquired": False, "ci_retried": False,
             "merge_executed": False, "deployment_executed": False,
             "runner_restarted": False,
+            "queue_resumed": False,
         },
     }
 
