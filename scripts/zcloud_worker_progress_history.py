@@ -40,6 +40,7 @@ SAFE_REASON_CODES = frozenset({
     "generation-unconfirmed-manual-review-no-retry",
     "dispatch-ledger-unavailable",
     "new-chat-transition-operator-action-required",
+    "command-ack-backlog-manual-review",
 })
 MAX_ROWS = 40
 
