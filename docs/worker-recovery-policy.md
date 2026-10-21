@@ -524,6 +524,34 @@ deduplicated, live newly discovered count, navigation-only hint links and
 incomplete-source warnings. A missing text match never implies no open
 repair PR, available owner, closed incident or merge clearance.
 
+### Focused inspection when the historical PR slots are full
+
+For an incident that already has three historical repair PRs, use
+`--discover-existing` to obtain additional **navigation-only** links.
+To inspect the precise current state of one such source-linked PR with
+the existing double-read guard, run a **focused** read:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json \
+  --view-project cloud --view-issue 1518 \
+  --live-candidates --discover-existing --live-focus-pr 1563 \
+  --format html > private-focused-existing-pr.html
+```
+
+The example PR number must appear in the saved case or the bounded
+discovery results for that issue. It is not a free-form way to inspect,
+adopt or control arbitrary PRs. `--live-focus-pr` may also select an
+already recorded historical PR without `--discover-existing`; in that
+case it does not perform extra GitHub PR-list searches. Only the
+selected PR receives the live issue/PR/HEAD/check/review observation.
+Every other saved or discovered PR remains a visible **unreviewed link**
+with live status UNKNOWN. A focused read never asserts that a PR is
+merged to main, owner-approved or deployed. With discovery enabled,
+the upper GET budget reduces from 17 to **9** (4 discovery pages,
+one issue and up to four focused PR reads).
+
 The upper read bound is **17 GitHub GETs**: at most four list pages, one
 original issue GET and four GETs for each of three live-read candidates.
 Each list response has its own fixed 2 MiB cap; issue/PR/check/review
