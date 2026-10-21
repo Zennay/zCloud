@@ -299,6 +299,7 @@ def build(report):
                 "issue_categories_observed": [],
                 "gate_states_observed_in_source": [],
                 "source_head_observed": linked["source_head_observed"],
+                "source_head_receipts_consistent": True,
                 "any_file_overlap_observed": False,
                 "any_historical_movement_observed": False,
                 "fixes_all_linked_issues_verified": False,
@@ -306,9 +307,12 @@ def build(report):
                 "merge_authorized": False,
             })
             if group["source_head_observed"] != linked["source_head_observed"]:
-                # Conflicting saved HEAD receipts for the same PR across
-                # issues must never collapse into one apparently safe card.
-                raise ValueError("conflicting source HEADs for one existing PR")
+                # A stale issue may legitimately lack a usable HEAD while a
+                # sibling issue has one. Preserve both issue cards, but revoke
+                # the grouped HEAD rather than making the whole P0/P1 workbench
+                # fail or selecting one receipt as the winner.
+                group["source_head_observed"] = None
+                group["source_head_receipts_consistent"] = False
             if ORDER[card["priority"]] < ORDER[group["highest_priority"]]:
                 group["highest_priority"] = card["priority"]
             group["linked_issue_urls_in_source"].append(card["issue_url"])
@@ -329,6 +333,8 @@ def build(report):
         observations = sorted(group["gate_states_observed_in_source"])
         group["gate_states_observed_in_source"] = observations
         group["group_gate_source_state"] = (
+            "inconsistent_existing_pr_head_sources"
+            if not group["source_head_receipts_consistent"] else
             observations[0] if len(observations) == 1
             else "inconsistent_existing_pr_gate_sources"
         )
@@ -342,6 +348,8 @@ def build(report):
                 "Controleer verplichte branchregels, onafhankelijke review en eigenaarschap.",
             "inconsistent_existing_pr_gate_sources":
                 "Bronissues melden verschillende gates voor dezelfde PR: controleer actuele HEAD.",
+            "inconsistent_existing_pr_head_sources":
+                "Bronissues bevatten ontbrekende of afwijkende HEAD-waarnemingen voor dezelfde PR; herlees actuele issue- en PR-bron. Geen HEAD kiezen.",
         }[group["group_gate_source_state"]]
         group["additional_issues_do_not_prove_fixes"] = True
     totals = Counter(item["category"] for item in cards)
