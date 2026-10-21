@@ -88,7 +88,7 @@ def prepare_rows(view, board_sha, saved, exported_at=None):
         evaluated_at=exported_at)["status"]
     archive_age = (source_freshness(archives, evaluated_at=exported_at)["status"]
                    if archives else "not-provided")
-    manifests = " | ".join(row["original_review_manifest_sha256"] for row in archives)
+    manifests = " | ".join(row["original_review_manifest_sha256"] for row in archives) or "not-provided"
     missing_batches = any(bool(row["missing_batch_indexes"]) for row in archives)
     historical = {row["issue_url"]: row for row in (saved["issues"] if saved else [])}
     unlinked = {row["url"]: row for row in (saved["unlinked_prs"] if saved else [])}
@@ -405,7 +405,7 @@ def main(argv=None):
             "board_observed_at_utc": view["observed_at_utc"],
             "board_age_at_export": board_age,
             "archive_age_at_export": archive_age,
-            "source_archive_manifest_sha256s": " | ".join(archive_manifests),
+            "source_archive_manifest_sha256s": " | ".join(archive_manifests) or "not-provided",
             "saved_archive_batches_missing": missing_archive_batches,
         }
         rows = prepare_rows(view, sha, saved, exported_at=exported_at)
