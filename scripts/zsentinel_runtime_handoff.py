@@ -200,6 +200,7 @@ def _notion_owner_status_summary(observed, source_mode, registry):
         "coverage": "not_requested_or_unavailable",
         "observed_at_utc": None,
         "source_age_seconds": None,
+        "status_windows": [],
         "projects": [],
         "unregistered_work_status_min": None,
         "items_truncated": False,
@@ -259,6 +260,40 @@ def _notion_owner_status_summary(observed, source_mode, registry):
             or sum(counts.values()) != count
             or sum(verifying.values()) != verifying_total):
         raise ValueError("inconsistent Notion owner status aggregates")
+    windows = observed.get("status_source_windows")
+    status_windows = []
+    if windows is not None:
+        expected = (("Claimed", 1), ("Running", 1), ("Verifying", 2))
+        if (mode[0] != "notion_readonly_data_source_pages"
+                or type(windows) is not list or len(windows) != len(expected)):
+            raise ValueError("private Notion handoff cannot carry live source receipts")
+        pages, total_rows, partial = 0, 0, False
+        for row, (status, budget) in zip(windows, expected):
+            if (type(row) is not dict or row.get("status") != status
+                    or row.get("page_budget") != budget
+                    or type(row.get("pages_read")) is not int
+                    or not 1 <= row["pages_read"] <= budget
+                    or type(row.get("observed_rows")) is not int
+                    or not 0 <= row["observed_rows"] <= 100 * row["pages_read"]
+                    or row.get("coverage") not in
+                    ("complete_within_source", "partial")
+                    or row.get("read_only") is not True
+                    or row.get("claim_scope_verified") is not False):
+                raise ValueError("invalid Notion handoff status window")
+            pages += row["pages_read"]
+            total_rows += row["observed_rows"]
+            partial |= row["coverage"] == "partial"
+            status_windows.append({
+                "status": status, "page_budget": budget,
+                "pages_read": row["pages_read"],
+                "observed_rows": row["observed_rows"],
+                "coverage": row["coverage"], "owner_verified": False,
+            })
+        if (type(observed.get("total_pages_read")) is not int
+                or observed["total_pages_read"] != pages or pages > 4
+                or total_rows != count
+                or (observed["coverage"] == "incomplete") != partial):
+            raise ValueError("inconsistent Notion handoff source totals")
     known = []
     unknown_total = 0
     for pid, total in counts.items():
@@ -288,6 +323,7 @@ def _notion_owner_status_summary(observed, source_mode, registry):
                            else "live_readonly_bounded")),
         "observed_at_utc": when.astimezone(timezone.utc).isoformat(timespec="seconds"),
         "source_age_seconds": max(0, age),
+        "status_windows": status_windows,
         "projects": known[:12],
         "unregistered_work_status_min": unknown_total,
         "items_truncated": len(known) > 12,
