@@ -93,7 +93,7 @@ def render_historical(decision: dict, observed: datetime, fmt: str) -> str:
         return rendered.replace(marker, banner, 1)
     if fmt == "ics":
         from zsentinel_human_agenda import human_calendar
-        return human_calendar(decision)
+        return human_calendar(decision, historical_replay=True)
     if fmt == "md":
         from zsentinel_runtime_handoff import build_handoff, serialize
         payload = serialize(build_handoff(decision), ".md")
