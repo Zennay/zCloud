@@ -3747,3 +3747,52 @@ one-MiB output limit. Source receipt absence is not permission to
 claim a work item or perform a merge. No runner, workflow, database,
 queue, Notion or production state is changed.
 
+
+
+## 21 October · recovered functional CLI integration and honest source completeness
+
+The standalone merge-first CLI previously compared saved PR URLs against
+`card["project"]` as though the project slug were the GitHub
+`owner/repository`. In the validated original issue board,
+`card["project"]` is a control-plane slug such as `cloud`, while
+`card["url"]` points to the canonical repository
+`https://github.com/Zennay/zCloud/issues/...`. That mismatch incorrectly
+rejected valid PR links and prevented normal source-bound owner exports.
+
+[The CLI now derives its PR repository from the already validated original
+issue URL](https://github.com/Zennay/zCloud/commit/9c6dbcea144aa76403a7b1bff306fb2ba824fa53).
+It checks the full canonical `/pull/<number>` URL for that exact repository,
+so unrelated repositories remain refused without confusing source slugs
+and GitHub ownership.
+
+The printable HTML handoff now **shows its original source-custody section
+unconditionally**, instead of hiding SHA256 provenance and gate gaps inside
+a collapsed `details` element that may not render in print/PDF output.
+[Printability fix](https://github.com/Zennay/zCloud/commit/2b14f7eff2ed5414f91cf45a72fd453cb12caaf9).
+
+The CLI independently classifies **board age at the moment of export** and,
+when original saved PR ZIPs are supplied, their source age using the existing
+`source_freshness` helper. Both ages appear as separate CSV columns and
+visible printable HTML text. Statuses are `recent-snapshot`, `stale` or
+`clock-skew` (or `not-provided` for absent archives). The local export-time
+clock is not an authoritative GitHub or worker clock; even a recent snapshot
+has **zero** current claim, CI, approval or merge authority.
+[Source age integrated](https://github.com/Zennay/zCloud/commit/5375d24b9ba84f6c0341e3bb464a4d078f6b0283).
+
+The original issue-first archive includes historical PRs that **had no
+observed issue link at all**. Those existing-PR candidates are now included
+in P0-first CSV and HTML (not discarded simply because a snapshot contained
+no issue relationship). They are explicitly marked
+`historical_pr_without_sampled_issue_link`, with the observed source
+priority, canonical PR URL, `linked_issue_count=0`, UNKNOWN historic HEAD
+and a human next step to inspect the current PR and owner before creating
+competing work. A PR already linked independently by the original issue
+board appears once, not duplicated.
+[Previously unlinked PRs retained](https://github.com/Zennay/zCloud/commit/46f84b5b244f92fc605a6e0700e05946feffca72).
+
+None of the above actions reads current GitHub, assigns claims, dispatches
+CI, merges source or deploys. Immutable Python source syntax was accepted
+using connected zSSH; no QA/regression suites were added or executed. Exact
+HEAD CI, independent review, protected-main and authorized runtime owner
+remain separate release gates.
+
