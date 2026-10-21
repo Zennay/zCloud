@@ -503,6 +503,32 @@ def collect_workorders(board):
                 raise ValueError("owner workorder exact-HEAD/base mismatch")
         elif live_gate.get("status") == "current_exact_pr_head_and_sample_match":
             raise ValueError("current gate receipt lost exact HEAD in workorder")
+        # Reuse the current exact-head, double-read GitHub review-request
+        # receipt. A requested review is never an independent approval.
+        requests = None
+        if pinned:
+            person_count = live_gate.get("pending_individual_review_requests_observed")
+            team_count = live_gate.get("pending_team_review_requests_observed")
+            fingerprint = live_gate.get("pending_review_request_evidence_sha256")
+            if (type(person_count) is not int or not 0 <= person_count <= 100
+                    or type(team_count) is not int or not 0 <= team_count <= 100
+                    or type(fingerprint) is not str
+                    or re.fullmatch(r"[a-f0-9]{64}", fingerprint) is None
+                    or live_gate.get("pending_review_requests_stable_on_second_read") is not True):
+                raise ValueError("incomplete exact-head requested-review source")
+            desk_requests = item.get("pending_review_requests")
+            if (type(desk_requests) is not dict or
+                    desk_requests.get("individuals") != person_count or
+                    desk_requests.get("teams") != team_count or
+                    desk_requests.get("not_an_approval") is not True):
+                raise ValueError("requested-review mismatch between live gate and work order")
+            requests = {
+                "individuals": person_count, "teams": team_count,
+                "evidence_sha256": fingerprint,
+                "requested_not_approved": True,
+            }
+        elif item.get("pending_review_requests") is not None:
+            raise ValueError("unverified reviewer requests cannot enter work order")
         paths, paths_cut, related, hints, scope_conflicts = _observed_overlap_paths(
             projects[project], url, head if pinned else None, repo,
             live_gate.get("sampled_file_overlaps_observed"))
@@ -559,6 +585,12 @@ def collect_workorders(board):
                 "voordat een PR als actueel wordt behandeld.")
         if not pinned:
             notes.append("Geen stabiele actuele HEAD/basis bevestigd; eerst bij GitHub herlezen.")
+        elif requests and (requests["individuals"] or requests["teams"]):
+            notes.append("Onafhankelijke review is bij GitHub aangevraagd; "
+                         "dat is nog geen ingediende goedkeuring of mergevrijgave.")
+        elif requests is not None:
+            notes.append("Geen open reviewverzoek waargenomen op de exacte HEAD; "
+                         "controleer de reviewregels voordat een aanvraag wordt gedaan.")
         # The existing portfolio CLI already computes bounded comparison
         # receipts. Promote that *source* into the operator handoff instead
         # of forcing an owner to read another JSON/Markdown section.
@@ -685,7 +717,10 @@ def collect_workorders(board):
             "attention_status": attention_status,
             "attention_label": ATTENTION_LABELS[attention_status],
             "project": project, "repository": repo, "number": num,
-            "url": url, "files_url": url + "/files", "head_sha": head if pinned else None,
+            "url": url, "files_url": url + "/files",
+            "checks_url": url + "/checks", "review_url": url,
+            "pending_review_requests": requests,
+            "head_sha": head if pinned else None,
             "base_sha": base if pinned else None,
             "category": _markdown(category), "blocker": _markdown(blocker),
             "human_next_step": _markdown(next_step),
