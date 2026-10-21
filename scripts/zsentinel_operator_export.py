@@ -246,6 +246,8 @@ def verify(bundle_dir):
         # not from untrusted manifest labels or guessed release timestamps.
         "digests": {name: hashlib.sha256(content[name]).hexdigest() for name in SOURCES},
         "source_bytes": {name: len(content[name]) for name in SOURCES},
+        "readme_sha256": hashlib.sha256(content["LEESMIJ.txt"]).hexdigest(),
+        "readme_bytes": len(content["LEESMIJ.txt"]),
     }
 
 
@@ -267,6 +269,7 @@ def compare_packages(first_dir, second_dir):
             "a_bytes": first["source_bytes"][name],
             "b_bytes": second["source_bytes"][name],
         })
+    readme_changed = first["readme_sha256"] != second["readme_sha256"]
     return {
         "schema": "zsentinel.private-operator-source-comparison.v1",
         "scope": "two-locally-verified-private-manifests",
@@ -276,6 +279,14 @@ def compare_packages(first_dir, second_dir):
         "installed_or_live_verified": False,
         "changes": entries,
         "changed_modules": sum(row["changed"] for row in entries),
+        "operator_instructions": {
+            "filename": "LEESMIJ.txt",
+            "changed": readme_changed,
+            "a_sha256": first["readme_sha256"],
+            "b_sha256": second["readme_sha256"],
+            "a_bytes": first["readme_bytes"],
+            "b_bytes": second["readme_bytes"],
+        },
     }
 
 
@@ -308,8 +319,21 @@ def render_comparison(data, format_name):
                          row["module"] + " · " + str(row["a_bytes"]) + " → " +
                          str(row["b_bytes"]) + " bytes · SHA-256 " +
                          row["a_sha256"][:16] + " → " + row["b_sha256"][:16])
+    guide = data["operator_instructions"]
+    guide_state = "GEWIJZIGD" if guide["changed"] else "identiek"
+    if format_name == "markdown":
+        lines.append("| `LEESMIJ.txt` | " + guide_state + " | " +
+                     str(guide["a_bytes"]) + " | " + str(guide["b_bytes"]) +
+                     " | `" + guide["a_sha256"] + "` | `" +
+                     guide["b_sha256"] + "` |")
+    else:
+        lines.append((" [GEWIJZIGD] " if guide["changed"] else " [identiek]  ") +
+                     "LEESMIJ.txt · " + str(guide["a_bytes"]) + " → " +
+                     str(guide["b_bytes"]) + " bytes · SHA-256 " +
+                     guide["a_sha256"][:16] + " → " + guide["b_sha256"][:16])
     lines += ["", "Gewijzigde modules: " + str(data["changed_modules"]) +
               "/" + str(len(data["changes"])),
+              "Operatorinstructies: " + guide_state + " (geen live-toepassingsbewijs).",
               "Vergelijk daarna zelf exacte GitHub HEAD, verplichte checks, review en runtime-eigenaar.",
               "Geen release- of herstelautorisatie."]
     return "\n".join(lines)
