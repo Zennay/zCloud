@@ -245,6 +245,9 @@ def product_queue_snapshot(items, max_visible=8):
     visible = 0
     malformed_rows = 0
     active_owner_rows = 0
+    active_missing_worker_slot = 0
+    active_missing_claim_start = 0
+    active_missing_claim_expiry = 0
     queued_visible = 0
     held_ineligible = 0
     held_slot_occupied = 0
@@ -271,6 +274,9 @@ def product_queue_snapshot(items, max_visible=8):
             activity = project_activity.setdefault(project, {
                 "project_id": project, "visible_rows": 0,
                 "active_claimed_running_verifying_visible": 0,
+                "active_missing_worker_slot_visible": 0,
+                "active_missing_claim_start_visible": 0,
+                "active_missing_claim_expiry_visible": 0,
                 "queued_rows_visible": 0, "queued_product_candidates_visible": 0,
                 "queued_qa_only_held": 0,
                 "queued_invalid_or_unknown_held": 0,
@@ -284,6 +290,21 @@ def product_queue_snapshot(items, max_visible=8):
             active_owner_rows += 1
             if activity is not None:
                 activity["active_claimed_running_verifying_visible"] += 1
+            # Evidence gaps are operator observations, not an expired lease
+            # verdict and never authority to take or release a worker claim.
+            # Count independently: the same active owner can lack both fields.
+            if item.get("worker_slot") is None:
+                active_missing_worker_slot += 1
+                if activity is not None:
+                    activity["active_missing_worker_slot_visible"] += 1
+            if item.get("claimed_at") in (None, ""):
+                active_missing_claim_start += 1
+                if activity is not None:
+                    activity["active_missing_claim_start_visible"] += 1
+            if item.get("claim_expires") in (None, ""):
+                active_missing_claim_expiry += 1
+                if activity is not None:
+                    activity["active_missing_claim_expiry_visible"] += 1
         if status != "queued":
             continue
         queued_visible += 1
@@ -387,7 +408,11 @@ def product_queue_snapshot(items, max_visible=8):
         row["project_id"],
     ))
     for row in pressure:
-        if row["active_claimed_running_verifying_visible"]:
+        if (row["active_missing_worker_slot_visible"]
+                or row["active_missing_claim_start_visible"]
+                or row["active_missing_claim_expiry_visible"]):
+            next_step = "owner_reconcile_active_claim_evidence_before_any_new_work"
+        elif row["active_claimed_running_verifying_visible"]:
             next_step = "check_active_claims_before_any_new_work"
         elif row["queued_product_candidates_visible"]:
             next_step = "verify_claim_scope_capacity_and_owner"
@@ -402,6 +427,10 @@ def product_queue_snapshot(items, max_visible=8):
         "visible_rows": visible,
         "malformed_nonobject_rows": malformed_rows,
         "active_claimed_running_verifying_visible": active_owner_rows,
+        "active_missing_worker_slot_visible": active_missing_worker_slot,
+        "active_missing_claim_start_visible": active_missing_claim_start,
+        "active_missing_claim_expiry_visible": active_missing_claim_expiry,
+        "active_claim_evidence_is_advisory_only": True,
         "queued_rows_visible": queued_visible,
         "queued_ineligible_held": held_ineligible,
         "queued_worker_slot_occupied": held_slot_occupied,
