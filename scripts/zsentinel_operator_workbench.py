@@ -561,6 +561,12 @@ def html_document(view: dict, board_sha: str, saved_pr_context=None) -> str:
     saved_issue_details = {
         "sources_provided": saved_pr_context is not None,
         "source_is_live": False,
+        "origin_board_sha256": board_sha,
+        "original_archive_sources": [],
+        "source_coverage_not_proven_complete": True,
+        "authorizes_claim": False,
+        "authorizes_merge": False,
+        "authorizes_deploy": False,
         "issues": {},
     }
     if saved_pr_context is not None:
@@ -573,6 +579,18 @@ def html_document(view: dict, board_sha: str, saved_pr_context=None) -> str:
                 or saved_pr_context.get("owner_claim_verified") is not False
                 or saved_pr_context.get("main_merge_verified") is not False):
             raise ValueError("Untrusted historical PR source")
+        original_sources = saved_pr_context["source_snapshots"]
+        if not 1 <= len(original_sources) <= 12:
+            raise ValueError("Unbounded saved PR source identity list")
+        saved_issue_details["original_archive_sources"] = [{
+            "source_index": row["index"],
+            "review_manifest_sha256": row["original_review_manifest_sha256"],
+            "board_sha256": row["original_board_sha256"],
+            "earliest_observed_utc": row["earliest_observed_utc"],
+            "latest_observed_utc": row["latest_observed_utc"],
+            "missing_batch_indexes": row["missing_batch_indexes"],
+            "selected_pr_candidates": row["selected_pr_candidates"],
+        } for row in original_sources]
         for card in view["cards"]:
             item = historical.get(card["url"])
             if item is None:
