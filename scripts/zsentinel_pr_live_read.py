@@ -395,8 +395,21 @@ def owner_html(report):
         str(report["unknown_observations"]) + " UNKNOWN · GET attempts " +
         str(report["get_attempts"]) +
         (" · provider denied, remaining requests stopped"
-         if report["provider_admission_paused"] else "") + "</p></header><main>",
+         if report["provider_admission_paused"] else "") +
+        "</p></header><main><nav aria-label='Owner next steps'>",
+        "<h2>Existing PRs to inspect first (advisory order)</h2>",
+        "<p>Sampled failing check and waiting-job signals are triage hints, "
+        "not mandatory-branch check proof. Always verify current claims and "
+        "protected-main gates before acting.</p><ol>",
     ]
+    for candidate in report["suggested_owner_review_order"]:
+        rows.append(
+            "<li><a href='" + esc(candidate["url"]) +
+            "' target='_blank' rel='noopener noreferrer'>PR #" +
+            str(candidate["number"]) + "</a>: " +
+            esc(candidate["next_human_step"]) + "</li>"
+        )
+    rows.append("</ol></nav>")
     for row in report["observations"]:
         observed = row["status"] == "LIVE_PARTIAL_READ"
         rows.extend([
@@ -409,6 +422,7 @@ def owner_html(report):
             "<dt>PR state</dt><dd>" + esc(row.get("observed_state", "UNKNOWN")) +
             " · draft: " + esc(row.get("observed_draft", "UNKNOWN")) +
             " · reported merged: " + esc(row.get("reported_merged", "UNKNOWN")) +
+            " · target: " + esc(row.get("target_branch", "UNKNOWN")) +
             "</dd>",
             "<dt>Historical link</dt><dd>" + esc(row["source_relationship"]) +
             " · draft at source: " + esc(row["source_draft"]) + "</dd>",
@@ -439,7 +453,36 @@ def owner_html(report):
             ])
             for key, count in checks["sample_status_counts"].items():
                 rows.append("<li>" + esc(key) + ": " + str(count) + "</li>")
-            rows.append("</ul></details>")
+            rows.append("</ul>")
+            if checks["sampled_blocking_checks"]:
+                rows.append("<p><strong>Observed failing HEAD checks — "
+                            "not necessarily branch-required:</strong></p><ul>")
+                for check in checks["sampled_blocking_checks"]:
+                    label = check["name"] + " (" + check["conclusion"] + ")"
+                    if check["url"] is not None:
+                        rows.append(
+                            "<li><a href='" + esc(check["url"]) +
+                            "' target='_blank' rel='noopener noreferrer'>" +
+                            esc(label) + "</a></li>"
+                        )
+                    else:
+                        rows.append("<li>" + esc(label) + "</li>")
+                rows.append("</ul>")
+            if checks["sampled_pending_checks"]:
+                rows.append("<p><strong>Observed waiting HEAD jobs — "
+                            "not necessarily branch-required:</strong></p><ul>")
+                for check in checks["sampled_pending_checks"]:
+                    label = check["name"] + " (" + check["status"] + ")"
+                    if check["url"] is not None:
+                        rows.append(
+                            "<li><a href='" + esc(check["url"]) +
+                            "' target='_blank' rel='noopener noreferrer'>" +
+                            esc(label) + "</a></li>"
+                        )
+                    else:
+                        rows.append("<li>" + esc(label) + "</li>")
+                rows.append("</ul>")
+            rows.append("</details>")
         reviews = row.get("reviews")
         if reviews:
             rows.extend([
@@ -487,7 +530,15 @@ def markdown(report):
         "- GitHub requests attempted: " + str(report["get_attempts"]),
         "- Provider admission paused: " + str(report["provider_admission_paused"]),
         "",
+        "## Suggested next existing PR reviews (non-authorizing)",
+        "",
     ]
+    for candidate in report["suggested_owner_review_order"]:
+        lines.append(
+            "- [PR #" + str(candidate["number"]) + "](" +
+            candidate["url"] + ") — " + candidate["next_human_step"]
+        )
+    lines.append("")
     for row in report["observations"]:
         lines.extend([
             "## [PR #" + str(row["number"]) + "](" + row["url"] + ")",
@@ -497,6 +548,7 @@ def markdown(report):
             "- Exact-HEAD checks: " + row.get("exact_head_checks_url", "UNKNOWN"),
             "- PR changed files: " + row.get("pr_files_url", "UNKNOWN"),
             "- Observed state: " + row.get("observed_state", "UNKNOWN"),
+            "- Observed target branch: " + row.get("target_branch", "UNKNOWN"),
             "- Historical source link: " + row["source_relationship"],
             "- Historical draft: " + str(row["source_draft"]),
             "- Live draft: " + str(row.get("observed_draft", "UNKNOWN")),
@@ -515,6 +567,17 @@ def markdown(report):
                 json.dumps(checks["sample_status_counts"], sort_keys=True),
                 "",
             ])
+            for check in checks["sampled_blocking_checks"]:
+                lines.append(
+                    "- Sampled failing check: " + check["conclusion"] +
+                    " · " + (check["url"] or "URL UNKNOWN")
+                )
+            for check in checks["sampled_pending_checks"]:
+                lines.append(
+                    "- Sampled waiting check: " + check["status"] +
+                    " · " + (check["url"] or "URL UNKNOWN")
+                )
+            lines.append("")
         for reason in row.get("secondary_source_gaps", []):
             lines.append("- Secondary source UNKNOWN: " + reason)
         if "reason" in row:
