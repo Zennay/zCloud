@@ -553,3 +553,19 @@ voordat je conclusies trekt. Een historische HOLD-kaart is een hercontrole,
 geen toestemming voor vrijgeven, werk claimen of een CI-run starten.
 Dezelfde protected-main, verplichte exact-head CI, onafhankelijke review en
 release-owner gates blijven van kracht.
+
+## 21 oktober · Unicode-veilige bronlabels in runtime-ownerhandoff
+
+De gecombineerde runtime-ownerhandoff gebruikt één bounded tekstnormalisatie voor
+actie, type en bronlabels. Onzichtbare Unicode-format controls (waaronder bidi-
+en zero-width-markeringen), Unicode-regel-/alineascheidingstekens en niet-ASCII-
+witruimte worden als zichtbare `⟦U+XXXX⟧`-markeringen getoond. C0/C1-control-
+en surrogate-codepunten blijven zichtbaar in plaats van onopgemerkt door te
+lekken; tab, CR en LF uit gewone meerregelige bronnotities worden eerst gewone
+scheidingsspaties. De Markdown-renderer escaped bovendien pipes en
+strikethrough-delimiters, zodat providertekst geen extra tabelkolommen of
+doorgestreepte statuslabels kan injecteren.
+
+Dit is uitsluitend een render-/handoff-integriteitsmaatregel. De bron, prioriteit,
+lease, owner-claim, CI-status, recoverybeslissing en release-autorisatie worden
+niet gewijzigd. Bestaande CI en menselijke/branch-protectiongates blijven intact.
