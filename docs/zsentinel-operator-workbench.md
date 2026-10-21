@@ -3471,3 +3471,27 @@ never exports any local private annotations. Both exports remain advisory
 offline artifacts: no independently verified GitHub/Notion claim, gate, merge,
 or live recovery authority is implied.
 
+
+
+### Historical PR ZIP relationships in the reviewed portfolio handoff
+
+The filtered multi-issue Markdown briefing now includes historical
+issue-to-PR links from the same independently admitted `--pr-dossier`
+archives shown by the selected issue panels. Each report names the ZIP
+source observation windows, original review-manifest and board SHA256s,
+and any missing source batches. For every included issue it displays
+the saved PR candidates, last observed and last issue-linked HEAD,
+recorded gate label and HEAD changes, missing final PR samples, lost
+issue associations and bounded-reference omissions.
+
+The briefing respects the existing project/priority/issue filters and
+does not silently treat an archived PR disappearance as a merge,
+a fix, a cleared ownership claim or a live CI result. If no archived
+PR source was provided, it says **UNKNOWN**; it does not report a clean
+GitHub inventory. It does not perform any external request or mutation.
+
+The private-annotation opt-in remains independent of historical
+PR ZIP evidence: history and SHA256 provenance can be shared without
+also disclosing local notes or contacts. The original JSON handoff
+formats are not changed.
+
