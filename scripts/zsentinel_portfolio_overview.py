@@ -1130,12 +1130,19 @@ def main():
         continuity = None
         routing_transition = None
         if history_files:
-            from zsentinel_blocker_continuity import _read, compare, compare_history
+            from zsentinel_blocker_continuity import compare, compare_history
             from zsentinel_route_continuity import compare as routing_compare
             current = {'portfolio': summary, 'blocker_first_handoff': unblock,
                        'selected_projects': selected,
                        'source_bound_decision': decision}
-            snapshots = [_read(path) for path in history_files] + [current]
+            # Historical portfolio exports are owner-private. Reuse the
+            # existing stable no-follow inode reader that checks owner/mode
+            # on the opened file and rejects ambiguous duplicate JSON keys.
+            snapshots = [
+                read_json(path, 6 * 1024 * 1024, "previous private portfolio",
+                          private_owner_only=True)
+                for path in history_files
+            ] + [current]
             continuity = (compare(snapshots[0], snapshots[1]) if len(snapshots) == 2
                           else compare_history(snapshots))
             # Reuse the already-loaded, latest chronological saved source.
