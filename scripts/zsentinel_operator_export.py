@@ -35,6 +35,7 @@ Vanaf deze map:
   python3 zsentinel_runner_report.py --timeline T0.json T1.json T2.json --output VERLOOP.html
   python3 zsentinel_runner_report.py --format markdown --output ACTUEEL.md
   python3 zsentinel_runner_report.py --bundle INCIDENT-PAKKET
+  python3 zsentinel_runner_report.py --format issue --output GITHUB-EIGENAAR.md
   python3 zsentinel_runner_report.py --verify-bundle INCIDENT-PAKKET
   python3 zsentinel_runner_report.py --receipt T0.json --bundle INCIDENT-OUD
   python3 zsentinel_runner_report.py --format markdown --receipt T0.json --output OPGENOMEN.md
@@ -46,10 +47,9 @@ Vanaf deze map:
   python3 zsentinel_runner_report.py --format json --timeline T0.json T1.json T2.json --output inbox-historie.json
 
 Rapporten en de nieuwe gestructureerde JSON-eigenaarinbox worden create-only (0600)\ngemaakt in bestaande veilige doelmappen. JSON noemt bronmoment,\nbeperkte capaciteit/servicetellingen en maximaal drie handmatige acties.\nDe JSON-inbox activeert GEEN herstel of workflow. Ook Markdown kan direct\nvanuit de eenmalige live bron of twee historische bonnetjes worden gemaakt;\nook één opgeslagen privébon kan offline opnieuw als rapport worden getoond.\nHistorische bronmomenten blijven uitdrukkelijk niet actueel.\n
-Het nieuwe --bundle maakt een verse 0700 map met incident.html,
-owner-handoff.md, owner-inbox.json en MANIFEST.json; ieder bestand is 0600.
+Het nieuwe --bundle maakt een verse 0700 map met incident.html,\nowner-handoff.md, owner-inbox.json, github-owner-issue-draft.md en\nMANIFEST.json; ieder bestand is 0600.
 De drie rapporten delen dezelfde bronobservatie. --verify-bundle leest alleen,
-controleert bronvenster en SHA256-consistentie, GEEN cryptografische handtekening.
+controleert bronvenster en SHA256-consistentie, GEEN cryptografische handtekening.\nDe GitHub-issueconcepttekst heeft bewuste handmatige overdracht,\nbevoegdheidsvragen en geen privé-runnernamen, host of ruwe capaciteit.
 Plaats de bundel onder een bestaande eigenaar-private (0700) doelmap.
 
 Gebruik nooit bestaande rapport-/bronbestandsnamen als nieuw doel. Het huidige --preview toont de werkelijke effectieve CPU-toewijzing
