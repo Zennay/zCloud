@@ -85,7 +85,7 @@ Het blokkadepaneel gebruikt wijzigingen in `public/app.js` en
 `public/style.css`. De startpagina op deze PR verwijst daarom naar
 het **exacte** Git-blobfragment van beide assets:
 
-- `app.js`: `afd3b464a8ea` — bevat de strikte
+- `app.js`: `adfa2fae05f` — bevat de strikte
   `resumed=true` / `status=queued` / exact-`queue_id` afhandeling.
 - `style.css`: `11567f347b38` — bevat de bijbehorende
   Dependency holds- en Attention-presentatie.
@@ -98,3 +98,23 @@ opnieuw overeenkomen met de nieuwe blob. Browsercache-headerbeleid,
 exact geleverde productiebytes en daadwerkelijke activering blijven
 onder de bestaande UI-owner en geautoriseerde releasegates; de
 bronverwijzing is niet automatisch bewijs van live deployment.
+
+
+## Alle geblokkeerde taken zichtbaar, P0 eerst
+
+Het dashboard toont de geladen `blocked`-rijen nu op prioriteit
+(P0, P1, P2, P3, daarna onbekend), met stabiele bronvolgorde
+binnen elke klasse. Standaard blijven twaalf kaarten zichtbaar voor
+mobiele leesbaarheid. Bij meer resultaten verschijnt `Show next 12`
+voor opeenvolgende pagina's uit **dezelfde reeds gelezen bron**,
+en aan het einde `Show first 12`. De teller toont hoeveel items
+in de **geladen wachtrijsteekproef** staan, niet een ongecontroleerde
+claim over de volledige database. Dit pagineert uitsluitend de
+browserweergave: geen nieuwe queue-write, verborgen auto-resume,
+lease-overname of providerrequest.
+
+Een onbereikbare queue toont expliciet `unavailable`, geen
+`0 blocked`. Echte aantallen boven de standaardkaartlimiet zijn
+niet meer onbereikbaar; ook minder recente P0/P1-items worden
+boven laagprioritaire cards getoond. De gewijzigde `app.js` wordt
+via de bijgewerkte exact-blobversie in `public/index.html` geladen.
