@@ -1616,6 +1616,42 @@ def operator_text(result):
         lines.append(f"- {issue['priority']} {issue['project_id']}: {issue['title']} — {issue['issue_url']}")
     for item in result["independent_task_suggestions"]:
         lines.append(f"- {item['priority']} {item['project_id']}/{item['id']}: owner must recheck claims")
+    notion = result.get("notion_claims_observation")
+    live_sources = result.get("live_sources")
+    notion_status = live_sources.get("notion") if type(live_sources) is dict else None
+    if notion is not None:
+        if (type(notion) is not dict
+                or notion.get("source") not in (
+                    "notion_readonly_data_source_pages",
+                    "user_supplied_notion_connector_export_unverified_origin")
+                or notion.get("coverage") not in (
+                    "current_pages_only", "incomplete",
+                    "saved_single_page_not_live_current_claims_unknown")
+                or any(notion.get(key) is not False for key in (
+                    "claim_scope_verified", "task_inventory_verified",
+                    "can_dispatch", "can_release_claim"))
+                or type(notion.get("active_count")) is not int
+                or not 0 <= notion["active_count"] <= 400
+                or type(notion.get("items")) is not list
+                or len(notion["items"]) > 30
+                or type(notion.get("items_truncated")) is not bool):
+            raise ValueError("untrusted Notion work-status text summary")
+        lines.append("Notion actieve werkstatus: " + str(notion["active_count"]) +
+                     " waargenomen statusrijen · dekking " + notion["coverage"] +
+                     " · geen claim-/lease-/dispatchrechten.")
+        for item in notion["items"][:10]:
+            if (type(item) is not dict
+                    or item.get("status") not in ("Claimed", "Running", "Verifying")
+                    or type(item.get("work")) is not str or len(item["work"]) > 32
+                    or type(item.get("project")) is not str or len(item["project"]) > 100):
+                raise ValueError("invalid Notion work-status text row")
+            lines.append("  - " + item["work"] + " · " + item["status"] +
+                         " · project " + item["project"] + " · eigenaar niet bewezen")
+        if len(notion["items"]) > 10:
+            lines.append("  Nog " + str(len(notion["items"]) - 10) +
+                         " Notion-statusrijen niet getoond in tekst.")
+    elif notion_status == "degraded_unavailable_no_claim_authority":
+        lines.append("NOTIONBRON: ONBEKEND — gevraagde bron onbeschikbaar/onvolledig; niet waargenomen is niet nul.")
     worker = result.get("worker_progress_observation")
     source = result.get("live_github_read")
     worker_status = source.get("worker_progress") if type(source) is dict else None
