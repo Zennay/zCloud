@@ -331,13 +331,21 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
             status, _ = _body_issue_reference(row, full_name, int(number))
             title_status, _ = _title_issue_reference(row, full_name, int(number))
             matched_in = "body"
-            if status not in (
+            body_matched = status in (
                 "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
-            ):
-                if title_status not in (
-                    "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
-                ):
-                    continue
+            )
+            title_matched = title_status in (
+                "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
+            )
+            if not body_matched and not title_matched:
+                continue
+            # Prefer the strongest textual hint across title and body.
+            # It is still only a hint, never a linked-issue fact.
+            if title_status == "CLOSING_KEYWORD_TEXT_OBSERVED" and (
+                    status != "CLOSING_KEYWORD_TEXT_OBSERVED"):
+                status = title_status
+                matched_in = "title" if body_matched else "title_only"
+            elif not body_matched:
                 status = title_status
                 matched_in = "title_only"
             matched_total += 1
