@@ -500,19 +500,23 @@ official GitHub **issue-only search** (`is:issue is:open`), not the
 repository issues listing that also contains PRs. It independently
 rejects any PR-shaped result, validates every retained issue URL and
 repository, and displays at most 45 links. Maximum network cost:
-**5 GitHub Search GETs**, each capped at 2 MiB. The normal recent
-inventory has at most 3 pages; only when that window is truncated or
-GitHub flags an incomplete result does the inbox make two **additional**
-issue-only source queries for `P0 in:title` and `P1 in:title`, one
-30-item page each. These independent bounded searches can surface
-urgent-looking issues beyond the recent window without recrawling
-the entire repository. A title match is an **unverified navigation hint**,
-not an official label, active claim or independently established blocker.
-If GitHub reports more than 30 older P0/P1 matches, the limited recall
-is explicitly marked truncated. Repeated issue URLs are deduplicated
-and every reported issue records the source window(s) where it was
-observed. If the complete recent issue set is already in the inventory,
-extra title searches are skipped.
+**7 GitHub Search GETs**, each capped at 2 MiB. The normal recent
+inventory has at most 3 pages. Only if recent coverage is truncated or
+GitHub flags incomplete results does zSentinel make up to four additional
+issue-only searches, **one 30-row page per source**: `label:P0,...`
+and `label:P1,...` (explicit label variants including `priority:P0`
+and `priority/P0`), followed by `P0 in:title` and `P1 in:title`.
+Each labeled search hit is checked against the actual returned issue's
+recognized GitHub label before gaining advisory P0/P1 rank. A title
+match without an explicit matching label is an **unverified navigation
+hint**, never a confirmed issue priority, active claim or independently
+established blocker. The title queries match words outside the title
+prefix too; irrelevant hits are excluded after the source is read.
+Provider counts above the 30-row recall cap are displayed as partial.
+Repeated issue URLs are deduplicated and every displayed issue records
+all source windows in which it was observed. When recent results already
+cover the full repository's open-issue listing, all four additional
+queries are skipped entirely.
 
 The JSON, Markdown and HTML report the provider's `total_count`,
 `incomplete_results`, actual source queries/cutoffs, recent coverage,
