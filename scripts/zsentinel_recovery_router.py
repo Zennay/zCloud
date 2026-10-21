@@ -1212,6 +1212,14 @@ def operator_text(result):
         lines.append("No actionable fresh incidents; unknown or missing evidence does not mean healthy.")
     lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
     holds = result.get("incident_dependency_holds")
+    if holds is None:
+        # Older saved decisions have no dependency coverage receipt. Absence
+        # cannot be interpreted as an empty set of dependent tasks.
+        holds = {
+            "coverage": "incomplete_or_stale", "coverage_reasons": [],
+            "count": 0, "examples": [], "samples_truncated": False,
+            "exact_reconciliation_required": True, "claim_authorized": False,
+        }
     if holds is not None:
         coverage = holds.get("coverage", "incomplete_or_stale") if type(holds) is dict else None
         allowed_coverage_reasons = {
