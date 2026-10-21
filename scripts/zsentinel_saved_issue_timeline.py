@@ -265,6 +265,8 @@ def filter_issue_page(report, *, priority=None, issue_url=None,
         "attention_filter": attention,
         "exact_source_issue_filter": issue_url,
         "total_source_issues": len(all_rows),
+        "source_unlinked_prs_total": report["pr_without_source_issue_count"],
+        "selected_unlinked_prs_shown": len(display["unlinked_prs"]),
         "matched_source_issues": len(rows),
         "shown_source_issues": len(display["issues"]),
         "page": page,
@@ -371,7 +373,7 @@ str(selection["historical_attention_overview"]["sampled_prs_missing_from_final_s
 str(selection["page"]) + "/" + str(selection["total_pages"]) +
 ".</p>" + "".join(cards) +
 ('<details><summary>PRs zonder waargenomen bronissue (' +
-str(result["pr_without_source_issue_count"]) +
+str(selection["selected_unlinked_prs_shown"]) +
 ')</summary><ol>' + loose +
 '</ol><p>Dit kan een onvolledige GitHub-zoekscope zijn, geen bewijs van vrij werk.</p></details>'
  if selection["exact_source_issue_filter"] is None and selection["attention_filter"] is None
@@ -393,6 +395,10 @@ def markdown_content(result):
              "- Projectfilter: " + (sel["project_filter"] or "alle opgeslagen projecten"),
              "- Aandachtsfocus: " + (sel["attention_filter"] or "alle bronissues") +
              " (niet getoond betekent niet gesloten of vrij)",
+             "- PRs zonder bronissue in deze selectie: " +
+             str(sel["selected_unlinked_prs_shown"]) +
+             " / " + str(sel["source_unlinked_prs_total"]) +
+             " totaal (niet-getoond is onbekend)",
              "- Historische aandachtsgevallen binnen projectscope: " +
              str(sel["historical_attention_overview"]["multiple_existing_pr_candidates"]) +
              " meerdere PRs · " +
