@@ -3652,3 +3652,23 @@ only, and every current authorization flag is false. Saved source changes
 may reflect ordinary PR development; differing historical HEADs are
 **not** evidence of a content conflict or a new code defect.
 
+
+
+### No observed PR is never a clean work queue
+
+The reviewed cross-issue PR CSV includes an explicit **source-only,
+P0-first row for every issue with no admitted PR candidate**. Its
+`pr_reference_state` is
+`not_observed_in_bounded_sources_unknown`, the `pr_url` is empty,
+and the original issue URL is retained for the authorized operator to
+investigate. This avoids a misleading header-only CSV when a selected
+project has real P0 work but no PR was observed in the bounded source.
+
+PR-linked rows remain grouped by existing canonical PR URL. PR-unknown
+issues are interleaved by original sampled priority, not silently
+appended after lower-priority PRs. All current owner, required CI,
+independent review, merge, dispatch and deployment authorization flags
+stay explicitly false. An unobserved link never authorizes starting
+new work: recheck the **live** GitHub issue/PR inventory and the
+current Notion/worker claims first.
+
