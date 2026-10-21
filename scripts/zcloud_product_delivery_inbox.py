@@ -348,6 +348,27 @@ DELTA_LABELS = {
 }
 
 
+def _source_window_caption(payload):
+    """Make the sampled DB rows distinct from a tiny chosen operator inbox."""
+    policy = payload.get("delivery_policy") or {}
+    visible = payload.get("source_rows_visible")
+    if not _safe_int(visible, maximum=2048):
+        return "Aantal onderliggende bronrijen onbekend"
+    active = policy.get("active_claimed_running_verifying_visible")
+    queued = policy.get("queued_rows_visible")
+    if (not _safe_int(active, maximum=visible)
+            or not _safe_int(queued, maximum=visible)
+            or active + queued > visible):
+        return "Onderliggende brontellingen onbekend; selectie is onvolledig"
+    return (
+        "Geobserveerde bronrijen: " + str(visible) +
+        " · actief: " + str(active) +
+        " · wachtend: " + str(queued) +
+        " · geselecteerde eigenaarinbox is kleiner dan deze bron"
+    )
+
+
+
 def _render_comparison_html(comparison):
     if comparison is None:
         return ""
@@ -481,7 +502,8 @@ def _render(payload, rows, truncated, comparison=None):
         '<p class="eyebrow">zSentinel · alleen lokale operator</p>'
         '<h1>Herstel en onafhankelijk productwerk</h1>'
         '<p class="subtle">Moment van bron: ' + esc(source) +
-        ' · gegenereerd: ' + esc(now) + '</p>'
+        ' · gegenereerd: ' + esc(now) + '</p>' +
+        '<p class="subtle">' + esc(_source_window_caption(payload)) + '</p>'
         '<div class="notice warn" role="status"><strong>' + esc(age) +
         '</strong><p>Gedeeltelijke wachtrijbron. Geen live-autorisatie, '
         'geen claimovername, geen automatische retry en geen bewijs dat '
@@ -527,6 +549,7 @@ def _render_markdown(payload, rows, truncated, comparison=None):
         "",
         "Bronmoment: " + clean(source),
         "Gegenereerd: " + clean(timestamp),
+        "Brondekking: " + clean(_source_window_caption(payload)),
         "",
         "**" + clean(age) + "**",
         "",
@@ -623,7 +646,7 @@ def main(argv=None):
         print("zSentinel: private invoer/uitvoer geweigerd; controleer rechten, "
               "broncontract en bestemming.", file=sys.stderr)
         return 2
-    print("zSentinel: private offline operatorpagina aangemaakt; "
+    print("zSentinel: privé operatoruitvoer aangemaakt; "
           "geen runtimeactie uitgevoerd.")
     return 0
 
