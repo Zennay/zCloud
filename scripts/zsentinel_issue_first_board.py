@@ -165,10 +165,23 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects, limit=48):
         }
     # First prefer existing PRs for the same severity; source-unknown issues
     # are still explicitly shown, never silently assigned to a new worker.
-    ordered = sorted(issue_map.values(), key=lambda item: (
-        0 if item["priority"] == "P0" else 1,
-        0 if item["linked_prs"] else 1,
-        item["repo"].casefold(), item["number"]))
+    # Round-robin inside each priority and PR-reuse bucket. Without
+    # this, one high-volume project's P0 issues bury all other projects'
+    # equally urgent owner action candidates in the 48-card display cap.
+    fair_slots = {}
+    fair_rows = []
+    for issue in sorted(issue_map.values(), key=lambda item: (
+            0 if item["priority"] == "P0" else 1,
+            0 if item["linked_prs"] else 1,
+            item["repo"].casefold(), item["number"])):
+        level = 0 if issue["priority"] == "P0" else 1
+        reuse = 0 if issue["linked_prs"] else 1
+        key = (level, reuse, issue["repo"])
+        position = fair_slots.get(key, 0)
+        fair_slots[key] = position + 1
+        fair_rows.append(((level, reuse, position,
+                           issue["repo"].casefold(), issue["number"]), issue))
+    ordered = [item for _, item in sorted(fair_rows, key=lambda pair: pair[0])]
     for item in ordered:
         project = repo_projects.get(item["repo"])
         if (isinstance(project, str)
