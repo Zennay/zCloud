@@ -45,3 +45,9 @@ Operators can **filter the issue, PR and multi-PR collision panels to expired pr
 The existing opt-in, source-token-bound private JSON session persists the date alongside each collision issue's coordination state and note. Imported dates must be canonical calendar dates within 2000–2100, and a malformed/foreign session is rejected before any local edits are applied. Earlier v2 sessions without dates restore with blank dates; v1 issue-only sessions preserve their original compatibility semantics. Never upload these private notes and dates to a public issue without the owner's deliberate consent.
 
 **Authority boundary:** no GitHub request, Notion edit, current claim transfer, CI retry, runner/service command, merge, deployment or automatic notification is made by this browser workspace. The source can be partial/stale and a shared issue never proves overlapping files or duplicate fixes. Existing exact-head CI, independent review, branch protection and operator release gates are unchanged.
+
+## Private calendar handoff for open PR coordination
+
+The offline multi-PR collision panel can export locally scheduled, unresolved follow-ups as an RFC 5545 `.ics` calendar file. Each valid, open collision issue with a private follow-up date becomes an all-day calendar item with a stable issue-based UID, source issue link, observed local coordination status and a note that the date is **not** a GitHub deadline or SLA. Unicode calendar lines are folded by UTF-8 octet length; ICS text separators and newlines are escaped.
+
+Only the date and public source fields are included. Private operator notes are intentionally omitted. Items already marked as locally followed up, entries without a valid date, and non-canonical GitHub issue URLs are excluded. The export is a local download only; it does not create calendar events through an external API, write back to GitHub/Notion, or authorize a claim, review, merge or release.
