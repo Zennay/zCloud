@@ -6,7 +6,7 @@ Human source-delta handoff; never a GitHub status, claim, CI or merge check.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 import os
 from pathlib import Path
@@ -17,6 +17,7 @@ from zipfile import BadZipFile
 
 from zsentinel_saved_issue_archive import canonical_issue, read_issue_dossier
 from zsentinel_saved_gate_dossier import _open_private_extract_parent, _save_private_handoff
+from zsentinel_saved_dossier_timeline import source_freshness
 
 MAX_DIFF_BYTES = 48 * 1024
 
@@ -57,13 +58,20 @@ def admit_comparable_source_pair(older, newer):
     return old_ids[-1], new_ids[-1]
 
 
-def issue_difference(older, newer, issue_url):
+def issue_difference(older, newer, issue_url, *, stale_after_hours=6, evaluated_at=None):
     """Compare fully admitted chronological dossiers for one canonical issue."""
     if not canonical_issue(issue_url):
         raise ValueError("Issue URL must be canonical GitHub source")
     admit_comparable_source_pair(older, newer)
     _, _, _, old_issues, old_sources = older
     _, _, _, new_issues, new_sources = newer
+    evaluated_at = evaluated_at or datetime.now(timezone.utc)
+    old_freshness = source_freshness(
+        [{"latest_observed_utc": old_sources[-1]["latest_observed_utc"]}],
+        stale_after_hours=stale_after_hours, evaluated_at=evaluated_at)
+    new_freshness = source_freshness(
+        [{"latest_observed_utc": new_sources[-1]["latest_observed_utc"]}],
+        stale_after_hours=stale_after_hours, evaluated_at=evaluated_at)
     old_ids = [r["original_review_manifest_sha256"] for r in old_sources]
     new_ids = [r["original_review_manifest_sha256"] for r in new_sources]
     before = next((r for r in old_issues if r["issue_url"] == issue_url), None)
@@ -125,6 +133,8 @@ def issue_difference(older, newer, issue_url):
         "old_manifest": old_ids[-1], "new_manifest": new_ids[-1],
         "old_time": old_sources[-1]["latest_observed_utc"],
         "new_time": new_sources[-1]["latest_observed_utc"],
+        "old_source_freshness": old_freshness,
+        "new_source_freshness": new_freshness,
         "old_missing_batches": len(old_sources[-1]["missing_batch_indexes"]),
         "new_missing_batches": len(new_sources[-1]["missing_batch_indexes"]),
         "issue_not_in_old_sample": before is None,
@@ -145,6 +155,16 @@ def human_markdown(change):
         "- Original issue: " + change["url"],
         "- Older observation UTC: " + change["old_time"],
         "- Newer observation UTC: " + change["new_time"],
+        "- Source freshness old/new: " +
+          change["old_source_freshness"]["status"].upper() + " (" +
+          (str(change["old_source_freshness"]["age_hours"]) + " hours"
+           if change["old_source_freshness"]["age_hours"] is not None else "UNKNOWN") +
+          ") → " + change["new_source_freshness"]["status"].upper() + " (" +
+          (str(change["new_source_freshness"]["age_hours"]) + " hours"
+           if change["new_source_freshness"]["age_hours"] is not None else "UNKNOWN") +
+          "); threshold " + str(change["new_source_freshness"]["stale_after_hours"]) + " hours",
+        "- Freshness evaluation UTC: " + change["new_source_freshness"]["evaluated_at_utc"] +
+          " · historical only; live owner/CI/merge recheck required",
         "- Old source manifest SHA256: " + change["old_manifest"],
         "- New source manifest SHA256: " + change["new_manifest"],
         "- Older/newer missing batches: " +
@@ -225,6 +245,10 @@ def human_html(change):
         '</a><br><small>' + e(", ".join(fields)) + '</small></li>'
         for url, fields in change["changed"]
     ) or "<li>No comparable source differences observed.</li>"
+    old_freshness = change["old_source_freshness"]
+    new_freshness = change["new_source_freshness"]
+    def age_text(item):
+        return str(item["age_hours"]) + " uur" if item["age_hours"] is not None else "ONBEKEND"
     result = ("""<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
@@ -255,7 +279,13 @@ e(change["old_manifest"]) + """</code></p><p>Nieuwer: """ +
 e(change["new_time"]) + """ · <code>""" +
 e(change["new_manifest"]) + """</code></p><p>Ontbrekende batches:
 """ + str(change["old_missing_batches"]) + " → " +
-str(change["new_missing_batches"]) + """ (beperkte snapshots)</p></section>
+str(change["new_missing_batches"]) + """ (beperkte snapshots)</p>
+<p><strong>Bronactualiteit oud/nieuw:</strong> """ +
+e(old_freshness["status"].upper()) + " (" + e(age_text(old_freshness)) +
+") → " + e(new_freshness["status"].upper()) + " (" + e(age_text(new_freshness)) +
+") · drempel " + str(new_freshness["stale_after_hours"]) +
+" uur · evaluatie UTC " + e(new_freshness["evaluated_at_utc"]) +
+". Recent betekent niet live; actuele bronhercontrole blijft verplicht.</p></section>
 <div class="cards"><section><strong class="value">""" +
 str(len(change["first_seen"])) + """</strong><p>Nieuw waargenomen PR-links
 in de latere bron, niet bewezen nieuw geopend.</p></section>
@@ -335,6 +365,8 @@ def main(argv=None):
                         help="Older private issue continuity ZIP")
     parser.add_argument("--current", required=True, type=Path,
                         help="Newer private issue continuity ZIP")
+    parser.add_argument("--stale-after-hours", type=int, default=6,
+                        help="Mark saved evidence stale after 1..168 hours (default: 6)")
     parser.add_argument("--issue", required=True,
                         help="Canonical exact source issue URL")
     parser.add_argument("--format", choices=("markdown", "html"),
@@ -345,7 +377,8 @@ def main(argv=None):
     try:
         previous = read_issue_dossier(args.previous)
         current = read_issue_dossier(args.current)
-        change = issue_difference(previous, current, args.issue)
+        change = issue_difference(
+            previous, current, args.issue, stale_after_hours=args.stale_after_hours)
         if args.format == "html":
             save_private_html(args.output, human_html(change))
         else:
