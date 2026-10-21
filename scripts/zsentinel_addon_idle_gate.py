@@ -12,12 +12,15 @@ import json
 import math
 import sys
 import time
+from datetime import datetime, timezone
 from urllib.request import urlopen
 
 RUNNER_URL = "http://127.0.0.1:8765/api/runner-live"
 MIN_STABLE_SECONDS = 12
 MAX_PROJECTS = 50
 MAX_WORKERS = 200
+MAX_EVENT_AGE_SECONDS = 90
+MAX_FUTURE_EVENT_SECONDS = 5
 
 
 class IdleNotProven(ValueError):
@@ -48,6 +51,30 @@ def _read_worker_snapshot() -> frozenset[str]:
                 raise IdleNotProven("worker activity unknown")
             if not worker["active"]:
                 continue
+            # A missing/offline/stale worker is UNKNOWN, never proof of idle.
+            # The server derives state=live from the last heartbeat/event.
+            if worker.get("state") != "live":
+                raise IdleNotProven("active worker telemetry stale or unavailable")
+            age = worker.get("age_seconds")
+            if (not isinstance(age, (int, float)) or not math.isfinite(age)
+                    or age < 0 or age > MAX_EVENT_AGE_SECONDS):
+                raise IdleNotProven("active worker age unknown")
+            event = worker.get("last_event")
+            if not isinstance(event, dict):
+                raise IdleNotProven("active worker last event unknown")
+            raw_ts = event.get("time")
+            if not isinstance(raw_ts, str):
+                raise IdleNotProven("active worker last event clock unknown")
+            try:
+                event_ts = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                if event_ts.tzinfo is None:
+                    raise ValueError("timezone required")
+                event_seconds = (datetime.now(timezone.utc) - event_ts).total_seconds()
+            except ValueError:
+                raise IdleNotProven("invalid event clock") from None
+            if (event_seconds < -MAX_FUTURE_EVENT_SECONDS
+                    or event_seconds > MAX_EVENT_AGE_SECONDS):
+                raise IdleNotProven("active worker event clock outside freshness window")
             identity = worker.get("worker_id")
             if not isinstance(identity, (str, int)) or not str(identity).strip():
                 raise IdleNotProven("active worker identity unknown")
@@ -64,12 +91,8 @@ def _read_worker_snapshot() -> frozenset[str]:
                 raise IdleNotProven("worker command state unknown")
             if isinstance(command, dict) and command.get("status") == "pending":
                 raise IdleNotProven("worker command pending")
-            event = worker.get("last_event")
-            if event is not None and not isinstance(event, dict):
-                raise IdleNotProven("last event state unknown")
-            last = (event or {}).get("event")
+            last = event.get("event")
             if last in {"prompt-sent", "generation-started"}:
-                age = worker.get("age_seconds")
                 if not isinstance(age, (int, float)) or not math.isfinite(age) or age < 180:
                     raise IdleNotProven("recent generation not proven finished")
     if observed == 0:
