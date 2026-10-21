@@ -17,7 +17,26 @@ python3 scripts/zsentinel_route_continuity.py \
 ```
 
 `--format json` schrijft een nieuwe `.json`, `--format text` een nieuwe
-`.md`. Bestaande `write_private_output` gebruikt directory-gebonden
+`.md` en `--format csv` een nieuwe `.csv` met een importeerbare
+**menselijke herstelwerklijst**. De CSV houdt P0/P1-voorstellen, wijzigingen,
+niet meer waargenomen taken en bronvolledigheid uit elkaar. Iedere rij
+bevat opnieuw expliciet `claim_authorized=false`,
+`dispatch_authorized=false`, `merge_authorized=false` en
+`task_released_verified=false`. Er komen geen bestandsscope,
+claimtokens, geheime logregels of automatische GitHub- of Notion-mutaties in
+de export. De CSV is informatief, niet een workerimport/uitvoeropdracht.
+
+Beide portfolio-bronnen moeten bovendien met exact dezelfde **opaque
+lokale SQLite-bronidentiteit** zijn geobserveerd om taaktransities met
+elkaar te vergelijken. Bij ontbrekende identiteit, GitHub-only of
+verschillende SQLite-bestanden krijgt de operator `queue_source_identity_unknown_or_changed`
+met UNKNOWN, zonder kunstmatige taak- of herstelovergangen. Het digest zelf
+blijft privé en wordt niet in menselijke HTML-, tekst- of CSV-rijen
+uitgeschreven. Ook indien bestanden minder dan tien minuten oud zijn,
+noemt de **standalone** offline vergelijking iedere getoonde overgang
+HISTORISCHE REPLAY; zij heeft geen live claim- of eigenaarbewijs.
+
+Bestaande `write_private_output` gebruikt directory-gebonden
 create-only opslag en mode 0600; input/output en hun geresolveerde paden
 moeten verschillend zijn. De reader weigert symlinks, ongeldige niet-reguliere
 bronbestanden, duplicate JSON-keys en meer dan 6 MiB per input. Geen
