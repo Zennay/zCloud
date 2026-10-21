@@ -475,6 +475,8 @@ def _batch_workorders(results):
         blockers = sorted({hold["code"] for report in reports
                            for hold in report["blockers"]})
         owners = {report["owner"] for report in reports}
+        needed = sorted({field for report in reports
+                         for field in report["required_evidence"]})
         workorders.append({
             "project_id": project,
             "incident_id": incident,
@@ -483,6 +485,7 @@ def _batch_workorders(results):
             "owner": next(iter(owners)) if len(owners) == 1 else None,
             "decision": "HOLD" if blockers else "READY_FOR_HUMAN_REVIEW",
             "problem_codes": blockers,
+            "required_evidence": needed,
             "source_urls": sorted({report["source_url"] for report in reports}),
             "next_step": ("select_one_authorized_action" if conflict else
                           "resolve_evidence_holds" if blockers else
@@ -509,10 +512,12 @@ def workorders_text(batch):
         issues = ", ".join(order["problem_codes"][:4]) or "no local policy holds"
         if len(order["problem_codes"]) > 4:
             issues += ", ..."
+        needed = ", ".join(order["required_evidence"][:4]) or "live authorization"
+        if len(order["required_evidence"]) > 4:
+            needed += ", ..."
         lines.extend([
             "Problem [" + order["project_id"] + "/" + order["incident_id"] + "]: " + issues,
-            "Action: " + order["next_step"] + " | proposal: " +
-            ", ".join(order["proposed_actions"]) +
+            "Action: " + order["next_step"] + " | required: " + needed +
             " | owner: " + (order["owner"] or "UNKNOWN"),
             "Status: " + order["decision"] +
             " | human approval required; no claim/retry/merge/deploy performed.",
@@ -673,7 +678,9 @@ def workorders_html(batch):
             " · proposals: " + esc(", ".join(item["proposed_actions"])) +
             " · owner: " + esc(item["owner"] or "UNKNOWN") + "</p>",
             "<p class='status'><strong>Status:</strong> " + esc(item["decision"]) + "</p>",
-            "<details><summary>Source receipts and boundaries</summary>",
+            "<details><summary>Required evidence, source receipts and boundaries</summary>",
+            "<p><strong>Required:</strong> " +
+            esc(", ".join(item["required_evidence"]) or "live authorization") + "</p>",
             "<p class='muted'>Locally supplied, not independently verified. "
             "Human review required; no retry, claim, merge, deploy or restart.</p>",
             "<ul>",
