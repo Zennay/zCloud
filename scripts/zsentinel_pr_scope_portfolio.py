@@ -744,14 +744,21 @@ def merge_first_attention(board):
         # Collision links are advisory and may cover a different sample/HEAD.
         # Never interpret absence or a shared filename as merge clearance.
         overlaps = []
-        for pair in view.get("shown_collision_pairs", [])[:80]:
-            left, right = pair["left"], pair["right"]
-            if left["url"] == url:
-                overlaps.append(right["url"])
-            elif right["url"] == url:
-                overlaps.append(left["url"])
-        for other in gate.get("sampled_file_overlaps_observed", []):
-            overlaps.append(other["other_pr_url"])
+        # The collision snapshot and the exact-HEAD gate can observe
+        # different revisions of the same open PR. Prevent old-file
+        # relationships from masquerading as current merge-first guidance.
+        if current:
+            gate_head = gate["head_sha_observed"]
+            for pair in view.get("shown_collision_pairs", [])[:80]:
+                left, right = pair["left"], pair["right"]
+                if left["url"] == url and left.get("head_sha") == gate_head:
+                    overlaps.append(right["url"])
+                elif right["url"] == url and right.get("head_sha") == gate_head:
+                    overlaps.append(left["url"])
+            # Focused older PRs use a separately pinned second-read
+            # exact-HEAD receipt. No sample may qualify after head drift.
+            for other in gate.get("sampled_file_overlaps_observed", []):
+                overlaps.append(other["other_pr_url"])
         # Only canonical same-repository PR locations are clickable. This is
         # presentation data from a bounded, possibly stale collision sample.
         candidate_links = sorted(set(overlaps))
