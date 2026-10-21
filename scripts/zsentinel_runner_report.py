@@ -105,10 +105,19 @@ def recovery_priorities(data):
     """Conservative operator decisions, never executable recovery instructions."""
     host = data["host"]
     unit_source = data["units"]
-    entries = unit_source["runner_units"] if unit_source["runner_units_observed"] else []
-    failed = [u for u in entries if u["state"] == "failed"]
-    stopped = [u for u in entries if u["state"] == "inactive"]
-    active = [u for u in entries if u["state"] == "active"]
+    from zsentinel_runner_snapshot import _unit_states, _user_unit_states
+    system_observed = unit_source.get("runner_units_observed") is True
+    user_observed = unit_source.get("user_runner_units_observed") is True
+    # Validate both managers separately. A same-named service in two managers
+    # is two distinct observations and must never overwrite another one.
+    system_rows = _unit_states({"units": unit_source}) if system_observed else {}
+    user_rows = _user_unit_states({"units": unit_source})
+    entries = [("system", row) for row in system_rows.values()] + [
+        ("user", row) for row in user_rows.values()] if user_observed else [
+        ("system", row) for row in system_rows.values()]
+    failed = [scope for scope, row in entries if row["state"] == "failed"]
+    stopped = [scope for scope, row in entries if row["state"] == "inactive"]
+    active = [scope for scope, row in entries if row["state"] == "active"]
     # Partial/malformed capacity is UNKNOWN, never falsely healthy and
     # never a TypeError that prevents an owner handoff.
     import math
@@ -142,20 +151,24 @@ def recovery_priorities(data):
                         "onafhankelijk heeft vastgesteld dat er voldoende ruimte is."))
     if failed:
         actions.append(("P1 · gefaalde runner-services",
-                        f"{len(failed)} service(s) hebben een systemd-fout. "
+                        f"{len(failed)} service(s) hebben een systemd-fout "
+                        f"(system={failed.count('system')}, user={failed.count('user')}). "
                         "De bevoegde service-eigenaar onderzoekt oorzaak en "
                         "huidige GitHub-labelroute; dit rapport voert geen herstart uit."))
     if stopped:
         actions.append(("P1 · gestopte runner-services",
-                        f"{len(stopped)} service(s) staan uit. Een geslaagde "
+                        f"{len(stopped)} service(s) staan uit "
+                        f"(system={stopped.count('system')}, user={stopped.count('user')}). Een geslaagde "
                         "stop kan bewust zijn; eerst eigenaarsintentie controleren."))
     if active:
         actions.append(("P2 · actieve services",
-                        f"{len(active)} service(s) zijn actief. GitHub-jobtoewijzing, "
+                        f"{len(active)} service(s) zijn actief "
+                        f"(system={active.count('system')}, user={active.count('user')}). GitHub-jobtoewijzing, "
                         "actuele workflowstatus en CI blijven afzonderlijk te bevestigen."))
-    if not unit_source["runner_units_observed"] or unit_source.get("runner_units_truncated"):
+    if (not system_observed or unit_source.get("runner_units_truncated")
+            or not user_observed or unit_source.get("user_runner_units_truncated")):
         actions.append(("Brondekking onvolledig",
-                        "Runnerinventaris is onvolledig. Ontbrekende services of jobs "
+                        "Systeem- en/of gebruikersrunnerinventaris is onvolledig. Ontbrekende services of jobs "
                         "mogen niet als gezond, hersteld of verwijderd worden beschouwd."))
     if not actions:
         actions.append(("Geen aantoonbare herstelactie",
