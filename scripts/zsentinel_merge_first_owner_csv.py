@@ -46,6 +46,9 @@ FIELDS = (
     "selection_pr_url", "selection_issue_url",
     "source_record_count", "selected_record_count",
     "excluded_source_record_count", "selection_filter_applied",
+    "selected_existing_pr_count", "selected_issue_without_pr_count",
+    "selected_unlinked_pr_count", "selected_competing_pr_count",
+    "selected_missing_final_pr_count", "selected_head_variation_count",
 )
 
 
@@ -331,6 +334,19 @@ def selection_metadata(total, rows, *, repository=None, priority=None,
         "excluded_source_record_count": total - len(rows),
         "selection_filter_applied": bool(
             repository or priority or record_type != "all" or pr_url or issue_url),
+        # Cohort counts refer ONLY to rows selected from admitted snapshots.
+        "selected_existing_pr_count": sum(bool(row["pr_url"]) for row in rows),
+        "selected_issue_without_pr_count": sum(not row["pr_url"] for row in rows),
+        "selected_unlinked_pr_count": sum(
+            row["pr_reference_state"] == "historical_pr_without_sampled_issue_link"
+            for row in rows),
+        "selected_competing_pr_count": sum(
+            bool(row["issue_has_alternative_prs"]) for row in rows),
+        "selected_missing_final_pr_count": sum(
+            bool(row["pr_missing_last_saved_snapshot"]) for row in rows),
+        "selected_head_variation_count": sum(
+            bool(row["head_variation_is_historical_not_merge_conflict"])
+            for row in rows),
     }
 
 
@@ -372,7 +388,10 @@ def render_private_html(rows, source_metadata=None):
         "selection_repository", "selection_priority", "selection_record_type",
         "selection_pr_url", "selection_issue_url",
         "source_record_count", "selected_record_count",
-        "excluded_source_record_count", "selection_filter_applied")}
+        "excluded_source_record_count", "selection_filter_applied",
+        "selected_existing_pr_count", "selected_issue_without_pr_count",
+        "selected_unlinked_pr_count", "selected_competing_pr_count",
+        "selected_missing_final_pr_count", "selected_head_variation_count")}
     parts.append(
         '<section aria-label="Owner selection and bounded coverage">'
         '<h2>Owner selection · saved source scope</h2>'
@@ -386,6 +405,20 @@ def render_private_html(rows, source_metadata=None):
         ' · displayed: ' + escape(str(selection["selected_record_count"])) +
         ' · excluded from this selection: ' +
         escape(str(selection["excluded_source_record_count"])) + '</p>'
+        '<p>Selected existing PR candidates: ' +
+        escape(str(selection["selected_existing_pr_count"])) +
+        ' · issues without an observed PR: ' +
+        escape(str(selection["selected_issue_without_pr_count"])) +
+        ' · saved unlinked PRs: ' +
+        escape(str(selection["selected_unlinked_pr_count"])) + '</p>'
+        '<p>Shared-issue competing PR references: ' +
+        escape(str(selection["selected_competing_pr_count"])) +
+        ' · PRs missing final historical sample: ' +
+        escape(str(selection["selected_missing_final_pr_count"])) +
+        ' · historically changing HEADs: ' +
+        escape(str(selection["selected_head_variation_count"])) + '</p>'
+        '<p>Counts are source-only, may overlap, and are not live project or '
+        'merge-gate evidence.</p>'
         '<p>Filtered: ' + escape(str(selection["selection_filter_applied"])) +
         '. Excluded or absent entries are UNKNOWN, not fixed, merged or free.</p>'
         '</section>'
@@ -566,6 +599,18 @@ def render_private_markdown(rows, source_metadata):
         "- Selected records: " + str(metadata["selected_record_count"]),
         "- Excluded by selection: " + str(
             metadata["excluded_source_record_count"]),
+        "- Existing saved PR candidates: " + str(
+            metadata["selected_existing_pr_count"]),
+        "- Issues without observed PR: " + str(
+            metadata["selected_issue_without_pr_count"]),
+        "- Saved unlinked PR candidates: " + str(
+            metadata["selected_unlinked_pr_count"]),
+        "- Competing PR candidates on sampled issues: " + str(
+            metadata["selected_competing_pr_count"]),
+        "- PR candidates missing from final historical sample: " + str(
+            metadata["selected_missing_final_pr_count"]),
+        "- Historically varied HEAD references: " + str(
+            metadata["selected_head_variation_count"]),
         "",
         "**Selection exclusions and unobserved records remain UNKNOWN, "
         "never cleared, claimed or completed.**",
