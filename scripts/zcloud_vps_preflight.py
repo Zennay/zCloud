@@ -409,7 +409,7 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
         status = ("owner_release_gate" if recommendation["code"] == "EXTERNAL_RELEASE_GATES"
                   else "active_blocker" if any(current[x] == "block" for x in active)
                   else "active_warning" if active else "observation_incomplete")
-        if active and stale_comparison:
+        if stale_comparison:
             trend = "stale_baseline_no_resolution_credit"
         elif active and family & escalated:
             trend = "escalated_to_blocker"
