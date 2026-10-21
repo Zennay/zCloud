@@ -21,6 +21,38 @@ Existing P0/P1 issue classification, draft/QA exclusion,
 exact HEAD, independent review, CI and mainwriter checks are unchanged.
 These are **candidate links**, never proof a PR actually fixes the issue.
 
+## P0/P1 bronvenster zonder verdwijnende PR-kandidaten
+
+De operator-inbox behoudt nu alle P0/P1-issues uit de **reeds opgevraagde**
+GitHub-issuespagina, niet slechts de maximaal vier PRs die per geselecteerd
+project diep worden geïnspecteerd. Daardoor verdwijnt een P0-issue niet meer
+uit het operatoroverzicht wanneer het wel in het bronvenster aan PR #5 of
+later gekoppeld is, maar niet aan één van de vier onderzochte PRs.
+
+Dezelfde reeds verkregen open-PR-lijst wordt omgekeerd geïndexeerd. Een
+issuekaart maakt daarom drie categorieën expliciet:
+- **Exact geïnspecteerde PR**: heeft afzonderlijke review/CI/workflowbron en
+  een expliciete nog steeds niet-bewezen issueverwijzing.
+- **Waargenomen maar niet opnieuw geïnspecteerde PR**: bronlijsthint,
+  uitsluitend nummer/link, nooit een actuele gate of voltooiingsclaim.
+  De kaart bevat de directe, read-only vervolgopdracht
+  `--project ID --issue N --candidate-pr M` om die PR met de
+  canonieke issuebron alsnog nauwkeurig te inspecteren.
+- **Geen kandidaat binnen het bronvenster**: niet gelijk aan geen open PR
+  of vrij eigenaarschap. De bestaande gerichte `--issue`-zoekroute blijft
+  beschikbaar om oudere kandidaten te vinden.
+
+De bestaande GitHub-leeslimieten blijven gelijk; dit voegt **nul**
+providerverzoeken toe. Iedere bronsnapshot is begrensd tot drie projecten,
+elk maximaal 100 recent geopende/gewijzigde bron-issues en 100 open PRs.
+Per issue worden maximaal tien bronlijst-PR-nummers opgeslagen; het
+werkelijke waargenomen aantal en eventueel weggelaten kandidaten blijven
+zichtbaar. De private HTML/JSON/terminal toont maximaal 48 issuekaarten,
+met een geaggregeerde telling van weggelaten kaarten en waarschuwingen
+voor een afgekapt of onbeschikbaar bronvenster. Geen enkele hint kan
+review, exacte-head CI, branch protection, werkereigenaarschap,
+mergebevoegdheid of productierelease vervangen.
+
 ## P0/P1 issue-inbox: direct van incident naar bestaande PRs
 
 De bestaande issue-first opdracht biedt nu één daadwerkelijk bruikbare
@@ -30,10 +62,10 @@ issue-referenties met de reeds opgehaalde P0/P1-issues waarvoor in die
 selectie geen PR-koppeling is gevonden. Iedere kaart toont:
 
 - de canonieke GitHub-issuelink, prioriteit en oorspronkelijke titel;
-- directe links naar geselecteerde bestaande kandidaat-PRs met hun
-  waargenomen status, afzonderlijke exacte-HEAD review-, CI- en
-  workflowstatus; geen enkele kaart noemt deze observaties een bewezen
-  fix of mergebevoegdheid;
+- directe links naar geselecteerde diep geïnspecteerde kandidaat-PRs,
+  met hun bron-waargenomen exacte-HEAD review-, CI- en workflowstatus;
+  plus eventuele **niet opnieuw geïnspecteerde** bestaande PRs uit de
+  al opgehaalde GitHub-lijst, zonder fictieve gate- of fixclaims;
 - één duidelijke volgende stap, met read-only CLI-opdracht om bij een
   bekende open issue ook **oudere** bestaande PRs te zoeken;
 - **eigenaarschap onbekend**, **main niet bewezen**, **live niet geverifieerd**.
