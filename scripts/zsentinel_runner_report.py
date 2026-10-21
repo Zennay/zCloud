@@ -1099,6 +1099,20 @@ def render_private_handoff(data):
             else:
                 detail = "niet vergelijkbaar"
             rows.append("- Capaciteit " + name + ": " + detail + ".")
+        oom = pair.get("memory_oom_comparison")
+        if isinstance(oom, dict):
+            amount = oom.get("kernel_oom_kills_delta")
+            rows.append("- Hostbrede kernel-OOM-toename (geen runner-attributie): " +
+                        (str(amount) if oom.get(
+                            "oom_counter_same_boot_comparable") is True
+                         and type(amount) is int and 0 <= amount < 2 ** 63
+                         else "ONBEKEND (boot/bron)") + ".")
+            rows.append("- PSI full avg10: " + _handoff_number(
+                oom.get("previous_psi_full_avg10_percent"), "%") + " → " +
+                _handoff_number(oom.get("current_psi_full_avg10_percent"), "%")
+                + "; geen jobbevestiging.")
+        else:
+            rows.append("- Kernelteller/PSI in deze historische bon ONBEKEND.")
         coach = pair.get("coach_comparison") or {}
         if coach.get("same_boot_policy_comparable") is True:
             before, after = coach.get("previous") or {}, coach.get("current") or {}
@@ -1489,6 +1503,15 @@ def render_private_immediate_handoff(data):
     ):
         rows.append("- " + label + ": " +
                     _handoff_number(readings.get(field), suffix) + ".")
+    rows += ["", "## Hostbreed OOM/PSI-bronbewijs", ""]
+    rows.append("- Memory PSI some avg10: " + _handoff_number(
+        readings.get("memory_psi_some_avg10_percent"), "%") +
+        "; full avg10: " + _handoff_number(
+            readings.get("memory_psi_full_avg10_percent"), "%") + ".")
+    rows.append("- Kernel-OOM-kills sinds boot (ALLE processen, geen runnerclaim): " +
+                _handoff_number(readings.get("kernel_oom_kills_since_boot")) + ".")
+    rows.append("- OOM-kernelbronnen bewijzen niet dat een bepaalde runner "
+                "of GitHub-job is hersteld. Geen herstart geautoriseerd.")
     rows += ["", "## Waargenomen runner-services (alleen systemd)", ""]
     services = observed["runner_services"]
     if services is None:
@@ -1524,6 +1547,14 @@ def render_private_immediate_handoff(data):
                         + ("volledig" if step["source_complete"] else "ONZEKER")
                         + ", zelfde boot "
                         + ("ja" if step["same_boot_verified"] else "niet bevestigd") + ".")
+        for step in steps[:11]:
+            count = step.get("host_kernel_oom_kills_delta")
+            rows.append("- Hostbrede OOM-toename " + _handoff_text(step["from_utc"]) +
+                        " → " + _handoff_text(step["to_utc"]) + ": " +
+                        (str(count) if step.get("host_oom_counter_comparable") is True
+                         and type(count) is int and 0 <= count < 2 ** 63
+                         else "ONBEKEND (boot/bron)") +
+                        "; dit is geen aantal runnercrashes.")
         for change in evidence["observed_transitions"][:40]:
             rows.append("  - " + _handoff_text(change["unit"]) + ": "
                         + _handoff_text(change["change"]) + "; geen herstelbewijs.")
