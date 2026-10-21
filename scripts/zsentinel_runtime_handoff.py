@@ -1397,6 +1397,8 @@ def handoff_html(report):
     return ('<section class="panel warn" aria-label="Prioritaire eigenaaroverdracht">'
             '<h2>Nu opvolgen · P0 eerst</h2><p>Actuele, begrensde '
             'bronwaarneming. GEEN vrijgave voor workerclaim, retry, merge of deploy.</p>'
+            '<p class="small muted">Handoff source SHA256: ' +
+            _source_report_digest(report) + '</p>'
             '<p class="small muted">Bronbereik: ' + sources + '</p>' +
             '<p class="small muted">Queue huidig: ' +
             escape(current_queue_line) + '</p>' +
@@ -1421,6 +1423,7 @@ def markdown(report):
         raise ValueError("invalid handoff report")
     lines = ["# zSentinel · actuele eigenaaroverdracht",
              "Bronmoment: " + _md(report.get("created_at_utc"), 40),
+             "Bronhandoff SHA256: `" + _source_report_digest(report) + "`",
              "",
              "**Alleen brongebonden advies.** Geen claim, CI-herstart, merge, "
              "VPS-herstel of deploy uitgevoerd of toegestaan.",
@@ -1672,6 +1675,15 @@ def _csv_cell(value, limit=2000):
     return text
 
 
+
+def _source_report_digest(report):
+    """Stable cross-format SHA256 of the handoff object, excluding its own digest."""
+    source = dict(report)
+    source.pop("source_report_sha256", None)
+    return hashlib.sha256(json.dumps(
+        source, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+
 def csv_export(report):
     """Render a separate source-bound owner CSV; no claim or release action."""
     if (not isinstance(report, dict) or report.get("schema") != SCHEMA
@@ -1696,9 +1708,7 @@ def csv_export(report):
     stamp = _short(report.get("created_at_utc"), 40)
     coverage_json = json.dumps(
         coverage, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    source_report_sha256 = hashlib.sha256(json.dumps(
-        report, ensure_ascii=False, sort_keys=True,
-        separators=(",", ":")).encode("utf-8")).hexdigest()
+    source_report_sha256 = _source_report_digest(report)
     metadata = {
         "handoff_schema": SCHEMA,
         "source_report_sha256": source_report_sha256,
@@ -1777,7 +1787,9 @@ def serialize(report, suffix):
     if suffix == ".md":
         return markdown(report)
     if suffix == ".json":
-        return json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
+        envelope = dict(report)
+        envelope["source_report_sha256"] = _source_report_digest(report)
+        return json.dumps(envelope, ensure_ascii=False, sort_keys=True, indent=2)
     if suffix == ".csv":
         return csv_export(report)
     raise ValueError("private handoff output must be .md, .json or .csv")
