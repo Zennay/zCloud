@@ -1168,6 +1168,29 @@ def render_private_handoff(data):
                         + "; niet gelijk aan evenveel crashes.")
     else:
         rows.append("- Geen failed-bronregel aangetroffen; geen bewijs dat alle runners gezond zijn.")
+    rows.extend(["",
+                 "## Gebruikersrunner failurehistorie (onafhankelijke systemd --user manager)",
+                 "- Onvolledige/onbekende user-servicebron: " +
+                 str(summary.get("incomplete_user_service_samples", summary["samples"])) +
+                 " meetmomenten.",
+                 "- User-services als failed in de laatste bron: " +
+                 str(len(summary.get("latest_user_failed_services", []))) +
+                 " (system bron afzonderlijk)."])
+    user_failed = summary.get("user_failed_observations", [])
+    if user_failed:
+        for entry in user_failed[:20]:
+            rows.append("- user-systemd / " + _handoff_text(entry["unit"]) +
+                        ": " + str(entry["failed_samples"]) + " × failed in " +
+                        str(entry["seen_samples"]) + " bronobservaties; " +
+                        "laatste status: " +
+                        _handoff_text(entry["last_observed_state"]) +
+                        "; systemd-oorzaken: " + _handoff_text(", ".join(
+                            item["result"] + " " + str(item["sample_count"]) + "x"
+                            for item in entry["failure_results"]), 250) +
+                        "; dit zijn geen afzonderlijke crashes of bewezen jobs.")
+    else:
+        rows.append("- Geen failed-user-service in waargenomen regels; "
+                    "onbekende bron is geen bewijs van gezonde runners.")
     rows.extend(["", "## Historische overgangen"])
     for index, pair in enumerate(comparisons, start=1):
         reboot = pair.get("host_reboot_observed") is True
@@ -1293,6 +1316,10 @@ def render_private_json_handoff(data):
             "incomplete_service_samples": summary["incomplete_service_samples"],
             "unknown_capacity_samples": summary["unknown_capacity_samples"],
             "failed_services_at_last_observation": len(summary["latest_failed_services"]),
+            "failed_user_services_at_last_observation": len(
+                summary.get("latest_user_failed_services", [])),
+            "incomplete_user_service_samples": summary.get(
+                "incomplete_user_service_samples", summary["samples"]),
         }
         source_kind = "private-offline-timeline"
     else:
