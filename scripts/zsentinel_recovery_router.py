@@ -1616,6 +1616,14 @@ def operator_text(result):
         lines.append(f"- {issue['priority']} {issue['project_id']}: {issue['title']} — {issue['issue_url']}")
     for item in result["independent_task_suggestions"]:
         lines.append(f"- {item['priority']} {item['project_id']}/{item['id']}: owner must recheck claims")
+    worker = result.get("worker_progress_observation")
+    source = result.get("live_github_read")
+    worker_status = source.get("worker_progress") if type(source) is dict else None
+    if worker is not None:
+        from zsentinel_worker_progress_observer import operator_text as worker_operator_text
+        lines.append(worker_operator_text(worker))
+    elif worker_status == "degraded_unavailable_no_recovery_proof":
+        lines.append("WORKERBRON: ONBEKEND — read-only eventbron ontbreekt of schema is incompatibel; geen hervatting/claimrechten bewezen.")
     return "\n".join(lines)
 
 
