@@ -35,7 +35,8 @@ def archived_decision(path: Path, now: datetime | None = None) -> tuple[dict, da
             or stat.S_IMODE(info.st_mode) & 0o077
             or info.st_nlink != 1 or not 0 < info.st_size <= MAX_SOURCE_BYTES):
         raise ValueError("saved source must be an owner-only 0600 regular file")
-    decision = read_json(path, MAX_SOURCE_BYTES, "saved decision")
+    decision = read_json(path, MAX_SOURCE_BYTES, "saved decision",
+                         private_owner_only=True)
     if (type(decision) is not dict
             or type(decision.get("schema_version")) is not int
             or decision["schema_version"] != 1
