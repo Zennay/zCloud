@@ -682,6 +682,35 @@ def generate_execution_lanes(project, backlog, claims=()):
     blocked_by_lane = {lane_def["id"]: [] for lane_def in lane_defs}
     active_backlog_counts = {lane_def["id"]: 0 for lane_def in lane_defs}
     occupied_scopes = []
+    reserved_queued_lanes = set()
+    # Queued rows carrying an existing worker slot are NOT new dispatch
+    # candidates, but they still reserve their lane and write scope. Without
+    # these reservations, a different recovery lane could be admitted to
+    # write the same files while the slot-bound task was still pending.
+    reserved_queued = [
+        item for item in classified
+        if profile == "portfolio-recovery"
+        and str(item.get("status") or "").lower() == "queued"
+        and item.get("worker_slot") is not None
+    ]
+    unknown_reserved_scopes = [
+        item for item in reserved_queued
+        if not any(_recovery_scope_from_item(item).values())
+    ]
+    for assigned in reserved_queued:
+        lane_id = assigned["lane_id"]
+        reserved_queued_lanes.add(lane_id)
+        blocked_by_lane[lane_id].append({
+            "kind": "queue",
+            "reason": "queued_worker_slot_reserved",
+            "overlap": {"capabilities": [], "files": []},
+        })
+        if assigned not in unknown_reserved_scopes:
+            occupied_scopes.append({
+                "queue_id": str(assigned.get("queue_id") or ""),
+                "lane_id": lane_id,
+                "scope": assigned["scope"],
+            })
 
     # Existing active work is authoritative: preserve it and reserve its write
     # scope before considering any new queued work.
@@ -711,6 +740,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             item for item in classified
             if str(item.get("status") or "queued").lower() == "queued"
             and item["lane_id"] not in chosen_by_lane
+            and item["lane_id"] not in reserved_queued_lanes
             and not (profile == "portfolio-recovery" and item.get("eligible") != 1)
             and not (profile == "portfolio-recovery" and item.get("worker_slot") is not None)
             and not (profile == "portfolio-recovery" and _prohibited_recovery_qa(item))
@@ -722,6 +752,7 @@ def generate_execution_lanes(project, backlog, claims=()):
         if lane_id in chosen_by_lane:
             continue
         if (unknown_active_scopes or unknown_claim_scopes
+                or unknown_reserved_scopes
                 or untrusted_active_leases or mismatched_active_profiles):
             # Existing queue writers and externally supplied claims retain
             # their ownership; neither an empty scope nor a malformed scope
@@ -738,6 +769,13 @@ def generate_execution_lanes(project, backlog, claims=()):
                     "kind": "queue",
                     "reason": "active_write_scope_not_declared",
                     "ambiguous_active_count": len(unknown_active_scopes),
+                    "overlap": {"capabilities": [], "files": []},
+                })
+            if unknown_reserved_scopes:
+                blocked_by_lane[lane_id].append({
+                    "kind": "queue",
+                    "reason": "queued_assigned_write_scope_not_declared",
+                    "ambiguous_reserved_count": len(unknown_reserved_scopes),
                     "overlap": {"capabilities": [], "files": []},
                 })
             if unknown_claim_scopes:
@@ -836,6 +874,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             "unknown_active_scope_count": len(unknown_active_scopes),
             "active_profile_mismatch_count": len(mismatched_active_profiles),
             "unknown_claim_scope_count": unknown_claim_scopes,
+            "unknown_assigned_scope_count": len(unknown_reserved_scopes),
             "untrusted_active_lease_count": len(untrusted_active_leases),
             "serialized_unscoped_queue_admitted": (
                 bool(unscoped_queued_writer_reserved)
