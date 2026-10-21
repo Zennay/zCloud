@@ -743,6 +743,89 @@ def linked_pr_collision_clusters(observed, pairs):
     return clusters
 
 
+MAX_SCOPE_CLUSTER_CARDS = 40
+MAX_SCOPE_CLUSTER_EXAMPLES = 8
+
+
+def linked_pr_scope_collision_clusters(observed, pairs, pair_counts):
+    """Group transitive file/directory ancestor conflicts without implying merge authority."""
+    by_num = {row["number"]: row for row in observed}
+    parent = {number: number for number in by_num}
+
+    def root(number):
+        while parent[number] != number:
+            parent[number] = parent[parent[number]]
+            number = parent[number]
+        return number
+
+    for left, right in sorted(pairs):
+        x, y = root(left), root(right)
+        if x != y:
+            parent[max(x, y)] = min(x, y)
+
+    groups = {}
+    for (left, right), examples in sorted(pairs.items()):
+        leader = root(left)
+        group = groups.setdefault(leader, {
+            "pr_numbers": set(), "pair_count": 0,
+            "path_conflict_count": 0, "degree": {}, "examples": [],
+        })
+        group["pr_numbers"].update((left, right))
+        group["pair_count"] += 1
+        group["path_conflict_count"] += pair_counts[(left, right)]
+        group["degree"][left] = group["degree"].get(left, 0) + 1
+        group["degree"][right] = group["degree"].get(right, 0) + 1
+        # Keep a small component-wide sample. The pair counts retain the
+        # exact observed total even when these example records are truncated.
+        for conflict in examples:
+            if len(group["examples"]) >= MAX_SCOPE_CLUSTER_EXAMPLES:
+                break
+            group["examples"].append({
+                "left_pr_number": left, "right_pr_number": right,
+                "left_pr_url": by_num[left]["url"],
+                "right_pr_url": by_num[right]["url"],
+                "left_pr_head_sha": by_num[left]["head_sha"],
+                "right_pr_head_sha": by_num[right]["head_sha"],
+                "left_path": conflict["left_path"],
+                "right_path": conflict["right_path"],
+                "relation": conflict["relation"],
+            })
+
+    clusters = []
+    for group in groups.values():
+        numbers = sorted(group["pr_numbers"])
+        ranked = sorted(numbers, key=lambda number: (-group["degree"][number], number))
+        clusters.append({
+            "pr_count_observed": len(numbers),
+            "scope_collision_edge_count_observed": group["pair_count"],
+            "path_conflict_count_observed": group["path_conflict_count"],
+            "path_conflicts_sample": group["examples"],
+            "path_conflicts_sample_truncated":
+                group["path_conflict_count"] > len(group["examples"]),
+            "participating_prs": [{
+                "number": number, "url": by_num[number]["url"],
+                "head_sha": by_num[number]["head_sha"],
+                "base_sha": by_num[number]["base_sha"],
+                "file_count_observed": by_num[number]["file_count_observed"],
+                "file_list_complete": by_num[number]["file_list_complete"],
+                "other_prs_with_scope_conflicts_observed": group["degree"][number],
+            } for number in ranked],
+            "component_has_unobserved_prs": "NOT_INFERABLE",
+            "ownership_verified": False,
+            "merge_conflict_verified": False,
+            "integration_order_authorized": False,
+        })
+    clusters.sort(key=lambda cluster: (
+        -cluster["path_conflict_count_observed"],
+        -cluster["pr_count_observed"],
+        -cluster["scope_collision_edge_count_observed"],
+        min(pr["number"] for pr in cluster["participating_prs"]),
+    ))
+    for index, cluster in enumerate(clusters, 1):
+        cluster["component_number"] = index
+    return clusters
+
+
 def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
                            page_count=1, resolve_issue_identity=False):
     """Show PR-to-PR file collisions over a bounded, double-read open PR window.
