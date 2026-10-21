@@ -45,7 +45,9 @@
   sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
   const label=el=>String(el?.getAttribute?.("aria-label")||el?.getAttribute?.("aria-valuetext")||el?.innerText||el?.textContent||"").trim();
   const visible=el=>{if(!el)return false;const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=="none"&&s.visibility!=="hidden"&&r.width>0&&r.height>0};
-  const generating=()=>!!document.querySelector('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]');
+  // Responsive portals can retain a hidden old stop button. Only the visible
+  // control indicates that the assigned conversation is currently generating.
+  const generating=()=>[...document.querySelectorAll('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]')].some(visible);
   const reply=()=>{const a=[...document.querySelectorAll('[data-message-author-role="assistant"]')];return a.length?String(a[a.length-1].innerText||a[a.length-1].textContent||"").trim():""};
   const conversation=()=>location.pathname.match(/^\/c\/([0-9a-f-]{20,})/i)?.[1]||"";
   const assistantCount=()=>document.querySelectorAll('[data-message-author-role="assistant"]').length;
@@ -202,22 +204,31 @@
     }
     return document.querySelector(selectors.join(",")); // Preserve draft detection if all are hidden.
   };
-  const sendButton=()=>document.querySelector('button[data-testid="send-button"],button[aria-label="Send message"],button[aria-label="Verzenden"]');
+  const sendButton=()=>[...document.querySelectorAll('button[data-testid="send-button"],button[aria-label="Send message"],button[aria-label="Verzenden"]')].find(visible)||null;
+  const composerText=box=>String(box?.value??box?.innerText??box?.textContent??"")
+    .replace(/\r\n?/g,"\n").trim();
   async function fill(text){
-    const box=composer();if(!visible(box))return false;
+    const box=composer();if(!visible(box))return "missing";
+    const wanted=String(text).replace(/\r\n?/g,"\n").trim();
+    // Never overwrite a human draft or a previous assignment's unsent text.
+    // Check again here because ensureHigh() can spend seconds in UI menus.
+    const previous=composerText(box);
+    if(previous&&previous!==wanted)return "draft-preserved";
     box.focus({preventScroll:true});
     if(box.tagName==="TEXTAREA"||box.tagName==="INPUT"){
       const proto=box.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
       const setter=Object.getOwnPropertyDescriptor(proto,"value")?.set;
       if(setter)setter.call(box,text);else box.value=text;
       box.dispatchEvent(new Event("input",{bubbles:true}));
-    }else{
+    }else if(previous!==wanted){
       document.execCommand("selectAll",false,null);
       document.execCommand("insertText",false,text);
       box.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:text}));
     }
     await sleep(350);
-    return !!String(box.value||box.innerText||box.textContent||"").trim();
+    // Earlier a merely nonempty (possibly stale) draft authorized Send.
+    // A source-equivalent exact value is required before lease revalidation.
+    return composerText(box)===wanted?"ready":"text-not-confirmed";
   }
   function ready(t){
     if(!t||t.active!==true||t.assignment_ready!==true||t.desired_state==="paused"||t.desired_state==="draining")return false;
@@ -233,7 +244,12 @@
     sending=true;markBusy();
     try{
       if(!(await ensureHigh())){await blocked("high-not-verified");return false}
-      if(!(await fill(prompt))){await blocked("composer-missing");return false}
+      const editor=await fill(prompt);
+      if(editor!=="ready"){
+        await blocked(editor==="missing"?"composer-missing":
+          editor==="draft-preserved"?"composer-draft-preserved":"composer-text-not-confirmed");
+        return false;
+      }
       // Recheck after asynchronous UI work; settings/allocation can change.
       if(!high()){await blocked("high-changed-before-send");return false}
       const fresh=await api("/runner-targets");
