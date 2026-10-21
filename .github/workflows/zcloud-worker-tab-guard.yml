@@ -202,6 +202,18 @@ jobs:
           # Recheck the admission after the staged copy and backup. A worker
           # may begin generation during the bounded copy window.
           python3 scripts/zsentinel_addon_idle_gate.py
+          # A concurrently running owner may have changed the installed
+          # background while the idle observation was waiting. Refuse to
+          # overwrite those bytes rather than trusting the earlier snapshot.
+          if test -L "$live" || test -L "$live/background.js" \
+             || ! cmp -s -- "$backup" "$live/background.js"; then
+            echo "::error::Installed add-on changed during guarded admission; owner bytes preserved."
+            exit 1
+          fi
+          if ! cmp -s -- firefox-extension/background.js "$source/background.js"; then
+            echo "::error::Runtime source changed during guarded admission; refusing live overwrite."
+            exit 1
+          fi
           mv -f -- "$staged" "$live/background.js"
           swapped=1
           cmp -- firefox-extension/background.js "$live/background.js"
