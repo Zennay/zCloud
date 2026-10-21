@@ -169,6 +169,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             "incident_sample_hits": None,
             "historical_unresolved_sample_hits": 0,
             "notion_active_status_min": None,
+            "notion_verifying_status_min": None,
             "github_job_runner_route": "not_scanned",
             "github_ci_source_stop_reason": None,
             "github_ci_windows_not_scanned": [],
@@ -342,15 +343,30 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 or not isinstance(notion.get("active_project_counts"), dict)):
             raise ValueError("invalid Notion project statuses")
         counts = notion["active_project_counts"]
+        verifying = notion.get("verifying_project_counts")
+        if verifying is not None and type(verifying) is not dict:
+            raise ValueError("invalid Notion verifying-status counts")
         for key, value in counts.items():
             if not isinstance(key, str) or type(value) is not int or value < 0 or value > 400:
                 raise ValueError("invalid active project status counter")
+        if verifying is not None:
+            for key, value in verifying.items():
+                if (not isinstance(key, str) or type(value) is not int
+                        or value <= 0 or value > counts.get(key, -1)):
+                    raise ValueError("Notion verifying work exceeds source totals")
+            if (type(notion.get("verifying_count")) is not int
+                    or sum(verifying.values()) != notion["verifying_count"]):
+                raise ValueError("Notion verifying count contradicts project groups")
         for pid in summary:
             # An absent project in a bounded connector sample is UNKNOWN,
             # never evidence that the project has zero live claims.
             value = counts.get(pid)
             summary[pid]["notion_active_status_min"] = (
                 value if value is not None and value > 0 else None)
+            # Verifying means unfinished work, not a live worker lease.
+            verified = verifying.get(pid) if verifying is not None else None
+            summary[pid]["notion_verifying_status_min"] = (
+                verified if verified is not None and verified > 0 else None)
     # The incident means only that one exact GitHub job has no runner.
     # It cannot establish a self-hosted route: its labels may be unavailable
     # or a sampled job may differ from the one referenced by the incident.
@@ -569,7 +585,10 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             '<td>' + _count(row["queued"]) + '</td>'
             '<td>' + _count(row["owned"]) + '</td>'
             '<td>' + ('ONBEKEND' if row["notion_active_status_min"] is None
-                      else '≥' + str(row["notion_active_status_min"])) + '</td>'
+                      else '≥' + str(row["notion_active_status_min"])) +
+            ('<br><small>Verifying ≥' + str(row["notion_verifying_status_min"]) +
+             ' · eigenaar hercontroleren</small>'
+             if row["notion_verifying_status_min"] is not None else '') + '</td>'
             '<td>' + _count(row["high_claim_attempts"]) + '</td>'
             '<td>' + _count(row["expired_owner_leases"]) + '</td>'
             '<td>' + _count(row["unverifiable_owner_leases"]) + '</td>'
@@ -637,7 +656,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         ' Geen claim, workflow, herstart, lease of deploy uitgevoerd.</p>'
         '<div class="wrap"><table><thead><tr><th scope="col">Project</th>'
         '<th scope="col">Wachtend</th><th scope="col">Bezet</th>'
-        '<th scope="col">Notion actief (min.)</th>'
+        '<th scope="col">Notion werkstatus (min.; incl. Verifying)</th>'
         '<th scope="col">Veel claims</th><th scope="col">Lease verlopen?</th>'
          '<th scope="col">Leaseklok onbekend?</th>'
         '<th scope="col">Claimvenster inconsistent?</th>'
