@@ -54,6 +54,56 @@ to make these labels turn green.
 
 ## Private four-lane operator desk
 
+### 21 October · private local P0/P1 portfolio comparison
+
+The read-only four-lane desk now offers a complete two-observation portfolio
+workflow without GitHub, Notion, network, worker or live queue writes.
+An authorized **human owner** first saves an intentionally minimal baseline:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --format owner-snapshot --output /PRIVATE-OWNER-DIRECTORY/owner-before.json
+```
+
+On a later observation, compare the current database with that private baseline:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --previous-owner-snapshot /PRIVATE-OWNER-DIRECTORY/owner-before.json \
+  --format html --output /PRIVATE-OWNER-DIRECTORY/owner-comparison.html
+```
+
+The existing `text`, `json`, `html`, `markdown`, `owner-brief`,
+and `owner-book` modes share a single source-transaction comparison. A
+`portfolio_previous_comparison` field appears in JSON only when a previous
+private snapshot has been supplied. Human-readable views expose P0/P1
+waiting and in-flight deltas and prioritise increases in P0 waiting, then
+P1 waiting, with explicit UTC endpoints. Changes are endpoint differences,
+**never continuous monitoring, failure attribution, owner freedom or
+confirmed recovery**. Dossiers for each project retain the same comparison
+state.
+
+Baseline snapshots use a small schema that intentionally contains only
+six aggregated queue counts per canonical real project, a UTC source
+timestamp, completeness state and explicit false authority flags. No
+individual queue ID, task title, lease, claim key, account or worker
+identity is copied. Private output reuses the original create-only,
+owner-private directory, symlink-denying `0600` save implementation.
+Previous files must be regular, current-user-owned, private, bounded
+(64 KiB), schema-exact, count-consistent, and strictly **older** than
+the current observation. Incomplete local source or a baseline older
+than seven days yields an explicit **NOT_COMPARABLE** state and no
+per-project deltas; no falsely precise zeros are emitted. Do not
+manually alter the saved source or interpret counter decreases as
+successful issue resolution.
+
+Use `--format owner-snapshot` for a *new* baseline filename on each
+capture. Never overwrite a prior private receipt. To inspect current
+live CI, owners or external issues, return to their authoritative
+source before any handoff; this local snapshot does not authorize
+claims, reruns, merges, deploys or runner restarts. No QA packages,
+regression suites or automated polling are added by this feature.
+
 ### 21 October · offline project drilldown and local owner-state parity
 
 The existing four-lane offline `--format html` desk now has a navigable
