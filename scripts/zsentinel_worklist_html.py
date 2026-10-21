@@ -14,6 +14,20 @@ import re
 from zsentinel_issue_action_board import MAX_CARDS, ORDER, PR, ISSUE
 
 
+def source_head_link(pr_url, head):
+    """Render only an admitted historical exact commit, never merge approval."""
+    if head is None:
+        return "<strong>Bron HEAD ONBEKEND</strong>"
+    if (type(head) is not str or re.fullmatch(r"[0-9a-f]{40}", head) is None
+            or type(pr_url) is not str or PR.fullmatch(pr_url) is None):
+        raise ValueError("untrusted saved PR commit identity")
+    base = pr_url.split("/pull/", 1)[0]
+    return ("<a target='_blank' rel='noopener noreferrer' href='" +
+            escape(base + "/commit/" + head, quote=True) +
+            "'>Waargenomen bron HEAD <code>" + head[:12] +
+            "</code> ↗</a> · geen actuele mergevrijgave")
+
+
 def render_html(board, max_rows=20):
     if (type(board) is not dict
             or board.get("schema") != "zsentinel-merge-first-human-inbox-v1"
@@ -71,7 +85,11 @@ def render_html(board, max_rows=20):
                     or type(other.get("file_overlap_observed")) is not bool
                     or type(other.get("source_movement_observed")) is not bool
                     or other.get("merge_authorized") is not False
-                    or other.get("owner_verified") is not False):
+                    or other.get("owner_verified") is not False
+                    or (other.get("source_head_observed") is not None
+                        and (type(other["source_head_observed"]) is not str
+                             or re.fullmatch(r"[0-9a-f]{40}",
+                                             other["source_head_observed"]) is None))):
                 raise ValueError("untrusted alternative PR gate or authority")
             other_seen.add(alt_url)
             alt_items.append((alt_url, gate_state, other))
@@ -101,6 +119,7 @@ def render_html(board, max_rows=20):
                 h(state) +
                 (" · bestandsoverlap" if data["file_overlap_observed"] else "") +
                 (" · bronbeweging" if data["source_movement_observed"] else "") +
+                "<br>" + source_head_link(url, data.get("source_head_observed")) +
                 "</li>"
                 for url, state, data in alt_items
             )
@@ -108,9 +127,16 @@ def render_html(board, max_rows=20):
                         str(len(alt_items)) +
                         ") · afzonderlijke eigenaar- en CI-beoordeling</summary><ul>" +
                         extra + "</ul></details>")
+        primary = next((item for item in full if item["url"] == pr), None)
+        primary_head = primary.get("source_head_observed") if primary else None
+        if primary_head is not None and (
+                type(primary_head) is not str or
+                re.fullmatch(r"[0-9a-f]{40}", primary_head) is None):
+            raise ValueError("untrusted primary PR source HEAD")
         pr_link = (
             "<a rel='noopener noreferrer' target='_blank' href='" + h(pr) +
-            "'>Bestaande PR ↗</a>" if pr else
+            "'>Bestaande PR ↗</a><br>" + source_head_link(pr, primary_head)
+            if pr else
             "<span>Geen bestaande PR bevestigd in bron</span>"
         )
         alternatives_failed = sum(state == "observed_failed"
@@ -193,6 +219,11 @@ def render_html(board, max_rows=20):
                 or group["primary_issue_count_observed"] != len(primary_urls)):
             raise ValueError("invalid primary vs secondary PR issue mapping")
         observed_gate = group.get("group_gate_source_state")
+        group_head = group.get("source_head_observed")
+        if group_head is not None and (
+                type(group_head) is not str or
+                re.fullmatch(r"[0-9a-f]{40}", group_head) is None):
+            raise ValueError("invalid PR-group source HEAD")
         permitted_gate = {
             "observed_failed", "observed_pending", "not_observed",
             "observed_partial_no_release_permission",
@@ -235,7 +266,8 @@ def render_html(board, max_rows=20):
             str(len(shown_links)) +
             " gekoppelde issuevermelding(en) in deze beperkte overdracht; " +
             str(primary_visible) + " als primaire reviewkandidaat"
-            "<p class='source'>Exacte-HEAD bron: " + escape(observed_gate) +
+            "<p class='source'>" + source_head_link(pr, group_head) +
+            "<br>Exacte-HEAD bron: " + escape(observed_gate) +
             " · " + escape(human_gate) +
             (" · Bestandsoverlap waargenomen" if
              group["any_file_overlap_observed"] else "") +
