@@ -1219,7 +1219,13 @@ def private_action_briefing(decision, source):
         lines.append("- Notion-bron ONBEKEND; werkitems zijn mogelijk actief.")
     workers = decision.get("worker_progress_observation")
     if type(workers) is dict:
+        worker_at = _stamp(workers["observed_at_utc"])
+        worker_recent = (datetime.now(timezone.utc) -
+                         datetime.fromisoformat(worker_at)) <= timedelta(minutes=10)
         lines.append("- Workerbron: " + md(workers["coverage"], 65) +
+                     " · bronmoment " + worker_at +
+                     (" · recente geselecteerde projectslots" if worker_recent
+                      else " · VEROUDERD (>10m), GEEN HUIDIGE VOORTGANG") +
                      " · eventtijdlijn is geen huidige werkhervatting.")
         for row in workers.get("owner_followup_candidates", [])[:12]:
             if (type(row) is not dict or
@@ -1232,8 +1238,13 @@ def private_action_briefing(decision, source):
             lines.append("  - " + md(row["project_id"], 80) +
                          " worker " + str(row["worker_slot"]) +
                          " · " + md(row["classification"], 100) +
-                         " · veilig owneradvies " + md(row["safe_followup"], 180))
+                         (" · GEEN ACTUEEL ADVIES; herlees bron vóór eigenaaractie."
+                          if not worker_recent else
+                          " · veilig owneradvies " + md(row["safe_followup"], 180)))
         lines.append("  - Beperkte bron; geen automatische hervatting of ownerclaim.")
+        if not worker_recent:
+            lines.append("  - EIGENAARACTIE: controleer live worker- en queueleasebron; "
+                         "ouder eventbewijs mag geen restart/overname triggeren.")
     else:
         lines.append("- Workercontinuïteit ONBEKEND; geen runnerherstelbewijs.")
     lines += ["", "## 5. Bestaande queue en incidenten"]
