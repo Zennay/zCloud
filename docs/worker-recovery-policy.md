@@ -478,6 +478,41 @@ closing keywords and their absence **never prove or disprove** GitHub
 cross-reference links or authorized ownership; no title/body, issue text,
 token or private prompt is exported.
 
+### Inspect one live GitHub issue without a saved private dossier
+
+The read-only owner desk can start immediately from an existing canonical
+`Zennay/<repo>` GitHub issue. A saved Notion/queue case is **not** required:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --live-issue-url https://github.com/Zennay/zCloud/issues/1326 \
+  --format html --output /private/zsentinel-issue-1326.html
+```
+
+Use `--format markdown` for a human-readable three-line incident handoff,
+or `--format json` for a versioned machine-readable **read-only** observation.
+The optional `--live-focus-pr N` restricts the expensive double-read to
+one PR whose number was actually observed in the current bounded timeline or
+open-PR source. Arbitrary PR numbers, other GitHub owners, PR URLs supplied
+as issue URLs, noncanonical identities, unsafe output destinations and
+incompatible source modes fail closed.
+
+The operation reads only GitHub's canonical issue, issue timeline,
+open-PR list and at most three PR/check/review observations, under the
+existing **20-GET upper bound**. It never performs a claim, retry,
+workflow dispatch, merge, deployment, runner restart, SQLite mutation or
+Notion write. Partial/failed GitHub sources remain UNKNOWN, never `no
+repair exists`. The JSON field `observation_mode=direct_live_issue_readonly`
+and `historical_case_provenance.historical_case_provided=false` make the
+absence of a saved dossier explicit; no fake case timestamp or past
+owner confirmation is constructed. A closed issue or GitHub cross-reference
+is not proof that an exact-head fix reached protected main or production.
+
+The `--output` route uses the existing private create-only 0600 output
+contract. Without `--output`, the report is printed to standard output;
+redirect only into an operator-controlled private directory.
+
 ### Reconcile historical repair PRs with current open PRs (explicit opt-in)
 
 A saved zSentinel recovery case is a point-in-time observation. It may
