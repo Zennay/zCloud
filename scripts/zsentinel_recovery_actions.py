@@ -43,8 +43,18 @@ def _psi_owner_context(pressure):
             candidates.append((value, description))
     if not candidates:
         return " Kernelwachttijden (PSI) onbekend."
-    percent, reason = max(candidates, key=lambda item: item[0])
-    return f" Kernel-PSI piek over 60s: {reason} {percent:.2f}%; geen jobbewijs."
+    # Full memory/I/O stalls are more severe than partial waits even when
+    # their raw percentage is smaller. Do not hide full 70% memory stalls
+    # behind a higher "some" percentage in a one-line owner handoff.
+    full = [
+        (value, label) for value, label in candidates
+        if "volledige stilstand" in label and value >= 1
+    ]
+    percent, reason = max(full if full else candidates, key=lambda item: item[0])
+    return (
+        f" Kernel-PSI (60s): {reason} {percent:.2f}%; "
+        "bronbrede stall, geen bewijs van een specifieke GitHub-job."
+    )
 
 
 def _runner_pressure_context(packet):
