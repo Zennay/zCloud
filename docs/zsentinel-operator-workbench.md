@@ -3672,3 +3672,50 @@ stay explicitly false. An unobserved link never authorizes starting
 new work: recheck the **live** GitHub issue/PR inventory and the
 current Notion/worker claims first.
 
+
+
+## CLI merge-first owner export without opening the workbench
+
+The same P0-first operator concept is now available as a **standalone
+source-only offline CSV** for a team that needs a portable artifact without
+first opening the browser-based desk:
+
+```sh
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board /private/saved-product-board.json \
+  --pr-dossier /private/older-pr-dossier.zip \
+  --pr-dossier /private/newer-pr-dossier.zip \
+  --output /private/merge-first-existing-prs.csv
+```
+
+The optional `--pr-dossier` can be omitted when only the original issue board
+exists. In that case the report still contains board-observed PR links, and
+issues without any admitted PR remain explicit **UNKNOWN**, never available
+for automatic reassignment or new competing PRs.
+
+This command reuses the workbench's existing stable no-follow board reader
+and complete schema/authority validation plus the existing archived-ZIP
+admission, chronological source constraints and independent `issue_worklist`
+projection. It never queries GitHub, Notion, a worker or a production
+database. Up to 60 bounded source issue cards, at most 12 historical ZIP
+sources and 900 rendered PR/unknown-issue rows are admitted. The output
+limit is one MiB.
+
+The output groups source PR URLs across the selected original issue cards
+with P0-first priority, lists all linked issue URLs and titles, observed
+original board and archive HEADs separately, saved gate labels and
+disappearing-source warnings. Every row includes the original board SHA256,
+archived review-manifest SHA256 chain, missing ZIP batch indicator and
+the concrete human-only next step. Original P0 issues with no observed PR
+are exported as `not_observed_in_bounded_sources_unknown` rather than
+disappearing into an empty report.
+
+The destination is a **new** `.csv` file, distinct from all input paths.
+The existing create-only private writer produces mode-0600 output and
+refuses to overwrite an existing file; no standard output of private
+source records occurs. Formula-like source cells are sanitized.
+The generated CSV cannot grant owner claims, dispatch, CI, review,
+merge, or deploy authorization: those flags are false and must remain so
+until separately verified by the authorized human/runtime owner.
+This is not a scheduler input or an automated queue writer.
+
