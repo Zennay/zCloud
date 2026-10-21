@@ -71,9 +71,7 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                 // Each incident needs its OWN pending-intent identity.
                 // requestCode=0 alone made all visible cards share the last
                 // notification's target when FLAG_UPDATE_CURRENT was used.
-                val project = alert.project?.takeIf {
-                    it.matches(Regex("[a-z][a-z0-9_-]{0,39}"))
-                } ?: "cloud"
+                val project = IncidentSnoozeStore.projectKey(alert)
                 val intent = Intent(applicationContext, MainActivity::class.java)
                     .setAction(MainActivity.ACTION_OPEN_BLOCKER)
                     .setData(Uri.parse("zcloud-watch://incident/" +
