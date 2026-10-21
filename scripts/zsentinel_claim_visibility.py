@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Private, read-only local zCloud lease visibility for zSentinel operators.
 
-Only counts of observed unexpired task_claims are released. This observer
+Only bounded aggregate counts of observed unexpired and expired task_claims are released. This observer
 never derives a free-owner decision from missing local rows: Notion, GitHub
 and workers outside this SQLite snapshot may still have active ownership.
 No raw owner_id, worker_id, claim_key, metadata or SQLite row leaves the tool.
