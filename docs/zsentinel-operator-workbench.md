@@ -1,5 +1,45 @@
 # zSentinel · Private Product Delivery Workbench
 
+## 21 oktober · zelfstandige Markdown-ownerbrief en snelle HTML-navigatie
+
+De bestaande brongebonden eigenaarsexport biedt nu naast CSV, JSON en
+HTML ook `--format markdown` met een **nieuw privé-`.md`-bestand**.
+De export is een leesbare menselijke briefing, geen GitHub-actie, ownerclaim
+of live mergebewijs. Alle bronrecords worden eerst gevalideerd, daarna
+pas gefilterd. Een exact gevraagde niet-waargenomen PR/issue weigert de
+briefing; een algemene selectie zonder hits meldt expliciet dat
+de opgeslagen bron geen actuele backlogvrijgave kan bewijzen.
+
+```sh
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --pr-dossier ./previously-saved-prs.zip \
+  --repository Zennay/zCloud --priority P0 \
+  --record-type existing-pr --format markdown \
+  --output ./private-zcloud-p0-owner-brief.md
+
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --inspect-pr-url https://github.com/Zennay/zCloud/pull/1560 \
+  --format markdown --output ./private-pr-1560-owner-brief.md
+```
+
+Markdown maakt onzichtbare opmaak- en controletekens in menselijke
+brontekst expliciet als Unicode-codepunten en escaped Markdown-tekens.
+Originele issue- en PR-links blijven uitsluitend de toegelaten canonieke
+GitHub-links. De briefing toont beide bronmomenten en eventuele ZIP-manifests,
+de complete bronselectie (`source_record_count` versus
+`selected_record_count`), de uitgesloten records, exact geselecteerde
+PR/issue, historische HEADs en menselijke vervolgstappen. Die historische
+waarnemingen verlenen géén claim-, CI-, review-, merge- of deployrechten.
+
+Bij `--format html` verschijnt bovendien vóór de PR-kaarten een
+scriptvrije navigatie op prioriteit × canonieke repository. Iedere groep
+toont het aantal geselecteerde opgeslagen eigenaarrecords en springt
+naar de eerste relevante kaart; het afdrukbeeld verbergt alleen deze
+navigatie en behoudt alle bronmetadata. Het blijft volledig offline en
+CSP blijft `script-src 'none'`.
+
 ## 21 oktober · gerichte, brongebonden merge-first eigenaarsexport
 
 De bestaande privé-owner-CLI heeft nu **project-, prioriteits- en PR-relatiegerichte selectie**. Alle originele board- en optionele ZIP-archieven worden eerst volledig toegelaten; filteren gebeurt pas nadat de canonieke issue-/PR-identiteiten, records en bronbeperkingen zijn vastgesteld.
