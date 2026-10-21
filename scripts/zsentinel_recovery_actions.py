@@ -51,9 +51,19 @@ def _psi_owner_context(pressure):
         if "volledige stilstand" in label and value >= 1
     ]
     percent, reason = max(full if full else candidates, key=lambda item: item[0])
+    window = psi.get("window_signal")
+    window_note = (
+        " De 10s-kerneldruk ligt beduidend hoger dan de 300s-bron;"
+        " dit is een venstervergelijking, geen prognose."
+        if window == "SHORT_WINDOW_PRESSURE_HIGHER" else
+        " De 10s- en 300s-vensters lopen uiteen;"
+        " de trendrichting is niet eenduidig."
+        if window == "MIXED_WINDOWS" else ""
+    )
     return (
         f" Kernel-PSI (60s): {reason} {percent:.2f}%; "
         "bronbrede stall, geen bewijs van een specifieke GitHub-job."
+        + window_note
     )
 
 
