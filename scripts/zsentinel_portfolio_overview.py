@@ -326,6 +326,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         if pid in summary:
             summary[pid]["historical_unresolved_sample_hits"] += 1
     notion = decision.get("notion_claims_observation")
+    status_source_windows = None
     if notion is not None:
         if (not isinstance(notion, dict)
                 or notion.get("source") not in (
@@ -343,6 +344,41 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 or not isinstance(notion.get("active_project_counts"), dict)):
             raise ValueError("invalid Notion project statuses")
         counts = notion["active_project_counts"]
+        # Native live observation exports one bounded coverage receipt for
+        # each status; a manually saved snapshot cannot claim this provenance.
+        live_windows = notion.get("status_source_windows")
+        if live_windows is not None:
+            expected = (("Claimed", 1), ("Running", 1), ("Verifying", 2))
+            if (notion["source"] != "notion_readonly_data_source_pages"
+                    or type(live_windows) is not list
+                    or len(live_windows) != len(expected)):
+                raise ValueError("untrusted live Notion per-status windows")
+            total_pages = 0
+            total_matched = 0
+            any_partial = False
+            for item, (expected_status, expected_budget) in zip(live_windows, expected):
+                if (type(item) is not dict
+                        or item.get("status") != expected_status
+                        or type(item.get("pages_read")) is not int
+                        or not 1 <= item["pages_read"] <= expected_budget
+                        or type(item.get("page_budget")) is not int
+                        or item["page_budget"] != expected_budget
+                        or type(item.get("observed_rows")) is not int
+                        or not 0 <= item["observed_rows"] <= item["pages_read"] * 100
+                        or item.get("coverage") not in ("partial", "complete_within_source")
+                        or item.get("read_only") is not True
+                        or item.get("claim_scope_verified") is not False):
+                    raise ValueError("invalid Notion source window receipt")
+                total_pages += item["pages_read"]
+                total_matched += item["observed_rows"]
+                any_partial |= item["coverage"] == "partial"
+            if (type(notion.get("total_pages_read")) is not int
+                    or notion["total_pages_read"] != total_pages
+                    or total_pages > 4
+                    or notion.get("active_count") != total_matched
+                    or (notion.get("coverage") == "incomplete") != any_partial):
+                raise ValueError("Notion source-window totals disagree")
+            status_source_windows = [dict(item) for item in live_windows]
         verifying = notion.get("verifying_project_counts")
         if verifying is not None and type(verifying) is not dict:
             raise ValueError("invalid Notion verifying-status counts")
@@ -426,6 +462,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         "queue_source": ("explicitly_unobserved_no_database" if queue_missing
                          else "local_sqlite_transaction_query_only"),
         "queue_owner_authorized": False,
+        "notion_status_source_windows": status_source_windows,
         "unregistered_queue_project_groups": None if queue_missing else unknown_count,
         "rows": list(summary.values()),
         "actions_performed": False,
