@@ -279,7 +279,12 @@ def product_queue_snapshot(items, max_visible=8):
     skipped_qa = 0
     skipped_invalid = 0
     hold_reasons = {}
+    # Product candidate details are O(max_visible), not O(queue size).
+    # Preserve exact counts and one *source-priority* lead per project.
     candidate_rows = []
+    candidate_total = 0
+    project_leads = {}
+    project_lead_order = {}
     # A bounded, observation-only cross-project view. Its counts never give
     # permission to reuse a lane, release a lease, or start an unclaimed task.
     project_activity = {}
@@ -442,32 +447,42 @@ def product_queue_snapshot(items, max_visible=8):
         else:
             if activity is not None:
                 activity["queued_product_candidates_visible"] += 1
-            candidate_rows.append(item)
+            candidate_total += 1
             priority = str(item.get("priority") or "").strip().upper()
             priority_counts[priority if priority in priorities else "other"] += 1
-    candidate_rows.sort(key=lambda row: (
-        priorities.get(str(row.get("priority") or "").upper(), 4),
-        str(row.get("created_at") or ""),
-        str(row.get("queue_id") or ""),
-    ))
+            order = (
+                priorities.get(priority, 4),
+                str(item.get("created_at") or ""),
+                str(item.get("queue_id") or ""),
+            )
+            candidate_rows.append(item)
+            candidate_rows.sort(key=lambda row: (
+                priorities.get(str(row.get("priority") or "").upper(), 4),
+                str(row.get("created_at") or ""),
+                str(row.get("queue_id") or ""),
+            ))
+            del candidate_rows[max_visible:]
+            # Every project retains its true highest source-priority work item
+            # and total eligible count, even if absent from the global top K.
+            if project:
+                lead = project_leads.get(project)
+                if lead is None:
+                    project_leads[project] = {
+                        "project_id": project,
+                        "product_candidates_visible": 1,
+                        "first_queue_id": str(item.get("queue_id") or "")[:160],
+                        "highest_priority": str(item.get("priority") or "")[:4],
+                    }
+                    project_lead_order[project] = order
+                else:
+                    lead["product_candidates_visible"] += 1
+                    if order < project_lead_order[project]:
+                        lead["first_queue_id"] = str(item.get("queue_id") or "")[:160]
+                        lead["highest_priority"] = str(item.get("priority") or "")[:4]
+                        project_lead_order[project] = order
     # Operator-only cross-project view: the normal P0-first candidate ordering
-    # remains untouched; one noisy project cannot hide all other project leads.
-    # This list is NOT used to assign a worker or release a lease.
-    project_leads = {}
-    for item in candidate_rows:
-        project = str(item.get("project_id") or "")[:56]
-        if not project:
-            continue
-        lead = project_leads.get(project)
-        if lead is None:
-            project_leads[project] = {
-                "project_id": project,
-                "product_candidates_visible": 1,
-                "first_queue_id": str(item.get("queue_id") or "")[:160],
-                "highest_priority": str(item.get("priority") or "")[:4],
-            }
-        else:
-            lead["product_candidates_visible"] += 1
+    # remains untouched; one noisy project cannot hide independent leads.
+    # No worker is claimed, retried or released by this shortlist.
     project_shortlist = list(project_leads.values())
     project_shortlist.sort(key=lambda row: (
         priorities.get(str(row["highest_priority"]).upper(), 4),
@@ -588,9 +603,9 @@ def product_queue_snapshot(items, max_visible=8):
         "queued_qa_only_held": skipped_qa,
         "queued_invalid_or_unknown_held": skipped_invalid,
         "queued_hold_reason_counts": dict(sorted(hold_reasons.items())),
-        "queued_product_candidates": len(candidate_rows),
+        "queued_product_candidates": candidate_total,
         "candidate_priority_counts": priority_counts,
-        "candidate_list_truncated": len(candidate_rows) > max_visible,
+        "candidate_list_truncated": candidate_total > max_visible,
         "distinct_projects_with_visible_product_work": len(project_leads),
         "project_shortlist_truncated": len(project_shortlist) > project_shortlist_limit,
         "project_shortlist_is_advisory_only": True,
