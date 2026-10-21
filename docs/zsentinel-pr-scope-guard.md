@@ -2255,6 +2255,14 @@ Het gestructureerde document heeft `schema=zsentinel-private-pr-workorders-v1`, 
 
 **Issueverwijzingen bij owner-handoff:** de kaart neemt nu ook eenmalige `#N`-vermeldingen uit de recent geobserveerde PR-titel/body mee, niet alleen vermeldingen die toevallig op meerdere open PRs terugkomen. Alleen hints die horen bij de **exact vastgepinde huidige PR-HEAD** worden getoond; een oudere of onbekende HEAD geeft geen mogelijk verouderde issueverwijzing. Zelfs een exact gepinde tekstvermelding is geen bewijs dat `#N` een echte open issue is of dat de PR deze oplost. Controleer GitHub issue-identiteit apart voordat dit als productfix of mergecriterium geldt.
 
+**Unicode-weergave-integriteit:** in de PR-eigenaarshandoff worden onzichtbare
+Unicode-opmaaktekens (waaronder bidi-/zero-width-markeringen), Unicode-regel- en
+alineascheidingstekens en niet-ASCII-witruimte als zichtbare `⟦U+XXXX⟧`-markeringen
+getoond. C0/C1-controltekens en surrogate-codepunten worden geweigerd. Zo kunnen
+bronlabels of checknamen in tekst, Markdown, HTML en CSV niet stilzwijgend de
+visuele volgorde of leesbaarheid van de eigenaarsoverdracht veranderen. Dit
+wijzigt geen bron-URL, gate-status, prioriteit of autorisatie.
+
 ## 20 oktober · Betrouwbare en tijdgebonden eigenaarwerkopdrachten
 
 `--format workorders` en `--format workorders-json` accepteren nu uitsluitend een
