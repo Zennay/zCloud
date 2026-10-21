@@ -336,3 +336,51 @@ Send click**, not a new task, changed lease, verified generation or successful
 recovery. The dashboard and browser producer are **separate open PRs** and
 need their own independent review, exact-head CI and protected merges before
 runtime integration can be claimed.
+
+
+## 21 October — existing backend endpoints integrated into Activity
+
+Product issue #1518 affected more than the GitHub Activity UI. This PR's
+`public/app.js` already requested five operator APIs that were **absent in
+the server.py source on this branch**. A standalone UI commit therefore could
+not provide live worker, GitHub or incident evidence, even if deployed.
+
+Integrated the pre-existing **read-only** source implementations from
+[PR #1549](https://github.com/Zennay/zCloud/pull/1549) onto this existing
+Activity product PR, without opening another PR or taking over PR #1549:
+
+- `GET /api/activity-page`: fair local per-project event pagination; the
+  existing `GET /api/activity` retains its legacy array response and
+  bounded fallback on malformed historical timestamps. The optimized
+  `events(project,ts DESC,id DESC)` index is created only by the existing
+  authorized server initialization, never during a GET.
+- `GET /api/worker-progress-history`: explicitly requested, per-project,
+  per-slot, privacy-bounded SQLite `mode=ro` and `query_only=ON`
+  observations. Three additional allowlisted v2 draft-safety reason codes
+  are retained without exposing raw prompts, errors, URLs or secrets.
+- `GET /api/queue-retry-incidents`: an operator-selected, bounded,
+  read-only queue pressure snapshot, never a claim or retry instruction.
+- `GET /api/github-activity-live` and
+  `GET /api/product-issues-live`: on-demand bounded provider observations,
+  public-only and with no GitHub token or GitHub write permission;
+  explicit partial and unavailable states are preserved.
+
+The supporting source modules are copied from the existing PR #1549; existing
+local digest, issue-inbox and GitHub reader implementations on this PR are
+retained. All five requested Activity endpoints now appear in the matching
+server handler, but **exist only on this open PR** until the normal merge,
+review and authorized deploy gates have been satisfied.
+
+**Security boundary:** ported source also removes the previous
+`action_request_allowed` fallback that treated user-forgeable Host, Origin,
+Referer or Sec-Fetch-Site request headers as trusted management identity.
+Only a real loopback socket peer or the existing explicit IP allowlist
+can authorize management calls. Separately, any ingress proxy forwarding
+external traffic to loopback still requires independent owner security
+review; this source change is not proof that a deployed gateway is secure.
+No new management token, network bypass or permission elevation was added.
+
+No GitHub workflow dispatched, no QA or regression suite written or run,
+no VPS/SQLite/worker/lease mutation, no forced merge and no production
+deployment. A source branch, even one with complete API handlers, is
+**not** evidence of a live worker recovery or merged release.
