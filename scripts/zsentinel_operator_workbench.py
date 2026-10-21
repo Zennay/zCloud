@@ -2606,6 +2606,7 @@ document.getElementById('recoveryNextProject').addEventListener('click',()=>{
  if(!queue.length)return;
  const last=queue.findIndex(row=>row.project===lastRecoveryProject);
  const target=queue[(last+1+queue.length)%queue.length];
+ saveSelection();
  lastRecoveryProject=target.project;
  document.getElementById('project').value='';
  drawList();
