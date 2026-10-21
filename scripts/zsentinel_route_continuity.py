@@ -82,6 +82,11 @@ def _queue_origin(snapshot, decision):
     portfolio = snapshot["portfolio"]
     pressure = decision.get("live_queue_pressure")
     source_kind = portfolio.get("queue_source")
+    # Existing historical portfolios may predate the opaque SQLite source
+    # receipt. Their absence means UNKNOWN, not a corrupt current report.
+    # Present but contradictory receipt fields are still rejected.
+    if source_kind is None or pressure is None:
+        return None
     if source_kind not in (
             "local_sqlite_transaction_query_only",
             "explicitly_unobserved_no_database"):
