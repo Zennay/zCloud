@@ -1033,6 +1033,128 @@ def runtime_source_panel(decision):
     return ''.join(panels)
 
 
+
+def private_action_briefing(decision, source):
+    """Bounded offline human runbook assembled from already validated panels.
+
+    Never initiate recovery, claim, review, or dispatch. This is a separate
+    operator-selected private export; no provider fetch or background send.
+    """
+    if (type(source) is not dict or source.get("authorizes_actions") is not False
+            or type(source.get("fingerprint")) is not str
+            or not re.fullmatch(r"[a-f0-9]{64}", source["fingerprint"])):
+        raise ValueError("private briefing requires read-only source identity")
+
+    def md(value, limit=180):
+        if type(value) is not str or len(value) > limit:
+            raise ValueError("invalid bounded operator label")
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("control in operator action label")
+        return "".join(("\\\" + ch if ch in "\\*_`[]()#<>!|~{}" else ch)
+                       for ch in value)
+
+    lines = [
+        "# zSentinel · privé actieoverdracht",
+        "",
+        "> Momentopname, geen merge/dispatch/runnerherstel/claimbevoegdheid.",
+        "> Verifieer actuele eigenaars, exacte HEAD, verplichte checks en reviews vóór ingrijpen.",
+        "",
+        "- Bron-ID SHA-256: " + source["fingerprint"],
+        "- Operationele bron SHA-256: " +
+            (source.get("operator_context_sha256") or "ONBEKEND"),
+        "- Bronmoment UTC: " + source["observed_at"],
+        "",
+    ]
+    prs = decision.get("pr_delivery")
+    lines += ["## 1. Bestaande PR's eerst"]
+    if prs is not None:
+        for row in prs["items"][:3]:
+            pid, number = row["project_id"], row["pr_number"]
+            link = row["url"]
+            next_step = row.get("next_step")
+            head = row.get("head_sha")
+            lines += [
+                "- " + md(pid, 80) + " · [PR #" + str(number) + "](" + link + ")",
+                "  - HEAD: " + head if type(head) is str and
+                    re.fullmatch(r"[a-f0-9]{40}", head) else
+                    "  - HEAD: ONBEKEND; geen merge.",
+                "  - Owner/gates: " + md(next_step, 90)
+                    if type(next_step) is str else
+                    "  - Owner/gates: ONBEKEND, handmatige GitHub-inspectie.",
+            ]
+    else:
+        lines.append("- PR-bron niet gekozen; geen nul-PR- of mergevrijgavebewijs.")
+    lines += ["", "## 2. Open productissues · hoogste prioriteit"]
+    issues = decision.get("open_product_issue_triage")
+    if type(issues) is dict and issues.get("source") == "github_readonly_issue_inbox":
+        cards = issues["issues"]
+        for row in cards[:8]:
+            pri, pid, url = row["priority"], row["project_id"], row["issue_url"]
+            lines.append("- " + md(pri, 16) + " · " + md(pid, 80) +
+                         " · [issue](" + url + ")")
+            for pr in row["open_pr_candidates"][:3]:
+                lines.append("  - Bestaand PR-kandidaat: " + pr)
+        if not cards:
+            lines.append("- Geen issue in deze begrensde steekproef; geen all-clear.")
+        lines.append("- Brondekking: " + md(issues["coverage"], 24) +
+                     "; actieve bestandsclaims niet geverifieerd.")
+    else:
+        lines.append("- Niet opgevraagd; P0/P1 issues en eigenaars ONBEKEND.")
+    lines += ["", "## 3. GitHub run-/runnerroute · nooit autonoom herstarten"]
+    live = decision.get("live_sources")
+    exact = live.get("github_jobs") if type(live) is dict else decision.get("live_github_read")
+    jobs = exact.get("refreshed_projects", []) if type(exact) is dict else []
+    if jobs:
+        for row in jobs[:8]:
+            if row["status"] == "degraded":
+                lines.append("- " + md(row["project_id"], 80) +
+                             ": GitHub exact-jobbron ONBEKEND.")
+                continue
+            url = ("https://github.com/" + row["repository"] +
+                   "/actions/runs/" + str(row["run_id"]) +
+                   "/job/" + str(row["job_id"]))
+            lines.append("- " + md(row["project_id"], 80) + " · [run/job](" +
+                         url + ") · HEAD " + row["head_sha"] +
+                         " · " + md(row["job_status"], 30) +
+                         " · runnerlabel " + md(row["runner_route"], 25))
+            lines.append("  - Toewijzing: " +
+                         md(row.get("job_assignment_stage", "ONBEKEND"), 60) +
+                         "; runnergezondheid en recovery ONBEKEND.")
+    else:
+        lines.append("- Geen exact-jobbron geselecteerd; geen runnerdiagnose.")
+    lines += ["", "## 4. Bestaande queue en incidenten"]
+    q = decision.get("live_queue_pressure")
+    if type(q) is dict and q.get("coverage") in ("current", "incomplete", "stale"):
+        t = q["totals"]
+        lines.append("- Queue-" + md(q["coverage"], 20) + ": " +
+                     str(t["queued_items"]) + " wachtend, " +
+                     str(t["owned_items"]) + " bezet, " +
+                     str(t["high_claim_attempt_items"]) + " met ≥3 claimpogingen.")
+        lines.append("- Lease onzeker/verlopen/inconsistent: " +
+                     str(t["unverifiable_owner_lease_rows"]) + "/" +
+                     str(t["expired_owner_lease_rows"]) + "/" +
+                     str(t["inconsistent_owner_lease_window_rows"]) +
+                     ". Geen release/retry; eerst actuele eigenaar.")
+    else:
+        lines.append("- Queue-/leasebron ONBEKEND. Geen vrije scope afleiden.")
+    for item in source["incidents"][:30]:
+        lines.append("- " + md(item["priority"], 5) + " · " +
+                     md(item["project"], 80) + " · " +
+                     md(item["problem"], 120) + " · review " + item["review_by"] +
+                     "; bronstatus " + md(item["status"], 45))
+    if len(source["incidents"]) > 30:
+        lines.append("- Meer actuele incidenten niet opgenomen; raadpleeg privé-cockpit.")
+    lines += ["", "---",
+              "Dit bestand is alleen voor handmatige, bevoegde beoordeling.",
+              "Geen geautomatiseerde push, claim, runnerrestart, CI-retry, merge, deploy of ACK.",
+              ""]
+    content = "\n".join(lines)
+    if len(content.encode("utf-8")) > 100_000:
+        raise ValueError("private operator action briefing exceeds 100 KiB")
+    return content
+
+
+
 def review_html(decision):
     """One offline HTML view + bounded private operator handoff in browser."""
     # Validate optional branch data before using it in the source fingerprint.
@@ -1044,6 +1166,10 @@ def review_html(decision):
                      blocked_work_owner_panel(decision) +
                      runtime_source_panel(decision))
     source = _source(decision)
+    action_briefing = private_action_briefing(decision, source)
+    action_payload = json.dumps(action_briefing, ensure_ascii=True)
+    action_payload = (action_payload.replace("<", "\\u003c").replace(">", "\\u003e")
+                      .replace("&", "\\u0026"))
     payload = json.dumps(source, ensure_ascii=True, separators=(",", ":"))
     payload = (payload.replace("<", "\\u003c").replace(">", "\\u003e")
                .replace("&", "\\u0026"))
