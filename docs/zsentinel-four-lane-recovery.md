@@ -61,8 +61,10 @@ P0/P1 queue census** into up to six explicit human review suggestions.
 They are selected P0-first, then P1, with canonical project name, local
 queued amount, locally `eligible=1` hint, currently active local tasks
 and a fixed next-step instruction to check current Notion claims and GitHub
-PRs/issues before any work takeover. More than six eligible project groups
-are marked **partial**, not discarded as a complete global inventory.
+PRs/issues before any work takeover. More than six eligible project groups are marked **partial**, not discarded
+as a complete global inventory. A truncated upstream SQLite project-group
+window or unmapped project also propagates **partial** to the shortlist,
+even when fewer than six observed projects appear.
 
 This read-only owner shortlist appears in the console text, private HTML
 cards (with static GitHub issue/PR links), private Markdown handoff and
