@@ -449,9 +449,16 @@ def prless_branch_conflict(task, receipt):
     return None
 
 
-def eligible_tasks(bundle, blocked, now, capacity):
+def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None):
     tasks = bundle.get("tasks", [])
     claims = bundle.get("active_claims", [])
+    # Only exact previously reconciled incident identities can satisfy a
+    # declared dependency. Absence from a bounded GitHub sample is UNKNOWN.
+    reconciled_dependencies = (frozenset() if reconciled_dependencies is None
+                               else frozenset(reconciled_dependencies))
+    if any(type(value) is not str or not re.fullmatch(r"[0-9a-f]{32}", value)
+           for value in reconciled_dependencies):
+        raise ValueError("invalid reconciled task dependency identity")
     complete = (bundle.get("claim_inventory_complete") is True
                 and bundle.get("task_inventory_complete") is True)
     # A historically complete claim/queue snapshot is NOT proof the same
@@ -496,6 +503,7 @@ def eligible_tasks(bundle, blocked, now, capacity):
     recommendations = []
     seen = set()
     branch_suppressed = []
+    dependency_holds = []
     for task in tasks:
         if not isinstance(task, dict):
             raise ValueError("task must be an object")
@@ -510,13 +518,28 @@ def eligible_tasks(bundle, blocked, now, capacity):
         if task.get("state") not in ("queued", "claimed", "running", "verifying", "blocked", "done"):
             raise ValueError("task.state unsupported")
         deps = task.get("depends_on_incidents")
-        if not isinstance(deps, list) or len(deps) > 30 or any(not isinstance(x, str) for x in deps):
-            raise ValueError("invalid incident dependencies")
+        if (not isinstance(deps, list) or len(deps) > 30
+                or any(type(x) is not str or not re.fullmatch(r"[0-9a-f]{32}", x)
+                       for x in deps)
+                or len(set(deps)) != len(deps)):
+            raise ValueError("invalid, duplicate or noncanonical incident dependencies")
         scopes = admit_paths(task) if task.get("state") == "queued" else None
         if (not complete or task.get("state") != "queued" or task.get("eligible") is not True
                 or task.get("human_gate") is not False or task.get("qa_only") is not False
-                or task.get("active_owner") is not False or scopes is None
-                or any(dep in blocked["ids"] for dep in deps)):
+                or task.get("active_owner") is not False or scopes is None):
+            continue
+        unresolved = [dep for dep in deps if dep not in reconciled_dependencies
+                      or dep in blocked["ids"]]
+        if unresolved:
+            # A lost or unobserved prior incident is not a clearance receipt.
+            # Keep bounded counts without exporting private incident IDs.
+            dependency_holds.append({
+                "id": ident, "project_id": pid, "priority": tier,
+                "unresolved_count": len(unresolved),
+                "observed_blocked_count": sum(dep in blocked["ids"] for dep in unresolved),
+                "reason": "incident_dependency_reconciliation_required",
+                "claim_authorized": False,
+            })
             continue
         if any(pid == claimed_pid and
                any(paths_overlap(p, c) for p in scopes for c in claimed_paths)
@@ -567,7 +590,7 @@ def eligible_tasks(bundle, blocked, now, capacity):
         disjoint.append(candidate)
         if len(disjoint) == MAX_RECOMMENDATIONS:
             break
-    return disjoint, complete, branch_ownership, branch_suppressed
+    return disjoint, complete, branch_ownership, branch_suppressed, dependency_holds
 
 
 def triage_issue_inbox(inbox, now):
@@ -1043,8 +1066,12 @@ def plan(bundle, previous=None, now=None):
     historical = unresolved_backlog(next_state, now)
     blocked = {"ids": blocking_ids, "gates": blocked_gates}
     capacity = vps_capacity(bundle, now)
-    routes, claims_verified, branches, branch_suppressed = eligible_tasks(
-        bundle, blocked, now, capacity)
+    exact_reconciled_dependencies = {
+        key for key, entry in next_state.items()
+        if entry["status"] == "exact_job_completed_source_reconciled"
+    }
+    routes, claims_verified, branches, branch_suppressed, dependency_holds = eligible_tasks(
+        bundle, blocked, now, capacity, exact_reconciled_dependencies)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
     queue_triage = queue_pressure_summary(bundle.get("queue_pressure"), now)
     # Candidate feed for an authorized watch/notifier integrator, NOT a push.
@@ -1115,6 +1142,13 @@ def plan(bundle, previous=None, now=None):
                 for row in historical["shown"]) > len(historical_owner_rechecks)
         ),
         "independent_task_suggestions": routes,
+        "incident_dependency_holds": {
+            "count": len(dependency_holds),
+            "examples": dependency_holds[:8],
+            "samples_truncated": len(dependency_holds) > 8,
+            "exact_reconciliation_required": True,
+            "claim_authorized": False,
+        },
         "recent_branch_ownership": {
             "supplied": branches["supplied"],
             "project_id": "cloud", "coverage": branches["coverage"],
@@ -1158,6 +1192,28 @@ def operator_text(result):
     if not result["incidents"]:
         lines.append("No actionable fresh incidents; unknown or missing evidence does not mean healthy.")
     lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
+    holds = result.get("incident_dependency_holds")
+    if holds is not None:
+        if (type(holds) is not dict or type(holds.get("count")) is not int
+                or not 0 <= holds["count"] <= MAX_TASKS
+                or type(holds.get("examples")) is not list
+                or len(holds["examples"]) > 8
+                or len(holds["examples"]) > holds["count"]
+                or holds.get("samples_truncated") is not (
+                    holds["count"] > len(holds["examples"]))
+                or holds.get("exact_reconciliation_required") is not True
+                or holds.get("claim_authorized") is not False):
+            raise ValueError("untrusted incident dependency hold report")
+        lines.append("Tasks HELD by unresolved/unobserved incident dependencies: " +
+                     str(holds["count"]) + " (no claim/dispatch)")
+        for hold in holds["examples"]:
+            lines.append("- HOLD " + hold["priority"] + " " + hold["project_id"] +
+                         "/" + hold["id"] + " · " +
+                         str(hold["unresolved_count"]) +
+                         " dependency identities lack exact-job reconciliation; " +
+                         "owner must inspect current source.")
+        if holds["samples_truncated"]:
+            lines.append("Further incident dependency HOLD examples omitted.")
     lines.append(f"Human-only watch candidates (NOT delivered): {len(result['watch_alert_candidates'])}")
     old_owner = result.get("historical_owner_recheck_candidates", [])
     lines.append("Historical human owner rechecks (NO notification, NO current incident): " +
