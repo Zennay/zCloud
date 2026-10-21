@@ -327,6 +327,143 @@ def branch_work_review_panel(decision):
 
 
 
+
+def queue_owner_pressure_panel(decision):
+    """Private queue/lease owner worklist from the *existing* routed snapshot.
+
+    This does not open SQLite again and never interprets attempts as failures,
+    unverified leases as unowned work or a source sample as a permission grant.
+    """
+    source = decision.get("live_queue_pressure")
+    if source is None:
+        # Decisions predating the queue observer do not have source coverage.
+        return '<section class="panel"><h2>Wachtrij en leasecontrole</h2>' \
+               '<p>Bron ONBEKEND; geen vrije queue of eigenaar afleiden.</p></section>'
+    if (type(source) is not dict or
+            source.get("coverage") not in (
+                "not_supplied", "current", "stale", "incomplete") or
+            source.get("claim_ownership_verified") is not False or
+            type(source.get("totals")) is not dict or
+            type(source.get("project_groups")) is not list or
+            len(source["project_groups"]) > 18 or
+            type(source.get("project_groups_truncated")) is not bool or
+            type(source.get("sample_is_complete")) is not bool or
+            type(source.get("samples")) is not list or
+            len(source["samples"]) > 20):
+        raise ValueError("invalid private queue pressure receipt")
+    coverage = source["coverage"]
+    if coverage == "not_supplied":
+        if source["totals"] or source["project_groups"] or source["samples"]:
+            raise ValueError("absent queue source cannot report current figures")
+        return ('<section class="panel"><h2>Wachtrij en leasecontrole</h2>'
+                '<p class="banner">Niet opgevraagd · actuele wachtrijdruk en'
+                ' eigenaarschap ONBEKEND. Geen automatische claim of retry.</p></section>')
+    totals = source["totals"]
+    fields = (
+        "active_items", "queued_items", "owned_items",
+        "high_claim_attempt_items", "ten_plus_claim_attempt_items",
+        "expired_owner_lease_rows", "unverifiable_owner_lease_rows",
+        "inconsistent_owner_lease_window_rows", "invalid_record_rows",
+        "max_claim_attempts",
+    )
+    if (any(type(totals.get(k)) is not int or
+            not 0 <= totals[k] <= 10**9 for k in fields)
+            or totals["queued_items"] + totals["owned_items"] != totals["active_items"]
+            or totals["high_claim_attempt_items"] > totals["active_items"]
+            or totals["ten_plus_claim_attempt_items"] > totals["high_claim_attempt_items"]
+            or sum(totals[k] for k in (
+                "expired_owner_lease_rows", "unverifiable_owner_lease_rows",
+                "inconsistent_owner_lease_window_rows")) > totals["owned_items"]):
+        raise ValueError("contradictory queue pressure aggregate")
+    observed = source.get("observed_at")
+    if (type(observed) is not str or len(observed) > 45):
+        raise ValueError("missing private queue observation date")
+    _stamp(observed)
+    # The queue router deliberately strips project/sample detail when stale or
+    # incomplete. Do not turn historic totals into a live per-project claim.
+    if coverage in ("stale", "incomplete"):
+        if source["project_groups"] or source["samples"]:
+            raise ValueError("incomplete queue receipt contains current details")
+        return ('<section class="panel"><h2>Wachtrij en leasecontrole</h2>'
+                '<p class="banner">Bron ' +
+                ("VEROUDERD" if coverage == "stale" else "ONVOLLEDIG") +
+                ' · oorspronkelijke observatie ' + escape(observed) +
+                '. Eerder gezien: ' + str(totals["active_items"]) +
+                ' actieve regels, ' + str(totals["high_claim_attempt_items"]) +
+                ' met minstens 3 claimpogingen. Dit is NIET de huidige toestand.'
+                ' Bevoegde eigenaar verifieert opnieuw; geen vrijgave.</p></section>')
+    counts = (
+        ("Geclaimde/uitvoerende/verifiërende regels", totals["owned_items"]),
+        ("Wachtende regels", totals["queued_items"]),
+        ("≥3 claimpogingen (geen faalbewijs)", totals["high_claim_attempt_items"]),
+        ("≥10 claimpogingen (geen retrytoestemming)", totals["ten_plus_claim_attempt_items"]),
+        ("Lease verlopen geobserveerd", totals["expired_owner_lease_rows"]),
+        ("Leaseklok onbekend", totals["unverifiable_owner_lease_rows"]),
+        ("Claim/expiry-venster inconsistent",
+         totals["inconsistent_owner_lease_window_rows"]),
+    )
+    risk_fields = (
+        "inconsistent_owner_lease_window_rows",
+        "expired_owner_lease_rows", "unverifiable_owner_lease_rows",
+        "ten_plus_claim_attempts", "high_claim_attempts",
+    )
+    rows = []
+    seen = set()
+    for group in source["project_groups"]:
+        if type(group) is not dict:
+            raise ValueError("invalid private queue aggregate row")
+        pid, priority = group.get("project_id"), group.get("priority")
+        if (type(pid) is not str or not SLUG.fullmatch(pid)
+                or priority not in ("P0", "P1", "P2", "P3")
+                or (pid, priority) in seen):
+            raise ValueError("noncanonical private queue row")
+        seen.add((pid, priority))
+        names = ("queued", "claimed", "running", "verifying",
+                 "high_claim_attempts", "ten_plus_claim_attempts",
+                 "expired_owner_lease_rows", "unverifiable_owner_lease_rows",
+                 "inconsistent_owner_lease_window_rows", "max_claim_attempts")
+        if any(type(group.get(name)) is not int or
+               not 0 <= group[name] <= 10**9 for name in names):
+            raise ValueError("invalid private queue group count")
+        if (group["ten_plus_claim_attempts"] > group["high_claim_attempts"]
+                or group["high_claim_attempts"] >
+                    sum(group[name] for name in ("queued", "claimed", "running", "verifying"))):
+            raise ValueError("contradictory private queue group counts")
+        rows.append(group)
+    rows.sort(key=lambda row: (
+        -sum(row[name] for name in risk_fields),
+        ("P0", "P1", "P2", "P3").index(row["priority"]), row["project_id"]))
+    table = ''.join(
+        '<tr><td>' + escape(row["project_id"]) + '</td><td>' +
+        escape(row["priority"]) + '</td><td>' + str(row["queued"]) +
+        '</td><td>' + str(row["claimed"] + row["running"] + row["verifying"]) +
+        '</td><td>' + str(row["high_claim_attempts"]) + '</td><td>' +
+        str(row["expired_owner_lease_rows"]) + '</td><td>' +
+        str(row["unverifiable_owner_lease_rows"]) + '</td><td>' +
+        str(row["inconsistent_owner_lease_window_rows"]) + '</td></tr>'
+        for row in rows
+    )
+    cards = ''.join('<li><strong>' + escape(title) + '</strong>: ' +
+                    str(value) + '</li>' for title, value in counts)
+    return ('<section class="panel" aria-label="Privé wachtrijdruk">'
+            '<h2>Wachtrijdruk en claimlease-risico</h2>'
+            '<p>Read-only SQLite-bron op ' + escape(observed) +
+            ' · geen claimeigendom vastgesteld en geen queuewrite toegestaan.</p>'
+            '<ul>' + cards + '</ul>'
+            '<details><summary>Projecten met risicodruk · ' +
+            str(len(rows)) + ' groepen' +
+            (' · lijst afgekapt' if source["project_groups_truncated"] else '') +
+            '</summary><div class="scroll"><table><thead><tr>'
+            '<th>Project</th><th>P</th><th>Queue</th><th>Bezet</th>'
+            '<th>≥3 claims</th><th>Lease verlopen</th><th>Klok onbekend</th>'
+            '<th>Venster conflict</th></tr></thead><tbody>' + table +
+            '</tbody></table></div></details>'
+            '<p class="meta">Rijen zijn bronaggregaten; claimpogingen zijn geen'
+            ' crashes en verlopen/onbekende leases mogen niet automatisch'
+            ' worden vrijgegeven. Menselijke eigenaar beslist na controle.</p>'
+            '</section>')
+
+
 def runtime_source_panel(decision):
     """Private, read-only worker/Notion context for the interactive incident desk.
 
@@ -453,7 +590,7 @@ def review_html(decision):
     """One offline HTML view + bounded private operator handoff in browser."""
     # Validate optional branch data before using it in the source fingerprint.
     branch_panel = branch_work_review_panel(decision)
-    runtime_panel = runtime_source_panel(decision)
+    runtime_panel = queue_owner_pressure_panel(decision) + runtime_source_panel(decision)
     source = _source(decision)
     payload = json.dumps(source, ensure_ascii=True, separators=(",", ":"))
     payload = (payload.replace("<", "\\u003c").replace(">", "\\u003e")
