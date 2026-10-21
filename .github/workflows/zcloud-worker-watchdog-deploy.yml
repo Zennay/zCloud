@@ -1,6 +1,15 @@
 name: zCloud worker progress watchdog deploy
 
 on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_worker_watchdog.py"
+      - "scripts/zcloud-self-heal.sh"
+      - "tests/test_worker_progress_watchdog.py"
+      - "tests/test_zcloud_worker_watchdog_deploy_workflow.py"
+      - "deploy/zcloud-self-heal.service"
+      - "deploy/zcloud-self-heal.timer"
+      - ".github/workflows/zcloud-worker-watchdog-deploy.yml"
   workflow_dispatch:
   push:
     branches: [main]
@@ -16,19 +25,50 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-worker-progress-watchdog-deploy
-  cancel-in-progress: true
+  group: zcloud-worker-progress-watchdog-deploy-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'live' }}
+  cancel-in-progress: false
 
 jobs:
-  deploy:
-    runs-on: self-hosted
-    timeout-minutes: 8
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
           clean: true
           fetch-depth: 1
+
+      - name: Validate watchdog deploy contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_worker_watchdog.py
+          python3 -m unittest tests.test_worker_progress_watchdog tests.test_zcloud_worker_watchdog_deploy_workflow
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Guard canonical permanent VPS before mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "zcloud-vps-1"
+          python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Validate watchdog
         shell: bash
@@ -62,7 +102,7 @@ jobs:
           sudo -n journalctl -u zcloud-self-heal.service -n 80 --no-pager
 
       - name: Upload watchdog evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zcloud-worker-watchdog-evidence-${{ github.run_id }}
           if-no-files-found: error
