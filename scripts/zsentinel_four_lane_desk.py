@@ -39,6 +39,14 @@ LANE_NAMES = {
     "worker-recovery": "Workers en wachtrij",
     "ci-deploy-recovery": "CI en deployments",
 }
+LANE_ROUTING_LABELS = {
+    "PERSISTED_ACTIVE_LANE": "Bestaande actieve lane behouden",
+    "KEYWORD_CLASSIFICATION": "Taakinhoud bepaalt lane (adviserend)",
+    "PRODUCT_REMEDIATION_FALLBACK": "Geen PR-/merge-signaal; productherstel",
+    "NO_KEYWORD_FALLBACK": "Standaardlane (overige profielen)",
+    "NO_LOCAL_TASK": "Geen lokale taak",
+    "UNKNOWN": "Routebron onbekend",
+}
 ACTIVE = {"claimed", "running", "verifying"}
 VALID = ACTIVE | {"queued"}
 MAX_ROWS = 500
@@ -576,6 +584,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             "admission": admission,
             "name": LANE_NAMES[lane["lane_id"]],
             "status": lane["status"],
+            "routing_origin": lane.get("routing_origin", "UNKNOWN"),
             "candidate_observed": lane.get("queue_id") is not None,
             "active_backlog_count": lane.get("active_backlog_count", 0),
             "deferred_qa_packages": lane.get("deferred_qa_packages", 0),
@@ -813,6 +822,8 @@ def text_view(data):
             f"{lane['active_backlog_count']}; conflicten "
             f"{lane['conflicting_claims'] + lane['conflicting_queue_entries']}{extra}"
         )
+        out.append("  Route: " + LANE_ROUTING_LABELS.get(
+            lane["routing_origin"], LANE_ROUTING_LABELS["UNKNOWN"]))
         out.append("  Beslissing: " + lane["admission"]["code"] +
                    " · " + lane["admission"]["label"])
         out.append("  Volgende stap: " + lane["admission"]["next_step"])
@@ -1019,7 +1030,10 @@ def html_view(data):
         cards.append(
             "<article><div class='eyebrow'>Herstelbaan</div><h2>"
             + html.escape(lane["name"]) + "</h2><p class='state'>"
-            + status + "</p><dl><div><dt>Actief waargenomen</dt><dd>"
+            + status + "</p><p>Routeherkomst: "
+            + html.escape(LANE_ROUTING_LABELS.get(
+                lane["routing_origin"], LANE_ROUTING_LABELS["UNKNOWN"]))
+            + "</p><dl><div><dt>Actief waargenomen</dt><dd>"
             + str(lane["active_backlog_count"])
             + "</dd></div><div><dt>Scopeconflicten</dt><dd>"
             + str(count) + "</dd></div></dl>" + warning
