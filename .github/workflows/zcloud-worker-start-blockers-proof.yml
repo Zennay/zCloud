@@ -1,0 +1,83 @@
+name: zCloud worker start blocker proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_worker_start_blockers.py
+      - tests/test_worker_start_blockers.py
+      - tests/test_worker_start_blockers_workflow.py
+      - .github/workflows/zcloud-worker-start-blockers-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-start-blockers-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Checkout exact requested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$(git rev-parse HEAD)" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          echo "ZCLOUD_WORKER_START_BLOCKERS_EXACT_HEAD=$expected"
+
+      - name: Run focused blocker regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_worker_start_blockers tests.test_worker_start_blockers_workflow
+
+      - name: Prove live classification is read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          from scripts.zcloud_worker_start_blockers import (
+              classify_worker_start_blockers,
+              fetch_status,
+          )
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          before = (db.stat().st_size, db.stat().st_mtime_ns)
+          status = fetch_status("http://127.0.0.1:8765/api/status", attempts=3, timeout=25)
+          report = classify_worker_start_blockers(status)
+          after = (db.stat().st_size, db.stat().st_mtime_ns)
+          if before != after:
+              raise SystemExit("/api/status + blocker classification mutated history.db")
+
+          safe = {
+              "worker_count": report["worker_count"],
+              "blocked_worker_count": report["blocked_worker_count"],
+              "category_counts": report["category_counts"],
+              "database_fingerprint_unchanged": True,
+          }
+          print("ZCLOUD_WORKER_START_BLOCKERS=" + json.dumps(safe, sort_keys=True))
+          print("ZCLOUD_WORKER_START_BLOCKERS_READONLY_GREEN=1")
+          PY
