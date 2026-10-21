@@ -543,6 +543,13 @@ def github_exact_gate_panel(decision):
                                   not item["runner_assigned"] or
                                   type(item.get("runner_id_observed")) is not int):
             raise ValueError("false canonical runner proof")
+        verified_attempt = item.get("verified_matching_run_attempt")
+        attempt = item.get("run_attempt")
+        if (verified_attempt not in (None, False, True) or
+                (verified_attempt is True and
+                 (type(attempt) is not int or not 1 <= attempt <= 10**6)) or
+                (verified_attempt is not True and attempt is not None)):
+            raise ValueError("invalid GitHub run/job attempt provenance")
         start = item.get("job_start_evidence", "unknown_not_proven")
         if start not in ("completed_without_steps", "completed_with_steps",
                          "unknown_not_proven"):
@@ -575,6 +582,9 @@ def github_exact_gate_panel(decision):
                         (' · VEROUDERD (>10 min)' if stale else ' · RECENT BRONMOMENT') +
                         ' · bronmoment: ' + escape(normalized_at) +
                         ' · jobstart: ' + escape(start) +
+                        ' · run/job-poging: ' +
+                        (str(attempt) + ' (BEIDE BRONNEN GELIJK)' if verified_attempt is True
+                         else 'ONBEKEND / niet door beide bronnen bevestigd') +
                         ' · geobserveerde runner toegewezen: ' +
                         ("JA" if item["runner_assigned"] else "NEE") +
                         ' · labels: ' +
