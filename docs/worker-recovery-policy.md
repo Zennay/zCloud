@@ -591,3 +591,27 @@ handoff from #1550's *source branch*: it does not assert that either PR
 has reached main, that the exporter or importer has been deployed, or that
 the current protected-main gate permits any merge.
 
+
+
+## 21 oktober · privé-uitvoer voor recovery policy
+
+De recovery-policy CLI kan iedere bestaande JSON-, Markdown-, workorders-,
+HTML- of CSV-weergave nu optioneel als **nieuw privébestand** opslaan met
+`--output`. Zonder dit argument blijft de bestaande stdout-route ongewijzigd.
+De extensie moet overeenkomen met `--format`: `.json`, `.md`, `.txt`,
+`.html` of `.csv`.
+
+```sh
+install -d -m 700 "$HOME/.local/state/zsentinel"
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input /private/zsentinel/recovery-case.json --format html \
+  --output "$HOME/.local/state/zsentinel/recovery-workorders.html"
+```
+
+De uitvoer wordt begrensd tot 128 KiB, exclusief aangemaakt met mode `0600`
+en geflusht naar bestand en directory. De doelmap moet al bestaan, eigendom
+zijn van de huidige gebruiker en niet door groep/anderen schrijfbaar zijn.
+Bestaande bestanden, symlinks en gewijzigde directory-inodes worden geweigerd;
+bij een schrijffout wordt uitsluitend de eigen nieuwe inode opgeruimd. Fout-
+meldingen tonen geen privépaden. De uitvoer blijft uitsluitend advies/HOLD:
+het bestand geeft geen live-status, claim, retry, merge- of deploybevoegdheid.
