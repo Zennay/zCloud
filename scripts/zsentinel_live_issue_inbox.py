@@ -28,8 +28,8 @@ MAX_DISPLAY = 45
 MAX_LABELS = 100
 PRIORITIES = ("P0", "P1", "P2", "P3")
 RECOGNIZED = {
-    p for prefix in ("", "priority:", "priority/") for p in
-    ("p0", "p1", "p2", "p3") for p in (prefix + p,)
+    prefix + priority for prefix in ("", "priority:", "priority/")
+    for priority in ("p0", "p1", "p2", "p3")
 }
 
 
@@ -248,7 +248,7 @@ def markdown(report):
     lines.extend([
         "",
         "Review an issue without a saved dossier using "
-        "\`--live-issue-url <issue URL>\` in the same zSentinel CLI.",
+        "`--live-issue-url <issue URL>` in the same zSentinel CLI.",
         "",
     ])
     return "\n".join(lines)
