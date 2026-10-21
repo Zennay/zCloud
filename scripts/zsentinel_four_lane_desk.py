@@ -1326,15 +1326,18 @@ def owner_snapshot(data):
         key = reverse.get(item["project"])
         if key is None:
             raise ValueError("Unmapped portfolio project in local owner snapshot")
-        if any(type(item[field]) is not int or item[field] < 0
-               for field in OWNER_COUNT_FIELDS):
+        if (any(type(item[field]) is not int or
+                not 0 <= item[field] <= 1000000
+                for field in OWNER_COUNT_FIELDS)
+                or item["eligible_queued_p0"] > item["queued_p0"]
+                or item["eligible_queued_p1"] > item["queued_p1"]):
             raise ValueError("Invalid bounded portfolio aggregate")
         rows[key] = {field: item[field] for field in OWNER_COUNT_FIELDS}
     return {
         "schema": OWNER_SNAPSHOT_SCHEMA,
         "observed_utc": data["observed_utc"],
         "coverage_complete": bool(
-            data["source_complete"] and not data["portfolio_priority_partial"]
+            not data["portfolio_priority_partial"]
             and not data["portfolio_unknown_project_groups"]
         ),
         "projects": rows,
