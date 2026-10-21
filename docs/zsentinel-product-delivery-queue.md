@@ -857,3 +857,18 @@ database-rijen blijven ongemoeid. Productiegedrag vereist nog steeds
 exact-head verplichte CI, onafhankelijke review, protected-main merge
 en de reeds bestaande geautoriseerde deployroute. Geen QA-suites of
 losse tests geschreven of gestart.
+
+
+#### Taakgerichte, begrensde owner-handoff
+
+Naast de aggregaten geeft `delivery_policy.active_claim_evidence_examples`
+maximaal `max_visible` (standaard acht) feitelijke actieve bronregels
+met `project_id`, `queue_id`, bestaande taakstatus en alleen de
+vaste `missing_fields`-codes `worker_slot`, `claimed_at` en
+`claim_expires`. Dit maakt het mogelijk om **het originele werkitem**
+op te zoeken in plaats van een willekeurige andere worker vrij te geven.
+`active_claim_evidence_examples_truncated=true` meldt dat er meer
+geobserveerde probleemregels waren dan worden getoond. Er staan geen
+workerpersistentietokens, browserinhoud of volledige lease-identiteiten
+in deze aanvullende kaartjes. Een ontbrekend bewijsveld blijft uitsluitend
+een **owner-review-observatie**, niet een actie- of claimautorisatie.
