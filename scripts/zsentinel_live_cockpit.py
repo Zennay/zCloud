@@ -250,6 +250,12 @@ def main():
                         help="explicitly skip public GitHub issue/PR API reads")
     parser.add_argument("--pin-issue", action="append", default=[],
                         help="extra bounded exact open GitHub issue GET, PROJECT:NUMBER, up to 3 selected projects")
+    parser.add_argument("--inspect-existing-prs", action="store_true",
+                        help="integrate up to three current existing PR exact-head gate receipts")
+    parser.add_argument("--existing-pr", action="append", default=[],
+                        help="pin existing product PR as PROJECT:NUMBER, up to three")
+    parser.add_argument("--pr-project", action="append", default=[],
+                        help="discover recent open PRs for selected canonical projects")
     parser.add_argument("--state", type=Path,
                         help="optional local private incident ledger file")
     parser.add_argument("--format", choices=("text", "json", "html", "ics", "desk"), default="html")
@@ -295,6 +301,12 @@ def main():
                 raise ValueError("local runner evidence must be owner-private")
         if args.pin_issue and args.skip_github_issues:
             raise ValueError("--pin-issue cannot be combined with --skip-github-issues")
+        if (args.pr_project or args.existing_pr) and not args.inspect_existing_prs:
+            raise ValueError("--pr-project and --existing-pr require --inspect-existing-prs")
+        if args.inspect_existing_prs and args.skip_github_issues:
+            raise ValueError("--inspect-existing-prs conflicts with --skip-github-issues")
+        if args.inspect_existing_prs and args.format not in ("html", "json", "text", "desk"):
+            raise ValueError("existing PR observation requires private html/json/text/desk")
         if args.read_notion_claims and args.notion_claims_export is not None:
             raise ValueError("choose either live Notion token or saved connector snapshot")
         # The extra private incident desk is NOT a stdout sink. A normal
@@ -302,11 +314,11 @@ def main():
         # worker events and live/saved Notion details. Require private 0600
         # --output unless the only selected output is --format desk.
         if (args.worker_events_database is not None or args.read_notion_claims
-                or args.notion_claims_export is not None):
+                or args.notion_claims_export is not None or args.inspect_existing_prs):
             if args.format not in ("html", "json", "text", "desk"):
-                raise ValueError("private worker/Notion observations need a private report format")
+                raise ValueError("private worker/Notion/PR observations need a private report format")
             if args.format != "desk" and args.output is None:
-                raise ValueError("private worker/Notion evidence needs --output; --desk-output does not suppress stdout")
+                raise ValueError("private worker/Notion/PR evidence needs --output; --desk-output does not suppress stdout")
         if args.github_only:
             if args.database is not None:
                 raise ValueError("--github-only requires omitting --database")
@@ -381,6 +393,29 @@ def main():
         if args.state is not None:
             ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
+        pr_selection = []
+        pr_projects = []
+        if args.inspect_existing_prs:
+            selected = args.project
+            if (not 1 <= len(selected) <= MAX_PROJECTS
+                    or len(set(selected)) != len(selected)
+                    or any(pid not in registry for pid in selected)):
+                raise ValueError("existing PR discovery needs selected canonical projects")
+            for spec in args.existing_pr:
+                match = re.fullmatch(r"([a-z][a-z0-9_-]{0,39}):([1-9][0-9]{0,8})", spec)
+                if match is None or match.group(1) not in selected:
+                    raise ValueError("existing PR needs selected PROJECT:NUMBER")
+                pr_selection.append({"project_id": match.group(1),
+                                     "pr_number": int(match.group(2))})
+            if (len(pr_selection) > 3 or len({
+                    (row["project_id"], row["pr_number"]) for row in pr_selection
+                    }) != len(pr_selection)):
+                raise ValueError("at most three distinct pinned existing PRs")
+            pr_projects = args.pr_project if args.pr_project else (
+                list(selected) if not pr_selection else [])
+            if (len(pr_projects) > 3 or len(set(pr_projects)) != len(pr_projects)
+                    or any(pid not in selected for pid in pr_projects)):
+                raise ValueError("PR discovery projects must be selected and unique")
         bundle, provenance = assemble(
             registry, args.project, args.job, args.database,
             token=os.environ.get("GITHUB_TOKEN"),
