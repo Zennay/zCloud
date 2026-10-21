@@ -35,6 +35,29 @@ eigenaren die herhaald werk en verloren PR-context willen voorkomen:
   De bestaande volledige bronoverdracht blijft compleet en de
   aparte PR-dossiers blijven beschikbaar.
 
+De operator kan nu **per meervoudig PR-bronissue apart**
+kiezen tussen `Nog niet beoordeeld`, `Eigenaar bepalen`,
+`Afstemmen met PR-eigenaren` en `Opvolging vastgelegd
+(niet opgelost)`. Een optionele privé botsingsnotitie kan de
+betrokken contactpersoon, huidige afspraak of benodigde review
+vastleggen. Deze coördinatiegegevens zijn los van de status/notitie
+voor de PR zelf en voor het issue zelf; **geen** van deze opties
+verklaart een issue opgelost of een PR mergeklaar.
+
+De bestaande brongebonden privé v2 JSON-sessie heeft een optionele
+`collision_entries` lijst van exact dezelfde geobserveerde issuevolgorde.
+Bij import worden **alle** states, notities, lengtegrenzen, issue-URLs,
+groepslijsten en exact-source token eerst gecontroleerd; alleen dan
+worden lokale velden hersteld. Oudere v1/v2 sessies zonder deze optionele
+lijst blijven importeerbaar. Ook browser-wegnavigatie waarschuwt nu
+bij een nog niet opgeslagen botsingsnotitie of coördinatiestatus.
+
+Zowel **Download PR-botsingsdossier** als de bestaande **complete**
+Markdown-overdracht nemen alle lokale botsingsnotities en hun
+handmatige statussen mee — ook wanneer de operator gefilterd werkt.
+Deze bestanden zijn privé-downloads, geen remote audit of bewezen
+actuele wijzigingen.
+
 De werkbak gebruikt uitsluitend bestaande, vooraf toegelaten
 `zsentinel-merge-first-human-inbox-v1` bronkaarten. Geen extra
 GitHub-/Notion-/VPS-read, nieuw authorisatieritueel of QA-suite.
