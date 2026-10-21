@@ -405,7 +405,87 @@ def markdown(report):
     return "\n".join(lines)
 
 
+def template_request(action, project_id, incident_id, source_url, owner):
+    if type(project_id) is not str or not SLUG.fullmatch(project_id):
+        raise PolicyInputError("project_id must be a bounded ASCII identifier")
+    if type(incident_id) is not str or not SLUG.fullmatch(incident_id):
+        raise PolicyInputError("incident_id must be a bounded ASCII identifier")
+    _source_url(source_url)
+    if owner is not None and (type(owner) is not str or not SLUG.fullmatch(owner)):
+        raise PolicyInputError("owner must be null or a bounded ASCII identifier")
+    evidence = {field: None for field in sorted(EVIDENCE_FIELDS)}
+    return {
+        "schema_version": 1,
+        "action": action,
+        "project_id": project_id,
+        "incident_id": incident_id,
+        "observed_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "source_url": source_url,
+        "owner": owner,
+        "evidence": evidence,
+    }
+
+
 def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Explain whether a proposed recovery action is ready for human review; never execute it."
+    )
+    parser.add_argument("--input", help="bounded JSON file path, or - for stdin")
+    parser.add_argument("--template", choices=sorted(ACTIONS),
+                        help="emit a fresh, fail-closed JSON request template")
+    parser.add_argument("--project-id", help="project slug used by --template")
+    parser.add_argument("--incident-id", help="incident slug used by --template")
+    parser.add_argument("--source-url", help="canonical HTTPS GitHub/Notion source used by --template")
+    parser.add_argument("--owner", help="known owner slug used by --template; omit if unknown")
+    parser.add_argument("--format", choices=("json", "markdown"), default="json")
+    parser.add_argument("--max-age-minutes", type=int, default=60,
+                        help="maximum accepted observation age (1..1440; default 60)")
+    args = parser.parse_args(argv)
+    if not 1 <= args.max_age_minutes <= 1440:
+        parser.error("--max-age-minutes must be between 1 and 1440")
+    if args.template:
+        if args.input:
+            parser.error("--template and --input cannot be used together")
+        if not all((args.project_id, args.incident_id, args.source_url)):
+            parser.error("--template requires --project-id, --incident-id and --source-url")
+        if args.format != "json":
+            parser.error("--template emits JSON only")
+        try:
+            report = template_request(args.template, args.project_id, args.incident_id,
+                                      args.source_url, args.owner)
+            output = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("template exceeds 128 KiB")
+            sys.stdout.write(output)
+            return 0
+        except (OSError, UnicodeError, PolicyInputError) as exc:
+            print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
+            return 2
+    if not args.input:
+        parser.error("either --input or --template is required")
+    if any((args.project_id, args.incident_id, args.source_url, args.owner)):
+        parser.error("template identity options require --template")
+    try:
+        raw = _read_input(args.input)
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                          parse_constant=_reject_constant)
+        report = evaluate(data, args.max_age_minutes)
+        output = markdown(report) if args.format == "markdown" else (
+            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        )
+        encoded = output.encode("utf-8")
+        if len(encoded) > MAX_OUTPUT_BYTES:
+            raise PolicyInputError("output exceeds 128 KiB")
+        sys.stdout.write(output)
+        return 0
+    except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
+        print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
     parser = argparse.ArgumentParser(
         description="Explain whether a proposed recovery action is ready for human review; never execute it."
     )
