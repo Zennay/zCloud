@@ -29,6 +29,7 @@ PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 MAX_ROWS = 2500
 MAX_SAMPLES = 20
+MAX_BLOCKED_GROUPS = 250
 MAX_BYTES_PER_TEXT = 180
 UTC = timezone.utc
 
@@ -58,6 +59,16 @@ def _read_sqlite(path):
             "WHERE status IN ('queued','claimed','running','verifying') "
             "LIMIT ?", (MAX_ROWS + 1,)
         )]
+        # Blocked work is a separate category, never folded into active or
+        # queued counts. Only aggregate project/priority totals are retained.
+        blocked_total = connection.execute(
+            "SELECT COUNT(*) AS items FROM portfolio_queue WHERE status='blocked'"
+        ).fetchone()["items"]
+        blocked_groups = [dict(row) for row in connection.execute(
+            "SELECT project_id,priority,COUNT(*) AS items FROM portfolio_queue "
+            "WHERE status='blocked' GROUP BY project_id,priority "
+            "ORDER BY project_id,priority LIMIT ?", (MAX_BLOCKED_GROUPS + 1,)
+        )]
         connection.execute("ROLLBACK")
     finally:
         connection.close()
@@ -73,7 +84,7 @@ def _read_sqlite(path):
         (os.uname().nodename + "\\0" + str(location.absolute()) + "\\0" +
          str(before.st_dev) + "\\0" + str(before.st_ino)).encode("utf-8")
     ).hexdigest()
-    return rows, source_key
+    return rows, source_key, {"total_items": blocked_total, "groups": blocked_groups}
 
 
 def _stamp(value):
@@ -88,12 +99,46 @@ def _stamp(value):
     return None
 
 
+def _blocked_queue_observation(raw, observed_at):
+    total, rows = raw.get("total_items"), raw.get("groups")
+    if (type(total) is not int or not 0 <= total <= 10**9
+            or type(rows) is not list or len(rows) > MAX_BLOCKED_GROUPS + 1):
+        raise ValueError("invalid bounded blocked-queue aggregate")
+    truncated = len(rows) > MAX_BLOCKED_GROUPS
+    groups = []
+    invalid = 0
+    for row in rows[:MAX_BLOCKED_GROUPS]:
+        project, priority, items = (
+            row.get("project_id"), row.get("priority"), row.get("items"))
+        if (type(project) is not str or not PROJECT.fullmatch(project)
+                or priority not in PRIORITY
+                or type(items) is not int or not 1 <= items <= 10**9):
+            invalid += 1
+            continue
+        groups.append({"project_id": project, "priority": priority, "items": items})
+    complete = (not truncated and invalid == 0
+                and sum(row["items"] for row in groups) == total)
+    return {
+        "schema": "zsentinel-blocked-queue-observation-v1",
+        "status_filter": "blocked",
+        "coverage": "complete" if complete else "partial",
+        "observed_at_utc": observed_at,
+        "total_items_observed": total,
+        "project_groups": groups,
+        "sample_truncated": truncated or invalid > 0,
+        "invalid_group_rows": invalid,
+        "claim_ownership_verified": False,
+        "queue_write_authorized": False,
+        "automatic_retry_authorized": False,
+    }
+
+
 def observe(path, now=None):
     moment = now or datetime.now(UTC)
     if moment.tzinfo is None:
         raise ValueError("now must have timezone")
     moment = moment.astimezone(UTC)
-    rows, source_key = _read_sqlite(path)
+    rows, source_key, blocked_raw = _read_sqlite(path)
     groups = defaultdict(lambda: {
         "queued": 0, "claimed": 0, "running": 0, "verifying": 0,
         "high_claim_attempts": 0, "ten_plus_claim_attempts": 0,
@@ -205,6 +250,7 @@ def observe(path, now=None):
         "totals": totals,
         "project_groups": table,
         "high_churn_samples": samples[:MAX_SAMPLES],
+        "blocked_queue": _blocked_queue_observation(blocked_raw, utc_string(moment)),
     }
 
 
@@ -229,6 +275,19 @@ def explicitly_unobserved_queue():
         "totals": {},
         "project_groups": [],
         "high_churn_samples": [],
+        "blocked_queue": {
+            "schema": "zsentinel-blocked-queue-observation-v1",
+            "status_filter": "blocked",
+            "coverage": "not_observed",
+            "observed_at_utc": None,
+            "total_items_observed": None,
+            "project_groups": [],
+            "sample_truncated": True,
+            "invalid_group_rows": None,
+            "claim_ownership_verified": False,
+            "queue_write_authorized": False,
+            "automatic_retry_authorized": False,
+        },
         "queue_source_available": False,
     }
 
