@@ -1,5 +1,28 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 21 oktober · P0-eerst langs open projectopvolging navigeren
+
+De bestaande projectfilter heeft nu ook **Volgende project met open lokale
+opvolging**. Deze brongebonden bediening groepeert uitsluitend al
+opgeslagen PR-, issue- en meervoudig-PR-afstemmingsnotities per project.
+Alle items met status `Opvolging vastgelegd` worden voor deze reviewronde
+overgeslagen, **niet als opgelost, gemerged of vrijgegeven** gemarkeerd.
+De projecten worden geordend op hun hoogste nog open geobserveerde
+prioriteit (P0, P1, P2, niet geclassificeerd) en daarna projectnaam.
+De operator kan met één klik de projectfilter instellen en alle huidige
+zoek-/botsings-/PR-focusfilters wissen die het brondossier zouden verbergen.
+
+De aparte voortgangsregel toont zowel het aantal projecten met open
+lokale opvolging als het aantal nog te bekijken bronitems. Navigatie en
+voortgang gebruiken exact dezelfde lokale `openProjectQueue`-berekening
+om te voorkomen dat de teller iets anders bedoelt dan de knop. De
+huidige projectexport blijft beschikbaar om de volledige beperkte
+projectsubset op papier over te dragen; de export volgt niet de
+handmatige zoekfilters. Zo ontstaat één menselijke route van P0
+signaleren → lokaal bronproject openen → relevante bestaande PRs
+bekijken → privé afstemming exporteren. Er is geen live repo/Notion-
+raadpleging, automatische claim, uitrol of verandering van bronbewijs.
+
 ## 21 oktober · één projectgerichte privé-overdracht uit bestaande merge-eerst werkbak
 
 De bestaande brongebonden offline werkbak heeft nu een knop **Download
