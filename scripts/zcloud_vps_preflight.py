@@ -19,6 +19,7 @@ from zcloud_vps_preflight_markdown import render as render_markdown
 
 RUNNER_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
 TRAINING_FREE_RESERVE_BYTES = 10 * 1024 ** 3
+MAX_PREVIOUS_REPORT_AGE_SECONDS = 24 * 60 * 60
 
 
 def command(*argv: str, cwd: Path | None = None, timeout: int = 8) -> tuple[int, str]:
@@ -399,6 +400,7 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
     escalated = {row["code"] for row in comparison.get("severity_changes", [])
                  if row["current"] == "block"}
     unknown_recovery = set(comparison.get("recovery_unverified_findings", []))
+    stale_comparison = comparison.get("resolution_credit_allowed") is False
     cards: list[dict[str, object]] = []
 
     for recommendation in report["recovery_priorities"][:8]:
@@ -407,7 +409,9 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
         status = ("owner_release_gate" if recommendation["code"] == "EXTERNAL_RELEASE_GATES"
                   else "active_blocker" if any(current[x] == "block" for x in active)
                   else "active_warning" if active else "observation_incomplete")
-        if active and family & escalated:
+        if active and stale_comparison:
+            trend = "stale_baseline_no_resolution_credit"
+        elif active and family & escalated:
             trend = "escalated_to_blocker"
         elif active and family & newly_observed:
             trend = "newly_observed"
@@ -694,6 +698,8 @@ def compare_snapshot(path: Path, current: dict) -> dict:
         current_time = datetime.fromisoformat(current["observed_at"])
         if previous_time.tzinfo is None or previous_time.utcoffset() is None or previous_time > current_time:
             raise ValueError("invalid snapshot")
+        snapshot_age_seconds = int((current_time - previous_time).total_seconds())
+        stale_baseline = snapshot_age_seconds > MAX_PREVIOUS_REPORT_AGE_SECONDS
         rows = prior.get("findings")
         if not isinstance(rows, list) or len(rows) > 100:
             raise ValueError("invalid snapshot")
@@ -769,7 +775,11 @@ def compare_snapshot(path: Path, current: dict) -> dict:
                     "RUNNER_UNIT_TRANSITIONING"} and current["runner"]["unit_state"] == "unavailable":
             return False
         return True
-    confirmed_resolved = sorted(code for code in disappeared if reobserved(code))
+    # An old baseline may still provide context, but a disappearance against
+    # a report older than one day is not a current recovery observation.
+    confirmed_resolved = sorted(
+        code for code in disappeared
+        if not stale_baseline and reobserved(code))
     not_reobserved = sorted(disappeared - set(confirmed_resolved))
     return {
         "new_findings": sorted(set(new) - set(old)),
@@ -781,6 +791,10 @@ def compare_snapshot(path: Path, current: dict) -> dict:
             for code in changed if old[code] != new[code]
         ],
         "unchanged": old == new,
+        "snapshot_age_seconds": snapshot_age_seconds,
+        "snapshot_freshness": ("stale_baseline_no_resolution_credit" if stale_baseline
+                                else "fresh_within_24h"),
+        "resolution_credit_allowed": not stale_baseline,
         "source": "local_operator_supplied_snapshot",
         "host_pressure_trend": compare_host_pressure(
             prior.get("host_pressure"), current.get("host_pressure"),
@@ -852,7 +866,10 @@ def render_html(report: dict) -> str:
             return ", ".join(esc(x) for x in values) or "None"
         comparison_html = (
             '<section aria-labelledby="diff"><h2 id="diff">Changes since previous report</h2>'
-            f'<dl>{item("New findings", shown(comparison["new_findings"]))}'
+            f'<dl>{item("Previous snapshot freshness", comparison.get("snapshot_freshness", "unknown"))}'
+            f'{item("Previous snapshot age (seconds)", comparison.get("snapshot_age_seconds", "unknown"))}'
+            f'{item("Resolution credit allowed", comparison.get("resolution_credit_allowed", "unknown"))}'
+            f'{item("New findings", shown(comparison["new_findings"]))}'
             f'{item("Confirmed resolved", shown(comparison["resolved_findings"]))}'
             f'{item("Recovery unverified", shown(comparison["recovery_unverified_findings"]))}'
             f'{item("Still present", shown(comparison["still_present"]))}'
@@ -1040,6 +1057,7 @@ def main() -> int:
             print(f"[{f['severity'].upper()}] {f['code']}: {f['detail']}")
         if "comparison" in report:
             change = report["comparison"]
+            print(f"Previous snapshot: {change['snapshot_freshness']} · age={change['snapshot_age_seconds']}s · resolution credit={change['resolution_credit_allowed']}")
             print(f"New findings: {', '.join(change['new_findings']) or 'none'}")
             print(f"Confirmed resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
             print(f"Recovery unverified: {', '.join(change['recovery_unverified_findings']) or 'none'}")
