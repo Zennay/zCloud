@@ -515,3 +515,37 @@ deze lokale werkbak. De nieuwe inhoud staat voorlopig uitsluitend op
 [zCloud PR #1563](https://github.com/Zennay/zCloud/pull/1563) en moet door de
 gebruikelijke exacte-head CI, onafhankelijke review, branchbescherming en
 runtime-releasegates.
+
+
+## 21 oktober · historische herhaalde HOLD-episodes blijven zichtbaar
+
+Bij het vergelijken van twee tot acht brongebonden routingvensters worden herhaalde
+HOLDs nu ook bewaard wanneer het laatste venster de taak niet opnieuw bemonstert
+of de HOLD-reden tussentijds is gewijzigd. Eerder verdwenen geldige
+drie-of-meer-vensterreeksen tot nu toe uit het overzicht doordat alleen de
+**laatst actieve** reeks werd geëxporteerd.
+
+- De bronreeks moet nog altijd dezelfde geverifieerde opaque queue-origin hebben,
+  strikt chronologisch zijn en per paar maximaal 72 uur verschillen. Een gap,
+  redenwissel of overgang naar **suggestion only** sluit een episode af.
+- Elke episode draagt het eerste en laatste 1-gebaseerde bronvenster,
+  oorspronkelijke UTC-bronstempels en het aantal opeenvolgende waarnemingen.
+  De nieuwe booleaan `observed_in_latest_sample` zegt alleen dat deze exacte
+  HOLD in het laatste beperkte bronvenster **voorkwam**. Ook `true` is geen
+  bewijs van voortdurende blokkade of huidige claimeigenaar.
+- HTML en tekst tonen expliciet **HISTORISCH · NIET IN LAATSTE STEEKPROEF · NIET
+  OPGELOST** waar toepasselijk. CSV gebruikt voor dergelijke episodes
+  `REPEATED_HOLD_HISTORICAL` en correcte historische begin-/eindvensters in
+  plaats van een onjuist eindvenster op het actuele bronmoment.
+- Meerdere episodes van één taak blijven apart wanneer de bronreeks tussentijds
+  brak. P0 gaat voor P1/P2; bij afkapping blijft het totale aantal episodes
+  bewaard en meldt elke mensleesbare export zichtbaar dat voorbeelden ontbreken.
+- Dit betreft de reeds bestaande `scripts/zsentinel_route_history.py` en
+  `scripts/zsentinel_route_continuity.py`-invoer, zonder aanvullende API-/SQLite-
+  leesoperaties, QA-suites, claim-, retry-, runner-, provider-, merge- of deployactie.
+
+**Operatoractie:** open de oorspronkelijke eigenaar/lease/PR/CI-bron opnieuw
+voordat je conclusies trekt. Een historische HOLD-kaart is een hercontrole,
+geen toestemming voor vrijgeven, werk claimen of een CI-run starten.
+Dezelfde protected-main, verplichte exact-head CI, onafhankelijke review en
+release-owner gates blijven van kracht.
