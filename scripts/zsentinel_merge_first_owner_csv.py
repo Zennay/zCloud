@@ -33,7 +33,8 @@ FIELDS = (
     "head_variation_is_historical_not_merge_conflict",
     "historical_gate_labels", "sampled_board_unknown_gates",
     "pr_missing_last_saved_snapshot", "issue_link_missing_in_saved_source",
-    "historical_candidates_truncated", "source_archive_manifest_sha256s",
+    "historical_candidates_truncated", "unlinked_in_saved_archive",
+    "source_archive_manifest_sha256s",
     "saved_archive_batches_missing", "human_next_step_only",
     "claim_authorized", "dispatch_authorized", "required_ci_verified",
     "independent_review_verified", "main_merge_verified", "deploy_authorized",
@@ -71,6 +72,9 @@ def prepare_rows(view, board_sha, saved):
     manifests = " | ".join(row["original_review_manifest_sha256"] for row in archives)
     missing_batches = any(bool(row["missing_batch_indexes"]) for row in archives)
     historical = {row["issue_url"]: row for row in (saved["issues"] if saved else [])}
+    unlinked = {row["url"]: row for row in (saved["unlinked_prs"] if saved else [])}
+    if len(unlinked) != len(saved["unlinked_prs"] if saved else []):
+        raise ValueError("duplicate unlinked source PR")
     if len(historical) != len(saved["issues"] if saved else []):
         raise ValueError("duplicate archived issue")
     mapped = {}
@@ -159,6 +163,7 @@ def prepare_rows(view, board_sha, saved):
             "pr_missing_last_saved_snapshot": pr["missing"],
             "issue_link_missing_in_saved_source": pr["lost_link"],
             "historical_candidates_truncated": pr["truncated"],
+            "unlinked_in_saved_archive": pr["url"] in unlinked,
             "human_next_step_only": action,
         })
     for card in unknown:
@@ -177,7 +182,38 @@ def prepare_rows(view, board_sha, saved):
             "pr_missing_last_saved_snapshot": False,
             "issue_link_missing_in_saved_source": False,
             "historical_candidates_truncated": False,
+            "unlinked_in_saved_archive": False,
             "human_next_step_only": "check_live_issue_pr_inventory_and_owner_before_new_work",
+        })
+    # The original saved ZIP inventory can contain PRs without any issue
+    # link in its bounded sample. They still exist as previously observed
+    # PR candidates and must not disappear from a merge-first owner handoff.
+    for pr_url, unlinked_pr in unlinked.items():
+        if pr_url in mapped:
+            continue  # Original issue board had an independent PR link.
+        repo = pr_url.split("/pull/", 1)[0]
+        if not re.fullmatch(
+            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}", repo
+        ):
+            raise ValueError("noncanonical unlinked historical PR")
+        rows.append({
+            **shared, "priority": unlinked_pr["priority"],
+            "source_issue_urls": "",
+            "source_issue_titles": "No issue relationship observed in bounded PR ZIP",
+            "project_scope": repo.removeprefix("https://github.com/"),
+            "pr_reference_state": "historical_pr_without_sampled_issue_link",
+            "pr_url": pr_url, "linked_issue_count": 0,
+            "multiple_issues_share_pr": False,
+            "issue_has_alternative_prs": False,
+            "board_heads_observed": "UNKNOWN", "archive_heads_observed": "UNKNOWN",
+            "head_variation_is_historical_not_merge_conflict": False,
+            "historical_gate_labels": "UNKNOWN",
+            "sampled_board_unknown_gates": "UNKNOWN",
+            "pr_missing_last_saved_snapshot": unlinked_pr["missing_from_final_sample"],
+            "issue_link_missing_in_saved_source": False,
+            "historical_candidates_truncated": False,
+            "unlinked_in_saved_archive": True,
+            "human_next_step_only": "inspect_unlinked_existing_pr_current_owner_and_issue_relations",
         })
     rows.sort(key=lambda row: (RANK[row["priority"]],
                                row["pr_reference_state"] != "saved_pr_candidate_not_live",
@@ -222,7 +258,11 @@ def render_private_html(rows):
                       'PR relationship UNKNOWN') + '</h2>')
         parts.append('<p><strong>' + escape(str(row["source_issue_titles"])) +
                      '</strong> · ' + escape(str(row["project_scope"])) + '</p>')
-        for url in row["source_issue_urls"].split(" | "):
+        if not row["source_issue_urls"]:
+            parts.append('<p>No linked source issue was observed for '
+                         'this existing PR. Relation to a current issue '
+                         'and present owner remain UNKNOWN.</p>')
+        for url in filter(None, row["source_issue_urls"].split(" | ")):
             if not re.fullmatch(
                 r'https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}', url
             ):
