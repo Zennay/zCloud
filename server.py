@@ -3037,46 +3037,104 @@ def portfolio_queue_items(include_done=False):
                                        created_at, queue_id""").fetchall()
     return [_portfolio_queue_row(row) for row in rows]
 
-def portfolio_queue_operator_window(limit=2048):
-    """Read-only, two-lane bounded source window for the private operator.
+def _portfolio_operator_project_fair_locked(c, rows, quota, where_sql, order_sql):
+    """Read-only project-fair slice of a single bounded status category.
 
-    Reserve room for *both* existing active owners and queued product leads.
-    Never let a very large active backlog falsely imply that no independent
-    product work is visible, or let queued work hide a protected active claim.
-    Overflow of EITHER category means the unseen tail is UNKNOWN.
+    A global top-N can be filled by one busy project even though other
+    projects have blocked owners or available P0 work. Reserve the first
+    observed row per distinct project, then fill from the original priority
+    list. No queue status, priority, lease or claim is changed.
+    """
+    selected=list(rows[:quota])
+    if not selected:
+        return selected
+    first_by_project={}
+    for row in selected:
+        first_by_project.setdefault(str(row['project_id'] or ''),row)
+    # Registry currently has a small fixed project set. Bound extra sqlite
+    # reads even if old data contains unexpectedly many project identifiers.
+    projects=c.execute(
+        'SELECT DISTINCT project_id FROM portfolio_queue WHERE ' +
+        where_sql+' ORDER BY project_id LIMIT 25'
+    ).fetchall()
+    for project_row in projects[:24]:
+        project_id=str(project_row['project_id'] or '')
+        if project_id in first_by_project:
+            continue
+        first=c.execute(
+            'SELECT * FROM portfolio_queue WHERE '+where_sql+
+            ' AND project_id=? '+order_sql+' LIMIT 1',
+            (project_id,),
+        ).fetchone()
+        if first is not None:
+            first_by_project[project_id]=first
+    # Preserve one real task from each known project. The rest of the budget
+    # retains original source order (bounded, read-only), never fabricated
+    # candidates or unowned extra queue data.
+    chosen=[]
+    chosen_ids=set()
+    for row in first_by_project.values():
+        if len(chosen)>=quota:
+            break
+        queue_id=str(row['queue_id'])
+        if queue_id not in chosen_ids:
+            chosen.append(row)
+            chosen_ids.add(queue_id)
+    for row in selected:
+        if len(chosen)>=quota:
+            break
+        queue_id=str(row['queue_id'])
+        if queue_id not in chosen_ids:
+            chosen.append(row)
+            chosen_ids.add(queue_id)
+    return chosen
+
+
+def portfolio_queue_operator_window(limit=2048):
+    """Read-only fair queue window for the private zSentinel operator.
+
+    Split the bounded window between *existing* active owners and queued
+    leads, and preserve project diversity inside each group. Neither the
+    source selection nor its owner workorders authorize a new worker claim.
+    An overflow of EITHER category always means unknown unseen rows.
     """
     if type(limit) is not int or not 2<=limit<=2048:
         raise ValueError('Ongeldige operator-inbox bronlimiet')
     active_quota=(limit+1)//2
     queued_quota=limit-active_quota
-    active_sql="""SELECT * FROM portfolio_queue
-                  WHERE status IN ('claimed','running','verifying')
-                  ORDER BY CASE status WHEN 'running' THEN 0
+    active_where="status IN ('claimed','running','verifying')"
+    queued_where="status='queued'"
+    active_order="""ORDER BY CASE status WHEN 'running' THEN 0
                            WHEN 'verifying' THEN 1 ELSE 2 END,
                            CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
                              WHEN 'P2' THEN 2 ELSE 3 END,
-                           created_at,queue_id LIMIT ?"""
-    queued_sql="""SELECT * FROM portfolio_queue WHERE status='queued'
-                  ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
-                                  WHEN 'P2' THEN 2 ELSE 3 END,
-                           created_at,queue_id LIMIT ?"""
+                           created_at,queue_id"""
+    queued_order="""ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                             WHEN 'P2' THEN 2 ELSE 3 END,
+                           created_at,queue_id"""
+    active_sql='SELECT * FROM portfolio_queue WHERE '+active_where+' '+active_order+' LIMIT ?'
+    queued_sql='SELECT * FROM portfolio_queue WHERE '+queued_where+' '+queued_order+' LIMIT ?'
     with connect() as c:
-        # +1 preserves an exact overflow signal without full-table reads.
+        # +1 permits a precise overflow flag without reading the full queue.
         active=c.execute(active_sql,(active_quota+1,)).fetchall()
         queued=c.execute(queued_sql,(queued_quota+1,)).fetchall()
         if len(active)<=active_quota and len(queued)>queued_quota:
-            # When active owners are scarce, use their unused budget for
-            # queued leads; still leave a trustworthy +1 overflow row.
             queued_quota=limit-len(active)
             queued=c.execute(queued_sql,(queued_quota+1,)).fetchall()
         elif len(queued)<=queued_quota and len(active)>active_quota:
-            # Symmetric treatment when queued leads are scarce.
             active_quota=limit-len(queued)
             active=c.execute(active_sql,(active_quota+1,)).fetchall()
-    truncated=(len(active)>active_quota or len(queued)>queued_quota)
-    sampled=active[:active_quota]+queued[:queued_quota]
-    # No lease reassignment, retry or hidden classification happens here.
-    return [_portfolio_queue_row(row) for row in sampled],truncated
+        truncated=len(active)>active_quota or len(queued)>queued_quota
+        active_selected=_portfolio_operator_project_fair_locked(
+            c,active,active_quota,active_where,active_order,
+        )
+        queued_selected=_portfolio_operator_project_fair_locked(
+            c,queued,queued_quota,queued_where,queued_order,
+        )
+    selected=active_selected+queued_selected
+    # Fairness is observation-only; source tails remain unknown when capped.
+    return [_portfolio_queue_row(row) for row in selected],truncated
+
 
 def portfolio_queue_current_for_slot(global_slot):
     try: slot=int(global_slot)
