@@ -83,7 +83,11 @@ excluded from new recovery admission. The generator records a bounded
 `HOLD_QUEUE_WORKER_SLOT_RESERVED` if those slot-linked records are
 the only work present. No slot IDs, worker IDs or claim keys appear in
 the public-facing report. Existing assignments are neither released
-nor automatically retried.
+nor automatically retried. The existing recovery-action panel also
+presents separate read-only owner follow-ups for slot reservations
+(`HOLD_QUEUE_WORKER_SLOT_RESERVED`) and noneligible queue entries
+(`HOLD_QUEUE_NOT_ELIGIBLE`). These are safe owner-triage suggestions,
+not an authority to clear or requeue a live task.
 
 The desk now exposes the count per lane as
 `deferred_ineligible_packages` in JSON, human-readable text, offline
