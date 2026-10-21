@@ -79,6 +79,26 @@ def observed_queue(decision, source_time):
             or clean["expired_owner_lease_rows"] +
                 clean["unverifiable_owner_lease_rows"] > clean["owned_items"]):
         raise ValueError("inconsistent saved queue aggregates")
+    # Older saved router decisions may not have the invalid claim window
+    # counter. Unknown is not zero. Reject a partially populated receipt.
+    window_counter = "inconsistent_owner_lease_window_rows"
+    window_present = window_counter in totals
+    group_window_flags = [window_counter in group for group in groups]
+    if group_window_flags and any(flag != group_window_flags[0] for flag in group_window_flags):
+        raise ValueError("mixed lease clock source group coverage")
+    if group_window_flags and group_window_flags[0] != window_present:
+        raise ValueError("lease clock total and groups coverage mismatch")
+    if window_present:
+        v = totals[window_counter]
+        if type(v) is not int or not 0 <= v <= MAX_VALUE:
+            raise ValueError("invalid aggregate inconsistent lease clock")
+        if (clean["expired_owner_lease_rows"] +
+                clean["unverifiable_owner_lease_rows"] + v >
+                clean["owned_items"]):
+            raise ValueError("incoherent combined owned lease clocks")
+        clean[window_counter] = v
+    else:
+        clean[window_counter] = None
     source_fresh_when_saved = (
         coverage == "current"
         and -timedelta(minutes=2) <= source_time - sampled <= timedelta(minutes=5))
@@ -106,14 +126,24 @@ def observed_queue(decision, source_time):
             if type(value) is not int or not 0 <= value <= MAX_VALUE:
                 raise ValueError("invalid queue project aggregate")
             counts[field] = value
+        if window_present:
+            value = entry[window_counter]
+            if type(value) is not int or not 0 <= value <= MAX_VALUE:
+                raise ValueError("invalid project inconsistent lease clock")
+            counts[window_counter] = value
+        else:
+            counts[window_counter] = None
         active = sum(counts[f] for f in ("queued", "claimed", "running", "verifying"))
         if (counts["high_claim_attempts"] > active
                 or counts["ten_plus_claim_attempts"] > counts["high_claim_attempts"]
                 or counts["expired_owner_lease_rows"] +
-                    counts["unverifiable_owner_lease_rows"] >
-                    active - counts["queued"]):
+                    counts["unverifiable_owner_lease_rows"] +
+                    (counts[window_counter] or 0) > active - counts["queued"]):
             raise ValueError("incoherent historical queue group")
         clean_groups.append({"project_id": pid, "priority": priority, **counts})
+    if window_present and not truncated and coverage == "current":
+        if sum(g[window_counter] for g in clean_groups) != clean[window_counter]:
+            raise ValueError("inconsistent lease clocks mismatch project totals")
     saved_rows = queue.get("samples")
     if type(saved_rows) is not list or len(saved_rows) > 20:
         raise ValueError("missing bounded positive queue row observations")
@@ -141,6 +171,8 @@ def observed_queue(decision, source_time):
         "totals": clean,
         "sample_is_complete": sample_complete,
         "source_file_identity_sha256_private": opaque_identity,
+        "inconsistent_lease_window_coverage": (
+            "observed" if window_present else "unknown_legacy"),
         "project_groups_complete": not truncated and coverage == "current",
         "project_groups": clean_groups,
         "source_fresh_when_saved": source_fresh_when_saved,
@@ -181,6 +213,11 @@ def summarize_queue_windows(source_windows):
             field: right["totals"][field] - left["totals"][field]
             for field in FIELDS
         }
+        # Invalid lease windows are not equivalent to expired leases.
+        earlier = left["totals"].get("inconsistent_owner_lease_window_rows")
+        later = right["totals"].get("inconsistent_owner_lease_window_rows")
+        differences["inconsistent_owner_lease_window_rows"] = (
+            later - earlier if earlier is not None and later is not None else None)
         # Project evidence is independently complete only when the original
         # canonical report did not truncate any project+priority group.
         # An absent group in a COMPLETE sample means no active tasks there,
@@ -208,6 +245,12 @@ def summarize_queue_windows(source_windows):
                     "expired_owner_lease_rows_delta": (
                         current.get("expired_owner_lease_rows", 0)
                         - old.get("expired_owner_lease_rows", 0)),
+                    "inconsistent_owner_lease_window_rows_delta": (
+                        current.get("inconsistent_owner_lease_window_rows", 0) -
+                        old.get("inconsistent_owner_lease_window_rows", 0)
+                        if (current.get("inconsistent_owner_lease_window_rows") is not None
+                            and old.get("inconsistent_owner_lease_window_rows") is not None)
+                        else None),
                     "task_recovery_verified": False,
                     "owner_claim_verified": False,
                 })
@@ -248,7 +291,9 @@ def summarize_queue_windows(source_windows):
             "owner_review_required": (
                 differences["high_claim_attempt_items"] > 0
                 or differences["ten_plus_claim_attempt_items"] > 0
-                or differences["expired_owner_lease_rows"] > 0),
+                or differences["expired_owner_lease_rows"] > 0
+                or (differences["inconsistent_owner_lease_window_rows"] is not None
+                    and differences["inconsistent_owner_lease_window_rows"] > 0)),
         })
     # Three consecutive *complete, same-identity project samples* expose
     # persistent owner-attention signals. Counts may refer to different jobs;
@@ -279,10 +324,13 @@ def summarize_queue_windows(source_windows):
         for key in sorted(set(groups[0]) & set(groups[1]) & set(groups[2]),
                           key=lambda x: (PRIORITIES.index(x[1]), x[0])):
             rows = [g[key] for g in groups]
-            signal = ("persistent_high_claim_attempt_counts"
-                      if all(r["high_claim_attempts"] > 0 for r in rows)
+            signal = ("persistent_inconsistent_lease_clock_counts"
+                      if all(r["inconsistent_owner_lease_window_rows"] is not None
+                             and r["inconsistent_owner_lease_window_rows"] > 0 for r in rows)
                       else "persistent_expired_lease_row_counts"
                       if all(r["expired_owner_lease_rows"] > 0 for r in rows)
+                      else "persistent_high_claim_attempt_counts"
+                      if all(r["high_claim_attempts"] > 0 for r in rows)
                       else None)
             if signal:
                 sustained.append({
@@ -290,6 +338,8 @@ def summarize_queue_windows(source_windows):
                     "first_window": first["index"], "last_window": last["index"],
                     "signal": signal,
                     "observed_counts": [
+                        r["inconsistent_owner_lease_window_rows"] if
+                        signal == "persistent_inconsistent_lease_clock_counts" else
                         r["high_claim_attempts"] if signal.startswith("persistent_high")
                         else r["expired_owner_lease_rows"] for r in rows],
                     "original_task_identity_verified": False,

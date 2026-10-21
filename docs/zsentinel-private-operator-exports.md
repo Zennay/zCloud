@@ -1,3 +1,22 @@
+### 21 oktober · ongeldige leaseklokken worden historisch zichtbaar
+
+De bestaande read-only SQLite-observer kende al de afzonderlijke bron
+`inconsistent_owner_lease_window_rows` voor ongeldige geobserveerde
+`claimed_at`/`claim_expires`-combinaties. De historische operatorwerkbak
+bewaart nu die teller en toont het verschil tussen aangrenzende,
+aantoonbaar identieke databasebronnen per project/prioriteit in privé-HTML,
+Markdown en tekst. Drie complete bronmomenten met aanhoudende ongeldige
+leaseklokken kunnen ook een eigen P0-eerst eigenaarwaarschuwing tonen.
+
+Oudere bronmomenten zonder deze teller blijven ONBEKEND; de werkbak
+claimt geen nul leasefouten, vrije worker of geautoriseerde claimvrijgave.
+Onlogische sommen van verlopen, unverifiable en inconsistent geclaimde
+leases worden geweigerd; complete niet-afgekorte projectoverzichten moeten
+kloppen met bronaggregaten. De eigenaar moet beide actuele leaseklokken
+van de oorspronkelijke rij en de echte claim controleren voordat er
+überhaupt een wijziging wordt overwogen. Geen queue-mutatie, restart,
+automatische retry, productie-uitrol of extra QA-ronde.
+
 # zSentinel · privé live operator-export
 
 Deze bestaande zSentinel live cockpit kan nu rechtstreeks een **nieuw lokaal

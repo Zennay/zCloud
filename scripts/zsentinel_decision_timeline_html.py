@@ -151,7 +151,10 @@ for(const w of queue.windows){
    (q.coverage==="current" ?
     " · wachtenden "+q.totals.queued_items+
     " · hoge claimpogingen "+q.totals.high_claim_attempt_items+
-    " · verlopen lease-rijen "+q.totals.expired_owner_lease_rows
+    " · verlopen lease-rijen "+q.totals.expired_owner_lease_rows+
+    " · inconsistente leaseklokken "+
+    (q.totals.inconsistent_owner_lease_window_rows===null?
+     "ONBEKEND":q.totals.inconsistent_owner_lease_window_rows)
     :" · BRON ONVOLLEDIG / HISTORISCH; niet als herstelbewijs gebruiken")
   )
  ));
@@ -164,6 +167,9 @@ for(const delta of queue.adjacent_comparisons){
   "wachtenden "+(changes.queued_items>=0?"+":"")+changes.queued_items+
   ", hoge claimpogingen "+(changes.high_claim_attempt_items>=0?"+":"")+changes.high_claim_attempt_items+
   ", verlopen lease-rijen "+(changes.expired_owner_lease_rows>=0?"+":"")+changes.expired_owner_lease_rows+
+  ", inconsistente leaseklokken "+(changes.inconsistent_owner_lease_window_rows===null?
+   "ONBEKEND":(changes.inconsistent_owner_lease_window_rows>=0?"+":"")+
+   changes.inconsistent_owner_lease_window_rows)+
   (delta.owner_review_required ? " · EIGENAAR CONTROLEERT BRON": " · niet gelijk aan herstel")
  ));
  const details=el("details");
@@ -180,6 +186,8 @@ for(const delta of queue.adjacent_comparisons){
     group.priority+" · "+group.project_id+" · wachtenden "+signed(group.queued_delta)+
     " · hoge claimpogingen "+signed(group.high_claim_attempts_delta)+
     " · verlopen lease-rijen "+signed(group.expired_owner_lease_rows_delta)+
+    " · leaseklokfouten "+(group.inconsistent_owner_lease_window_rows_delta===null?
+      "ONBEKEND":signed(group.inconsistent_owner_lease_window_rows_delta))+
     " · veranderingen ≠ retries of vrijgegeven taken"));
   }
   details.append(list);
@@ -214,7 +222,9 @@ if(!queue.sustained_owner_attention.length){
 for(const row of queue.sustained_owner_attention){
  $("queuePersistent").append(line(
   row.priority+" · "+row.project_id+" · bronvensters "+row.first_window+"–"+row.last_window,
-  (row.signal==="persistent_high_claim_attempt_counts"?
+  (row.signal==="persistent_inconsistent_lease_clock_counts"?
+   "Inconsistente leaseklokken":
+   row.signal==="persistent_high_claim_attempt_counts"?
    "Hoge claimpogingen":"Verlopen lease-rijen")+
   " in drie waarnemingen: "+row.observed_counts.join(" → ")+
   ". Controleer huidige eigenaar/rij. GEEN retry of leasevrijgave."));
@@ -256,17 +266,24 @@ function queueMarkdown(){
   out.push("- Wachtenden: "+deltas.queued_items,
    "- Hoge claimpogingen: "+deltas.high_claim_attempt_items,
    "- Verlopen lease-rijen: "+deltas.expired_owner_lease_rows,
+   "- Inconsistente leaseklokrijen: "+
+    (deltas.inconsistent_owner_lease_window_rows===null?
+     "ONBEKEND":deltas.inconsistent_owner_lease_window_rows),
    "- Status: geobserveerd AGGREGAAT; geen jobherstel of leasevrijgave.");
   if(row.project_deltas===null){
    out.push("- Projectbron onvolledig; geen fictieve projectnullen.");
   }else{
    for(const g of row.project_deltas){
     if(g.queued_delta===0&&g.high_claim_attempts_delta===0&&
-       g.expired_owner_lease_rows_delta===0)continue;
+       g.expired_owner_lease_rows_delta===0&&
+       g.inconsistent_owner_lease_window_rows_delta===0)continue;
     out.push("- "+g.priority+" "+g.project_id+
      " · wachtenden "+g.queued_delta+
      " · hoge claimpogingen "+g.high_claim_attempts_delta+
      " · verlopen lease-rijen "+g.expired_owner_lease_rows_delta+
+     " · inconsistente leaseklokken "+
+      (g.inconsistent_owner_lease_window_rows_delta===null?"ONBEKEND":
+       g.inconsistent_owner_lease_window_rows_delta)+
      " (eigenaar onderzoekt; GEEN automatische retry)");
    }
   }

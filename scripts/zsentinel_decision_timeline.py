@@ -185,6 +185,11 @@ def render_text(report):
                 (pair["from_window"], pair["to_window"],
                  delta["queued_items"], delta["high_claim_attempt_items"],
                  delta["expired_owner_lease_rows"]))
+            lines.append(
+                "  Inconsistente leaseklokrijen: " +
+                ("ONBEKEND" if delta["inconsistent_owner_lease_window_rows"] is None
+                 else "%+d" % delta["inconsistent_owner_lease_window_rows"]) +
+                "; eigenaar verifieert claimed_at en claim_expires.")
     for pair in report["queue_pressure_history"]["adjacent_comparisons"]:
         if pair["observed_increased_refs_total"] is None:
             continue
@@ -246,7 +251,16 @@ def render_markdown(report):
         for pair in report["queue_pressure_history"]["adjacent_comparisons"]
     ] + [
         "",
-        "## Brongebonden toenemende claimpogingen per privé-wachtrijreferentie", "",
+        "## Leaseklokfouten per oude SQLite-aggregaat", "",
+    ] + [
+        "- Vensters " + str(pair["from_window"]) + "–" + str(pair["to_window"]) +
+        ": " + ("ONBEKEND" if pair["deltas"] is None or
+                pair["deltas"]["inconsistent_owner_lease_window_rows"] is None else
+                str(pair["deltas"]["inconsistent_owner_lease_window_rows"])) +
+        "; huidige claimed_at/claim_expires en eigenaarlease eerst controleren."
+        for pair in report["queue_pressure_history"]["adjacent_comparisons"]
+    ] + [
+        "", "## Brongebonden toenemende claimpogingen per privé-wachtrijreferentie", "",
     ] + [
         "- Vensters " + str(pair["from_window"]) + "–" +
         str(pair["to_window"]) + ": " +
