@@ -1,5 +1,35 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 21 oktober · openstaande PR-eigenaarsopvolging als gerichte werkstroom
+
+De bestaande offline, source-token-gebonden merge-eerst werkbak heeft nu
+een aparte knop **Volgende PR zonder lokale opvolging**. Die loopt langs
+alle bestaande PR-groepen uit het opgeslagen bronvenster, slaat uitsluitend
+de handmatig op `Opvolging vastgelegd` gezette PRs over en brengt de
+operator rechtstreeks in de bestaande PR-focus met bijbehorende bronissues.
+De knop toont hoeveel PRs nog menselijke opvolging vragen en hoeveel nog
+helemaal niet bekeken zijn. Bronvolgorde blijft intact; huidige zoekfilters
+beïnvloeden deze volledige privé-inventaris niet. Dit is geen bewijs dat
+een overgeslagen PR gemerged, hersteld of door een echte reviewer beoordeeld
+is.
+
+De extra knop **Download open PR-eigenaaroverdracht** levert een lokaal
+Markdown-dossier van uitsluitend die PRs waarvoor nog geen lokale
+opvolging vastligt. Per PR: opgeslagen bron-HEAD en gatecode met menselijk
+label, waargenomen overlappings-/bewegingssignalen, project/prioriteit,
+link naar elk gekoppeld bronissue en eventuele andere bestaande PRs bij
+hetzelfde issue, lokale PR- en issuestatussen, privé PR-notitie, beperkte
+brondekking en exact bron-token. De export gebruikt de bestaande
+browser-lokale `Blob`-download, schrijft nooit remote en blijft
+beschikbaar ongeacht actieve zoekfilters of de gekozen PR.
+
+Iedere export vermeldt nadrukkelijk dat CI, onafhankelijke review,
+branch protection, actieve Notion-claims en huidig GitHub-HEAD opnieuw
+bij de bevoegde eigenaar moeten worden gecontroleerd. Alle bestaande
+sessie-JSON-uitwisselingen en hun source-token-binding blijven ongewijzigd.
+Er zijn geen QA-suites, backendrechten, GitHub/Notion-writes, nieuwe
+claims, CI-herstarts of automatische merge-/deployacties toegevoegd.
+
 ## 21 oktober · open PR-botsingen gericht afhandelen
 
 **Bron-gates in mensentaal:** de werkbak noemt opgeslagen gatecodes niet
