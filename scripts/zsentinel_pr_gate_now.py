@@ -206,12 +206,25 @@ def _one(repo, number, token):
             or last["head"].get("sha") != head
             or last["base"].get("sha") != base):
         raise ValueError("PR head/base changed during observation")
+    # Draft and GitHub's mergeability signal are separate from check/review
+    # receipts. Never advise an operator to merge a conflicted or draft PR
+    # merely because sampled checks happen to be green.
+    if (type(first.get("draft")) is not bool or type(last.get("draft")) is not bool
+            or first["draft"] != last["draft"]):
+        raise ValueError("PR draft state missing or changed during observation")
+    mergeable = last.get("mergeable")
+    if mergeable is not None and type(mergeable) is not bool:
+        raise ValueError("invalid GitHub PR mergeability observation")
     approved = sum(state == "APPROVED" for _, state in most_recent.values())
     requested = sum(state == "CHANGES_REQUESTED" for _, state in most_recent.values())
     check_complete = (len(check_rows) == checks["total_count"] and
                       statuses["pending_observed"] == 0 and
                       statuses["other_observed"] == 0)
-    if legacy_partial or len(check_rows) != checks["total_count"] or len(reviews) == 100:
+    if last["draft"]:
+        gate_step = "owner_finish_draft_before_merge_review"
+    elif mergeable is False:
+        gate_step = "owner_resolve_current_base_conflicts"
+    elif legacy_partial or len(check_rows) != checks["total_count"] or len(reviews) == 100:
         gate_step = "inspect_incomplete_current_head_gate_source"
     elif (statuses["failure_observed"] or
           legacy_states["failure"] or legacy_states["error"]):
@@ -223,6 +236,8 @@ def _one(repo, number, token):
         gate_step = "owner_address_exact_head_review_changes"
     elif not check_rows and not latest_context:
         gate_step = "verify_missing_current_head_checks_and_rules"
+    elif mergeable is None:
+        gate_step = "wait_for_github_mergeability_evaluation"
     elif not approved:
         gate_step = "request_independent_current_head_review"
     else:
@@ -231,8 +246,11 @@ def _one(repo, number, token):
         "url": "https://github.com/" + repo + "/pull/" + str(number),
         "repository": repo, "number": number,
         "head_sha_observed": head, "base_sha_observed": base,
-        "draft_at_read": last.get("draft") is True,
-        "github_mergeable_boolean_observed": last.get("mergeable"),
+        "draft_at_read": last["draft"],
+        "draft_state_stable_on_second_read": True,
+        "github_mergeable_boolean_observed": mergeable,
+        "merge_conflict_observed": mergeable is False,
+        "mergeability_not_yet_evaluated": mergeable is None,
         "check_runs_total_observed": checks["total_count"],
         "check_runs_evidence_sha256": check_fingerprint,
         "check_runs_latest_attempts_observed": len(latest_checks),
@@ -346,6 +364,14 @@ def human_gate_summary(source: dict) -> str:
             lines.append("GitHub-bron onbereikbaar of HEAD veranderd; PR niet vrijgeven.")
             continue
         lines.append("Waargenomen HEAD: " + item["head_sha_observed"])
+        if item["draft_at_read"]:
+            lines.append("PR-status: CONCEPT; eigenaar moet deze eerst reviewklaar maken.")
+        elif item["merge_conflict_observed"]:
+            lines.append("GitHub meldt MERGECONFLICT op huidige base/HEAD; eigenaar moet dit oplossen.")
+        elif item["mergeability_not_yet_evaluated"]:
+            lines.append("GitHub heeft mergeability nog niet vastgesteld: ONBEKEND.")
+        else:
+            lines.append("GitHub meldt code samenvoegbaar; dit is GEEN CI/reviewvrijgave.")
         lines.append(
             "Checks: " + str(item["observed_checks_pending"]) + " lopend, " +
             str(item["observed_checks_not_successful"]) + " niet geslaagd")
