@@ -111,6 +111,41 @@ def build_handoff(decision, registry=None, queue_trend=None):
                   "fresh_incident", item.get("action"),
                   source="bounded_fresh_incident"),
             item.get("exact_github_job"), registry, item.get("target_review_by")))
+    # The router already verified this bounded VPS read-only source and its
+    # freshness. An overloaded host must become an *owner* action in the
+    # unified handoff, not silently disappear behind a task backlog.
+    capacity = decision.get("vps_resource_admission")
+    capacity_coverage = "unavailable"
+    if capacity is not None:
+        if (type(capacity) is not dict
+                or capacity.get("state") not in {
+                    "unavailable", "stale", "overloaded", "advisory_headroom"}
+                or type(capacity.get("reason")) is not str
+                or not re.fullmatch(r"[a-z0-9_,]{1,180}", capacity["reason"])):
+            raise ValueError("invalid source-bound VPS capacity decision")
+        capacity_coverage = capacity["state"]
+        if capacity_coverage == "overloaded":
+            allowed = {
+                "load_above_conservative_capacity", "memory_headroom_low",
+                "swap_headroom_low", "disk_headroom_low",
+                "disk_unavailable_at_least_90_percent",
+            }
+            reasons = capacity["reason"].split(",")
+            if not reasons or len(reasons) != len(set(reasons)) or any(
+                    reason not in allowed for reason in reasons):
+                raise ValueError("untrusted VPS overload reason")
+            card = _card(
+                "P1", "cloud", "vps_capacity_owner_review",
+                "VPS bron bevestigt capaciteitsdruk: " +
+                ", ".join(reasons) +
+                ". Bevoegde host/runner-eigenaar controleert veilige "
+                "opslag-, swap- en actieve jobruimte; geen cache-delete, "
+                "service-restart, workerstop of automatische opschaling.",
+                source="validated_recent_readonly_vps_capacity",
+                ref="https://github.com/Zennay/zCloud/issues/1326")
+            card["observed_capacity_state"] = "overloaded"
+            card["capacity_reasons"] = reasons
+            cards.append(card)
     worker = decision.get("worker_progress_observation")
     worker_coverage = "not_requested"
     if worker is not None:
