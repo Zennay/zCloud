@@ -1963,14 +1963,14 @@ function clearCarryPreview(message){
 }
 function previewCarry(data){
  if(!baseline)throw Error('Earlier source board required');
- if(!data||Array.isArray(data)||![1,2,3,4].includes(data.schema_version)||
+ if(!data||Array.isArray(data)||![1,2,3,4,5].includes(data.schema_version)||
     data.kind!=='zsentinel-private-human-delivery-handoff'||
     data.source_board_sha256!==baseline.sha||
     data.source_observed_at_utc!==baseline.observed_at_utc||
     data.authorizes_claim!==false||data.authorizes_merge!==false||
     data.authorizes_deploy!==false||!Array.isArray(data.entries)||
     data.entries.length>60||
-    (data.schema_version===4&&(!Array.isArray(data.project_recovery)||
+    (data.schema_version>=4&&(!Array.isArray(data.project_recovery)||
       data.project_recovery.length>60)))
   throw Error('Earlier private handoff does not match exact earlier source');
  const seen=new Set(),proposed=[],missing=[];
@@ -2458,8 +2458,9 @@ document.getElementById('export').onclick=()=>{
    followup_changed_at_utc:value.followup_changed_at_utc||''}));
  const projects=[...recoveryHandoffs].filter(([project,v])=>
    board.project_operations.some(row=>row.project===project)&&recoveryDecisions.has(v.decision))
-  .map(([project,v])=>({project,decision:v.decision,note:v.note.slice(0,500)}));
- const payload={schema_version:4,kind:'zsentinel-private-human-delivery-handoff',
+  .map(([project,v])=>({project,decision:v.decision,note:v.note.slice(0,500),
+   owner:contactLabel(v.owner),due:validFollowupDate(v.due)?v.due:''}));
+ const payload={schema_version:5,kind:'zsentinel-private-human-delivery-handoff',
    source_board_sha256:boardSha,source_observed_at_utc:board.observed_at_utc,
    authorizes_claim:false,authorizes_merge:false,authorizes_deploy:false,
    entries:rows,project_recovery:projects};
@@ -2531,7 +2532,7 @@ document.getElementById('restore').addEventListener('change',async event=>{
  try{
    if(file.size<4||file.size>65536)throw Error('size');
    const data=JSON.parse(await file.text());
-   if(!data||Array.isArray(data)||![1,2,3,4].includes(data.schema_version)||
+   if(!data||Array.isArray(data)||![1,2,3,4,5].includes(data.schema_version)||
       data.kind!=='zsentinel-private-human-delivery-handoff'||
       data.source_board_sha256!==boardSha||
       data.source_observed_at_utc!==board.observed_at_utc||
@@ -2566,7 +2567,7 @@ document.getElementById('restore').addEventListener('change',async event=>{
        followup_changed_at_utc:data.schema_version>=3?(v.followup_changed_at_utc||''):''});
    }
    const recoveredProjects=new Map();
-   if(data.schema_version===4){
+   if(data.schema_version>=4){
     if(!Array.isArray(data.project_recovery)||data.project_recovery.length>60)
      throw Error('missing or oversized private project follow-up');
     for(const row of data.project_recovery){
@@ -2575,9 +2576,14 @@ document.getElementById('restore').addEventListener('change',async event=>{
         recoveredProjects.has(row.project)||!recoveryDecisions.has(row.decision)||
         typeof row.note!=='string'||row.note.length>500||
         new TextEncoder().encode(row.note).length>2000||
-        [...row.note].some(ch=>ch.codePointAt(0)<32&&ch!=='\\n'&&ch!=='\\t'))
+        [...row.note].some(ch=>ch.codePointAt(0)<32&&ch!=='\\n'&&ch!=='\\t')||
+        (data.schema_version===5&&(
+         typeof row.owner!=='string'||row.owner.length>80||
+         row.owner!==contactLabel(row.owner)||!validFollowupDate(row.due))))
       throw Error('Malformed or cross-project recovery note');
-     recoveredProjects.set(row.project,{decision:row.decision,note:row.note});
+     recoveredProjects.set(row.project,{decision:row.decision,note:row.note,
+       owner:data.schema_version===5?row.owner:'',
+       due:data.schema_version===5?row.due:''});
     }
    }else if(data.project_recovery!==undefined){
     throw Error('Legacy handoff cannot insert project annotations');
