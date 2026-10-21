@@ -381,11 +381,14 @@ def collect_workorders(board):
         # The summary can include an earlier file-scope sample, not
         # necessarily the second read's exact HEAD. Never surface those
         # links as positive overlap when the current HEAD could not be pinned.
-        if pinned:
+        if pinned and projects[project].get("open_pr_snapshot_stable") is True:
             for extra in item.get("observed_file_overlap_prs", [])[:8]:
                 related.append(_same_repo_url(extra, repo))
         elif item.get("observed_file_overlap_prs"):
+            # These list-level hints are from the first GitHub snapshot,
+            # not the exact-head gate read; never resurrect stale peers.
             paths_cut = True
+            peer_partial = True
         related = sorted(set(related) - {url})[:8]
         links = []
         for job in item.get("non_green_jobs", [])[:MAX_CHECKS]:
