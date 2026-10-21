@@ -106,7 +106,8 @@ def _source(decision):
     # The explicit older-source notes carry route can still be used by a human.
     runtime_keys = ("live_github_read", "live_sources",
                     "live_queue_pressure", "worker_progress_observation",
-                    "notion_claims_observation", "open_product_issue_triage")
+                    "notion_claims_observation", "open_product_issue_triage",
+                    "pr_delivery")
     operational_sources = {key: decision[key] for key in runtime_keys
                            if key in decision}
     context_sha = None
@@ -350,6 +351,53 @@ def branch_work_review_panel(decision):
 
 
 
+
+
+
+
+def existing_pr_merge_gate_panel(decision):
+    """Render the same already-inspected exact-head PR owner receipt in desk."""
+    source = decision.get("pr_delivery")
+    if source is None:
+        return ('<section class="panel"><h2>Bestaande PR’s · merge eerst</h2>'
+                '<p>PR-inspectie niet gekozen; actuele exacte CI/reviewgates'
+                ' ONBEKEND, geen vrije merge of eigenaar vastgesteld.</p></section>')
+    if (type(source) is not dict
+            or source.get("schema") != "zsentinel-pr-delivery-desk-v1"
+            or source.get("source") != "github_canonical_readonly_bounded_pr_gets"
+            or source.get("merge_authorized") is not False
+            or source.get("deploy_authorized") is not False
+            or source.get("owner_verified") is not False
+            or source.get("writes_performed") is not False
+            or type(source.get("items")) is not list
+            or len(source["items"]) > 3):
+        raise ValueError("untrusted private existing PR desk evidence")
+    seen = set()
+    for row in source["items"]:
+        if type(row) is not dict:
+            raise ValueError("malformed exact-head PR owner receipt")
+        pid, number = row.get("project_id"), row.get("pr_number")
+        url = row.get("url")
+        if (type(pid) is not str or not SLUG.fullmatch(pid)
+                or type(number) is not int or not 1 <= number <= 999999999
+                or type(url) is not str or not re.fullmatch(
+                    r"https://github[.]com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}",
+                    url)
+                or int(url.rsplit("/", 1)[1]) != number
+                or (pid, number) in seen
+                or row.get("source") != "github_exact_pr_readonly"
+                or row.get("merge_authorized") is not False):
+            raise ValueError("invalid existing PR scope or duplicate owner card")
+        seen.add((pid, number))
+        sha = row.get("head_sha")
+        if sha is not None and (type(sha) is not str or
+                                re.fullmatch(r"[0-9a-f]{40}", sha) is None):
+            raise ValueError("noncanonical PR HEAD source")
+    from zsentinel_pr_delivery import pr_delivery_html
+    # This uses the identical bounded source and its existing strict
+    # next-action/CI/review render logic, without any new provider read.
+    return '<section class="panel" aria-label="Merge-first bestaand werk">' + (
+        pr_delivery_html(source)) + '</section>'
 
 
 
@@ -989,7 +1037,8 @@ def review_html(decision):
     """One offline HTML view + bounded private operator handoff in browser."""
     # Validate optional branch data before using it in the source fingerprint.
     branch_panel = branch_work_review_panel(decision)
-    runtime_panel = (open_product_issue_owner_panel(decision) +
+    runtime_panel = (existing_pr_merge_gate_panel(decision) +
+                     open_product_issue_owner_panel(decision) +
                      github_exact_gate_panel(decision) +
                      queue_owner_pressure_panel(decision) +
                      blocked_work_owner_panel(decision) +
