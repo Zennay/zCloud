@@ -343,33 +343,66 @@ function blockedQueuePanel(){
     +(blockedQueueVisible<count?'<button type="button" data-blocked-show-more>Show next 12</button>':'<button type="button" data-blocked-show-less>Show first 12</button>')
     +'</div>':'')+'</section>';
 }
+const blockedResumesPending=new Set();
+// Compare only the exact dependency and work identity. Display refreshes alone
+// cannot authorize resuming a changed or reassigned queue item.
+function blockedResumeFingerprint(item){
+  return JSON.stringify([
+    String(item?.queue_id??''),String(item?.project_id??''),
+    String(item?.title??''),String(item?.priority??''),
+    String(item?.status??''),String(item?.eligible??''),
+    String(item?.blocker??''),String(item?.evidence??'')
+  ]);
+}
 async function resumeBlockedQueue(queueId,button){
-  const item=(BLOCKED_QUEUE||[]).find(row=>row.queue_id===queueId&&row.status==='blocked');
-  if(!item){window.alert('This task is no longer shown as blocked. Refresh the queue before acting.');return}
+  if(blockedResumesPending.has(queueId))return;
+  const item=(BLOCKED_QUEUE||[]).find(row=>String(row?.queue_id)===queueId&&row.status==='blocked');
+  if(!item){window.alert('The parked task is no longer visible. Refresh the queue before acting.');return}
   const note=window.prompt('Confirm the dependency has genuinely cleared. Describe the resolution (at least 12 characters). This records your attestation; it does not independently verify the dependency.');
   if(note==null)return;
   if(note.trim().length<12){window.alert('Add a concrete resolution note of at least 12 characters.');return}
   if(!window.confirm('Return “'+String(item.title||queueId)+'” to normal queue selection? The scheduler still applies its normal capacity and claim checks.'))return;
-  const previous=button.textContent;button.disabled=true;button.textContent='Resuming…';
+  blockedResumesPending.add(queueId);
+  const previous=button.textContent;
+  button.disabled=true;
+  button.textContent='Checking latest task…';
   try{
+    // The confirmation may have been open for minutes. Observe the CURRENT
+    // authorized queue read before sending any operator attestation.
+    const current=await api('/api/portfolio-queue');
+    if(!Array.isArray(current?.items))throw new Error('Cannot confirm current parked-task state. Resume refused.');
+    const freshItems=current.items.filter(row=>row&&row.status==='blocked');
+    BLOCKED_QUEUE=freshItems;
+    BLOCKED_QUEUE_ERROR='';
+    const matches=freshItems.filter(row=>String(row.queue_id)===queueId);
+    if(matches.length!==1||blockedResumeFingerprint(matches[0])!==blockedResumeFingerprint(item)){
+      render();
+      throw new Error('The dependency or task state changed since confirmation. Review the refreshed card and confirm again.');
+    }
+    button.textContent='Resuming…';
     const response=await fetch('/api/portfolio-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'resume_blocked',queue_id:queueId,resolution_note:note.trim()}),signal:AbortSignal.timeout(10000)});
     const result=await response.json().catch(()=>({}));
     if(!response.ok||!result.ok)throw new Error(result.error||result.result?.reason||'Could not resume the parked task');
-    // The endpoint may return HTTP 200 + ok:true for an idempotent no-op
-    // when another operator has already changed this queue row. Never hide
-    // the task or clear Attention unless this exact row was resumed.
+    // HTTP 200 / ok:true may be an idempotent no-op if another worker moved
+    // the row. Require the exact successful transaction receipt.
     if(result.result?.resumed!==true||result.result?.status!=='queued'||
        String(result.result?.queue_id||'')!==queueId){
       await refresh(true);
       throw new Error('The parked task was not resumed ('+(result.result?.reason||'state changed')+'). Review the refreshed queue before acting again.');
     }
-    BLOCKED_QUEUE=(BLOCKED_QUEUE||[]).filter(row=>row.queue_id!==queueId);
-    if(result.result?.attention_resolved===true){DATA.attention_needed=(DATA.attention_needed||[]).filter(row=>row.attention_id!=='queue:'+queueId);}
-    BLOCKED_QUEUE_ERROR='';
-    button.textContent='Queued';
+    BLOCKED_QUEUE=freshItems.filter(row=>String(row.queue_id)!==queueId);
+    if(result.result?.attention_resolved===true){
+      DATA.attention_needed=(DATA.attention_needed||[]).filter(row=>row.attention_id!=='queue:'+queueId);
+    }
     render();
     await refresh(true);
-  }catch(error){button.disabled=false;button.textContent=previous;window.alert(error.message||'Could not resume the parked task.')}
+  }catch(error){
+    window.alert(error?.message||'Could not safely resume the parked task.');
+  }finally{
+    blockedResumesPending.delete(queueId);
+    button.disabled=false;
+    button.textContent=previous;
+  }
 }
 function archivedPanel(){const list=DATA.archived_projects||[];if(!list.length)return '';return `<div class="archived-panel"><div><strong>Archived</strong><span>Hidden from the dashboard and Watch</span></div><div class="archived-list">${list.map(p=>`<button type="button" data-restore="${esc(p.id)}"><span style="--accent:${p.accent}" class="project-dot"></span>${esc(p.name)}<b>Restore</b></button>`).join('')}</div></div>`}
 function activityItem(a){const p=DATA.projects.find(p=>p.id===a.project);return `<div class="activity-item" style="--accent:${p?.accent||'#aab5c4'}"><span class="activity-symbol">${icon(a.kind==='commit'?'commit':'check')}</span><div class="activity-copy"><p>${esc(a.title)}</p><div class="activity-meta"><strong>${esc(p?.name||a.project)}</strong><span>·</span><time datetime="${esc(a.ts)}" title="${date(a.ts,true)}">${rel(a.ts)}</time><span title="${esc(a.detail)}">${a.kind==='commit'?esc(a.detail):'Project step'}</span></div></div></div>`}
