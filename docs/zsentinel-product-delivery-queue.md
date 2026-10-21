@@ -1263,3 +1263,35 @@ overflow. Werkelijke productieprestatie is niet gemeten.
 **Levergrens:** deze veranderingen staan alleen op de bestaande
 product-PR #1536; onafhankelijke review, exacte-head CI,
 protected-main merge en geautoriseerde release blijven verplicht.
+
+
+## 21 oktober · Projectdiversiteit binnen de compacte operatorbron
+
+De read-only, opt-in `portfolio_queue_operator_window` reserveert nu niet
+alleen een eigen bronvenster voor bestaande actieve eigenaren en
+wachtend productwerk, maar bewaart ook **één werkelijk bestaand
+bronrecord per waargenomen project** voordat het resterende venster in
+de oorspronkelijke SQL-volgorde wordt gevuld. Hiermee kan een enkel
+project met een zeer grote P0- of actieve backlog niet alle andere
+projecten uit de beperkte privé operatorbron drukken.
+
+De interne helper `_portfolio_operator_project_fair_locked` doorzoekt
+maximaal 24 verschillende projectidentiteiten per categorie voor
+individuele eerste records. Deze aanvullende lookups zijn
+parametergebonden en read-only; geselecteerde queue-identiteiten
+worden gededupliceerd, nooit verzonnen of doorgegeven aan de
+toewijzingsplanner. De helft-helft-bronbegroting, het benutten van
+ongebruikte ruimte en de expliciete categorische overflowwaarschuwing
+blijven ongewijzigd. Eindresultaat: maximaal 2048 geobserveerde
+bronrecords en uitsluitend operatorinformatie.
+
+**Belangrijk onderscheid:** projectdiversiteit in deze *observatie*
+kan een P2-record van een ander project tonen naast P0-werk. Het
+verandert niet de P0/P1-prioriteit, het aantal slots, bestaande claims,
+de scheduler of de echte worker-admissie. Als de bron een venster
+afkapt, kunnen andere relevante projecten of taken alsnog ontbreken.
+De offline HTML/Markdown en optionele snapshotvergelijking blijven
+daarom expliciet adviserend, niet autoriserend.
+
+Dit staat op de bestaande PR #1536; het is geen gevalideerde
+VPS-runtimewijziging en geen productie-merge.
