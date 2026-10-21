@@ -970,7 +970,15 @@ async function publicGitHubGET(repository,suffix){
   const url='https://api.github.com/repos/Zennay/'+repository+'/'+suffix;
   const response=await fetch(url,{method:'GET',credentials:'omit',redirect:'error',cache:'no-store',
     headers:{'Accept':'application/vnd.github+json'},signal:AbortSignal.timeout(8000)});
-  if(!response.ok)throw Error(response.status===403||response.status===429?'Rate limited or inaccessible':'GitHub source unavailable');
+  if(!response.ok){
+    // These fixed local categories intentionally omit response bodies, headers,
+    // repository internals and network exception details.
+    const reason=response.status===429?'confirmed_rate_limit':
+      response.status===403?'forbidden_or_secondary_limit_unknown':
+      response.status===401?'authentication_required':
+      response.status===404?'repository_inaccessible':'provider_unavailable';
+    throw Error(reason);
+  }
   if(new URL(response.url).origin!=='https://api.github.com')throw Error('Unexpected GitHub origin');
   const raw=await response.text();
   if(raw.length>600000)throw Error('GitHub source too large');
@@ -1102,10 +1110,14 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
       (i===1?Array.isArray(outcome.value?.workflow_runs):Array.isArray(outcome.value)));
     const good=sourceReadable.filter(Boolean).length;
     const sourceLimits=[20,20,15];
+    const allowedDenials=new Set(['confirmed_rate_limit','forbidden_or_secondary_limit_unknown',
+      'authentication_required','repository_inaccessible','provider_unavailable']);
     const sourceCoverage=sourceReadable.map((ok,i)=>({
       name:['PR','Actions','main'][i],
       status:ok?(sourceLists[i].length>=sourceLimits[i]?'bounded_full':'bounded_end'):'unavailable',
-      rows:ok?Math.min(sourceLists[i].length,sourceLimits[i]):null
+      rows:ok?Math.min(sourceLists[i].length,sourceLimits[i]):null,
+      denial:ok?'none':allowedDenials.has(outcomes[i].reason?.message)
+        ?outcomes[i].reason.message:'provider_unavailable'
     }));
     // GitHub may return a partial history; no source page can authorize a
     // positive completeness claim about older branches or hidden PRs.
@@ -1227,7 +1239,14 @@ function githubActivityImportPanel(){
   const selectedCoverage=(snapshot?.coverage||[]).filter(c=>visible.has(c.project)&&(!filter||c.project===filter));
   const sourceDetails=selectedCoverage.filter(c=>Array.isArray(c.sourceCoverage))
     .map(c=>'<p class="detail-note" role="status">'+esc(c.project)+' · page '+esc(c.page||1)+' source coverage: '+
-      c.sourceCoverage.map(src=>esc(src.name)+' '+(src.status==='unavailable'?'UNAVAILABLE':
+      c.sourceCoverage.map(src=>esc(src.name)+' '+(src.status==='unavailable'
+        ?'UNAVAILABLE ('+({
+          confirmed_rate_limit:'GitHub 429 confirmed',
+          forbidden_or_secondary_limit_unknown:'GitHub 403: access or secondary rate unknown',
+          authentication_required:'GitHub 401: authentication required',
+          repository_inaccessible:'GitHub 404: source inaccessible',
+          provider_unavailable:'provider/network unavailable'
+        }[src.denial]||'source unavailable')+')':
         esc(src.rows)+' rows · '+(src.status==='bounded_full'?'older data may exist':'window ended'))).join(' · ')+
       ' · branches and private sources remain UNKNOWN</p>').join('');
   const counts=selectedCoverage.map(c=>c.project+': '+c.status+
