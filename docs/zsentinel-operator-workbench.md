@@ -3021,3 +3021,38 @@ is not evidence of a file conflict, ownership transfer or fix. The CSV and
 ZIP are private create-only 0600 output with bounded size and SHA256
 receipts. Neither format performs live GitHub/Notion queries, tests, claims,
 retries, merges, production writes or deployments.
+
+
+### Focus on one source-linked issue, without losing competing PRs
+
+The same offline bridge now offers a **single-issue** private dossier in four
+compatible formats: `portfolio-issue-markdown`,
+`portfolio-issue-html`, `portfolio-issue-csv` and
+`portfolio-issue-zip`. Pass an exact `--issue-url` that actually occurs
+in the admitted saved review manifest. The complete original sources are
+validated before the issue is selected; foreign or unobserved issues fail
+closed instead of appearing free.
+
+For example, using the same saved review and gate receipt inputs:
+
+```sh
+python3 scripts/zsentinel_saved_gate_batch_bridge.py --from-review ./private-review.json --receipt ./private-gate-batch-1.json --format portfolio-issue-zip --issue-url https://github.com/Zennay/zCloud/issues/1326 --output ./private-issue-1326-handoff.zip
+```
+
+Only choose an issue actually present in those saved source receipts. The
+issue ZIP bundles `issue-pr-dossier.html` (script-free offline browser
+page), `issue-pr-actions.md` (human follow-ups for every linked PR),
+`issue-pr-matrix.csv` (each admitted issue/PR relationship),
+`source-receipt.json` (canonical issue/repository, observed source PR/HEAD,
+original digests, UTC interval and explicit gate unknowns) and
+`source-checksums.json` (SHA256 per original member). The existing
+create-only 0600/no-follow writer and size limits remain unchanged.
+
+Several PRs may mention the same source issue. The issue-specific output
+shows each separately, P0 first then by the shared gate classifier. A shared
+issue is **not** proof of a fix, file conflict, current ownership or review.
+Missing batches remain UNKNOWN. The owner must refresh current GitHub HEAD,
+mandatory CI/review, branch protection, active Notion/queue claims and
+release permissions before any privileged action. These exports do not run
+QA suites, dispatch CI, read live providers, claim workers, retry blocked
+jobs, write production state, merge or deploy.
