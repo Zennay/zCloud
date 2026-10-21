@@ -1282,6 +1282,9 @@ def main():
                     _count(row["incident_sample_hits"]),
                     row["github_observation"], row["github_job_runner_route"],
                     row["next_action"]))
+                if row["notion_verifying_status_min"] is not None:
+                    lines.append("  Notion Verifying ≥%s · eigenaar hercontroleren; geen live leasebewijs." % (
+                        row["notion_verifying_status_min"],))
                 lines.append("  GitHub jobs: %s; wachtend self-hosted ≥%s; aanvullende joblijst afgekapt=%s. "
                              "Steekproef, geen volledig CI- of runnergezondheidsbewijs." % (
                     _count(row["github_sampled_actionable_jobs"]),
