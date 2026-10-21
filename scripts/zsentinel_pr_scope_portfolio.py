@@ -19,7 +19,7 @@ import stat
 import sys
 
 from zsentinel_pr_scope_guard import (
-    ROOT, observe_conflict_graph, registry,
+    ROOT, csv_formula_inert, observe_conflict_graph, registry,
 )
 
 from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
@@ -1268,9 +1268,7 @@ def as_private_csv(board):
         raw = "".join(
             "\\u%04x" % ord(char) if ord(char) < 32 or ord(char) == 127
             else char for char in str(value))
-        if raw.lstrip(" \u200b\u200c\u200d\u2060\ufeff").startswith(("=", "+", "-", "@")):
-            return "'" + raw
-        return raw
+        return csv_formula_inert(raw)
 
     def emit(kind, project, repo, source_status, **values):
         nonlocal written
