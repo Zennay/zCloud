@@ -1,6 +1,36 @@
 
 ### 21 oktober · veilige routeringsovergangen tussen operatorvensters
 
+#### Zelfstandig offline vergelijken zonder live bron of runner
+
+Bij onbereikbare CI/runner kan de bevoegde operator twee **reeds gemaakte**
+privé portfolio-JSON-exports vergelijken, zonder nieuwe provider-, queue- of
+SQLite-leesacties. De nieuwe stand-alone CLI heeft verplicht aparte, bestaande
+`--previous` en `--current` bronpaden en een **nieuwe** `--output`-naam:
+
+```sh
+python3 scripts/zsentinel_route_continuity.py \
+  --previous /eigenaar/prive/zsentinel-oud.json \
+  --current /eigenaar/prive/zsentinel-nieuw.json \
+  --format html \
+  --output /eigenaar/prive/zsentinel-routing-vergelijking.html
+```
+
+`--format json` schrijft een nieuwe `.json`, `--format text` een nieuwe
+`.md`. Bestaande `write_private_output` gebruikt directory-gebonden
+create-only opslag en mode 0600; input/output en hun geresolveerde paden
+moeten verschillend zijn. De reader weigert symlinks, ongeldige niet-reguliere
+bronbestanden, duplicate JSON-keys en meer dan 6 MiB per input. Geen
+standalone uitvoer gaat automatisch naar stdout of externe apps.
+
+Het offline pad mag archiefdata vergelijken maar labelt oude huidige
+snapshots expliciet **HISTORISCHE REPLAY**, zonder actuele routeerbaarheid
+te suggereren. De normale portfolio `--compare-with` blijft strenger:
+huidige bron ouder dan tien minuten geeft ONBEKEND. Ontbrekende snapshots,
+afgekapt scopebewijs en verdwenen kandidaten mogen nooit als oplossing,
+vrije claim, gesloten issue of geautoriseerde job worden behandeld.
+
+
 Bestaande `scripts/zsentinel_portfolio_overview.py --compare-with <privé-vorige-portfolio.json>`
 vergelijkt nu, naast bestaande blockercontinuïteit, de feitelijke brongebonden
 routeringsstatus van dezelfde queue-taken. Nieuwe module
