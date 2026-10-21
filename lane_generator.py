@@ -597,7 +597,15 @@ def generate_execution_lanes(project, backlog, claims=()):
         classified.append({**item, **lane})
     deferred_qa_by_lane = {lane["id"]: 0 for lane in lane_defs}
     deferred_ineligible_by_lane = {lane["id"]: 0 for lane in lane_defs}
+    deferred_assigned_by_lane = {lane["id"]: 0 for lane in lane_defs}
     for item in classified:
+        if (profile == "portfolio-recovery"
+                and str(item.get("status") or "queued").lower() == "queued"
+                and item.get("worker_slot") is not None):
+            # The real dispatch query requires worker_slot IS NULL.
+            # Queued records still bound to a slot are already reserved;
+            # never advertise them as fresh recovery work.
+            deferred_assigned_by_lane[item["lane_id"]] += 1
         if (profile == "portfolio-recovery"
                 and str(item.get("status") or "queued").lower() == "queued"
                 and item.get("eligible") != 1):
@@ -704,6 +712,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             if str(item.get("status") or "queued").lower() == "queued"
             and item["lane_id"] not in chosen_by_lane
             and not (profile == "portfolio-recovery" and item.get("eligible") != 1)
+            and not (profile == "portfolio-recovery" and item.get("worker_slot") is not None)
             and not (profile == "portfolio-recovery" and _prohibited_recovery_qa(item))
         ],
         key=_queue_order,
@@ -814,9 +823,11 @@ def generate_execution_lanes(project, backlog, claims=()):
                                if chosen else "NO_LOCAL_TASK"),
             "queue_id": str(chosen.get("queue_id") or "") if chosen else None,
             "status": str(chosen.get("status") or "") if chosen else "blocked" if (blocked_by or deferred_qa_by_lane[lane_id]
-                or deferred_ineligible_by_lane[lane_id]) else "idle",
+                or deferred_ineligible_by_lane[lane_id]
+                or deferred_assigned_by_lane[lane_id]) else "idle",
             "deferred_qa_packages": deferred_qa_by_lane[lane_id],
             "deferred_ineligible_packages": deferred_ineligible_by_lane[lane_id],
+            "deferred_assigned_packages": deferred_assigned_by_lane[lane_id],
             "scope": scope,
             # Advisory reconciliation only: never take, release, or supersede
             # an existing worker claim on the strength of this count.
