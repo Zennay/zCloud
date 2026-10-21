@@ -1917,6 +1917,8 @@ def main(argv=None):
     parser.add_argument("--case-input", help="private zSentinel portfolio recovery-case JSON export, file path or -")
     parser.add_argument("--live-issue-url",
                         help="read one canonical Zennay GitHub issue and its existing PRs directly; no saved case required")
+    parser.add_argument("--live-inbox-repo",
+                        help="bounded read-only P0/P1-first recent issue inbox for one Zennay/<repo>")
     parser.add_argument("--template", choices=sorted(ACTIONS),
                         help="emit a fresh, fail-closed JSON request template")
     parser.add_argument("--project-id", help="project slug used by --template")
@@ -1959,6 +1961,19 @@ def main(argv=None):
             parser.error(
                 "--live-candidates requires --case-input, --view-project, "
                 "--view-issue and --format json|markdown|html; no conflicting action modes"
+            )
+    if args.live_inbox_repo:
+        if (any((args.live_issue_url, args.case_input, args.input,
+                 args.batch_input, args.template, args.live_candidates,
+                 args.discover_unlinked, args.view_project,
+                 args.view_issue is not None, args.through_priority,
+                 args.prepare_merge_review, args.candidate_pr_number,
+                 args.live_focus_pr is not None, args.project_id,
+                 args.incident_id, args.source_url, args.owner,
+                 args.fail_on_hold))
+                or args.format not in ("json", "markdown", "html")):
+            parser.error(
+                "--live-inbox-repo is a standalone read-only JSON/Markdown/HTML mode"
             )
     if args.live_issue_url:
         if (any((args.case_input, args.input, args.batch_input, args.template,
@@ -2009,6 +2024,28 @@ def main(argv=None):
             return 0
         except (OSError, UnicodeError, PolicyInputError) as exc:
             print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
+            return 2
+    if args.live_inbox_repo:
+        try:
+            from zsentinel_live_issue_inbox import (
+                observe_repo_inbox, markdown as issue_inbox_markdown,
+                html_view as issue_inbox_html,
+            )
+            from zsentinel_pr_live_read import GitHubReadError
+            report = observe_repo_inbox(
+                args.live_inbox_repo, token=os.environ.get("GITHUB_TOKEN") or None,
+            )
+            output = (
+                issue_inbox_html(report) if args.format == "html"
+                else issue_inbox_markdown(report) if args.format == "markdown"
+                else json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            )
+            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("live inbox output exceeds 128 KiB")
+            _emit_output(output, args.output, args.format)
+            return 0
+        except (OSError, UnicodeError, GitHubReadError, PolicyInputError) as exc:
+            print("zSentinel live inbox: " + str(exc), file=sys.stderr)
             return 2
     if args.live_issue_url:
         try:
