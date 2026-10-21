@@ -660,3 +660,7 @@ Retry, root-fix routing, independent task admission, parking/resuming a task, me
 Single-request JSON, Markdown and HTML reports now include a deterministic `recommended_next_step`. It directs stale evidence to refresh, active/unknown claims to the current owner, pending/red exact-head gates to the normal CI/review path, unhealthy capacity to wait, missing approval to the authorized owner, and dependency/overlap problems to evidence collection rather than mutation. Batch Markdown also carries the per-proposal recommendation; competing actions for one incident are explicitly routed to an owner to choose one route.
 
 The recommendation is advisory and is recomputed after batch conflict detection adds a HOLD. It does not acquire claims, dispatch retries, change queue state, merge, deploy or restart a runner.
+
+## Per-route guidance in the offline HTML workorder
+
+The batch HTML workorder now retains the incident-level summary and adds a disclosure for each proposed action. It shows that route's decision, deterministic recommended next step, original source link, HOLD reasons and required evidence. This is especially useful when one incident has competing recovery routes: the report keeps them on HOLD and asks an authorized owner to choose one instead of implying both can proceed. The disclosure is rendered only from already validated batch input and performs no live reads or side effects.
