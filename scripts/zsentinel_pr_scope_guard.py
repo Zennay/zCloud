@@ -1287,10 +1287,13 @@ def graph_html(report):
             "</ol><table><thead><tr><th>Open PR's</th><th>Overlap</th>"
             "<th>Gedeelde bestanden</th></tr></thead><tbody>" +
             "".join(rows) + "</tbody></table>"
-            "<h2>Bestand/map-ancestorconflicten</h2>"
+            "<h2>Bestand/map-ancestorconflicten (" +
+            str(report["observed_path_scope_collision_pairs"]) + ")</h2>"
             "<p>Een PR gebruikt een pad als bestand terwijl een andere PR daaronder bestanden toevoegt. Dit is een scopeconflict-signaal, geen bewezen Git-mergeconflict of eigenaarschap.</p>"
             "<table><thead><tr><th>Open PR's</th><th>Padparen</th><th>Waargenomen paden en relatie</th></tr></thead><tbody>" +
-            "".join(scope_rows) + "</tbody></table>"
+            "".join(scope_rows) + "</tbody></table>" +
+            ("<p role='alert'>ONVOLLEDIG: aanvullende bestand/map-conflicpparen ontbreken buiten de weergavelimiet.</p>"
+             if report["path_scope_collision_pairs_truncated"] else "") +
             "<h2>Meerdere open PR's noemen hetzelfde issue</h2>"
             "<p>Positieve PR-tekstvermeldingen, geen bewezen fix of mergevrijgave.</p><ul>" +
             ("".join(duplicate_cards) or
