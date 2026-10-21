@@ -1629,6 +1629,34 @@ def graph_markdown(report):
         lines.append("Geen bestand/map-ancestorparen waargenomen in de gelezen bron.")
     if report["path_scope_collision_pairs_truncated"]:
         lines.append("**ONVOLLEDIG:** overige bestand/map-conflicpparen buiten de weergavelimiet.")
+    lines.extend([
+        "", "## Verbonden bestand/map-scopegroepen", "",
+        "Transitive groepen van waargenomen bestand/map-ancestorconflicten; geen merge- of eigenaarsbewijs.",
+        "Waargenomen groepen: " +
+        str(report["observed_connected_path_scope_collision_clusters"]) +
+        " · getoond: " + str(len(report["linked_pr_path_scope_collision_clusters"])), "",
+    ])
+    for cluster in report["linked_pr_path_scope_collision_clusters"]:
+        lines.append("### Scopegroep " + str(cluster["component_number"]) +
+                     " · " + str(cluster["pr_count_observed"]) + " open PRs")
+        lines.append(str(cluster["scope_collision_edge_count_observed"]) +
+                     " PR-paren · " + str(cluster["path_conflict_count_observed"]) +
+                     " waargenomen padconflicten.")
+        for pr in cluster["participating_prs"]:
+            lines.append("- [PR #" + str(pr["number"]) + "](" + pr["url"] +
+                         ") · HEAD " + pr["head_sha"][:12] + " · " +
+                         str(pr["other_prs_with_scope_conflicts_observed"]) +
+                         " directe scopeverbindingen")
+        for conflict in cluster["path_conflicts_sample"]:
+            lines.append("- Padrelatie: [PR #" + str(conflict["left_pr_number"]) +
+                         "](" + conflict["left_pr_url"] + ") ↔ [PR #" +
+                         str(conflict["right_pr_number"]) + "](" +
+                         conflict["right_pr_url"] + ") · " + conflict["relation"] +
+                         " (padvoorbeelden staan in HTML/tekstweergave)")
+        if cluster["path_conflicts_sample_truncated"]:
+            lines.append("  - Extra padconflicten in deze groep niet afgebeeld.")
+    if report["path_scope_collision_clusters_truncated"]:
+        lines.append("**ONVOLLEDIG:** overige verbonden scopegroepen buiten de weergavelimiet.")
     lines.extend(["", "## Mogelijk dubbel werk rond hetzelfde issue (titel of body)", ""])
     for group in report["shown_duplicate_issue_groups"]:
         lines.append("- [Nummer #" + str(group["issue_number"]) + "](" +
