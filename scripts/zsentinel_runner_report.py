@@ -1333,6 +1333,19 @@ def render_private_immediate_handoff(data):
             rows.append("- " + _handoff_text(entry["unit"]) + ": "
                         + _handoff_text(entry["systemd_state"])
                         + "; GitHub-jobtoewijzing NIET BEWEZEN.")
+    rows += ["", "## Gebruikersservices (aparte systemd --user bron)", ""]
+    user_services = observed["user_runner_services"]
+    if user_services is None:
+        rows.append("- User-manager bron ONBEKEND: niet gezien of oud bronformaat.")
+    elif not user_services:
+        rows.append("- Geen user-runner waargenomen; geen GitHub-herstelbewijs.")
+    else:
+        for entry in user_services[:20]:
+            rows.append("- user-systemd / " + _handoff_text(entry["unit"]) + ": "
+                        + _handoff_text(entry["systemd_state"])
+                        + "; jobtoewijzing NIET BEWEZEN.")
+    if not observed["user_runner_inventory_complete"]:
+        rows.append("- User-servicebron GEDEELTELIJK/ONBEKEND; niet gezien is niet opgelost.")
     steps = evidence["observation_steps"]
     if steps:
         rows += ["", "## T0/T1 bronverschillen"]
@@ -1347,6 +1360,12 @@ def render_private_immediate_handoff(data):
         for change in evidence["observed_transitions"][:40]:
             rows.append("  - " + _handoff_text(change["unit"]) + ": "
                         + _handoff_text(change["change"]) + "; geen herstelbewijs.")
+        for change in evidence["observed_user_transitions"][:40]:
+            rows.append("  - user-systemd / " + _handoff_text(change["unit"]) + ": "
+                        + _handoff_text(change["change"]) + "; geen herstelbewijs.")
+        if evidence["user_transition_items_omitted"]:
+            rows.append("- Weggelaten oudere user-systemd overgangen: "
+                        + str(evidence["user_transition_items_omitted"]) + ".")
         if evidence["transition_items_omitted"]:
             rows.append("- Weggelaten oudere overgangen: "
                         + str(evidence["transition_items_omitted"]) + ".")
