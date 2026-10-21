@@ -214,7 +214,10 @@ def render_issue_inbox(inbox):
             "<a href='" + esc(pr["url"]) + "'>PR #" + esc(pr["number"]) +
             "</a> (" + esc(pr["status"]) + "; review " +
             esc(pr["review"]) + "; CI " + esc(pr["checks"]) +
-            "; workflows " + esc(pr["workflows"]) + ")" for pr in prs)
+            "; workflows " + esc(pr["workflows"]) +
+            ("; volgende gate: " + esc(" / ".join(pr["gate_actions"]))
+             if pr["gate_actions"] else "; volgende gate: broncontrole nodig") +
+            ")" for pr in prs)
             if prs else "Geen gekoppelde PR binnen deze selectie bevestigd")
         cards.append(
             "<li><strong>" + esc(issue["priority"]) + "</strong> · "
