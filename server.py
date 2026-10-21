@@ -3037,6 +3037,29 @@ def portfolio_queue_items(include_done=False):
                                        created_at, queue_id""").fetchall()
     return [_portfolio_queue_row(row) for row in rows]
 
+def portfolio_queue_operator_window(limit=2048):
+    """Bounded, read-only queue window for the private zSentinel operator.
+
+    This is an observation only: missing tail rows are always UNKNOWN.
+    Prioritize already-active owners before queued work so fresh product
+    admission never conceals a still-claimed worker. Do not alter the
+    normal full queue API or the scheduler's independent SQL admissions.
+    """
+    if type(limit) is not int or not 1<=limit<=2048:
+        raise ValueError('Ongeldige operator-inbox bronlimiet')
+    with connect() as c:
+        rows=c.execute("""SELECT * FROM portfolio_queue
+                          WHERE status IN ('queued','claimed','running','verifying')
+                          ORDER BY CASE status
+                            WHEN 'running' THEN 0 WHEN 'verifying' THEN 1
+                            WHEN 'claimed' THEN 2 ELSE 3 END,
+                            CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                              WHEN 'P2' THEN 2 ELSE 3 END,
+                            created_at,queue_id
+                          LIMIT ?""",(limit+1,)).fetchall()
+    truncated=len(rows)>limit
+    return [_portfolio_queue_row(row) for row in rows[:limit]],truncated
+
 def portfolio_queue_current_for_slot(global_slot):
     try: slot=int(global_slot)
     except Exception: return None
@@ -5451,16 +5474,20 @@ class Handler(BaseHTTPRequestHandler):
             # raw portfolio rows or worker/allocation state in this view.
             # Same existing caller authorization; no new URL or writer.
             inbox_mode=str(q.get('operator_inbox',['0'])[0]).lower() in ('1','true','yes')
-            include_done=(not inbox_mode and str(q.get('all',['0'])[0]).lower() in ('1','true','yes'))
-            items=portfolio_queue_items(include_done)
-            delivery_policy=product_queue_snapshot(items)
             if inbox_mode:
+                items,source_truncated=portfolio_queue_operator_window()
                 return self.reply({
                     'backend':'sqlite',
                     'operator_inbox_snapshot':True,
-                    'delivery_policy':delivery_policy,
+                    'source_rows_visible':len(items),
+                    'source_rows_truncated':source_truncated,
+                    'source_rows_limit':2048,
+                    'delivery_policy':product_queue_snapshot(items),
                     'time':now(),
                 })
+            include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
+            items=portfolio_queue_items(include_done)
+            delivery_policy=product_queue_snapshot(items)
             return self.reply({
                 'backend':'sqlite',
                 'items':items,
