@@ -2460,3 +2460,37 @@ Voor volledige inspectie van één issue gebruikt de operator de reeds
 beschikbare `--inspect-issue`-route van
 `zsentinel_saved_issue_timeline.py` en inspecteert daarna actuele
 GitHub/Notion-eigenaarschap en verplichte exacte-head mergegates.
+
+
+## Project recovery without an issue card (21 October integration-runtime)
+
+The existing board records **project_operations** separately from issue cards.
+The Workbench now keeps this previously lost, human-only product route visible.
+Expand **Project recovery · issue-independent source observations** above
+the issue filters to inspect every admitted project's original sampled issue
+counts, source coverage, bounded queue pressure, claim-observation uncertainty
+and recommended human investigation. A project with **zero observed issues**
+can still display an expired-lease or claim-cycle investigation lead; zero
+issues never means a healthy or currently idle worker. Source coverage is
+always incomplete, and queue attempts are not verified failures.
+
+**Preview current filtered briefing** and the reviewed private Markdown
+export now also contain a clearly separate **FULL saved portfolio snapshot**
+section with those project-level leads. This intentionally remains
+portfolio-wide even when issue filters show a narrow selection; the heading
+states that distinction. A project with no issue card can therefore still
+produce a useful source-bound human handoff. The export does not assert an
+available claim, recovered runner, released lease or deploy.
+
+The reader validates the exact bounded project-level counts, lease-pressure
+aggregate, unique project identities, incomplete-inventory flag and
+non-authorizing action flag. It checks issue coverage against the admitted
+source summary. Only a coarse, non-authorizing **claim observed / not
+verified** indicator can reach the browser; opaque claim IDs, task titles,
+raw SQLite fields, worker prompts and credentials cannot.
+
+All of this is local rendering and optional human export of the existing
+immutable source. It does not query Notion, GitHub or the live VPS, start CI,
+mutate queues/claims, assign a worker, merge a PR or deploy anything. Existing
+independent review and exact-head mandatory CI remain required before any
+main-branch integration. No new QA suite or manual test run was introduced.
