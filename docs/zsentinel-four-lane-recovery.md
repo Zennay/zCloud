@@ -867,3 +867,25 @@ Broncommits: [7e63e1b](https://github.com/Zennay/zCloud/commit/7e63e1b30634b31e5
 [1fc311e](https://github.com/Zennay/zCloud/commit/1fc311eafdca16801615b69818c910fdc2cc17db)
 (eigenaaradvies). Dit blijft op bestaande PR #1572; geen
 main- of live-claim voordat GitHub de exacte vereiste gates bevestigt.
+
+
+### Brongebonden P0 runner/capacity-overdracht (geen automatische reparatie)
+
+Een hoge hostdrukkaart kan nu, **alleen als de operator tevens
+`--runner-processes` selecteert**, de lokale zCloud-listener-/worker-
+waarneming in de *zelfde* menselijke vervolgregel opnemen.
+Voorbeelden: listener **gezien maar GitHub-toewijzing onbewezen**;
+worker gezien terwijl lokale listener niet is waargenomen (behoud job);
+of procesbron incompleet. Geen van deze gevallen zegt dat een
+remote workflow werkelijk stuck/geslaagd is. Een geobserveerde
+zCloud-listener is niet hetzelfde als GitHub `runner_id`, labels,
+toewijzing of daadwerkelijke CI.
+
+`python3 scripts/zsentinel_four_lane_desk.py --db history.db --host-pressure --runner-processes`
+levert het samengevoegde, read-only operatorbeeld. Het blijft een
+menselijke HOLD/volgactie, zonder service-, CPUQuota-, runner-,
+claim-, opslag- of GitHub-writes. Broncommit
+[4766ff2](https://github.com/Zennay/zCloud/commit/4766ff26514bd7719875e50a19b5ed4a037e96e1)
+staat op bestaande PR #1572. Issues als
+[zCloud #1326](https://github.com/Zennay/zCloud/issues/1326)
+worden **niet** automatisch gesloten of als hersteld bestempeld.
