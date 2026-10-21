@@ -458,6 +458,17 @@ function onePrHandoff(){
   lines.push('  - '+safeText(t.dataset.priority)+' · '+safeText(t.dataset.title));
   lines.push('  - Handmatige lokale opvolging: '+labels[t.querySelector('.local-state').value]);
   lines.push('  - Menselijke vervolgstap uit de bron: '+safeText(t.dataset.next));
+  const alternatives=[t.dataset.pr,...t.dataset.prs.trim().split(' ').filter(Boolean)]
+    .filter(other=>other&&other!==url);
+  if(alternatives.length){
+   lines.push('  - Andere PR-kandidaten bij ditzelfde issue (apart beoordelen, geen eigenaarschap):');
+   for(const other of alternatives){
+    const group=prs.find(row=>row.dataset.pr===other);
+    const head=group&&group.dataset.head;
+    lines.push('    - [Andere PR '+other.split('/').pop()+']('+other+
+      ')' +(head?' · waargenomen HEAD '+safeText(head):' · HEAD ONBEKEND'));
+   }
+  }
   const note=t.querySelector('textarea').value.trim();
   if(note)lines.push('  - Privé issuenotitie: '+safeText(note));
  }
