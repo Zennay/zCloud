@@ -2564,3 +2564,34 @@ lease, original queue timestamp and ownership must be rechecked by a human.
 No network, CI dispatch, queue write, lease reclaim, workflow replay,
 service restart, production deployment, broker action or QA suite is created
 by this source-only UI.
+
+### Saved exact-head PR evidence next to the original issue (21 October)
+
+The original product-delivery board already held canonical
+`pr_delivery_observations` and per-issue `pr_delivery_candidates`, but
+the Workbench used to discard these fields. This required a separate
+offline ZIP to see even previously saved PR gate information.
+
+Now each original issue's **Existing PR references** displays the
+previously captured GitHub PR HEAD, original PR observation UTC timestamp,
+observed native CI success flag, available legacy-context status,
+observed independent approvals, previously reported mergeability
+and recorded unresolved gate labels. The *same* bounded read-only facts
+are included in the reviewed private Markdown issue handoff. If a PR
+reference lacks a matching admitted observation, the desk explicitly says
+the source is missing instead of assuming checks succeeded.
+
+The offline input is fail-closed: at most five unique canonical PR
+observations, 40-character immutable source HEADs, a known UTC PR source
+clock and explicit non-authorizing flags. Every per-issue PR observation
+must agree exactly with the previously validated top-level PR inventory;
+cross-issue or mismatched PR gates cannot silently replace source evidence.
+No arbitrary GitHub metadata or credentials enter the browser.
+
+**These are historical snapshots, not merge eligibility.** In particular,
+a saved success flag, apparent mergeability or prior approvals do not
+establish current required checks, branch protection, an active owner,
+the present PR HEAD, consent, source merge or a live deployment. The
+operator must independently refresh all of those current facts from GitHub
+before any privileged action. No new API call, QA suite, runner dispatch,
+claim, merge or deploy is introduced.
