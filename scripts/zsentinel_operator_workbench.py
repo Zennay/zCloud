@@ -4004,7 +4004,7 @@ function mergeFirstInventory(){
    if(!references.size){
      unknownIssues++;
      missingIssueRefs.push({issue:card.issue,url:card.url,project:card.project,
-       priority:card.priority});
+       priority:card.priority,title:card.title});
    }
    if(references.size>1)alternateIssues++;
    for(const url of references){
@@ -4016,8 +4016,8 @@ function mergeFirstInventory(){
          unobservedAdditionalPrs:false};
        rows.set(url,row);
      }
-     row.issues.push({issue:card.issue,url:card.url,priority:card.priority,
-       title:card.title,alternatives:references.size>1});
+     row.issues.push({issue:card.issue,url:card.url,project:card.project,
+       priority:card.priority,title:card.title,alternatives:references.size>1});
      if(card.open_pr_candidates.includes(url)){
        row.sourceKinds.add('original_issue_board');
        const observation=card.pr_gate_observations.find(pr=>pr.url===url);
@@ -4093,7 +4093,7 @@ function mergeFirstCsv(){
  const report=mergeFirstInventory();
  if(!report.selected_issues)return null;
  const columns=['original_board_sha256','board_observed_at_utc',
-   'source_age_not_live','priority','pr_reference_state','pr_url','source_issue_links',
+   'source_age_not_live','priority','project_scope','pr_reference_state','pr_url','source_issue_links','source_issue_titles',
    'linked_issue_count','multiple_issues_share_pr','issue_has_alternative_prs',
    'source_types','board_heads_observed','archived_heads_observed',
    'source_head_variation_not_conflict_proof','sampled_original_board_blocking_unknowns',
@@ -4128,9 +4128,11 @@ function mergeFirstCsv(){
    if(item.kind==='saved_pr'){
      const row=item.row;
      Object.assign(record,{
+       project_scope:[...new Set(row.issues.map(issue=>issue.project))].join(' | '),
        pr_reference_state:'saved_pr_candidate_not_live',
        pr_url:row.url,
        source_issue_links:row.issues.map(issue=>issue.url).join(' | '),
+       source_issue_titles:row.issues.map(issue=>issue.title).join(' | '),
        linked_issue_count:row.issues.length,
        multiple_issues_share_pr:row.same_pr_covers_multiple_issues,
        issue_has_alternative_prs:row.issue_has_alternative_prs,
@@ -4147,9 +4149,11 @@ function mergeFirstCsv(){
      });
    }else{
      Object.assign(record,{
+       project_scope:item.issue.project,
        pr_reference_state:'not_observed_in_bounded_sources_unknown',
        pr_url:'',
        source_issue_links:item.issue.url,
+       source_issue_titles:item.issue.title,
        linked_issue_count:1,
        multiple_issues_share_pr:false,
        issue_has_alternative_prs:false,
