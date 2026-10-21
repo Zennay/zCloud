@@ -164,6 +164,23 @@ def suggested_actions(packet):
             "Laat de taak starten uitsluitend na externe claim-, eigenaar- en resourcecontrole; geen parallelle schrijver.",
             "SERIAL_CANDIDATE_NOT_AUTHORIZED",
         ))
+    # Local host memory/swap/load is corroborating evidence only. Resource
+    # pressure can explain slow CI/worker throughput; low pressure does not
+    # prove cgroup quotas, GitHub admission, free leases or new worker rights.
+    pressure = packet.get("host_pressure")
+    if isinstance(pressure, dict) and pressure.get("status") == "HOST_SNAPSHOT_OBSERVED":
+        hint = pressure.get("pressure_hint")
+        if hint in ("HIGH_LOCAL_PRESSURE", "ELEVATED_LOCAL_PRESSURE"):
+            result.append(action(
+                "host-pressure-owner-review",
+                "urgent" if hint == "HIGH_LOCAL_PRESSURE" else "review",
+                "De lokale host heeft verhoogde RAM-, swap- of CPU-druk; "
+                "dit is geen bewijs dat een GitHub-job vastzit.",
+                "Behoud bestaande jobs en claims. Vergelijk cgroup-limieten, "
+                "runner-toewijzing en workerprogressie met de bevoegde eigenaar "
+                "vóór capaciteitsverhoging of serviceactie.",
+                "HOLD_CAPACITY_OWNER_REVIEW",
+            ))
     # Runner /proc only corroborates local process presence. It cannot prove
     # GitHub runner registration, labels, job assignment or successful CI.
     local_proc = packet.get("runner_processes")
