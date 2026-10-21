@@ -3077,3 +3077,28 @@ saved observations: current PR head, required branch rules, live owner, actual
 review state, mergeability and release permission must still be checked
 independently. The existing two-snapshot CSV includes these differences in
 its `changed_source_fields` column without carrying private human notes.
+
+
+## Project-level recovery deltas between saved boards
+
+The offline comparison also admits the bounded `project_operations` inventory
+from the earlier board. It compares per-project issue-source coverage, sampled
+P0/P1/P2/unranked counts, aggregate queue pressure (active items, high claim
+cycles and expired leases), reported claim-context presence, and the recommended
+human investigation. A queue sample is admitted only when its original source
+clock is valid and no later than the earlier board; claim identifiers are never
+carried into the comparison. A timestamp refresh alone is not treated as a
+state change when the sampled values are unchanged.
+
+New project observations, changed recovery signals and projects no longer
+visible are listed separately from issue/PR changes. Disappearance remains
+NOT resolved. A separate reviewed project-recovery CSV includes both exact
+board SHA-256 values, captured observation times, coverage, prior/current
+aggregate values, source clocks and explicit false claim/merge/deploy authority
+columns. It excludes private human notes and raw claim IDs. The existing issue
+delta CSV remains issue-scoped and now includes saved PR-gate/HEAD differences
+inside its `changed_source_fields` column.
+
+Neither comparison refreshes data from GitHub or Notion. All gate and queue
+values are historical saved observations; they do not prove current PR state,
+worker ownership, queue availability, merge clearance or release authority.
