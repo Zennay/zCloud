@@ -351,7 +351,11 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     dependency_count = None
     if dep is not None:
         examples = dep.get("examples") if type(dep) is dict else None
-        if (type(dep) is not dict or type(dep.get("count")) is not int
+        raw_dependency_coverage = (dep.get("coverage", "incomplete_or_stale")
+                                   if type(dep) is dict else None)
+        if (type(dep) is not dict
+                or raw_dependency_coverage not in ("complete", "incomplete_or_stale")
+                or type(dep.get("count")) is not int
                 or not 0 <= dep["count"] <= 250
                 or type(examples) is not list or len(examples) > 8
                 or len(examples) > dep["count"]
@@ -360,9 +364,15 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 or dep.get("exact_reconciliation_required") is not True
                 or dep.get("claim_authorized") is not False):
             raise ValueError("untrusted dependency HOLD source")
-        dependency_count = dep["count"]
-        dependency_coverage = ("bounded_examples_truncated"
-                               if dep["samples_truncated"] else "bounded_examples")
+        if raw_dependency_coverage == "complete":
+            dependency_count = dep["count"]
+            dependency_coverage = ("bounded_examples_truncated"
+                                   if dep["samples_truncated"] else "bounded_examples")
+        else:
+            # Never carry a zero count across a missing, stale or incomplete
+            # task/claim inventory as proof that no dependent work exists.
+            dependency_count = None
+            dependency_coverage = "incomplete_or_stale"
         for row in examples:
             if (type(row) is not dict
                     or row.get("reason") != "incident_dependency_reconciliation_required"
@@ -1141,21 +1151,25 @@ def handoff_html(report):
     dependency = report.get("incident_dependency_owner_summary", {})
     if (type(dependency) is not dict
             or dependency.get("coverage") not in (
-                "not_supplied", "bounded_examples", "bounded_examples_truncated")
+                "not_supplied", "incomplete_or_stale",
+                "bounded_examples", "bounded_examples_truncated")
             or dependency.get("claim_authorized") is not False
             or dependency.get("runtime_recovered_verified") is not False
-            or (dependency["coverage"] == "not_supplied"
+            or (dependency["coverage"] in ("not_supplied", "incomplete_or_stale")
                 and dependency.get("held_count") is not None)
-            or (dependency["coverage"] != "not_supplied"
+            or (dependency["coverage"] not in ("not_supplied", "incomplete_or_stale")
                 and (type(dependency.get("held_count")) is not int
                      or not 0 <= dependency["held_count"] <= 250))):
         raise ValueError("untrusted dependency owner summary")
-    dep_line = ("Niet aangeleverd; afhankelijke taken ONBEKEND."
-                if dependency["coverage"] == "not_supplied" else
-                str(dependency["held_count"]) +
-                " expliciete taak-HOLDs; exacte bronreconciliatie vereist." +
-                (" Zichtbare voorbeelden afgekapt."
-                 if dependency["coverage"] == "bounded_examples_truncated" else ""))
+    dep_line = (
+        "Bron niet aangeleverd; afhankelijke taken ONBEKEND."
+        if dependency["coverage"] == "not_supplied" else
+        "Taak-/claiminventaris onvolledig of verouderd; totaal ONBEKEND, nul is geen vrijgave."
+        if dependency["coverage"] == "incomplete_or_stale" else
+        str(dependency["held_count"]) +
+        " expliciete taak-HOLDs; exacte bronreconciliatie vereist." +
+        (" Zichtbare voorbeelden afgekapt."
+         if dependency["coverage"] == "bounded_examples_truncated" else ""))
     return ('<section class="panel warn" aria-label="Prioritaire eigenaaroverdracht">'
             '<h2>Nu opvolgen · P0 eerst</h2><p>Actuele, begrensde '
             'bronwaarneming. GEEN vrijgave voor workerclaim, retry, merge of deploy.</p>'
@@ -1240,12 +1254,17 @@ def markdown(report):
     dep = report.get("incident_dependency_owner_summary", {})
     if (type(dep) is not dict
             or dep.get("coverage") not in (
-                "not_supplied", "bounded_examples", "bounded_examples_truncated")
+                "not_supplied", "incomplete_or_stale",
+                "bounded_examples", "bounded_examples_truncated")
             or dep.get("claim_authorized") is not False
             or dep.get("runtime_recovered_verified") is not False):
         raise ValueError("invalid dependency status in owner handoff")
     if dep["coverage"] == "not_supplied":
         lines.append("Incidentafhankelijkheden: bron ONBEKEND, nooit veronderstellen dat alle taken vrij zijn.")
+    elif dep["coverage"] == "incomplete_or_stale":
+        if dep.get("held_count") is not None:
+            raise ValueError("incomplete dependency source must not carry a zero/all-clear count")
+        lines.append("Incidentafhankelijkheden: inventaris onvolledig/verouderd; totaal ONBEKEND, nul is geen vrijgave.")
     else:
         count = dep.get("held_count")
         if type(count) is not int or not 0 <= count <= 250:
