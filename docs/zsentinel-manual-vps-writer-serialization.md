@@ -45,7 +45,19 @@ production writer from cancelling an in-flight deployment.
    overrides in these privileged jobs were removed because they were rejected
    by the mandatory permanent-runner source gate. The separate manual
    owner/triggering-actor/first-attempt/exact-main checks remain required.
-6. A changed main, unknown runner, missing permission, non-idle worker or
+6. The manual watchdog workflow also protects the **shared runtime
+   checkout**. If it exists, exact approved HEAD, a non-symlink script path,
+   a clean tracked/untracked watchdog path and any existing source bytes must
+   all agree before installing the separately authorized standalone watchdog.
+   It does not update the shared runtime script: an owner-modified/untracked
+   file must be resolved by that owner first. Read-only zSSH observation on
+   21 October found an untracked watchdog script in the VPS runtime checkout;
+   this is a **real non-overwrite case**, not permission to reset it.
+7. The emergency reload workflow rechecks actual installed addon bytes,
+   trusted/non-symlink paths and its tab-open/close restrictions **after**
+   the final current-main and worker-idle checks, immediately before invoking
+   the addon-only reload. The earlier preflight alone is never sufficient.
+8. A changed main, unknown runner, missing permission, non-idle worker or
    failed step leaves activation denied or deferred according to the existing
    fail-closed behavior.
 
