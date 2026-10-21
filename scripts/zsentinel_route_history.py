@@ -222,6 +222,34 @@ def _admit(report):
     if (type(repeated) is not list or len(repeated) > 12
             or type(report.get("repeated_hold_candidates_truncated")) is not bool):
         raise ValueError("unbounded repeated HOLD source")
+    # An exported episode must still point at a real observed source window.
+    # Otherwise a handoff could silently describe an invented "last seen".
+    coverage_known = report["coverage"] in (
+        "historical_sampled_series", "current_sampled_series")
+    stamps = report.get("window_utc")
+    if type(stamps) is not list or len(stamps) > MAX_WINDOWS:
+        raise ValueError("untrusted routing source timestamp series")
+    if coverage_known:
+        if (len(stamps) != report["window_count"]
+                or any(type(stamp) is not str
+                       or not re.fullmatch(
+                           r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z",
+                           stamp)
+                       for stamp in stamps)):
+            raise ValueError("missing canonical routing window timestamps")
+        prior = None
+        for stamp in stamps:
+            instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if prior is not None and not prior < instant:
+                raise ValueError("unordered routing source timestamps")
+            prior = instant
+        total = report.get("repeated_hold_total")
+        if (type(total) is not int or not len(repeated) <= total <= 400
+                or report["repeated_hold_candidates_truncated"] is not
+                    (total > len(repeated))):
+            raise ValueError("inconsistent historical HOLD episode coverage")
+    elif repeated or report.get("repeated_hold_total") is not None:
+        raise ValueError("unknown routing coverage cannot claim HOLD episodes")
     for row in repeated:
         if (type(row) is not dict or row.get("priority") not in PRIORITY
                 or type(row.get("project_id")) is not str
@@ -239,6 +267,8 @@ def _admit(report):
                     (row["last_window"] == report["window_count"])
                 or row.get("hold_reason") not in KINDS
                 or KINDS[row["hold_reason"]] == "advisory_suggestion"
+                or row.get("first_observed_utc") != stamps[row["first_window"] - 1]
+                or row.get("last_observed_utc") != stamps[row["last_window"] - 1]
                 or row.get("next_owner_action") != "Controleer exacte eigenaar, lease en HOLD-bron; geen retry of claim."
                 or row.get("claim_authorized") is not False
                 or row.get("dispatch_authorized") is not False):
@@ -346,6 +376,10 @@ def owner_text(report):
                  str(len(source["visible_events"])) + " / " +
                  str(source["total_events_observed"]) +
                  " · bronvoorbeelden blijven beperkt.")
+    lines.append("HOLD-episodes: " +
+                 str(len(source["repeated_hold_candidates"])) + " / " +
+                 str(source["repeated_hold_total"]) + " zichtbaar; " +
+                 "verdwenen uit steekproef is nooit opgelost.")
     if source["coverage"] == "historical_sampled_series":
         lines.append("HISTORISCHE REPLAY: geen actuele claim/runner/gate bewezen.")
     if any(not row["routing_inventory_complete"]
@@ -425,7 +459,10 @@ def owner_html(report):
             'Routegeschiedenis · P0-eerst</h2><p class="muted">' +
             escape(notes + "Geen live claim- of hersteltoestemming. ") +
             str(source["window_count"]) + ' bronvensters · ' +
-            str(source["total_events_observed"]) + ' waargenomen overgangen.</p>' +
+            str(source["total_events_observed"]) + ' waargenomen overgangen · ' +
+            str(len(source["repeated_hold_candidates"])) + '/' +
+            str(source["repeated_hold_total"]) +
+            ' herhaalde HOLD-episodes zichtbaar.</p>' +
             (''.join(cards) if cards else
              '<p>Geen verschillen in de beschikbare steekproef; '
              'niet bewezen dat alle werk is afgerond.</p>') +
