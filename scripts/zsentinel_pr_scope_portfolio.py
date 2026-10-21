@@ -81,6 +81,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
         display_truncated = (source["collision_cards_truncated"] or
                              len(source["shown_file_collision_pairs"]) > MAX_VISIBLE_PAIRS or
                              source["path_scope_collision_pairs_truncated"] or
+                             source["path_scope_examples_truncated"] or
                              len(source["shown_path_scope_collision_pairs"]) > MAX_VISIBLE_PAIRS)
         complete = source["pr_file_scope_sample_complete"] and not display_truncated
         items.append({
