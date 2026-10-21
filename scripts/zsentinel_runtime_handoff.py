@@ -1745,6 +1745,14 @@ def markdown(report):
                 lines.append("   GitHub-commit: " + card["exact_github_commit_url"])
         for pr in card.get("existing_pr_urls", []):
             lines.append("   Eerst bestaande PR beoordelen: " + pr)
+        from zsentinel_pr_delivery import NEXT_ACTION_NL
+        for gate in _linked_issue_pr_gates(card):
+            lines.append(
+                "   Gekoppelde PR-bron: " + gate["pr_url"] +
+                " · HEAD " + (gate["observed_head_sha"] or "ONBEKEND") +
+                " · " + _md(NEXT_ACTION_NL[gate["next_step"]], 250) +
+                " · issuefix en merge NIET bewezen."
+            )
         if card.get("kind") == "open_pr_owner_review":
             coverage = card.get("pr_observation_coverage")
             if coverage not in ("bounded_exact_head_review_and_checks",
@@ -1817,6 +1825,7 @@ CSV_FIELDS = (
     "all_sources_complete", "historical_recheck_count",
     "historical_rechecks_truncated", "priority", "project", "kind",
     "next_step", "evidence", "issue_url", "existing_pr_urls",
+    "linked_inspected_pr_gates_json", "related_prs_not_inspected",
     "exact_github_job_run_id", "exact_github_job_id",
     "exact_github_job_head_sha", "exact_github_job_url",
     "exact_github_commit_url", "review_by_utc", "review_overdue_at_export",
@@ -1909,6 +1918,10 @@ def csv_export(report):
             "evidence": item.get("evidence"),
             "issue_url": item.get("issue_url"),
             "existing_pr_urls": " | ".join(item.get("existing_pr_urls", [])),
+            "linked_inspected_pr_gates_json": json.dumps(
+                _linked_issue_pr_gates(item), ensure_ascii=True,
+                separators=(",", ":")),
+            "related_prs_not_inspected": item.get("uninspected_related_pr_count"),
             "exact_github_job_run_id": job.get("run_id") if job else None,
             "exact_github_job_id": job.get("job_id") if job else None,
             "exact_github_job_head_sha": job.get("head_sha") if job else None,
