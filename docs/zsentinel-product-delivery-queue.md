@@ -952,3 +952,51 @@ metadataregels behandeld als een bovenliggende `metadata.workstream`.
 Dit sluit het geval waarin een producent een oude QA-lane nested aanbiedt
 maar de top-level bron geen lane bevat. Deze bronclassificatie heeft
 **geen** terugwerkende gevolgen voor actieve claims of hun voortgang.
+
+
+## 21 oktober · Eén samengevoegde operator-inbox
+
+De bestaande **geautoriseerde** `GET /api/portfolio-queue` bevat
+in `delivery_policy.operator_workorder_inbox` nu één begrensd
+menselijk vervolgscherm in JSON-vorm. Zonder extra SQLite-query,
+netwerkcall, workeropdracht of schrijfactie combineert dit
+**drie reeds brongebonden werkstromen**:
+
+1. `active_owner_evidence_gap`: oorspronkelijke actieve taak met
+   ontbrekend slot/start-/eindbewijs — eerst eigenaar reconciliëren.
+2. `repeated_claim_attempts`: oorspronkelijke taak met herhaalde
+   claimpogingen — geschiedenis laten onderzoeken, nooit blind retryen.
+3. `queued_product_lead`: geobserveerd P0/P1/P2/P3-productwerk per
+   project — alleen een kandidaat voor de **bestaande** Notion-/
+   lease-/scope-/capaciteitsautorisatie, nooit al toegekend werk.
+
+De inbox wisselt tussen deze categorieën en dedupliceert op
+`(project_id, queue_id)`. Hierdoor kan een geheel bezet herstelproject
+niet alle kansen op onafhankelijk productwerk verhullen. Alles is
+begrensd tot `max_visible` (standaard acht) met expliciete
+`operator_workorder_inbox_truncated`, inclusief beperkingen van de
+onderliggende bronlijsten, en
+`operator_workorder_inbox_is_advisory_only=true`.
+Ieder item heeft een vast `operator_next_step`, een vaste
+`kind`, de bestaande brongebonden project-/taakidentiteit,
+`owner_only=true` en `not_claimed_or_authorized=true`.
+
+Dit is een onmiddellijk leesbare operatorroute via de **bestaande**
+authenticated API na een reguliere, geautoriseerde release; nog geen
+openbaar webpaneel en **geen** claim, force, runner-restart, brokeractie,
+CI-retry, PR-merge of productieherstel in deze broncode. Extra UI-integratie
+in parallel actief beheerde Activity-bestanden is bewust niet overgenomen.
+
+## 21 oktober · Begrensde geheugenvoetafdruk voor de queue-werkbak
+
+Voor een grote bronlijst bewaart de policy in het geheugen uitsluitend
+maximaal `max_visible` top-claim-workorders **per geobserveerd project**
+en maximaal `max_visible` kandidaatdetails globaal, naast de
+projecttelling en per-project eerste bronprioriteitskandidaat.
+De eerdere onbeperkt groeiende kandidaatlijst en volledige sortering zijn
+vervangen door begrensde selectie zonder verlies van exacte zichtbare
+totaaltellingen, prioriteitstellingen en bronkop-ID per project. De
+bestaande `portfolio_queue_items()` SQL/API-query is **niet** naar
+paginatie omgebouwd; dit voorkomt geen geheugengebruik bij het oorspronkelijk
+lezen van de API-rijen en claimt geen gemeten productieprestatie.
+Het verandert evenmin worker-dispatch, queue-opslag of actieve claims.
