@@ -806,10 +806,22 @@ def portfolio_single_pr_html(selected, integrated, *, pr_url, project=None):
         '/commit/' + head + '" target="_blank" rel="noopener noreferrer">' +
         '<code>' + head + '</code></a>'
         if head else '<strong>BRON HEAD ONBEKEND</strong>')
+    peers = single_pr_related_peers(selected, integrated, pr_url=pr_url)
     issues = "".join(
         '<li><a href="' + e(url) +
         '" target="_blank" rel="noopener noreferrer">' +
-        e(url) + '</a> — bronvermelding; geen fixbewijs</li>'
+        e(url) + '</a> — bronvermelding; geen fixbewijs' +
+        ('<ul>' + ''.join(
+            '<li>Ook in deze bron genoemd bij '
+            '<a href="' + e(other["url"]) +
+            '" target="_blank" rel="noopener noreferrer">PR #' +
+            e(other["url"].rsplit("/", 1)[-1]) + '</a> · HEAD ' +
+            e(other["head_observed"] or "ONBEKEND") +
+            ' · apart beoordelen (geen bevestigd conflict/fix)</li>'
+            for other in peers[url]) + '</ul>'
+         if peers[url] else '<p>Geen andere PR in deze beperkte steekproef; '
+              'buiten de bron ONBEKEND.</p>') +
+        '</li>'
         for url in candidate["linked_issue_urls"]
     ) or "<li>Geen issue gevonden in deze steekproef; actuele issues onbekend.</li>"
     counts = candidate["gate_observations"]
@@ -865,7 +877,10 @@ def portfolio_single_pr_html(selected, integrated, *, pr_url, project=None):
         '<p><strong>Bronintegriteit:</strong> ' +
         e(source_gate_detail(candidate)) + '</p>'
         '<p>' + e(evidence) + '</p></article>'
-        '<article><h2>Gekoppelde bronissues</h2><ul>' + issues + '</ul></article>'
+        '<article><h2>Gekoppelde bronissues</h2><p>Andere PR-vermeldingen '
+        'bij hetzelfde issue worden hieronder getoond. Dit bewijst geen '
+        'gedeelde bestandswijziging, eigenaren, oplossing of actuele status.</p><ul>' +
+        issues + '</ul></article>'
         '<article><h2>Herkomst</h2><p><strong>' + e(head_age) + '</strong></p>'
         '<p>Observatie UTC: ' + e(integrated["earliest_observed_at_utc"]) +
         ' — ' + e(integrated["latest_observed_at_utc"]) + '</p>'
