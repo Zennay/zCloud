@@ -77,6 +77,18 @@ production writer from cancelling an in-flight deployment.
    backup directory/file creation, denies symlinked root targets or colliding
    backup names, and stores any previous standalone executable as an owner-only
    mode-0600 backup. Backups do not appear in normal GitHub Actions logs.
+   Standalone watchdog promotion no longer streams approved source bytes
+   directly over the live executable path. It stages a mode-0755,
+   root-owned executable **in /usr/local/sbin** and compares bytes first;
+   only then does a same-filesystem rename publish the new version. This
+   avoids exposing truncated/partially copied watchdog files during an
+   update. A second exact-main check and existing-live-byte comparison
+   immediately precede promotion. A post-promotion failure attempts a
+   guarded restore from the saved private backup (or removes a newly
+   introduced file), but refuses to roll back over a different owner's
+   intervening edits. On rollback failure the owner's private backup stays
+   available for supervised restoration. This procedure never stops or
+   restarts a watchdog, browser, runner or worker process.
 7. The emergency reload workflow rechecks actual installed addon bytes,
    trusted/non-symlink paths and its tab-open/close restrictions **after**
    the final current-main and worker-idle checks, immediately before invoking
