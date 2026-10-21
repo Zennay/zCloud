@@ -205,6 +205,10 @@ def main():
                         help="opt-in: use private unresolved exact run/job SHA to perform bounded GET-only reconciliation")
     parser.add_argument("--queue-database", type=Path,
                         help="read existing live SQLite queue pressure with mode=ro only")
+    parser.add_argument("--worker-events-database", type=Path,
+                        help="opt-in existing indexed history.db: read-only worker events and queue-lease observations")
+    parser.add_argument("--worker-project", action="append", default=[],
+                        help="canonical project ID for worker observation; 1-3 distinct projects, repeatable")
     parser.add_argument("--read-product-issues", action="store_true",
                         help="read up to three selected project P0/P1 GitHub issue inboxes")
     parser.add_argument("--issue-project", action="append",
@@ -217,6 +221,13 @@ def main():
     try:
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
+        if args.worker_project and args.worker_events_database is None:
+            raise ValueError("--worker-project requires --worker-events-database")
+        if args.worker_events_database is not None:
+            if args.format not in ("json", "text", "html"):
+                raise ValueError("--worker-events-database supports json, text or html output")
+            if args.desk_output is not None:
+                raise ValueError("--worker-events-database cannot be combined with --desk-output")
         if args.desk_output is not None and args.format not in ("desk", "html"):
             raise ValueError("--desk-output accepts only desk or html operator formats")
         if args.desk_output is not None:
@@ -230,6 +241,11 @@ def main():
         if args.state is not None:
             ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
+        if args.worker_events_database is not None and (
+                not 1 <= len(args.worker_project) <= 3
+                or len(set(args.worker_project)) != len(args.worker_project)
+                or any(name not in registry for name in args.worker_project)):
+            raise ValueError("worker source requires one to three distinct canonical --worker-project IDs")
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
         old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
         selected_historical = None
@@ -273,8 +289,22 @@ def main():
             except (OSError, ValueError, sqlite3.Error):
                 enriched.pop("queue_pressure", None)
                 source["queue_source"] = "degraded_unavailable_no_mutation"
+        if args.worker_events_database is not None:
+            try:
+                from zsentinel_worker_progress_observer import observe_worker_progress
+                enriched["worker_progress_observation"] = observe_worker_progress(
+                    args.worker_events_database, args.worker_project)
+                source["worker_progress"] = "read_only_indexed_events"
+                source["worker_projects"] = list(args.worker_project)
+            except (OSError, ValueError, sqlite3.Error):
+                enriched.pop("worker_progress_observation", None)
+                source["worker_progress"] = "degraded_unavailable_no_recovery_proof"
+                source["worker_projects"] = list(args.worker_project)
+                source["worker_progress_reason"] = "read_only_source_unavailable_or_schema_incompatible"
         routed, updated = plan(enriched, old)
         routed["live_github_read"] = source
+        if "worker_progress_observation" in enriched:
+            routed["worker_progress_observation"] = enriched["worker_progress_observation"]
         routed["private_ledger_written"] = bool(args.state)
         if args.format == "html":
             from zsentinel_recovery_view import html_view
