@@ -328,3 +328,66 @@ bewust **projectgebonden**, zodat bereikbare andere projecten niet
 stilvallen. Een wegens tokenweigering geheel overgeslagen PR-waarneming
 heeft geen nieuw `observed_at_utc`-GitHub-bronmoment: de bewaarde
 PR-link is slechts een menselijke navigatieaanwijzing.
+
+
+## 21 oktober · merge-first rechtstreeks in de LIVE-herstelcockpit
+
+De bestaande **one-command** `scripts/zsentinel_live_cockpit.py` kan nu
+met `--inspect-existing-prs` exact dezelfde PR-bron en menselijke
+release-informatie opnemen als de bundle-gebaseerde refresh-workbench.
+Er is **geen vooraf handmatig opgebouwd evidence-JSON** vereist:
+
+```sh
+umask 077
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /secure/zcloud-existing.sqlite3 \
+  --registry projects.json \
+  --project cloud \
+  --inspect-existing-prs \
+  --existing-pr cloud:1563 \
+  --pr-project cloud \
+  --format desk \
+  --desk-output /secure/operator-only/live-incident-en-pr-new.html \
+  --handoff-output /secure/operator-only/live-pr-eigenaar-new.md
+```
+
+Een eigenaar zonder SQLite-database kan in plaats van `--database`
+expliciet `--github-only` kiezen; de output vermeldt dan dat queue- en
+claimzekerheid **ONBEKEND** is. Dat verleent nooit een vervangende
+runner-/release-/queue-toestemming.
+
+De operator kan maximaal drie bestaande product-PR’s kiezen met
+`--existing-pr PROJECT:NUMBER`; iedere PROJECT moet eveneens bij
+`--project` zijn geselecteerd. `--pr-project PROJECT` voegt hoogstens
+één bestaand, begrensd **open PR-venster per project** toe en gebruikt alleen
+overgebleven ruimte tot de drie geselecteerde PR’s. Zonder expliciete
+PR-pins/projecten gebruikt de CLI de al gekozen 1–3 `--project`-waarden.
+De bestaande QA-only-filter blijft actief, zonder nieuwe QA uit te voeren.
+`--inspect-existing-prs` is niet combineerbaar met
+`--skip-github-issues` of ICS-als-hoofdformaat.
+
+De reguliere privé-HTML toont een exacte PR-ownerkaart met commit,
+CI- en reviewstatus, onvolledige bron en de volgende menselijke actie;
+`--format desk` hergebruikt hetzelfde PR-receipt. De
+`--handoff-output` en `--show-owner-handoff` nemen het identieke
+PR-receipt mee in de P0-eerst runtime-ownerhandoff. JSON bevat
+`pr_delivery`, en private tekstuitvoer noemt de merge-first
+vervolgstappen. De bestaande begrensde verzamelaar verricht geen
+GitHub-dispatch, claim, merge, branch-update of deploy.
+
+Een duidelijke GitHub-401 of **geverifieerde** quota-uitputting tijdens
+de exacte jobverversing stopt ook onnodige issue-/pin-GETs en latere
+PR-GETs binnen dezelfde runtime-aanroep. Bevestigde globale quota-uitputting
+in de issuecollector stopt de latere PR-reads. Een repositorygebonden
+403/401 zonder bewezen globale limiet wordt niet ten onrechte als
+algemeen kosten- of runnerincident gepresenteerd. Alle niet opgehaalde
+issues, PR’s en jobs blijven **ONBEKEND**, nooit "nul" of vrijgegeven.
+
+**Privé-uitvoer is verplicht:** met `--inspect-existing-prs`
+moet HTML/JSON/tekst naar een nieuw `--output`-bestand, of gebruikt
+`--format desk` een nieuw `--desk-output`-bestand.
+`--handoff-output` alléén onderdrukt gewone stdout **niet**.
+De bestaande 0600 create-only writer weigert overschrijven.
+Een ontbrekende independent review, incomplete exact-head CI, actieve
+claim en branch protection blijven onverkort echte release-HOLDs.
+Deze bronuitbreiding is geen live recovery- of deploybewijs.
