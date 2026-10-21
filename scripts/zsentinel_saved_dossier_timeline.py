@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from datetime import datetime, timezone
 from html import escape
 from io import StringIO
 import json
@@ -26,6 +27,53 @@ MAX_PR_IDS = 600
 MAX_OUTPUT = 1024 * 1024
 TAGS = ("changed_head", "changed_gate", "changed_issues",
         "reappeared_in_sample", "missing_between_samples", "last_sample_missing")
+
+
+def source_freshness(source_snapshots, *, stale_after_hours=6, evaluated_at=None):
+    """Label the newest saved observation's age, never live status.
+
+    A recent snapshot is still historical evidence. Clock-skewed or unreadable
+    timestamps fail closed and require a fresh source inspection.
+    """
+    if type(stale_after_hours) is not int or not 1 <= stale_after_hours <= 168:
+        raise ValueError("Stale threshold must be an integer from 1 to 168 hours")
+    now = evaluated_at or datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("Freshness evaluation time must be timezone-aware")
+    now = now.astimezone(timezone.utc)
+    raw = (source_snapshots[-1].get("latest_observed_utc")
+           if source_snapshots else None)
+    result = {
+        "status": "unknown",
+        "latest_observed_utc": raw if isinstance(raw, str) else None,
+        "evaluated_at_utc": now.isoformat(),
+        "age_hours": None,
+        "stale_after_hours": stale_after_hours,
+        "source_is_live": False,
+        "live_recheck_required_before_action": True,
+        "refresh_required": True,
+    }
+    try:
+        if not isinstance(raw, str) or not raw:
+            raise ValueError("Missing source timestamp")
+        observed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if observed.tzinfo is None or observed.utcoffset() is None:
+            raise ValueError("Source timestamp lacks timezone")
+        age_seconds = (now - observed.astimezone(timezone.utc)).total_seconds()
+        if age_seconds < -300:
+            result["status"] = "clock-skew"
+            return result
+        age_seconds = max(0.0, age_seconds)
+        stale = age_seconds > stale_after_hours * 3600
+        result.update({
+            "status": "stale" if stale else "recent-snapshot",
+            "age_hours": round(age_seconds / 3600, 2),
+            "refresh_required": stale,
+        })
+    except (ValueError, TypeError, OverflowError, OSError):
+        # Malformed timestamps must never be presented as recent.
+        pass
+    return result
 
 
 def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
@@ -257,6 +305,14 @@ def markdown(report):
         "",
         "- Projectscope: " + (report["scope"] or "oorspronkelijke portfolio-samples"),
         "- Bronmomenten: " + str(len(report["source_snapshots"])),
+        "- Bronactualiteit: " + report["source_freshness"]["status"].upper() +
+          " · leeftijd " + (str(report["source_freshness"]["age_hours"]) + " uur"
+          if report["source_freshness"]["age_hours"] is not None else "ONBEKEND") +
+          " · drempel " + str(report["source_freshness"]["stale_after_hours"]) +
+          " uur · laatste bron UTC " +
+          str(report["source_freshness"]["latest_observed_utc"] or "ONBEKEND"),
+        "- Evaluatie UTC: " + report["source_freshness"]["evaluated_at_utc"] +
+          " · live status NIET GEVERIFIEERD; hercontrole vóór actie verplicht",
         "- Verschillende bron-PR's totaal: " +
           str(report["distinct_pr_candidates"]),
         "- Weergegeven: " + str(report["display"]["shown_source_pr_candidates"]) +
@@ -310,7 +366,9 @@ def csv_content(report):
         "Issue wijzigingen", "Zelfde-HEAD ontvangstwaarneming gewijzigd",
         "Niet vergelijkbare HEAD-receipts", "Laatste gateklasse", "Bronlabels",
         "Menselijke vervolgactie", "Actuele CI/review/owner",
-        "Main merge bewezen", "Live bewezen",
+        "Main merge bewezen", "Live bewezen", "Bronactualiteit",
+        "Leeftijd bron uren", "Bronactualiteit geëvalueerd UTC",
+        "Stale-drempel uren", "Live status geverifieerd",
     ])
     for item in report["entries"]:
         writer.writerow([
@@ -326,6 +384,11 @@ def csv_content(report):
             item["latest_sample_primary_gate"],
             " | ".join(item["tags"]), item["human_next_action"],
             "ONBEKEND", "ONBEKEND", "ONBEKEND",
+            report["source_freshness"]["status"],
+            report["source_freshness"]["age_hours"] if report["source_freshness"]["age_hours"] is not None else "ONBEKEND",
+            report["source_freshness"]["evaluated_at_utc"],
+            report["source_freshness"]["stale_after_hours"],
+            "NEE",
         ])
     return "\ufeff" + target.getvalue()
 
@@ -370,6 +433,14 @@ def html_content(report):
         "Bron " + str(s["index"]) + ": " + e(s["latest_observed_utc"])
         for s in report["source_snapshots"])
     paging = report["display"]
+    freshness = report["source_freshness"]
+    freshness_age = (str(freshness["age_hours"]) + " uur"
+                     if freshness["age_hours"] is not None else "ONBEKEND")
+    freshness_notice = (
+        "Vernieuw de oorspronkelijke bron vóór beslissingen; dit dossier is historisch."
+        if freshness["refresh_required"] else
+        "De bron is historisch; controleer live eigenaar, CI en merge vóór actie."
+    )
     return ("""<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; object-src 'none'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
@@ -388,7 +459,7 @@ li{margin:9px 0;overflow-wrap:anywhere}
 <aside><strong>Niet live en nooit mergevrijgave.</strong> Alle statussen zijn
 alleen waarnemingen in privé opgeslagen bronnen. Ook herhaald ontbreken
 in latere bronnen bewijst geen merge, sluiting of vrij eigenaarschap.</aside>
-<p>""" + times + """</p><p><strong>Pagina """ +
+<p><strong>Bronactualiteit: """ + e(freshness["status"].upper()) + " · leeftijd " + e(freshness_age) + " · drempel " + str(freshness["stale_after_hours"]) + " uur · laatste bron UTC " + e(freshness["latest_observed_utc"] or "ONBEKEND") + ".</strong> " + e(freshness_notice) + " Evaluatie UTC: " + e(freshness["evaluated_at_utc"]) + ". Een recente snapshot is geen live status.</p><p>""" + times + """</p><p><strong>Pagina """ +
 str(paging["page"]) + "/" + str(paging["total_pages"]) + """</strong> · """ +
 str(paging["shown_source_pr_candidates"]) + " getoond van " +
 str(paging["matched_source_pr_candidates"]) + " filtersmatches; " +
@@ -420,6 +491,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, action="append", required=True,
                         help="Chronologically ordered private portfolio-zip, repeat 2-12 times")
+    parser.add_argument("--stale-after-hours", type=int, default=6,
+                        help="Mark saved evidence stale after 1..168 hours (default: 6)")
     parser.add_argument("--priority", choices=PRIORITIES,
                         help="Filter saved PRs by priority after full source admission")
     parser.add_argument("--change", choices=TAGS,
@@ -434,6 +507,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         report = build_timeline(args.source)
+        report["source_freshness"] = source_freshness(
+            report["source_snapshots"], stale_after_hours=args.stale_after_hours)
         selected = select_page(report, priority=args.priority, tag=args.change,
                                page=args.page, page_size=args.page_size)
         data = render(selected, args.format)
@@ -455,7 +530,10 @@ def main(argv=None):
               str(selected["display"]["matched_source_pr_candidates"]) +
               " matched out of " + str(report["distinct_pr_candidates"]) +
               " source PRs across " + str(len(report["source_snapshots"])) +
-              " snapshots. No current merge/live status inferred.")
+              " snapshots. Source freshness=" +
+              report["source_freshness"]["status"] + ", age_hours=" +
+              str(report["source_freshness"]["age_hours"]) +
+              ". No current merge/live status inferred.")
         return 0
     except (OSError, ValueError, TypeError, KeyError, UnicodeError,
             BadZipFile, OverflowError) as exc:
