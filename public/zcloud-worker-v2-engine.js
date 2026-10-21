@@ -39,6 +39,23 @@
   }
   let resetRoute=null;
   let promptAt=0,awaitingAt=0,baseline="",baselineAssistantCount=0,next=false,lastBlock="",lastCommand=0;
+  // The normal in-page reply loop may continue a queue, but a full reload
+  // loses all reply/ack evidence. Retain only the previously dispatched queue
+  // identity in this tab, never the private prompt or its answer.
+  const SENT_QUEUE_KEY="zcloud-v2-last-dispatched-queue";
+  let sentInThisDocument=false;
+  function sameQueueWasSentBeforeReload(queueId){
+    const raw=sessionStorage.getItem(SENT_QUEUE_KEY);
+    if(raw===null)return false;
+    if(raw.length>320)return true; // Corrupt previous evidence is not clearance.
+    try{
+      const seen=JSON.parse(raw);
+      if(!seen||typeof seen!=="object"||Array.isArray(seen)||
+         typeof seen.worker!=="string"||typeof seen.queue!=="string"||
+         !seen.worker||!seen.queue)return true;
+      return seen.worker===id&&seen.queue===queueId;
+    }catch(_){return true}
+  }
   let reportedConversation=sessionStorage.getItem("zcloud-v2-reported-conversation")||"";
   let chatAt=Number(sessionStorage.getItem("zcloud-v2-chat-at")||0);
   if(!chatAt||chatAt>Date.now())chatAt=Date.now();
@@ -239,6 +256,11 @@
   }
   async function send(reason){
     if(sending||awaiting||generating()||!target||!ready(target))return false;
+    const dispatchedQueue=String(target.queue_item.queue_id);
+    if(!sentInThisDocument&&sameQueueWasSentBeforeReload(dispatchedQueue)){
+      await blocked("previous-queue-send-after-reload-manual-review");
+      return false;
+    }
     if(!(await forceAllowed())){await blocked("force-tab-handoff-required");return false}
     const prompt=String(target.prompt||"").trim();if(!prompt)return false;
     // An operator's existing draft is never permission to replace it with
@@ -280,7 +302,16 @@
       if(!visible(currentEditor)||composerText(currentEditor)!==prompt){
         await blocked("composer-changed-before-send");return false;
       }
+      // Persist a conservative may-have-sent marker BEFORE the irreversible
+      // click. If storage fails, do not send; do not erase or auto-ack the
+      // original queue after a browser restart.
+      try{
+        sessionStorage.setItem(SENT_QUEUE_KEY,JSON.stringify({
+          worker:id,queue:dispatchedQueue
+        }));
+      }catch(_){await blocked("dispatch-ledger-unavailable");return false}
       baseline=reply();baselineAssistantCount=assistantCount();button.click();promptAt=Date.now();awaitingAt=promptAt;
+      sentInThisDocument=true;
       awaiting=true;everGenerating=false;next=false;lastBlock="";
       await status("prompt-sent",{reason,thinkingEffort:"high"});
       return true;
