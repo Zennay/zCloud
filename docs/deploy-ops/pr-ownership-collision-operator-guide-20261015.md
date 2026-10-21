@@ -67,5 +67,24 @@ difference requires operator review; **2** refuses invalid, incomplete,
 symlinked or unequal-main evidence. The JSON report contains bounded PR-ID
 lists, changed file-owner paths, new or resolved exact-path collisions,
 changed file-vs-directory conflict edges, before/after counts and both SHA-256
-snapshot fingerprints. Truncation flags preserve honest full counts. There
-is **no PR-less branch coverage, semantic merge proof, approval or write path**.
+snapshot fingerprints. Truncation flags preserve honest full counts. The collision analyzer itself still does not claim semantic merge proof,
+approval, or a write path. The existing manual-main workflow now pairs it with
+`scripts/zcloud_deployops_prless_branch_inventory_20261021.py`, a separate
+read-only census of repository-local branches and same-repository open-PR heads.
+
+The branch collector reads every bounded `/branches` and open-`/pulls` page,
+then repeats both inventories and the canonical main read. It refuses incomplete
+pagination, invalid identities, inventory churn, or a main-SHA mismatch. The
+workflow requires the PR-file snapshot and branch snapshot to carry the same
+`main_sha == GITHUB_SHA` before it reports a combined result. The bounded JSON
+snapshots are retained as a 14-day workflow artifact; the summary shows counts
+and up to 20 PR-less branch names.
+
+A **PR-less branch** means only that no same-repository open PR head was
+observed for that branch at that snapshot. It does not mean abandoned, unowned,
+safe to delete, mergeable, or approved. Fork branches are not mistaken for local
+branches. The snapshot fingerprint is explicitly unverified; it is not a
+signature, durable lock, independent review, or release permission. The collector
+never updates/deletes refs, dispatches another workflow, touches VPS/SQLite/
+queue/worker state, or authorizes a merge/deploy. Semantic behavior review and
+the serialized #580/#1089 release-owner gates remain separate.
