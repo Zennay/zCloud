@@ -829,6 +829,8 @@ def main():
                         help="single new private .zip: JSON, CSV, Markdown, HTML and SHA manifest")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
+    parser.add_argument("--action-output", type=Path,
+                        help="new 0600 .md merge-first owner-action briefing from same PR/issue/worker sources")
     parser.add_argument("--output", type=Path,
                         help="new 0600 report: .html, .json or .md (text); never overwrites")
     parser.add_argument("--compare-with", type=Path, action="append",
@@ -953,6 +955,19 @@ def main():
             if any(item is not None and args.desk_output.resolve() == item.resolve()
                    for item in private_inputs):
                 raise ValueError("desk-output must differ from private ledger/cursor paths")
+        if args.action_output is not None:
+            if args.action_output.suffix != ".md":
+                raise ValueError("--action-output needs a new private .md path")
+            inputs = [args.state, args.window_state, args.database, args.registry,
+                      args.worker_events_database, args.notion_claims_export,
+                      args.queue_previous, args.worker_previous, args.output,
+                      args.desk_output, args.disk_hotspots_output,
+                      args.disk_hotspots_previous, args.owner_handoff_output,
+                      args.owner_handoff_json_output, args.owner_packet_output,
+                      *history_files]
+            if any(p is not None and args.action_output.resolve() == p.resolve()
+                   for p in inputs):
+                raise ValueError("action-output overlaps source, cursor, ledger or other private report")
         if args.state is not None:
             ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
@@ -1492,6 +1507,10 @@ def main():
             if routing_history is not None:
                 from zsentinel_route_history import owner_text as route_history_text
                 rendered = route_history_text(routing_history) + "\n\n" + rendered
+        action_content = None
+        if args.action_output is not None:
+            from zsentinel_incident_desk import private_action_output
+            action_content = private_action_output(decision)
         if disk_private_html is not None:
             from zsentinel_private_output import write_private_output
             write_private_output(args.disk_hotspots_output, disk_private_html, "html")
@@ -1521,6 +1540,9 @@ def main():
             from zsentinel_incident_desk import write_private_html, review_html
             private_desk = rendered if args.format == "desk" else review_html(decision)
             write_private_html(args.desk_output, private_desk)
+        if action_content is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(args.action_output, action_content, "md")
         if args.window_state:
             # A concurrent run must never overwrite a completed scan cursor.
             advance(args.window_state, windows, registry, previous_window_state,
