@@ -8,6 +8,7 @@ a missing PR, available owner or green required CI.
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -263,6 +264,98 @@ def observe_candidate_prs(issue, *, token=None):
         "action_executed": False,
         "no_candidate_does_not_prove_no_existing_pr": True,
     }
+
+
+def owner_html(report):
+    """Portable script-free owner view of one bounded live PR observation."""
+    esc = lambda v: html.escape(str(v), quote=True)
+    rows = [
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
+        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none';\">",
+        "<title>zSentinel | Current PR candidate observation</title>",
+        "<style>body{max-width:960px;margin:auto;padding:2rem;"
+        "font:16px/1.5 system-ui,sans-serif;background:#f6f8fc;color:#132335}"
+        "section{background:white;padding:1.3rem;margin:1.3rem 0;"
+        "border:1px solid #b9cadc;border-left:5px solid #ad6413;"
+        "border-radius:.5rem;overflow-wrap:anywhere}"
+        "section.observed{border-left-color:#1d665c}h1{font-size:1.7rem}"
+        "h2{font-size:1.15rem}a{color:#07569e}a:focus-visible{outline:3px solid #07569e}"
+        "code{overflow-wrap:anywhere}small{color:#42586b}dl{display:grid;"
+        "grid-template-columns:max-content 1fr;gap:.3rem 1.3rem}"
+        "dt{font-weight:700}dd{margin:0}summary{cursor:pointer}</style></head><body>",
+        "<header><h1>zSentinel — live PR candidate desk</h1>",
+        "<p><strong>Read-only owner handoff.</strong> Live partial GitHub "
+        "observations never establish required CI, reviewer independence, "
+        "active owner, branch protection or merge entitlement.</p>",
+        "<p>Source: <a href='" + esc(report["original_issue_url"]) +
+        "' rel='noopener noreferrer'>" + esc(report["original_issue_url"]) +
+        "</a> · checked: <code>" + esc(report["observed_at_utc"]) + "</code></p>",
+        "<p>Observed " + str(report["live_observations"]) + " / " +
+        str(report["candidate_count"]) + " referenced candidates; " +
+        str(report["unknown_observations"]) + " UNKNOWN · GET attempts " +
+        str(report["get_attempts"]) +
+        (" · provider denied, remaining requests stopped"
+         if report["provider_admission_paused"] else "") + "</p></header><main>",
+    ]
+    for row in report["observations"]:
+        observed = row["status"] == "LIVE_PARTIAL_READ"
+        rows.extend([
+            "<section" + (" class='observed'" if observed else "") + ">",
+            "<h2><a href='" + esc(row["url"]) +
+            "' target='_blank' rel='noopener noreferrer'>PR #" +
+            str(row["number"]) + "</a> — " + esc(row["status"]) + "</h2>",
+            "<dl><dt>Current HEAD</dt><dd><code>" +
+            esc(row.get("exact_head_sha", "UNKNOWN")) + "</code></dd>",
+            "<dt>PR state</dt><dd>" + esc(row.get("observed_state", "UNKNOWN")) +
+            " · draft: " + esc(row.get("observed_draft", "UNKNOWN")) +
+            " · reported merged: " + esc(row.get("reported_merged", "UNKNOWN")) +
+            "</dd>",
+            "<dt>Historical link</dt><dd>" + esc(row["source_relationship"]) +
+            " · draft at source: " + esc(row["source_draft"]) + "</dd>",
+            "<dt>Required CI</dt><dd>UNKNOWN · sampled check runs are not "
+            "branch-protection rules</dd>",
+            "<dt>Independent review / active owner / deployment</dt>"
+            "<dd>UNKNOWN / UNKNOWN / NOT AUTHORIZED</dd>",
+            "<dt>Next human action</dt><dd>" + esc(row["next_human_step"]) +
+            "</dd></dl>",
+        ])
+        checks = row.get("check_runs")
+        if checks:
+            rows.extend([
+                "<details><summary>Sampled exact-head check states</summary>",
+                "<p>Sampled " + str(checks["sampled_count"]) + " of " +
+                str(checks["provider_total_count"]) +
+                (" (PARTIAL)" if checks["sample_incomplete"] else "") +
+                " check runs; all required-check identities UNKNOWN.</p><ul>",
+            ])
+            for key, count in checks["sample_status_counts"].items():
+                rows.append("<li>" + esc(key) + ": " + str(count) + "</li>")
+            rows.append("</ul></details>")
+        reviews = row.get("reviews")
+        if reviews:
+            rows.extend([
+                "<details><summary>Sampled review states</summary><p>" +
+                str(reviews["sampled_count"]) +
+                (" records (PARTIAL sample possible)." if reviews["may_be_truncated"]
+                 else " sampled records.") +
+                " Approval independence and current state UNKNOWN.</p><ul>",
+            ])
+            for key, count in reviews["observed_review_states"].items():
+                rows.append("<li>" + esc(key) + ": " + str(count) + "</li>")
+            rows.append("</ul></details>")
+        if "reason" in row:
+            rows.append("<p><strong>Provider source:</strong> " +
+                        esc(row["reason"]) + "</p>")
+        rows.append("</section>")
+    rows.extend([
+        "</main><footer><small>No write endpoints, workflow dispatch, "
+        "claim, merge, deployment or runner operation invoked. "
+        "Every current release gate remains independently authoritative."
+        "</small></footer></body></html>\\n",
+    ])
+    return "".join(rows)
 
 
 def markdown(report):
