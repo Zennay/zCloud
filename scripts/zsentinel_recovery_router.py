@@ -459,19 +459,27 @@ def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None)
     if any(type(value) is not str or not re.fullmatch(r"[0-9a-f]{32}", value)
            for value in reconciled_dependencies):
         raise ValueError("invalid reconciled task dependency identity")
+    coverage_reasons = set()
     complete = (bundle.get("claim_inventory_complete") is True
                 and bundle.get("task_inventory_complete") is True)
+    if bundle.get("claim_inventory_complete") is not True:
+        coverage_reasons.add("claim_inventory_not_complete")
+    if bundle.get("task_inventory_complete") is not True:
+        coverage_reasons.add("task_inventory_not_complete")
     # A historically complete claim/queue snapshot is NOT proof the same
     # files are still available for writing. Source timestamps are separate
     # from GitHub/Notion issue observation and must be no older than 5 min.
     for clock in ("claim_observed_at", "task_observed_at"):
         value = bundle.get(clock)
+        reason_prefix = "claim" if clock == "claim_observed_at" else "task"
         if value is None:
             complete = False
+            coverage_reasons.add(reason_prefix + "_observation_missing")
             continue
         stamp = timestamp(value, clock)
         if stamp > now + timedelta(minutes=2) or now - stamp > timedelta(minutes=5):
             complete = False
+            coverage_reasons.add(reason_prefix + "_observation_stale_or_future")
     if not isinstance(tasks, list) or len(tasks) > MAX_TASKS:
         raise ValueError("tasks must be a bounded array")
     if not isinstance(claims, list) or len(claims) > MAX_CLAIMS:
@@ -486,6 +494,7 @@ def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None)
         paths = admit_paths(claim)
         if paths is None:
             complete = False
+            coverage_reasons.add("active_claim_scope_unknown")
         else:
             claim_scopes.append((pid, paths))
     try:
@@ -590,7 +599,8 @@ def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None)
         disjoint.append(candidate)
         if len(disjoint) == MAX_RECOMMENDATIONS:
             break
-    return disjoint, complete, branch_ownership, branch_suppressed, dependency_holds
+    return (disjoint, complete, branch_ownership, branch_suppressed,
+            dependency_holds, sorted(coverage_reasons))
 
 
 def triage_issue_inbox(inbox, now):
@@ -1070,7 +1080,8 @@ def plan(bundle, previous=None, now=None):
         key for key, entry in next_state.items()
         if entry["status"] == "exact_job_completed_source_reconciled"
     }
-    routes, routing_inventory_complete, branches, branch_suppressed, dependency_holds = eligible_tasks(
+    (routes, routing_inventory_complete, branches, branch_suppressed,
+     dependency_holds, routing_coverage_reasons) = eligible_tasks(
         bundle, blocked, now, capacity, exact_reconciled_dependencies)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
     queue_triage = queue_pressure_summary(bundle.get("queue_pressure"), now)
@@ -1129,6 +1140,7 @@ def plan(bundle, previous=None, now=None):
         # combined safe-routing gate, not a claim-only source declaration.
         "claim_inventory_complete": routing_inventory_complete,
         "routing_inventory_complete": routing_inventory_complete,
+        "routing_inventory_coverage_reasons": routing_coverage_reasons,
         "vps_resource_admission": capacity,
         "incidents": incidents,
         "unattributed_progress_or_jobs": unattributed,
@@ -1149,6 +1161,7 @@ def plan(bundle, previous=None, now=None):
             # A zero count is meaningful only when the task AND claim source
             # inventories are complete and their observation clocks are fresh.
             "coverage": "complete" if routing_inventory_complete else "incomplete_or_stale",
+            "coverage_reasons": routing_coverage_reasons,
             "count": len(dependency_holds),
             "examples": dependency_holds[:8],
             "samples_truncated": len(dependency_holds) > 8,
@@ -1201,7 +1214,17 @@ def operator_text(result):
     holds = result.get("incident_dependency_holds")
     if holds is not None:
         coverage = holds.get("coverage", "incomplete_or_stale") if type(holds) is dict else None
+        allowed_coverage_reasons = {
+            "claim_inventory_not_complete", "task_inventory_not_complete",
+            "claim_observation_missing", "task_observation_missing",
+            "claim_observation_stale_or_future", "task_observation_stale_or_future",
+            "active_claim_scope_unknown",
+        }
+        coverage_reasons = holds.get("coverage_reasons", [])
         if (type(holds) is not dict or coverage not in ("complete", "incomplete_or_stale")
+                or type(coverage_reasons) is not list or len(coverage_reasons) > 7
+                or any(reason not in allowed_coverage_reasons for reason in coverage_reasons)
+                or (coverage == "complete" and coverage_reasons)
                 or type(holds.get("count")) is not int
                 or not 0 <= holds["count"] <= MAX_TASKS
                 or type(holds.get("examples")) is not list
@@ -1218,6 +1241,8 @@ def operator_text(result):
         else:
             lines.append("Incident dependencies: UNKNOWN — task/claim inventory incomplete or stale; " +
                          "the observed count is not an all-clear and no dependency is cleared.")
+            for reason in coverage_reasons:
+                lines.append("- Routing coverage gap: " + reason)
         for hold in holds["examples"]:
             lines.append("- HOLD " + hold["priority"] + " " + hold["project_id"] +
                          "/" + hold["id"] + " · " +
