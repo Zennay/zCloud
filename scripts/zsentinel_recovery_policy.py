@@ -439,6 +439,88 @@ def evaluate(data, max_age_minutes, *, now=None):
     }
 
 
+# Human-review ordering only; never infer incident severity or live authority.
+WORKORDER_ORDER = {
+    "merge_pr": 0, "restart_runner": 1, "route_root_fix": 2,
+    "retry_ci": 3, "deploy": 4, "escalate_human": 5,
+    "park_blocker": 6, "assign_independent_work": 7,
+}
+
+
+def _batch_workorders(results):
+    """One bounded non-authorizing handoff per incident, with collision HOLDs."""
+    groups = {}
+    for item in results:
+        report = item["report"]
+        key = (report["project_id"], report["incident_id"])
+        groups.setdefault(key, []).append(item)
+
+    workorders = []
+    for (project, incident), items in groups.items():
+        actions = sorted((item["report"]["action"] for item in items),
+                         key=lambda action: (WORKORDER_ORDER[action], action))
+        conflict = len(actions) > 1
+        if conflict:
+            for item in items:
+                report = item["report"]
+                report["decision"] = "HOLD"
+                report["blockers"].append({
+                    "code": "competing_incident_actions",
+                    "message": "Multiple recovery actions target one incident; "
+                               "an authorized owner must select one route.",
+                })
+                if "owner_route_selection" not in report["required_evidence"]:
+                    report["required_evidence"].append("owner_route_selection")
+        reports = [item["report"] for item in items]
+        blockers = sorted({hold["code"] for report in reports
+                           for hold in report["blockers"]})
+        owners = {report["owner"] for report in reports}
+        workorders.append({
+            "project_id": project,
+            "incident_id": incident,
+            "input_indexes": [item["index"] for item in items],
+            "proposed_actions": actions,
+            "owner": next(iter(owners)) if len(owners) == 1 else None,
+            "decision": "HOLD" if blockers else "READY_FOR_HUMAN_REVIEW",
+            "problem_codes": blockers,
+            "source_urls": sorted({report["source_url"] for report in reports}),
+            "next_step": ("select_one_authorized_action" if conflict else
+                          "resolve_evidence_holds" if blockers else
+                          "verify_live_gates_and_obtain_owner_approval"),
+            "human_review_required": True,
+            "actions_executed": False,
+        })
+    return sorted(workorders, key=lambda item: (
+        min(WORKORDER_ORDER[action] for action in item["proposed_actions"]),
+        item["project_id"], item["incident_id"],
+    ))
+
+
+def workorders_text(batch):
+    """Compact three-line per-incident owner handoff, not a job dispatcher."""
+    lines = [
+        "zSentinel | advisory incident workorders",
+        "Observed: " + batch["evaluated_at_utc"] +
+        " | Incident groups: " + str(batch["incident_count"]) +
+        " | No independent source verification or execution.",
+        "",
+    ]
+    for order in batch["owner_workorders"]:
+        issues = ", ".join(order["problem_codes"][:4]) or "no local policy holds"
+        if len(order["problem_codes"]) > 4:
+            issues += ", ..."
+        lines.extend([
+            "Problem [" + order["project_id"] + "/" + order["incident_id"] + "]: " + issues,
+            "Action: " + order["next_step"] + " | proposal: " +
+            ", ".join(order["proposed_actions"]) +
+            " | owner: " + (order["owner"] or "UNKNOWN"),
+            "Status: " + order["decision"] +
+            " | human approval required; no claim/retry/merge/deploy performed.",
+            "",
+        ])
+    return "\n".join(lines)
+
+
 def evaluate_batch(data, max_age_minutes):
     """Evaluate a bounded set of proposals against one shared clock snapshot."""
     if type(data) is not list or not 1 <= len(data) <= MAX_BATCH_REQUESTS:
@@ -479,12 +561,15 @@ def evaluate_batch(data, max_age_minutes):
                 report["required_evidence"].append("incident_route_selection")
             report["decision"] = "HOLD"
 
+    workorders = _batch_workorders(results)
     decisions = [item["report"]["decision"] for item in results]
     return {
         "schema_version": 1,
         "policy": "zsentinel-recovery-policy-batch-v1",
         "evaluated_at_utc": evaluated_at.isoformat().replace("+00:00", "Z"),
         "request_count": len(results),
+        "incident_count": len(workorders),
+        "owner_workorders": workorders,
         "decision_counts": {
             "HOLD": decisions.count("HOLD"),
             "READY_FOR_HUMAN_REVIEW": decisions.count("READY_FOR_HUMAN_REVIEW"),
