@@ -266,6 +266,8 @@ def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
             "missing_batch_indexes": s["missing_batch_indexes"],
         } for i, s in enumerate(source)],
         "snapshot_inventories_can_differ": True,
+        "source_batches_missing_in_any_snapshot": any(
+            bool(sample["missing_batch_indexes"]) for sample in source),
         "absent_from_sample_is_not_closed": True,
         "historical_observations_are_not_current_ci_or_review": True,
         "distinct_pr_candidates": len(history),
@@ -364,6 +366,10 @@ def markdown(report):
           (report["display"]["linked_issue_ever_observed_filter"] or "alle issues") +
           " (ooit in een opgeslagen PR-koppeling; GEEN actuele eigenaarschap/fix)",
         "- Bronmomenten: " + str(len(report["source_snapshots"])),
+        "- Batches ontbrekend in minstens één origineel brondossier: " +
+          ("JA · onvolledige steekproef, geen sluitbewijs"
+           if report["source_batches_missing_in_any_snapshot"] else
+           "NEE gemeld; geen bewijs van volledige actuele GitHub-inventaris"),
         "- Bronactualiteit: " + report["source_freshness"]["status"].upper() +
           " · leeftijd " + (str(report["source_freshness"]["age_hours"]) + " uur"
           if report["source_freshness"]["age_hours"] is not None else "ONBEKEND") +
@@ -383,7 +389,11 @@ def markdown(report):
         lines.append("- Bron " + str(s["index"]) + ": " +
                      s["latest_observed_utc"] + " · " +
                      str(s["selected_pr_candidates"]) + " kandidaten · manifest " +
-                     s["original_review_manifest_sha256"])
+                     s["original_review_manifest_sha256"] +
+                     " · board-SHA " + s["original_board_sha256"] +
+                     " · ontbrekende bronbatches " +
+                     (", ".join(map(str, s["missing_batch_indexes"]))
+                      if s["missing_batch_indexes"] else "niet gemeld"))
     lines.extend(["", "## Bestaande PRs in prioriteitsvolgorde", ""])
     for item in report["entries"]:
         lines.extend([
@@ -460,6 +470,7 @@ def csv_content(report):
         "Geselecteerd historisch issue", "Laatst gekoppeld bronmoment",
         "Link in laatste PR-steekproef", "Link in laatste totaalsample",
         "Issue live opgelost bewezen",
+        "Originele reviewmanifest-SHAs", "Ontbrekende bronbatches per snapshot",
     ])
     for item in report["entries"]:
         writer.writerow([
@@ -489,6 +500,11 @@ def csv_content(report):
             ("JA, HISTORISCH" if (item.get("selected_issue_source_history") or {})
              .get("linked_in_latest_source_snapshot") else "NIET BEWEZEN"),
             "NEE",
+            " | ".join(src["original_review_manifest_sha256"]
+                       for src in report["source_snapshots"]),
+            json.dumps({str(src["index"]): src["missing_batch_indexes"]
+                        for src in report["source_snapshots"]
+                        if src["missing_batch_indexes"]}, sort_keys=True),
         ])
     return "\ufeff" + target.getvalue()
 
@@ -564,6 +580,25 @@ def html_content(report):
     times = " · ".join(
         "Bron " + str(s["index"]) + ": " + e(s["latest_observed_utc"])
         for s in report["source_snapshots"])
+    source_integrity = "<ol>" + "".join(
+        "<li><strong>Bron " + str(src["index"]) + "</strong> · " +
+        e(src["earliest_observed_utc"]) + " t/m " +
+        e(src["latest_observed_utc"]) + " · " +
+        str(src["selected_pr_candidates"]) + " PRs uit oorspronkelijke " +
+        str(src["all_original_source_candidates"]) + " kandidaatbronnen" +
+        "<br>Reviewmanifest SHA256: <code>" +
+        e(src["original_review_manifest_sha256"]) + "</code>" +
+        "<br>Board SHA256: <code>" + e(src["original_board_sha256"]) +
+        "</code><br>Ontbrekende bronbatches: " +
+        (e(", ".join(map(str, src["missing_batch_indexes"])))
+         if src["missing_batch_indexes"] else "niet gemeld") + "</li>"
+        for src in report["source_snapshots"]) + "</ol>"
+    source_gap_notice = (
+        '<p><strong>Onvolledige archiefbron:</strong> één of meer ingevoerde '
+        'dossiers missen batches; niet opgenomen PRs blijven ONBEKEND.</p>'
+        if report["source_batches_missing_in_any_snapshot"] else
+        '<p>Geen ontbrekende archiefbatches gemeld. Live GitHub-dekking '
+        'blijft ONBEKEND.</p>')
     paging = report["display"]
     freshness = report["source_freshness"]
     issue_filter = paging["linked_issue_ever_observed_filter"]
@@ -599,7 +634,9 @@ li{margin:9px 0;overflow-wrap:anywhere}
 <aside><strong>Niet live en nooit mergevrijgave.</strong> Alle statussen zijn
 alleen waarnemingen in privé opgeslagen bronnen. Ook herhaald ontbreken
 in latere bronnen bewijst geen merge, sluiting of vrij eigenaarschap.</aside>
-<p><strong>Bronactualiteit: """ + e(freshness["status"].upper()) + " · leeftijd " + e(freshness_age) + " · drempel " + str(freshness["stale_after_hours"]) + " uur · laatste bron UTC " + e(freshness["latest_observed_utc"] or "ONBEKEND") + ".</strong> " + e(freshness_notice) + " Evaluatie UTC: " + e(freshness["evaluated_at_utc"]) + ". Een recente snapshot is geen live status.</p><p>""" + times + """</p><p><strong>Pagina """ +
+<p><strong>Bronactualiteit: """ + e(freshness["status"].upper()) + " · leeftijd " + e(freshness_age) + " · drempel " + str(freshness["stale_after_hours"]) + " uur · laatste bron UTC " + e(freshness["latest_observed_utc"] or "ONBEKEND") + ".</strong> " + e(freshness_notice) + " Evaluatie UTC: " + e(freshness["evaluated_at_utc"]) + ". Een recente snapshot is geen live status.</p><p>""" + times + """</p>""" +
+source_gap_notice + '<details><summary>Herkomst van de originele bronbestanden</summary>' +
+source_integrity + '</details><p><strong>Pagina ' +
 str(paging["page"]) + "/" + str(paging["total_pages"]) + """</strong> · """ +
 str(paging["shown_source_pr_candidates"]) + " getoond van " +
 str(paging["matched_source_pr_candidates"]) + " filtersmatches; " +
