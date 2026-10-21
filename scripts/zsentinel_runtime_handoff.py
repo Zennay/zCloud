@@ -732,7 +732,8 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                   "queue_lease_window_review": 3,
                   "incident_dependency_owner_hold": 4,
                   "vps_capacity_owner_review": 5,
-                  "open_pr_owner_review": 6, "open_product_issue": 7}
+                  "vps_capacity_source_incomplete": 6,
+                  "open_pr_owner_review": 7, "open_product_issue": 8}
     cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
                               c.get("review_by_utc", "9999"),
                               0 if c.get("existing_pr_urls") else 1,
