@@ -1156,3 +1156,42 @@ Actieve eigenaren, taakstatus, scheduler en queue-writers zijn niet
 veranderd. De afgeschermde compacte API is opt-in, oude callers
 blijven de bestaande volledige respons ontvangen. Bron in bestaande
 PR #1536; niet op `main` of live geverifieerd.
+
+
+### 21 oktober · Compacte operator-API leest maximaal 2048 bronrijen
+
+De eerdere compacte API verwijderde wel ruwe taakrecords uit de
+**respons**, maar bouwde intern nog steeds de volledige onbegrensde
+`portfolio_queue_items()`-lijst op. Dat is opgelost met de
+nieuwe **read-only**, opt-in
+`portfolio_queue_operator_window(limit=2048)` in `server.py`:
+
+- De bestaande authorisatie van
+  `GET /api/portfolio-queue?operator_inbox=1` blijft exact gelijk.
+- De database leest nu alleen actieve `running/verifying/claimed`
+  rijen en nog vrije `queued` rijen in een vaste, brongebonden volgorde,
+  met maximaal 2049 bronrijen voor een betrouwbaar overflow-bit.
+  Maximaal 2048 worden verwerkt door de bestaande policy-read-model.
+- De compacte respons bevat nu ook `source_rows_visible`,
+  `source_rows_limit=2048` en `source_rows_truncated`. Door overflow
+  ontbrekende taken worden **niet** als afwezig, vrij, vastgelopen of
+  geslaagd beschouwd.
+- De private offline HTML en Markdown weigeren tegenstrijdige
+  compact-source receipts en tonen **BRON OF INBOX AFGEKAPT** zodra
+  de bron of het werkorder-venster onvolledig is.
+- De **standaard** `GET /api/portfolio-queue` zonder deze opt-in
+  behoudt de eerdere volledige read route met `items`,
+  `allocation` en conflictinformatie. De normale scheduler,
+  claim-/leasegeschiedenis en schrijfpaden zijn niet veranderd.
+
+De SQL-venstergrens begrenst het aantal in Python geconverteerde
+bronrijen en de geretourneerde JSON op deze **nieuwe operatorroute**;
+er is geen gemeten live CPU/RAM-verbetering en geen productieactivatie
+bewezen. SQLite mag voor zijn prioriteitssortering intern alsnog
+werk uitvoeren. Dit is bewust een **observatie**: een bronvenster dat
+afkapt vraagt verder onderzoek bij de huidige eigenaar, geen claim-,
+retry- of mergeactie.
+
+Broncodes zitten in bestaande PR #1536; release alleen via verplichte
+exact-head CI, onafhankelijke review, protected main en expliciet
+geautoriseerde productie-integratie.
