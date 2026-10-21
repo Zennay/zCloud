@@ -1640,6 +1640,120 @@ def portfolio_owner_book(data):
     return "\n".join(contents)
 
 
+
+def owner_change_brief(data):
+    """A compact source-tied owner handoff only for changed P0/P1 groups.
+
+    It can never issue a claim, escalation or retry. Historic counts are
+    explicit endpoint observations, not an event history or issue resolution.
+    """
+    history = data.get("portfolio_previous_comparison")
+    if history is None:
+        raise ValueError("Private change brief requires previous local snapshot")
+    lines = [
+        "# zSentinel · privé veranderde portfolio-projecten",
+        "",
+        "**Vergelijking:** " + history["status"],
+        "**Vorige lokale bron UTC:** " + history["previous_observed_utc"],
+        "**Huidige lokale bron UTC:** " + history["current_observed_utc"],
+        "**Bronafstand (uur):** " + str(history["elapsed_hours"]),
+        "**Context:** " + history["note"],
+        "**Autorisatie:** eigenaar niet geverifieerd, geen claim, workflow, "
+        "herstel, merge of release.",
+        "**Selectie:** alleen gewijzigde P0/P1-groepscounts binnen "
+        "twee lokale eindpunten; geen bewijs van tussentijdse events.",
+        "",
+    ]
+    if history["status"] != "COMPARABLE_ENDPOINTS":
+        lines.extend((
+            "## Vergelijking niet betrouwbaar",
+            "",
+            "Er worden geen projectverschillen of escalaties weergegeven. "
+            "Maak een nieuwe betrouwbare privé-baseline van dezelfde "
+            "bron en controleer externe claims vóór uitvoering.",
+            "",
+        ))
+        return "\n".join(lines)
+    changed = history["changed_projects"]
+    lines.extend((
+        "## Menselijke opvolging van gewijzigde projecten",
+        "",
+        "**Aantal projecten met countverschil:** " + str(len(changed)),
+        "**Reviewvolgorde:** P0-wachtgroei, daarna P1-wachtgroei, "
+        "daarna overige countverschillen. Dit is geen taaktoewijzing.",
+        "",
+    ))
+    if not changed:
+        lines.extend((
+            "Geen countverschil tussen de twee bronmomenten waargenomen. "
+            "Dit is geen bewijs dat er geen open GitHub-issues zijn, "
+            "geen worker is vastgelopen of geen werk heeft plaatsgevonden.",
+            "",
+        ))
+    for index, item in enumerate(changed, 1):
+        project_id, name = item["project_id"], item["project"]
+        old, current, delta = (item["previous"], item["current"],
+                               item["delta"])
+        owner = data["project_owner_decisions"][project_id]
+        if owner["owner_authorized"] is not False:
+            raise ValueError("Change brief cannot convey owner authority")
+        links = github_inbox_urls(name)
+        lines.extend((
+            "### " + str(index) + ". " + name,
+            "",
+            "**Waarneming:** " + item["kind"],
+            "**Huidige eigenaar:** NIET GEVERIFIEERD; "
+            "bestaande actieve claims niet overnemen.",
+            "**Lokale eigenaarstriage:** " + owner["code"],
+            "**Handmatige vervolgstap:** " + owner["next_step"],
+            "",
+            "| Wachtrijveld | Vorige bron | Huidige bron | Verschil |",
+            "| --- | ---: | ---: | ---: |",
+        ))
+        labels = {
+            "queued_p0": "P0 wacht",
+            "queued_p1": "P1 wacht",
+            "eligible_queued_p0": "P0 eligible-hint",
+            "eligible_queued_p1": "P1 eligible-hint",
+            "in_flight_p0": "P0 actief",
+            "in_flight_p1": "P1 actief",
+        }
+        for field in OWNER_COUNT_FIELDS:
+            lines.append(
+                "| " + labels[field] + " | " + str(old[field])
+                + " | " + str(current[field]) + " | "
+                + f"{delta[field]:+d}" + " |"
+            )
+        lines.extend(("", "**Bestaande GitHub-bronnen (niet live opgevraagd):**"))
+        if links:
+            lines.extend((
+                "- [Open product-PRs](" + links[0] + ")",
+                "- [Open productissues](" + links[1] + ")",
+            ))
+        else:
+            lines.append("- Canonieke GitHub-route onbekend.")
+        lines.extend((
+            "- Controleer de huidige Notion-eigenaars, actuele PR-HEAD, "
+            "verplichte exacte-head CI, onafhankelijke review en "
+            "branch protection voordat je werk toewijst of merge uitvoert.",
+            "",
+        ))
+    lines.extend((
+        "## Bron- en releasegrenzen",
+        "",
+        "Deze handoff gebruikt uitsluitend de bestaande read-only "
+        "SQLite-aggregatie en een vooraf opgeslagen owner-private baseline. "
+        "Aantalverschillen geven geen directe oorzaak van een eventuele "
+        "toename of afname en bewijzen geen echte fixes, actieve eigenaar, "
+        "runnerherstel of productie-integratie. QA-only werk is niet "
+        "onderscheidbaar uit deze aggregatie en wordt niet toegewezen. "
+        "Er is geen remote write of automatische actie uitgevoerd.",
+        "",
+    ))
+    return "\n".join(lines)
+
+
+
 def save_private(path, markup, extension=".html"):
     dest = Path(path)
     if dest.suffix.lower() != extension or dest.name in ("", ".", ".."):
