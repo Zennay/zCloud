@@ -20,6 +20,38 @@ python3 scripts/zsentinel_operator_workbench.py \
 3. Open the HTML locally, on mobile or desktop. Search and filter the *already observed* real issues by project or priority. Each card links to the original GitHub issue, its bounded existing PR references, known evidence gaps and the owner's recommended next investigation. Choose a **human-only disposition**: investigate, inspect/integrate existing PR, coordinate owner, park external blocker, or candidate for new product implementation (requiring independent fresh claim verification).
 4. Add a private note for an issue. **Download private human handoff** to create a source-bound `zsentinel-human-handoff.json` in your browser. If you close the page, **Reopen own handoff** restores precisely that file only if the SHA-256 of the original board, observation timestamp, entire known issue inventory and read-only authorization flags match. Wrong, malformed, overlong or foreign handoffs leave the current notes alone. There is no automatic persistence, autosave, external API call or output to Notion.
 
+## 21 oktober · kruisverwijzingen naar andere PRs bij dezelfde bronissues
+
+Bij `portfolio-pr-markdown`, `portfolio-pr-html` en
+`portfolio-pr-zip` toont één geselecteerd bestaand product-PR-dossier
+voortaan ook de andere PR-kandidaten die **volgens het oorspronkelijke,
+volledig gevalideerde beperkte opgeslagen manifest** hetzelfde bronissue
+noemen. Dit helpt de bevoegde eigenaar een overlappende PR-review niet
+over het hoofd te zien.
+
+- De bron wordt eerst als geheel toegelaten, dan wordt de canonieke
+  geselecteerde PR geïdentificeerd; per gekoppeld issue worden uitsluitend
+  kandidaten uit **dezelfde repository** met diezelfde bronissue-URL
+  overgenomen. Elke andere PR houdt zijn eigen canonical URL, bronprioriteit,
+  gatebron en al dan niet bekende geobserveerde HEAD. De overige projecten
+  of PRs buiten de bron blijven **ONBEKEND**. Een gedeeld issue bewijst
+  niet dat beide PRs dezelfde bestanden veranderen of de issue fixen.
+- Markdown vermeldt de alternatieve PRs direct onder de oorspronkelijke
+  issuevermelding, HTML toont mobiele geneste bronlinks. Als de huidige
+  beperkte steekproef geen ander PR toont, betekent dat **niet** dat
+  de live repository vrij van andere PRs of claims is.
+- De private ZIP bevat aanvullend het **machineleesbare**
+  `linked-peer-prs.json`. Dit bestand koppelt ieder bronissue aan
+  zijn andere geobserveerde PRs met hun bron-HEAD/gate en expliciete
+  `claim_authorized=false`, `merge_authorized=false` en
+  `complete_current_pr_inventory_verified=false`. Het bestaande
+  `source-checksums.json` bindt ook deze nieuwe bijlage aan SHA256.
+  `source-receipt.json` bevat het aantal unieke andere PRs uit die
+  bron. De bestaande write/file/size safety blijft gelijk.
+
+Deze functie opent geen GitHub/Notion API, leest geen nieuwe live claims
+en voert nooit review, CI, merge, deployment of queue-mutatie uit.
+
 ## Nieuw: één bestaande PR als privé eigenaarsoverleg exporteren
 
 Voor een concreet openstaand product-PR hoef je niet langer een volledige
