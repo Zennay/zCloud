@@ -1201,6 +1201,32 @@ def graph_operator_text(report):
         if cluster["shared_files_sample_truncated"]:
             result.append("  Meer gedeelde paden; weergave ingekort.")
         result.append("  Alleen waargenomen bestandspaden; geen eigenaar of mergevolgorde.")
+    result.append("Verbonden bestand/map-scopegroepen: " +
+                  str(report["observed_connected_path_scope_collision_clusters"]) +
+                  " waargenomen · getoond " +
+                  str(len(report["linked_pr_path_scope_collision_clusters"])) +
+                  " · ancestorpaden zijn geen bewezen Git-mergeconflicten.")
+    for cluster in report["linked_pr_path_scope_collision_clusters"]:
+        result.append(
+            "BESTAND/MAP-SCOPEGROEP " + str(cluster["component_number"]) + " · " +
+            str(cluster["pr_count_observed"]) + " open PRs · " +
+            str(cluster["scope_collision_edge_count_observed"]) + " PR-paren · " +
+            str(cluster["path_conflict_count_observed"]) + " padconflicten")
+        for pr in cluster["participating_prs"]:
+            result.append(
+                "  PR #" + str(pr["number"]) + " · " +
+                str(pr["other_prs_with_scope_conflicts_observed"]) +
+                " scopeverbindingen | " + pr["url"] + " @ " + pr["head_sha"][:12])
+        for conflict in cluster["path_conflicts_sample"]:
+            result.append(
+                "  PR #" + str(conflict["left_pr_number"]) + " ↔ PR #" +
+                str(conflict["right_pr_number"]) + ": " + conflict["left_path"] +
+                " ↔ " + conflict["right_path"] + " [" + conflict["relation"] + "]")
+        if cluster["path_conflicts_sample_truncated"]:
+            result.append("  Extra padconflicten in deze verbonden groep niet afgebeeld.")
+        result.append("  Geen eigenaar, mergeconflict of integratievolgorde bewezen.")
+    if report["path_scope_collision_clusters_truncated"]:
+        result.append("Verbonden bestand/map-scopegroepen afgekapt; overige groepen onbekend.")
     for row in report["shown_file_collision_pairs"]:
         a, b = row["left"], row["right"]
         result.append("PR #" + str(a["number"]) + " ↔ PR #" + str(b["number"]) +
