@@ -3775,3 +3775,42 @@ only what the bounded source moment observed, event history is incomplete, and
 a generation-finished event is not proof of a delivered product. No queue
 status change, claim acquisition/release, retry, worker resume/restart,
 GitHub dispatch, service mutation or deployment is performed.
+
+
+## Unified read-only Notion, queue and worker recovery refresh
+
+The same `zsentinel_recovery_refresh.py` invocation can now optionally include
+bounded Notion work-status visibility as well as the explicit worker/queue
+sources above:
+
+- Live Notion read: `--read-notion-claims --notion-data-source <UUID>`
+  (or set `NOTION_QUEUE_DATA_SOURCE_ID`) with `NOTION_TOKEN` present in the
+  local environment.
+- Saved connector snapshot: `--notion-claims-export <private-json>` plus
+  `--notion-data-source <UUID>`. The saved source is explicitly unverified
+  and cannot establish current ownership.
+- Choose one Notion mode. This option supports only JSON, text or offline HTML;
+  it is deliberately rejected with ICS, incident-desk and separate
+  `--desk-output` formats so a requested source cannot silently disappear
+  from the rendered artifact.
+
+Example for a live, bounded read (do not put tokens in command arguments):
+
+```sh
+python scripts/zsentinel_recovery_refresh.py private-observation.json \
+  --registry projects.json \
+  --read-notion-claims \
+  --notion-data-source "$NOTION_QUEUE_DATA_SOURCE_ID" \
+  --queue-database /path/to/existing-history.db \
+  --worker-events-database /path/to/existing-history.db \
+  --worker-project cloud --worker-project supa \
+  --format html
+```
+
+Notion results are only `Claimed`, `Running` and `Verifying` status
+observations from the existing bounded status windows. A missing token, denied
+query, stale/invalid saved snapshot or incomplete source is reported as
+`degraded_unavailable_no_claim_authority`, not an empty claim list. HTML and
+text identify the source state; JSON preserves the bounded observation. Neither
+a Notion status, a worker event, nor a queue lease observation proves repository
+file ownership or grants claim/retry/restart/dispatch authority.
