@@ -77,19 +77,28 @@
     }));
   }
   async function status(event,extra={}){
-    if(!target)return;
+    if(!target)return false;
     const at=new Date().toISOString();
-    try{await api("/runner-status","POST",{
-      projectId:id,baseProjectId:target.base_project_id||id.split("::w")[0],
-      workerSlot:target.worker_slot||1,globalWorkerSlot:target.global_worker_slot||1,
-      queueItem:target.queue_item?.queue_id||"",projectName:target.name||id,
-      target:location.href,targetConversation:conversation(),title:document.title,
-      event,at,progressAt:at,generating:generating(),sending,
-      assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.3",...extra
-    })}catch(_){}
+    try{
+      await api("/runner-status","POST",{
+        projectId:id,baseProjectId:target.base_project_id||id.split("::w")[0],
+        workerSlot:target.worker_slot||1,globalWorkerSlot:target.global_worker_slot||1,
+        queueItem:target.queue_item?.queue_id||"",projectName:target.name||id,
+        target:location.href,targetConversation:conversation(),title:document.title,
+        event,at,progressAt:at,generating:generating(),sending,
+        assistantCharacters:reply().length,runner:"violentmonkey",
+        provider:"chatgpt",runnerVersion:"2.0.3",...extra
+      });
+      return true;
+    }catch(_){return false}
   }
-  async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
+  async function blocked(reason){
+    if(lastBlock===reason)return;
+    // Offline /runner-status is not an acknowledged blocker receipt. Retry
+    // on an existing later poll rather than permanently hiding a P0 stop.
+    // Keep one acknowledged reason per queue; never spawn retry timers.
+    if(await status("send-blocked",{reason}))lastBlock=reason;
+  }
   function high(){
     // The live composer attribute is authoritative: a checked menu item
     // elsewhere must never override an explicitly Medium/Low composer.
