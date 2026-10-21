@@ -36,8 +36,7 @@ def _standalone_html(report, digest):
     return (
         '<!doctype html><html lang="nl"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<meta http-equiv="Content-Security-Policy" content="default-src '
-        "\'none\'; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'">"
+        """<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">"""
         '<meta name="referrer" content="no-referrer">'
         '<title>zSentinel · private eigenaarsoverdracht</title>'
         '<style>body{font:16px/1.55 system-ui,sans-serif;max-width:64rem;'
