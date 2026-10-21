@@ -290,6 +290,8 @@ def recommended_next_step_code(action, blockers):
     if "source_stale" in codes:
         return "refresh_source"
     if codes & {"claim_not_clear", "claim_state_unknown"}:
+        if codes & {"owner_missing", "human_owner_missing"}:
+            return "identify_claim_owner"
         return "resolve_claim_with_owner"
     if "competing_incident_routes" in codes or "competing_incident_actions" in codes:
         return "choose_one_incident_route"
@@ -337,6 +339,8 @@ def recommended_next_step(action, blockers, required_evidence):
     if "source_stale" in codes:
         return "Refresh the original source observation and reevaluate; stale evidence cannot clear a HOLD."
     if codes & {"claim_not_clear", "claim_state_unknown"}:
+        if codes & {"owner_missing", "human_owner_missing"}:
+            return "Identify the current claim owner from live source evidence; do not preempt, reassign, or mutate the queue."
         return "Ask the current owner to confirm or release the exact claim; do not preempt, reassign, or mutate the queue."
     if "competing_incident_routes" in codes:
         return "Ask the authorized owner to choose one recovery route for this incident before reviewing route-specific gates."
