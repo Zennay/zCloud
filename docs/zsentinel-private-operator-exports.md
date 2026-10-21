@@ -420,3 +420,21 @@ een bewijs van dezelfde claim, productieverandering, commit of
 eigenaarsovername. Herhaalde eigenaarcontrole wordt uitsluitend
 geprioriteerd als beide gecontroleerde bronvensters dezelfde
 toewijzingscontext tonen en geen broncursor geroteerd is.
+
+
+## Offline queue-trend freshness
+
+The standalone queue-churn CLI can compare two owner-private snapshots without
+reading the live database again. An offline snapshot can be internally valid
+and still be too old to describe the current queue. Reports therefore include
+`current_snapshot_age_seconds`, `current_snapshot_stale`, the source UTC
+timestamp and the six-hour freshness limit in JSON, text/Markdown and HTML.
+
+When the newer snapshot is older than six hours, the report remains useful as
+**historical trend evidence**, but the text and HTML explicitly warn that it is
+not a current queue observation and instruct the operator to refresh the
+read-only source before making operational conclusions. The stale flag does not
+prove a retry, failed job, released lease or available worker. The live
+portfolio overview still compares its fresh read-only queue observation against
+the prior saved snapshot. No retry, queue/claim write, lease release, restart,
+dispatch or release authorization is introduced.
