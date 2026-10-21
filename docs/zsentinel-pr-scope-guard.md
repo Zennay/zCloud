@@ -2648,3 +2648,28 @@ Het pad moet nog niet bestaan; een gedeelde tijdelijke directory zoals
 `/tmp` wordt terecht geweigerd. Deze wijziging verandert alleen de lokale
 rapportuitvoer: geen queue/claimwijziging, netwerkactie buiten de reeds gekozen
 read-only observatie, workflowdispatch, merge of deployment.
+
+
+## 21 oktober · bounded ancestor-scope graph and connected components
+
+The live open-PR scan now counts file/directory ancestor matches while retaining
+at most `MAX_SCOPE_PATH_PAIRS_PER_PAIR` (24) deterministic path examples per
+PR pair. Previously the scanner accumulated every matching path pair in memory
+before applying the display cap; two 100-path PRs could create up to 10,000
+temporary dictionaries for a single edge. The observed total remains exact for
+the scanned file lists, while retained examples stay bounded during graph
+construction.
+
+A separate transitive component view now groups path-scope edges into
+`linked_pr_path_scope_collision_clusters`. Each component includes observed
+PR/HEAD receipts, number of participating PRs, PR-pair edge count, total
+observed ancestor-conflict count, and at most eight path examples. At most 40
+components are displayed; truncation is explicit. JSON, operator text, offline
+HTML and Markdown now distinguish these groups from exact shared-filename
+clusters. Existing pairwise path-scope cards and CSV rows retain their previous
+meaning.
+
+This is still only a bounded observation of open PR paths. The counts do not
+prove Git merge conflicts, active owners, claim leases, review approval or safe
+integration order. A partial/stale sample cannot clear a path for editing or
+merging.
