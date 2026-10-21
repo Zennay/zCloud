@@ -3719,3 +3719,31 @@ merge, or deploy authorization: those flags are false and must remain so
 until separately verified by the authorized human/runtime owner.
 This is not a scheduler input or an automated queue writer.
 
+
+
+### Print-ready owner view from the same offline CLI
+
+Add `--format html` and select a new `.html` destination instead of
+the default `.csv` file to produce a **standalone printable report**:
+
+```sh
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board /private/saved-product-board.json \
+  --pr-dossier /private/saved-pr-dossier.zip \
+  --format html --output /private/merge-first-existing-prs.html
+```
+
+The HTML version uses the **same** admitted PR-and-UNKNOWN-issue rows and
+P0-first priority order as the CSV. It includes direct canonical GitHub
+issue and PR links, original source-manifest SHA256 provenance, saved
+board/ZIP HEADs, historical gate uncertainty and concrete human-only
+follow-up. Unsafe or noncanonical original GitHub URLs are refused;
+issue titles and source labels are HTML-escaped. Its CSP disables
+scripts, images, network connections, forms and embeds. External GitHub
+pages are visited only when the recipient voluntarily follows a link.
+
+Both formats retain the existing create-only private destination and
+one-MiB output limit. Source receipt absence is not permission to
+claim a work item or perform a merge. No runner, workflow, database,
+queue, Notion or production state is changed.
+
