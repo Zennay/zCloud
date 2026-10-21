@@ -1,0 +1,108 @@
+{
+  "schema": "zcloud.deploy_status_sha_acceptance.v1",
+  "purpose": "Offline fixtures only; not authorization or deploy policy",
+  "issue": 1160,
+  "expected_repo": "Zennay/zCloud",
+  "sha_S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "sha_T": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "cases": [
+    {
+      "id": "stable",
+      "main_before": "S",
+      "status_http": 200,
+      "status_sha": "S",
+      "main_after": "S",
+      "contexts": "valid",
+      "sha_binding": "PASS",
+      "deployment": "DENY_UNTIL_SERIALIZED_GATES_RELEASE"
+    },
+    {
+      "id": "main_moves",
+      "main_before": "S",
+      "status_http": 200,
+      "status_sha": "S",
+      "main_after": "T",
+      "contexts": "valid",
+      "sha_binding": "DENY"
+    },
+    {
+      "id": "wrong_response_sha",
+      "main_before": "S",
+      "status_http": 200,
+      "status_sha": "T",
+      "main_after": "S",
+      "contexts": "valid",
+      "sha_binding": "DENY"
+    },
+    {
+      "id": "missing_response_sha",
+      "main_before": "S",
+      "status_http": 200,
+      "status_sha": null,
+      "main_after": "S",
+      "contexts": "valid",
+      "sha_binding": "DENY"
+    },
+    {
+      "id": "old_green",
+      "main_before": "S",
+      "status_http": 200,
+      "status_sha": "T",
+      "main_after": "S",
+      "contexts": "green_only_for_T",
+      "sha_binding": "DENY"
+    },
+    {
+      "id": "status_timeout",
+      "main_before": "S",
+      "status_http": "timeout",
+      "status_sha": null,
+      "main_after": "unknown",
+      "contexts": "unknown",
+      "sha_binding": "DENY"
+    },
+    {
+      "id": "rate_limited",
+      "main_before": "S",
+      "status_http": 403,
+      "status_sha": null,
+      "main_after": "unknown",
+      "contexts": "unknown",
+      "sha_binding": "DENY"
+    },
+    {
+      "id": "abbrev_sha",
+      "main_before": "abcdef1",
+      "status_http": "not_requested",
+      "status_sha": null,
+      "main_after": "unknown",
+      "contexts": "unknown",
+      "sha_binding": "DENY"
+    },
+    {
+      "id": "mismatched_repo",
+      "requested_repo": "untrusted/zCloud",
+      "main_before": "S",
+      "status_http": 200,
+      "status_sha": "S",
+      "main_after": "S",
+      "contexts": "valid",
+      "sha_binding": "DENY"
+    },
+    {
+      "id": "missing_contexts",
+      "main_before": "S",
+      "status_http": 200,
+      "status_sha": "S",
+      "main_after": "S",
+      "contexts": "missing",
+      "sha_binding": "DENY"
+    }
+  ],
+  "assertions": [
+    "No symbolic /commits/main/status request in admitted path",
+    "Never reuse a status response across a changed canonical main SHA",
+    "PASS means only SHA binding satisfied, never deployment authorization",
+    "Production mutation denied while #580/PWQ-41 or #1089 gates remain closed"
+  ]
+}
