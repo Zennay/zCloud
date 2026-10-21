@@ -45,7 +45,7 @@ Vanaf deze map:
   python3 zsentinel_runner_report.py --format json --receipt T0.json --output inbox-opgenomen.json
   python3 zsentinel_runner_report.py --format json --t0 T0.json --t1 T1.json --output inbox-vergelijking.json
   python3 zsentinel_runner_report.py --format json --timeline T0.json T1.json T2.json --output inbox-historie.json
-  python3 zsentinel_operator_export.py --verify-dir PAKKET-B --compare-dir PAKKET-A --compare-format markdown
+  # Buiten dit pakket, vanuit een checkout met scripts/zsentinel_operator_export.py:\n  python3 scripts/zsentinel_operator_export.py --verify-dir PAKKET-B --compare-dir PAKKET-A --compare-format markdown
 
 Rapporten en de nieuwe gestructureerde JSON-eigenaarinbox worden create-only (0600)\ngemaakt in bestaande veilige doelmappen. JSON noemt bronmoment,\nbeperkte capaciteit/servicetellingen en maximaal drie handmatige acties.\nDe JSON-inbox activeert GEEN herstel of workflow. Ook Markdown kan direct\nvanuit de eenmalige live bron of twee historische bonnetjes worden gemaakt;\nook één opgeslagen privébon kan offline opnieuw als rapport worden getoond.\nHistorische bronmomenten blijven uitdrukkelijk niet actueel.
 Bij --previous is alleen de nieuwe meting actueel gelezen: de T0-bron blijft
