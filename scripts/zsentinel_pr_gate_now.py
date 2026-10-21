@@ -33,12 +33,39 @@ def _sha(value):
 
 def _source_evidence_fingerprint(source_kind, observed_rows):
     """Deterministic bounded evidence identity; never approval or authentication."""
-    if source_kind not in ("check_runs", "legacy_status", "current_head_reviews"):
+    if source_kind not in ("check_runs", "legacy_status", "current_head_reviews",
+                           "pending_review_requests"):
         raise ValueError("unrecognized read-only evidence category")
     payload = json.dumps(
         ["zsentinel-gate-evidence-v1", source_kind, observed_rows],
         ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _pending_review_requests(pr):
+    """Pin a bounded set of pending review requests without inferring approvals."""
+    people, teams = pr.get("requested_reviewers"), pr.get("requested_teams")
+    if (type(people) is not list or type(teams) is not list
+            or len(people) > 100 or len(teams) > 100):
+        raise ValueError("requested review state unavailable or unbounded")
+    users, groups = [], []
+    for entry in people:
+        login = entry.get("login") if type(entry) is dict else None
+        if (type(login) is not str or
+                re.fullmatch(r"[A-Za-z0-9-]{1,39}", login) is None):
+            raise ValueError("invalid requested individual review identity")
+        users.append(login.lower())
+    for entry in teams:
+        slug = entry.get("slug") if type(entry) is dict else None
+        org = entry.get("organization") if type(entry) is dict else None
+        # Team requests are counted, not treated as individual approvals.
+        if (type(slug) is not str or
+                re.fullmatch(r"[A-Za-z0-9_-]{1,100}", slug) is None):
+            raise ValueError("invalid requested team review identity")
+        groups.append(slug.lower())
+    if len(set(users)) != len(users) or len(set(groups)) != len(groups):
+        raise ValueError("repeated pending review request")
+    return sorted(users), sorted(groups)
 
 
 def _one(repo, number, token):
@@ -52,6 +79,7 @@ def _one(repo, number, token):
         raise ValueError("PR not open or source missing")
     head = _sha(first["head"].get("sha"))
     base = _sha(first["base"].get("sha"))
+    requested_people, requested_teams = _pending_review_requests(first)
     base_repo = first["base"].get("repo")
     author = first.get("user")
     if (type(base_repo) is not dict or base_repo.get("full_name") != repo
@@ -212,6 +240,11 @@ def _one(repo, number, token):
     if (type(first.get("draft")) is not bool or type(last.get("draft")) is not bool
             or first["draft"] != last["draft"]):
         raise ValueError("PR draft state missing or changed during observation")
+    if _pending_review_requests(last) != (requested_people, requested_teams):
+        raise ValueError("PR review requests changed during observation")
+    request_fingerprint = _source_evidence_fingerprint(
+        "pending_review_requests", [{"individuals": requested_people,
+                                     "teams": requested_teams}])
     mergeable = last.get("mergeable")
     if mergeable is not None and type(mergeable) is not bool:
         raise ValueError("invalid GitHub PR mergeability observation")
@@ -238,6 +271,8 @@ def _one(repo, number, token):
         gate_step = "verify_missing_current_head_checks_and_rules"
     elif mergeable is None:
         gate_step = "wait_for_github_mergeability_evaluation"
+    elif not approved and (requested_people or requested_teams):
+        gate_step = "wait_for_requested_independent_review"
     elif not approved:
         gate_step = "request_independent_current_head_review"
     else:
@@ -248,6 +283,10 @@ def _one(repo, number, token):
         "head_sha_observed": head, "base_sha_observed": base,
         "draft_at_read": last["draft"],
         "draft_state_stable_on_second_read": True,
+        "pending_review_requests_stable_on_second_read": True,
+        "pending_individual_review_requests_observed": len(requested_people),
+        "pending_team_review_requests_observed": len(requested_teams),
+        "pending_review_request_evidence_sha256": request_fingerprint,
         "github_mergeable_boolean_observed": mergeable,
         "merge_conflict_observed": mergeable is False,
         "mergeability_not_yet_evaluated": mergeable is None,
@@ -382,6 +421,10 @@ def human_gate_summary(source: dict) -> str:
         lines.append(
             "Onafhankelijke exact-head approvals (waargenomen): " +
             str(item["observed_independent_exact_head_approvals"]))
+        lines.append(
+            "Openstaande reviewaanvragen: " +
+            str(item["pending_individual_review_requests_observed"]) + " personen, " +
+            str(item["pending_team_review_requests_observed"]) + " teams (geen approvals).")
         lines.append("Volgende menselijke actie: " + item["human_next_gate_step"])
         if (item["legacy_status_source_may_be_truncated"] or
                 not item["check_runs_page_complete"] or
