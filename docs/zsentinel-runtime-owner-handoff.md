@@ -642,3 +642,45 @@ geen schrijfrechten nodig en maakt geen bestanden aan. Ook een geldig
 exportpaar is uitsluitend bewijs van **inhoudelijke bronconsistentie**,
 geen bewijs dat CI klaar is, claims vrij zijn, main gemerged is of een runner
 live hersteld is. Alle huidige review- en releasegates blijven van kracht.
+
+
+## Portable eigenaarspakket · één bestand, vier leesvormen
+
+De bestaande `scripts/zsentinel_portfolio_overview.py` levert met
+`--show-owner-handoff --owner-packet-output /private/zsentinel/owner-packet.zip`
+een **zelfstandig privé-ZIP-pakket** uit precies dezelfde in-memory runtime-
+beslissing. Het maakt geen extra GitHub-/Notion-/SQLite-aanroep en voert geen
+retry, merge, deploy, notificatie of workeractie uit.
+
+```sh
+umask 077
+python3 scripts/zsentinel_portfolio_overview.py \
+  --github-only --window 0 --show-owner-handoff \
+  --discover-open-prs --owner-packet-output /private/zsentinel/owner-packet-20261021.zip \
+  --format html --output /private/zsentinel/portfolio-20261021.html
+```
+
+Het ZIP bevat vaste, veilige bestandsnamen, zonder invoerpaden van derden:
+`owner-handoff.json`, `owner-actions.csv`, `owner-handoff.md`,
+`owner-handoff.html` en `manifest.json`. De HTML is volledig lokaal te openen,
+zonder scripts, afbeeldingen, externe fonts, API-calls of formulieracties.
+De manifestbron noteert de canonieke handoff-SHA256, per vorm de SHA256 en
+bestandsgrootte, bronmoment, aantallen, truncatie en expliciet alle
+actieautorisaties `false`. Het manifest autoriseert geen recovery. De ZIP
+is bewust opgeslagen zonder compressie, met vaste ledenvolgorde en maximaal
+3 MiB. Dat voorkomt verschillende uitpakken-/compressie-interpretaties en
+houdt de operator-export begrensd.
+
+Het uitvoerbestand wordt eenmalig als private mode-0600 inode aangemaakt
+in een bestaande eigenaar-gecontroleerde directory (directory-FD, no-follow,
+exclusive-create, fsync). Bestaande paden, symlinks en onveilige directories
+worden geweigerd; bij schrijffouten wordt uitsluitend het eigen nieuw
+aangemaakte inode opgeruimd. Alle `--owner-*` exports blijven los optioneel:
+het ZIP biedt een **compleet één-bestands alternatief** voor de afzonderlijke
+JSON+CSV-export en vereist enkel `--show-owner-handoff`.
+
+Een ZIP met intacte hashes betekent **alleen** dat het exportpakket intern
+consistent is met het in de export vastgelegde bronmoment. Bestaande P0,
+exact-head CI, onafhankelijke PR-review, bronclaim, branch protection en
+release-eigenaar blijven altijd aparte actuele controles. Een ZIP mag nooit
+als taak-/dispatchinvoer of als live runnerherstelbewijs worden behandeld.
