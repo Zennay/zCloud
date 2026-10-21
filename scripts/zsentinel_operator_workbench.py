@@ -2485,11 +2485,27 @@ function currentBrief(){
   'Issues selected: '+rows.length+' of '+board.cards.length,
   'Comparison baseline: '+(baseline?baseline.sha+' observed '+baseline.observed_at_utc:
    'not loaded; no historical comparison'),
+  'Historical PR ZIP source windows: '+savedPrHistory.original_archive_sources.length+
+    (savedPrHistory.sources_provided?' (saved, not live)':' (not provided: PR relationships UNKNOWN)'),
   'Status: observational, claims and releases NOT AUTHORIZED.',
   'Private annotations: '+(includePrivate?'EXPLICITLY INCLUDED — check recipient and destination':'EXCLUDED by default'),
   'MANDATORY: verify active owner/claim, exact-head required CI, security, review and release consent before action.',
   ''
  ];
+ // The historical PR source was independently admitted when this page was built.
+ // Record ZIP manifest identities once, not repeatedly for each issue. This
+ // never replaces the current issue/PR/owner source-of-truth.
+ if(savedPrHistory.sources_provided){
+  lines.push('','## Archived PR source receipts · historical evidence only');
+  for(const source of savedPrHistory.original_archive_sources){
+   lines.push('ZIP source #'+source.source_index+
+     ' · UTC '+source.earliest_observed_utc+' to '+source.latest_observed_utc+
+     ' · review manifest SHA256 '+source.review_manifest_sha256+
+     ' · board SHA256 '+source.board_sha256+
+     ' · missing batches '+(source.missing_batch_indexes.join(', ')||'none in source'));
+  }
+  lines.push('Historical PR absence is not proof of no PR, no owner or a merged fix.','');
+ }
  let group=null;
  rows.forEach(card=>{
   if(card.project!==group){group=card.project;lines.push('## Project '+line(group,80),'');}
@@ -2522,6 +2538,35 @@ function currentBrief(){
       card.evidence_gaps.map(g=>line(g,300)).join('; '):'live owner, exact CI and release gates remain unverified'),
     'Recommended investigation: '+line(card.recommended_next_step,650));
   if(human?.note)lines.push('Private human note: '+line(human.note,1000));
+  // Merge-first source worklist: bring relevant saved PR links along with
+  // every currently filtered product issue rather than making the recipient
+  // reopen a separate interactive panel to find those links.
+  if(savedPrHistory.sources_provided){
+   const history=savedPrHistory.issues[card.issue];
+   if(!history){
+    lines.push('Historical existing-PR relation: UNKNOWN · no issue link in supplied bounded ZIP sources.');
+   }else{
+    lines.push('Historical PR link focus: '+line(history.triage_focus,500)+
+       ' · source-age: '+history.source_age_status+
+       ' · candidate PRs: '+history.source_pr_total+
+       ' · omitted candidates: '+history.not_shown_count);
+    lines.push('Lost historical issue links while PR still observed: '+
+       history.issue_links_lost_while_pr_sampled+
+       ' · PRs absent from latest historical sample: '+
+       history.prs_missing_last_saved_snapshot+
+       '. Neither is proof of closure, merge or resolved ownership.');
+    for(const pr of history.prs){
+     lines.push('Previously linked PR: '+pr.url+
+       ' · last saved HEAD '+(pr.latest_observed_head||'UNKNOWN')+
+       ' · last linked HEAD '+(pr.head_at_last_issue_link||'UNKNOWN')+
+       ' · saved gate '+pr.source_gate+
+       ' · changed HEAD '+pr.head_changes+
+       ' · issue link now absent in saved source '+pr.issue_link_missing_last_source+
+       ' · PR absent in final saved sample '+pr.pr_missing_last_source+
+       ' · current CI/review/claim/merge UNKNOWN');
+    }
+   }
+  }
   lines.push('');
  });
  // Portfolio-wide queue pressure is independent of the issue-inbox sample.
