@@ -61,17 +61,30 @@
   // loses all reply/ack evidence. Retain only the previously dispatched queue
   // identity in this tab, never the private prompt or its answer.
   const SENT_QUEUE_KEY="zcloud-v2-last-dispatched-queue";
+  const PERSISTENT_SENT_QUEUE_KEY="zcloud-v2-last-dispatched-queue:"+id;
   let sentInThisDocument=false;
-  function sameQueueWasSentBeforeReload(queueId){
-    const raw=sessionStorage.getItem(SENT_QUEUE_KEY);
-    if(raw===null)return false;
-    if(raw.length>320)return true; // Corrupt previous evidence is not clearance.
+  function sentQueueFromReceipt(raw){
+    if(raw===null||raw===undefined)return null;
+    if(typeof raw!=="string"||raw.length>320)return false;
     try{
       const seen=JSON.parse(raw);
       if(!seen||typeof seen!=="object"||Array.isArray(seen)||
          typeof seen.worker!=="string"||typeof seen.queue!=="string"||
-         !seen.worker||!seen.queue)return true;
-      return seen.worker===id&&seen.queue===queueId;
+         !seen.worker||!seen.queue)return false;
+      return seen.worker===id?seen.queue:false;
+    }catch(_){return false}
+  }
+  function sameQueueWasSentBeforeReload(queueId){
+    // The session witness survives a reload in the same tab. The separate
+    // userscript-private witness survives a replacement tab / browser restart.
+    // Never interpret unreadable or malformed evidence as proof of safety.
+    try{
+      if(typeof GM_getValue!=="function"||typeof GM_setValue!=="function")
+        return true;
+      const local=sentQueueFromReceipt(sessionStorage.getItem(SENT_QUEUE_KEY));
+      const persistent=sentQueueFromReceipt(GM_getValue(PERSISTENT_SENT_QUEUE_KEY,null));
+      return local===false||persistent===false||
+        local===queueId||persistent===queueId;
     }catch(_){return true}
   }
   let reportedConversation=sessionStorage.getItem("zcloud-v2-reported-conversation")||"";
@@ -344,9 +357,13 @@
       // click. If storage fails, do not send; do not erase or auto-ack the
       // original queue after a browser restart.
       try{
-        sessionStorage.setItem(SENT_QUEUE_KEY,JSON.stringify({
-          worker:id,queue:dispatchedQueue
-        }));
+        const receipt=JSON.stringify({worker:id,queue:dispatchedQueue});
+        if(typeof GM_getValue!=="function"||typeof GM_setValue!=="function")
+          throw Error("userscript storage not available");
+        // The persistent marker closes the replacement-tab loophole. It
+        // contains only the queue and worker identity, never task text.
+        GM_setValue(PERSISTENT_SENT_QUEUE_KEY,receipt);
+        sessionStorage.setItem(SENT_QUEUE_KEY,receipt);
       }catch(_){await blocked("dispatch-ledger-unavailable");return false}
       baseline=reply();baselineAssistantCount=assistantCount();button.click();promptAt=Date.now();awaitingAt=promptAt;
       sentInThisDocument=true;
