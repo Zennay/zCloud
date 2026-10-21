@@ -100,82 +100,98 @@ def observe_claims(data_source_id, token, known_projects=None):
     if not isinstance(known_projects, dict):
         raise ValueError("invalid Notion project mapping")
     endpoint = "https://api.notion.com/v1/data_sources/" + data_source_id + "/query"
-    cursor = None
-    seen_cursors = set()
     rows = []
     seen_pages = set()
     incomplete = False
     opener = urllib.request.build_opener(NoRedirect())
-    for index in range(MAX_PAGES):
-        # Canonical Portfolio Work Queue Status is a Notion SELECT property.
-        # Filter at the source so historic Done/Dropped rows cannot bury
-        # current work (including review/verifying holds) beyond pagination.
-        payload = {
-            "page_size": PAGE_SIZE,
-            "filter": {"or": [
-                {"property": "Status", "select": {"equals": "Claimed"}},
-                {"property": "Status", "select": {"equals": "Running"}},
-                {"property": "Status", "select": {"equals": "Verifying"}},
-            ]},
-        }
-        if cursor is not None:
-            payload["start_cursor"] = cursor
-        request = urllib.request.Request(endpoint,
-            data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
-            headers={"Authorization": "Bearer " + token, "Notion-Version": "2025-09-03",
-                     "Content-Type": "application/json", "Accept": "application/json"},
-            method="POST")
-        try:
-            with opener.open(request, timeout=8) as response:
-                if response.status != 200:
-                    raise ValueError("Notion source unavailable")
-                raw = response.read(MAX_BODY + 1)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            # Never forward provider exception strings: they can contain URLs
-            # or request metadata, and token values must not enter reports.
-            raise ValueError("Notion claim source unavailable") from None
-        if len(raw) > MAX_BODY:
-            raise ValueError("Notion claim source over size limit")
-        try:
-            data = json.loads(raw.decode("utf-8"))
-        except (UnicodeError, json.JSONDecodeError):
-            raise ValueError("Notion response is not valid UTF-8 JSON") from None
-        if not isinstance(data, dict) or not isinstance(data.get("results"), list) or len(data["results"]) > PAGE_SIZE:
-            raise ValueError("Invalid Notion claim page")
-        for page in data["results"]:
-            if not isinstance(page, dict) or not isinstance(page.get("properties"), dict):
-                raise ValueError("Malformed Notion claim record")
-            page_id = page.get("id")
-            if (not isinstance(page_id, str) or not UUID.fullmatch(page_id)
-                    or page_id.lower() in seen_pages):
-                raise ValueError("Notion claim records must have distinct canonical page IDs")
-            seen_pages.add(page_id.lower())
-            props = page["properties"]
-            status_prop = props.get("Status")
-            if (not isinstance(status_prop, dict)
-                    or status_prop.get("type") not in ("select", "status")):
-                raise ValueError("Missing or incompatible Notion Status property")
-            state = _state(status_prop)
-            if not isinstance(state, str):
-                raise ValueError("Invalid Notion work status type")
-            if state not in ACTIVE:
-                continue
-            title = _text(props.get("Work item")) or "Onbenoemd actief werk"
-            number = _work_number(props.get("Work ID"))
-            rows.append({"work": ("PWQ-" + str(number) if number else "Werk-ID onbekend"),
-                         "title": title, "status": state,
-                         "project": _project_name(props.get("Project"), known_projects)})
-        more = data.get("has_more")
-        if type(more) is not bool:
-            raise ValueError("Invalid Notion pagination status")
-        if not more:
-            break
-        cursor = data.get("next_cursor")
-        if not isinstance(cursor, str) or not 1 <= len(cursor) <= 200 or cursor in seen_cursors:
-            raise ValueError("Invalid Notion pagination cursor")
-        seen_cursors.add(cursor)
-        if index == MAX_PAGES - 1:
-            incomplete = True
+    # Reserve separate bounded Notion source windows. A large historic
+    # Verifying backlog must not crowd out fresh Claimed/Running rows.
+    # Total request budget remains MAX_PAGES (four HTTP reads).
+    status_windows = (("Claimed", 1), ("Running", 1), ("Verifying", 2))
+    if sum(budget for _, budget in status_windows) != MAX_PAGES:
+        raise ValueError("invalid Notion source window budget")
+    for requested_status, page_budget in status_windows:
+        cursor = None
+        seen_cursors = set()
+        for index in range(page_budget):
+            payload = {
+                "page_size": PAGE_SIZE,
+                "filter": {"property": "Status",
+                           "select": {"equals": requested_status}},
+                "sorts": [{"timestamp": "last_edited_time",
+                           "direction": "descending"}],
+            }
+            if cursor is not None:
+                payload["start_cursor"] = cursor
+            request = urllib.request.Request(
+                endpoint,
+                data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "Notion-Version": "2025-09-03",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                with opener.open(request, timeout=8) as response:
+                    if response.status != 200:
+                        raise ValueError("Notion source unavailable")
+                    raw = response.read(MAX_BODY + 1)
+            except (urllib.error.URLError, TimeoutError, OSError):
+                raise ValueError("Notion claim source unavailable") from None
+            if len(raw) > MAX_BODY:
+                raise ValueError("Notion claim source over size limit")
+            try:
+                data = json.loads(raw.decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError):
+                raise ValueError("Notion response is not valid UTF-8 JSON") from None
+            if (not isinstance(data, dict) or not isinstance(data.get("results"), list)
+                    or len(data["results"]) > PAGE_SIZE):
+                raise ValueError("Invalid Notion claim page")
+            for page in data["results"]:
+                if not isinstance(page, dict) or not isinstance(page.get("properties"), dict):
+                    raise ValueError("Malformed Notion claim record")
+                page_id = page.get("id")
+                if (not isinstance(page_id, str) or not UUID.fullmatch(page_id)
+                        or page_id.lower() in seen_pages):
+                    # Duplicate across status windows is a changing source, not
+                    # permission to assign one item twice or release a lease.
+                    raise ValueError("Notion work identity changed across source windows")
+                seen_pages.add(page_id.lower())
+                props = page["properties"]
+                status_prop = props.get("Status")
+                if (not isinstance(status_prop, dict)
+                        or status_prop.get("type") not in ("select", "status")):
+                    raise ValueError("Missing or incompatible Notion Status property")
+                state = _state(status_prop)
+                if not isinstance(state, str):
+                    raise ValueError("Invalid Notion work status type")
+                if state != requested_status:
+                    # An item changed state between Notion's filter and
+                    # delivery. This window cannot claim completeness.
+                    incomplete = True
+                    continue
+                title = _text(props.get("Work item")) or "Onbenoemd actief werk"
+                number = _work_number(props.get("Work ID"))
+                rows.append({
+                    "work": ("PWQ-" + str(number) if number else "Werk-ID onbekend"),
+                    "title": title, "status": state,
+                    "project": _project_name(props.get("Project"), known_projects),
+                })
+            more = data.get("has_more")
+            if type(more) is not bool:
+                raise ValueError("Invalid Notion pagination status")
+            if not more:
+                break
+            cursor = data.get("next_cursor")
+            if (not isinstance(cursor, str) or not 1 <= len(cursor) <= 200
+                    or cursor in seen_cursors):
+                raise ValueError("Invalid Notion pagination cursor")
+            seen_cursors.add(cursor)
+            if index == page_budget - 1:
+                incomplete = True
     rows.sort(key=lambda row: (row["status"], row["work"]))
     counts, verifying_counts = {}, {}
     for row in rows:
