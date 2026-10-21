@@ -370,6 +370,14 @@ def owner_html(report):
             for key, count in reviews["observed_review_states"].items():
                 rows.append("<li>" + esc(key) + ": " + str(count) + "</li>")
             rows.append("</ul></details>")
+        if row.get("secondary_source_gaps"):
+            rows.extend([
+                "<details><summary>Unavailable secondary GitHub sources</summary>",
+                "<ul>",
+            ])
+            rows.extend("<li>" + esc(reason) + "</li>"
+                        for reason in row["secondary_source_gaps"])
+            rows.append("</ul></details>")
         if "reason" in row:
             rows.append("<p><strong>Provider source:</strong> " +
                         esc(row["reason"]) + "</p>")
@@ -423,6 +431,8 @@ def markdown(report):
                 json.dumps(checks["sample_status_counts"], sort_keys=True),
                 "",
             ])
+        for reason in row.get("secondary_source_gaps", []):
+            lines.append("- Secondary source UNKNOWN: " + reason)
         if "reason" in row:
             lines.extend(["- Provider note: " + row["reason"], ""])
     lines.append("A live read can identify the next person to ask; it never approves a protected-main merge.")
