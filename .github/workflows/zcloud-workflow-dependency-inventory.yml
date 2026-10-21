@@ -1,0 +1,85 @@
+name: zCloud workflow dependency inventory
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_workflow_dependency_inventory.py"
+      - "tests/test_workflow_dependency_inventory.py"
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-workflow-dependency-inventory-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Run focused inventory regressions
+        run: python3 -m unittest tests.test_workflow_dependency_inventory
+
+      - name: Build read-only dependency inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_workflow_dependency_inventory.py --json > "$RUNNER_TEMP/zcloud-workflow-dependency-inventory.json"
+
+      - name: Publish bounded inventory summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(
+              Path(os.environ["RUNNER_TEMP"])
+              .joinpath("zcloud-workflow-dependency-inventory.json")
+              .read_text(encoding="utf-8")
+          )
+          counts = report["counts"]
+          debt = report["floating_dependencies"][:25]
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          lines = [
+              "## zCloud workflow dependency inventory",
+              "",
+              f"- Workflows scanned: {counts['workflows']}",
+              f"- External action uses: {counts['external_total']}",
+              f"- Immutable SHA pinned: {counts['pinned_sha']}",
+              f"- Floating / invalid external refs: {counts['floating'] + counts['invalid_external']}",
+              "",
+              "This workflow is observability-only; existing debt does not fail the run.",
+          ]
+          if debt:
+              lines += ["", "### First 25 floating references"]
+              for item in debt:
+                  ref = item["ref"] or "<missing>"
+                  lines.append(
+                      f"- `{item['workflow']}:{item['line']}` — "
+                      f"`{item['action']}@{ref}`"
+                  )
+          summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
