@@ -327,7 +327,16 @@ def project_operations_html(view: dict) -> str:
     Deliberately never embed opaque claim identifiers or runtime task titles.
     """
     sections = []
-    for row in view["project_operations"]:
+    def rank(row):
+        queue = row["queue_observation"] or {}
+        counts = row["issue_counts_in_sample"]
+        # A sampled expired lease is a human reconciliation lead, not a
+        # released lease. Preserve P0 priority inside that bounded category.
+        return (0 if queue.get("expired_active_leases", 0) else
+                1 if counts["P0"] else
+                2 if queue.get("high_claim_attempts", 0) else
+                3 if counts["P1"] else 4, row["project"])
+    for row in sorted(view["project_operations"], key=rank):
         counts = row["issue_counts_in_sample"]
         queue = row["queue_observation"]
         queue_text = (
@@ -337,12 +346,25 @@ def project_operations_html(view: dict) -> str:
             .format(queue["active_items"], queue["high_claim_attempts"],
                     queue["expired_active_leases"])
         )
+        if queue is not None and queue["expired_active_leases"]:
+            badge = "Review suspected expired lease with current owner"
+        elif counts["P0"]:
+            badge = "Review observed P0 product blocker"
+        elif queue is not None and queue["high_claim_attempts"]:
+            badge = "Investigate repeated claim cycles (not failures)"
+        elif counts["P1"]:
+            badge = "Review observed P1 product work"
+        else:
+            badge = "Verify current project source and claims"
         sections.append(
             '<li><strong>' + escape(row["project"]) + '</strong> · ' +
-            'P0 ' + str(counts["P0"]) + ' / P1 ' + str(counts["P1"]) +
+            '<strong>' + escape(badge) + '</strong>' +
+            '<br>P0 ' + str(counts["P0"]) + ' / P1 ' + str(counts["P1"]) +
             ' (observed sample) · GitHub coverage: ' +
             escape(row["issue_coverage"]) +
             '<br>' + escape(queue_text) +
+            ' · original queue source UTC: ' +
+            escape(row["queue_source_observed_at_utc"] or "unavailable") +
             ' · Current owner: UNKNOWN (' +
             escape(row["claim_context"]) + ')' +
             '<br>Suggested human investigation: ' +
@@ -2007,6 +2029,9 @@ function currentBrief(){
        pressure.active_items+' sampled rows; '+pressure.high_claim_attempts+
        ' high claim cycles; '+pressure.expired_active_leases+' expired leases':
        'unavailable; current worker state UNKNOWN'),
+     'Original queue source observed UTC: '+
+       (row.queue_source_observed_at_utc||'unavailable')+
+       ' (not current worker or lease status)',
      'Observed claim context: '+line(row.claim_context,50)+
        ' (not a present owner lease)',
      'Human investigation: '+line(row.recommended_next_step,650),
