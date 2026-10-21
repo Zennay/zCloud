@@ -653,6 +653,26 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     notion_owner_status = _notion_owner_status_summary(
         decision.get("notion_claims_observation"), sources.get("notion"), registry)
     pr_cards, pr_coverage = _observed_pr_owner_cards(pr_desk, registry)
+    pr_change_source = decision.get("pr_gate_continuity")
+    if pr_change_source is not None:
+        from zsentinel_pr_hold_continuity import SCHEMA as PR_CHANGE_SCHEMA, html_panel
+        # Local schema/range/URL validation; no second GitHub read.
+        html_panel(pr_change_source)
+        if (pr_desk is None or type(pr_change_source) is not dict
+                or pr_change_source.get("schema") != PR_CHANGE_SCHEMA
+                or pr_change_source.get("merge_verified") is not False
+                or pr_change_source.get("actions_performed") is not False):
+            raise ValueError("untrusted PR continuity in owner handoff")
+        by_url = {card["existing_pr_urls"][0]: card for card in pr_cards}
+        for observed in pr_change_source["current_prs"]:
+            url = observed["pr_url"]
+            if url not in by_url:
+                raise ValueError("PR comparison not linked to this live owner source")
+            card = by_url[url]
+            old_head = card.get("pr_observed_head_sha")
+            if old_head != observed.get("observed_head_sha"):
+                raise ValueError("PR continuity head differs from owner receipt")
+            card["pr_continuity_state"] = observed["state"]
     for item in incidents:
         if not isinstance(item, dict) or item.get("severity") not in ("P0", "P1", "P2"):
             raise ValueError("malformed fresh incident")
@@ -1023,6 +1043,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                      "issues": issue_coverage, "prs": pr_coverage,
                      "notion": _short(sources.get("notion"), 80)},
         "priority_items": cards[:MAX_ITEMS],
+        "pr_gate_continuity": pr_change_source,
         "routing_gate_owner_summary": {
             "coverage": gate_coverage,
             "held_count": gate_count,
