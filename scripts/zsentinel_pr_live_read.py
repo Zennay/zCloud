@@ -790,8 +790,16 @@ def owner_html(report):
              " · last observed page was short (snapshot may still drift)") +
             " · text mentions found: " +
             str(discovery["candidate_text_matches_in_page"]) +
-            " · candidates retained: " +
+            " · navigation hints retained: " +
             str(discovery["candidate_records_returned"]) +
+            " · historical candidates preserved: " +
+            str(discovery["historical_candidate_count"]) +
+            " · previously referenced hits deduplicated: " +
+            str(discovery["previously_referenced_hints_deduplicated"]) +
+            " · new candidates live-read: " +
+            str(discovery["new_live_candidates_selected"]) +
+            " · not live-read: " +
+            str(discovery["navigation_only_count"]) +
             " · title-only matches: " +
             str(discovery["title_only_matches_in_window"]) +
             " · explicit closing keyword matches: " +
@@ -803,6 +811,22 @@ def owner_html(report):
             (" · candidate sample truncated" if discovery[
                 "candidate_list_truncated"] else "") + ".</p></section>"
         )
+        if discovery["navigation_only_hints"]:
+            rows.append(
+                "<section><h2>Further existing PR leads · NOT live-verified</h2>"
+                "<p>These links were observed only in the bounded PR-list "
+                "response. The three-slot live review cap remains in force; "
+                "they must not be treated as available ownership or merge "
+                "approval.</p><ol>"
+            )
+            for hint in discovery["navigation_only_hints"]:
+                rows.append(
+                    "<li><a rel='noopener noreferrer' href='" +
+                    esc(hint["url"]) + "'>PR #" + esc(hint["number"]) +
+                    "</a> · " + esc(hint["source_relationship"]) +
+                    " · live status UNKNOWN</li>"
+                )
+            rows.append("</ol></section>")
     rows.extend([
         "<nav aria-label='Owner next steps'>",
         "<h2>Existing PRs to inspect first (advisory order)</h2>",
@@ -812,7 +836,7 @@ def owner_html(report):
     ])
     if not report["observations"]:
         rows.append(
-            "<li>No matching PR in this sampled page. This is NOT proof "
+            "<li>No matching live PR in this bounded sample. This is NOT proof "
             "that the issue has no existing repair PR: expand source "
             "discovery with an authorized owner before creating work.</li>"
         )
@@ -980,8 +1004,16 @@ def markdown(report):
             "- Pagination window full: " + str(discovery["pagination_window_full"]),
             "- Candidate text references found: " +
             str(discovery["candidate_text_matches_in_page"]),
-            "- Candidates retained for live inspection: " +
+            "- Text-linked navigation hints retained: " +
             str(discovery["candidate_records_returned"]),
+            "- Historical references preserved: " +
+            str(discovery["historical_candidate_count"]),
+            "- Previously referenced hints deduplicated: " +
+            str(discovery["previously_referenced_hints_deduplicated"]),
+            "- New references selected for live double-read: " +
+            str(discovery["new_live_candidates_selected"]),
+            "- Unobserved navigation-only leads: " +
+            str(discovery["navigation_only_count"]),
             "- Title-only issue references in window: " +
             str(discovery["title_only_matches_in_window"]),
             "- Closing-keyword matches in window: " +
@@ -994,6 +1026,20 @@ def markdown(report):
             "- No matching PR in scanned pages proves absence: NO",
             "",
         ])
+        if discovery["navigation_only_hints"]:
+            lines.extend([
+                "### Additional existing PR hints (not live-verified)",
+                "",
+                "These URLs are bounded PR-list text observations only. "
+                "Current owner, head, checks, review and merge readiness: UNKNOWN.",
+                "",
+            ])
+            for hint in discovery["navigation_only_hints"]:
+                lines.append(
+                    "- [PR #" + str(hint["number"]) + "](" + hint["url"] +
+                    ") · " + hint["source_relationship"] + " · live UNKNOWN"
+                )
+            lines.append("")
     lines.extend([
         "## Suggested next existing PR reviews (non-authorizing)",
         "",
