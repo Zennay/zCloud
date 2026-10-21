@@ -254,6 +254,40 @@ python3 scripts/zsentinel_recovery_policy.py \
 links explicitly and displays the original priority on each incident
 card.
 
+### Existing PRs first: linked-repair routing
+
+The imported Activity recovery case now carries the actual bounded *historical*
+issue-to-PR candidate data into the private owner worklist. Only the canonical
+same-repository PR references from the validated source are considered (up to
+three per issue). In addition to the issue URL, each candidate includes:
+
+- PR number and original canonical URL;
+- `draft_at_source` and a strictly admitted `relationship_at_source`
+  (`closing_keyword_only` or `text_reference_only`);
+- explicit `current_pr_state_verified=false`,
+  `current_claim_verified=false`, and `merge_authorized=false`.
+
+The importer refuses contradictory `link_status` and draft-reference
+metadata rather than choosing a fictional repair owner. For the same P0/P1
+priority, issues with a sampled **non-draft** PR reference are examined first,
+then draft-only issues, then issues without an observed candidate. This is a
+*source-linked review ordering*, not proof that a PR remains open, ready,
+tested, approved, product-only or unclaimed.
+
+The next owner action now differentiates **inspect existing non-draft PR and
+exact-head CI/review**, **finish existing draft with authorized owner**, or
+**look for another existing product PR before creating new work**. When the
+issue source is old, uncertain or truncated, refresh-first still wins.
+No linked PR is automatically completed, merged or assigned. Existing exact
+head, CI, review, branch protection and owner verification remain mandatory.
+
+The resulting JSON contains `candidate_prs`, `pr_source_triage`, and a
+bounded `sampled_existing_pr_triage` summary. The focused historical view
+recomputes its candidate counts instead of presenting the whole original
+case's counts as though they came from the filtered slice. HTML, Markdown,
+text and CSV expose the sampled draft and relationship hints with explicit
+"at source" and "verify live" wording.
+
 ### Project- and priority-focused historical owner views
 
 Use `--view-project <project-id>` and/or `--through-priority P0|P1|P2|P3`
