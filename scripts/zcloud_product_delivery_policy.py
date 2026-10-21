@@ -400,6 +400,9 @@ def product_queue_snapshot(items, max_visible=8):
     # Show pressure where an already-active task and more queued work coexist.
     pressure = list(project_activity.values())
     pressure.sort(key=lambda row: (
+        -(row["active_missing_worker_slot_visible"] > 0
+          or row["active_missing_claim_start_visible"] > 0
+          or row["active_missing_claim_expiry_visible"] > 0),
         -(row["active_claimed_running_verifying_visible"] > 0
           and row["queued_product_candidates_visible"] > 0),
         -row["queued_product_candidates_visible"],
@@ -431,6 +434,12 @@ def product_queue_snapshot(items, max_visible=8):
         "active_missing_claim_start_visible": active_missing_claim_start,
         "active_missing_claim_expiry_visible": active_missing_claim_expiry,
         "active_claim_evidence_is_advisory_only": True,
+        "active_claim_evidence_gap_projects_observed": sum(
+            bool(row["active_missing_worker_slot_visible"]
+                 or row["active_missing_claim_start_visible"]
+                 or row["active_missing_claim_expiry_visible"])
+            for row in project_activity.values()
+        ),
         "queued_rows_visible": queued_visible,
         "queued_ineligible_held": held_ineligible,
         "queued_worker_slot_occupied": held_slot_occupied,
