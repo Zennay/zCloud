@@ -24,7 +24,8 @@ python3 scripts/zsentinel_operator_workbench.py \
 
 Voor een concreet openstaand product-PR hoef je niet langer een volledige
 portfolio-export te delen. De bestaande offline bronbridge biedt nu
-`--format portfolio-pr-markdown --pr-url`: zij valideert eerst **het
+`--format portfolio-pr-markdown --pr-url` én
+`--format portfolio-pr-html --pr-url`: beide valideren eerst **het
 complete oorspronkelijke manifest en alle reeds opgeslagen batchbewijzen**,
 zoekt vervolgens één canonieke PR in die bron en maakt een afzonderlijk,
 brongebonden privé-Markdown-dossier. Een niet-waargenomen PR geeft een fout,
@@ -43,9 +44,20 @@ Bij meerdere vooraf opgeslagen batches herhaal je `--receipt` zoals in het
 bestaande bridgecontract; ontbrekende batches zijn alleen met de bestaande
 expliciete `--allow-partial` optie toegestaan en blijven **UNKNOWN**.
 Het optionele `--project Zennay/zCloud` moet bij de bron-PR passen.
-`--pr-url` is uitsluitend toegestaan bij
-`--format portfolio-pr-markdown`; alle andere formaten behouden hun
-eerdere invoercontract.
+`--pr-url` is uitsluitend toegestaan bij de twee
+`portfolio-pr-markdown`/`portfolio-pr-html`-formaten; alle andere formaten
+behouden hun eerdere invoercontract. Voor een **mobiel leesbare, scriptvrije
+HTML-pagina** gebruik je dezelfde invoerbronnen en vervang je in bovenstaand
+commando alleen `--format portfolio-pr-markdown` door
+`--format portfolio-pr-html`, en de uitvoernaam door
+`./private-pr-1560-owner-handoff.html`.
+
+De offline HTML-pagina geeft de PR, oorspronkelijke issue-links,
+waargenomen broncommit, CI-/reviewgebreken, broninterval, ontbrekende batches,
+bron-SHA256's en de menselijke vervolgactie in aparte toegankelijke kaarten.
+Een strenge Content Security Policy verbiedt scripts, netwerkverzoeken,
+afbeeldingen en formulieren; externe GitHub-links openen alleen na een
+vrijwillige klik. Printweergave blijft leesbaar.
 
 Het bestand bevat de exacte originele reviewmanifest- en board-SHA256,
 UTC-broninterval, ouderdom bij export, alle batchdekkingsgaten,
