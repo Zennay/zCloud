@@ -633,3 +633,104 @@ def portfolio_json(selected, integrated, *, project=None):
     if len(content.encode("utf-8")) > 1024 * 1024:
         raise ValueError("Private project evidence JSON exceeds one MiB")
     return content
+
+
+def portfolio_single_pr_markdown(selected, integrated, *, pr_url, project=None):
+    """One saved-source PR owner handoff, never a live approval or merge ticket.
+
+    Validate the ENTIRE supplied source before restricting the private output.
+    A PR absent from the bounded snapshot is unknown, not merged or free.
+    """
+    if type(pr_url) is not str or PR.fullmatch(pr_url) is None:
+        raise ValueError("Expected canonical existing GitHub PR URL")
+    oldest, latest, missing = _admit(selected, integrated)
+    projects = project_worklist(selected, integrated)
+    candidates = [
+        (group, item)
+        for group in projects for item in group["candidates"]
+        if item["url"] == pr_url
+    ]
+    if len(candidates) != 1:
+        raise ValueError("PR not present exactly once in saved review source")
+    group, candidate = candidates[0]
+    if project is not None and (
+            type(project) is not str or project != group["repository"]):
+        raise ValueError("Project filter does not match existing PR evidence")
+    head = candidate["head_observed"]
+    source_time = integrated["latest_observed_at_utc"]
+    gate = candidate["gate_observations"]
+    evidence = (
+        "Afgeronde checks gezien: " + str(gate["checks_completed"]) +
+        "; nog lopend gezien: " + str(gate["checks_pending"]) +
+        "; niet succesvol gezien: " + str(gate["checks_not_successful"]) +
+        "; onafhankelijke approvals gezien: " +
+        str(gate["independent_approvals_observed"])
+        if gate is not None else "Geen bruikbare exacte HEAD-gatebron")
+    related_issues = candidate["linked_issue_urls"]
+    lines = [
+        "# zSentinel · privédossier voor één bestaande product-PR",
+        "",
+        "> Opgeslagen, begrensde bron, NIET LIVE. Dit dossier bevestigt GEEN "
+        "eigenaarschap, goedgekeurde verplichte CI/review, merge, release of herstel.",
+        "",
+        "## Bestaande PR",
+        "",
+        "- PR: [" + pr_url + "](" + pr_url + ")",
+        "- Repository: " + group["repository"],
+        "- Bronprioriteit: " + candidate["priority"],
+        "- Bronbatch: " + str(candidate["batch_index"]),
+        "- Gatebron: " + candidate["gate_source"],
+        "- Hoofdblokkade: " + LABELS[candidate["primary_gate"]][0],
+        "- Gelijktijdige blokkades: " +
+        ", ".join(LABELS[key][0] for key in candidate["concurrent_gates"]),
+        "- Waargenomen bron-HEAD: " + (head or "ONBEKEND"),
+        "- Onveranderlijke broncommit: " +
+        ("https://github.com/" + group["repository"] + "/commit/" + head
+         if head else "ONBEKEND"),
+        "- Bronintegriteit: " + source_gate_detail(candidate),
+        "- Gate-waarneming: " + evidence,
+        "",
+        "## Herkomst en steekproefgrenzen",
+        "",
+        "- Oorspronkelijk reviewmanifest SHA256: " +
+        integrated["original_review_manifest_sha256"],
+        "- Oorspronkelijk board SHA256: " +
+        integrated["original_board_sha256"],
+        "- Broninterval UTC: " + oldest.isoformat() + " — " + latest.isoformat(),
+        "- Brontijd tweede moment UTC: " + source_time,
+        "- Leeftijd bij export: " + source_age_warning(latest),
+        "- Batches waargenomen: " + str(integrated["observed_batch_count"]) +
+        "/" + str(integrated["expected_batch_count"]),
+        "- Ontbrekende batches: " +
+        (", ".join(map(str, sorted(missing))) or "geen waargenomen"),
+        "- Totale oorspronkelijke PR-steekproef: " + str(len(selected)),
+        "- Alleen deze opgeslagen PR is uitgelicht; de rest van het portfolio "
+        "is niet afgerond, niet vrijgegeven en niet live gecontroleerd.",
+        "",
+        "## Gekoppelde bronissues (geen fixbewijs)",
+        "",
+    ]
+    lines.extend(
+        "- [Issue #" + url.rsplit("/", 1)[-1] + "](" + url + ")"
+        for url in related_issues
+    )
+    if not related_issues:
+        lines.append("- Geen issuevermelding in deze opgeslagen steekproef; "
+                     "actuele open issues ONBEKEND.")
+    lines.extend([
+        "",
+        "## Alleen menselijke vervolgstap",
+        "",
+        candidate["next_action"],
+        "",
+        "Herlees de huidige GitHub-PR-HEAD, alle verplichte checks, "
+        "onafhankelijke review, protected-main, actuele Notion-claims en "
+        "releasebevoegdheid. Tot die tijd: merge=NIET_GEAUTORISEERD, "
+        "deploy=NIET_GEAUTORISEERD, live=ONBEKEND.",
+        "",
+    ])
+    rendered = "\n".join(lines)
+    if len(rendered.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("Single PR private source dossier exceeds one MiB")
+    return rendered
+
