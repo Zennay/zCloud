@@ -169,7 +169,7 @@ jobs:
           # bytes in its own directory, so rename and rollback are same-FS.
           # An interrupted process can leave an approved new file in place,
           # but never a partially copied live background.js.
-          live_dir="${live%/*}"
+          live_dir="$live"
           staged=""
           backup=""
           swapped=0
