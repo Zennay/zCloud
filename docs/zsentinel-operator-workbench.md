@@ -29,3 +29,9 @@ The output HTML is create-only, mode 0600, using the existing board's atomic no-
 Most importantly: **no claim, merge, release, queue retry or deployment can be performed or authorized through this page.** A visible candidate PR is not proof of ownership, passed mandatory CI, adequate review or release consent; an empty claims snapshot is not a lease release. zSentinel's Notion status stays Verifying until actual required runtime and worker evidence exists. Do not publicize private handoff exports or invent recovery claims from this source-only UI.
 
 No QA, regression or test suites were authored or manually run as part of this feature. The existing repository/owner/production gates stay independent.
+
+## 21 October · file/directory conflicts in the merge-first workorder
+
+The existing private PR workorder now carries file/directory ancestor conflicts separately from exact shared filenames. It shows the selected path, peer path, relation direction and the peer PR's observed HEAD. These rows come only from a stable bounded collision snapshot or a separately pinned focused-PR receipt, and the selected PR HEAD must still match the observation.
+
+The CSV, offline HTML and Markdown owner handoffs expose the same path-pair relation. This helps an operator spot incompatible Git tree layouts such as a file at `src` versus a descendant `src/app.py` before changing either branch. It does not establish a Git merge conflict, owner, lease, fix, required-check set or merge authority. When the path-pair preview is capped, the workorder marks the source incomplete.
