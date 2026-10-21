@@ -36,19 +36,15 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             // can assert that the known incident requires a human decision.
             .filter { it.id.isNotBlank() && it.id.length <= 256 && it.isUrgent() &&
                       it.humanActionRequired }
-            .distinctBy { it.id }
+            .distinctBy { IncidentSnoozeStore.notificationTag(it) }
             .sortedWith(compareBy<AlertItem> {
                 if (it.severity.equals("critical", true) ||
                     it.severity.equals("error", true)) 0 else 1
             }.thenByDescending { it.occurredAt.orEmpty() })
-        // Migrate a prior delivered receipt when the provider begins
-        // supplying stable episode IDs. A source refresh must not create
-        // another alert for an already delivered unresolved incident.
-        urgent.forEach { alert ->
-            val legacy = IncidentSnoozeStore.legacyEpisodeKey(alert)
-            val stable = IncidentSnoozeStore.episodeKey(alert)
-            if (legacy in delivered) delivered += stable
-        }
+        // Prior receipt formats were not project-scoped. Their ownership
+        // cannot be authenticated, so do not migrate them into a different
+        // project's incident suppression state. A one-time re-notification
+        // after upgrade is preferable to silencing another project's blocker.
         // Deduplicate by incident episode. When it disappears from the
         // current source, its suppression expires and a later recurrence can
         // notify. Timestamp changes within a service outage cannot spam.
