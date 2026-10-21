@@ -1,6 +1,6 @@
 # zSentinel — geïntegreerde privé-incidentenbalie met worker/Notion-bronnen
 
-Deze productroute hoort bij de bestaande [zSentinel runtime-PR #1563](https://github.com/Zennay/zCloud/pull/1563) en gebruikt het bestaande read-only, eenmalige bronvenster. De interactieve incidentenbalie toont nu naast de menselijke incidentopvolging ook afzonderlijke, uitklapbare **browserworker-eventhistorie** en **Notion-statusobservaties**, zonder een claim of lease uit een van beide bronnen af te leiden.
+Deze productroute hoort bij de bestaande [zSentinel runtime-PR #1563](https://github.com/Zennay/zCloud/pull/1563) en gebruikt het bestaande read-only, eenmalige bronvenster. De interactieve incidentenbalie toont nu naast de menselijke incidentopvolging ook een geïntegreerd **wachtrij-/claimlease-risicobord**, afzonderlijke, uitklapbare **browserworker-eventhistorie** en **Notion-statusobservaties**, zonder een claim of lease uit een van beide bronnen af te leiden.
 
 ## Eén opdracht, één privéwerkbank
 
@@ -25,10 +25,10 @@ Voor een handmatig opgeslagen Notion-snapshot kan de eigenaar `--notion-claims-e
 ## Wat de werkbank laat zien
 
 - **Huidige incidentkaarten:** prioriteit, bronstatus, menselijke vervolgstap en lokaal bewaarde notities tot een expliciete privé-export.
-- **Workerpaneel:** index-gedragen recente eventtijdlijn en veilige eigenaaropvolging voor maximaal drie gekozen projecten. `generation-progress` is browsersignaal, geen onafhankelijke bewijsvoering dat het werk werkelijk doorgaat.
+- **Wachtrijdruk:** toont uit één bestaande SQLite-observatie aantallen wachtend/bezet, herhaalde claimpogingen (≥3 en ≥10), verlopen leases, onbekende leaseklokken en inconsistente claimvensters. Tot 18 project/prioriteitgroepen worden risicogericht gerangschikt. Verouderde/onvolledige bron verbergt projectdetails en wordt nooit als actuele vrijgave voorgesteld; geen extra SQLite-transactie.\n- **Workerpaneel:** index-gedragen recente eventtijdlijn en veilige eigenaaropvolging voor maximaal drie gekozen projecten. `generation-progress` is browsersignaal, geen onafhankelijke bewijsvoering dat het werk werkelijk doorgaat.
 - **Notionpaneel:** maximaal dertig gesamplede `Claimed`, `Running` en `Verifying`-werkregels met originele bronstatus en afkappingswaarschuwing; labels zijn geen bewijs van actuele queue- of file-scope-eigendom.
 
-Het paneel verandert niets aan de bestaande incidentfingerprint of lokale notitie-import. Bij invalidatie van bronautoriteit, discrepante status of misvormde brongegevens weigert de renderer de werkbank vóór het bijwerken van het optionele incidenteledger.
+Het wachtrijpaneel en de andere bronpanelen veranderen niets aan de bestaande incidentfingerprint of lokale notitie-import. Bij invalidatie van bronautoriteit, discrepante status of misvormde brongegevens weigert de renderer de werkbank vóór het bijwerken van het optionele incidenteledger.
 
 ## Bevoegdheid en oplevering
 
