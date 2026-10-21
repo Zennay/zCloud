@@ -959,7 +959,9 @@ def html_view(decision, registry=None):
     held_panel = ""
     if held is not None:
         examples = held.get("examples") if type(held) is dict else None
-        if (type(held) is not dict or type(held.get("count")) is not int
+        coverage = held.get("coverage", "incomplete_or_stale") if type(held) is dict else None
+        if (type(held) is not dict or coverage not in ("complete", "incomplete_or_stale")
+                or type(held.get("count")) is not int
                 or not 0 <= held["count"] <= 250
                 or type(examples) is not list or len(examples) > 8
                 or len(examples) > held["count"]
@@ -996,14 +998,25 @@ def html_view(decision, registry=None):
                 'Eigenaar herbeoordeelt de originele job/claim voordat werk verdergaat. '
                 'Geen claim, retry of automatische dispatch.</p></article>'
             )
+        if coverage == "complete":
+            hold_heading = "Incidentafhankelijke taken op HOLD (" + str(held["count"]) + ")"
+            hold_status = (
+                '<p class="muted">Verdwenen incidenten tellen niet als opgelost. Alleen exacte '
+                'succesvolle job-reconciliatie uit het bestaande incidentledger kan een '
+                'expliciete taakafhankelijkheid opheffen; geen bewijs van algeheel runtime-herstel.</p>'
+            )
+            empty_holds = "Geen open afhankelijke taken in de complete, actuele taak- en claimbron."
+        else:
+            hold_heading = "Incidentafhankelijkheden — STATUS ONBEKEND"
+            hold_status = (
+                '<p class="muted">Taak-/claiminventaris ontbreekt, is onvolledig of is verouderd. '
+                'Een getoond aantal is geen totaal; ook nul waargenomen HOLDs is geen all-clear. '
+                'Geen afhankelijkheid is automatisch vrijgegeven.</p>'
+            )
+            empty_holds = "Geen voorbeelden in de onvolledige/verouderde bron; totaal onbekend."
         held_panel = (
-            '<section><h2>Incidentafhankelijke taken op HOLD (' +
-            str(held["count"]) + ')</h2><p class="muted">Verdwenen '
-            'incidenten tellen niet als opgelost. Alleen exacte succesvolle '
-            'job-reconciliatie uit het bestaande incidentledger kan een '
-            'expliciete taakafhankelijkheid opheffen; geen bewijs van '
-            'algeheel runtime-herstel.</p>' +
-            section(hold_cards, "Geen open afhankelijke taken in de geldige taakbron.") +
+            '<section><h2>' + hold_heading + '</h2>' + hold_status +
+            section(hold_cards, empty_holds) +
             ('<p class="muted">Niet alle HOLD-voorbeelden getoond.</p>'
              if held["samples_truncated"] else '') + '</section>'
         )
