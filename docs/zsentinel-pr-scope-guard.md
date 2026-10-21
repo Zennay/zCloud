@@ -731,6 +731,12 @@ one-shot source generator. No QA suite, regression or CI rerun is created
 or invoked.
 
 
+### 21 oktober · concept-PR's en actuele mergeconflicten krijgen eigen eigenaaractie
+
+De bestaande exacte-HEAD gatebalie onderscheidt nu expliciet **concept-PR**, **GitHub mergeable=false** (actueel mergeconflict) en **mergeable=null** (GitHub heeft de mergeability nog niet bepaald). Deze labels komen mee in JSON (`draft_at_read`, `merge_conflict_observed`, `mergeability_not_yet_evaluated`) én in de Nederlandse CLI-tekst. De live issue/PR-cockpit vertaalt de bijbehorende `human_next_gate_step` naar een concrete eigenaaractie, en het offline batchoverzicht accepteert dezelfde nieuwe statussen en toont een opgeslagen conflict afzonderlijk. Oude opgeslagen receipts zonder deze velden blijven historisch/onbekend; ze worden niet ten onrechte als conflictvrij behandeld.
+
+Een concept vraagt eerst productafronding en reviewklaar maken door de bevoegde PR-eigenaar. Bij `mergeable=false` moet de eigenaar eerst de actuele basisconflicten oplossen. Bij `mergeable=null` is aanvullend huidig GitHub-bewijs nodig. Succesvolle checks of een waarneembare `mergeable=true` leveren **nooit** zelfstandig review-, branch protection-, claim- of deployautorisatie op. De scanner leest beide PR-identiteiten rondom de gatebronnen, weigert een tussentijds gewijzigde draftstatus en schrijft geen GitHub-/Notion-/queue-/VPS-state. Bestaande exact-head CI, onafhankelijke review en eigenaarstoestemming blijven vereist.
+
 ### Direct Dutch triage without exporting JSON
 
 The same bounded CLI supports `--format text` for an immediately readable
