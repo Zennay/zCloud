@@ -489,6 +489,7 @@ const focusClear=document.getElementById('focus-clear');
 const focusNext=document.getElementById('focus-next');
 const focusExport=document.getElementById('focus-export');
 const collisionOnly=document.getElementById('collision-only');
+const overdueOnly=document.getElementById('collision-overdue-only');
 const collisionRows=Array.from(document.querySelectorAll('li.collision[data-issue]'));
 const collisionVisible=document.getElementById('collision-visible');
 const collisionStateFilter=document.getElementById('collision-state-filter');
@@ -504,7 +505,7 @@ const collisionLabels={
 function validFollowupDate(value){
  if(typeof value!=='string')return false;
  if(value==='')return true;
- if(!/^20[0-9]{2}-[0-9]{2}-[0-9]{2}$/.test(value))return false;
+ if(!/^(20[0-9]{2}|2100)-[0-9]{2}-[0-9]{2}$/.test(value))return false;
  const parsed=new Date(value+'T00:00:00Z');
  return !Number.isNaN(parsed.getTime())&&parsed.toISOString().slice(0,10)===value&&value<='2100-12-31';
 }
@@ -516,6 +517,12 @@ function todayLocal(){
 function followupDate(c){return c.querySelector('.collision-due').value;}
 function overdue(c){const due=followupDate(c);
  return Boolean(due&&due<todayLocal()&&c.querySelector('.collision-state').value!=='followup');
+}
+function hasOverdueIssue(ticket){
+ return collisionRows.some(c=>c.dataset.issue===ticket.dataset.issue&&overdue(c));
+}
+function hasOverduePr(group){
+ return collisionRows.some(c=>overdue(c)&&c.dataset.prs.split(' ').includes(group.dataset.pr));
 }
 function dueHandoff(c){
  const due=followupDate(c);
@@ -533,6 +540,7 @@ const gateLabels={
 };
 const collisionExport=document.getElementById('collision-export');
 const collisionOpenExport=document.getElementById('collision-open-export');
+const collisionOverdueExport=document.getElementById('collision-overdue-export');
 let focusedPr=null,focusIndex=-1;
 let lastPrReview=null,lastProjectReview=null,lastIssueReview=null,lastIndependentReview=null;
 // The privacy-preserving baseline describes ONLY this browser's local edits;
@@ -609,6 +617,7 @@ function refresh(){
    t.dataset.project,t.dataset.category,t.dataset.next].join(' ').toLocaleLowerCase('nl');
   const show=(!focusedPr||linkedToFocus(t))&&
    (!collisionOnly.checked||t.dataset.collision==='yes')&&
+    (!overdueOnly.checked||hasOverdueIssue(t))&&
    (!q||text.includes(q))&&(!priority.value||priority.value===t.dataset.priority)&&
    (!project.value||project.value===t.dataset.project)&&
    (!activity.value||(activity.value==='unknown'?['source_clock_incoherent','activity_timestamp_unknown'].includes(t.dataset.activity):activity.value===t.dataset.activity))&&
@@ -620,7 +629,8 @@ function refresh(){
   const content=[p.dataset.pr,p.dataset.issues,p.dataset.project,
     p.dataset.gate].join(' ').toLocaleLowerCase('nl');
   const show=(!focusedPr||p.dataset.pr===focusedPr)&&
-    (!collisionOnly.checked||p.dataset.collision==='yes')&&(!q||content.includes(q))&&
+    (!collisionOnly.checked||p.dataset.collision==='yes')&&
+     (!overdueOnly.checked||hasOverduePr(p))&&(!q||content.includes(q))&&
     (!priority.value||priority.value===p.dataset.priority)&&
     (!project.value||project.value===p.dataset.project)&&
     (!prState.value||prState.value===p.querySelector('.pr-local-state').value);
@@ -631,6 +641,7 @@ function refresh(){
   const source=[c.dataset.issue,c.dataset.title,c.dataset.prs,c.dataset.project]
     .join(' ').toLocaleLowerCase('nl');
   const show=(!focusedPr||c.dataset.prs.split(' ').includes(focusedPr))&&
+     (!overdueOnly.checked||overdue(c))&&
     (!q||source.includes(q))&&
     (!priority.value||priority.value===c.dataset.priority)&&
     (!project.value||project.value===c.dataset.project)&&
@@ -790,12 +801,16 @@ collisionNext.addEventListener('click',()=>{
  active[collisionIndex].scrollIntoView({block:'start'});
  active[collisionIndex].focus();
 });
-for(const c of [search,priority,project,activity,state,prState,collisionOnly,collisionStateFilter])c.addEventListener('input',refresh);
+for(const c of [search,priority,project,activity,state,prState,collisionOnly,overdueOnly,collisionStateFilter])c.addEventListener('input',refresh);
 for(const t of tickets)t.querySelector('.local-state').addEventListener('change',refresh);
 for(const p of prs)p.querySelector('.pr-local-state').addEventListener('change',refresh);
-for(const c of collisionRows)c.querySelector('.collision-state').addEventListener('change',refresh);
+for(const c of collisionRows){
+ c.querySelector('.collision-state').addEventListener('change',refresh);
+ c.querySelector('.collision-due').addEventListener('input',refresh);
+ c.querySelector('.collision-due').addEventListener('change',refresh);
+}
 document.getElementById('reset').addEventListener('click',function(){
- focusedPr=null;focusIndex=-1;collisionIndex=-1;collisionOnly.checked=false;collisionStateFilter.value='';search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';refresh();
+ focusedPr=null;focusIndex=-1;collisionIndex=-1;collisionOnly.checked=false;overdueOnly.checked=false;collisionStateFilter.value='';search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';refresh();
 });
 function safeText(value){
  return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#\x60~])/g,'\\$1').slice(0,720);
@@ -1201,13 +1216,15 @@ function exportProjectHandoff(){
 projectExport.addEventListener('click',exportProjectHandoff);
 
 
-function exportCollisionHandoff(onlyUnresolved,focusIssue=null){
+function exportCollisionHandoff(onlyUnresolved,focusIssue=null,onlyOverdue=false){
  if(focusIssue!==null&&!collisionRows.some(c=>c.dataset.issue===focusIssue))return;
  const selectedCollisions=collisionRows.filter(c=>(!focusIssue||c.dataset.issue===focusIssue)&&
-  (!onlyUnresolved||c.querySelector('.collision-state').value!=='followup'));
+  (!onlyUnresolved||c.querySelector('.collision-state').value!=='followup')&&
+  (!onlyOverdue||overdue(c)));
  const lines=[
   '# zSentinel · '+(focusIssue?'privé PR-afstemming voor één issue':
-   onlyUnresolved?'openstaande privé PR-afstemming':'privé afstemming meervoudige PR-bronissues'),'',
+   onlyOverdue?'verlopen privé PR-afstemming':onlyUnresolved?'openstaande privé PR-afstemming':
+   'privé afstemming meervoudige PR-bronissues'),'',
   '> '+(focusIssue?'Eén bronissue uit de':'Volledige')+
    ' beperkte opgeslagen botsingsinventaris; geen bewezen file conflict, fixes, eigenaren, CI of mergebevoegdheid.','',
   '- Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
@@ -1216,6 +1233,8 @@ function exportCollisionHandoff(onlyUnresolved,focusIssue=null){
   '- Totale meervoudige bronissuevermeldingen: '+collisionRows.length,
   '- In dit bestand: '+selectedCollisions.length,
   '- Geselecteerd bronissue: '+(focusIssue||'geen, volledige of openstaande beperkte bronlijst'),
+  '- Alleen verlopen privé opvolgdatums: '+(onlyOverdue?'JA':'NEE'),
+  '- Peildatum: '+todayLocal()+' (lokale apparaatdatum, geen server- of GitHub SLA),
   '- Handmatig opvolging vastgelegd (niet opgelost), overgeslagen bij open werk: '+
     (onlyUnresolved?collisionRows.filter(c=>c.querySelector('.collision-state').value==='followup').length:0),
   '- Huidige UI-filters of geselecteerde PR veranderen de opgeslagen bronlijst niet.',
@@ -1263,6 +1282,7 @@ function exportCollisionHandoff(onlyUnresolved,focusIssue=null){
 }
 collisionExport.addEventListener('click',()=>exportCollisionHandoff(false));
 collisionOpenExport.addEventListener('click',()=>exportCollisionHandoff(true));
+collisionOverdueExport.addEventListener('click',()=>exportCollisionHandoff(true,null,true));
 for(const c of collisionRows)c.querySelector('.collision-export-one').addEventListener('click',
  ()=>exportCollisionHandoff(false,c.dataset.issue));
 document.getElementById('export').addEventListener('click',function(){
@@ -1568,7 +1588,8 @@ refresh();
         "<option value='owner'>Wacht op eigenaar</option>"
         "<option value='coordination'>Afstemming nodig</option>"
         "<option value='followup'>Opvolging genoteerd</option></select></label>"
-        "<label><input type='checkbox' id='collision-only'>Alleen issues/PRs met "
+        "<label><input type='checkbox' id='collision-overdue-only'>Alleen verlopen privé PR-afstemming</label>"+
+         "<label><input type='checkbox' id='collision-only'>Alleen issues/PRs met "
         "meerdere PR-kandidaten</label>"
         "<label>PR-opvolging<select id='pr-state'>"
         "<option value=''>Alle PR-statussen</option>"
@@ -1585,7 +1606,8 @@ refresh();
         "<option value='followup'>Opvolging vastgelegd (niet opgelost)</option></select></label>"
         "<button id='reset' type='button'>Wis filters</button>"
         "<button id='collision-export' type='button'>Download PR-botsingsdossier (Markdown)</button>"
-        "<button id='collision-open-export' type='button'>Download open afstemming (Markdown)</button>"
+        "<button id='collision-open-export' type='button'>Download open afstemming (Markdown)</button>"+
+         "<button id='collision-overdue-export' type='button'>Download verlopen privé opvolgdatums (Markdown)</button>"
         "<button id='export' type='button'>Download privéoverdracht (Markdown)</button>"
         "<button id='session-save' type='button'>Bewaar lokale sessie (JSON)</button>"
         "<label>Heropen lokale sessie<input id='session-import' type='file' "
