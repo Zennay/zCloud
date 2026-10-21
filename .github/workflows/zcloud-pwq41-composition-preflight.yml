@@ -1,0 +1,90 @@
+name: zCloud PWQ-41 composition preflight
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_pwq41_composition_preflight.py"
+      - "tests/test_zcloud_pwq41_composition_preflight.py"
+      - ".github/workflows/zcloud-pwq41-composition-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-pwq41-composition-preflight-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused preflight regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_pwq41_composition_preflight
+          python3 -m py_compile scripts/zcloud_pwq41_composition_preflight.py
+
+      - name: Capture exact-head composition evidence read only
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/zcloud-pwq41-composition-preflight.json"
+          python3 scripts/zcloud_pwq41_composition_preflight.py             --root .             --expected-head "$EXPECTED_SHA"             --json | tee "$report"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["schema"] == "zcloud-pwq41-composition-preflight-v1"
+          assert payload["head_matches"] is True
+          assert payload["head_sha"] == payload["expected_head"]
+          assert payload["shared_paths_not_claimed"] == [
+              ".github/workflows/push-all-workers-now.yml",
+              "tests/test_push_all_workers_workflow.py",
+          ]
+          assert len(payload["checks"]) == 6
+          print(
+              "ZCLOUD_PWQ41_COMPOSITION_EVIDENCE="
+              f"ready:{str(payload['ready']).lower()}:"
+              f"present:{sum(1 for item in payload['checks'] if item['present'])}:"
+              f"missing:{sum(1 for item in payload['checks'] if not item['present'])}"
+          )
+          PY
+
+      - name: Upload bounded composition evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-pwq41-composition-preflight-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-pwq41-composition-preflight.json
+          if-no-files-found: error
+          retention-days: 14
