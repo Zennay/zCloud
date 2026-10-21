@@ -3784,7 +3784,9 @@ GitHub dispatch, service mutation or deployment is performed.
 
 The same `zsentinel_recovery_refresh.py` invocation can now optionally include
 bounded Notion work-status visibility as well as the explicit worker/queue
-sources above:
+sources above. When a Notion or worker source is requested, `--output` is
+mandatory: the owner-private report is created with mode 0600 and never dumped
+to stdout (to avoid leaking work/worker metadata into terminal or job logs):
 
 - Live Notion read: `--read-notion-claims --notion-data-source <UUID>`
   (or set `NOTION_QUEUE_DATA_SOURCE_ID`) with `NOTION_TOKEN` present in the
