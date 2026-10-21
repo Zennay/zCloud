@@ -257,10 +257,47 @@ def collect_workorders(board):
                 "voordat een PR als actueel wordt behandeld.")
         if not pinned:
             notes.append("Geen stabiele actuele HEAD/basis bevestigd; eerst bij GitHub herlezen.")
-        if item.get("historical_gate_change") is not None:
+        # The existing portfolio CLI already computes bounded comparison
+        # receipts. Promote that *source* into the operator handoff instead
+        # of forcing an owner to read another JSON/Markdown section.
+        history_code = item.get("historical_gate_change")
+        history_step = item.get("historical_next_step")
+        history_new = item.get("new_evidence_since_previous_sample")
+        if type(history_new) is not bool:
+            raise ValueError("invalid historical new-evidence flag")
+        if history_code is None:
+            if history_step is not None or history_new:
+                raise ValueError("unsourced historical PR next step")
+            history_state = "not_compared"
+        else:
+            if type(history_code) is not str or history_step is None:
+                raise ValueError("malformed historical gate comparison")
+            _markdown(history_code)
+            _markdown(history_step)
+            if history_code == "one_or_both_gate_observations_absent":
+                if history_new:
+                    raise ValueError("historical gap cannot prove new gate evidence")
+                history_state = "source_gap"
+            elif history_code == "same_exact_head_and_gate_receipts_at_two_observations":
+                if history_new:
+                    raise ValueError("unchanged gate receipts cannot be new evidence")
+                history_state = "unchanged_two_snapshots"
+            else:
+                if not history_new:
+                    raise ValueError("historical change missing new-evidence marker")
+                history_state = "changed_two_snapshots"
             notes.append("Historische vergelijking: " +
-                         _markdown(item["historical_gate_change"]) +
-                         "; geen bewijs voor tussenliggende periode.")
+                         _markdown(history_code) +
+                         "; géén bewijs over de tijd tussen de opnames.")
+        defer_repeat = (history_state == "unchanged_two_snapshots"
+                        and item["rank"] == 5)
+        if defer_repeat:
+            notes.append("Ongewijzigde waarneming: dezelfde HOLD niet "
+                         "opnieuw onderzoeken zonder nieuw bronbewijs; "
+                         "vervolg ander veilig werk.")
+        if history_state == "source_gap":
+            notes.append("Vorige en/of huidige vergelijkingsbron ontbreekt: "
+                         "een wijziging kan niet betrouwbaar worden bepaald.")
         if paths_cut or item.get("non_green_jobs_hidden") or (
                 item.get("source_current_head_verified") is not True):
             notes.append("Brongegevens voor conflicterende paden/CI zijn mogelijk afgekapt.")
@@ -287,6 +324,12 @@ def collect_workorders(board):
             "source_current": pinned and not source_stale,
             "source_exact_head_at_observation": pinned,
             "rank": item["rank"], "check_links": links,
+            "change_since_previous_observation": history_state,
+            "historical_change_code": history_code,
+            "historical_next_step": (
+                _markdown(history_step) if history_step is not None else None),
+            "new_evidence_since_previous_sample": history_new,
+            "repeat_hold_deferred": defer_repeat,
             "check_links_hidden": int(item.get("non_green_jobs_hidden", 0)),
             "overlap_paths": [_markdown(p) for p in paths],
             "overlap_paths_hidden": paths_cut,
