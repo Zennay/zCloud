@@ -224,7 +224,17 @@ def render_html(board, max_rows=20):
             escape(card["title"]) + "</a><p>" +
             str(len(candidates)) + " PR-kandidaten in opgeslagen bron. " +
             "Controleer eigenaren en exacte HEADs los van elkaar.</p><ul>" +
-            peer_links + "</ul></li>"
+            peer_links + "</ul>"
+            "<div class='collision-controls'><label>Privé afstemming voor dit issue"
+            "<select class='collision-state'>"
+            "<option value='unreviewed'>Nog niet beoordeeld</option>"
+            "<option value='owner'>Eigenaar bepalen</option>"
+            "<option value='coordinate'>Afstemmen met PR-eigenaren</option>"
+            "<option value='followup'>Opvolging vastgelegd (niet opgelost)</option>"
+            "</select></label><label>Privé botsingsnotitie (geen GitHub-status)"
+            "<textarea class='collision-note' maxlength='500' rows='2' "
+            "placeholder='Eigenaar/contact of apart te controleren PR'></textarea>"
+            "</label></div></li>"
         )
     visible_issues = {card["issue_url"] for card in cards[:max_rows]}
     visible_project = {card["issue_url"]: card["project"]
@@ -390,6 +400,12 @@ const focusExport=document.getElementById('focus-export');
 const collisionOnly=document.getElementById('collision-only');
 const collisionRows=Array.from(document.querySelectorAll('li.collision[data-issue]'));
 const collisionVisible=document.getElementById('collision-visible');
+const collisionLabels={
+ unreviewed:'Nog niet beoordeeld',
+ owner:'Eigenaar bepalen',
+ coordinate:'Afstemmen met PR-eigenaren',
+ followup:'Opvolging vastgelegd (niet opgelost)'
+};
 const collisionExport=document.getElementById('collision-export');
 let focusedPr=null,focusIndex=-1;
 function linkedToFocus(t){
@@ -480,6 +496,7 @@ focusNext.addEventListener('click',()=>{
 for(const c of [search,priority,project,state,prState,collisionOnly])c.addEventListener('input',refresh);
 for(const t of tickets)t.querySelector('.local-state').addEventListener('change',refresh);
 for(const p of prs)p.querySelector('.pr-local-state').addEventListener('change',refresh);
+for(const c of collisionRows)c.querySelector('.collision-state').addEventListener('change',refresh);
 document.getElementById('reset').addEventListener('click',function(){
  focusedPr=null;focusIndex=-1;collisionOnly.checked=false;search.value='';priority.value='';project.value='';state.value='';prState.value='';refresh();
 });
@@ -567,6 +584,10 @@ collisionExport.addEventListener('click',function(){
    'Titel: '+safeText(c.dataset.title),
    'PR-kandidaten uit hetzelfde beperkte issuevenster: '+sourcePrs.length,
    'Een gedeeld issue bewijst geen overlapping van bestanden of twee complete fixes.','');
+  lines.push('Lokale botsingsopvolging: '+
+   collisionLabels[c.querySelector('.collision-state').value]);
+  const collisionNote=c.querySelector('.collision-note').value.trim();
+  if(collisionNote)lines.push('Privé botsingsnotitie: '+safeText(collisionNote));
   if(t){
    lines.push('Handmatige lokale issuestatus: '+labels[t.querySelector('.local-state').value]);
    const note=t.querySelector('textarea').value.trim();
@@ -797,6 +818,9 @@ refresh();
         ".pr-work[hidden],.focus-bar[hidden],.collision[hidden]{display:none}"
         ".collision{border-bottom:1px solid #526a83;padding:14px 4px}"
         ".collision ul{padding-left:26px}.collision li{margin:9px 0}"
+        ".collision-controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
+        "gap:12px;padding:12px 0}.collision-note{width:100%;box-sizing:border-box}"
+        "@media(max-width:640px){.collision-controls{grid-template-columns:1fr}}"
         ".focus-alternative{padding:5px 9px;margin:4px 0}"
         ".pr-controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
         "gap:14px;margin:12px 0}.pr-note{width:100%;box-sizing:border-box}"
