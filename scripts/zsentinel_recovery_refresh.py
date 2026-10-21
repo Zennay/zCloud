@@ -209,6 +209,12 @@ def main():
                         help="opt-in existing indexed history.db: read-only worker events and queue-lease observations")
     parser.add_argument("--worker-project", action="append", default=[],
                         help="canonical project ID for worker observation; 1-3 distinct projects, repeatable")
+    parser.add_argument("--read-notion-claims", action="store_true",
+                        help="read bounded live Notion Claimed/Running/Verifying status windows; no claim authority")
+    parser.add_argument("--notion-data-source",
+                        help="Notion queue data-source UUID, or NOTION_QUEUE_DATA_SOURCE_ID environment variable")
+    parser.add_argument("--notion-claims-export", type=Path,
+                        help="private saved Notion connector snapshot; origin/current ownership remain unverified")
     parser.add_argument("--read-product-issues", action="store_true",
                         help="read up to three selected project P0/P1 GitHub issue inboxes")
     parser.add_argument("--issue-project", action="append",
@@ -228,6 +234,16 @@ def main():
                 raise ValueError("--worker-events-database supports json, text or html output")
             if args.desk_output is not None:
                 raise ValueError("--worker-events-database cannot be combined with --desk-output")
+        if args.read_notion_claims and args.notion_claims_export is not None:
+            raise ValueError("choose either live Notion token or saved connector snapshot")
+        if args.notion_data_source and not (
+                args.read_notion_claims or args.notion_claims_export is not None):
+            raise ValueError("--notion-data-source requires a Notion observation mode")
+        if args.read_notion_claims or args.notion_claims_export is not None:
+            if args.format not in ("json", "text", "html"):
+                raise ValueError("Notion status observation supports json, text or html output")
+            if args.desk_output is not None:
+                raise ValueError("Notion status observation cannot be combined with --desk-output")
         if args.desk_output is not None and args.format not in ("desk", "html"):
             raise ValueError("--desk-output accepts only desk or html operator formats")
         if args.desk_output is not None:
@@ -301,10 +317,39 @@ def main():
                 source["worker_progress"] = "degraded_unavailable_no_recovery_proof"
                 source["worker_projects"] = list(args.worker_project)
                 source["worker_progress_reason"] = "read_only_source_unavailable_or_schema_incompatible"
+        notion_status = "not_observed_no_ownership_claim"
+        if args.read_notion_claims or args.notion_claims_export is not None:
+            data_source_id = (args.notion_data_source
+                              or os.environ.get("NOTION_QUEUE_DATA_SOURCE_ID"))
+            try:
+                from zsentinel_notion_claim_observer import project_labels, observe_claims
+                known_projects = project_labels(args.registry, registry)
+                if args.read_notion_claims:
+                    enriched["notion_claims_observation"] = observe_claims(
+                        data_source_id, os.environ.get("NOTION_TOKEN"), known_projects)
+                    notion_status = "claim_status_observed_no_file_ownership"
+                else:
+                    from zsentinel_notion_connector_snapshot import observe_saved_connector
+                    enriched["notion_claims_observation"] = observe_saved_connector(
+                        args.notion_claims_export, data_source_id, known_projects)
+                    notion_status = "private_connector_snapshot_unverified_origin"
+            except (OSError, ValueError, TypeError, KeyError):
+                enriched.pop("notion_claims_observation", None)
+                notion_status = "degraded_unavailable_no_claim_authority"
+                source["notion_claims_reason"] = "notion_source_unavailable_or_incomplete"
+        source["notion_claims"] = notion_status
         routed, updated = plan(enriched, old)
         routed["live_github_read"] = source
+        routed["live_sources"] = {
+            "notion": notion_status,
+            "runtime": "not_observed_no_worker_recovery_claim",
+            "current_claim_inventory": "unknown_and_not_used_for_routing",
+            "worker_progress": source.get("worker_progress", "not_requested"),
+        }
         if "worker_progress_observation" in enriched:
             routed["worker_progress_observation"] = enriched["worker_progress_observation"]
+        if "notion_claims_observation" in enriched:
+            routed["notion_claims_observation"] = enriched["notion_claims_observation"]
         routed["private_ledger_written"] = bool(args.state)
         if args.format == "html":
             from zsentinel_recovery_view import html_view
