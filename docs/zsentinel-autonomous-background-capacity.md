@@ -438,8 +438,13 @@ bestandsidentiteiten, bytes en wijzigingen. Dit bewijst geen atomische
 Git-revisie, schone checkout, externe trust, CI- of live-installatiestatus.
 Ontbrekend, vervangen of gewijzigd bronmateriaal wordt geweigerd.
 
-Het statische, mobiel leesbare HTML-werkblad toont vier module-/instructiekaarten,
-elk met bron A/B SHA-256, bytes en wijzigingsstatus. Het bevat geen scripts,
+Het statische, mobiel leesbare HTML-werkblad toont drie modulekaarten
+met bron A/B SHA-256, bytes en wijzigingsstatus. De vierde kaart toont de
+meegeleverde LEESMIJ.txt uit pakket A; voor een checkoutvergelijking blijft
+de bron B-instructiestatus expliciet **ONBEKEND**. De lopende exporter kan
+namelijk uit een andere revisie komen dan de gekozen --compare-source-dir.
+Alleen bij vergelijking tussen twee werkelijk opgeslagen pakketten worden
+de instructieteksten van beide pakketten met hun eigen manifest vergeleken. Het bevat geen scripts,
 externe bronnen, netwerkverzoeken of uitvoerende herstelknoppen. Het kan
 alleen in een nieuwe .html-file onder een vooraf bestaande eigenaar-private
 0700-map worden bewaard (0600, create-only, nooit overwrite). Ook text,
