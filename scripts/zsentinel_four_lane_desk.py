@@ -609,6 +609,10 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
     )
     packet["host_pressure"] = observe_host_pressure() if include_host_pressure else None
     packet["recovery_actions"] = suggested_actions(packet)
+    packet["project_owner_decisions"] = {
+        project_id: project_review_status(packet, project_id)
+        for project_id in sorted(PORTFOLIO_PROJECTS)
+    }
     return packet
 
 
@@ -755,7 +759,12 @@ def project_review_status(data, project_id):
     incomplete = (data["portfolio_priority_partial"]
                   or bool(data["portfolio_unknown_project_groups"])
                   or not data["source_complete"])
-    if incomplete:
+    if item is not None and (item["in_flight_p0"] or item["in_flight_p1"]):
+        code = "HOLD_ACTIVE_OWNER"
+        message = ("Actieve lokale taken aangetroffen; behoud bestaande "
+                   "eigenaars, bespreek wachtrijwerk met hen. "
+                   "Controleer daarnaast bronvolledigheid en externe claims.")
+    elif incomplete:
         code = "HOLD_LOCAL_SOURCE_PARTIAL"
         message = ("Lokale bron niet volledig; vraag eerst actuele "
                    "Notion/GitHub- en eigenaarsbewijzen op.")
@@ -763,10 +772,6 @@ def project_review_status(data, project_id):
         code = "NO_URGENT_LOCAL_OBSERVATION"
         message = ("Geen P0/P1-groep lokaal waargenomen; controleer "
                    "bestaande GitHub-issues en lopende Notion-claims.")
-    elif item["in_flight_p0"] or item["in_flight_p1"]:
-        code = "HOLD_ACTIVE_OWNER"
-        message = ("Actieve lokale taken aangetroffen; behoud bestaande "
-                   "eigenaars, bespreek wachtrijwerk met hen.")
     elif item["queued_p0"] or item["queued_p1"]:
         if item["eligible_queued_p0"] or item["eligible_queued_p1"]:
             code = "OWNER_REVIEW_REQUIRED"
@@ -792,7 +797,7 @@ def project_cards_html(data):
     for project_id, name in sorted(PORTFOLIO_PROJECTS.items(),
                                    key=lambda pair: pair[1].casefold()):
         row = observed.get(name)
-        status = project_review_status(data, project_id)
+        status = data["project_owner_decisions"][project_id]
         if row:
             numbers = (
                 "P0 wacht: " + str(row["queued_p0"]) +
@@ -1251,6 +1256,10 @@ def project_owner_brief(data, project_id):
         "**Dekking:** " + source_note,
         "**Actuele eigenaar:** NIET GEVERIFIEERD.",
         "**Claim-/merge-/deploybevoegdheid:** NEE.",
+        "**Brongebonden eigenaarstriage:** " +
+        data["project_owner_decisions"][project_id]["code"],
+        "**Handmatig vervolg:** " +
+        data["project_owner_decisions"][project_id]["next_step"],
         "",
         "## Lokale P0/P1-observaties",
         "",
