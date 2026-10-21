@@ -1,0 +1,42 @@
+name: zSSH main-protection attestation admission proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zssh_main_protection_attestation_admission.py"
+      - "tests/test_zssh_main_protection_attestation_admission.py"
+      - ".github/workflows/zssh-main-protection-attestation-admission.yml"
+      - ".github/workflows/zssh-attest-main-protection.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zssh-main-protection-attestation-admission-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate attestation admission contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact candidate head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Run focused admission suite
+        run: python3 -m unittest -v tests.test_zssh_main_protection_attestation_admission
