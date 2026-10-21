@@ -1143,6 +1143,9 @@ def plan(bundle, previous=None, now=None):
         ),
         "independent_task_suggestions": routes,
         "incident_dependency_holds": {
+            # A zero count is meaningful only when the task AND claim source
+            # inventories are complete and their observation clocks are fresh.
+            "coverage": "complete" if claims_verified else "incomplete_or_stale",
             "count": len(dependency_holds),
             "examples": dependency_holds[:8],
             "samples_truncated": len(dependency_holds) > 8,
@@ -1194,7 +1197,9 @@ def operator_text(result):
     lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
     holds = result.get("incident_dependency_holds")
     if holds is not None:
-        if (type(holds) is not dict or type(holds.get("count")) is not int
+        coverage = holds.get("coverage", "incomplete_or_stale") if type(holds) is dict else None
+        if (type(holds) is not dict or coverage not in ("complete", "incomplete_or_stale")
+                or type(holds.get("count")) is not int
                 or not 0 <= holds["count"] <= MAX_TASKS
                 or type(holds.get("examples")) is not list
                 or len(holds["examples"]) > 8
@@ -1204,8 +1209,12 @@ def operator_text(result):
                 or holds.get("exact_reconciliation_required") is not True
                 or holds.get("claim_authorized") is not False):
             raise ValueError("untrusted incident dependency hold report")
-        lines.append("Tasks HELD by unresolved/unobserved incident dependencies: " +
-                     str(holds["count"]) + " (no claim/dispatch)")
+        if coverage == "complete":
+            lines.append("Tasks HELD by unresolved/unobserved incident dependencies: " +
+                         str(holds["count"]) + " (no claim/dispatch)")
+        else:
+            lines.append("Incident dependencies: UNKNOWN — task/claim inventory incomplete or stale; " +
+                         "the observed count is not an all-clear and no dependency is cleared.")
         for hold in holds["examples"]:
             lines.append("- HOLD " + hold["priority"] + " " + hold["project_id"] +
                          "/" + hold["id"] + " · " +
