@@ -4091,7 +4091,7 @@ function mergeFirstCsv(){
    row.archived_candidates_truncated,false,false,false,false,false,false,false];
   lines.push(values.map(csvCell).join(','));
  }
- return lines.join('\r\n')+'\r\n';
+ return lines.join('\\r\\n')+'\\r\\n';
 }
 let mergeFirstReviewed=null;
 function refreshMergeFirst(){
