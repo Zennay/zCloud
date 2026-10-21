@@ -20,7 +20,11 @@ bij issues met **meerdere bestaande PR-kandidaten**:
 3. **Alle gekoppelde bronissue-URLs** uit de vooraf gevalideerde
    beperkte bron worden genoemd; voor issuekaarten binnen de huidige
    `--worklist-limit` export staan ook de eigen lokale status,
-   privé-notitie en bron-next-action erbij. Bronissues buiten het
+   privé-notitie en bron-next-action erbij. Ook andere bestaande PRs
+   die volgens de bron bij hetzelfde issue genoemd worden, blijven met
+   hun afzonderlijke URL en de eventueel beschikbare opgeslagen bron-HEAD
+   in het dossier staan. Daarmee verdwijnt een mogelijke PR-botsing niet
+   wanneer de operator maar één PR exporteert. Bronissues buiten het
    beperkte venster worden nadrukkelijk **ONBEKEND** gelabeld,
    niet genegeerd of als opgelost geteld. De afzonderlijke PR-notitie
    en PR-status gaan mee.
