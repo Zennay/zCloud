@@ -459,7 +459,7 @@ def portfolio_csv(selected, integrated, *, project=None):
 
 
 
-def portfolio_issue_pr_csv(selected, integrated, *, project=None):
+def portfolio_issue_pr_csv(selected, integrated, *, project=None, issue_url=None):
     """Complete issue-to-PR relationship matrix from one admitted saved source.
 
     Unlike the bounded HTML preview, every observed issue/PR association is
@@ -478,6 +478,12 @@ def portfolio_issue_pr_csv(selected, integrated, *, project=None):
                     raise ValueError("Duplicate issue-to-PR relationship")
                 seen.add(identity)
                 relations.append((group["repository"], issue_url, candidate))
+    if issue_url is not None:
+        # A link must be in the original admitted source, not an arbitrary
+        # operator-provided text value or a partial unrelated issue.
+        single_issue_candidates(
+            selected, integrated, issue_url=issue_url, project=project)
+        relations = [row for row in relations if row[1] == issue_url]
     relations.sort(key=lambda row: (
         PRIORITIES.index(row[2]["priority"]), row[0],
         int(row[1].rsplit("/", 1)[-1]), row[2]["pr_number"]))
@@ -723,6 +729,149 @@ def single_pr_related_peers(selected, integrated, *, pr_url):
         related.sort(key=lambda row: int(row["url"].rsplit("/", 1)[-1]))
         peers[issue] = related
     return peers
+
+
+
+def single_issue_candidates(selected, integrated, *, issue_url, project=None):
+    """Select every linked PR for one real issue only AFTER full source admission."""
+    if type(issue_url) is not str:
+        raise ValueError("Expected source-linked canonical GitHub issue URL")
+    projects = project_worklist(selected, integrated, project=project)
+    matches = [
+        (group, pr) for group in projects for pr in group["candidates"]
+        if issue_url in pr["linked_issue_urls"]
+    ]
+    if not matches:
+        raise ValueError("Issue was not linked in this bounded saved PR source")
+    repositories = {group["repository"] for group, _ in matches}
+    if len(repositories) != 1:
+        raise ValueError("Issue linked to contradictory repositories")
+    repo = next(iter(repositories))
+    if not issue_url.startswith("https://github.com/" + repo + "/issues/"):
+        raise ValueError("Issue and PR repositories disagree")
+    matches.sort(key=lambda pair: (
+        PRIORITIES.index(pair[1]["priority"]),
+        list(LABELS).index(pair[1]["primary_gate"]),
+        pair[1]["pr_number"]))
+    return repo, [pr for _, pr in matches]
+
+
+def portfolio_single_issue_markdown(selected, integrated, *, issue_url, project=None):
+    """Portable human issue workorder: all sampled PRs, never merge authority."""
+    _oldest, latest, missing = _admit(selected, integrated)
+    repo, candidates = single_issue_candidates(
+        selected, integrated, issue_url=issue_url, project=project)
+    lines = [
+        "# zSentinel · bestaand issue / alle brongekoppelde PRs", "",
+        "> HISTORISCHE STEEKPROEF, NIET LIVE. Dezelfde issuevermelding bewijst "
+        "geen bestandsconflict, opgeloste bug of exclusieve eigenaar.", "",
+        "- Issue: [" + issue_url + "](" + issue_url + ")",
+        "- Repository: " + repo,
+        "- Gerelateerde bestaande PRs waargenomen: " + str(len(candidates)),
+        "- Oorspronkelijk reviewmanifest SHA256: " +
+        integrated["original_review_manifest_sha256"],
+        "- Oorspronkelijk board SHA256: " +
+        integrated["original_board_sha256"],
+        "- Broninterval UTC: " + integrated["earliest_observed_at_utc"] +
+        " — " + integrated["latest_observed_at_utc"],
+        "- Leeftijd bij export: " + source_age_warning(latest),
+        "- Ontbrekende batchnummers: " +
+        (", ".join(map(str, sorted(missing))) or "geen"),
+        "- Alle actuele PRs/claims, verplichte CI/review, merge op main "
+        "en live herstel: ONBEKEND.", "",
+    ]
+    for candidate in candidates:
+        head = candidate["head_observed"]
+        lines.extend([
+            "## " + candidate["priority"] + " · [PR #" +
+            str(candidate["pr_number"]) + "](" + candidate["url"] + ")", "",
+            "- Waargenomen bron-HEAD: " + (head or "ONBEKEND"),
+            "- Onveranderlijke broncommit: " + (
+                "https://github.com/" + repo + "/commit/" + head
+                if head else "ONBEKEND"),
+            "- Gatebron / batch: " + candidate["gate_source"] + " / " +
+            str(candidate["batch_index"]),
+            "- Hoofdblokkade: " + LABELS[candidate["primary_gate"]][0],
+            "- Bronintegriteit: " + source_gate_detail(candidate),
+            "- Menselijke volgende stap: " + candidate["next_action"], "",
+        ])
+    lines.extend([
+        "## Vereiste eigenaarcontrole", "",
+        "Controleer de actuele PRs, HEADs, review en branch protection bij "
+        "GitHub en de actieve Notion/queue-claims bij de eigenaar. Kies slechts "
+        "één bevoegde integratieroute; lees eventuele overlap in code vóór "
+        "een merge. Dit bestand verleent GEEN claim, retry, CI-dispatch, "
+        "merge of deploy.", "",
+    ])
+    result = "\n".join(lines)
+    if len(result.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("Private issue handoff exceeds one MiB")
+    return result
+
+
+def portfolio_single_issue_html(selected, integrated, *, issue_url, project=None):
+    """Accessible, script-free per-issue human owner dossier from saved receipts."""
+    _oldest, latest, missing = _admit(selected, integrated)
+    repo, candidates = single_issue_candidates(
+        selected, integrated, issue_url=issue_url, project=project)
+    e = lambda item: escape(str(item), quote=True)
+    rows = []
+    for candidate in candidates:
+        head = candidate["head_observed"]
+        head_link = (
+            '<a target="_blank" rel="noopener noreferrer" href="https://github.com/' +
+            e(repo) + '/commit/' + head + '">Broncommit ' + head[:12] + '</a>'
+            if head else '<strong>Bron HEAD ONBEKEND</strong>')
+        rows.append(
+            '<li><h2>' + e(candidate["priority"]) + ' · <a target="_blank" '
+            'rel="noopener noreferrer" href="' + e(candidate["url"]) +
+            '">PR #' + str(candidate["pr_number"]) + '</a></h2><p>' +
+            head_link + ' · Batch ' + str(candidate["batch_index"]) +
+            ' · ' + e(candidate["gate_source"]) + '</p><p><strong>' +
+            e(LABELS[candidate["primary_gate"]][0]) + '</strong><br>' +
+            e(source_gate_detail(candidate)) + '</p><p>Handmatige opvolging: ' +
+            e(candidate["next_action"]) + '</p></li>')
+    html = (
+        '<!doctype html><html lang="nl"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta http-equiv="Content-Security-Policy" content="default-src '
+        "'none'; style-src 'unsafe-inline'; img-src 'none'; connect-src "
+        "'none'; form-action 'none'; base-uri 'none'; object-src 'none'\">"
+        '<title>zSentinel · privé issue PR-dossier</title><style>'
+        ':root{color-scheme:dark;font-family:system-ui,sans-serif}'
+        'body{max-width:840px;margin:auto;padding:20px;background:#102036;'
+        'color:#eef5fa;line-height:1.6}a{color:#a9deff}'
+        'a:focus-visible{outline:3px solid #efce72;outline-offset:3px}'
+        'li{margin:16px 0;padding:14px;border:1px solid #65809a;'
+        'border-radius:10px;background:#203951}'
+        'aside{padding:15px;border-left:4px solid #efce72}'
+        'code{overflow-wrap:anywhere}'
+        '@media print{body{background:white;color:black}li{background:white;'
+        'color:black}a{color:#165477}}</style></head><body><main>'
+        '<h1>Issue → alle waargenomen bestaande PRs</h1><p><a target="_blank" '
+        'rel="noopener noreferrer" href="' + e(issue_url) + '">' +
+        e(issue_url) + '</a></p>'
+        '<aside><strong>HISTORISCHE BRON · GEEN MERGEVRIJGAVE.</strong>'
+        ' Gedeeld issue betekent geen codeconflict of fix. Hercontroleer live '
+        'alle claims, HEADs, review, verplichte CI en protected main.</aside>'
+        '<p>Repository: ' + e(repo) + ' · PRs in de steekproef: ' +
+        str(len(candidates)) + ' · ' + e(source_age_warning(latest)) + '</p>'
+        '<p>Manifest SHA256: <code>' +
+        e(integrated["original_review_manifest_sha256"]) + '</code><br>'
+        'Board SHA256: <code>' +
+        e(integrated["original_board_sha256"]) + '</code><br>'
+        'Broninterval UTC: ' + e(integrated["earliest_observed_at_utc"]) +
+        ' — ' + e(integrated["latest_observed_at_utc"]) +
+        ' · Ontbrekende batches: ' +
+        e(", ".join(map(str, sorted(missing))) or "geen") + '</p>'
+        '<ol>' + ''.join(rows) + '</ol>'
+        '<footer>Privé offline export, zonder scripts of netwerkverzoeken. '
+        'Eigenaarschap/merge/deploy/live: ONBEKEND, NIET GEAUTORISEERD.'
+        '</footer></main></body></html>')
+    if len(html.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("Private issue HTML exceeds one MiB")
+    return html
+
 
 
 def portfolio_single_pr_markdown(selected, integrated, *, pr_url, project=None):
