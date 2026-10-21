@@ -677,6 +677,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
     extra_get_attempts = 0
     new_references = []
     timeline = {"performed": False, "source_error": None}
+    discovery_admission_paused = False
     if discover_unlinked:
         # GitHub's issue timeline can expose actual PR cross-references,
         # including merged/closed repairs absent from the open-PR list.
@@ -685,11 +686,27 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         timeline_hints, timeline = _discover_issue_timeline_prs(
             source_url, token=token,
         )
-        discovered, discovery = _discover_sampled_open_prs(
-            source_url, token=token,
+        discovery_admission_paused = (
+            "authentication, quota or provider admission" in
+            (timeline.get("source_error") or "")
         )
+        if discovery_admission_paused:
+            # Never consume additional provider quota or retry a denied
+            # identity in a second source after an explicit 401/403/429.
+            discovered = []
+            discovery["source_error"] = (
+                "Skipped open PR source: GitHub admission denied earlier"
+            )
+        else:
+            discovered, discovery = _discover_sampled_open_prs(
+                source_url, token=token,
+            )
+            discovery_admission_paused = (
+                "authentication, quota or provider admission" in
+                (discovery.get("source_error") or "")
+            )
         extra_get_attempts = (
-            timeline["get_attempts"] + discovery["get_attempts"]
+            timeline["get_attempts"] + discovery.get("get_attempts", 0)
         )
         seen_refs = set(historical_urls)
         deduplicated = 0
@@ -795,19 +812,24 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         "issue_work_cleared": False,
     }
     observations = []
-    provider_paused = False
+    provider_paused = discovery_admission_paused
     total_gets_attempted = extra_get_attempts
-    try:
-        total_gets_attempted += 1
-        current_issue = _issue_summary(
-            _limited_json(issue_api, token=token),
-            issue_repo_name, int(issue_match[3]),
+    if provider_paused:
+        current_issue["reason"] = (
+            "Skipped issue GET: GitHub admission denied in discovery"
         )
-        current_issue["status"] = "LIVE_ISSUE_READ"
-    except GitHubReadError as exc:
-        current_issue["reason"] = str(exc)
-        if "authentication, quota or provider admission" in str(exc):
-            provider_paused = True
+    else:
+        try:
+            total_gets_attempted += 1
+            current_issue = _issue_summary(
+                _limited_json(issue_api, token=token),
+                issue_repo_name, int(issue_match[3]),
+            )
+            current_issue["status"] = "LIVE_ISSUE_READ"
+        except GitHubReadError as exc:
+            current_issue["reason"] = str(exc)
+            if "authentication, quota or provider admission" in str(exc):
+                provider_paused = True
     for candidate in candidates:
         url = candidate["url"]
         match = REPO_URL.fullmatch(url)
