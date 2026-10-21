@@ -939,6 +939,19 @@ Explicitly include private operator follow-ups, contact labels and notes</label>
 <button type="button" id="downloadBrief" disabled>Download exactly this private briefing (.md)</button>
 </div>
 </section>
+<section class="brief" aria-label="Print-ready source-only portfolio existing PR desk">
+<h2>Print-ready product issue / existing-PR worklist</h2>
+<p>Turn the currently selected issue filters into a portable, static HTML owner
+briefing with P0-first issue links, the real saved existing PR references,
+source manifest SHA256s and missing-gate warnings. Unlike the general Markdown
+briefing this export <strong>never</strong> contains private follow-up notes,
+contact labels or local operator status. No live GitHub or queue permission.</p>
+<button type="button" id="portfolioHtmlReview">Preview source-only printable worklist</button>
+<div id="portfolioHtmlPanel" hidden>
+<div id="portfolioHtmlPreview" class="portfolio"></div>
+<button type="button" id="portfolioHtmlDownload" disabled>Download reviewed static portfolio HTML</button>
+</div>
+</section>
 <section class="brief" aria-label="Offline CSV triage export">
 <h2>Offline spreadsheet triage · reviewed CSV</h2>
 <p>Export exactly the currently filtered saved issues, including observed PR links,
@@ -3930,6 +3943,120 @@ document.getElementById('applyIssueImport').onclick=()=>{
 };
 
 document.getElementById('briefIncludePrivate').addEventListener('change',invalidateBrief);
+// Portable HTML owner worklist reuses the already-admitted board and ZIP
+// snapshots without sending any operator annotations or accessing a provider.
+function staticPortfolioWorklist(){
+ const rank={P0:0,P1:1,P2:2,Unspecified:3};
+ const rows=filtered().slice().sort((a,b)=>
+   rank[a.priority]-rank[b.priority]||a.project.localeCompare(b.project)||
+   a.issue.localeCompare(b.issue));
+ if(!rows.length)return null;
+ const doc=document.implementation.createHTMLDocument('zSentinel · Saved product issue worklist');
+ doc.documentElement.lang='en';
+ const meta=doc.createElement('meta');
+ meta.setAttribute('http-equiv','Content-Security-Policy');
+ meta.content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; form-action 'none'; frame-src 'none'; base-uri 'none'; object-src 'none'";
+ doc.head.append(meta);
+ const ref=doc.createElement('meta');ref.name='referrer';ref.content='no-referrer';doc.head.append(ref);
+ const viewport=doc.createElement('meta');viewport.name='viewport';viewport.content='width=device-width,initial-scale=1';doc.head.append(viewport);
+ const style=doc.createElement('style');
+ style.textContent='body{font:15px/1.55 system-ui,sans-serif;color:#132136;max-width:1024px;margin:20px auto;padding:0 20px}h1{font-size:28px}h2{border-bottom:1px solid #abb8c8;padding-bottom:5px}article{border:1px solid #aebdcc;border-radius:9px;padding:15px;margin:12px 0;break-inside:avoid}a{color:#145b8b}p,li,small{overflow-wrap:anywhere}small{color:#4b5e71;display:block}strong{font-weight:700}@media print{body{padding:0;margin:0}article{break-inside:avoid}}';
+ doc.head.append(style);
+ const el=(parent,tag,label)=>{const e=doc.createElement(tag);e.textContent=String(label);parent.append(e);return e;};
+ const github=(parent,label,url)=>{const e=doc.createElement('a');e.href=url;e.textContent=label;e.rel='noopener noreferrer';e.target='_blank';parent.append(e);return e;};
+ el(doc.body,'h1','zSentinel · Saved product issue and PR worklist');
+ el(doc.body,'p','P0-first; filtered saved issues only. NOT current owner, required CI, branch protection, merged main or live release.');
+ el(doc.body,'p','Original board UTC: '+board.observed_at_utc+' · original SHA256: '+boardSha);
+ el(doc.body,'p','Included: '+rows.length+' of '+board.cards.length+' saved issues. Omitted issues are not solved or owner-free.');
+ const age=archivedPrFreshnessNow();
+ el(doc.body,'p','Saved PR ZIP source: '+age.status+' · '+age.age+' (untrusted local clock; no live GitHub refresh).');
+ if(savedPrHistory.sources_provided){
+   el(doc.body,'h2','Historical ZIP source custody');
+   savedPrHistory.original_archive_sources.forEach(source=>{
+     const item=el(doc.body,'article','');
+     el(item,'p','Source #'+source.source_index+' · '+source.earliest_observed_utc+' to '+source.latest_observed_utc);
+     el(item,'small','Manifest SHA256: '+source.review_manifest_sha256+' · board SHA256: '+source.board_sha256);
+     el(item,'small','Missing gate batch indexes: '+(source.missing_batch_indexes.join(', ')||'none reported'));
+   });
+ }else el(doc.body,'p','No PR ZIP archive was included. Cross-source existing-PR relationships are UNKNOWN.');
+ el(doc.body,'h2','Source-bound P0-first issue review list');
+ let lastProject=null;
+ rows.forEach(card=>{
+   if(card.project!==lastProject){lastProject=card.project;el(doc.body,'h3',card.project);}
+   const item=el(doc.body,'article','');
+   el(item,'strong',card.priority+' · '+card.title+' · ');
+   github(item,card.issue,card.url);
+   el(item,'small','Issue coverage: '+card.issue_coverage+
+     ' · original claim context: '+card.claim_context+' · NO current owner proof.');
+   const archive=savedPrHistory.issues[card.issue];
+   if(archive){
+     el(item,'p','Historical PR relations: '+archive.source_pr_total+
+       ' · lost source issue links: '+archive.issue_links_lost_while_pr_sampled+
+       ' · missing PR final sample: '+archive.prs_missing_last_saved_snapshot+
+       ' · omitted candidates: '+archive.not_shown_count);
+   }else el(item,'p','No archived issue-to-PR record in supplied sample: UNKNOWN, never PR-free.');
+   const prs=new Map();
+   card.open_pr_candidates.forEach(u=>prs.set(u,{url:u,head:null,gate:'board candidate only'}));
+   if(archive)archive.prs.forEach(pr=>prs.set(pr.url,{url:pr.url,head:pr.latest_observed_head,
+     gate:pr.source_gate,missing:pr.pr_missing_last_source,broken:pr.issue_link_missing_last_source}));
+   if(!prs.size)el(item,'p','No existing PR observed in this bounded sample; check live repository before new work.');
+   else{
+     const list=doc.createElement('ul');item.append(list);
+     Array.from(prs.values()).slice(0,15).forEach(pr=>{
+       const li=doc.createElement('li');list.append(li);
+       github(li,pr.url,pr.url);
+       el(li,'small','Saved HEAD '+(pr.head||'UNKNOWN')+' · saved gate '+pr.gate+
+         ' · missing last PR sample '+(pr.missing===true?'YES':'UNKNOWN/NO')+
+         ' · issue link missing last sample '+(pr.broken===true?'YES':'UNKNOWN/NO'));
+     });
+   }
+   el(item,'p','Next: confirm real existing PR, current active claims, exact-head checks and independent review before any claim or merge.');
+ });
+ el(doc.body,'h2','Authorization boundary');
+ el(doc.body,'p','No action performed. Claims, retries, CI changes, review approval, GitHub merge, deployment or worker dispatch require separate live verified owner authority.');
+ el(doc.body,'small','All issue titles and links originate from the admitted saved board or saved PR archives. No private human annotations, contact labels, tokens, other unselected source rows or inline scripts are exported.');
+ return '<!doctype html>\\n'+doc.documentElement.outerHTML+'\\n';
+}
+let portfolioHtmlReviewed=null,portfolioHtmlSource=null;
+function portfolioHtmlIdentity(){
+ return JSON.stringify({issues:filtered().map(c=>c.issue),boardSha,
+  project:document.getElementById('project').value,
+  priority:document.getElementById('priority').value,
+  search:document.getElementById('search').value,
+  historical:document.getElementById('historicalPrFilter').value,
+  change:document.getElementById('change').value,
+  disposition:document.getElementById('disposition').value,
+  followupStatus:document.getElementById('followupStatus').value});
+}
+const invalidatePortfolioHtml=()=>{
+ portfolioHtmlReviewed=null;portfolioHtmlSource=null;
+ document.getElementById('portfolioHtmlDownload').disabled=true;
+ document.getElementById('portfolioHtmlPanel').hidden=true;
+};
+document.getElementById('portfolioHtmlReview').onclick=()=>{
+ saveSelection();
+ const full=staticPortfolioWorklist();
+ invalidatePortfolioHtml();
+ if(!full){status.textContent='No saved product issue matches those filters; nothing was exported.';return;}
+ portfolioHtmlSource=portfolioHtmlIdentity();portfolioHtmlReviewed=full;
+ const page=new DOMParser().parseFromString(full,'text/html');
+ const preview=document.getElementById('portfolioHtmlPreview');
+ preview.replaceChildren(...Array.from(page.body.childNodes).map(n=>document.importNode(n,true)));
+ document.getElementById('portfolioHtmlPanel').hidden=false;
+ document.getElementById('portfolioHtmlDownload').disabled=false;
+ status.textContent='Review the P0-first source-only worklist. No contact labels, external actions or live claims included.';
+};
+document.getElementById('portfolioHtmlDownload').onclick=()=>{
+ saveSelection();
+ if(!portfolioHtmlReviewed||portfolioHtmlIdentity()!==portfolioHtmlSource){
+  invalidatePortfolioHtml();status.textContent='Filters or issue selection changed; preview the worklist again.';return;
+ }
+ const uri=URL.createObjectURL(new Blob([portfolioHtmlReviewed],{type:'text/html;charset=utf-8'}));
+ const a=elem('a');a.href=uri;a.download='zsentinel-private-portfolio-existing-pr-worklist.html';
+ a.click();setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ invalidatePortfolioHtml();
+ status.textContent='Filtered source-only PR worklist downloaded as standalone, script-free HTML.';
+};
 document.getElementById('previewBrief').onclick=()=>{
  saveSelection();
  viewedBrief=currentBrief();
