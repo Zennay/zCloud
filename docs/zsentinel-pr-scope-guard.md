@@ -749,6 +749,14 @@ Alle operatoroppervlakken gebruiken dezelfde Nederlandse gatevertaling uit `zsen
 
 Een reviewer kan na `CHANGES_REQUESTED` nog een gewone `COMMENTED`-review indienen. Die reactie is geen nieuwe goedkeuring of intrekking; de actuele reviewerbeslissing wordt daarom uitsluitend uit `APPROVED`, `CHANGES_REQUESTED` of `DISMISSED` afgeleid, op exact dezelfde HEAD en met de nieuwste waargenomen beslissings-ID per onafhankelijke reviewer. Bovendien krijgt een openstaand `CHANGES_REQUESTED` een concrete eigenaaractie ook wanneer andere exacte-HEAD checks nog in de wachtrij staan. Dat voorkomt dat het product uitsluitend 'wacht op CI' zegt terwijl de PR-eigenaar al een wijzigingsverzoek kan afhandelen. Dit blijft een read-only steekproef, niet GitHub's volledige vereiste reviewregelset.
 
+### 21 oktober · Portfolio merge-first kan echte reviewvoortgang herkennen
+
+De bestaande eenmalige portfolio-PR-balie (maximaal drie projecten en vier expliciet gecontroleerde current-head PR's) neemt nu ook de *geobserveerde* aantallen openstaande individuele/teamreviewverzoeken en de SHA-256-vingerafdruk van die verzoeken over uit de begrensde dubbele GitHub-lezing. Dit verschijnt in JSON, de Nederlandstalige tekst/Markdown, de offline HTML-kaarten en de menselijke merge-first shortlist. Een verzoek is **nooit** een ingediende approval. De blocker `independent_review_requested_waiting` is bewust anders dan `independent_review_not_seen`: geen dubbele verzoekactie wanneer een reviewer al is uitgenodigd.
+
+De optionele historische PR-gatevergelijking toont nu wijzigingen in de reviewer-verzoekenset als **nieuw bewijs op dezelfde HEAD**, ook wanneer CI en ingediende reviews onveranderd lijken. Het bestaande SHA-256-bronbewijs van de Check Runs, legacy-statussen en reviews werd abusievelijk behandeld als een 40-cijferige Git SHA: dat is hersteld met een strikt 64-hexadecimaal SHA-256-patroon, gescheiden van de 40-cijferige commit/base-SHA. Beide snapshots moeten volledige, stabiele checks, review-verzoeken en geldige fingerprints hebben voor de categorie `same_exact_head_and_gate_receipts_at_two_observations`. Oudere snapshots zonder reviewerbron blijven *incomplete*, nooit automatisch als een ongewijzigde HOLD weggeschreven.
+
+Het product adviseert alleen menselijk vervolgwerk: geen automatische reviewverzoeken, merge, issueafhandeling, CI-rerun, claim, worker-/VPS-ingreep of deploy. Protected main, onafhankelijke review, actieve eigenaarsclaims en exacte-HEAD vereiste CI blijven aparte autorisatievoorwaarden.
+
 ### Direct Dutch triage without exporting JSON
 
 The same bounded CLI supports `--format text` for an immediately readable
