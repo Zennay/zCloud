@@ -218,3 +218,30 @@ Notion-bron. Import is alleen een **positieve statusaanwijzing**;
 werkelijke claimhouder, scope, bestandsrechten, dispatch, merge, runner
 en productieherstel blijven onbewezen en ongeautoriseerd. De tool voert
 geen Notion-write of GitHub/VPS-actie uit.
+
+## 21 oktober · Notion-verificatiefase is geen vrije scope
+
+De live read-only Notion-query en de privé opgeslagen connector- of native
+API-snapshot behandelen nu **Claimed, Running en Verifying** als drie
+verschillende positieve aanwijzingen van nog niet afgerond projectwerk.
+Dit is een bewust conservatieve verruiming: in de werkelijke Portfolio
+Work Queue staat **Status** als select-veld en **Work ID** als Notion
+`unique_id` (`prefix: "PWQ"`, positieve `number`). De optionele
+native import accepteert daarnaast de reeds ondersteunde legacy
+`number`/`status`-vorm, maar valideert bij echte `unique_id` het
+exacte prefix en bij beide vormen de bronidentiteit.
+
+De importer bewaart aparte geaggregeerde `verifying_project_counts` en
+`verifying_count`. De portfolio-HTML toont nu de ondergrens
+**Verifying ≥N · eigenaar hercontroleren** bij een project met positieve
+verificatiewaarneming; het tekstrapport vermeldt dezelfde eigenaar-HOLD.
+De totaaltelling blijft een **observatie van werkstatussen**, géén bewijs
+van een huidige lease, uitvoerende worker of bestandsclaim. Ontbrekende
+projecten of onvolledige bronnen blijven **ONBEKEND**; de privé-snapshot
+blijft maximaal tien minuten bruikbaar.
+
+De bestaande P0/P1 probleemkiezer houdt een gerelateerde OPEN PR ook bij
+onvolledige GitHub-dekking vóór een nieuwe implementatie. Zonder bekende
+PR wordt bij waargenomen Verifying eerst een eigenaar-/reviewhercontrole
+gevraagd in plaats van nieuwe scope toe te kennen. Er wordt nog steeds
+**niets** automatisch geclaimd, geretriggerd, gemerged of gedeployed.
