@@ -1556,14 +1556,16 @@ def main():
                         help="Read only local /proc listener presence; no job or online proof")
     parser.add_argument("--host-pressure", action="store_true",
                         help="Read bounded host RAM/swap/load and root disk headroom; never admits workers")
-    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief", "owner-book"), default="text")
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief", "owner-book", "owner-snapshot"), default="text")
     parser.add_argument("--owner-project", choices=tuple(sorted(PORTFOLIO_PROJECTS)),
                         help="Canonical project id for a private single-project owner brief")
-    parser.add_argument("--output", help="New owner-private file: .html or .md")
+    parser.add_argument("--output", help="New owner-private file: .html, .md or .json")
+    parser.add_argument("--previous-owner-snapshot",
+                        help="Existing owner-private .json snapshot for endpoint comparison")
     args = parser.parse_args()
     if not 1 <= args.max_rows <= MAX_ROWS:
         parser.error("--max-rows must be between 1 and 500")
-    if (args.format in ("html", "markdown", "owner-brief", "owner-book")) != bool(args.output):
+    if (args.format in ("html", "markdown", "owner-brief", "owner-book", "owner-snapshot")) != bool(args.output):
         parser.error("Private HTML/Markdown requires --output, other formats cannot write files")
     if (args.format == "owner-brief") != bool(args.owner_project):
         parser.error("--format owner-brief requires --owner-project; other modes reject it")
@@ -1572,7 +1574,17 @@ def main():
                          include_runner_processes=args.runner_processes,
                          contracts_file=args.contracts_file,
                          include_host_pressure=args.host_pressure)
-        if args.format == "html":
+        packet["portfolio_previous_comparison"] = (
+            owner_snapshot_changes(packet, read_owner_snapshot(
+                args.previous_owner_snapshot))
+            if args.previous_owner_snapshot else None
+        )
+        if args.format == "owner-snapshot":
+            snapshot_json = json.dumps(owner_snapshot(packet), ensure_ascii=False,
+                                       indent=2, sort_keys=True) + "\\n"
+            save_private(args.output, snapshot_json, ".json")
+            print("Privé minimaal eigenaarssnapshot gemaakt (0600); geen queue- of bronwijziging.")
+        elif args.format == "html":
             save_private(args.output, html_view(packet), ".html")
             print("Privé herstelbalie gemaakt (0600); geen systeemactie.")
         elif args.format == "markdown":
