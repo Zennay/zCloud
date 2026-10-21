@@ -264,9 +264,9 @@ def _review_summary(rows):
 
 
 def _discover_sampled_open_prs(issue_url, *, token=None):
-    """Best-effort same-repo, issue-text hints from one open-PR page.
+    """Best-effort same-repo, issue-text hints from a bounded PR window.
 
-    A missing first-page mention does NOT prove there is no existing PR.
+    Missing text mentions in these pages never prove a repair PR absent.
     GitHub's issue cross-reference graph is not reconstructed here.
     """
     match = ISSUE_URL.fullmatch(issue_url)
@@ -279,6 +279,7 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
     scanned_rows = 0
     pages_scanned = 0
     first_page_rows = None
+    first_page_skipped_rows = 0
     last_page_short = False
     # Pagination is limited to four 30-PR pages. The last short page is a
     # historical observation, not durable proof that no other repair exists.
@@ -298,6 +299,8 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
         for row in payload:
             if not isinstance(row, dict):
                 skipped_rows += 1
+                if page_number == 1:
+                    first_page_skipped_rows += 1
                 continue
             identity = row.get("number")
             base = row.get("base")
@@ -308,9 +311,13 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
                     or row.get("state") != "open"
                     or type(row.get("draft")) is not bool):
                 skipped_rows += 1
+                if page_number == 1:
+                    first_page_skipped_rows += 1
                 continue
             if identity in seen:
                 skipped_rows += 1
+                if page_number == 1:
+                    first_page_skipped_rows += 1
                 continue
             seen.add(identity)
             status, _ = _body_issue_reference(row, full_name, int(number))
@@ -328,7 +335,7 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
                         "closing_keyword_only" if status == "CLOSING_KEYWORD_TEXT_OBSERVED"
                         else "text_reference_only"
                     ),
-                    "candidate_origin": "sampled_open_pr_first_page_text_only",
+                    "candidate_origin": "sampled_open_pr_bounded_window_text_only",
                 })
         if last_page_short:
             break
@@ -343,7 +350,7 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
         "pagination_window_full": not last_page_short,
         "candidate_text_matches_in_page": matched_total,
         "candidate_records_returned": len(candidates),
-        "skipped_or_malformed_first_page_rows": skipped_rows,
+        "skipped_or_malformed_first_page_rows": first_page_skipped_rows,
         "skipped_or_malformed_rows_in_window": skipped_rows,
         "candidate_list_truncated": matched_total > len(candidates),
         "source_page_may_be_incomplete": True,
@@ -364,7 +371,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         )
     if not candidates and not discover_unlinked:
         raise GitHubReadError(
-            "issue has no sampled PR; use explicit first-page discovery or refresh source"
+            "issue has no sampled PR; use explicit bounded discovery or refresh source"
         )
     if (type(source_case) is not dict
             or source_case.get("policy") != "zsentinel-recovery-case-handoff-v1"):
@@ -391,8 +398,8 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
     }
     extra_get_attempts = 0
     if discover_unlinked:
-        # Optional operator-directed discovery only: one first-page GET,
-        # then the same bounded, double-read candidate observation as normal.
+        # Operator-directed, maximum four open-PR page GETs, then the
+        # same bounded, double-read candidate observation as normal.
         # A matching body phrase is never considered an authorized issue link.
         candidates, discovery = _discover_sampled_open_prs(
             source_url, token=token,
@@ -674,17 +681,21 @@ def owner_html(report):
     discovery = report["optional_unlinked_discovery"]
     if discovery["performed"]:
         rows.append(
-            "<section><h2>Opt-in first-page open-PR discovery</h2><p>"
-            "This is an incomplete text-reference search, NOT evidence "
-            "that no other repair PR exists.</p><p>Open PRs sampled: " +
-            str(discovery["first_page_rows"]) + " / first " +
-            str(discovery["first_page_limit"]) +
+            "<section><h2>Opt-in paginated open-PR discovery</h2><p>"
+            "This is a bounded text-reference search, NOT evidence "
+            "that no other repair PR exists.</p><p>Open PRs scanned: " +
+            str(discovery["open_pr_rows_scanned"]) + " across " +
+            str(discovery["pages_scanned"]) + "/" +
+            str(discovery["max_pages"]) + " pages" +
+            (" · last observed page was full (more PRs may exist)"
+             if discovery["pagination_window_full"] else
+             " · last observed page was short (snapshot may still drift)") +
             " · text mentions found: " +
             str(discovery["candidate_text_matches_in_page"]) +
             " · candidates retained: " +
             str(discovery["candidate_records_returned"]) +
             " · skipped invalid records: " +
-            str(discovery["skipped_or_malformed_first_page_rows"]) +
+            str(discovery["skipped_or_malformed_rows_in_window"]) +
             (" · candidate sample truncated" if discovery[
                 "candidate_list_truncated"] else "") + ".</p></section>"
         )
@@ -855,16 +866,19 @@ def markdown(report):
         lines.extend([
             "## Opt-in bounded existing-PR discovery",
             "",
-            "- Sampled only first " + str(discovery["first_page_limit"]) +
-            " open-PR records, observed " + str(discovery["first_page_rows"]),
+            "- Open PR records scanned: " + str(discovery["open_pr_rows_scanned"]) +
+            " (pages " + str(discovery["pages_scanned"]) + "/" +
+            str(discovery["max_pages"]) + ", max " +
+            str(discovery["first_page_limit"]) + " records/page)",
+            "- Pagination window full: " + str(discovery["pagination_window_full"]),
             "- Candidate text references found: " +
             str(discovery["candidate_text_matches_in_page"]),
             "- Candidates retained for live inspection: " +
             str(discovery["candidate_records_returned"]),
             "- Skipped malformed rows: " +
-            str(discovery["skipped_or_malformed_first_page_rows"]),
+            str(discovery["skipped_or_malformed_rows_in_window"]),
             "- Historical relation reverified: NO",
-            "- No matching PR in this page proves absence: NO",
+            "- No matching PR in scanned pages proves absence: NO",
             "",
         ])
     lines.extend([
