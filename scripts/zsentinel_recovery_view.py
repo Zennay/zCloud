@@ -956,6 +956,14 @@ def html_view(decision, registry=None):
     # disappeared from the bounded current sample. Display source-bound holds
     # separately from both active branch conflicts and routable work.
     held = decision.get("incident_dependency_holds")
+    if held is None:
+        # Older saved decisions did not carry dependency coverage. Treat them
+        # as unknown, never as evidence that no dependent work is held.
+        held = {
+            "coverage": "incomplete_or_stale", "count": 0, "examples": [],
+            "samples_truncated": False, "claim_authorized": False,
+            "exact_reconciliation_required": True,
+        }
     held_panel = ""
     if held is not None:
         examples = held.get("examples") if type(held) is dict else None
