@@ -3529,3 +3529,35 @@ wijzigingen aan queue, claims, worker, runner, services of release.
 De nieuwe velden bestaan nog uitsluitend op de bestaande open PR,
 niet op main of de productie-VPS. Onafhankelijke PR-review,
 exacte HEAD-CI en bestaande release-gates blijven vereist.
+
+
+## Otherwise-eligible work held by execution gates or capacity
+
+The router now distinguishes **execution-gate/capacity holds** from both
+unresolved incident dependencies and recent PR-less branch collisions. After
+the current task/claim inventory, explicit eligibility, declared dependencies,
+active claim scopes and optional branch-overlap checks pass, a queued candidate
+that cannot be suggested is retained in the bounded `routing_gate_holds`
+summary when the reason is one of:
+
+- `required_gate_blocked`: one or more of the task's declared
+  `github_hosted` / `self_hosted` gates are in the current portfolio-wide
+  blocked-gate set;
+- `self_hosted_capacity_not_advisory_headroom`: the task requires
+  `self_hosted` but the trusted read-only VPS observation is unavailable,
+  stale, overloaded or otherwise not in `advisory_headroom`;
+- `compute_destination_not_explicitly_routable`: the task did not explicitly
+  set `requires_vps=false` and did not declare the `self_hosted` gate.
+
+Only the first eight candidates are shown, sorted P0→P3 then project/task ID;
+the full bounded count and truncation flag remain available. JSON, operator
+text and the offline HTML cockpit use the same summary. The report shares the
+task/claim freshness coverage: `incomplete_or_stale` is UNKNOWN, and a zero
+count in that state is never an all-clear.
+
+These are otherwise-eligible **human-only HOLDs**, not task recommendations,
+claim grants or retry instructions. They intentionally exclude tasks already
+held by unresolved incident dependencies, overlapping active claims, or a
+recent conflicting branch. The operator must recheck the exact source and the
+authorized gate/capacity owner before reconsidering the task. No queue/claim
+mutation, workflow dispatch, runner restart, or deploy is performed.
