@@ -326,10 +326,124 @@ def branch_work_review_panel(decision):
     )
 
 
+
+def runtime_source_panel(decision):
+    """Private, read-only worker/Notion context for the interactive incident desk.
+
+    The source remains observation-only and cannot affect human dispositions,
+    incident identity, queue leases, work claims or the recovery router.
+    """
+    live = decision.get("live_sources")
+    if live is None:
+        return ""
+    if (type(live) is not dict
+            or live.get("runtime") != "not_observed_no_worker_recovery_claim"
+            or live.get("current_claim_inventory") != "unknown_and_not_used_for_routing"
+            or live.get("notion") not in (
+                "not_observed_no_ownership_claim",
+                "claim_status_observed_no_file_ownership",
+                "private_connector_snapshot_unverified_origin",
+                "degraded_unavailable_no_claim_authority")
+            or live.get("worker_progress") not in (
+                None, "not_requested", "read_only_indexed_events",
+                "degraded_unavailable_no_recovery_proof")):
+        raise ValueError("invalid private incident desk source authority")
+    worker_status = live.get("worker_progress")
+    worker = decision.get("worker_progress_observation")
+    notion_status = live["notion"]
+    notion = decision.get("notion_claims_observation")
+    if worker_status in (None, "not_requested") and worker is not None:
+        raise ValueError("unexpected private worker source")
+    if worker_status == "degraded_unavailable_no_recovery_proof" and worker is not None:
+        raise ValueError("degraded worker observation cannot carry a source")
+    if notion_status in ("not_observed_no_ownership_claim",
+                         "degraded_unavailable_no_claim_authority") and notion is not None:
+        raise ValueError("unverified Notion source contradiction")
+    if worker_status in (None, "not_requested") and notion_status == "not_observed_no_ownership_claim":
+        return ""
+    panels = ['<section class="panel" aria-label="Privé herstelcontext">'
+              '<h2>Werkers en Notion · bronobservaties, géén uitvoerrecht</h2>'
+              '<p class="banner">Alleen privé lokaal; een tijdstempel, Notion status'
+              ' of browserevent bewijst geen actuele lease, claimeigenaar,'
+              ' voortgang, merge- of hersteltoestemming.</p>']
+    if worker_status == "read_only_indexed_events":
+        if worker is None:
+            raise ValueError("worker source receipt without observation")
+        from zsentinel_worker_progress_observer import worker_progress_html
+        # Reuse the existing strict source validator and script-free renderer.
+        panels.append('<details><summary>Browserworker-bron · uitgeklapte'
+                      ' eventtijdlijn en veilige eigenaarvervolgstappen</summary>'
+                      + worker_progress_html(worker) + '</details>')
+    elif worker_status == "degraded_unavailable_no_recovery_proof":
+        panels.append('<p class="banner">Browserworker-bron aangevraagd maar'
+                      ' onbeschikbaar. Niet interpreteren als vrije worker.</p>')
+    if notion is not None:
+        if (type(notion) is not dict
+                or notion.get("source") not in (
+                    "notion_readonly_data_source_pages",
+                    "user_supplied_notion_connector_export_unverified_origin")
+                or notion.get("coverage") not in (
+                    "current_pages_only", "incomplete",
+                    "saved_single_page_not_live_current_claims_unknown")
+                or notion.get("claim_scope_verified") is not False
+                or notion.get("task_inventory_verified") is not False
+                or notion.get("can_dispatch") is not False
+                or notion.get("can_release_claim") is not False
+                or type(notion.get("active_count")) is not int
+                or not 0 <= notion["active_count"] <= 400
+                or type(notion.get("items")) is not list
+                or len(notion["items"]) > 30
+                or type(notion.get("items_truncated")) is not bool):
+            raise ValueError("untrusted private Notion observation")
+        expected = ("claim_status_observed_no_file_ownership" if
+                    notion["source"] == "notion_readonly_data_source_pages" else
+                    "private_connector_snapshot_unverified_origin")
+        if notion_status != expected:
+            raise ValueError("Notion source identity and coverage disagree")
+        if (notion["source"] == "user_supplied_notion_connector_export_unverified_origin"
+                and (notion.get("origin_authenticity_verified") is not False
+                     or notion.get("live_claim_ownership_verified") is not False)):
+            raise ValueError("saved Notion snapshot lacks unverified-origin guard")
+        labels = []
+        for item in notion["items"]:
+            if type(item) is not dict or item.get("status") not in (
+                    "Claimed", "Running", "Verifying"):
+                raise ValueError("invalid Notion work status sample")
+            parts = []
+            for field, limit in (("work", 35), ("status", 12),
+                                 ("project", 80), ("title", 120)):
+                value = item.get(field)
+                if value is None and field == "title":
+                    value = "Titel niet meegestuurd"
+                if (type(value) is not str or len(value) > limit
+                        or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+                    raise ValueError("unsafe private Notion status label")
+                parts.append(escape(value))
+            labels.append("<li>" + " · ".join(parts) + "</li>")
+        caveat = ("HANDMATIG OPGESLAGEN · oorsprong en huidige claims onbekend"
+                  if expected == "private_connector_snapshot_unverified_origin"
+                  else ("ONVOLLEDIGE BRON · niet alle statuspagina's gezien"
+                        if notion["coverage"] == "incomplete" else
+                        "Live opgevraagde Notion werkstatus · geen bestands- of leaseclaim"))
+        panels.append('<details><summary>Notion statusbron · ' +
+                      str(notion["active_count"]) + ' waargenomen werkregels' +
+                      (' · samples afgekapt' if notion["items_truncated"] else '') +
+                      '</summary><p>' + escape(caveat) +
+                      '</p><ul>' + ''.join(labels) +
+                      '</ul><p>Niet bevoegd om werk over te nemen, te hervatten of'
+                      ' als voltooid te markeren.</p></details>')
+    elif notion_status == "degraded_unavailable_no_claim_authority":
+        panels.append('<p class="banner">Notionbron aangevraagd maar'
+                      ' onbeschikbaar. Claimeigenaarschap ONBEKEND.</p>')
+    panels.append('</section>')
+    return ''.join(panels)
+
+
 def review_html(decision):
     """One offline HTML view + bounded private operator handoff in browser."""
     # Validate optional branch data before using it in the source fingerprint.
     branch_panel = branch_work_review_panel(decision)
+    runtime_panel = runtime_source_panel(decision)
     source = _source(decision)
     payload = json.dumps(source, ensure_ascii=True, separators=(",", ":"))
     payload = (payload.replace("<", "\\u003c").replace(">", "\\u003e")
@@ -398,6 +512,7 @@ oorspronkelijke jobidentiteit en bronhash vóór je zelf de bevoegde eigenaar be
 </div>
 </section>
 __BRANCH_PANEL__
+__RUNTIME_PANEL__
 <section class="panel" aria-label="Human escalation overview"><h2>Wie heeft actie nodig?</h2>
 <p class="meta">Alleen huidige gedeeltelijke bron: eigenaarverdeling is geen eigenaarsbewijs of werktoewijzing.</p>
 <div id="ownerSummary"></div></section>
@@ -750,8 +865,12 @@ isFresh();render();
 </script></html>"""
     # Split the ORIGINAL template before inserting either source-derived
     # value. Never scan an inserted incident/branch value for another marker.
-    if (html.count("__BRANCH_PANEL__") != 1 or html.count("__SOURCE__") != 1):
+    if (html.count("__BRANCH_PANEL__") != 1 or
+            html.count("__RUNTIME_PANEL__") != 1 or
+            html.count("__SOURCE__") != 1):
         raise ValueError("offline incident desk template has ambiguous placeholders")
     before_branch, rest = html.split("__BRANCH_PANEL__", 1)
+    between_panels, rest = rest.split("__RUNTIME_PANEL__", 1)
     between, after_source = rest.split("__SOURCE__", 1)
-    return before_branch + branch_panel + between + payload + after_source
+    return (before_branch + branch_panel + between_panels + runtime_panel +
+            between + payload + after_source)
