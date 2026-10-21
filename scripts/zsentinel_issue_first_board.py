@@ -257,7 +257,7 @@ def render_issue_inbox(inbox):
 
 
 def collect(projects, registry, budget):
-    rows, unmatched, partial = [], [], []
+    rows, unmatched, partial, source_inventory = [], [], [], []
     for project in projects:
         choices = [(repo, key) for repo, key in registry.values() if key == project]
         if len(choices) != 1:
@@ -282,6 +282,24 @@ def collect(projects, registry, budget):
                 if rank is not None:
                     available.append((rank, position, entry))
             links = link_candidates([item for _, _, item in available], issues, repo=repo)
+            # Preserve *all* observed priority issues in the same already-read
+            # 100-issue source page. Previously any issue referenced by PR #5
+            # would disappear when only the top four PRs were inspected.
+            # This reverse map is only a source-listing hint: PR and issue may
+            # have changed; no gates, fix or owner availability can be inferred.
+            references_by_issue = {number: [] for number in issues}
+            for pr_number, issue_numbers in links.items():
+                for issue_number in issue_numbers:
+                    references_by_issue[issue_number].append(pr_number)
+            for number, source_issue in sorted(issues.items()):
+                candidates = sorted(set(references_by_issue[number]))
+                source_inventory.append({
+                    "project": project, "repo": repo, **source_issue,
+                    "candidate_pr_count_in_sample": len(candidates),
+                    "candidate_pr_numbers": candidates[:10],
+                    "candidate_prs_omitted": max(0, len(candidates) - 10),
+                    "candidate_pr_source": "UNVERIFIED_RECENT_OPEN_PR_LISTING",
+                })
             sorted_prs = sorted(
                 available,
                 key=lambda item: (
@@ -319,7 +337,7 @@ def collect(projects, registry, budget):
             partial.append({"project": project, "reason": "SOURCE_UNAVAILABLE"})
             # One project's source failure must never discard another.
             continue
-    return prioritize_observed_work(rows), unmatched[:24], partial
+    return prioritize_observed_work(rows), unmatched[:24], partial, source_inventory
 
 
 def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
@@ -1083,6 +1101,7 @@ def main():
         registry = board.registry()
         budget = [0, time.monotonic() + board.MAX_SECONDS]
         targeted = None
+        source_inventory = []
         if args.issue is not None:
             if args.candidate_pr:
                 rows, targeted, partial, target_coverage = collect_explicit_prs(
@@ -1097,7 +1116,8 @@ def main():
                     max_linked_prs=args.max_linked_prs)
             unmatched = []
         else:
-            rows, unmatched, partial = collect(args.project, registry, budget)
+            rows, unmatched, partial, source_inventory = collect(
+                args.project, registry, budget)
             target_coverage = None
         observed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         repo_projects = {
@@ -1105,7 +1125,8 @@ def main():
             if project in args.project
         }
         issue_inbox = (observed_issue_inbox(
-            rows, unmatched, partial, repo_projects)
+            rows, unmatched, partial, repo_projects,
+            source_inventory=source_inventory)
             if args.issue is None else None)
         local_claims = observe_local_claims(DB, args.project)
         if args.output:
