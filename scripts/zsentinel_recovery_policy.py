@@ -1929,8 +1929,9 @@ def main(argv=None):
                         help="sampled issue repair PR number, for --prepare-merge-review")
     parser.add_argument("--live-candidates", action="store_true",
                         help="read up to 3 live GitHub candidate PRs for one source-linked issue; advisory only")
-    parser.add_argument("--discover-unlinked", action="store_true",
-                        help="opt-in bounded existing open-PR discovery for a case with no sampled PRs")
+    parser.add_argument("--discover-existing", "--discover-unlinked",
+                        dest="discover_unlinked", action="store_true",
+                        help="opt-in bounded open-PR discovery alongside historical issue references; advisory only")
     parser.add_argument("--through-priority", choices=("P0", "P1", "P2", "P3"),
                         help="show up to this severity in --case-input (default P3)")
     parser.add_argument("--format", choices=("json", "markdown", "workorders", "html", "csv"), default="json")
@@ -1941,7 +1942,7 @@ def main(argv=None):
                         help="maximum accepted observation age (1..1440; default 60)")
     args = parser.parse_args(argv)
     if args.discover_unlinked and not args.live_candidates:
-        parser.error("--discover-unlinked requires --live-candidates")
+        parser.error("--discover-existing requires --live-candidates")
     if args.live_candidates:
         if (not args.case_input or not args.view_project or args.view_issue is None
                 or args.prepare_merge_review or args.candidate_pr_number is not None
