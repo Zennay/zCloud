@@ -236,7 +236,7 @@ def suggested_actions(packet):
     # pressure can explain slow CI/worker throughput; low pressure does not
     # prove cgroup quotas, GitHub admission, free leases or new worker rights.
     pressure = packet.get("host_pressure")
-    if isinstance(pressure, dict) and pressure.get("status") == "HOST_SNAPSHOT_OBSERVED":
+    if isinstance(pressure, dict) and pressure.get("status") in ("HOST_SNAPSHOT_OBSERVED", "HOST_PARTIAL"):
         hint = pressure.get("pressure_hint")
         if hint in ("HIGH_LOCAL_PRESSURE", "ELEVATED_LOCAL_PRESSURE"):
             result.append(action(
