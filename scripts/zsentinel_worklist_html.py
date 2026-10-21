@@ -511,6 +511,25 @@ const prLabels={open:'Nog te beoordelen',review:'Wacht op review/CI',
  followup:'Opvolging vastgelegd'};
 const labels={open:'Nog te bekijken',owner:'Wacht op bevoegde eigenaar',
   coordination:'Afstemming nodig',followup:'Opvolging genoteerd'};
+function openProjectQueue(){
+ const entries=new Map();
+ const rank={P0:0,P1:1,P2:2,Unspecified:3};
+ function add(key,status,priority){
+  if(status==='followup')return;
+  if(!entries.has(key))entries.set(key,{name:key,count:0,priority:4});
+  const item=entries.get(key);
+  item.count++;
+  item.priority=Math.min(item.priority,rank[priority]??4);
+ }
+ for(const p of prs)add(p.dataset.project,
+  p.querySelector('.pr-local-state').value,p.dataset.priority);
+ for(const t of tickets)add(t.dataset.project,
+  t.querySelector('.local-state').value,t.dataset.priority);
+ for(const c of collisionRows)add(c.dataset.project,
+  c.querySelector('.collision-state').value,c.dataset.priority);
+ return [...entries.values()].sort((a,b)=>a.priority-b.priority||
+  a.name.localeCompare(b.name,'nl'));
+}
 function refresh(){
  const q=search.value.trim().toLocaleLowerCase('nl');
  let count=0;
@@ -563,37 +582,12 @@ function refresh(){
    +prs.length+' bron-PRs; '+unreviewed+' nog te beoordelen. '
    +'Lokale opvolging bewijst geen review, merge of fixes.';
  nextOpenPr.disabled=outstanding===0;
- const perProject=new Map();
- for(const p of prs){
-  const key=p.dataset.project;
-  if(!perProject.has(key))perProject.set(key,{open:0,highest:4});
-  const item=perProject.get(key);
-  if(p.querySelector('.pr-local-state').value!=='followup'){
-   item.open++;
-   item.highest=Math.min(item.highest,{P0:0,P1:1,P2:2,Unspecified:3}[p.dataset.priority]??4);
-  }
- }
- for(const t of tickets){
-  const key=t.dataset.project;
-  if(!perProject.has(key))perProject.set(key,{open:0,highest:4});
-  const item=perProject.get(key);
-  if(t.querySelector('.local-state').value!=='followup'){
-   item.open++;
-   item.highest=Math.min(item.highest,{P0:0,P1:1,P2:2,Unspecified:3}[t.dataset.priority]??4);
-  }
- }
- for(const c of collisionRows){
-  const key=c.dataset.project;
-  if(!perProject.has(key))perProject.set(key,{open:0,highest:4});
-  const item=perProject.get(key);
-  if(c.querySelector('.collision-state').value!=='followup'){
-   item.open++;
-   item.highest=Math.min(item.highest,{P0:0,P1:1,P2:2,Unspecified:3}[c.dataset.priority]??4);
-  }
- }
- const projectsOutstanding=Array.from(perProject.values()).filter(x=>x.open>0).length;
- projectReviewSummary.textContent=projectsOutstanding+' projecten met nog open lokale opvolging in de beperkte bron; '
-   +'P0 eerst, daarna P1. Lokale opvolging is geen bewijs van voltooide fixes.';
+ const reviewQueue=openProjectQueue();
+ const projectsOutstanding=reviewQueue.length;
+ const localOpenEntries=reviewQueue.reduce((sum,item)=>sum+item.count,0);
+ projectReviewSummary.textContent=projectsOutstanding+
+  ' projecten met '+localOpenEntries+' open lokale PR-, issue- of botsingsopvolgingen. '+
+  'P0 eerst, daarna P1; dit is geen bewijs van voltooide fixes.';
  projectNext.disabled=projectsOutstanding===0;
  projectExport.disabled=!project.value;
  projectExport.textContent=project.value?
@@ -622,21 +616,7 @@ function focusOnPr(url){
 }
 for(const p of prs)p.querySelector('.focus-pr').addEventListener('click',()=>focusOnPr(p.dataset.pr));
 projectNext.addEventListener('click',()=>{
- const items=new Map();
- function mark(key,status,priority){
-  if(status==='followup')return;
-  if(!items.has(key))items.set(key,4);
-  items.set(key,Math.min(items.get(key),
-    {P0:0,P1:1,P2:2,Unspecified:3}[priority]??4));
- }
- for(const p of prs)mark(p.dataset.project,
-  p.querySelector('.pr-local-state').value,p.dataset.priority);
- for(const t of tickets)mark(t.dataset.project,
-  t.querySelector('.local-state').value,t.dataset.priority);
- for(const c of collisionRows)mark(c.dataset.project,
-  c.querySelector('.collision-state').value,c.dataset.priority);
- const candidates=[...items.entries()].sort((a,b)=>a[1]-b[1]||
-  a[0].localeCompare(b[0],'nl')).map(row=>row[0]);
+ const candidates=openProjectQueue().map(item=>item.name);
  if(!candidates.length)return;
  const last=candidates.indexOf(lastProjectReview);
  lastProjectReview=candidates[(last+1)%candidates.length];
