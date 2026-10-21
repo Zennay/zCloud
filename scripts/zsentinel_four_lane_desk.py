@@ -317,6 +317,11 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         path.parent / "project-contracts.json"
     )
     local_contract = observe_local_contract(contract_path)
+    # Path equality alone would trust a restored/replaced SQLite DB as the
+    # same timeline. Bind owner receipts to the actual local file identity.
+    source_before = path.stat()
+    if not stat.S_ISREG(source_before.st_mode):
+        raise ValueError("Regular portfolio SQLite source required")
     uri = path.as_uri() + "?mode=ro"
     db = sqlite3.connect(uri, uri=True, timeout=2)
     try:
@@ -613,8 +618,14 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             or missing_local_claim
         ),
     }
+    source_after = path.stat()
+    if ((source_before.st_dev, source_before.st_ino) !=
+            (source_after.st_dev, source_after.st_ino)
+            or not stat.S_ISREG(source_after.st_mode)):
+        raise ValueError("Portfolio SQLite source changed during observation")
     packet["portfolio_source_key"] = hashlib.sha256(
-        (os.uname().nodename + "\\x00" + str(path.resolve()))
+        (os.uname().nodename + "\\x00" + str(path.resolve())
+         + "\\x00" + str(source_after.st_dev) + ":" + str(source_after.st_ino))
         .encode("utf-8")
     ).hexdigest()
     packet["runner_processes"] = (
