@@ -1305,7 +1305,12 @@ def markdown(report):
                 "not_supplied", "incomplete_or_stale",
                 "bounded_examples", "bounded_examples_truncated")
             or dep.get("claim_authorized") is not False
-            or dep.get("runtime_recovered_verified") is not False):
+            or dep.get("runtime_recovered_verified") is not False
+            or (dep.get("coverage") in ("not_supplied", "incomplete_or_stale")
+                and dep.get("held_count") is not None)
+            or (dep.get("coverage") not in ("not_supplied", "incomplete_or_stale")
+                and (type(dep.get("held_count")) is not int
+                     or not 0 <= dep["held_count"] <= 250))):
         raise ValueError("invalid dependency status in owner handoff")
     if dep["coverage"] == "not_supplied":
         lines.append("Incidentafhankelijkheden: bron ONBEKEND, nooit veronderstellen dat alle taken vrij zijn.")
