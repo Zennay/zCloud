@@ -109,19 +109,30 @@ def recovery_priorities(data):
     failed = [u for u in entries if u["state"] == "failed"]
     stopped = [u for u in entries if u["state"] == "inactive"]
     active = [u for u in entries if u["state"] == "active"]
-    load = host["host_load"]
-    cores = host["cores"]
-    under_pressure = (not host["source_complete"] or
-                      host["swap_used_percent"] is None or
-                      host["disk_unavailable_percent"] is None or
-                      load is None or
-                      host["swap_used_percent"] >= 80 or
-                      host["disk_unavailable_percent"] >= 90 or
-                      (type(host.get("root_inode_available_percent")) in (int, float) and
-                       host["root_inode_available_percent"] < 1) or
-                      (type(host.get("root_available_gib")) in (int, float) and
-                       host["root_available_gib"] < 2) or
-                      load > cores * 1.35)
+    # Partial/malformed capacity is UNKNOWN, never falsely healthy and
+    # never a TypeError that prevents an owner handoff.
+    import math
+    def bounded(value, *, positive=False):
+        return (type(value) in (int, float) and math.isfinite(value)
+                and (value > 0 if positive else value >= 0))
+    load, cores = host.get("host_load"), host.get("cores")
+    swap, disk = host.get("swap_used_percent"), host.get("disk_unavailable_percent")
+    inode, free = host.get("root_inode_available_percent"), host.get("root_available_gib")
+    under_pressure = (
+        host.get("source_complete") is not True
+        or not bounded(load) or not bounded(cores, positive=True)
+        or not bounded(swap) or swap > 100
+        or not bounded(disk) or disk > 100
+        or (inode is not None and (not bounded(inode) or inode > 100))
+        or (free is not None and not bounded(free))
+    )
+    if not under_pressure:
+        under_pressure = (
+            swap >= 80 or disk >= 90
+            or (inode is not None and inode < 1)
+            or (free is not None and free < 2)
+            or load > cores * 1.35
+        )
     actions = []
     if under_pressure:
         actions.append(("P0 · capaciteit veiligstellen",
