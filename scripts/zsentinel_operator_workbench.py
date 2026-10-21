@@ -3996,11 +3996,16 @@ function mergeFirstInventory(){
  const cards=filtered({includeHuman:false}).slice();
  const rows=new Map();
  let unknownIssues=0,alternateIssues=0;
+ const missingIssueRefs=[];
  for(const card of cards){
    const archived=savedPrHistory.issues[card.issue];
    const references=new Set(card.open_pr_candidates);
    if(archived)archived.prs.forEach(pr=>references.add(pr.url));
-   if(!references.size)unknownIssues++;
+   if(!references.size){
+     unknownIssues++;
+     missingIssueRefs.push({issue:card.issue,url:card.url,project:card.project,
+       priority:card.priority});
+   }
    if(references.size>1)alternateIssues++;
    for(const url of references){
      let row=rows.get(url);
@@ -4081,13 +4086,14 @@ function mergeFirstInventory(){
    archive_source_incomplete:sourceBatchesMissing,
    archive_sample_is_not_live:true,
    unknown_issue_prs:unknownIssues,issues_with_alternative_prs:alternateIssues,
+   issues_without_saved_pr_candidate:missingIssueRefs,
    total_saved_prs:ordered.length,hidden_due_to_display_limit:Math.max(0,ordered.length-80)};
 }
 function mergeFirstCsv(){
  const report=mergeFirstInventory();
  if(!report.selected_issues)return null;
  const columns=['original_board_sha256','board_observed_at_utc',
-   'source_age_not_live','priority','pr_url','source_issue_links',
+   'source_age_not_live','priority','pr_reference_state','pr_url','source_issue_links',
    'linked_issue_count','multiple_issues_share_pr','issue_has_alternative_prs',
    'source_types','board_heads_observed','archived_heads_observed',
    'source_head_variation_not_conflict_proof','sampled_original_board_blocking_unknowns',
@@ -4097,20 +4103,69 @@ function mergeFirstCsv(){
    'main_merge_verified','claim_authorized','merge_authorized','deploy_authorized',
    'source_archive_manifest_sha256s','archived_gate_batches_missing',
    'human_next_step_without_execution_authority'];
+ const common={
+   original_board_sha256:boardSha,
+   board_observed_at_utc:board.observed_at_utc,
+   source_age_not_live:'historical_saved_evidence_only',
+   active_owner_verified:false,required_ci_verified:false,
+   independent_review_verified:false,main_merge_verified:false,
+   claim_authorized:false,merge_authorized:false,deploy_authorized:false,
+   source_archive_manifest_sha256s:report.archive_source_receipts.map(s=>s.manifest).join(' | '),
+   archived_gate_batches_missing:report.archive_source_incomplete,
+ };
+ const queue=report.rows.map(row=>({
+   priority:row.priority,sort:row.url,kind:'saved_pr',row
+ })).concat(report.issues_without_saved_pr_candidate.map(issue=>({
+   priority:issue.priority,sort:issue.url,kind:'unobserved_pr',issue
+ })));
+ const ranks={P0:0,P1:1,P2:2,Unspecified:3};
+ queue.sort((a,b)=>ranks[a.priority]-ranks[b.priority]||
+   Number(a.kind==='unobserved_pr')-Number(b.kind==='unobserved_pr')||
+   a.sort.localeCompare(b.sort));
  const lines=[columns.map(csvCell).join(',')];
- for(const row of report.rows){
-  const values=[boardSha,board.observed_at_utc,'historical_saved_evidence_only',
-   row.priority,row.url,row.issues.map(issue=>issue.url).join(' | '),
-   row.issues.length,row.same_pr_covers_multiple_issues,
-   row.issue_has_alternative_prs,row.source_kinds.join(' | '),
-   row.board_heads.join(' | '),row.archived_heads.join(' | '),
-   row.source_head_variation,row.board_gate_unknowns.join(' | '),
-   row.historical_gate_labels.join(' | '),
-   row.missing_final_archived_pr_sample,row.issue_link_disappeared_in_archive,
-   row.archived_candidates_truncated,false,false,false,false,false,false,false,
-   report.archive_source_receipts.map(source=>source.manifest).join(' | '),
-   report.archive_source_incomplete,row.human_next_step];
-  lines.push(values.map(csvCell).join(','));
+ for(const item of queue){
+   const record={...common,priority:item.priority};
+   if(item.kind==='saved_pr'){
+     const row=item.row;
+     Object.assign(record,{
+       pr_reference_state:'saved_pr_candidate_not_live',
+       pr_url:row.url,
+       source_issue_links:row.issues.map(issue=>issue.url).join(' | '),
+       linked_issue_count:row.issues.length,
+       multiple_issues_share_pr:row.same_pr_covers_multiple_issues,
+       issue_has_alternative_prs:row.issue_has_alternative_prs,
+       source_types:row.source_kinds.join(' | '),
+       board_heads_observed:row.board_heads.join(' | '),
+       archived_heads_observed:row.archived_heads.join(' | '),
+       source_head_variation_not_conflict_proof:row.source_head_variation,
+       sampled_original_board_blocking_unknowns:row.board_gate_unknowns.join(' | '),
+       sampled_historical_gate_labels:row.historical_gate_labels.join(' | '),
+       pr_missing_last_saved_sample:row.missing_final_archived_pr_sample,
+       issue_link_absent_in_saved_sample:row.issue_link_disappeared_in_archive,
+       archived_pr_candidates_truncated:row.archived_candidates_truncated,
+       human_next_step_without_execution_authority:row.human_next_step
+     });
+   }else{
+     Object.assign(record,{
+       pr_reference_state:'not_observed_in_bounded_sources_unknown',
+       pr_url:'',
+       source_issue_links:item.issue.url,
+       linked_issue_count:1,
+       multiple_issues_share_pr:false,
+       issue_has_alternative_prs:false,
+       source_types:'no_admitted_pr_reference',
+       board_heads_observed:'UNKNOWN',
+       archived_heads_observed:'UNKNOWN',
+       source_head_variation_not_conflict_proof:false,
+       sampled_original_board_blocking_unknowns:'UNKNOWN',
+       sampled_historical_gate_labels:'UNKNOWN',
+       pr_missing_last_saved_sample:false,
+       issue_link_absent_in_saved_sample:false,
+       archived_pr_candidates_truncated:false,
+       human_next_step_without_execution_authority:'check_live_issue_pr_inventory_and_owner_before_new_work'
+     });
+   }
+   lines.push(columns.map(name=>csvCell(record[name]??'')).join(','));
  }
  return lines.join('\\r\\n')+'\\r\\n';
 }
