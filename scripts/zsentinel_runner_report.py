@@ -1265,9 +1265,105 @@ def save_private(path, markup, extension=".html"):
     return created
 
 
+
+def save_private_incident_bundle(path, data):
+    """Create one owner-private incident folder from one admitted observation.
+
+    HTML, Markdown and JSON are rendered before the first filesystem write.
+    The SHA256 manifest makes source equivalence verifiable without carrying
+    process arguments, credentials or private source file paths.
+    """
+    import hashlib
+    import json
+
+    report_json = render_private_json_handoff(data)
+    payload = json.loads(report_json)
+    report_markdown = (render_private_handoff(data) if data.get("timeline") is not None
+                       else render_private_immediate_handoff(data))
+    report_html = render(data)
+    rendered = {
+        "incident.html": report_html.encode("utf-8"),
+        "owner-handoff.md": report_markdown.encode("utf-8"),
+        "owner-inbox.json": report_json.encode("utf-8"),
+    }
+    if any(not body or len(body) > 128 * 1024 for body in rendered.values()):
+        raise ValueError("Private incident artifact exceeds bounded output size")
+    manifest = {
+        "schema": "zsentinel.private-incident-bundle.v1",
+        "source": payload["source"],
+        "observation_window": payload["window"],
+        "artifacts": {
+            name: {"sha256": hashlib.sha256(body).hexdigest(), "bytes": len(body)}
+            for name, body in sorted(rendered.items())
+        },
+        "claim_authorized": False,
+        "service_restart_authorized": False,
+        "github_dispatch_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "github_job_recovered": None,
+        "production_restored": None,
+    }
+    rendered["MANIFEST.json"] = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+
+    target = Path(path)
+    if not target.name or target.name in {".", ".."} or target.is_symlink():
+        raise ValueError("Choose a fresh incident bundle folder")
+    # The parent is already provisioned by the owner, not created in a shared
+    # runtime tree. All entries are opened relative to pinned directory fds.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    parent_fd = os.open(str(target.parent), flags)
+    bundle_fd = None
+    made = False
+    written = []
+    try:
+        info = os.fstat(parent_fd)
+        if (info.st_uid != os.geteuid() or
+                stat.S_IMODE(info.st_mode) & 0o077 or
+                not stat.S_ISDIR(info.st_mode)):
+            raise PermissionError("Private owner directory required")
+        os.mkdir(target.name, mode=0o700, dir_fd=parent_fd)
+        made = True
+        bundle_fd = os.open(target.name, flags, dir_fd=parent_fd)
+        os.fchmod(bundle_fd, 0o700)
+        for name, body in rendered.items():
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                         os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                         0o600, dir_fd=bundle_fd)
+            written.append(name)
+            with os.fdopen(fd, "wb") as output:
+                os.fchmod(output.fileno(), 0o600)
+                output.write(body)
+                output.flush()
+                os.fsync(output.fileno())
+        os.fsync(bundle_fd)
+        os.fsync(parent_fd)
+    except BaseException:
+        if bundle_fd is not None:
+            for name in reversed(written):
+                try:
+                    os.unlink(name, dir_fd=bundle_fd)
+                except FileNotFoundError:
+                    pass
+        if made:
+            try:
+                os.rmdir(target.name, dir_fd=parent_fd)
+            except OSError:
+                pass
+        raise
+    finally:
+        if bundle_fd is not None:
+            os.close(bundle_fd)
+        os.close(parent_fd)
+    return manifest
+
+
 def main():
     parser = argparse.ArgumentParser(description="Private one-shot zSentinel runner incident workbench")
-    parser.add_argument("--output", required=True, help="NEW private 0600 output (never overwritten)")
+    parser.add_argument("--output", help="NEW private 0600 output (never overwritten)")
+    parser.add_argument("--bundle", help="NEW owner-private folder for coherent HTML/MD/JSON incident package")
     parser.add_argument("--format", choices=("html", "markdown", "json"), default="html",
                         help="Private HTML, JSON or Markdown owner handoff from current, T0/T1 or offline timeline")
     parser.add_argument("--receipt", help="Replay one previously saved owner-private JSON (no current host read)")
@@ -1277,6 +1373,10 @@ def main():
     parser.add_argument("--timeline", nargs="+", metavar="PRIVATE_JSON",
                         help="Offline historical view of 3–12 ordered private receipts")
     args = parser.parse_args()
+    if bool(args.output) == bool(args.bundle):
+        parser.error("Choose exactly one: --output or --bundle")
+    if args.bundle and args.format != "html":
+        parser.error("--bundle creates all formats; omit --format")
     if (bool(args.t0) != bool(args.t1) or
             sum(bool(x) for x in (args.previous, args.t0, args.timeline, args.receipt)) > 1):
         parser.error("Choose one: --t0 and --t1, --previous, or --timeline")
@@ -1296,7 +1396,9 @@ def main():
                 from zsentinel_runner_snapshot import packet, changes, load_private
                 current = packet(data)
                 data["comparison"] = changes(load_private(args.previous), current)
-        if args.format == "json":
+        if args.bundle:
+            save_private_incident_bundle(args.bundle, data)
+        elif args.format == "json":
             markup = render_private_json_handoff(data)
             save_private(args.output, markup, extension=".json")
         elif args.format == "markdown":
@@ -1309,7 +1411,8 @@ def main():
     except (OSError, ValueError, KeyError, TypeError, UnicodeError):
         # Do not echo report paths, unit command lines or operator-private details.
         parser.exit(1, "Kon geen privé rapport maken; controleer veilige doelmap en rechten.\n")
-    print("Privé herstelwerkbank gemaakt (0600, zonder live wijziging).")
+    print("Privé coherent incidentpakket gemaakt (0700/0600; geen servicewijziging)." if args.bundle
+          else "Privé herstelwerkbank gemaakt (0600, zonder live wijziging).")
 
 
 if __name__ == "__main__":
