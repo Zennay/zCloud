@@ -1017,10 +1017,14 @@ def render_private_json_handoff(data):
             "observations": 1 + int(data.get("comparison") is not None),
             "comparison_count": int(data.get("comparison") is not None),
         }
-        source_kind = ("private-offline-pair" if data.get("offline_replay") is True
-                       and data.get("comparison") is not None else
-                       "private-offline-receipt" if data.get("offline_replay") is True
-                       else "local-read-only-current")
+        source_kind = (
+            "private-offline-pair" if data.get("offline_replay") is True
+            and data.get("comparison") is not None else
+            "private-offline-receipt" if data.get("offline_replay") is True else
+            "local-current-with-saved-previous"
+            if data.get("comparison") is not None else
+            "local-read-only-current"
+        )
 
     # A missing observation is UNKNOWN, never zero healthy/failed runners.
     observed = units.get("runner_units_observed") is True
@@ -1150,8 +1154,9 @@ def render_private_immediate_handoff(data):
     """
     import json
     evidence = json.loads(render_private_json_handoff(data))
-    if evidence["source"] not in {"local-read-only-current", "private-offline-pair",
-                                  "private-offline-receipt"}:
+    if evidence["source"] not in {"local-read-only-current",
+                                  "local-current-with-saved-previous",
+                                  "private-offline-pair", "private-offline-receipt"}:
         raise ValueError("Immediate handoff requires current or saved T0/T1 evidence")
     source = evidence["source"]
     window = evidence["window"]
@@ -1159,6 +1164,8 @@ def render_private_immediate_handoff(data):
     origin = (
         "Live eenmalig gelezen (alleen lokale host/systemd-bron)"
         if source == "local-read-only-current" else
+        "Nieuwe lokale hostobservatie met eerdere opgeslagen T0-bon (T0 is historisch)"
+        if source == "local-current-with-saved-previous" else
         "HISTORISCHE PRIVÉBON: één oude momentopname (niet opnieuw live bevestigd)"
         if source == "private-offline-receipt" else
         "HISTORISCHE T0/T1-bonnen (niet opnieuw live bevestigd)"
@@ -1282,8 +1289,11 @@ def render_owner_issue_draft(data):
         "**Status: NIET BEVESTIGD; geen runnerherstart, claimmutatie of deploy.**",
         "",
         "- Incidentreferentie (geen autorisatietoken): `" + incident_ref + "`",
-        "- Bron: " + ("historische privéwaarneming" if historical else
-                       "eenmalige lokale read-only waarneming") + ".",
+        "- Bron: " + (
+            "historische privéwaarneming" if historical else
+            "nieuwe read-only waarneming met historisch T0"
+            if kind == "local-current-with-saved-previous" else
+            "eenmalige lokale read-only waarneming") + ".",
         "- GitHub-jobtoewijzing: ONBEKEND; apart door eigenaar controleren.",
         "- GitHub-workflow / CI-resultaat: NIET ONDERZOCHT DOOR DIT RAPPORT.",
         "- Runnerinventaris: " + (
