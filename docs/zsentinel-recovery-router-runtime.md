@@ -1,4 +1,52 @@
 
+### 21 oktober · volledige routegeschiedenis over meerdere bestaande bronvensters
+
+De bestaande `scripts/zsentinel_portfolio_overview.py --compare-with <pad>`
+mag maximaal zeven chronologisch opgeslagen privéportfolio-JSON-bronnen
+lezen. Eerder werd uitsluitend de laatste oude bron gebruikt voor
+routeringsveranderingen. Vanaf deze uitbreiding toont HTML, tekst,
+Markdown-`handoff` en JSON (`routing_history`) bij **ten minste twee
+vorige rapporten** óók een brongebonden P0-eerst tijdlijn over alle
+bronvensters. De normale laatste-paarvergelijking blijft behouden.
+
+De tijdlijn onderscheidt `route_changed`,
+`appeared_in_later_sample` en `not_reobserved`. De laatste
+twee beschrijven **alleen de beperkte steekproef**; een taak kan
+onzichtbaar zijn door een ander GitHub-/Notion-/taakvenster en is dus
+niet automatisch nieuw, opgelost, vrijgegeven of overgenomen.
+Overgangen zijn alleen bewezen tussen **opeenvolgende** bronmomenten
+waarin de taak in beide voorkomt. Alle opgeslagen bronmomenten moeten
+strikt oplopen (maximaal 72 uur tussen buren), dezelfde eerder
+geobserveerde opaque SQLite-queueidentiteit hebben en mogen geen
+toekomstige broninformatie bevatten. Incomplete/oude/verschillende
+bronnen leveren ONBEKEND, geen gefingeerde routewissels. De actuele
+portfolio-opdracht eist een huidige routerbron jonger dan tien minuten.
+Een historische offline herhaling krijgt altijd HISTORISCHE REPLAY.
+
+Ook de zelfstandige `zsentinel_route_continuity.py` heeft nu optioneel
+tot zes extra `--older <pad.json>` argumenten **in chronologische
+volgorde**, vóór de verplichte `--previous` en `--current`:
+
+```sh
+python3 scripts/zsentinel_route_continuity.py \
+  --older /eigenaar/prive/bron-1.json \
+  --older /eigenaar/prive/bron-2.json \
+  --previous /eigenaar/prive/bron-3.json \
+  --current /eigenaar/prive/bron-4.json \
+  --format html \
+  --output /eigenaar/prive/herstelgeschiedenis.html
+```
+
+Met `--older` bevat JSON zowel de laatste-paarvergelijking
+(`latest_pair`) als `routing_history`; de CSV is dan een P0-eerst
+**tijdlijnexport** met bronvenster, route vóór/na, vervolgstap en
+expliciete false autorisatievelden. HTML/Markdown voegen de
+meer-venster eigenaarsectie toe. Bij slechts twee bronnen blijft de
+oude outputstructuur behouden. Alle bronnen worden met de bestaande
+owner-private read-only no-follow-inodecontrole geopend. De uitvoer
+is uitsluitend een nieuwe mode-0600 create-only operatorfile;
+geen actieve provider-, runner-, claim-, scheduler- of queuewrite.
+
 ### 21 oktober · veilige routeringsovergangen tussen operatorvensters
 
 #### Zelfstandig offline vergelijken zonder live bron of runner
