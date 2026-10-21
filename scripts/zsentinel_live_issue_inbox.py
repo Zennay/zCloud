@@ -205,11 +205,15 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             if item is None:
                 invalid_excluded += 1
                 continue
-            if source != "recent" and (
+            if source.startswith("label_"):
+                # Cross-check the actual returned labels; provider search
+                # results alone do not establish priority or ownership.
+                if item["priority_from_explicit_labels"] != source[-2:]:
+                    continue
+            elif source != "recent" and (
                     item["unverified_title_prefix_hint"] != source
                     and item["priority_from_explicit_labels"] != source):
-                # GitHub text-search words need not start the issue title.
-                # Drop unrelated search hits rather than inventing urgency.
+                # Text queries may match words anywhere, not just prefixes.
                 continue
             existing = collected.get(item["number"])
             if existing is None:
@@ -255,28 +259,40 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             break
 
     # When all recent open issues fit, the P0/P1 search is redundant.
-    # If recent coverage is truncated or incomplete, retrieve the first
-    # page of each P0/P1 title recall separately (2 extra GETs at most).
-    # Never promote a title hint into an exact label or owner claim.
+    # When the recent window is incomplete, independently recall old
+    # explicit-label P0/P1 cases and title-only P0/P1 hints. Four strictly
+    # bounded first pages (30 records each) are optional and advisory.
+    # No title hit becomes authoritative unless the returned issue itself
+    # has one single explicit P0/P1 label.
     if source_error is None and (recent_window_truncated or provider_incomplete):
         recall_performed = True
-        for priority in ("P0", "P1"):
+        scopes = [
+            ("label_P0", "label:P0,priority:P0,priority/P0",
+             "explicit_label"),
+            ("label_P1", "label:P1,priority:P1,priority/P1",
+             "explicit_label"),
+            ("P0", "P0 in:title", "unverified_title"),
+            ("P1", "P1 in:title", "unverified_title"),
+        ]
+        for source, query_suffix, kind in scopes:
             try:
                 items, count, incomplete = read_page(
-                    query_prefix + " " + priority + " in:title", 1
+                    query_prefix + " " + query_suffix, 1
                 )
             except GitHubReadError as exc:
                 source_error = str(exc)
                 break
             provider_incomplete = provider_incomplete or incomplete
             recall_sources.append({
-                "priority": priority, "source_matches": count,
+                "priority": source[-2:],
+                "source_kind": kind,
+                "source_matches": count,
                 "sampled_rows": len(items),
                 "truncated": len(items) == PAGE_SIZE and count > PAGE_SIZE,
                 "provider_incomplete": incomplete,
                 "authority": False,
             })
-            admit_rows(items, priority)
+            admit_rows(items, source)
 
     issues = list(collected.values())
     issues.sort(key=lambda x: (
@@ -330,7 +346,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         ),
         "source_error": source_error,
         "get_attempts": attempts,
-        "read_get_attempt_upper_bound": MAX_PAGES + 2,
+        "read_get_attempt_upper_bound": MAX_PAGES + 4,
         "priority_breakdown_in_source_window": by_rank,
         "explicit_p0_p1_without_github_issue_update_72h": sum(
             row["priority_from_explicit_labels"] in ("P0", "P1")
@@ -404,7 +420,8 @@ def markdown(report):
         ])
         for scope in report["priority_recall_sources"]:
             lines.append(
-                "- " + scope["priority"] + " title search: "
+                "- " + scope["priority"] + " " +
+                scope["source_kind"] + " search: "
                 + str(scope["source_matches"]) + " provider matches, "
                 + str(scope["sampled_rows"]) + " sampled, truncated="
                 + str(scope["truncated"]) + ", provider incomplete="
@@ -506,7 +523,8 @@ def html_view(report):
         )
         for scope in report["priority_recall_sources"]:
             rows.append(
-                "<li>" + esc(scope["priority"]) + ": " +
+                "<li>" + esc(scope["priority"]) + " (" +
+                esc(scope["source_kind"]) + "): " +
                 esc(scope["source_matches"]) + " source matches, " +
                 esc(scope["sampled_rows"]) + " sampled, truncated " +
                 esc(scope["truncated"]) + ", provider incomplete " +
