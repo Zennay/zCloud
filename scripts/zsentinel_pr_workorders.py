@@ -411,9 +411,18 @@ def render_html(bundle):
                 parts.append("<li><code>" + e(path) + "</code></li>")
             parts.append("</ul>")
         if card.get("unverified_issue_hints"):
-            parts.append("<p>Ongeverifieerde issuevermeldingen: " +
-                         ", ".join("#" + str(n) for n in
-                                   card["unverified_issue_hints"]) + "</p>")
+            parts.append("<h3>Ongeverifieerde issuevermeldingen</h3>"
+                         "<p>Nummers uit PR-tekst, niet uit gecontroleerde "
+                         "issuebron. Link kan ook een PR of ontbrekend nummer "
+                         "openen.</p><ul>")
+            for n in card["unverified_issue_hints"][:MAX_ISSUE_HINTS]:
+                if type(n) is not int or not 1 <= n < 100000000:
+                    raise ValueError("untrusted issue number hint")
+                issue_url = "https://github.com/" + repo + "/issues/" + str(n)
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" "
+                             "href=\"" + e(issue_url) + "\">Controleer nummer #" +
+                             str(n) + "</a> (onbevestigd)</li>")
+            parts.append("</ul>")
         if card.get("overlap_paths_hidden"):
             parts.append("<p class=\"notice warning\">"
                          "Niet alle mogelijke gedeelde bestandspaden zijn "
@@ -507,9 +516,17 @@ def render_markdown(bundle):
                 lines.append("- Mogelijk gerelateerde PR: " + other)
             lines.append("")
         if card["unverified_issue_hints"]:
+            issue_links = []
+            for n in card["unverified_issue_hints"][:MAX_ISSUE_HINTS]:
+                if type(n) is not int or not 1 <= n < 100000000:
+                    raise ValueError("untrusted issue number hint")
+                issue_links.append("[nummer #" + str(n) + "](" +
+                                   "https://github.com/" + card["repository"] +
+                                   "/issues/" + str(n) + ")")
             lines.append("**Ongeverifieerde issuevermeldingen:** " +
-                         ", ".join("#" + str(n) for n in card["unverified_issue_hints"]) +
-                         " (tekstverwijzingen, geen fixbewijs).\n")
+                         ", ".join(issue_links) +
+                         " (tekstverwijzingen, link kan naar PR of ontbrekend "
+                         "nummer leiden; geen fixbewijs).\n")
         for warning in card["source_warnings"]:
             lines.append("**Let op:** " + warning)
         lines += ["", "---", ""]
