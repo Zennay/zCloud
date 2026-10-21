@@ -2811,7 +2811,7 @@ function drawList(){
  document.getElementById('navUrgent').disabled=!view.some(c=>
    (c.priority==='P0'||c.priority==='P1')&&
    handoffs.get(c.issue)?.followup_status!=='local-complete');
- refreshTriage();refreshFollowups();refreshBatch();refreshPrDesk()
+ refreshTriage();refreshFollowups();refreshBatch();refreshPrDesk();refreshMergeFirst()
 }
 function drawDetail(){
  detail.replaceChildren();
