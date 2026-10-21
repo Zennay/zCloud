@@ -152,7 +152,11 @@ def product_delivery_classification(item):
             if _lane_value(execution_lane) in QA_LANES:
                 return "qa_only", "explicit_qa_lane"
         elif isinstance(execution_lane, dict):
-            for key in ("lane_id", "focus", "work_type"):
+            # Nested execution lane receipts may declare a QA workstream
+            # in the same fields as the top-level producer metadata.
+            # Ignoring nested "workstream" could quietly admit QA-only work.
+            for key in ("lane", "lane_id", "focus", "work_type",
+                        "lane_focus", "workstream"):
                 value = execution_lane.get(key)
                 if value is not None and not isinstance(value, str):
                     return "invalid", "invalid_lane_metadata"
