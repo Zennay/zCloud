@@ -2775,6 +2775,57 @@ function drawDetail(){
       ' additional archived PR references omitted from this bounded panel; NOT resolved.','meta'));
   }
   historical.append(elem('p','Before integrating or opening a competing PR: recheck GitHub exact HEAD, required CI/reviews, branch protection and active Notion/queue claims. No action is authorized.','meta'));
+  // Build a source-only, single-issue portable operator receipt.
+  // Never export private annotations, inferred claims or release authority.
+  const preview=elem('button','Review historical PR source handoff (JSON)');
+  preview.type='button';
+  const download=elem('button','Download reviewed historical source handoff');
+  download.type='button';download.disabled=true;
+  const previewPanel=elem('div');previewPanel.hidden=true;
+  const output=elem('pre');output.className='code';
+  output.style.whiteSpace='pre-wrap';
+  output.style.overflowWrap='anywhere';
+  let reviewed=null;
+  const capture=()=>JSON.stringify({
+    schema:'zsentinel-saved-selected-issue-pr-handoff-v1',
+    issue_url:card.url,issue_ref:card.issue,
+    project:card.project,
+    source_board_sha256:boardSha,
+    original_archive_sources:savedPrHistory.original_archive_sources,
+    source_issue_link_observed:Boolean(match),
+    historical_source_detail:match||null,
+    source_window_is_historical:true,
+    missing_source_issue_does_not_prove_no_pr:true,
+    active_claim_verified:false,
+    exact_head_required_ci_review_verified:false,
+    merged_main_verified:false,live_verified:false,
+    claim_authorized:false,merge_authorized:false,
+    deploy_authorized:false,dispatch_authorized:false,
+    human_next_action:'Refresh original GitHub issue and each PR exact HEAD, required CI/review, protected main, current Notion/queue ownership and release rights before action.',
+  },null,2)+'\\n';
+  preview.onclick=()=>{
+    if(selected!==card.issue){download.disabled=true;previewPanel.hidden=true;return;}
+    reviewed=capture();
+    output.textContent=reviewed;
+    download.disabled=false;previewPanel.hidden=false;
+    status.textContent='Historical source handoff prepared for this issue only. Review before downloading; no external action occurred.';
+  };
+  download.onclick=()=>{
+    if(selected!==card.issue||reviewed===null||capture()!==reviewed){
+      download.disabled=true;
+      status.textContent='Historical source changed. Review the selected issue again before export.';
+      return;
+    }
+    const uri=URL.createObjectURL(new Blob([reviewed],{type:'application/json;charset=utf-8'}));
+    const linkNode=elem('a');linkNode.href=uri;
+    const number=card.issue.split('#').pop();
+    const project=card.project.replace(/[^a-z0-9-]/gi,'-').slice(0,50);
+    linkNode.download='zsentinel-saved-pr-handoff-'+project+'-'+number+'.json';
+    linkNode.click();setTimeout(()=>URL.revokeObjectURL(uri),1000);
+    status.textContent='Saved one source-only issue/PR handoff locally. No other project notes, live claims, CI retries or releases were included.';
+  };
+  previewPanel.append(output,download);
+  historical.append(preview,previewPanel);
   detail.append(historical);
  }
  const gaps=elem('div');gaps.append(elem('h3','Missing evidence and gates'));
