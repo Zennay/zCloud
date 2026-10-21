@@ -13,8 +13,8 @@ import sys
 
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 REPOSITORY = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
-EVENT_ID = re.compile(r"^github:Zennay/[A-Za-z0-9_.-]{1,100}:(?:(?:pr_created|pr_updated|pr_merged|pr_closed|ci_run):[0-9]{1,15}|main_commit:[a-f0-9]{40})$")
-KINDS = {"pr_created", "pr_updated", "pr_merged", "pr_closed", "ci_run", "main_commit"}
+EVENT_ID = re.compile(r"^github:Zennay/[A-Za-z0-9_.-]{1,100}:(?:(?:pr_created|pr_updated|pr_merged|pr_closed|ci_run):[0-9]{1,15}|main_commit:[a-f0-9]{40}|branch_head:[A-Za-z0-9._/-]{1,80}:[a-f0-9]{40})$")
+KINDS = {"pr_created", "pr_updated", "pr_merged", "pr_closed", "ci_run", "main_commit", "branch_head"}
 OUTCOMES = {"success", "failure", "cancelled", "skipped", "timed_out",
             "action_required", "neutral", "stale", "startup_failure", None}
 # Constant operator language: never interpolate GitHub response text or tokens.
@@ -70,8 +70,8 @@ def digest(payload: dict) -> str:
     lines = [
         "# zCloud · GitHub activity receipt",
         "",
-        "**Status:** PARTIAL GitHub observation only. No non-main branch inventory, "
-        "production deployment, worker resumption or project-complete claim.",
+        "**Status:** PARTIAL GitHub observation only. Branch heads are bounded snapshots, "
+        "not full branch history; no production deployment, worker resumption or project-complete claim.",
         "",
     ]
     known: set[str] = set()
@@ -98,12 +98,13 @@ def digest(payload: dict) -> str:
         lines.append("## " + project)
         lines.append("")
         branches = item.get("github_branches")
-        if branches not in {"not_synchronized", "observed_pr_heads_only"}:
+        if branches not in {"not_synchronized", "observed_pr_heads_only", "unavailable",
+                            "partial", "bounded_window", "bounded_truncated", "bounded_partial"}:
             raise ValueError("invalid_branch_coverage")
         lines.append("GitHub PR: **" + source_pr + "** · GitHub Actions: **" +
                      source_ci + "** · main commits: **" + source_commit +
                      "** · branches: **" + branches + "** (not fully synchronized).")
-        if "bounded_truncated" in (source_pr, source_ci, source_commit):
+        if "bounded_truncated" in (source_pr, source_ci, source_commit, branches):
             lines.append("**Source page budget reached:** older GitHub events were not scanned; counts are lower bounds.")
         if state != "partial_sources":
             lines.append("Source is **incomplete or inaccessible**. Missing events are unknown, not zero.")
@@ -139,6 +140,21 @@ def digest(payload: dict) -> str:
                 raise ValueError("new_since_previous_missing")
             if not payload["previous_snapshot_compared"] and event.get("new_since_previous") is not None:
                 raise ValueError("unexpected_previous_comparison")
+            if kind == "branch_head":
+                branch_ref = event.get("branch_ref")
+                sha = event.get("sha")
+                if (not isinstance(branch_ref, str) or len(branch_ref) > 80
+                        or not re.fullmatch(r"[A-Za-z0-9._/-]{1,80}", branch_ref)
+                        or branch_ref.startswith("/") or branch_ref.endswith("/")
+                        or "//" in branch_ref or ".." in branch_ref or branch_ref.endswith(".")
+                        or any(not part or part.endswith(".lock") for part in branch_ref.split("/"))
+                        or not isinstance(sha, str) or not re.fullmatch(r"[a-f0-9]{40}", sha)
+                        or event_id != "github:" + repo + ":branch_head:" + branch_ref + ":" + sha
+                        or event.get("main_merged") is not False
+                        or event.get("branch_owner_verified") is not False
+                        or event.get("deploy_verified") is not False
+                        or event.get("worker_resumed") is not False):
+                    raise ValueError("invalid_branch_head")
             if kind in {"pr_created", "pr_updated", "pr_merged", "pr_closed"}:
                 target = event.get("reported_target")
                 if target is not None and (not isinstance(target, str) or
@@ -165,6 +181,9 @@ def digest(payload: dict) -> str:
                 head_sha = event.get("pr_head_sha")
                 if not isinstance(head_sha, str) or not re.fullmatch(r"[a-f0-9]{40}", head_sha):
                     raise ValueError("invalid_pr_head_sha")
+                # Older valid receipts do not contain this optional lifecycle.
+                # Never interpret a legacy missing field as an open PR.
+                lifecycle = event.get("pr_lifecycle")
                 if kind == "pr_closed":
                     # A closure is a provider event, not an inferred delivery.
                     if (lifecycle != "closed_without_merge"
@@ -173,9 +192,6 @@ def digest(payload: dict) -> str:
                             or event.get("reported_main_merge") is not False
                             or not isinstance(event.get("pr_closed_at"), str)):
                         raise ValueError("invalid_unmerged_closure_evidence")
-                # Older valid receipts do not contain this optional lifecycle.
-                # Never interpret a legacy missing field as an open PR.
-                lifecycle = event.get("pr_lifecycle")
                 if lifecycle is not None:
                     if lifecycle not in ("open", "merged", "closed_without_merge"):
                         raise ValueError("invalid_pr_lifecycle")
@@ -217,6 +233,7 @@ def digest(payload: dict) -> str:
         ci_success = sum(e["kind"] == "ci_run" and e.get("conclusion") == "success"
                          for e in validated)
         main_commits = sum(e["kind"] == "main_commit" for e in validated)
+        branch_heads = sum(e["kind"] == "branch_head" for e in validated)
         first_seen_in_view = sum(e.get("new_since_previous") is True for e in validated)
         lines.append("Observed event counts (bounded window, may be truncated): "
                      + str(created) + " PR-created; " + str(closed_unmerged)
@@ -227,7 +244,9 @@ def digest(payload: dict) -> str:
                      str(source_matched_merges) + " with matching SHA in the same imported main history); " +
                      str(ci_success)
                      + " workflow-success; " + str(main_commits)
-                     + " canonical-main commits. **None proves a main deployment.**")
+                     + " canonical-main commits; " + str(branch_heads)
+                     + " observed branch heads. Branch observation time is not commit time. "
+                     + "**None proves a main deployment.**")
         if payload["previous_snapshot_compared"]:
             lines.append(str(first_seen_in_view) +
                          " events absent from previous bounded snapshot (not proof of new GitHub work).")
@@ -243,6 +262,11 @@ def digest(payload: dict) -> str:
                 sha = event["sha"]
                 label = "main commit " + sha[:12]
                 url = "https://github.com/" + repo + "/commit/" + sha
+            elif kind == "branch_head":
+                branch_ref = event["branch_ref"]
+                sha = event["sha"]
+                label = "branch head " + branch_ref + " · " + sha[:12] + " · owner/merge/deploy unverified"
+                url = "https://github.com/" + repo + "/tree/" + branch_ref
             else:
                 number = event.get("pr")
                 if not isinstance(number, int) or isinstance(number, bool) or number < 1:
