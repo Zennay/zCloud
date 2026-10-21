@@ -360,3 +360,11 @@ python3 scripts/zsentinel_portfolio_overview.py \
 Alles is broncode op de reeds bestaande
 [PR #1563](https://github.com/Zennay/zCloud/pull/1563).
 Geen nieuwe QA-suite, workflow, procesgate of productieactie.
+
+## 21 oktober · actuele VPS-capaciteit in de bestaande eigenaarwerkbak
+
+De herstelrouter leverde al een brongevalideerde `vps_resource_admission` op basis van de **optioneel expliciet gevraagde read-only VPS-metingen**. Deze beslisinformatie werd nog niet in de centrale `--show-owner-handoff`-prioriteiten weergegeven. Een schijf boven de bestaande 90%-drempel of zeer lage swapruimte kon daardoor in de queue/CI-overdracht onzichtbaar blijven.
+
+De bestaande eigenaarhand-off maakt van **uitsluitend** een bronvastgestelde `state=overloaded` nu één extra **P1 cloud / vps_capacity_owner_review**-kaart. Die heeft een directe link naar bestaand [P0-runnerincident #1326](https://github.com/Zennay/zCloud/issues/1326), vermeldt disk- en swaprisico vooraan, bevat alle bekende reden-codes als begrensde JSON-velden en eindigt bij de geautoriseerde host-/runner-eigenaar. De centrale `coverage.vps_capacity` onderscheidt voortaan `overloaded`, `stale`, `unavailable` en `advisory_headroom`; oude/ontbrekende metingen worden **nooit** tot groen resultaat of afgerond herstel verheven. De kaart wordt via dezelfde bronbeslissing vanzelf weergegeven in bestaande HTML-, Markdown-, tekst- en JSON-handoffs. Er is geen extra `statvfs`, SQL-leesactie of netwerkoproep nodig.
+
+Ongewijzigde veiligheid: `claim_authorized=false`, `retry_authorized=false`, `merge_authorized=false`, `deploy_authorized=false`. **Geen automatische opruiming, swapclear, service-restart, workerstop, opslagmigratie of capaciteitswijziging.** Een gesignaleerde bottleneck bewijst ook niet welke GitHub-job onassigned is. De release blijft bij exacte CI-HEAD, review en de bestaande productie-eigenaar; bron op de bestaande open [PR #1563](https://github.com/Zennay/zCloud/pull/1563), niet live of `main`.
