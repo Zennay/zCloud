@@ -249,6 +249,81 @@ def _validate(payload: dict):
     )
 
 
+
+def _snapshot_timestamp(payload):
+    """Only a timezone-bearing source clock can order two saved snapshots."""
+    value = payload.get("time")
+    if not _bounded_str(value, 96):
+        return None
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        return None
+    return timestamp.astimezone(timezone.utc)
+
+
+def _compare_snapshots(old_payload, old_rows, old_truncated,
+                       new_payload, new_rows, new_truncated):
+    """Compare two bounded read models, never infer recovery from absence.
+
+    The offline inbox is an *operator selection*, not a complete durable
+    event history. An item disappearing from it could mean reprioritization,
+    truncation, changed source coverage or a resolved issue. We cannot know.
+    """
+    old_time = _snapshot_timestamp(old_payload)
+    new_time = _snapshot_timestamp(new_payload)
+    if old_time is None or new_time is None or new_time <= old_time:
+        raise ValueError("vergelijking vereist twee chronologische UTC-bronmomenten")
+    if new_time > datetime.now(timezone.utc):
+        raise ValueError("toekomstige bronklok geeft geen betrouwbare volgorde")
+    older = {(row["project"], row["queue"]): row for row in old_rows}
+    newer = {(row["project"], row["queue"]): row for row in new_rows}
+    changes = []
+    counts = {
+        "still_observed": 0,
+        "changed_visible_context": 0,
+        "newly_observed": 0,
+        "no_longer_in_visible_window_unverified": 0,
+    }
+    # Compare identities, not positions: source ordering is allowed to change.
+    for key in sorted(older.keys() | newer.keys()):
+        old, new = older.get(key), newer.get(key)
+        if old is None:
+            state = "newly_observed"
+        elif new is None:
+            state = "no_longer_in_visible_window_unverified"
+        elif (old["kind"], old["priority"], old["step"], old["detail"]) != (
+                new["kind"], new["priority"], new["step"], new["detail"]):
+            state = "changed_visible_context"
+        else:
+            state = "still_observed"
+        counts[state] += 1
+        if state == "still_observed":
+            continue
+        row = new if new is not None else old
+        changes.append({
+            "state": state,
+            "project": row["project"],
+            "queue": row["queue"],
+            "priority": row["priority"],
+            "kind": row["kind"],
+        })
+    return {
+        "old_time": old_time.strftime("%Y-%m-%d %H:%M UTC"),
+        "new_time": new_time.strftime("%Y-%m-%d %H:%M UTC"),
+        "old_truncated": bool(old_truncated),
+        "new_truncated": bool(new_truncated),
+        "counts": counts,
+        "changes": changes,
+        "resolution_verified": False,
+        "claim_release_authorized": False,
+        "both_sources_are_partial": True,
+    }
+
+
+
 def _render(payload, rows, truncated):
     esc = lambda value: html.escape(str(value), quote=True)
     source, age = _source_clock(payload.get("time"))
