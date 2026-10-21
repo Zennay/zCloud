@@ -324,7 +324,82 @@ def _compare_snapshots(old_payload, old_rows, old_truncated,
 
 
 
-def _render(payload, rows, truncated):
+
+DELTA_LABELS = {
+    "newly_observed": "Nieuw zichtbaar in huidig begrensd venster",
+    "changed_visible_context": "Context gewijzigd in zichtbaar venster",
+    "no_longer_in_visible_window_unverified":
+        "Niet meer in huidig venster - herstel NIET bevestigd",
+    "still_observed": "Nog zichtbaar in beide vensters",
+}
+
+
+def _render_comparison_html(comparison):
+    if comparison is None:
+        return ""
+    esc = lambda value: html.escape(str(value), quote=True)
+    counts = comparison["counts"]
+    headings = (
+        '<section class="notice" aria-label="Momentopnamevergelijking">'
+        '<h2>Verandering tussen twee privébronmomenten</h2>'
+        '<p>' + esc(comparison["old_time"]) + ' → ' +
+        esc(comparison["new_time"]) + '</p>'
+        '<p><strong>Geen geverifieerd herstel.</strong> '
+        'Afwezigheid uit een begrensd overzicht kan ook door andere '
+        'prioriteit of afgekapt bronbereik komen.</p>'
+        '<p class="subtle">Nog zichtbaar: ' + str(counts["still_observed"]) +
+        ' · context gewijzigd: ' + str(counts["changed_visible_context"]) +
+        ' · nieuw zichtbaar: ' + str(counts["newly_observed"]) +
+        ' · niet meer zichtbaar (onbevestigd): ' +
+        str(counts["no_longer_in_visible_window_unverified"]) + '</p></section>'
+    )
+    parts = []
+    for row in comparison["changes"]:
+        parts.append(
+            '<article class="notice"><div class="eyebrow">' +
+            esc(DELTA_LABELS[row["state"]]) + '</div><strong>' +
+            esc(row["project"]) + ' · ' + esc(row["queue"]) +
+            '</strong><p>' + esc(row["priority"]) + ' · ' +
+            esc(KINDS[row["kind"]][0]) + '</p></article>'
+        )
+    return headings + (
+        '<section aria-label="Veranderde geobserveerde taken">' +
+        ''.join(parts) + '</section>'
+    )
+
+
+def _render_comparison_markdown(comparison):
+    if comparison is None:
+        return []
+    counts = comparison["counts"]
+    lines = [
+        "## Verschil tussen privébronmomenten",
+        "",
+        "Vorige bron: " + comparison["old_time"],
+        "Huidige bron: " + comparison["new_time"],
+        "",
+        "**Geen geverifieerd herstel**: afwezigheid uit een beperkt venster",
+        "bewijst geen afgeronde taak, vrijgekomen lease of werkende runner.",
+        "",
+        "Nog zichtbaar: " + str(counts["still_observed"]),
+        "Context gewijzigd: " + str(counts["changed_visible_context"]),
+        "Nieuw zichtbaar: " + str(counts["newly_observed"]),
+        "Niet meer zichtbaar, onbevestigd: " +
+        str(counts["no_longer_in_visible_window_unverified"]),
+        "",
+    ]
+    for row in comparison["changes"]:
+        # Project/queue identities are already strict identifier syntax,
+        # not free-form Markdown or untrusted target URLs.
+        lines.append("- " + DELTA_LABELS[row["state"]] + ": " +
+                     row["project"] + " / " + row["queue"] +
+                     " (" + row["priority"] + ")")
+    lines.append("")
+    return lines
+
+
+
+def _render(payload, rows, truncated, comparison=None):
     esc = lambda value: html.escape(str(value), quote=True)
     source, age = _source_clock(payload.get("time"))
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -375,7 +450,8 @@ def _render(payload, rows, truncated):
          'queuebron blijft gedeeltelijk.</div>') +
         '<p class="subtle">Geobserveerd: ' +
         ' · '.join(esc(KINDS[key][0] + ": " + str(n)) for key, n in count_by_kind.items()) +
-        '</p><section aria-label="Filters" class="toolbar">' +
+        '</p>' + _render_comparison_html(comparison) +
+        '<section aria-label="Filters" class="toolbar">' +
         '<label>Zoek op project, taak of actie'
         '<input id="search" type="search" autocomplete="off"></label>' +
         '<label>Werksoort<select id="kind"><option value="">Alle soorten</option>' +
@@ -395,7 +471,7 @@ def _render(payload, rows, truncated):
 
 
 
-def _render_markdown(payload, rows, truncated):
+def _render_markdown(payload, rows, truncated, comparison=None):
     """Private text briefing for the responsible owner, not an action command."""
     def clean(value):
         # Escape inline markup even if a formerly fixed field changes later.
@@ -436,6 +512,7 @@ def _render_markdown(payload, rows, truncated):
                 "  - Status: alleen handmatige beoordeling, geen overname.",
             ])
         lines.append("")
+    lines.extend(_render_comparison_markdown(comparison))
     lines.append("Gebaseerd op een private JSON-export. "
                  "Bestandsrechten bewijzen de bronherkomst niet.")
     return "\n".join(lines) + "\n"
@@ -478,12 +555,23 @@ def main(argv=None):
                      help="Nieuw privébestand in eigen 0700 directory")
     cli.add_argument("--format", choices=("html", "markdown"), default="html",
                      help="Offline HTML of Markdown-eigenaarsoverdracht")
+    cli.add_argument("--previous", type=Path,
+                     help="Eerder privé snapshot voor brongebonden verschillen")
     opts = cli.parse_args(argv)
     try:
         payload = _bounded_private_read(opts.input)
         rows, truncated = _validate(payload)
-        document = (_render(payload, rows, truncated) if opts.format == "html"
-                    else _render_markdown(payload, rows, truncated))
+        comparison = None
+        if opts.previous is not None:
+            previous_payload = _bounded_private_read(opts.previous)
+            previous_rows, previous_truncated = _validate(previous_payload)
+            comparison = _compare_snapshots(
+                previous_payload, previous_rows, previous_truncated,
+                payload, rows, truncated,
+            )
+        document = (_render(payload, rows, truncated, comparison)
+                    if opts.format == "html"
+                    else _render_markdown(payload, rows, truncated, comparison))
         _private_create(opts.output, document)
     except (OSError, UnicodeError, ValueError, TypeError,
             RecursionError, OverflowError):
