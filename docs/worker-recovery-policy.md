@@ -362,8 +362,10 @@ python3 scripts/zsentinel_recovery_policy.py \
 ```
 
 The HTML has a restrictive Content-Security-Policy, escaped labels,
-direct canonical PR links, expandable sampled check/review evidence and
-clear UNKNOWN/HOLD signals. No remote assets, client-side API requests,
+direct canonical PR links, **direct per-HEAD checks and changed-files links**
+for a stably observed PR, expandable sampled check/review evidence and
+clear UNKNOWN/HOLD signals. These links facilitate legitimate review,
+not an automated CI-pass or merge decision. No remote assets, client-side API requests,
 tracking scripts or external style resources are included.
 
 Each candidate has a bounded current PR GET,
