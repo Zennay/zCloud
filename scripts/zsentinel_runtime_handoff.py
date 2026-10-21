@@ -210,7 +210,11 @@ def _notion_owner_status_summary(observed, source_mode, registry):
         "can_release_claim": False,
     }
     if observed is None:
-        return blank
+        # Do not add a phantom Notion task panel to the default operator
+        # handoff when this optional source was never requested. A genuinely
+        # failed requested source stays explicitly UNKNOWN.
+        return (blank if source_mode == "degraded_unavailable_no_claim_authority"
+                else None)
     mode = {
         "claim_status_observed_no_file_ownership":
             ("notion_readonly_data_source_pages", ("current_pages_only", "incomplete")),
