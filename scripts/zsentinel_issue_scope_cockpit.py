@@ -822,8 +822,14 @@ def output_html(report):
                 "' rel='noopener noreferrer'>Bestaande PR #" +
                 escape(group["pr_url"].rsplit("/", 1)[-1]) + "</a> · " +
                 str(group["linked_issue_count_observed"]) +
-                " issuelinks; GEEN fix- of mergebewijs<details>" +
-                "<summary>Bekijk betrokken issues</summary><ul>" +
+                " issuelinks; GEEN fix- of mergebewijs<br><small>Gatebron: " +
+                escape(group["group_gate_source_state"]) + " · " +
+                escape(group["human_next_gate_step"]) + " · PR-HEAD: " +
+                ("ONBEKEND/INCONSISTENT"
+                 if group.get("source_head_receipts_consistent") is not True
+                 or group.get("source_head_observed") is None
+                 else "waargenomen bij bronmoment; niet live bevestigd") +
+                "</small><details><summary>Bekijk betrokken issues</summary><ul>" +
                 linked + "</ul></details></li>")
         group_panel = (
             "<details><summary>Gedeelde PR-opvolging: " +
