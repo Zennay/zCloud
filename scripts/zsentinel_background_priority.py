@@ -464,19 +464,18 @@ def write_private_state(data):
 RUNNER_UNIT = re.compile(r"^actions\.runner\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.service$")
 
 
-def runner_inventory():
-    """Optional one-shot local unit inventory: no permission or service changes."""
+def _scoped_runner_inventory(user_scope=False):
+    """Read only the selected systemd manager; don't conflate source gaps."""
+    scope = ["--user"] if user_scope else []
     try:
         result = subprocess.run(
-            ["systemctl", "--no-pager", "--plain", "--no-legend",
+            ["systemctl", *scope, "--no-pager", "--plain", "--no-legend",
              "list-units", "--all", "--type=service", "actions.runner.*"],
             check=True, timeout=8, capture_output=True, text=True,
         )
     except (OSError, subprocess.SubprocessError):
-        return {"runner_units_observed": False, "runner_units": [],
-                "runner_units_truncated": None}
-    units = []
-    seen = set()
+        return {"observed": False, "units": [], "truncated": None}
+    units, seen = [], set()
     partial = len(result.stdout) > 20000
     for line in result.stdout[:20000].splitlines():
         fields = line.strip().split()
@@ -494,23 +493,41 @@ def runner_inventory():
         if detail not in {"running", "dead", "failed", "exited", "start", "stop",
                           "auto-restart", "waiting", "listening"}:
             detail = "unknown"
-        entry = {"unit": name, "state": state, "detail": detail,
-                 "reason": None}
+        entry = {"unit": name, "state": state, "detail": detail, "reason": None}
         if state == "failed":
             try:
                 receipt = subprocess.run(
-                    ["systemctl", "--no-pager", "show", name, "-p", "Result"],
+                    ["systemctl", *scope, "--no-pager", "show", name,
+                     "-p", "Result"],
                     check=True, timeout=3, capture_output=True, text=True,
                 )
                 value = receipt.stdout.strip().removeprefix("Result=")
-                if value in {"oom-kill", "exit-code", "signal", "timeout", "watchdog",
-                             "core-dump", "resources", "success"}:
+                if value in {"oom-kill", "exit-code", "signal", "timeout",
+                             "watchdog", "core-dump", "resources", "success"}:
                     entry["reason"] = value
             except (OSError, subprocess.SubprocessError):
                 pass
         units.append(entry)
-    return {"runner_units_observed": True, "runner_units": units,
-            "runner_units_truncated": partial}
+    return {"observed": True, "units": units, "truncated": partial}
+
+
+def runner_inventory():
+    """One-shot separate system and user service sources, no service mutation.
+
+    Existing system-scope fields retain their historical meanings for saved
+    receipts. User units have separate fields, so identical unit names in
+    different managers are never silently deduplicated or conflated.
+    """
+    system = _scoped_runner_inventory(user_scope=False)
+    user = _scoped_runner_inventory(user_scope=True)
+    return {
+        "runner_units_observed": system["observed"],
+        "runner_units": system["units"],
+        "runner_units_truncated": system["truncated"],
+        "user_runner_units_observed": user["observed"],
+        "user_runner_units": user["units"],
+        "user_runner_units_truncated": user["truncated"],
+    }
 
 
 REASON_LABELS = {
@@ -568,7 +585,16 @@ def human_preview(data):
         if data.get("runner_units_truncated"):
             print("  Let op: gedeeltelijk overzicht; niet alle services zijn gezien.")
     elif data.get("runner_units_observed") is False:
-        print("GitHub runner-services: niet uitleesbaar.")
+        print("GitHub system runner-services: niet uitleesbaar.")
+    if data.get("user_runner_units_observed") is True:
+        print("GitHub user runner-services (geen bewijs van toegewezen GitHub-job):")
+        for entry in data.get("user_runner_units", []):
+            reason = f" ({entry['reason']})" if entry["reason"] else ""
+            print(f"  {entry['unit']}: {entry['state']}/{entry['detail']}{reason}")
+        if data.get("user_runner_units_truncated"):
+            print("  User systemd: gedeeltelijk overzicht.")
+    else:
+        print("GitHub user runner-services: bron onbekend/onleesbaar.")
     if "promotion_status" in data:
         print("Effectieve CPU-regeling: "
               + (str(data.get("effective_quota")) + "% / gewicht "
@@ -662,7 +688,9 @@ def main():
                 "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                 "host": s,
                 "units": {key: result[key] for key in
-                          ("runner_units_observed", "runner_units", "runner_units_truncated")},
+                          ("runner_units_observed", "runner_units", "runner_units_truncated",
+                            "user_runner_units_observed", "user_runner_units",
+                            "user_runner_units_truncated")},
                 "coach": {
                     "observed": result["unit_observed"],
                     "active": result["unit_active"],
