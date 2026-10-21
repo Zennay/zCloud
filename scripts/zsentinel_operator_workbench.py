@@ -420,6 +420,17 @@ def project_operations_html(view: dict) -> str:
             '<option value="coordinate-owner">Coordinate current owner</option>' +
             '<option value="park-blocker">Park external blocker</option>' +
             '</select></label>' +
+            '<label>Manual follow-up contact label (not a claim)' +
+            '<input type="text" data-recovery-owner="' +
+            escape(row["project"], quote=True) +
+            '" maxlength="80" autocomplete="off"></label>' +
+            '<label>Next human review date (UTC; no automated reminder)' +
+            '<input type="date" data-recovery-due="' +
+            escape(row["project"], quote=True) +
+            '" min="2020-01-01" max="2099-12-31"></label>' +
+            '<span data-recovery-due-label="' +
+            escape(row["project"], quote=True) +
+            '">No follow-up date entered.</span>' +
             '<label>Private operator note (local only; max 500 chars)' +
             '<textarea data-recovery-note="' +
             escape(row["project"], quote=True) +
@@ -2113,6 +2124,9 @@ function currentBrief(){
      'Human investigation: '+line(row.recommended_next_step,650),
      'Local operator decision: '+line(recoveryHandoffs.get(row.project)?.decision||'investigate',40)+
        ' (human note only, never a claim)',
+     'Manual contact label (not assignee): '+line(recoveryHandoffs.get(row.project)?.owner||'not entered',80),
+     'Manual UTC review date: '+line(recoveryHandoffs.get(row.project)?.due||'not entered',10),
+     'Human follow-up: '+recoveryReviewStatus(recoveryHandoffs.get(row.project)),
      'Private operator note: '+line(recoveryHandoffs.get(row.project)?.note||'not entered',500),
      'Required: independently verify current claims, exact-head CI, review and release permission.',
      '');
@@ -2367,6 +2381,14 @@ document.addEventListener('keydown',event=>{
    event.preventDefault();navigateObserved(event.key==='j'?1:-1);
  }
 });
+function recoveryReviewStatus(entry){
+ if(!entry?.due)return 'No follow-up date entered; no automated reminder.';
+ if(!entry.owner)return 'Contact label missing; manual owner reconciliation required.';
+ const today=utcToday();
+ return entry.due<today?'OVERDUE · manual human review needed':
+   entry.due===today?'DUE TODAY UTC · manual human review needed':
+   'Scheduled for manual UTC review '+entry.due;
+}
 function syncRecoveryControls(){
  document.querySelectorAll('[data-recovery-choice]').forEach(select=>{
   select.value=recoveryHandoffs.get(select.dataset.recoveryChoice)?.decision||'investigate';
@@ -2374,21 +2396,41 @@ function syncRecoveryControls(){
  document.querySelectorAll('[data-recovery-note]').forEach(area=>{
   area.value=recoveryHandoffs.get(area.dataset.recoveryNote)?.note||'';
  });
+ document.querySelectorAll('[data-recovery-owner]').forEach(area=>{
+  area.value=recoveryHandoffs.get(area.dataset.recoveryOwner)?.owner||'';
+ });
+ document.querySelectorAll('[data-recovery-due]').forEach(area=>{
+  area.value=recoveryHandoffs.get(area.dataset.recoveryDue)?.due||'';
+ });
+ document.querySelectorAll('[data-recovery-due-label]').forEach(area=>{
+  area.textContent=recoveryReviewStatus(recoveryHandoffs.get(area.dataset.recoveryDueLabel));
+ });
 }
 document.getElementById('projectRecoveryDesk').addEventListener('input',event=>{
  const target=event.target;
- const project=target?.dataset?.recoveryChoice||target?.dataset?.recoveryNote;
+ const project=target?.dataset?.recoveryChoice||target?.dataset?.recoveryNote||
+   target?.dataset?.recoveryOwner||target?.dataset?.recoveryDue;
  if(!project||!board.project_operations.some(item=>item.project===project))return;
- const old=recoveryHandoffs.get(project)||{decision:'investigate',note:''};
+ const old=recoveryHandoffs.get(project)||{decision:'investigate',note:'',owner:'',due:''};
  const next={...old};
  if(target.dataset.recoveryChoice){
   if(!recoveryDecisions.has(target.value))return;
   next.decision=target.value;
+ }else if(target.dataset.recoveryOwner){
+  next.owner=contactLabel(target.value);
+ }else if(target.dataset.recoveryDue){
+  if(!validFollowupDate(target.value))return;
+  next.due=target.value;
  }else{
   next.note=target.value.slice(0,500);
  }
- if(next.decision==='investigate'&&!next.note)recoveryHandoffs.delete(project);
+ if(next.decision==='investigate'&&!next.note&&!next.owner&&!next.due)
+  recoveryHandoffs.delete(project);
  else recoveryHandoffs.set(project,next);
+ document.querySelectorAll('[data-recovery-due-label]').forEach(label=>{
+  if(label.dataset.recoveryDueLabel===project)
+   label.textContent=recoveryReviewStatus(recoveryHandoffs.get(project));
+ });
  setUnsaved(true);invalidateBrief();
  status.textContent='Local project follow-up changed; export private handoff to preserve it.';
 });
