@@ -821,6 +821,81 @@ def _historical_html(report):
             '</section>')
 
 
+
+def _notion_review_summary(report):
+    """Read safely bounded Notion owner hints from the current handoff."""
+    value = report.get("notion_owner_status_review")
+    if value is None:
+        return None
+    if (type(value) is not dict
+            or value.get("coverage") not in (
+                "not_requested_or_unavailable", "saved_snapshot_origin_unverified",
+                "live_readonly_incomplete", "live_readonly_bounded")
+            or any(value.get(key) is not False for key in (
+                "owner_verified", "live_lease_verified",
+                "can_dispatch", "can_release_claim"))
+            or type(value.get("projects")) is not list
+            or len(value["projects"]) > 12
+            or type(value.get("items_truncated")) is not bool):
+        raise ValueError("untrusted Notion owner handoff rendering")
+    age = value.get("source_age_seconds")
+    if age is not None and (type(age) is not int or not 0 <= age <= 2**31):
+        raise ValueError("invalid Notion handoff observation age")
+    unknown = value.get("unregistered_work_status_min")
+    if unknown is not None and (type(unknown) is not int or not 0 <= unknown <= 400):
+        raise ValueError("invalid unregistered Notion work count")
+    seen = set()
+    for row in value["projects"]:
+        if type(row) is not dict or row.get("project") in seen:
+            raise ValueError("duplicate or invalid Notion review project")
+        project = _project(row.get("project"))
+        seen.add(project)
+        total = row.get("observed_unfinished_min")
+        review = row.get("observed_verifying_min")
+        if (type(total) is not int or not 1 <= total <= 400
+                or type(review) is not int or not 0 <= review <= total
+                or row.get("live_owner_verified") is not False
+                or row.get("can_claim") is not False
+                or row.get("review_required") is not True
+                or type(row.get("next_step")) is not str
+                or len(row["next_step"]) > 160):
+            raise ValueError("untrusted Notion review counters")
+    return value
+
+
+def _notion_review_html(report):
+    source = _notion_review_summary(report)
+    if source is None:
+        return ""
+    age = source["source_age_seconds"]
+    old = age is None or age > 600
+    lines = []
+    for row in source["projects"]:
+        lines.append(
+            "<li><strong>" + escape(row["project"]) + "</strong> · ≥" +
+            str(row["observed_unfinished_min"]) + " onafgerond" +
+            (" · ≥" + str(row["observed_verifying_min"]) + " Verifying"
+             if row["observed_verifying_min"] else "") +
+            " · " + escape(row["next_step"]) + "</li>")
+    return (
+        '<section class="panel" aria-label="Notion status eigenaarhercontrole">'
+        '<h2>Notion · onafgerond werk, eigenaar hercontroleren</h2>'
+        '<p>Bron: ' + escape(source["coverage"]) +
+        (" · VEROUDERD/ONBEKEND" if old else " · recent gelezen") +
+        '. Observaties zijn GEEN actuele workerlease, bestandsclaim of '
+        'toestemming om werk over te nemen.</p>' +
+        ('<ul>' + "".join(lines) + '</ul>' if lines else
+         '<p>Geen positieve werkitems in de begrensde bron; overige '
+         'projecten blijven ONBEKEND.</p>') +
+        ('<p>Projectlijst afgekapt; niet getoonde projecten ONBEKEND.</p>'
+         if source["items_truncated"] else "") +
+        ('<p>≥' + str(source["unregistered_work_status_min"]) +
+         ' statusregels hebben geen bekend projectlabel.</p>'
+         if source["unregistered_work_status_min"] else "") +
+        '</section>'
+    )
+
+
 def handoff_html(report):
     """Script-free P0-first owner strip for the existing live cockpit."""
     if (not isinstance(report, dict) or report.get("schema") != SCHEMA
@@ -937,7 +1012,8 @@ def handoff_html(report):
              '<p>Geen actie in het onderzochte venster; geen compleet herstelbewijs.</p>') +
             ('<p>Werkbak afgekapt; extra items blijven buiten dit venster.</p>'
              if report.get("items_truncated") is True else '') +
-            '</section>' + _historical_html(report))
+            '</section>' + _notion_review_html(report) +
+            _historical_html(report))
 
 
 def markdown(report):
