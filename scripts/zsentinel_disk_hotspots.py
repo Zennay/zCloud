@@ -100,6 +100,17 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         raise ValueError("untrusted workspace mount capacity")
     mount_total = fs.f_blocks * fs.f_frsize
     mount_available = fs.f_bavail * fs.f_frsize
+    if any(type(x) is not int or x < 0 for x in
+           (fs.f_files, fs.f_ffree, fs.f_favail)):
+        raise ValueError("untrusted mount inode counters")
+    if fs.f_files > 0:
+        if fs.f_ffree > fs.f_files or fs.f_favail > fs.f_ffree:
+            raise ValueError("contradictory mount inode counters")
+        mount_inode_total = fs.f_files
+        mount_inode_available = fs.f_favail
+        mount_inode_unavailable_pct = round(100 * (1 - fs.f_favail / fs.f_files), 2)
+    else:
+        mount_inode_total = mount_inode_available = mount_inode_unavailable_pct = None
     if mount_total > 10**15 or mount_available > mount_total:
         raise ValueError("disk capacity outside bounded diagnostic contract")
     host = socket.gethostname()
@@ -221,6 +232,9 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
             "percent_unavailable": round(
                 100 * (1 - mount_available / mount_total), 2),
             "source": "same_host_statvfs_observation_not_cleanup_proof",
+            "inode_total": mount_inode_total,
+            "inode_available": mount_inode_available,
+            "inode_unavailable_percent": mount_inode_unavailable_pct,
         },
         "scan_parameters": {
             "min_mib": min_mib, "max_entries": max_entries,
@@ -318,6 +332,13 @@ def markdown(report):
         str(round(report["mount_capacity"]["available_bytes_to_operator"] / (1024**3), 2)) +
         " GiB beschikbaar (" + str(report["mount_capacity"]["percent_unavailable"]) +
         "% niet beschikbaar); momentopname, geen schoonmaakbewijs.",
+        "Inodes nog beschikbaar: " +
+        str(report["mount_capacity"].get("inode_available") if
+            report["mount_capacity"].get("inode_available") is not None else "ONBEKEND") +
+        "; inodebezetting niet beschikbaar: " +
+        str(report["mount_capacity"].get("inode_unavailable_percent") if
+            report["mount_capacity"].get("inode_unavailable_percent") is not None
+            else "ONBEKEND") + "%; geen schijfopruimbevoegdheid.",
         "Waargenomen toegewezen ruimte (ondergrens): " +
         str(round(report["observed_allocated_bytes_lower_bound"] / 1024**3, 2)) + " GiB.",
         "Beperkt door: " + str(report["truncation_reason"] or "geen tijd-/itemlimiet"),
@@ -404,6 +425,15 @@ def html(report):
              str(round(report["mount_capacity"]["available_bytes_to_operator"] / (1024**3), 2)) +
              " GiB · " + str(report["mount_capacity"]["percent_unavailable"]) +
              "% niet beschikbaar. Geen herstelbewijs.</p>",
+             "<p>Inodes nog beschikbaar: " +
+             escape(str(report["mount_capacity"].get("inode_available") if
+                        report["mount_capacity"].get("inode_available") is not None
+                        else "ONBEKEND")) +
+             "; percentage inodes niet beschikbaar: " +
+             escape(str(report["mount_capacity"].get("inode_unavailable_percent") if
+                        report["mount_capacity"].get("inode_unavailable_percent") is not None
+                        else "ONBEKEND")) +
+             "%. Geen inode-herstelbewijs.</p>",
              "<p>Waargenomen ruimte (ondergrens): " +
              str(round(report["observed_allocated_bytes_lower_bound"] / 1024**3,2)) + " GiB; " +
              str(report["directories_unscanned"]) + " mappen niet bezocht.</p>",
@@ -514,6 +544,17 @@ def public_summary(report):
             or type(mount.get("percent_unavailable")) not in (int, float)
             or not 0 <= mount["percent_unavailable"] <= 100):
         raise ValueError("invalid mount observation for public capacity summary")
+    inode_total = mount.get("inode_total")
+    inode_available = mount.get("inode_available")
+    inode_pct = mount.get("inode_unavailable_percent")
+    if any(x is not None for x in (inode_total, inode_available, inode_pct)):
+        if (type(inode_total) is not int or type(inode_available) is not int
+                or not 1 <= inode_total <= 10**15
+                or not 0 <= inode_available <= inode_total
+                or type(inode_pct) not in (int, float)
+                or not 0 <= inode_pct <= 100
+                or abs(inode_pct - 100 * (1 - inode_available / inode_total)) > 0.015):
+            raise ValueError("invalid inode capacity receipt")
     compare = report.get("disk_growth_comparison")
     if compare is not None:
         from zsentinel_disk_trend import TREND
@@ -563,6 +604,8 @@ def public_summary(report):
         "mount_available_gib_observed": round(
             mount["available_bytes_to_operator"] / (1024**3), 2),
         "mount_unavailable_percent_observed": mount["percent_unavailable"],
+        "mount_inode_unavailable_percent_observed": mount.get("inode_unavailable_percent"),
+        "mount_inode_available_observed": mount.get("inode_available"),
         "mount_free_change_mib_not_cleanup": (
             round(compare["mount_free_change_bytes_not_cleanup_proof"] / 1048576, 1)
             if compare is not None else None),
@@ -614,6 +657,13 @@ def public_summary_html(summary):
         ' GiB beschikbaar; ' +
         str(summary["mount_unavailable_percent_observed"]) +
         '% niet beschikbaar volgens lokaal statvfs. Geen toegang/vrijgavebewijs.</p>' +
+        '<p>Inodes nog beschikbaar: ' +
+        escape(str(summary["mount_inode_available_observed"]) if
+               summary["mount_inode_available_observed"] is not None else "ONBEKEND") +
+        '; inodes niet beschikbaar: ' +
+        escape((str(summary["mount_inode_unavailable_percent_observed"]) + "%") if
+               summary["mount_inode_unavailable_percent_observed"] is not None else "ONBEKEND") +
+        '. Alleen metadata, geen cleanup- of releasebevoegdheid.</p>' +
         ('<p>SQLite/WAL-metadata in privé-diskrapport: ' +
          str(summary['sqlite_files_metadata_observed']) +
          ' database(s) waargenomen; interne freelist is geen bewezen'

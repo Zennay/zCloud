@@ -1,4 +1,16 @@
 
+### 21 oktober · inodezichtbaarheid in bestaande privé schijfwerkbank
+
+De bestaande read-only workspace-hotspotscanner neemt nu bij hetzelfde
+statvfs-moment ook inode-totalen, vrije inodes en percentages in de
+private disk-receipt op. Standalone Markdown/HTML en de compacte
+gefilterde eigenaar-HTML tonen inodebeschikbaarheid naast vrije bytes.
+De compacte brondecoder valideert alle optionele inodetellingen en
+weigert tegenstrijdige percentages. Historische receipts zonder inodeveld
+blijven bruikbaar met expliciet ONBEKEND; zij kunnen geen inode-herstel,
+veilige cleanup of toestemming voor nieuwe jobs bewijzen. Geen extra
+recursieve scan of bestandswijziging is toegevoegd.
+
 ### 21 oktober · inode-druk voorkomt onveilige nieuwe self-hosted jobs
 
 De opt-in zsentinel_vps_resource_observer.py leest voortaan tegelijk
