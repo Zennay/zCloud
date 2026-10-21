@@ -2591,6 +2591,7 @@ function zSentinelDeliveryBoard(){
   const queueTime=admitted?(DELIVERY_QUEUE_OBSERVED||'Unknown time'):'Not observed';
   const gitTime=scopedTime(coveredGitHub,github?.observedAt);
   const active=ZSENTINEL_SOURCES_BUSY||ZSENTINEL_ALL_RUNNING||PUBLIC_ISSUES_BUSY||PUBLIC_GITHUB_BUSY||DELIVERY_QUEUE_BUSY;
+  const recoveryReadBusy=ZSENTINEL_RETRY_BUSY;
   return '<section class="panel" id="zSentinelDeliveryBoard"><div class="panel-header">'+
     '<div><h2>zSentinel · product delivery board</h2>'+
     '<p class="panel-subtitle">Start here: currently sampled open P0/P1 issues, related PR evidence, and eligible queue candidates. Sources are manual and may be stale; no automatic claim.</p></div>'+
@@ -2599,9 +2600,14 @@ function zSentinelDeliveryBoard(){
     (active?'Reading…':'Read product sources')+'</button>'+
     (!focus?'<button type="button" class="runner-action runner-action-secondary" data-zsentinel-all-read '+(active?'disabled aria-busy="true"':'')+'>'+
     (ZSENTINEL_ALL_RUNNING?'Reading portfolio…':'Read next 4 projects')+'</button>':'')+
+    '<button type="button" class="runner-action runner-action-secondary" data-retry-vps-read '+
+    (recoveryReadBusy?'disabled aria-busy="true"':'')+'>'+
+    (recoveryReadBusy?'Reading queue recovery…':'Read queue recovery')+'</button>'+
     '<button type="button" class="runner-action" data-zsentinel-export '+(!snapshot&&!github&&!IMPORTED_PRLESS_BRANCHES&&!ZSENTINEL_RETRY_SNAPSHOT?'disabled':'')+
     '>Export handoff .md</button></div>'+
     (ZSENTINEL_ALL_MESSAGE&&!focus?'<p class="detail-note" role="status">'+esc(ZSENTINEL_ALL_MESSAGE)+'</p>':'')+
+    (ZSENTINEL_RETRY_MESSAGE?'<p class="detail-note" role="status">Queue recovery source: '+
+      esc(ZSENTINEL_RETRY_MESSAGE)+'</p>':'')+
     '<p class="detail-note" role="status">Issue source '+esc(issueTime)+
     ' · GitHub activity '+esc(gitTime)+' · Queue '+esc(queueTime)+
     '. Reads are manual, separate, bounded and may be partial or stale.</p>'+
