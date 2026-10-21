@@ -599,3 +599,46 @@ rapportbestanden. Het bestaande directory-bound create-only outputmechanisme
 schrijft privé met modus 0600 en weigert overschrijven. Alle autorisatievelden
 blijven `false`; de CSV is geen schedulerinput, claim, CI-rerun, merge of
 deployopdracht.
+
+## Eén bronmoment · verifieerbaar JSON/CSV-exportpaar
+
+De portfolio-werkbak heeft nu ook `--owner-handoff-json-output`: de bestaande
+CSV en een JSON **van hetzelfde, reeds opgebouwde owner-object** worden in één
+aanroep als twee afzonderlijke create-only 0600-bestanden geschreven. De
+gewone `--format json` portfolio-uitvoer is **niet** dezelfde handoff en
+mag niet als bron voor de paarcontrole worden gebruikt. Er wordt geen extra
+GitHub-, Notion-, runner- of SQLite-lezing uitgevoerd om het paar te maken.
+
+```sh
+umask 077
+python3 scripts/zsentinel_portfolio_overview.py \
+  --github-only --window 0 --show-owner-handoff \
+  --owner-handoff-json-output /private/zsentinel/owner-20261021.json \
+  --owner-handoff-output /private/zsentinel/owner-20261021.csv \
+  --format html --output /private/zsentinel/workbench-20261021.html
+
+python3 scripts/zsentinel_handoff_verify.py \
+  --json /private/zsentinel/owner-20261021.json \
+  --csv /private/zsentinel/owner-20261021.csv
+```
+
+De tweede opdracht is een zelfstandige **read-only productfunctie** voor de
+operator. Hij weigert ontbrekende bestanden, symlinks als eindbestand,
+niet-reguliere bestanden, te grote bestanden, dubbele JSON-keys, ongeldige
+schema's en een gewijzigde SHA-256 van het JSON-bronobject. Vervolgens bouwt
+hij de CSV **byte-for-byte** opnieuw met de bestaande productie-exporter en
+vergelijkt daarmee de volledige ontvangen CSV, inclusief BOM, rijvolgorde,
+kaartteksten, bronmetadata, referentielinks en expliciete autorisatievelden.
+Een gelijk digest in twee handmatig gewijzigde bestanden is dus niet genoeg.
+De uitvoer bevat uitsluitend `SOURCE_EXPORT_PAIR_MATCH`, digest en aantallen,
+geen privédossier of rijinhoud. Een weigering eindigt met exitcode 2.
+
+De twee bestanden hebben elk een uniek pad nodig en mogen geen bron, cursor,
+ledger of andere uitvoer overschrijven. Als het tweede schrijven faalt kan een
+al gecreëerde JSON bestaan; dat is **geen geslaagd exportpaar**: verwijder of
+archiveer het restbestand uitsluitend via een aparte geautoriseerde
+operatorhandeling en exporteer naar nieuwe bestandsnamen. De verifier heeft
+geen schrijfrechten nodig en maakt geen bestanden aan. Ook een geldig
+exportpaar is uitsluitend bewijs van **inhoudelijke bronconsistentie**,
+geen bewijs dat CI klaar is, claims vrij zijn, main gemerged is of een runner
+live hersteld is. Alle huidige review- en releasegates blijven van kracht.
