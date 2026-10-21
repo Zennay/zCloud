@@ -1152,8 +1152,9 @@ def main():
             # Previously all but the last saved source were ignored for
             # task routing. Retain source-bound route movement across the
             # entire already-read window without further provider calls.
-            from zsentinel_route_history import build_history
-            routing_history = build_history(snapshots)
+            if len(snapshots) > 2:
+                from zsentinel_route_history import build_history
+                routing_history = build_history(snapshots)
         disk_private_html = None
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
