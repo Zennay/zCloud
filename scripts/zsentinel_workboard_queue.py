@@ -6,12 +6,12 @@ observed local queue rows, not permission to claim, release or retry anything.
 """
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from zsentinel_product_issue_inbox import object_unique, observed_time
+from zsentinel_product_issue_inbox import observed_time
+from zsentinel_recovery_router import read_json
 
 MAX_BYTES = 1024 * 1024
 REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
@@ -23,12 +23,16 @@ EXPECTED_UNKNOWN = (None,)
 
 
 def read_queue_overview(path: Path):
-    if not isinstance(path, Path) or path.is_symlink() or not path.is_file():
-        raise ValueError("existing queue overview must be a regular private JSON file")
-    size = path.stat().st_size
-    if size <= 1 or size > MAX_BYTES:
-        raise ValueError("queue overview larger than 1 MiB or empty")
-    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=object_unique)
+    """Admit a single stable, bounded JSON inode for the operator workboard.
+
+    The historical path.stat() followed by read_text() could open a different
+    replacement inode, or block on a FIFO swapped into place after the check.
+    Reuse the recovery router's no-follow, nonblocking, same-inode reader.
+    The read stays local and grants no claim/merge/recovery authority.
+    """
+    if not isinstance(path, Path):
+        raise ValueError("existing queue overview Path required")
+    return read_json(path, MAX_BYTES, "queue overview")
 
 
 def attach_queue_pressure(board, source, canonical, now=None):
