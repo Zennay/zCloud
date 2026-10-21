@@ -1,0 +1,63 @@
+name: Control Plane Action Outcome Proof
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_action_outcome_report.py"
+      - "tests/test_action_outcome_report.py"
+      - "tests/test_action_outcome_workflow.py"
+      - ".github/workflows/zcloud-action-outcome-report.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    if: >-
+      github.actor == 'Zennay' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Run focused regressions
+        run: python3 -m unittest tests.test_action_outcome_report tests.test_action_outcome_workflow -v
+
+      - name: Prove live database remains read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          db=/home/ubuntu/zennay-cloud/history.db
+          test -f "$db"
+          test ! -L "$db"
+          before_fingerprint="$(stat -c '%s|%y' "$db")"
+
+          report="$(python3 scripts/zcloud_action_outcome_report.py "$db" --hours 24)"
+          REPORT_JSON="$report" python3 - <<'PY'
+          import json
+          import os
+          payload = json.loads(os.environ["REPORT_JSON"])
+          if not payload.get("ok"):
+              raise SystemExit("ACTION_OUTCOME_REPORT_NOT_OK")
+          if payload.get("source") != "runner_commands":
+              raise SystemExit("ACTION_OUTCOME_REPORT_WRONG_SOURCE")
+          print(
+              "ZCLOUD_ACTION_OUTCOME_REPORT_GREEN "
+              f"commands={payload['totals']['commands']} "
+              f"terminal={payload['totals']['terminal']} "
+              f"success_rate_pct={payload['totals']['success_rate_pct']} "
+              f"timestamp_coverage_complete={payload['data_quality']['timestamp_coverage_complete']} "
+              f"unparseable_timestamp_rows={payload['data_quality']['unparseable_timestamp_rows']}"
+          )
+          PY
+
+          after_fingerprint="$(stat -c '%s|%y' "$db")"
+          test "$before_fingerprint" = "$after_fingerprint"
+          echo "ZCLOUD_ACTION_OUTCOME_DB_READ_ONLY_GREEN fingerprint=$after_fingerprint"
