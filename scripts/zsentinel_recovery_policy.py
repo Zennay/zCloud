@@ -301,8 +301,10 @@ def recommended_next_step_code(action, blockers):
     if codes & {"capacity_not_healthy", "running_jobs_unknown_or_active",
                 "runner_unavailability_unproven"}:
         return "wait_for_capacity_and_runtime_evidence"
+    if codes & {"human_owner_missing", "owner_missing"}:
+        return "identify_authorized_owner"
     if codes & {"owner_authorization_missing", "runtime_owner_missing",
-                "human_approval_missing", "human_owner_missing", "owner_missing"}:
+                "human_approval_missing"}:
         return "request_authorized_owner_approval"
     if codes & {"retry_budget_exhausted_or_unknown", "backoff_not_elapsed"}:
         return "confirm_bounded_retry_budget"
@@ -346,9 +348,11 @@ def recommended_next_step(action, blockers, required_evidence):
     if codes & {"capacity_not_healthy", "running_jobs_unknown_or_active",
                 "runner_unavailability_unproven"}:
         return "Wait for current capacity and runner/job evidence; do not launch or restart workers from this report."
+    if codes & {"human_owner_missing", "owner_missing"}:
+        return "Identify the responsible owner from current source evidence; do not invent ownership, and obtain explicit authorization before any action."
     if codes & {"owner_authorization_missing", "runtime_owner_missing",
-                "human_approval_missing", "human_owner_missing", "owner_missing"}:
-        return "Route the scoped request to the named authorized owner and obtain explicit approval before any change."
+                "human_approval_missing"}:
+        return "Route the scoped request to the authorized owner and obtain explicit approval before any change."
     if codes & {"retry_budget_exhausted_or_unknown", "backoff_not_elapsed"}:
         return "Do not retry now; confirm the bounded retry budget and backoff or choose an independently safe route."
     if codes & {"failure_not_deterministic", "root_cause_unconfirmed", "not_transient"}:
