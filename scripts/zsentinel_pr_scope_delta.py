@@ -108,7 +108,7 @@ def _pairs(view, repo):
 
 def _scope_path(value):
     if (type(value) is not str or not 1 <= len(value) <= 180
-            or value.startswith("/") or "\\\\" in value or "//" in value
+            or value.startswith("/") or "\\" in value or "//" in value
             or any(part in ("", ".", "..") for part in value.split("/"))
             or any(ord(char) < 32 or ord(char) == 127 for char in value)):
         raise ValueError("scope conflict path invalid")
@@ -233,8 +233,10 @@ def compare(previous, current):
         new_seen_pairs = _pairs(new, repo) if new_stable else set()
         old_pairs = old_seen_pairs if both_complete else set()
         new_pairs = new_seen_pairs if both_complete else set()
-        old_seen_scope = _scope_pairs(old, repo) if old_stable else None
-        new_seen_scope = _scope_pairs(new, repo) if new_stable else None
+        old_seen_scope = (_scope_pairs(old, repo)
+                          if old.get("source_status") != "unavailable" else None)
+        new_seen_scope = (_scope_pairs(new, repo)
+                          if new.get("source_status") != "unavailable" else None)
         scope_comparable = (both_complete and old_seen_scope is not None
                             and new_seen_scope is not None)
         old_scope_pairs = old_seen_scope if scope_comparable else set()
@@ -463,6 +465,10 @@ def render_delta(delta, format="text"):
             lines.append("  Alleen huidige steekproef, niet bewezen nieuw: " + url)
         for url in row["seen_only_in_previous_sample_not_proven_closed"]:
             lines.append("  Alleen vorige steekproef, niet bewezen gesloten: " + url)
+        if row.get("scope_conflict_comparison_unavailable"):
+            lines.append("  Bestand/map-historie onbekend: minstens één snapshot bevat deze bronvelden niet of was niet beschikbaar.")
+        if row.get("scope_conflict_sample_preview_truncated"):
+            lines.append("  Meer historische bestand/map-ancestorparen buiten zichtbare limiet.")
         if not row["complete_open_pr_inventory_comparable"]:
             for pair in row["overlap_pairs_only_in_current_sample_not_proven_new"]:
                 lines.append("  Alleen huidige botsingssteekproef, NIET bewezen nieuw: " +
@@ -470,6 +476,16 @@ def render_delta(delta, format="text"):
             for pair in row["overlap_pairs_only_in_previous_sample_not_proven_resolved"]:
                 lines.append("  Alleen vorige botsingssteekproef, NIET bewezen opgelost: " +
                              pair["left"] + " ↔ " + pair["right"])
+            for conflict in row.get("scope_conflicts_only_in_current_sample_not_proven_new", []):
+                lines.append("  Alleen huidige bestand/map-steekproef, NIET bewezen nieuw: " +
+                             conflict["left"] + " " + conflict["left_path"] + " ↔ " +
+                             conflict["right"] + " " + conflict["right_path"] +
+                             " [" + conflict["relation"] + "]")
+            for conflict in row.get("scope_conflicts_only_in_previous_sample_not_proven_resolved", []):
+                lines.append("  Alleen vorige bestand/map-steekproef, NIET bewezen opgelost: " +
+                             conflict["left"] + " " + conflict["left_path"] + " ↔ " +
+                             conflict["right"] + " " + conflict["right_path"] +
+                             " [" + conflict["relation"] + "]")
         if row["complete_open_pr_inventory_comparable"]:
             for pair in row["added_collision_pairs_if_complete"]:
                 lines.append("  Nieuw waargenomen overlap: " +
