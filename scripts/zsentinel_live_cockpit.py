@@ -433,10 +433,81 @@ def main():
             pinned_issues=args.pin_issue,
             worker_events_database=args.worker_events_database,
         )
+        # Combine existing PR source with the SAME read-only queue/issue/job
+        # window. Reuse canonical PR collectors; no new claims or CI dispatch.
+        pr_delivery = None
+        if args.inspect_existing_prs:
+            from zsentinel_pr_delivery import discover_open_prs, observe_prs
+            token = os.environ.get("GITHUB_TOKEN")
+            provider_denial = None
+            job_source = provenance.get("github_jobs")
+            if type(job_source) is dict:
+                provider_denial = job_source.get("provider_admission_denial")
+            issue_source = bundle.get("issue_inbox")
+            if type(issue_source) is dict and (
+                    issue_source.get("stopped_after_rate_or_auth_denial") is True):
+                provider_denial = "rate_limit_confirmed"
+            if provider_denial not in (
+                    None, "authentication_required", "rate_limit_confirmed"):
+                raise ValueError("invalid upstream GitHub admission source")
+            discovered = None
+            if pr_projects and provider_denial is not None:
+                discovered = {
+                    "coverage": [
+                        {"project_id": project,
+                         "status": "not_queried_after_auth_or_rate_limit",
+                         "provider_admission": provider_denial}
+                        for project in pr_projects
+                    ],
+                    "calls": 0, "selection": [],
+                    "all_open_prs_observed": False, "merge_authorized": False,
+                    "owner_verified": False, "writes_performed": False,
+                }
+            elif pr_projects and len(pr_selection) < 3:
+                try:
+                    discovered = discover_open_prs(
+                        registry, pr_projects, token=token,
+                        limit=3 - len(pr_selection), exclude=pr_selection)
+                    pr_selection.extend(discovered["selection"])
+                    if any(
+                        type(row) is dict and
+                        row.get("provider_admission") == "rate_limit_confirmed"
+                        for row in discovered["coverage"]
+                    ):
+                        provider_denial = "rate_limit_confirmed"
+                except (OSError, ValueError, TypeError, KeyError):
+                    # Preserve pinned links; unresolved discovery is NOT
+                    # proof that there are no other open product branches.
+                    discovered = {
+                        "coverage": [{"project_id": project, "status": "degraded"}
+                                     for project in pr_projects],
+                        "calls": 0, "selection": [],
+                        "all_open_prs_observed": False,
+                        "merge_authorized": False, "owner_verified": False,
+                        "writes_performed": False,
+                    }
+            pr_delivery = observe_prs(
+                registry, pr_selection, token=token,
+                skip_provider_denial=provider_denial)
+            pr_delivery["open_pr_discovery"] = (
+                discovered if discovered is not None else {
+                    "coverage": "not_requested",
+                    "all_open_prs_observed": False,
+                    "merge_authorized": False,
+                })
+            provenance["existing_prs"] = (
+                "bounded_readonly_exact_head_sample" if provider_denial is None
+                else "degraded_skipped_after_verified_provider_denial")
+            provenance["existing_prs_selected"] = len(pr_selection)
+            provenance["existing_prs_gets"] = (
+                pr_delivery["request_count"] +
+                (discovered["calls"] if discovered is not None else 0))
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
         decision, ledger = plan(bundle, previous)
         decision["live_sources"] = provenance
+        if pr_delivery is not None:
+            decision["pr_delivery"] = pr_delivery
         if args.observe_local_runners:
             from zsentinel_local_runner_processes import observe as observe_local_runners
             from zsentinel_local_runner_processes import _admit as admit_local_runners
@@ -448,7 +519,8 @@ def main():
         owner_handoff = None
         if args.handoff_output is not None or args.show_owner_handoff:
             from zsentinel_runtime_handoff import build_handoff
-            owner_handoff = build_handoff(decision, registry=registry)
+            owner_handoff = build_handoff(
+                decision, registry=registry, pr_desk=pr_delivery)
         disk_private_html = None
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
