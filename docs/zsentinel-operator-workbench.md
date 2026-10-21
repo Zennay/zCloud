@@ -3317,3 +3317,41 @@ PR-verwijzing vervangt geen eigenaarsautorisatie.
 De op deze branch gewijzigde Python-modules zijn syntactisch gecontroleerd
 op hun exacte gepinde GitHub-bron via verbonden zSSH. Geen nieuwe QA-
 of regressiesuites geschreven of gedraaid, geen live deploy uitgevoerd.
+
+
+### Directe PR-historie bij het geselecteerde issue
+
+De historische PR-verwijzingen waren eerst uitsluitend te vinden in een
+afzonderlijke uitklapbare bronsectie bovenaan de werkbak. Bij normale
+navigatie op het issue zelf zag de gebruiker alleen de beperkte PR-verwijzingen
+uit de originele JSON-boardbron, die juist kan ontbreken of achterlopen.
+
+De huidige productwerkbak projecteert de **reeds onafhankelijk gevalideerde**
+PR-dossierinformatie nu ook direct in het interactieve paneel
+`Selected product issue`. Zodra een operator een opgeslagen issue kiest,
+verschijnt daar (als `--pr-dossier` is meegegeven):
+
+- een beknopte historische triagefocus plus brondekking en het onderscheid
+  tussen verdwenen PRs en verdwenen issue-links;
+- maximaal twaalf brongebonden bestaande PRs met directe originele
+  GitHub-links, laatst waargenomen PR-HEAD versus HEAD bij de laatste
+  issuekoppeling, laatst waargenomen gateklasse en aantal HEAD-wissels;
+- expliciete afzonderlijke tekst als een issue-link verdween terwijl
+  de PR nog in steekproeven voorkwam of als de PR ontbreekt in het laatste
+  opgeslagen bronvenster;
+- het getelde aantal weggelaten PR-kandidaten als een issue meer dan
+  twaalf opgeslagen referenties heeft.
+
+De primaire werkbak en de historische bronnen worden **afzonderlijk**
+gevalideerd. De nieuwe HTML gebruikt uitsluitend een kleine, begrensde
+JSON-projectie van reeds toegelaten informatie voor de maximaal zestig
+geobserveerde boardissues. De tekst wordt via veilige DOM-tekstnodes
+geplaatst, zonder externe serviceaanroepen. Het bestaande privébestand
+blijft create-only. Ontbreekt een historisch verband, dan zegt het paneel
+expliciet dat de relatie **onbekend** is en niet dat de PR is gesloten of
+dat het issue vrij kan worden overgenomen.
+
+Deze aanvullende projectie verandert de bestaande handoff-schema's,
+operatornotities of importautoriteit niet; de inhoud is uitsluitend voor
+menselijke inspectie en vereist vóór daadwerkelijke actie een verse
+GitHub-/Notion-/queuebron en alle verplichte releasegates.
