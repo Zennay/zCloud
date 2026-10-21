@@ -230,12 +230,14 @@ private fun HomeScreen(
                           it.severity.equals("high", true) ||
                           it.severity.equals("error", true) ||
                           it.severity.equals("needs_attention", true) }
-                // Same source incident ID can legitimately exist in another project.
-                .distinctBy { IncidentSnoozeStore.notificationTag(it) }
+                // A recurring incident may have more than one source row.
+                // Show the highest-priority, latest episode for each project
+                // before dropping duplicates; different projects remain distinct.
                 .sortedWith(compareBy<com.zennay.cloud.watch.data.AlertItem> {
                     if (it.severity.equals("critical", true) ||
                         it.severity.equals("error", true)) 0 else 1
                 }.thenByDescending { it.occurredAt.orEmpty() })
+                .distinctBy { IncidentSnoozeStore.notificationTag(it) }
             if (urgent.isNotEmpty()) {
                 item { SectionLabel("AANDACHT NODIG · ${urgent.size}") }
                 items(urgent, key = {
