@@ -245,6 +245,10 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
             "url": row["url"],
             "historic_gate_category": row["historic_gate_category"],
             "human_next_gate": row["next_human_gate"],
+            "pending_individual_review_requests_observed":
+                row["pending_individual_review_requests_observed"],
+            "pending_team_review_requests_observed":
+                row["pending_team_review_requests_observed"],
             "exact_head_observed": row["exact_head_observed"],
             "receipt_old": row["saved_source_stale_over_15_minutes"],
             "current_head_verified": False,
@@ -288,6 +292,16 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
     }
 
 
+def _review_request_note(row):
+    """Saved observation, never proof that a review is currently pending."""
+    people = row.get("pending_individual_review_requests_observed")
+    teams = row.get("pending_team_review_requests_observed")
+    if people is None or teams is None:
+        return "reviewaanvragen: ONBEKEND (historische bron)"
+    return "historisch review aangevraagd bij " + str(people) + (
+        " personen en " + str(teams) + " teams; geen goedkeuring")
+
+
 def human(report, markdown=False):
     lines = [
         "# zSentinel · Merge-first gatebatches (opgeslagen momentopnamen)" if markdown
@@ -319,7 +333,7 @@ def human(report, markdown=False):
         lines.append("- " + str(action["manifest_position"]) + ". " + link +
                      " · [" + action["historic_gate_category"] + "] " +
                      HUMAN_GATE_LABELS_NL.get(action["human_next_gate"], "Actueel bronbewijs nodig.") +
-                     " · geen mergevrijgave")
+                     " · " + _review_request_note(action) + " · geen mergevrijgave")
     if report["manual_review_queue_hidden_after_24"]:
         lines.append(str(report["manual_review_queue_hidden_after_24"]) +
                      " extra PR's buiten compacte shortlist, zie volledige bronbatches.")
@@ -330,6 +344,7 @@ def human(report, markdown=False):
             name = ("[" + row["url"] + "](" + row["url"] + ")") if markdown else row["url"]
             lines.append("- " + name + " · [" + row["historic_gate_category"] + "] " +
                          HUMAN_GATE_LABELS_NL.get(row["next_human_gate"], "Actueel bronbewijs nodig.") +
+                         " · " + _review_request_note(row) +
                          (" · VEROUDERD (>15 min)" if row["saved_source_stale_over_15_minutes"] else "") +
                          " · MERGE NEE")
     lines.append("\nGeen claims, workflows, GitHub-writes, merge of deploy uitgevoerd.")
@@ -349,6 +364,7 @@ def html(report):
             note = " · oud bronbewijs" if row["saved_source_stale_over_15_minutes"] else ""
             items.append('<li><a rel="noopener noreferrer" href="' + url + '">' + url +
                          '</a><br><small>HEAD ' + head + ' · [' + category + '] ' + step + escape(note) +
+                         ' · ' + escape(_review_request_note(row)) +
                          ' · geen mergevrijgave</small></li>')
         cards.append(
             "<details class='receipt-batch'><summary>Batch " +
