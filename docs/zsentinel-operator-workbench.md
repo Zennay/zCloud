@@ -1,5 +1,27 @@
 # zSentinel · Private Product Delivery Workbench
 
+## 21 oktober · gedeelde issuekoppelingen maken hergebruikbare PR's direct bereikbaar
+
+De brongebonden eigenaarsexport benoemt nu bij ieder gekoppeld bestaand PR
+de **andere exact canonieke PR-URL's** die in het volledig toegelaten
+historische brondossier hetzelfde issue noemen. Die alternatieve PR's
+zijn een indicator om bestaand werk eerst te onderzoeken, niet het bewijs
+van een bestandconflict, actuele open status of actieve eigenaar.
+
+- CSV en JSON bewaren `saved_peer_pr_count`, de canonieke
+  `saved_peer_pr_urls` en `saved_peer_inventory_current=false`;
+  een ontbrekende bronkoppeling blijft UNKNOWN.
+- Markdown biedt rechtstreeks navigeerbare historische peer-PR-links,
+  naast het relevante bronissue en de menselijke vervolgstap.
+- De offline HTML toont links naar alle bekende peers; als een peer ook
+  in **de huidige gefilterde selectie** aanwezig is, kan de operator via
+  een interne paginalink direct naar zijn kaart springen. Peers buiten de
+  selectie worden niet als aanwezig of afgerond weergegeven.
+- De bestaande record-, uitvoergrootte-, canonieke-URL- en privé-bestandslimieten
+  blijven gelden. Alle alternatieven komen uit dezelfde vooraf toegelaten
+  oorspronkelijke bron; er wordt geen GitHub GET, workflowactie of claim
+  gestart. Gedeelde issues bewijzen nooit automatisch code- of mergeconflict.
+
 ## 21 oktober · zelfstandige Markdown-ownerbrief en snelle HTML-navigatie
 
 De bestaande brongebonden eigenaarsexport biedt nu naast CSV, JSON en
