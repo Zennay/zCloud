@@ -21,6 +21,25 @@ Existing P0/P1 issue classification, draft/QA exclusion,
 exact HEAD, independent review, CI and mainwriter checks are unchanged.
 These are **candidate links**, never proof a PR actually fixes the issue.
 
+## Portfolio-brede prioriteit, geen fictief mergebewijs
+
+De bestaande `zsentinel_issue_first_board.py --project cloud --project supa`
+verdeelt nu de reeds geobserveerde bestaande product-PRs **portfolio-breed**
+in de volgorde P0-issuehint, P1-issuehint, daarna overige PRs. Binnen
+eenzelfde prioriteit krijgen bron-geobserveerde gates voorrang op HOLD en
+daarna concept-PRs. Gelijktijdige kandidaten worden stabiel over de
+geselecteerde repositories afgewisseld, zodat de volgorde waarin projecten
+aan de CLI zijn meegegeven niet op zichzelf een P0 van een ander project
+naar beneden duwt. Dit raakt uitsluitend de getoonde volgorde van de al
+begrensd gelezen gegevens; het maakt geen nieuwe GitHub-calls.
+
+Het is uitdrukkelijk een **triagevolgorde**, geen bewijs dat het gekoppelde
+issue is opgelost of dat een PR veilig kan worden gemerged. De bestaande
+exacte-head CI, onafhankelijke review, branch protection, lokale en externe
+claims en expliciete mainwriterrechten blijven beslissend. Gericht
+pagineren met `--issue` behoudt juist zijn eigen exacte GitHub
+source-window-volgorde en hervat-tokens.
+
 ## Merge-first cockpit: cross-project offline worklist
 
 The new `scripts/zsentinel_merge_first_board.py` combines multiple **explicit existing** product PRs into a bounded, read-only operator worklist. It does not discover new owners, claim work, approve PRs, merge, restart runners or deploy. Its canonical repository allowlist comes from `projects.json`.
