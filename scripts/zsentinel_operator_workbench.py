@@ -2327,6 +2327,66 @@ function drawDetail(){
   status.textContent='Three source-bound lines selected for manual copy; nothing was submitted.';};
  summary.append(snippet,copy);
  detail.append(summary);
+ const policyRequest=elem('section');
+ policyRequest.setAttribute('aria-label','Recovery policy request template');
+ policyRequest.append(elem('h3','Recovery policy request · no action authorized'),
+  elem('p','Download a policy request for this saved issue. The evidence fields remain unknown, and the original source observation time is preserved; no live claim, CI or release status is inferred.'));
+ const policyActionLabel=elem('label','Proposed recovery action');
+ policyActionLabel.htmlFor='recoveryPolicyAction';
+ const policyAction=elem('select');policyAction.id='recoveryPolicyAction';
+ [['route_root_fix','Route a confirmed root fix'],
+  ['assign_independent_work','Assign independent work'],
+  ['retry_ci','Consider a bounded CI retry'],
+  ['merge_pr','Review a PR merge'],
+  ['deploy','Review a deployment'],
+  ['restart_runner','Review runner recovery']]
+ .forEach(([value,labelText])=>{
+  const option=elem('option',labelText);option.value=value;policyAction.append(option);
+ });
+ const policyDownload=elem('button','Download recovery policy JSON');
+ policyDownload.type='button';
+ policyDownload.onclick=()=>{
+  try{
+   const sourceUrl=new URL(card.url);
+   if(sourceUrl.protocol!=='https:'||sourceUrl.hostname!=='github.com'||
+      !/\/(issues|pull)\/[1-9][0-9]{0,8}$/.test(sourceUrl.pathname))
+    throw Error('Saved source is not a canonical GitHub issue or PR URL');
+   const sourceStamp=board.source_times_utc?.inbox;
+   if(typeof sourceStamp!=='string'||!sourceStamp.trim())
+    throw Error('Original issue-inbox observation time is missing');
+   const projectId=String(card.project).toLowerCase()
+    .replace(/[^a-z0-9_-]/g,'-').replace(/^-+/,'').slice(0,64);
+   if(!/^[a-z][a-z0-9_-]{0,63}$/.test(projectId))
+    throw Error('Saved project identity is not a canonical slug');
+   const sourceParts=sourceUrl.pathname.split('/').filter(Boolean);
+   const sourceNumber=sourceParts[sourceParts.length-1];
+   const incidentId='issue-'+sourceNumber;
+   const evidenceFields=[
+    'source_verified','failure_kind','attempts','retry_budget',
+    'backoff_elapsed','active_claim','independent_task_ready','scope_disjoint',
+    'capacity','exact_head','required_ci','independent_review',
+    'branch_protection','owner_authorized','root_cause_confirmed',
+    'unresolved_review_threads','merged_main','post_merge_health',
+    'release_approval','runtime_owner_authorized','runner_state',
+    'running_jobs','human_approval'
+   ];
+   const request={
+    schema_version:1,action:policyAction.value,project_id:projectId,
+    incident_id:incidentId,observed_at_utc:sourceStamp,source_url:card.url,
+    owner:null,evidence:Object.fromEntries(evidenceFields.map(name=>[name,null]))
+   };
+   const raw=JSON.stringify(request,null,2);
+   const uri=URL.createObjectURL(new Blob([raw],{type:'application/json;charset=utf-8'}));
+   const downloadLink=elem('a');downloadLink.href=uri;
+   downloadLink.download='zsentinel-recovery-'+incidentId+'.json';
+   downloadLink.click();setTimeout(()=>URL.revokeObjectURL(uri),1000);
+   status.textContent='Private policy request downloaded. Saved source time preserved; evidence is unknown and no action was authorized or performed.';
+  }catch(error){
+   status.textContent='Policy request not created: '+(error instanceof Error?error.message:'saved source refused');
+  }
+ };
+ policyRequest.append(policyActionLabel,policyAction,policyDownload);
+ detail.append(policyRequest);
  const label=elem('label','Operator disposition (non-authorizing)');label.htmlFor='decision';
  const sel=elem('select');sel.id='decision';
  [['investigate','Investigate product issue'],['integrate-existing-pr','Inspect/integrate existing PR'],
