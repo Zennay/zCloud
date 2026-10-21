@@ -1441,9 +1441,26 @@ def main() -> int:
                        help="Create a NEW private 0600 report of the selected format; never overwrite")
     saved.add_argument("--bundle-dir", type=Path, default=None,
                        help="Create a NEW private 0700 snapshot folder: JSON, HTML, Markdown, brief and digest manifest")
+    saved.add_argument("--verify-bundle", type=Path, default=None,
+                       help="Verify a saved private bundle locally without probing VPS sources")
     args = parser.parse_args()
     if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
         parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
+    if args.verify_bundle is not None:
+        if (args.worker_safety or args.disk_hotspots or args.host_pressure
+                or args.archive_readiness or args.previous_report is not None
+                or args.expected_main_sha is not None or args.json
+                or args.format != "text"):
+            parser.error("--verify-bundle accepts no live preflight or output-format options")
+        try:
+            result = verify_private_bundle(args.verify_bundle)
+        except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
+            print("PRIVATE_PREFLIGHT_BUNDLE_INTEGRITY_UNVERIFIED: "
+                  "invalid, modified or unavailable private bundle; no VPS probe.",
+                  file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
     report = measure(args.root.resolve(), args.expected_main_sha, args.disk_hotspots, args.archive_readiness, args.worker_safety, args.host_pressure)
     if args.previous_report is not None:
         try:
