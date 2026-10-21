@@ -1056,3 +1056,52 @@ opnieuw op de werkelijk actuele bronnen worden vastgesteld.
 broncommit en CI/review staan in de PR. Merge en VPS-release blijven
 afzonderlijke, geautoriseerde stappen. Geen QA-testmodule, QA-run,
 privébronexport, live-API-aanroep of worker-/SQLite-mutatie uitgevoerd.
+
+
+### 21 oktober · Rechtstreeks bruikbare compacte operatorbron en Markdown-export
+
+De bestaande `GET /api/portfolio-queue` heeft een **opt-in**, brongebonden
+read-only variant: voeg `?operator_inbox=1` toe aan dezelfde bestaande
+authenticatie- en toegangsroute. De JSON bevat `backend`,
+`operator_inbox_snapshot=true`, `delivery_policy` en `time`.
+De nieuwe compacte weergave geeft **niet** de volledige `items`-rijen,
+workerallocatie of lane-conflictbron terug. `?all=1` wordt in de compacte
+variant genegeerd: afgeschermde historische done/dropped-taakrecords zijn
+niet nodig voor actuele herstelwerkorders. De normale API zonder parameter
+blijft functioneel en qua response-shape ongewijzigd. Intern wordt nog
+dezelfde bestaande queue-SQL-uitlezing uitgevoerd; deze verbetering
+verkleint de **uitgaande response**, niet de databasewerkdruk of de
+volledige geheugenvoetafdruk van de server.
+
+De operator kan met bestaande beheerrechten een lokale privé-export van
+de compacte respons opslaan en de eerder toegevoegde offline HTML-tool
+gebruiken. Voor een overdracht die gemakkelijk in Notion kan worden
+geplaatst is daarnaast **echte Markdown-uitvoer** toegevoegd:
+
+```sh
+umask 077
+install -d -m 700 "$HOME/.local/share/zcloud/private"
+# Gebruik uitsluitend de bestaande geautoriseerde queue-API, geen publieke
+# of ongeautoriseerde URL. Bewaar de JSON in portfolio-queue.json (0600).
+python3 scripts/zcloud_product_delivery_inbox.py \
+  --input "$HOME/.local/share/zcloud/private/portfolio-queue.json" \
+  --output "$HOME/.local/share/zcloud/private/zsentinel-handoff.md" \
+  --format markdown
+```
+
+De Markdown bevat de daadwerkelijk waargenomen project- en taakidentiteiten
+en vaste herstelstappen, maar geen credential, ruwe taakmetadata, prompt,
+URL of bronbestandspad. Deze tekst is een **privé eigenaarsoverdracht**
+en geeft niemand automatisch rechten om te claimen, retryen of mergen.
+Een opgemaakte lokale HTML-pagina blijft de standaard zonder
+`--format markdown`.
+
+**Bronprovenance:** privé bestandsrechten beschermen de informatie maar
+**bewijzen niet cryptografisch** dat de JSON werkelijk door de server is
+afgegeven. Het bestaande beheerproces blijft verantwoordelijk voor
+herkomst, tijd en autorisatie van de snapshot. Zowel HTML als Markdown
+melden historische/onbetrouwbare klokvelden en onvolledige brondekking.
+
+Deze implementatie staat alleen op de bestaande PR-branch. Bestaande
+hosted/self-hosted workflowgates, onafhankelijke review, protected main
+en geautoriseerde VPS-release blijven verplicht.
