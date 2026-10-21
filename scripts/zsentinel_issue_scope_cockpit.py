@@ -31,6 +31,7 @@ from zsentinel_pr_scope_delta import read_private_previous, compare, render_delt
 from zsentinel_issue_pr_history import attach as attach_history
 from zsentinel_issue_action_board import (
     build as build_human_work_inbox, render_compact_inbox,
+    render_merge_first_csv,
 )
 from zsentinel_worklist_html import render_html as render_private_worklist_html
 from zsentinel_issue_activity import classify as classify_issue_activity
@@ -1172,7 +1173,8 @@ def main(argv=None):
                         help="Rows in compact worklist output, maximum 60")
     parser.add_argument("--format", choices=("html", "json", "text", "markdown",
                                              "worklist-markdown", "worklist-text",
-                                             "worklist-json", "worklist-html"),
+                                             "worklist-json", "worklist-html",
+                                             "worklist-csv"),
                         default="html")
     args = parser.parse_args(argv)
     try:
@@ -1355,6 +1357,9 @@ def main(argv=None):
         elif args.format == "worklist-html":
             rendered = render_private_worklist_html(report["human_work_inbox"],
                                                     args.worklist_limit) + "\n"
+        elif args.format == "worklist-csv":
+            rendered = render_merge_first_csv(report["human_work_inbox"],
+                                              args.worklist_limit)
         elif args.format in ("worklist-markdown", "worklist-text"):
             rendered = render_compact_inbox(
                 report["human_work_inbox"],
