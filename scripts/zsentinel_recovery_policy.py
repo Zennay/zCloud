@@ -126,7 +126,10 @@ def _timestamp(value):
 def _source_url(value):
     if type(value) is not str or len(value) > 500:
         raise PolicyInputError("source_url must be a canonical HTTPS source link")
-    parsed = urlparse(value)
+    try:
+        parsed = urlparse(value)
+    except ValueError as exc:
+        raise PolicyInputError("source_url is malformed") from exc
     if (parsed.scheme != "https" or not parsed.hostname
             or parsed.username is not None or parsed.password is not None
             or parsed.hostname.lower() not in {
@@ -147,7 +150,7 @@ def _validate(data):
         raise PolicyInputError("missing top-level properties: " + ", ".join(sorted(missing)))
     if type(data["schema_version"]) is not int or data["schema_version"] != 1:
         raise PolicyInputError("schema_version must be integer 1")
-    if data["action"] not in ACTIONS:
+    if type(data["action"]) is not str or data["action"] not in ACTIONS:
         raise PolicyInputError("action must be one of: " + ", ".join(sorted(ACTIONS)))
     for field in ("project_id", "incident_id"):
         value = data[field]
@@ -168,7 +171,9 @@ def _validate(data):
         if field in evidence and evidence[field] is not None and type(evidence[field]) is not bool:
             raise PolicyInputError(field + " must be true, false or null")
     for field, allowed in ENUMS.items():
-        if field in evidence and evidence[field] is not None and evidence[field] not in allowed:
+        if field in evidence and evidence[field] is not None and (
+            type(evidence[field]) is not str or evidence[field] not in allowed
+        ):
             raise PolicyInputError(field + " has an unsupported value")
     for field in ("attempts", "retry_budget", "unresolved_review_threads"):
         value = evidence.get(field)
