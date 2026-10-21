@@ -76,3 +76,38 @@ Edit incident.json using only evidence actually observed. Leave unavailable fiel
     python3 scripts/zsentinel_recovery_policy.py --input incident.json --format markdown
 
 The template command validates the project/incident identifiers and source URL. It does not assert that the source is current, that any check is green, or that an owner has approved an action. Regenerate or refresh the observation timestamp immediately before evaluation; the default freshness window is 60 minutes.
+
+### Incident-owner workorders and conflicting proposals
+
+An operator can now get a **three-line problem/action/status handoff** for the
+same 1–25 bounded, source-validated policy requests without opening every
+individual JSON receipt. This is an **advisory queue, not worker assignment**:
+
+```bash
+python3 scripts/zsentinel_recovery_policy.py --batch-input incidents.json --format workorders
+```
+
+- Each `(project_id, incident_id)` produces one incident-level owner workorder.
+  JSON batches expose `incident_count` and `owner_workorders`; Markdown
+  batches put the compact handoff before the full per-proposal evidence.
+- If one batch proposes different actions for the same incident, **every**
+  proposal becomes `HOLD` with `competing_incident_actions`, and the single
+  workorder says `select_one_authorized_action`. This prevents two separately
+  policy-eligible routes being presented as concurrent permission. A repeated
+  identical `(project_id, incident_id, action)` still rejects the whole batch.
+- Workorder `next_step` is `resolve_evidence_holds` for ordinary HOLDs or
+  `verify_live_gates_and_obtain_owner_approval` for locally ready proposals.
+  The owner is UNKNOWN unless the input identifies one consistent owner.
+- The order groups proposals by **intervention class** (merge review, runner
+  recovery, root fix, bounded CI retry, release, escalation, blocker parking,
+  independent work). It is *not* a severity score, P0 prioritization,
+  authorization or evidence of runtime capacity. Existing actual issue
+  priorities, active claims and required CI/review gates remain authoritative.
+- Workorder source URLs are only the validated, sanitized supplied links;
+  independently verified remains false and no claim, CI retry, merge, deploy
+  or runner action occurs. `--format workorders` is batch-only.
+- `--fail-on-hold` also detects collision-induced HOLDs and returns exit 2
+  after emitting the complete local handoff.
+
+This local policy gate complements the runtime incident router in PR #1563,
+but does not claim it was merged or connected to a live scheduler.
