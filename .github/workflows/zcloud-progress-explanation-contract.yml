@@ -1,0 +1,56 @@
+name: zCloud progress explanation contract
+
+on:
+  pull_request:
+    paths:
+      - 'projects.json'
+      - 'public/app.js'
+      - 'tests/test_progress_explanation_contract.py'
+      - 'tests/test_progress_explanation_contract_workflow.py'
+      - '.github/workflows/zcloud-progress-explanation-contract.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-progress-explanation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  hosted:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact candidate
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Prove progress explanation contract
+        run: python3 -m unittest -v tests.test_progress_explanation_contract tests.test_progress_explanation_contract_workflow
+
+  permanent-vps-proof:
+    if: github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact candidate and permanent runner
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Prove progress explanation contract
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_progress_explanation_contract tests.test_progress_explanation_contract_workflow
+          echo "ZCLOUD_PROGRESS_EXPLANATION_VPS_GREEN=1"
