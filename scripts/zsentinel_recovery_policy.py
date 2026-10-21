@@ -471,6 +471,9 @@ def evaluate(data, max_age_minutes, *, now=None):
                 ("evidence.active_claim",))
 
     elif action == "merge_pr":
+        require(value("active_claim") == "none",
+                "claim_not_clear", "Do not merge while any active or unknown worker claim remains.",
+                ("evidence.active_claim",))
         require(value("exact_head") == "verified",
                 "head_not_verified", "Required gates must be bound to the current exact PR head.",
                 ("evidence.exact_head",))
@@ -1539,6 +1542,128 @@ def merge_review_template_from_case(case_report, *, project, issue_number, pr_nu
     return request
 
 
+
+MERGE_REVIEW_CHECKS = (
+    ("active_claim", "No active worker or owner claim remains (none)."),
+    ("exact_head", "The reviewed commit is the current exact PR head (verified)."),
+    ("required_ci", "Every mandatory check is green on that exact head (green)."),
+    ("independent_review", "An independent reviewer has approved (approved)."),
+    ("branch_protection", "Normal GitHub branch protection is satisfied."),
+    ("unresolved_review_threads", "No unresolved review threads remain (0)."),
+    ("merged_main", "The PR is confirmed open and not already merged (no)."),
+    ("owner_authorized", "The authorized PR owner explicitly approves integration (true)."),
+)
+
+
+def merge_review_packet_from_case(case_report, *, project, issue_number,
+                                  pr_number, format_name):
+    """Render a sampled PR merge-review request without granting merge authority."""
+    request = merge_review_template_from_case(
+        case_report, project=project, issue_number=issue_number,
+        pr_number=pr_number,
+    )
+    selected = select_case_view(
+        case_report, project=project, issue_number=issue_number,
+    )["owner_workorders"][0]
+    candidates = [row for row in selected.get("candidate_prs", [])
+                  if row["number"] == pr_number]
+    if len(candidates) != 1 or not selected.get("source_urls"):
+        raise PolicyInputError("sampled issue/PR source identity is incomplete")
+    candidate = candidates[0]
+    issue_url = selected["source_urls"][0]
+    pr_url = candidate["url"]
+    issue_observed = case_report["source_issues_observed_at_utc"]
+    case_generated = case_report["source_generated_at_utc"]
+    request_json = json.dumps(
+        request, ensure_ascii=False, indent=2, sort_keys=True
+    )
+    if format_name == "json":
+        return request_json + "\n"
+
+    draft_label = (
+        "DRAFT at source snapshot" if candidate["draft_at_source"]
+        else "non-draft at source snapshot"
+    )
+    if format_name == "markdown":
+        tick = chr(96)
+        lines = [
+            "# zSentinel — merge-review request",
+            "",
+            "**HOLD · historical candidate only. This packet does not authorize a merge.**",
+            "",
+            "- Project: " + project,
+            "- Priority: " + selected["priority"],
+            "- Original issue: [#" + str(issue_number) + "](" + issue_url + ")",
+            "- Sampled candidate PR: [#" + str(pr_number) + "](" + pr_url + ")",
+            "- PR state in saved source: " + draft_label,
+            "- Relationship in saved source: " + candidate["relationship_at_source"],
+            "- Issue source observed (UTC): " + str(issue_observed or "UNKNOWN"),
+            "- Case exported (UTC): " + str(case_generated or "UNKNOWN"),
+            "",
+            "## Required live owner checks",
+            "",
+            "Re-read GitHub and the current Notion/worker ownership inventory. "
+            "The saved source is navigation evidence only; do not infer current status from it.",
+            "",
+        ]
+        lines.extend(
+            "- [ ] " + label + " Evidence field: " + tick + field + tick + "."
+            for field, label in MERGE_REVIEW_CHECKS
+        )
+        lines.extend([
+            "",
+            "## Fail-closed policy request",
+            "",
+            "The JSON below deliberately leaves every evidence value null. "
+            "In particular, active_claim must be independently observed as none; "
+            "unknown or active claims block merge review.",
+            "",
+            chr(96) * 3 + "json",
+            request_json,
+            chr(96) * 3,
+            "",
+            "**Boundary:** no claim, CI retry, merge, deployment, runner restart or other action was performed.",
+            "",
+        ])
+        return "\n".join(lines)
+
+    if format_name == "html":
+        esc = lambda value: html.escape(str(value), quote=True)
+        parts = [
+            "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+            "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">",
+            "<title>zSentinel merge-review request</title>",
+            "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:920px;margin:2rem auto;padding:0 1rem;color:#172538;background:#f8fafc}section{background:white;border:1px solid #ccd5e0;border-left:5px solid #a75a14;border-radius:.5rem;padding:1rem;margin:1rem 0;overflow-wrap:anywhere}h1{font-size:1.6rem}h2{font-size:1.1rem}li{margin:.6rem 0}a{color:#1458a1}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f5f9;padding:1rem;border-radius:.4rem}.muted{color:#4a596f}</style>",
+            "</head><body><header><h1>zSentinel — merge-review request</h1>",
+            "<p><strong>HOLD · historical candidate only.</strong> This packet does not authorize a merge.</p></header>",
+            "<section><h2>Source identity</h2><ul>",
+            "<li>Project: <strong>" + esc(project) + "</strong></li>",
+            "<li>Priority: <strong>" + esc(selected["priority"]) + "</strong></li>",
+            "<li>Original issue: <a href='" + esc(issue_url) + "'>#" + str(issue_number) + "</a></li>",
+            "<li>Sampled candidate PR: <a href='" + esc(pr_url) + "'>#" + str(pr_number) + "</a></li>",
+            "<li>Saved PR state: " + esc(draft_label) + "</li>",
+            "<li>Saved relationship: " + esc(candidate["relationship_at_source"]) + "</li>",
+            "<li>Issue source observed (UTC): " + esc(issue_observed or "UNKNOWN") + "</li>",
+            "<li>Case exported (UTC): " + esc(case_generated or "UNKNOWN") + "</li>",
+            "</ul><p class='muted'>Saved links are navigation evidence only. Re-read current GitHub and current Notion/worker ownership before acting.</p></section>",
+            "<section><h2>Required live owner checks</h2><ul>",
+        ]
+        for field, label in MERGE_REVIEW_CHECKS:
+            parts.append("<li><strong>" + esc(label) + "</strong> <code>" +
+                         esc(field) + "</code></li>")
+        parts.extend([
+            "</ul><p>Any unknown or active claim blocks merge review. Every check must be backed by current, independently observed evidence.</p></section>",
+            "<section><h2>Fail-closed JSON policy request</h2>",
+            "<p>Every evidence value is null by design. Complete it only from current source evidence; do not infer from the saved PR snapshot.</p>",
+            "<details><summary>Show JSON request</summary><pre>" + esc(request_json) + "</pre></details></section>",
+            "<footer><p class='muted'>No claim, CI retry, merge, deployment, runner restart or other action was performed.</p></footer>",
+            "</body></html>\n",
+        ])
+        return "".join(parts)
+    raise PolicyInputError("merge-review packet format must be json, markdown or html")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Explain whether a proposed recovery action is ready for human review; never execute it."
@@ -1585,11 +1710,11 @@ def main(argv=None):
     if args.prepare_merge_review:
         if (not args.case_input or not args.view_project or args.view_issue is None
                 or args.candidate_pr_number is None
-                or args.format != "json" or args.fail_on_hold
+                or args.format not in ("json", "markdown", "html") or args.fail_on_hold
                 or args.through_priority is not None):
             parser.error(
                 "--prepare-merge-review requires --case-input, --view-project, "
-                "--view-issue, --candidate-pr-number and JSON output only"
+                "--view-issue, --candidate-pr-number and --format json|markdown|html"
             )
     elif args.candidate_pr_number is not None:
         parser.error("--candidate-pr-number requires --prepare-merge-review")
@@ -1659,14 +1784,14 @@ def main(argv=None):
                 _emit_output(output, args.output, args.format)
                 return 0
             if args.prepare_merge_review:
-                request = merge_review_template_from_case(
+                output = merge_review_packet_from_case(
                     report, project=args.view_project,
                     issue_number=args.view_issue, pr_number=args.candidate_pr_number,
+                    format_name=args.format,
                 )
-                output = json.dumps(request, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
                 if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
                     raise PolicyInputError("output exceeds 128 KiB")
-                _emit_output(output, args.output, "json")
+                _emit_output(output, args.output, args.format)
                 return 0
             if args.view_project or args.through_priority or args.view_issue is not None:
                 report = select_case_view(
