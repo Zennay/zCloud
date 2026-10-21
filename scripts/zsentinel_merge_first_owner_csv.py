@@ -378,7 +378,7 @@ def main(argv=None):
         rows = prepare_rows(view, sha, saved)
         if args.format == "csv":
             stream = StringIO()
-            writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\\r\\n")
+            writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\r\n")
             writer.writeheader()
             for row in rows:
                 writer.writerow({key: _cell(row.get(key)) for key in FIELDS})
@@ -419,7 +419,7 @@ def main(argv=None):
                 "live_state_verified": False,
             }
             payload = json.dumps(
-                envelope, ensure_ascii=False, sort_keys=True, indent=2) + "\\n"
+                envelope, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
         if len(payload.encode("utf-8")) > MAX_CSV_BYTES:
             raise ValueError("private owner export exceeds one MiB size limit")
         write_create_only(args.output, payload)
