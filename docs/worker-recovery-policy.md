@@ -507,10 +507,15 @@ references are deduplicated against them and fill unused slots up to
 discovered PRs are still offered as **navigation-only links with live status
 UNKNOWN**; they are not silently discarded or treated as reviewed.
 
-The combined source window is strictly limited to **two chronological
-timeline pages of 30 events** and **four pages of 30 open PRs**, with
+The combined source window is strictly limited to **three issue-timeline
+pages of 30 events** and **four pages of 30 open PRs**, with
 at most **12 timeline cross-reference hints and 12 text hints** retained
-for navigation. Official GitHub `cross-referenced` events are admitted
+for navigation. The first timeline page is read, then up to two most
+recent pages when GitHub's canonical `Link: rel="last"` pagination
+header identifies them; otherwise, at most two sequential fallback
+pages are read. The returned URL itself is never followed. Middle
+historical pages may be omitted and source coverage remains explicitly
+partial. Official GitHub `cross-referenced` events are admitted
 only when the event's originating PR URL exactly belongs to the same
 canonical repository. They precede weaker title/body text matches, and
 duplicate PR identities are removed. The text source examines the issue
@@ -562,18 +567,18 @@ selected PR receives the live issue/PR/HEAD/check/review observation.
 Every other saved or discovered PR remains a visible **unreviewed link**
 with live status UNKNOWN. A focused read never asserts that a PR is
 merged to main, owner-approved or deployed. With discovery enabled,
-the upper GET budget reduces from 19 to **11** (2 timeline pages,
+the upper GET budget reduces from 20 to **12** (3 timeline pages,
 4 open-PR pages, one issue and up to four focused PR reads).
 
-The upper read bound is **19 GitHub GETs**: at most two issue-timeline
+The upper read bound is **20 GitHub GETs**: at most three issue-timeline
 pages, four open-PR-list pages, one original issue GET and four GETs
 for each of three live-read candidates. Each timeline/list response
 has a fixed 2 MiB cap; issue/PR/check/review reads retain the 160 KiB
 cap. 401/403/429 on one discovery source prevents further pages from
 that source and records a visible UNKNOWN; it never grants a retry,
-owner reassignment, merge or release authority. The receipt records
-actual `get_attempts` and the conservative
-`read_get_attempt_upper_bound`. A live PR reference is only an
+owner reassignment, merge or release authority. The receipt records actual `get_attempts`, the sampled timeline page
+numbers, whether the recent tail was observed, unobserved middle-page
+coverage and the conservative `read_get_attempt_upper_bound`. A live PR reference is only an
 owner-navigation lead until required exact-head CI, independent review,
 active claims and protected-main rules have been separately verified
 by an authorized operator.
