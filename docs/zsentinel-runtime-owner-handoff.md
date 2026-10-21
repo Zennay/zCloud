@@ -438,3 +438,22 @@ De router en werkbak wijzigen geen operationele taak-/queue-toestand; dit
 zijn leesbare veiligheids-HOLDs op bestaande productvoorstellen. Het werk
 staat op de reeds open PR #1563; onafhankelijke review, exacte-head CI en
 beschermde main zijn nog verplicht vóór integratie. Geen nieuwe QA-tests.
+
+
+## 21 oktober · onvolledige afhankelijkheidsbron is geen nulmeting
+
+De bestaande router kan alle werkvoorstellen onderdrukken wanneer de taak- of
+claiminventaris ontbreekt, ouder is dan vijf minuten of een actieve claim geen
+bekende bestandsscope heeft. In die situatie is het waargenomen aantal
+dependency-HOLDs **geen totaal**: de centrale eigenaaroverdracht toont
+`incomplete_or_stale` en **ONBEKEND** in plaats van `0` alsof alle
+afhankelijkheden zijn beoordeeld. Dezelfde status verschijnt in de standaard
+tekstuitvoer en offline HTML. Ook oudere opgeslagen beslissingen zonder
+dependency-coverageveld worden fail-closed als onbekend weergegeven.
+
+Alleen `coverage=complete` staat toe dat de handoff een concreet totaal aantal
+HOLD-taken presenteert. Deze status is gebaseerd op expliciete complete
+inventarissen, verse observatietijden en bekende actieve claimscopes; het blijft
+advies en verleent geen claim-, retry-, merge- of deployrecht. De implementatie
+staat op de bestaande PR #1563 en vereist nog steeds de originele exacte-head
+CI, onafhankelijke review en protected-main release.
