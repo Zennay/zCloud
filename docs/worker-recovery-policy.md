@@ -495,21 +495,23 @@ python3 scripts/zsentinel_recovery_policy.py \
 
 This route never creates or merges PRs. It inspects at most **four pages**
 of 30 existing open PRs (120 total) in their source repository. Only the
-selected issue's same-repository number is searched in the PR description
-in memory. Explicit issue-closing keyword references are selected before
-ordinary issue-number text mentions; ties keep the GitHub source-window
-order. This improves which existing repair gets reviewed first but does
+selected issue's same-repository number is searched in both the PR
+description and title in memory. Explicit issue-closing keyword references
+are selected before ordinary issue-number text mentions across both sources;
+ties keep the GitHub source-window order. This improves which existing repair gets reviewed first but does
 **not** verify the relationship, merge readiness or the issue's status.
 At most three candidate PRs are retained and double-read to observe
-their exact HEAD and any concurrent description changes. No raw PR
-descriptions, unrelated issues or authorization tokens are exported.
+their exact HEAD and any concurrent title/description changes. A PR title
+alone is only a textual hint, never a verified GitHub issue association.
+No raw PR titles/descriptions, unrelated issues or authorization tokens
+are exported.
 
 A short page stops pagination early; a full fourth page marks
 `pagination_window_full=true`. The JSON source provenance exposes
 `pages_scanned`, `open_pr_rows_scanned`,
 `last_page_short_at_observation`, skipped rows, total textual matches,
-candidate truncation, closing-keyword prioritization and the unchanged
-`existing_repair_absence_verified=false`.
+candidate truncation, title-only matches, closing-keyword prioritization and
+the unchanged `existing_repair_absence_verified=false`.
 The HTML and Markdown owner views show this coverage clearly. A short
 page is only a momentary API observation; concurrent changes, different
 link syntax, private repositories and unsampled references still prevent
