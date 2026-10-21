@@ -2627,3 +2627,31 @@ snapshots: live claim, incident and lease evidence must be reviewed again.
 No new tests, test dispatch, bot/worker assignment, CI bypass, persistent
 storage, network request, automated reminder, service restart, queue write,
 GitHub merge or production deployment is introduced.
+
+### Issue-independent manual recovery calendar export (21 October)
+
+The existing **Preview reviewed calendar events** route now also includes
+project-level recovery follow-ups for projects with no issue cards. As with
+existing issue follow-ups, a project must have a locally entered, valid
+UTC review date **and** an explicit human contact label before it appears
+in the private all-day ICS export. The accepted project name is the
+validated identity from the original saved board, not a queue task ID
+or active claim. The calendar description records the source board timestamp,
+the original queue-source timestamp or UNKNOWN, and the human-only disposition.
+
+For privacy, private notes, issue-free queue identifiers and any presumed
+live assignee remain excluded from the calendar. The manually entered
+contact label is omitted by default and is included only after the existing
+explicit contact opt-in checkbox is selected. The entire resulting ICS is
+visible for review before the separate local download action. The combined
+offline export is capped at 60 all-day events; known manual issue entries
+retain priority and project entries fill the remaining bounded slots.
+No notification, automated reminder, third-party calendar API, email or
+live project action is invoked. Calendar import may have its own
+notification/sync defaults outside this tool; the user must decide whether
+and where to import the downloaded file.
+
+The private JSON handoff format remains v5 and stores the human project
+contact/date for later manual restoration on the **same board**. These
+local timestamps are not evidence that an original GitHub issue, worker,
+lease, CI job or production deployment is healthy or resolved.
