@@ -48,6 +48,29 @@ def unique(pairs):
     return result
 
 
+def csv_formula_inert(value):
+    """Make spreadsheet formulas inert after Unicode whitespace/format prefixes.
+
+    CSV quoting protects record structure, not spreadsheet formula execution.
+    Keep the original evidence intact; prefix an apostrophe when the first
+    meaningful character can start a formula. Unicode format controls (for
+    example zero-width and bidi marks) are ignored for detection only.
+    """
+    if type(value) is not str:
+        raise ValueError("CSV cell must be a string")
+    index = 0
+    while index < len(value):
+        char = value[index]
+        category = unicodedata.category(char)
+        if char.isspace() or category in ("Cf", "Zs", "Zl", "Zp"):
+            index += 1
+            continue
+        break
+    if value[index:].startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 def edit_path(value):
     """Require explicit repository-relative file or trailing-slash folder."""
     if not isinstance(value, str) or not 1 <= len(value) <= 180:
@@ -1335,9 +1358,7 @@ def graph_private_csv(report):
     def safe(value):
         raw = "".join("\\u%04x" % ord(c) if ord(c) < 32 or ord(c) == 127
                       else c for c in str(value))
-        if raw.lstrip(" \u200b\u200c\u200d\u2060\ufeff").startswith(("=", "+", "-", "@")):
-            return "'" + raw
-        return raw
+        return csv_formula_inert(raw)
 
     def row(kind, **values):
         nonlocal count
