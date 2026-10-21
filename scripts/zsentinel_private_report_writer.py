@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create-only, owner-directory-pinned private report output for zSentinel CLIs.
+"""Create-only, owner-only-directory-pinned private report output for zSentinel CLIs.
 
 This utility writes one caller-requested file. It never creates directories,
 overwrites existing paths, follows the final destination symlink, or removes a
@@ -16,7 +16,7 @@ MAX_PRIVATE_REPORT_BYTES = 6 * 1024 * 1024
 
 def write_private_report(destination: Path, content: str, *,
                          max_bytes: int = MAX_PRIVATE_REPORT_BYTES) -> int:
-    """Write UTF-8 mode-0600 text through a pinned, private directory FD."""
+    """Write UTF-8 mode-0600 text through a pinned, owner-only directory FD."""
     if (not isinstance(destination, Path) or not isinstance(content, str)
             or type(max_bytes) is not int
             or not 1 <= max_bytes <= MAX_PRIVATE_REPORT_BYTES):
@@ -33,8 +33,8 @@ def write_private_report(destination: Path, content: str, *,
     parent = destination.parent
     before = parent.lstat()
     if (not stat.S_ISDIR(before.st_mode) or before.st_uid != os.geteuid()
-            or stat.S_IMODE(before.st_mode) & 0o022):
-        raise ValueError("private report directory must be owned and not writable by others")
+            or stat.S_IMODE(before.st_mode) & 0o077):
+        raise ValueError("private report directory must be owned by current user and inaccessible to group/others")
     directory_fd = os.open(
         parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
         getattr(os, "O_CLOEXEC", 0))
@@ -43,8 +43,8 @@ def write_private_report(destination: Path, content: str, *,
         if (not stat.S_ISDIR(actual.st_mode)
                 or (actual.st_dev, actual.st_ino) != (before.st_dev, before.st_ino)
                 or actual.st_uid != os.geteuid()
-                or stat.S_IMODE(actual.st_mode) & 0o022):
-            raise ValueError("private report directory was replaced or became unsafe")
+                or stat.S_IMODE(actual.st_mode) & 0o077):
+            raise ValueError("private report directory was replaced or became accessible to group/others")
         fd = None
         created_inode = None
         try:
