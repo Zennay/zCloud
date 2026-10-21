@@ -77,6 +77,17 @@ getoond. Een service die niet in een onvolledige bron voorkomt is niet
 hersteld of bewezen afwezig.
 De privébon bewaart beide scopes afzonderlijk; de T0/T1 bronvergelijking
 geeft onafhankelijke overgangslijsten en de HTML en eigenaarinbox tonen die.
+Daarnaast bevat de lees-preview een hostbrede Linux geheugendiagnose uit
+/proc/pressure/memory (some en full avg10) en /proc/vmstat (oom_kill).
+Deze meetwaarden zijn optioneel en blijven ONBEKEND bij onleesbare bron.
+Kernel-OOM sinds boot geldt voor ALLE processen; het is geen aantal
+gefaalde GitHub-runners. Bij twee privé T0/T1 bronmomenten wordt een
+OOM-toename alleen getoond als dezelfde Linux-boot bewezen is, de
+beide cumulatieve tellers geldig zijn en de teller niet afneemt.
+PSI toont geheugenstalling over de laatste circa 10 seconden;
+de kernelteller telt gebeurtenissen sinds boot, niet hun eigenaar.
+In HTML, terminal, JSON en Markdown staat nadrukkelijk
+NIET AANGETOOND welk proces is geraakt of dat herstel is gelukt.
 Bij oudere privébonnen zonder user-bron is de herkomst expliciet ONBEKEND.
 Geen enkele systemd-status bewijst een GitHub job of staat herstart toe.
 Het incident.html start met lokale navigatie naar de eigenaaroverdracht,
