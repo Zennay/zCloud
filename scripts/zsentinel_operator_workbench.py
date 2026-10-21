@@ -1886,7 +1886,7 @@ function acceptBaseline(data){
      !Array.isArray(c.open_pr_candidates)||c.open_pr_candidates.length>3||
      !Array.isArray(c.evidence_gaps)||c.evidence_gaps.length>15)
        throw Error('invalid earlier issue card');
-  if(c.open_pr_candidates.some(p=>typeof p!=='string'||!/^https:\\/\\/github\.com\\/[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+\\/pull\\/[1-9][0-9]{0,8}$/.test(p))||
+  if(c.open_pr_candidates.some(p=>typeof p!=='string'||!/^https:\\/\\/github\\.com\\/[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+\\/pull\\/[1-9][0-9]{0,8}$/.test(p))||
      c.evidence_gaps.some(g=>typeof g!=='string'||g.length>300))
        throw Error('invalid earlier evidence');
   if(typeof c.title!=='string'||!c.title.trim()||c.title.length>180||
