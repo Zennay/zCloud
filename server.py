@@ -3002,22 +3002,35 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
 def portfolio_queue_audit(refill=True):
     """Keep the execution queue write-only, broad enough, and separate from human gates."""
     removed=[]
+    protected_active=[]
     with connect() as c:
-        rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria FROM portfolio_queue
+        rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria,status,worker_slot
+                          FROM portfolio_queue
                           WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchall()
         for row in rows:
             project=PROJECT_INDEX.get(str(row['project_id'])) or {}
             human_gated=str(project.get('queue_mode') or '').lower()=='human-gated'
             if human_gated or not _portfolio_queue_execution_capable(row['title'],row['completion_criteria']):
-                c.execute("""UPDATE portfolio_queue SET status='dropped',eligible=0,worker_slot=NULL,
-                             claimed_at=NULL,claim_expires=NULL,blocker=?,updated_at=? WHERE queue_id=?""",
+                # Never let a periodic audit revoke an active claim, running
+                # worker or verification lease. Owner-driven completion/parking
+                # is the only safe transition for an already-assigned task.
+                if str(row['status'])!='queued' or row['worker_slot'] is not None:
+                    protected_active.append(str(row['queue_id']))
+                    continue
+                cur=c.execute("""UPDATE portfolio_queue SET status='dropped',eligible=0,worker_slot=NULL,
+                             claimed_at=NULL,claim_expires=NULL,blocker=?,updated_at=?
+                             WHERE queue_id=? AND status='queued' AND eligible=1
+                               AND worker_slot IS NULL""",
                           ('queue-audit: non-executable or human-gated task',now(),row['queue_id']))
-                removed.append(str(row['queue_id']))
+                # A simultaneous allocator may have claimed it after SELECT.
+                # In that case the guarded UPDATE does nothing; no takeover.
+                if cur.rowcount:
+                    removed.append(str(row['queue_id']))
     if not refill:
         with connect() as c:
             ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
             projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
-        return {'ready':int(ready),'projects':int(projects),'removed':removed,'created':[],'time':now()}
+        return {'ready':int(ready),'projects':int(projects),'removed':removed,'protected_active':protected_active,'created':[],'time':now()}
     # Keep at least one executable item available for every non-human-gated active project.
     with connect() as c:
         rows=c.execute("""SELECT DISTINCT project_id FROM portfolio_queue
@@ -3046,7 +3059,7 @@ def portfolio_queue_audit(refill=True):
                            WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
         projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue
                               WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
-    return {'ready':int(ready),'projects':int(projects),'removed':removed,'created':created,'time':now()}
+    return {'ready':int(ready),'projects':int(projects),'removed':removed,'protected_active':protected_active,'created':created,'time':now()}
 
 def portfolio_queue_health():
     with connect() as c:
