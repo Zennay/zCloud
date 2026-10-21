@@ -25,6 +25,25 @@ cards (up to 32) with source-scope and truncation warnings.
 - Cards contain no raw queue ID, claim token, task title or prompt text. They
   never classify an attempt as a failure or auto-retry/claim anything.
 
+For machine-readable handoff, click **Export owner workorders .json**. The
+download is derived exclusively from the validated, already-loaded queue
+observation, without a new network request. It reports the selected project,
+source observation clock, source/sample completeness, stale status, total
+project-priority groups and up to 64 operator workorders. Each order contains
+the observed aggregate claim/queue/expired-lease counts, suggested manual
+action, HOLD-like operator status and explicit `owner_identity_verified=false`.
+A changed project filter outside a snapshot's scope produces
+`source_covers_selection=false` and **zero displayed cards, not a claim of
+healthy/no incidents**. Aggregate expired leases may refer to low-attempt rows
+in the same group, not an exact sampled incident.
+
+The JSON schema is `zsentinel-queue-owner-workorders-v1` and explicitly
+sets all retry, claim, merge, deploy and execution authority flags to false.
+Keep downloaded JSON private; it contains no raw queue ID or claim token,
+but still describes operating conditions. Current source and release gates
+must be checked independently before anyone acts.
+
+
 This is useful immediate **owner triage**, not issue #677's native retry
 writer fix. Durable `retry_not_before`, finite native retry transitions
 (`FAILED_RETRYABLE`/`NEEDS_AI`/`FAILED_FINAL`) and writer-migration ownership
