@@ -134,6 +134,14 @@ def build_handoff(decision, registry=None, queue_trend=None):
             if not reasons or len(reasons) != len(set(reasons)) or any(
                     reason not in allowed for reason in reasons):
                 raise ValueError("untrusted VPS overload reason")
+            # Rank disk and swap before load: the bounded operator label
+            # has room for two reasons, but the JSON card retains all of them.
+            reason_order = (
+                "disk_unavailable_at_least_90_percent", "disk_headroom_low",
+                "swap_headroom_low", "memory_headroom_low",
+                "load_above_conservative_capacity",
+            )
+            reasons.sort(key=reason_order.index)
             card = _card(
                 "P1", "cloud", "vps_capacity_owner_review",
                 "VPS capaciteitsdruk (" + ", ".join(reasons[:2]) +
