@@ -1,0 +1,139 @@
+name: zCloud one-shot workflow inventory
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/zcloud-one-shot-workflow-inventory.yml
+      - scripts/zcloud_one_shot_workflow_inventory.py
+      - tests/test_one_shot_workflow_inventory.py
+  push:
+    branches:
+      - ops/one-shot-workflow-inventory-20261006
+    paths:
+      - .github/workflows/zcloud-one-shot-workflow-inventory.yml
+      - scripts/zcloud_one_shot_workflow_inventory.py
+      - tests/test_one_shot_workflow_inventory.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-one-shot-workflow-inventory-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Run focused inventory regressions
+        run: python3 -m unittest tests.test_one_shot_workflow_inventory
+
+      - name: Run bounded repository inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_one_shot_workflow_inventory.py --json > "$RUNNER_TEMP/one-shot-inventory.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "one-shot-inventory.json").read_text()
+          )
+          assert report["schema_version"] == 1
+          assert report["workflows_scanned"] > 0
+          assert report["legacy_candidates"] >= len(report["candidates"])
+          print(
+              "ZCLOUD_ONE_SHOT_WORKFLOW_COUNTS",
+              json.dumps(
+                  {
+                      "workflows_scanned": report["workflows_scanned"],
+                      "legacy_candidates": report["legacy_candidates"],
+                      "candidates_truncated": report["candidates_truncated"],
+                      "marker_counts": report["marker_counts"],
+                      "risk_counts": report["risk_counts"],
+                  },
+                  sort_keys=True,
+              ),
+          )
+          PY
+
+  prove-permanent-vps:
+    needs: validate
+    if: >-
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.repo.owner.login == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify exact permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null
+
+      - name: Prove inventory is read-only on permanent VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_one_shot_workflow_inventory
+          before="$(git status --porcelain=v1 --untracked-files=all)"
+          python3 scripts/zcloud_one_shot_workflow_inventory.py --json > "$RUNNER_TEMP/one-shot-inventory-vps.json"
+          after="$(git status --porcelain=v1 --untracked-files=all)"
+          test "$before" = "$after"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "one-shot-inventory-vps.json").read_text()
+          )
+          assert report["schema_version"] == 1
+          assert report["workflows_scanned"] > 0
+          print(
+              "ZCLOUD_ONE_SHOT_WORKFLOW_VPS_GREEN",
+              json.dumps(
+                  {
+                      "workflows_scanned": report["workflows_scanned"],
+                      "legacy_candidates": report["legacy_candidates"],
+                      "candidates_truncated": report["candidates_truncated"],
+                  },
+                  sort_keys=True,
+              ),
+          )
+          PY
