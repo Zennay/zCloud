@@ -174,7 +174,7 @@ def suggested_actions(packet):
             result.append(action(
                 "host-pressure-owner-review",
                 "urgent" if hint == "HIGH_LOCAL_PRESSURE" else "review",
-                "De lokale host heeft verhoogde RAM-, swap- of CPU-druk; "
+                "De lokale host heeft verhoogde RAM-, swap-, CPU- of schijfruimtedruk; "
                 "dit is geen bewijs dat een GitHub-job vastzit.",
                 "Behoud bestaande jobs en claims. Vergelijk cgroup-limieten, "
                 "runner-toewijzing en workerprogressie met de bevoegde eigenaar "
