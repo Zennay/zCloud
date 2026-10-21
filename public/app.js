@@ -337,6 +337,14 @@ async function resumeBlockedQueue(queueId,button){
     const response=await fetch('/api/portfolio-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'resume_blocked',queue_id:queueId,resolution_note:note.trim()}),signal:AbortSignal.timeout(10000)});
     const result=await response.json().catch(()=>({}));
     if(!response.ok||!result.ok)throw new Error(result.error||result.result?.reason||'Could not resume the parked task');
+    // The endpoint may return HTTP 200 + ok:true for an idempotent no-op
+    // when another operator has already changed this queue row. Never hide
+    // the task or clear Attention unless this exact row was resumed.
+    if(result.result?.resumed!==true||result.result?.status!=='queued'||
+       String(result.result?.queue_id||'')!==queueId){
+      await refresh(true);
+      throw new Error('The parked task was not resumed ('+(result.result?.reason||'state changed')+'). Review the refreshed queue before acting again.');
+    }
     BLOCKED_QUEUE=(BLOCKED_QUEUE||[]).filter(row=>row.queue_id!==queueId);
     if(result.result?.attention_resolved===true){DATA.attention_needed=(DATA.attention_needed||[]).filter(row=>row.attention_id!=='queue:'+queueId);}
     BLOCKED_QUEUE_ERROR='';
