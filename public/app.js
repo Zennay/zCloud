@@ -756,7 +756,7 @@ async function controlWorker(workerId,action,button,force=false,globalSlot=null)
 // Explicit local operator evidence: never mix uploaded GitHub observations into
 // the local VPS feed, and never grant merge/deploy/worker authority from a file.
 let IMPORTED_GITHUB_ACTIVITY=null,IMPORTED_GITHUB_ERROR='';
-const GITHUB_RECEIPT_KINDS=new Set(['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit']);
+const GITHUB_RECEIPT_KINDS=new Set(['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit','branch_head']);
 // Bind operator-supplied receipts to the ACTUAL canonical project registry.
 // A plausible Zennay/repository string is not evidence that it belongs to
 // the claimed project; otherwise cross-project events become misleading.
@@ -765,6 +765,24 @@ function canonicalGitHubRepositoryForProject(projectId){
   if(matches.length!==1)return null;
   const match=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(matches[0].repo_url||'');
   return match?'Zennay/'+match[1]:null;
+}
+function validGitHubBranchRef(value){
+  if(typeof value!=='string'||value.length<1||value.length>80
+      ||!/^[A-Za-z0-9._\/-]+$/.test(value)
+      ||value.startsWith('/')||value.endsWith('/')||value.includes('//')
+      ||value.includes('..')||value.endsWith('.'))return false;
+  return value.split('/').every(part=>part.length>0&&!part.endsWith('.lock'));
+}
+function githubBranchURL(repository,ref){
+  if(!/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/.test(repository)
+      ||!validGitHubBranchRef(ref))return '';
+  return 'https://github.com/'+repository+'/tree/'+ref.split('/').map(encodeURIComponent).join('/');
+}
+function isCanonicalGitHubActivityURL(value){
+  if(typeof value!=='string')return false;
+  const branch=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/tree\/([A-Za-z0-9_.\/-]{1,80})$/.exec(value);
+  if(branch)return validGitHubBranchRef(branch[2]);
+  return /^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/(?:pull\/[1-9][0-9]*|commit\/[a-f0-9]{40}|actions\/runs\/[1-9][0-9]*)$/.test(value);
 }
 // Bounded, fixed operator text only: never surface a provider response body,
 // token, request URL, or unvalidated imported reason in the dashboard.
@@ -908,7 +926,17 @@ function validateGitHubActivityReceipt(value){
     seen.add(entry.id);
     const repository=sourceByProject.get(entry.project);
     let url='',description='';
-    if(entry.kind==='main_commit'){
+    if(entry.kind==='branch_head'){
+      if(!validGitHubBranchRef(entry.branch_ref)||typeof entry.sha!=='string'
+          ||!/^[a-f0-9]{40}$/.test(entry.sha)
+          ||entry.id!=='github:'+repository+':branch_head:'+entry.branch_ref+':'+entry.sha
+          ||entry.main_merged!==false||entry.branch_owner_verified!==false)
+        throw Error('Invalid branch-head observation');
+      url=githubBranchURL(repository,entry.branch_ref);
+      if(!url)throw Error('Invalid branch URL');
+      description='Branch '+entry.branch_ref+' · HEAD '+entry.sha.slice(0,12)+
+        ' · owner/merge/deploy unverified';
+    }else if(entry.kind==='main_commit'){
       if(typeof entry.sha!=='string'||!/^[a-f0-9]{40}$/.test(entry.sha)
           ||entry.id!=='github:'+repository+':main_commit:'+entry.sha
           ||entry.main_merged!==true)throw Error('Invalid main commit');
@@ -953,7 +981,9 @@ function validateGitHubActivityReceipt(value){
       }
     }
     events.push({project:entry.project,id:entry.id,kind:entry.kind,url,description,
-      ts:entry.source_at,firstSeen:entry.new_since_previous===true});
+      ts:entry.source_at,firstSeen:entry.new_since_previous===true,
+      ...(entry.kind==='branch_head'?{branch_ref:entry.branch_ref,sha:entry.sha,
+        main_merged:false,branch_owner_verified:false}:{})});
   }
   if(coverage.length===0)throw Error('Snapshot contains no canonical project coverage');
   return {observedAt:value.observed_at,coverage,events};
@@ -1016,7 +1046,8 @@ function fairPublicGitHubHistory(rows,coverage,limit=200){
   for(const row of rows||[]){
     if(!row||!admitted.has(row.project)||typeof row.url!=='string'||
         typeof row.kind!=='string')continue;
-    const key=row.project+'|'+row.kind+'|'+row.url;
+    const key=row.kind==='branch_head'&&typeof row.id==='string'
+      ?row.id:row.project+'|'+row.kind+'|'+row.url;
     if(seen.has(key))continue;
     const ts=Date.parse(row.ts||'');
     if(!Number.isFinite(ts)||ts>Date.now()+120000||ts<0)continue;
@@ -1027,20 +1058,21 @@ function fairPublicGitHubHistory(rows,coverage,limit=200){
       ?row.sourcePage:0;
     const groupKey=row.project+':'+page;
     if(!groups.has(groupKey))groups.set(groupKey,{project:row.project,page,
-      pr:[],ci:[],main:[],cursor:{pr:0,ci:0,main:0}});
-    const category=row.kind==='ci_run'?'ci':row.kind==='main_commit'?'main':'pr';
+      pr:[],ci:[],main:[],branch:[],cursor:{pr:0,ci:0,main:0,branch:0}});
+    const category=row.kind==='ci_run'?'ci':row.kind==='main_commit'?'main':
+      row.kind==='branch_head'?'branch':'pr';
     groups.get(groupKey)[category].push(row);
   }
   const ordered=[...groups.values()].sort((a,b)=>
     ids.indexOf(a.project)-ids.indexOf(b.project)||a.page-b.page);
   for(const group of ordered)
-    for(const category of ['pr','ci','main'])
-      group[category].sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts));
+    for(const category of ['pr','ci','main','branch'])
+      group[category].sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)||a.id.localeCompare(b.id));
   const result=[];
   while(result.length<limit){
     let progressed=false;
     for(const group of ordered){
-      for(const category of ['pr','ci','main']){
+      for(const category of ['pr','ci','main','branch']){
         const index=group.cursor[category];
         if(index>=group[category].length)continue;
         result.push(group[category][index]);
@@ -1078,17 +1110,27 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
     if(!quiet)render();return;
   }
   PUBLIC_GITHUB_BUSY=true;PUBLIC_GITHUB_LAST_FETCH.set(projectId,Date.now());
-  if(!quiet){IMPORTED_GITHUB_ERROR='Reading public PR, CI and main-commit page '+readPage+'…';render();}
+  if(!quiet){IMPORTED_GITHUB_ERROR='Reading public PR, CI, main and branch-head page '+readPage+'…';render();}
   const suffixes=['pulls?state=all&sort=updated&direction=desc&per_page=20&page='+readPage,
-    'actions/runs?per_page=20&page='+readPage,'commits?sha=main&per_page=15&page='+readPage];
+    'actions/runs?per_page=20&page='+readPage,'commits?sha=main&per_page=15&page='+readPage,
+    'branches?per_page=100&page='+readPage];
   const outcomes=await Promise.allSettled(suffixes.map(suffix=>publicGitHubGET(repo,suffix)));
+  const sampledAt=new Date().toISOString();
   const events=[],seen=new Set();
-  const push=(kind,ts,url,description)=>{
+  const previousGitHub=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
+  const previousCoverage=previousGitHub.coverage.find(row=>row.project===projectId);
+  const previousRows=previousGitHub.events.filter(row=>row.project===projectId);
+  const comparablePrior=previousCoverage?.status==='partial_sources'
+    &&previousCoverage.staleEvidence!==true;
+  const push=(kind,ts,url,description,branchRef=null,branchSha=null)=>{
     const parsed=Date.parse(ts||'');
     if(!Number.isFinite(parsed)||parsed>Date.now()+120000||parsed<0)return;
     // Public GitHub events must carry the SAME immutable namespaced identity
     // required by combinedActivityRows and the strict offline receipt reader.
-    const ref=kind==='main_commit'?(/\/commit\/([a-f0-9]{40})$/.exec(url)?.[1]||''):
+    const ref=kind==='branch_head'&&validGitHubBranchRef(branchRef)
+        &&typeof branchSha==='string'&&/^[a-f0-9]{40}$/.test(branchSha)
+      ?branchRef+':'+branchSha:
+      kind==='main_commit'?(/\/commit\/([a-f0-9]{40})$/.exec(url)?.[1]||''):
       kind==='ci_run'?(/\/actions\/runs\/([1-9][0-9]*)$/.exec(url)?.[1]||''):
       ['pr_created','pr_updated','pr_merged','pr_closed'].includes(kind)?
         (/\/pull\/([1-9][0-9]*)$/.exec(url)?.[1]||''):'';
@@ -1097,10 +1139,13 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
     if(seen.has(id))return;
     seen.add(id);
     events.push({project:projectId,id,kind,ts:new Date(parsed).toISOString(),url,
-      description,firstSeen:false,sourcePage:readPage});
+      description,firstSeen:false,sourcePage:readPage,
+      ...(kind==='branch_head'?{branch_ref:branchRef,sha:branchSha,
+        main_merged:false,branch_owner_verified:false}:{})});
   };
   try{
     const commits=outcomes[2].status==='fulfilled'&&Array.isArray(outcomes[2].value)?outcomes[2].value:[];
+    const branches=outcomes[3].status==='fulfilled'&&Array.isArray(outcomes[3].value)?outcomes[3].value:[];
     const sampledMainShas=new Set(commits.slice(0,15).filter(commit=>typeof commit.sha==='string'
       &&/^[a-f0-9]{40}$/.test(commit.sha)).map(commit=>commit.sha));
     const prs=outcomes[0].status==='fulfilled'&&Array.isArray(outcomes[0].value)?outcomes[0].value:[];
@@ -1151,23 +1196,44 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
         'https://github.com/Zennay/'+repo+'/commit/'+commit.sha,
         'Commit on GitHub main history · '+commit.sha.slice(0,10)+' · deploy not verified');
     }
-    const sourceLists=[prs,runs,commits];
+    let branchesSkipped=0;
+    const previousBranchHeads=new Map(previousRows.filter(row=>row.kind==='branch_head'
+      &&typeof row.branch_ref==='string'&&typeof row.sha==='string')
+      .map(row=>[row.branch_ref,row]));
+    for(const branchRow of branches.slice(0,100)){
+      const branchRef=branchRow?.name;
+      const branchSha=typeof branchRow?.commit?.sha==='string'
+        ?branchRow.commit.sha.toLowerCase():'';
+      if(!validGitHubBranchRef(branchRef)||!/^[a-f0-9]{40}$/.test(branchSha)){
+        branchesSkipped++;continue;
+      }
+      const prior=comparablePrior?previousBranchHeads.get(branchRef):null;
+      const changed=Boolean(prior&&prior.sha!==branchSha);
+      const detail='Branch head observed · '+branchRef+' · '+branchSha.slice(0,12)+
+        (changed?' · HEAD changed from '+prior.sha.slice(0,12):
+          ' · owner/merge/deploy unverified');
+      push('branch_head',sampledAt,githubBranchURL('Zennay/'+repo,branchRef),
+        detail,branchRef,branchSha);
+    }
+    const sourceLists=[prs,runs,commits,branches];
     const sourceReadable=outcomes.map((outcome,i)=>outcome.status==='fulfilled'&&
       (i===1?Array.isArray(outcome.value?.workflow_runs):Array.isArray(outcome.value)));
     const good=sourceReadable.filter(Boolean).length;
-    const sourceLimits=[20,20,15];
+    const sourceLimits=[20,20,15,100];
     const allowedDenials=new Set(['confirmed_rate_limit','forbidden_or_secondary_limit_unknown',
       'authentication_required','repository_inaccessible','provider_unavailable']);
     const sourceCoverage=sourceReadable.map((ok,i)=>({
-      name:['PR','Actions','main'][i],
+      name:['PR','Actions','main','branches'][i],
       status:ok?(sourceLists[i].length>=sourceLimits[i]?'bounded_full':'bounded_end'):'unavailable',
       rows:ok?Math.min(sourceLists[i].length,sourceLimits[i]):null,
+      skipped:i===3?branchesSkipped:0,
       denial:ok?'none':allowedDenials.has(outcomes[i].reason?.message)
         ?outcomes[i].reason.message:'provider_unavailable'
     }));
-    // GitHub may return a partial history; no source page can authorize a
-    // positive completeness claim about older branches or hidden PRs.
-    const morePossible=good===3&&sourceCoverage.some(row=>row.status==='bounded_full');
+    // A branch inventory is bounded too; only an operator read can observe it.
+    const completeSample=good===4&&branchesSkipped===0;
+    const morePossible=sourceReadable.slice(0,3).every(Boolean)
+      &&sourceCoverage.some(row=>row.status==='bounded_full');
     // Provider failure MUST NOT turn previously observed PR/CI activity into
     // an empty current result. Incomplete source windows can retain older
     // evidence, clearly labelled stale/partial, until a full new sample arrives.
@@ -1175,19 +1241,16 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
     const previousCoverage=previousGitHub.coverage.find(row=>row.project===projectId);
     const previousRows=previousGitHub.events.filter(row=>row.project===projectId);
     // "First seen" is an observation delta, not proof a PR was created now.
-    // Only compare two independently successful bounded three-source reads.
-    const comparablePrior=previousCoverage?.status==='partial_sources'
-      &&previousCoverage.staleEvidence!==true;
-    if(!older&&good===3&&comparablePrior){
+    // Compare only complete bounded PR/CI/main/branch snapshots.
+    if(!older&&completeSample&&comparablePrior){
       const previousIds=new Set(previousRows.map(row=>row.id)
         .filter(id=>typeof id==='string'));
       for(const event of events)event.firstSeen=!previousIds.has(event.id);
     }
-    const sampledAt=new Date().toISOString();
     const githubCoverage=[...previousGitHub.coverage.filter(row=>row.project!==projectId),
-      {project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable',
-        observedAt:good===3||!previousCoverage?sampledAt:previousCoverage.observedAt,
-        lastAttemptAt:sampledAt,staleEvidence:good<3&&previousRows.length>0,
+      {project:projectId,status:completeSample?'partial_sources':good?'partial_error':'unavailable',
+        observedAt:completeSample||!previousCoverage?sampledAt:previousCoverage.observedAt,
+        lastAttemptAt:sampledAt,staleEvidence:!completeSample&&previousRows.length>0,
         sourceCoverage,page:readPage,morePossible}].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
     const coveredIds=new Set(githubCoverage.map(row=>row.project));
     // Partial provider reads must not shadow genuinely refreshed events
@@ -1196,7 +1259,7 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
     const freshIds=new Set(events.map(row=>row.id));
     // An older page extends the same manually observed window; it must not
     // erase newer pages or count older data as newly created GitHub work.
-    const retainedProjectRows=good===3?(older?
+    const retainedProjectRows=completeSample?(older?
       [...events,...previousRows.filter(row=>!freshIds.has(row.id))]:events):[
       ...events,
       ...previousRows.filter(row=>!freshIds.has(row.id))
@@ -1206,9 +1269,17 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
       [...previousGitHub.events.filter(row=>row.project!==projectId&&coveredIds.has(row.project)),
        ...retainedProjectRows],githubCoverage);
     IMPORTED_GITHUB_ACTIVITY={observedAt:sampledAt,events:githubEvents,coverage:githubCoverage};
-    if(good===3){PUBLIC_GITHUB_PAGE.set(projectId,readPage);PUBLIC_GITHUB_VIEW_PAGE.set(projectId,readPage);PUBLIC_GITHUB_MORE.set(projectId,morePossible);}
-    IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); prior observations retained and may be stale. ':'Public GitHub page '+readPage+' observed; ')+
-      'branch-only work and private repositories are not covered. Not a live deployment receipt.';
+    if(sourceReadable.slice(0,3).every(Boolean)){
+      PUBLIC_GITHUB_PAGE.set(projectId,readPage);PUBLIC_GITHUB_VIEW_PAGE.set(projectId,readPage);
+      PUBLIC_GITHUB_MORE.set(projectId,morePossible);
+    }
+    const requiredReadable=sourceReadable.slice(0,3).filter(Boolean).length;
+    IMPORTED_GITHUB_ERROR=requiredReadable<3
+      ?'Incomplete public PR/CI/main sources ('+requiredReadable+'/3 readable); prior observations retained and may be stale. '
+      :completeSample?'Public GitHub page '+readPage+' observed for PR, CI, main and bounded branch heads. '
+      :'PR/CI/main read; branch-head source partial ('+
+        (sourceReadable[3]?(branchesSkipped+' branch rows omitted'):'unavailable')+'). '+
+        'Private branches/repositories and branch creation/last-commit times remain unknown; no deployment proof.';
     return {project:projectId,readable:good,attempted:true};
   }catch(_error){
     IMPORTED_GITHUB_ERROR='Public GitHub source could not be interpreted. No authorization or deployment inferred.';
@@ -1327,8 +1398,9 @@ function githubActivityImportPanel(){
           repository_inaccessible:'GitHub 404: source inaccessible',
           provider_unavailable:'provider/network unavailable'
         }[src.denial]||'source unavailable')+')':
-        esc(src.rows)+' rows · '+(src.status==='bounded_full'?'older data may exist':'window ended'))).join(' · ')+
-      ' · branches and private sources remain UNKNOWN</p>').join('');
+        esc(src.rows)+' rows · '+(src.status==='bounded_full'?'older data may exist':'window ended')+
+        (src.skipped?' · '+src.skipped+' branch rows omitted':''))).join(' · ')+
+      ' · private repositories/branches and branch commit times remain UNKNOWN</p>').join('');
   const counts=selectedCoverage.map(c=>c.project+': '+c.status+
       (c.staleEvidence?' · STALE observation from '+c.observedAt:'')).join(' · ')||'No GitHub receipt loaded';
   const denials=selectedCoverage.filter(c=>c.providerAdmission&&c.providerAdmission!=='none')
@@ -1357,7 +1429,7 @@ function githubActivityImportPanel(){
     '<button type="button" class="runner-action" data-vps-github-refresh '+
     (VPS_GITHUB_BUSY?'disabled aria-busy="true"':'')+'>Read VPS GitHub</button> '+
     (VPS_GITHUB_ERROR?'<p class="detail-note" role="status">'+esc(VPS_GITHUB_ERROR)+'</p>':'')+
-    '<span class="detail-note">Opt-in browser GET only · three bounded requests per selected project. Up to 16 bounded project snapshots retained in this tab; no credentials or background sync.</span><br>'+ 
+    '<span class="detail-note">Opt-in browser GET only · four bounded requests per selected project. Branch heads are source-time observations, not branch creation/last-commit times; private refs remain unknown. Up to 16 bounded project snapshots retained in this tab; no credentials or background sync.</span><br>'+ 
     '<label for="githubReceiptFile">Or import a JSON receipt created by the zCloud GitHub activity observer</label> '+
     '<input type="file" id="githubReceiptFile" accept=".json,application/json" aria-label="Import read-only GitHub activity JSON receipt">'+
     (snapshot?'<button type="button" class="runner-action" data-github-receipt-clear>Clear snapshot</button>':'')+
@@ -2283,7 +2355,7 @@ function exportZSentinelHandoff(){
   const recent=(IMPORTED_GITHUB_ACTIVITY?.events||[]).filter(item=>
     projects.has(item.project)&&(!filter||item.project===filter)).slice(0,30);
   for(const item of recent){
-    if(!/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/(?:pull|commit|actions\/runs)\/[A-Za-z0-9]+$/.test(item.url))continue;
+    if(!isCanonicalGitHubActivityURL(item.url))continue;
     lines.push('- '+clean(item.project,56)+' · '+clean(item.kind,32)+' · '+clean(item.ts,40)+
       (item.staleUnverified?' · HISTORICAL ONLY: NOT REOBSERVED':'')+
       ' · '+clean(item.description,160)+' — '+item.url);
@@ -2319,12 +2391,12 @@ function exportZSentinelHandoff(){
 }
 
 function zSentinelDeliveryPulseSummary(github,visible,focus){
-  const validKinds=new Set(['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit']);
+  const validKinds=new Set(['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit','branch_head']);
   const events=(github?.events||[]).filter(row=>row&&visible.has(row.project)
     &&(!focus||focus===row.project)&&validKinds.has(row.kind)
     &&typeof row.id==='string'
     &&typeof row.url==='string'
-    &&/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/(?:pull|commit|actions\/runs)\/[A-Za-z0-9]+$/.test(row.url)
+    &&isCanonicalGitHubActivityURL(row.url)
     &&Number.isFinite(Date.parse(row.ts))&&Date.parse(row.ts)<=Date.now()+120000);
   // Historical events preserved after incomplete reads do not count as
   // current 24h delivery pulse evidence even when their source time is recent.
@@ -2353,7 +2425,8 @@ function zSentinelDeliveryPulse(github,visible,focus){
     '<small>'+esc(date(row.ts,true))+'</small></div>').join('');
   const keys=[['pr_created','PR created'],['pr_updated','PR updated'],
     ['pr_merged','GitHub-reported PR merges'],['pr_closed','Closed without merge'],
-    ['ci_run','CI run observations'],['main_commit','GitHub main commits']];
+    ['ci_run','CI run observations'],['main_commit','GitHub main commits'],
+    ['branch_head','Branch head observations']];
   return '<section class="section-details" aria-label="Observed GitHub delivery pulse">'+
     '<h3>GitHub delivery pulse · bounded observations in last 24h</h3>'+
     '<p class="detail-note" role="status">'+
@@ -3069,16 +3142,18 @@ function combinedActivityRows(){
     if(!row||!groups.has(row.project)||!GITHUB_RECEIPT_KINDS.has(row.kind)
         ||typeof row.id!=='string'||typeof row.description!=='string'
         ||typeof row.url!=='string'||typeof row.ts!=='string'
-        ||!/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/(?:pull|commit|actions\/runs)\/[A-Za-z0-9]+$/.test(row.url)
+        ||!isCanonicalGitHubActivityURL(row.url)
         ||!Number.isFinite(Date.parse(row.ts)))continue;
     const key='github:'+row.project+':'+row.id;
     if(seen.has(key)||pairedMainCommits.has(row.id))continue;
     seen.add(key);
     groups.get(row.project).push({key,source:'github',project:row.project,
       kind:row.kind,summary:row.description,
-      detail:row.staleUnverified
-        ?'HISTORICAL GITHUB EVENT: NOT REOBSERVED after incomplete provider refresh'
-        :row.firstSeen?'First observed in this bounded sample; not proof of new work':'GitHub observation',
+      detail:row.kind==='branch_head'
+        ?(row.description||'Branch head observed; owner/merge/deploy unverified')
+        :row.staleUnverified
+          ?'HISTORICAL GITHUB EVENT: NOT REOBSERVED after incomplete provider refresh'
+          :row.firstSeen?'First observed in this bounded sample; not proof of new work':'GitHub observation',
       observedAt:(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).find(c=>c.project===row.project)?.observedAt||null,
       ts:row.ts,url:row.url});
   }
