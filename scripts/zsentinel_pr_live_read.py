@@ -32,6 +32,7 @@ MAX_CANDIDATES = 3
 MAX_LIST_PAGE = 30
 MAX_DISCOVERY_PAGES = 4  # Bounded open-PR inventory; never an exhaustive ownership claim.
 MAX_DISCOVERY_HINTS = 12  # Navigation-only hints; at most 3 can get live PR reads.
+MAX_TIMELINE_PAGES = 2  # 60 chronological issue events; not exhaustive.
 
 
 class GitHubReadError(ValueError):
@@ -51,7 +52,10 @@ def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES):
     """One fixed-host HTTPS GitHub GET, no redirects, strict byte cap."""
     if (max_body_bytes not in (MAX_BODY_BYTES, MAX_DISCOVERY_BODY_BYTES)
             or (max_body_bytes == MAX_DISCOVERY_BODY_BYTES
-                and "/pulls?state=open&per_page=" not in path)):
+                and not (
+                    "/pulls?state=open&per_page=" in path or
+                    "/timeline?per_page=" in path
+                ))):
         raise GitHubReadError("oversized read requires the sole bounded PR page")
     if not path.startswith("/repos/Zennay/") or (
         any(char in path for char in ("#", "\\", "\n", "\r", "\t"))
@@ -406,6 +410,91 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
         "source_page_may_be_incomplete": True,
         "existing_repair_absence_verified": False,
         "issue_pr_relationship_verified": False,
+    }
+
+
+
+def _discover_issue_timeline_prs(issue_url, *, token=None):
+    """Bounded official GitHub cross-reference observations for one issue.
+
+    A cross-reference is a provider-observed link, not proof that the PR
+    repairs the bug, passed checks, merged to main, or owns work. Timeline
+    pages are chronological and may omit newer links after the hard cap.
+    """
+    issue_match = ISSUE_URL.fullmatch(issue_url)
+    if issue_match is None:
+        raise GitHubReadError("timeline issue identity is not canonical")
+    owner, repo, issue_number = issue_match.groups()
+    full_name = owner + "/" + repo
+    path = "/repos/" + quote(owner, safe="") + "/" + quote(repo, safe="")
+    candidates, seen = [], set()
+    pages_scanned = 0
+    events_scanned = 0
+    last_page_short = False
+    skipped = 0
+    source_error = None
+    for page_number in range(1, MAX_TIMELINE_PAGES + 1):
+        try:
+            events = _limited_json(
+                path + "/issues/" + issue_number + "/timeline?per_page=" +
+                str(MAX_LIST_PAGE) + "&page=" + str(page_number),
+                token=token, max_body_bytes=MAX_DISCOVERY_BODY_BYTES,
+            )
+        except GitHubReadError as exc:
+            # Other independently read GitHub sources remain usable as
+            # advisory hints. This provider gap must remain visible.
+            source_error = str(exc)
+            break
+        if not isinstance(events, list) or len(events) > MAX_LIST_PAGE:
+            source_error = "GitHub timeline response has invalid shape"
+            break
+        pages_scanned += 1
+        events_scanned += len(events)
+        last_page_short = len(events) < MAX_LIST_PAGE
+        for event in events:
+            if not isinstance(event, dict):
+                skipped += 1
+                continue
+            if event.get("event") != "cross-referenced":
+                continue
+            source = event.get("source")
+            source_issue = source.get("issue") if isinstance(source, dict) else None
+            if not isinstance(source_issue, dict):
+                skipped += 1
+                continue
+            pr = source_issue.get("pull_request")
+            link = pr.get("html_url") if isinstance(pr, dict) else None
+            match = REPO_URL.fullmatch(link) if isinstance(link, str) else None
+            if not match or match.group(1) + "/" + match.group(2) != full_name:
+                skipped += 1
+                continue
+            number = int(match.group(3))
+            if number in seen:
+                continue
+            seen.add(number)
+            candidates.append({
+                "number": number, "url": link,
+                "draft_at_source": None,
+                "relationship_at_source": "issue_timeline_cross_reference",
+                "candidate_origin": "github_issue_timeline_cross_reference",
+                "timeline_created_at": event.get("created_at")
+                    if isinstance(event.get("created_at"), str) else None,
+            })
+        if last_page_short:
+            break
+    return candidates[:MAX_DISCOVERY_HINTS], {
+        "performed": True, "pages_scanned": pages_scanned,
+        "max_pages": MAX_TIMELINE_PAGES,
+        "events_scanned": events_scanned,
+        "candidate_count_in_window": len(candidates),
+        "candidate_count_retained": min(len(candidates), MAX_DISCOVERY_HINTS),
+        "candidate_hints_truncated": len(candidates) > MAX_DISCOVERY_HINTS,
+        "skipped_cross_references": skipped,
+        "pagination_window_full": not last_page_short and source_error is None,
+        "partial_or_unknown": bool(source_error) or not last_page_short,
+        "source_error": source_error,
+        "issue_pr_link_is_fix_proof": False,
+        "merge_or_owner_authorized": False,
     }
 
 
