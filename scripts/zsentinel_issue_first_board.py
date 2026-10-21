@@ -110,7 +110,7 @@ def prioritize_observed_work(rows):
     return [row for _, row in sorted(ranked, key=lambda item: item[0])]
 
 
-def observed_issue_inbox(rows, unlinked, partial, limit=48):
+def observed_issue_inbox(rows, unlinked, partial, repo_projects, limit=48):
     """Turn the *observed* P0/P1 issue window into a read-only action inbox.
 
     A selected PR's explicit issue reference is an inspection hint, not a fix,
@@ -119,6 +119,8 @@ def observed_issue_inbox(rows, unlinked, partial, limit=48):
     """
     if type(limit) is not int or not 1 <= limit <= 120:
         raise ValueError("invalid bounded issue inbox limit")
+    if not isinstance(repo_projects, dict):
+        raise ValueError("missing canonical project registry")
     issue_map = {}
     for row in rows:
         repo = row["repo"]
@@ -158,6 +160,16 @@ def observed_issue_inbox(rows, unlinked, partial, limit=48):
         0 if item["linked_prs"] else 1,
         item["repo"].casefold(), item["number"]))
     for item in ordered:
+        project = repo_projects.get(item["repo"])
+        if (isinstance(project, str)
+                and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", project)):
+            item["project"] = project
+            item["read_only_issue_command"] = (
+                "python3 scripts/zsentinel_issue_first_board.py --project " +
+                project + " --issue " + str(item["number"]))
+        else:
+            item["project"] = "UNKNOWN"
+            item["read_only_issue_command"] = None
         item["operator_action"] = (
             "Inspect the existing PR and its exact-HEAD review/CI/claim gates"
             if item["linked_prs"] else
@@ -198,6 +210,10 @@ def render_issue_inbox(inbox):
             esc(issue["number"]) + " · " + esc(issue["title"]) + "</a>"
             "<br>Geselecteerde bestaande PRs: " + links +
             "<br>Volgende stap: " + esc(issue["operator_action"]) +
+            ("<br>Lees bestaande PRs: <code>" +
+             esc(issue["read_only_issue_command"]) + "</code>"
+             if issue["read_only_issue_command"] else
+             "<br>Projectmapping onbekend: handmatige broncontrole nodig") +
             "<br><small>Eigenaarschap: onbekend · main: niet bewezen · "
             "live: niet geverifieerd</small></li>")
     return ("<section aria-label='P0/P1 issue-inbox'><h2>P0/P1 "
@@ -1056,8 +1072,13 @@ def main():
             rows, unmatched, partial = collect(args.project, registry, budget)
             target_coverage = None
         observed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        issue_inbox = (observed_issue_inbox(rows, unmatched, partial)
-                       if args.issue is None else None)
+        repo_projects = {
+            repo: project for repo, project in registry.values()
+            if project in args.project
+        }
+        issue_inbox = (observed_issue_inbox(
+            rows, unmatched, partial, repo_projects)
+            if args.issue is None else None)
         local_claims = observe_local_claims(DB, args.project)
         if args.output:
             board.private_write(board.Path(args.output),
@@ -1110,7 +1131,9 @@ def main():
                                    for pr in issue["linked_prs"]) or "UNKNOWN"
                     print("ISSUE_ACTION " + issue["priority"] + " " +
                           issue["url"] + " existing_prs=" + prs +
-                          " next=" + issue["operator_action"])
+                          " next=" + issue["operator_action"] +
+                          " readonly_command=" +
+                          (issue["read_only_issue_command"] or "UNAVAILABLE"))
             for item in rows:
                 refs = ", ".join(
                     str(issue["priority"]) + "#" + str(issue["number"]) +
