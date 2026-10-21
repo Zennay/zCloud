@@ -357,7 +357,8 @@ def project_operations_html(view: dict) -> str:
         else:
             badge = "Verify current project source and claims"
         sections.append(
-            '<li><strong>' + escape(row["project"]) + '</strong> · ' +
+            '<li data-recovery-project="' + escape(row["project"], quote=True) +
+            '"><strong>' + escape(row["project"]) + '</strong> · ' +
             '<strong>' + escape(badge) + '</strong>' +
             '<br>P0 ' + str(counts["P0"]) + ' / P1 ' + str(counts["P1"]) +
             ' (observed sample) · GitHub coverage: ' +
@@ -377,8 +378,9 @@ def project_operations_html(view: dict) -> str:
         'while a bounded queue observation still shows claim pressure. '
         'These are historical human investigation leads, never worker '
         'availability, confirmed failures or permission to retry.</p>'
-        '<details><summary>Inspect ' + str(len(sections)) +
-        ' project-level recovery leads (offline)</summary>'
+        '<details><summary>Inspect <span id="recoveryVisibleCount">' +
+        str(len(sections)) + '</span> project-level recovery leads (offline)' +
+        '</summary>'
         '<ol>' + ''.join(sections) + '</ol></details>'
         '<p>All source windows are incomplete; no claim, CI, merge or '
         'production state was verified live.</p></section>'
@@ -1970,7 +1972,10 @@ function currentBrief(){
   return ranks[a.priority]-ranks[b.priority] ||
     a.project.localeCompare(b.project) || a.issue.localeCompare(b.issue);
  });
- if(!rows.length && !board.project_operations.length)return null;
+ const selectedRecoveryProject=document.getElementById('project').value;
+ const recoveryRows=board.project_operations.filter(row=>
+   !selectedRecoveryProject||row.project===selectedRecoveryProject);
+ if(!rows.length && !recoveryRows.length)return null;
  const lines=[
   '# zSentinel · PRIVATE human product handoff',
   '',
@@ -2013,12 +2018,14 @@ function currentBrief(){
  // Portfolio-wide queue pressure is independent of the issue-inbox sample.
  // Include every admitted project lead, even projects with zero issue cards.
  // This is historical operator evidence, never current claim/worker authority.
- if(board.project_operations.length){
-  lines.push('## Project-level recovery leads · FULL saved portfolio snapshot',
-    'Independent from the filtered issue selection. Queue values are sampled claim cycles, not failures.',
-    'Project count: '+board.project_operations.length,
+ if(recoveryRows.length){
+  lines.push('## Project-level recovery leads · '+(selectedRecoveryProject?
+    'SELECTED saved project '+selectedRecoveryProject:'FULL saved portfolio snapshot'),
+    'Project filter applies to project leads. Search, priority and disposition filters apply only to issue cards.',
+    'Queue values are sampled claim cycles, not failures.',
+    'Project count: '+recoveryRows.length,
     '');
-  board.project_operations.forEach(row=>{
+  recoveryRows.forEach(row=>{
    const totals=row.issue_counts_in_sample;
    const pressure=row.queue_observation;
    lines.push('### Project '+line(row.project,80),
@@ -2108,6 +2115,15 @@ function calendarSource(stamp){
  return lines.flatMap(foldCalendarLine).join('\\r\\n')+'\\r\\n';
 }
 function drawList(){
+ const currentProject=document.getElementById('project').value;
+ let recoveryCount=0;
+ document.querySelectorAll('[data-recovery-project]').forEach(node=>{
+  const show=!currentProject||node.getAttribute('data-recovery-project')===currentProject;
+  node.hidden=!show;
+  if(show)recoveryCount++;
+ });
+ const recoveryCounter=document.getElementById('recoveryVisibleCount');
+ if(recoveryCounter)recoveryCounter.textContent=String(recoveryCount);
  const view=filtered();issueList.replaceChildren();
  view.forEach(c=>{
    const li=elem('li'),b=elem('button');b.type='button';
