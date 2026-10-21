@@ -491,7 +491,7 @@ def _markdown_evidence(value):
             char.isspace() and char != " "
         ):
             visible.append("⟦U+" + format(ord(char), "04X") + "⟧")
-        elif char in "\\\`*_{}[]()#+-.!|>~":
+        elif char in r"\`*_{}[]()#+-.!|>~":
             visible.append("\\" + char)
         else:
             visible.append(char)
