@@ -46,7 +46,7 @@ FIELDS = (
     "independent_review_verified", "main_merge_verified", "deploy_authorized",
     "live_state_verified",
     "selection_repository", "selection_priority", "selection_record_type",
-    "selection_pr_url", "selection_issue_url",
+    "selection_pr_url", "selection_issue_url", "selection_attention",
     "source_record_count", "selected_record_count",
     "excluded_source_record_count", "selection_filter_applied",
     "selected_existing_pr_count", "selected_issue_without_pr_count",
@@ -338,8 +338,14 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
     return rows
 
 
+ATTENTION = (
+    "all", "shared-issue-prs", "missing-final-sample", "lost-issue-link",
+    "historical-head-changes", "archive-only-linked", "unlinked-pr"
+)
+
+
 def select_owner_rows(rows, *, repository=None, priority=None, record_type="all",
-                      pr_url=None, issue_url=None):
+                      pr_url=None, issue_url=None, attention="all"):
     """Narrow a fully admitted historical owner list without granting ownership.
 
     Repository identity always comes from canonical issue/PR URLs, not from
@@ -357,6 +363,8 @@ def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"
         "archive-only-linked-pr"
     ):
         raise ValueError("unrecognized owner record type")
+    if attention not in ATTENTION:
+        raise ValueError("unknown historical attention filter")
     if pr_url is not None and not re.fullmatch(
         r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
         pr_url
@@ -388,6 +396,18 @@ def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"
             continue
         if record_type == "archive-only-linked-pr" and not row["archive_only_issue_count"]:
             continue
+        if attention == "shared-issue-prs" and not row["issue_has_alternative_prs"]:
+            continue
+        if attention == "missing-final-sample" and not row["pr_missing_last_saved_snapshot"]:
+            continue
+        if attention == "lost-issue-link" and not row["issue_link_missing_in_saved_source"]:
+            continue
+        if attention == "historical-head-changes" and not row["head_variation_is_historical_not_merge_conflict"]:
+            continue
+        if attention == "archive-only-linked" and not row["archive_only_issue_count"]:
+            continue
+        if attention == "unlinked-pr" and row["pr_reference_state"] != "historical_pr_without_sampled_issue_link":
+            continue
         result.append(row)
     # Exact PR/issue packets must exist in the admitted source selection.
     # An absent observation is not evidence that work has been completed.
@@ -399,7 +419,8 @@ def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"
 
 
 def selection_metadata(total, rows, *, repository=None, priority=None,
-                       record_type="all", pr_url=None, issue_url=None):
+                       record_type="all", pr_url=None, issue_url=None,
+                       attention="all"):
     """Explicit whole-source vs selected coverage for every export format."""
     return {
         "selection_repository": repository or "ALL_SOURCE_REPOSITORIES",
@@ -407,11 +428,13 @@ def selection_metadata(total, rows, *, repository=None, priority=None,
         "selection_record_type": record_type,
         "selection_pr_url": pr_url or "NOT_SELECTED",
         "selection_issue_url": issue_url or "NOT_SELECTED",
+        "selection_attention": attention,
         "source_record_count": total,
         "selected_record_count": len(rows),
         "excluded_source_record_count": total - len(rows),
         "selection_filter_applied": bool(
-            repository or priority or record_type != "all" or pr_url or issue_url),
+            repository or priority or record_type != "all"
+            or pr_url or issue_url or attention != "all"),
         # Cohort counts refer ONLY to rows selected from admitted snapshots.
         "selected_existing_pr_count": sum(bool(row["pr_url"]) for row in rows),
         "selected_issue_without_pr_count": sum(not row["pr_url"] for row in rows),
@@ -466,7 +489,7 @@ def render_private_html(rows, source_metadata=None):
     missing_batches = metadata.get("saved_archive_batches_missing", "UNKNOWN")
     selection = {key: metadata.get(key, "UNKNOWN") for key in (
         "selection_repository", "selection_priority", "selection_record_type",
-        "selection_pr_url", "selection_issue_url",
+        "selection_pr_url", "selection_issue_url", "selection_attention",
         "source_record_count", "selected_record_count",
         "excluded_source_record_count", "selection_filter_applied",
         "selected_existing_pr_count", "selected_issue_without_pr_count",
@@ -479,6 +502,8 @@ def render_private_html(rows, source_metadata=None):
         '<p>Repository: ' + escape(str(selection["selection_repository"])) +
         ' · priority: ' + escape(str(selection["selection_priority"])) +
         ' · record type: ' + escape(str(selection["selection_record_type"])) + '</p>'
+        '<p>Historical attention: ' +
+        escape(str(selection["selection_attention"])) + '</p>'
         '<p>Exact selected PR: ' + escape(str(selection["selection_pr_url"])) +
         ' · exact issue: ' + escape(str(selection["selection_issue_url"])) + '</p>'
         '<p>Source records before filtering: ' +
@@ -706,6 +731,8 @@ def render_private_markdown(rows, source_metadata):
         "- Priority: " + _markdown_evidence(metadata["selection_priority"]),
         "- Record type: " + _markdown_evidence(
             metadata["selection_record_type"]),
+        "- Historical attention: " + _markdown_evidence(
+            metadata["selection_attention"]),
         "- Selected PR: " + _markdown_evidence(metadata["selection_pr_url"]),
         "- Selected issue: " + _markdown_evidence(metadata["selection_issue_url"]),
         "- Fully admitted saved records: " + str(metadata["source_record_count"]),
@@ -836,6 +863,9 @@ def main(argv=None):
                         choices=("all", "existing-pr", "issue-without-pr", "unlinked-pr",
                                  "archive-only-linked-pr"),
                         help="Select saved PRs, unmatched issue links, unlinked PRs or archive-only linked PRs")
+    parser.add_argument("--attention", choices=ATTENTION, default="all",
+                        help="Focus on shared-issue PRs, missing saved links, "
+                             "archive-only records or historical HEAD changes")
     parser.add_argument("--inspect-pr-url",
                         help="Create a source-observed exact-PR owner packet")
     parser.add_argument("--inspect-issue-url",
@@ -881,11 +911,12 @@ def main(argv=None):
         rows = select_owner_rows(
             admitted_rows, repository=args.repository, priority=args.priority,
             record_type=args.record_type, pr_url=args.inspect_pr_url,
-            issue_url=args.inspect_issue_url)
+            issue_url=args.inspect_issue_url, attention=args.attention)
         selection = selection_metadata(
             len(admitted_rows), rows, repository=args.repository,
             priority=args.priority, record_type=args.record_type,
-            pr_url=args.inspect_pr_url, issue_url=args.inspect_issue_url)
+            pr_url=args.inspect_pr_url, issue_url=args.inspect_issue_url,
+            attention=args.attention)
         # Keep complete-source coverage explicit, even in a single selected row.
         html_metadata.update(selection)
         for row in rows:
