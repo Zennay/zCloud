@@ -491,6 +491,26 @@ def product_queue_snapshot(items, max_visible=8):
         else:
             next_step = "no_product_candidate_observed"
         row["operator_next_step"] = next_step
+    # Bridge the ordinary P0-first product shortlist with the *same* source
+    # observation of existing owners. A candidate is never proof of a free
+    # claim scope, even when it is eligible, queued, and unoccupied.
+    for lead in project_shortlist:
+        activity = project_activity.get(lead["project_id"], {})
+        lead["active_claims_visible"] = activity.get(
+            "active_claimed_running_verifying_visible", 0
+        )
+        lead["active_claim_evidence_gaps_visible"] = (
+            activity.get("active_missing_worker_slot_visible", 0)
+            + activity.get("active_missing_claim_start_visible", 0)
+            + activity.get("active_missing_claim_expiry_visible", 0)
+        )
+        lead["repeated_claim_attempts_visible"] = activity.get(
+            "repeated_claim_attempts_visible", 0
+        )
+        lead["owner_next_step"] = activity.get(
+            "operator_next_step", "verify_claim_scope_capacity_and_owner"
+        )
+        lead["new_claim_authorized"] = False
     # Show one high-attempt original task per project first, then the highest
     # remaining observed count. Never let one noisy project suppress every
     # other human recovery lead in the bounded owner list.
@@ -565,6 +585,10 @@ def product_queue_snapshot(items, max_visible=8):
                 "project_id": str(item.get("project_id") or "")[:56],
                 "queue_id": str(item.get("queue_id") or "")[:160],
                 "priority": str(item.get("priority") or "")[:4],
+                "observed_active_project_owners": project_activity.get(
+                    str(item.get("project_id") or "")[:56], {}
+                ).get("active_claimed_running_verifying_visible", 0),
+                "owner_scope_and_capacity_not_verified": True,
             }
             for item in candidate_rows[:max_visible]
         ],
