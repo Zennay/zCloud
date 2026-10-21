@@ -2679,6 +2679,51 @@ function drawDetail(){
   }else prs.append(elem('small','No admitted exact-head PR observation in this saved source; inspect live GitHub.'));
  });
  detail.append(prs);
+ // Offline PR history follows the currently selected issue. Only the
+ // previously admitted ZIP source is projected into this read-only panel.
+ // No live status, active claim or release authority can be inferred.
+ if(savedPrHistory.sources_provided){
+  const historical=elem('section');
+  historical.setAttribute('aria-label','Historical existing PR recovery context');
+  historical.append(elem('h3','Existing PR history · saved source only'));
+  const match=savedPrHistory.issues[card.issue];
+  if(!match){
+   historical.append(elem('p','This issue has no PR link in the supplied historical ZIP samples. This is NOT proof there is no current PR or owner.'));
+  }else{
+   historical.append(
+    elem('p','Original ZIP source freshness: '+match.source_age_status+
+      ' · '+match.source_pr_total+' previously linked PR(s) · '+
+      match.issue_links_lost_while_pr_sampled+
+      ' issue links disappeared while PRs remained in sources · '+
+      match.prs_missing_last_saved_snapshot+
+      ' PR(s) absent from latest saved sample. Historical observations are not current CI, owner or merge evidence.','meta'),
+    elem('p','Human investigation: '+match.triage_focus));
+   const list=elem('ol');
+   match.prs.forEach(pr=>{
+    const li=elem('li');
+    li.append(link('Previously linked PR #'+pr.number+' ↗',pr.url),
+      elem('p','Last observed HEAD: '+(pr.latest_observed_head||'UNKNOWN')+
+        ' · HEAD at last issue link: '+(pr.head_at_last_issue_link||'UNKNOWN')+
+        ' · gate label: '+pr.source_gate+
+        ' · observed HEAD changes: '+pr.head_changes+
+        ' · issue last linked in ZIP source #'+pr.last_issue_link_source,
+        'meta'));
+    if(pr.pr_observed_after_issue_link_absent)
+     li.append(elem('p','Issue link disappeared although this PR was later still sampled. Verify the current original PR and issue; NOT evidence of a fix.','meta'));
+    if(pr.issue_link_missing_last_source)
+     li.append(elem('p','Issue link missing in last saved source. Current relationship UNKNOWN.','meta'));
+    if(pr.pr_missing_last_source)
+     li.append(elem('p','PR missing in final saved sample; this is NOT evidence of a merge or closure.','meta'));
+    list.append(li);
+   });
+   historical.append(list);
+   if(match.not_shown_count)
+    historical.append(elem('p',match.not_shown_count+
+      ' additional archived PR references omitted from this bounded panel; NOT resolved.','meta'));
+  }
+  historical.append(elem('p','Before integrating or opening a competing PR: recheck GitHub exact HEAD, required CI/reviews, branch protection and active Notion/queue claims. No action is authorized.','meta'));
+  detail.append(historical);
+ }
  const gaps=elem('div');gaps.append(elem('h3','Missing evidence and gates'));
  const ul=elem('ul');
  card.evidence_gaps.forEach(x=>ul.append(elem('li',x)));
