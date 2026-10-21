@@ -8,20 +8,23 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   enqueue:
     runs-on: self-hosted
     timeout-minutes: 5
+    env:
+      RECEIPT_PATH: ${{ runner.temp }}/ftmo-cpu-zssh-queue-receipt.json
     steps:
-      - name: Check out exact main
+      - name: Check out exact triggering revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
-          fetch-depth: 0
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Enqueue zSSH P0 subtask and persist live SQLite receipt
+      - name: Enqueue zSSH P0 subtask and prepare bounded receipt
         shell: bash
         run: |
           set -euo pipefail
@@ -64,9 +67,6 @@ jobs:
                   raise RuntimeError(f"queue enqueue failed: HTTP {response.status}")
           print("QUEUE_ENQUEUE_RESPONSE", json.dumps(body, sort_keys=True))
           PY
-
-          git fetch origin main
-          git reset --hard origin/main
 
           python3 - <<'PY'
           import json
@@ -122,17 +122,19 @@ jobs:
               },
           }
           print("FTMO_CPU_ZSSH_QUEUE_GREEN", json.dumps(receipt, sort_keys=True))
-          target = Path("artifacts/ops/ftmo-cpu-zssh-queue-receipt.json")
+          target = Path(os.environ["RECEIPT_PATH"])
           target.parent.mkdir(parents=True, exist_ok=True)
-          target.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          target.write_text(
+              json.dumps(receipt, sort_keys=True, indent=2) + "\n",
+              encoding="utf-8",
+          )
           PY
 
-          git config user.name "zcloud-automation"
-          git config user.email "zcloud-automation@users.noreply.github.com"
-          git add artifacts/ops/ftmo-cpu-zssh-queue-receipt.json
-          if git diff --cached --quiet; then
-            echo "Queue receipt unchanged"
-          else
-            git commit -m "Record FTMO zSSH queue receipt"
-            git push origin HEAD:main
-          fi
+      - name: Upload bounded queue receipt
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ftmo-cpu-zssh-queue-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ftmo-cpu-zssh-queue-receipt.json
+          if-no-files-found: error
+          retention-days: 14
