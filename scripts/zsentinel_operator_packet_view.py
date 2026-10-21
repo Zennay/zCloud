@@ -19,7 +19,8 @@ from zipfile import ZIP_STORED, BadZipFile, LargeZipFile, ZipFile
 from zsentinel_operator_packet import MEMBERS, MAX_PACKET_BYTES, build_packet
 from zsentinel_runtime_handoff import (
     SCHEMA, _short, _source_report_digest, handoff_html,
-)
+)from zsentinel_private_output import write_private_output
+
 
 JSON_MAX = 1024 * 1024
 SHA = re.compile(r"^[0-9a-f]{64}$")
@@ -238,7 +239,11 @@ def main():
         description="Open source-exact offline zSentinel owner ZIP; do not run actions")
     parser.add_argument("--packet", type=Path, required=True)
     parser.add_argument("--format", choices=("text", "json", "html"), default="text")
+    parser.add_argument("--output", type=Path,
+                        help="Optional new private mode-0600 HTML file; create-only")
     args = parser.parse_args()
+    if args.output is not None and args.format != "html":
+        parser.error("--output requires --format html")
     try:
         report = open_packet(args.packet)
     except (OSError, ValueError, TypeError, KeyError,
@@ -248,7 +253,13 @@ def main():
     if args.format == "json":
         print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
     elif args.format == "html":
-        print(render_html(report), end="")
+        rendered = render_html(report)
+        if args.output is None:
+            print(rendered, end="")
+        else:
+            write_private_output(args.output, rendered, "html")
+            print("Created NEW private offline owner desk (0600); no actions.",
+                  file=sys.stderr)
     else:
         print("zSentinel · PRIVÉ / OFFLINE / BRONMOMENT " +
               str(report["source_created_at_utc"]))
