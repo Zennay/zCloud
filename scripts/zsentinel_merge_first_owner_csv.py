@@ -588,13 +588,19 @@ def render_private_html(rows, source_metadata=None):
             parts.append('<p>No linked source issue was observed for '
                          'this existing PR. Relation to a current issue '
                          'and present owner remain UNKNOWN.</p>')
+        archived_issue_urls = set(filter(
+            None, row["archive_only_source_issue_urls"].split(" | ")
+        ))
         for url in filter(None, row["source_issue_urls"].split(" | ")):
             if not re.fullmatch(
                 r'https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}', url
             ):
                 raise ValueError("noncanonical original issue URL")
             safe = escape(url, quote=True)
-            parts.append('<p>Issue: <a href="' + safe +
+            label = ("Archive-only issue (absent from original issue board): "
+                     if url in archived_issue_urls else
+                     "Original issue-board issue: ")
+            parts.append('<p>' + label + '<a href="' + safe +
                          '" target="_blank" rel="noopener noreferrer">' +
                          safe + '</a></p>')
         if has_pr:
@@ -776,13 +782,19 @@ def render_private_markdown(rows, source_metadata):
                 row["source_issue_titles"]),
             "",
         ])
+        archived_issue_urls = set(filter(
+            None, row["archive_only_source_issue_urls"].split(" | ")
+        ))
         for issue in filter(None, row["source_issue_urls"].split(" | ")):
             if not re.fullmatch(
                 r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}",
                 issue,
             ):
                 raise ValueError("noncanonical saved issue URL")
-            lines.append("- [Inspect original issue](" + issue + ")")
+            label = ("Inspect archive-only issue missing from original board"
+                     if issue in archived_issue_urls else
+                     "Inspect original issue-board issue")
+            lines.append("- [" + label + "](" + issue + ")")
         if row["pr_url"]:
             url = row["pr_url"]
             if not re.fullmatch(
