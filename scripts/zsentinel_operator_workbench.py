@@ -371,6 +371,48 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
         ' source-seen existing PR(s)</li>'
         for row in other_issues[:30]
     ]
+    # One P0-first historical recovery snapshot per BOARD project. Counts
+    # describe only matching saved board issue links; omitted projects/PRs
+    # remain UNKNOWN. Never derive an owner-free or merge-ready task.
+    project_leads = {}
+    for card in view["cards"]:
+        pid = card["project"]
+        row = project_leads.setdefault(pid, {
+            "P0": 0, "P1": 0, "matched": 0, "unknown": 0,
+            "multiple_prs": 0, "lost_links": 0, "missing_prs": 0,
+            "saved_existing_prs": 0,
+        })
+        linked = group_map.get(card["url"])
+        if linked is None:
+            row["unknown"] += 1
+            continue
+        row["matched"] += 1
+        if card["priority"] in ("P0", "P1"):
+            row[card["priority"]] += 1
+        row["multiple_prs"] += int(
+            linked["multiple_candidate_prs_need_owner_review"])
+        row["lost_links"] += int(
+            linked["links_lost_while_pr_still_sampled"] > 0 or
+            linked["link_unobserved_in_final_sample"])
+        row["missing_prs"] += int(
+            linked["sampled_prs_missing_from_final"] > 0)
+        row["saved_existing_prs"] += len(linked["linked_existing_prs"])
+    def lead_rank(pair):
+        name, counts = pair
+        return (-counts["P0"], -counts["lost_links"], -counts["P1"],
+                -counts["multiple_prs"], name)
+    project_summary = "<ol>" + "".join(
+        '<li><strong>' + e(name) + '</strong>: ' +
+        str(counts["P0"]) + ' sampled P0 / ' + str(counts["P1"]) +
+        ' sampled P1 with saved PR links; ' +
+        str(counts["matched"]) + ' matched board issues / ' +
+        str(counts["unknown"]) + ' unmatched (UNKNOWN); ' +
+        str(counts["saved_existing_prs"]) + ' historical PR associations; ' +
+        str(counts["multiple_prs"]) + ' issues with multiple PRs, ' +
+        str(counts["lost_links"]) + ' missing final issue links, ' +
+        str(counts["missing_prs"]) + ' missing final PR samples.</li>'
+        for name, counts in sorted(project_leads.items(), key=lead_rank)
+    ) + "</ol>"
     return (
         '<section id="sourcePrConnections" class="portfolio" '
         'aria-label="Source-linked existing PRs for current product issues">'
@@ -388,7 +430,13 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
         (' At least one original archive has missing batches; '
          'omitted PRs stay UNKNOWN.' if missing_batches else
          ' No missing archive batches reported; live inventory still UNKNOWN.') +
-        '</p><p>PR sources: ' + str(len(report["source_snapshots"])) +
+        '</p><details><summary>Project-level issue/PR recovery shortlist (' +
+        str(len(project_leads)) +
+        ' saved board projects, no claim authorization)</summary><p>' +
+        'Prioritized from saved P0/P1 observations only. Unknown links, '
+        'review, owner claims and exact-head CI require fresh source checks.'
+        '</p>' + project_summary + '</details>' +
+        '<p>PR sources: ' + str(len(report["source_snapshots"])) +
         ' · matched board issues: ' + str(len(cards)) +
         ' · other source-linked issues: ' + str(len(other_issues)) +
         ' · PRs without saved issue links: ' +
