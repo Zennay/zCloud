@@ -410,11 +410,15 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
 
 
 def observe_candidate_prs(issue, *, token=None, source_case=None,
-                          discover_unlinked=False):
+                          discover_unlinked=False, focus_pr_number=None):
     """Read exactly an admitted issue's referenced PRs; leave each result untrusted."""
     candidates = issue.get("candidate_prs", [])
     if not isinstance(candidates, list) or len(candidates) > MAX_CANDIDATES:
         raise GitHubReadError("unbounded or absent candidate source")
+    if focus_pr_number is not None and (
+            type(focus_pr_number) is not int
+            or not 1 <= focus_pr_number <= 100000000):
+        raise GitHubReadError("focused PR must be a positive canonical number")
     if not candidates and not discover_unlinked:
         raise GitHubReadError(
             "issue has no sampled PR; use explicit bounded discovery or refresh source"
@@ -436,6 +440,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
     }
     source_url = issue["source_urls"][0]
     historical_candidates = len(candidates)
+    saved_candidates = candidates[:]
     # Historical candidates retain priority. Newly discovered hints fill
     # only unused live-read slots; overflow is navigation-only with UNKNOWN
     # live status, never an implicit claim or deliverable.
@@ -449,6 +454,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         "issue_pr_relationship_verified": False,
     }
     extra_get_attempts = 0
+    new_references = []
     if discover_unlinked:
         # Operator-directed, maximum four open-PR page GETs, then the
         # same bounded, double-read candidate observation as normal.
@@ -488,6 +494,58 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
             len(candidates) == MAX_CANDIDATES and
             bool(new_references[slots_remaining:])
         )
+    # A focused review may select an explicit, source-linked PR even when
+    # the ordinary three slots were occupied by older historical repairs.
+    # It cannot inject a guessed PR number outside the observed source pool.
+    other_source_candidates = []
+    focused_source = None
+    if focus_pr_number is not None:
+        candidate_pool = saved_candidates + new_references
+        focused = [
+            row for row in candidate_pool
+            if isinstance(row, dict) and row.get("number") == focus_pr_number
+        ]
+        if len(focused) != 1:
+            raise GitHubReadError(
+                "focused PR is not uniquely present in saved or observed source"
+            )
+        selected = focused[0]
+        focused_source = (
+            "historical_case_issue_reference"
+            if selected["url"] in historical_urls else
+            "bounded_live_open_pr_text_hint"
+        )
+        for row in candidate_pool:
+            if row["number"] != focus_pr_number:
+                other_source_candidates.append({
+                    "number": row["number"], "url": row["url"],
+                    "live_read_performed": False,
+                    "live_status": "UNKNOWN",
+                    "source": (
+                        "historical_case_issue_reference"
+                        if row["url"] in historical_urls else
+                        "bounded_live_open_pr_text_hint"
+                    ),
+                })
+        candidates = [selected]
+        if discover_unlinked:
+            discovery["new_live_candidates_selected"] = int(
+                selected["url"] not in historical_urls
+            )
+            unobserved_new = [
+                row for row in new_references if row["number"] != focus_pr_number
+            ]
+            discovery["navigation_only_count"] = len(unobserved_new)
+            discovery["navigation_only_hints"] = [
+                {
+                    "number": row["number"], "url": row["url"],
+                    "source_relationship": row["relationship_at_source"],
+                    "candidate_origin": row["candidate_origin"],
+                    "live_read_performed": False, "live_state": "UNKNOWN",
+                    "merge_authorized": False, "claim_authorized": False,
+                } for row in unobserved_new
+            ]
+            discovery["candidate_slot_limit_reached"] = False
     issue_match = ISSUE_URL.fullmatch(source_url)
     if issue_match is None:
         raise GitHubReadError("source issue is not a canonical repository issue")
@@ -695,7 +753,12 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         "observed_at_utc": utc(),
         "candidate_count": len(candidates),
         "source_candidate_count": historical_candidates,
-        "live_discovered_count": max(0, len(candidates) - historical_candidates),
+        "live_discovered_count": sum(
+            row["url"] not in historical_urls for row in candidates
+        ),
+        "focused_pr_number": focus_pr_number,
+        "focused_source": focused_source,
+        "other_source_candidates_not_live_read": other_source_candidates,
         "optional_unlinked_discovery": discovery,
         "observations": observations, "sample_scope_only": True,
         "suggested_owner_review_order": [
