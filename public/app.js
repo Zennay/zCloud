@@ -1226,7 +1226,7 @@ async function readVpsGitHubActivity(){
   VPS_GITHUB_BUSY=true;VPS_GITHUB_ERROR='Requesting bounded GitHub observation from VPS…';
   if(route==='activity')render();
   try{
-    let data=null;
+    let data=null,staleSample=false,staleAge=0,staleReason='';
     // First request schedules GitHub collection if not cached; subsequent
     // short reads query the same singleflight result without new provider GETs.
     for(let attempt=0;attempt<6;attempt++){
@@ -1239,10 +1239,23 @@ async function readVpsGitHubActivity(){
          envelope.project!==project||envelope.feed_complete!==false||
          envelope.authorizes_repair!==false||envelope.authorizes_merge!==false||
          envelope.authorizes_deploy!==false||
-         !['refreshing','partial','unavailable','capacity_wait','rate_budget_wait'].includes(envelope.state)){
+         !['refreshing','partial','stale','unavailable','capacity_wait','rate_budget_wait'].includes(envelope.state)){
         throw Error('Unrecognized GitHub server source');
       }
       if(envelope.state==='partial'){data=envelope.receipt;break}
+      if(envelope.state==='stale'){
+        // The original source timestamp is retained inside the receipt.
+        // Never upgrade an old cache hit to a fresh GitHub observation.
+        if(!Number.isSafeInteger(envelope.cached_age_s)||envelope.cached_age_s<300||
+           envelope.cached_age_s>3600||
+           !['refreshing','provider_unavailable','invalid_provider_receipt',
+             'capacity_wait','rate_budget_wait'].includes(envelope.refresh_status)){
+          throw Error('Invalid stale GitHub source metadata');
+        }
+        staleSample=true;staleAge=envelope.cached_age_s;
+        staleReason=envelope.refresh_status;
+        data=envelope.receipt;break;
+      }
       if(envelope.state!=='refreshing'){
         throw Error(envelope.state==='rate_budget_wait'?'Anonymous GitHub hourly request budget reached; retry later':
           envelope.state==='capacity_wait'?'Source capacity busy':'GitHub unavailable');
@@ -1259,11 +1272,21 @@ async function readVpsGitHubActivity(){
     // imports. An incomplete trusted-server response must not erase the
     // project's previous PR/CI history or newer source observations.
     const prior=IMPORTED_GITHUB_ACTIVITY||null;
-    IMPORTED_GITHUB_ACTIVITY=mergeValidatedZSentinelReceipts(prior,parsed,'github');
-    // Server evidence is a distinct source/window. Do not use public browser
-    // page cursors to silently filter authenticated server facts.
-    PUBLIC_GITHUB_PAGE.delete(project);PUBLIC_GITHUB_VIEW_PAGE.delete(project);PUBLIC_GITHUB_MORE.delete(project);
-    VPS_GITHUB_ERROR='Server GitHub sample loaded for '+project+
+    const previousTime=prior?.coverage?.find(row=>row.project===project)?.observedAt||'';
+    const olderThanLoaded=staleSample&&previousTime&&
+      Date.parse(parsed.coverage[0].observedAt)<Date.parse(previousTime);
+    if(!olderThanLoaded){
+      IMPORTED_GITHUB_ACTIVITY=mergeValidatedZSentinelReceipts(prior,parsed,'github');
+      // The server source is a separate evidence window, not a browser
+      // public-page cursor. Only reset display slices if newly admitted.
+      PUBLIC_GITHUB_PAGE.delete(project);PUBLIC_GITHUB_VIEW_PAGE.delete(project);PUBLIC_GITHUB_MORE.delete(project);
+    }
+    VPS_GITHUB_ERROR=staleSample?
+      'STALE GitHub cache for '+project+' ('+staleAge+'s old; '+staleReason+'). '+
+      (olderThanLoaded?'Kept your newer existing evidence. ':
+        'Showing historical observations only. ')+
+      'No current PR, CI or deployment coverage verified.':
+      'Server GitHub sample loaded for '+project+
       '. Partial PR/CI/main source; no deployment or branch completeness implied.';
   }catch(error){
     if(routeVersion===version&&filter===project)
