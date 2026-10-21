@@ -429,12 +429,14 @@ def _discover_issue_timeline_prs(issue_url, *, token=None):
     path = "/repos/" + quote(owner, safe="") + "/" + quote(repo, safe="")
     candidates, seen = [], set()
     pages_scanned = 0
+    gets_attempted = 0
     events_scanned = 0
     last_page_short = False
     skipped = 0
     source_error = None
     for page_number in range(1, MAX_TIMELINE_PAGES + 1):
         try:
+            gets_attempted += 1
             events = _limited_json(
                 path + "/issues/" + issue_number + "/timeline?per_page=" +
                 str(MAX_LIST_PAGE) + "&page=" + str(page_number),
@@ -484,6 +486,7 @@ def _discover_issue_timeline_prs(issue_url, *, token=None):
             break
     return candidates[:MAX_DISCOVERY_HINTS], {
         "performed": True, "pages_scanned": pages_scanned,
+        "get_attempts": gets_attempted,
         "max_pages": MAX_TIMELINE_PAGES,
         "events_scanned": events_scanned,
         "candidate_count_in_window": len(candidates),
@@ -563,23 +566,33 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
     }
     extra_get_attempts = 0
     new_references = []
+    timeline = {"performed": False, "source_error": None}
     if discover_unlinked:
-        # Operator-directed, maximum four open-PR page GETs, then the
-        # same bounded, double-read candidate observation as normal.
-        # A matching body phrase is never considered an authorized issue link.
+        # GitHub's issue timeline can expose actual PR cross-references,
+        # including merged/closed repairs absent from the open-PR list.
+        # Timeline hints take precedence over title/body text matches, but
+        # cannot establish what fixes were delivered or ownership clearance.
+        timeline_hints, timeline = _discover_issue_timeline_prs(
+            source_url, token=token,
+        )
         discovered, discovery = _discover_sampled_open_prs(
             source_url, token=token,
         )
-        extra_get_attempts = discovery["pages_scanned"]
-        new_references = [
-            row for row in discovered if row["url"] not in historical_urls
-        ]
+        extra_get_attempts = (
+            timeline["get_attempts"] + discovery["pages_scanned"]
+        )
+        seen_refs = set(historical_urls)
+        deduplicated = 0
+        for row in timeline_hints + discovered:
+            if row["url"] in seen_refs:
+                deduplicated += 1
+                continue
+            seen_refs.add(row["url"])
+            new_references.append(row)
         slots_remaining = MAX_CANDIDATES - len(candidates)
         candidates = candidates + new_references[:slots_remaining]
         discovery["historical_candidate_count"] = historical_candidates
-        discovery["previously_referenced_hints_deduplicated"] = (
-            len(discovered) - len(new_references)
-        )
+        discovery["previously_referenced_hints_deduplicated"] = deduplicated
         discovery["new_live_candidates_selected"] = min(
             slots_remaining, len(new_references)
         )
@@ -868,6 +881,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         "focused_source": focused_source,
         "other_source_candidates_not_live_read": other_source_candidates,
         "optional_unlinked_discovery": discovery,
+        "issue_timeline_cross_references": timeline,
         "observations": observations, "sample_scope_only": True,
         "suggested_owner_review_order": [
             {"number": row["number"], "url": row["url"],
@@ -881,8 +895,10 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         ],
         "provider_admission_paused": provider_paused,
         "read_get_attempt_upper_bound": (
-            1 + (MAX_DISCOVERY_PAGES if discover_unlinked else 0) +
-            4 * len(candidates)
+            1 + (
+                MAX_DISCOVERY_PAGES + MAX_TIMELINE_PAGES
+                if discover_unlinked else 0
+            ) + 4 * len(candidates)
         ),
         "get_attempts": total_gets_attempted,
         "live_observations": sum(row["status"] == "LIVE_PARTIAL_READ"
