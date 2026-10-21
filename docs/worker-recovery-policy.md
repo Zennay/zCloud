@@ -549,7 +549,7 @@ umask 077
 python3 scripts/zsentinel_recovery_policy.py \
   --case-input private-recovery-case.json \
   --view-project cloud --view-issue 1518 \
-  --live-candidates --discover-existing --live-focus-pr 1563 \
+  --live-candidates --discover-existing --live-focus-pr 1524 \
   --format html > private-focused-existing-pr.html
 ```
 
