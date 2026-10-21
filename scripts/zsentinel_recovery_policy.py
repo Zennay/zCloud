@@ -1061,10 +1061,10 @@ def main(argv=None):
                               parse_constant=_reject_constant)
             report = evaluate_recovery_case(data)
             output = (workorders_html(report) if args.format == "html" else
-                      "# zSentinel case workorders\\n\\n" + workorders_text(report)
+                      "# zSentinel case workorders\n\n" + workorders_text(report)
                       if args.format == "markdown" else
                       workorders_text(report) if args.format == "workorders" else
-                      json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\\n")
+                      json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
             if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
                 raise PolicyInputError("output exceeds 128 KiB")
             sys.stdout.write(output)
