@@ -50,6 +50,36 @@ OUTCOMES = {
         "Existing add-on reloaded; browser PID was preserved, but independent live acceptance is NOT verified.",
         "Confirm end-to-end worker/browser behaviour separately.",
     ),
+    ("addon", "rollback-restored"): (
+        "PREVIOUS_VERSION_RESTORED",
+        "An addon install failed after its disk swap; prior on-disk bytes were restored.",
+        "Check the original failure. Browser activation was NOT verified.",
+    ),
+    ("addon", "rollback-owner-preserved"): (
+        "CONCURRENT_OWNER_CHANGE_PRESERVED",
+        "An addon install failed; a later owner edit was not overwritten by rollback.",
+        "Coordinate with the active addon owner; the previous version backup was retained.",
+    ),
+    ("addon", "rollback-failed"): (
+        "ROLLBACK_FAILED",
+        "An addon install failed and the previous on-disk version could not be restored.",
+        "Owner intervention needed; recovery backup was retained. Do not assert active browser state.",
+    ),
+    ("watchdog", "rollback-restored"): (
+        "PREVIOUS_VERSION_RESTORED",
+        "A standalone watchdog install failed after its atomic promotion; prior executable restored.",
+        "Investigate the original failure; watchdog process state is NOT independently verified.",
+    ),
+    ("watchdog", "rollback-owner-preserved"): (
+        "CONCURRENT_OWNER_CHANGE_PRESERVED",
+        "A standalone watchdog install failed; another owner's newer installed bytes were preserved.",
+        "Coordinate with the runtime owner before considering another installation.",
+    ),
+    ("watchdog", "rollback-failed"): (
+        "ROLLBACK_FAILED",
+        "Standalone watchdog installation failed after promotion and automatic rollback did not finish.",
+        "Private backup needs owner-supervised recovery; no live recovery is claimed.",
+    ),
 }
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -98,8 +128,12 @@ def main() -> int:
     with Path(summary).open("a", encoding="utf-8") as out:
         out.write("\n".join(lines) + "\n")
     print(f"ZSENTINEL_RELEASE_OBSERVATION={args.component}:{status}")
-    if "DEFERRED" in status:
-        print("::warning::Add-on installed on disk, but browser activation was deferred.")
+    if status == "RELOAD_DEFERRED":
+        print("::warning::Add-on on disk; active browser reload deferred.")
+    elif status in {"ROLLBACK_FAILED", "CONCURRENT_OWNER_CHANGE_PRESERVED"}:
+        print("::warning::Manual install failed; owner recovery or coordination is required.")
+    elif status == "PREVIOUS_VERSION_RESTORED":
+        print("::warning::Manual install failed; the prior on-disk version was restored.")
     return 0
 
 
