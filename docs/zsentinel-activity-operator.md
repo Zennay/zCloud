@@ -2,6 +2,35 @@
 
 This is a product-first, explicit-action operator view on the existing **Activity** route. All new features are **read-only** and do not mutate portfolio-queue records, worker leases, priorities, runtime settings or deployments.
 
+## Queue retry incident owner workorders — issue #677 (21 October)
+
+On the existing Activity **zSentinel · queue retry incidents** panel, choose
+**Read VPS queue** (authorized, read-only) or import an existing bounded source
+snapshot. The page now derives one advisory **problem / action / status** card
+per project and P0–P3 priority with observed high claim attempts. Cards are
+P0-first; at most 12 are shown together, and a project filter reveals the
+remaining groups. The existing **Export retry handoff .md** includes the same
+cards (up to 32) with source-scope and truncation warnings.
+
+- Group totals describe the actual read-only SQL observation, **not** the
+  potentially partial high-attempt *sample*. Owned claim counts remain separate
+  from queued counts; the expired-lease count describes the **whole matched
+  project/priority group**, not necessarily the specific high-attempt items.
+- **Owned or expired lease indicators:** confirm the *current* worker, Notion
+  and queue lease before intervening. **Queued-only high attempts:** ask the
+  authorized runtime owner to classify the claim/requeue cause first.
+- Older-than-six-hours reports say **STALE — REFRESH REQUIRED**; an incomplete
+  bounded sample says **PARTIAL SAMPLE — OWNER REVIEW**. Changing to a project
+  outside the snapshot's scope cannot fabricate empty/healthy results.
+- Cards contain no raw queue ID, claim token, task title or prompt text. They
+  never classify an attempt as a failure or auto-retry/claim anything.
+
+This is useful immediate **owner triage**, not issue #677's native retry
+writer fix. Durable `retry_not_before`, finite native retry transitions
+(`FAILED_RETRYABLE`/`NEEDS_AI`/`FAILED_FINAL`) and writer-migration ownership
+remain separately gated by the current control-plane window. Nothing in this
+UI changes the `server.py` queue writer or clears that issue.
+
 ## Product delivery queue
 
 Choose **Read admission** to request the existing authenticated `GET /api/portfolio-queue` endpoint. The new `delivery_policy` payload comes from unified backend PR #1549 and reports:
