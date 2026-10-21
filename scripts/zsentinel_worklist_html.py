@@ -155,7 +155,7 @@ def render_html(board, max_rows=20):
                 ("volledig binnen steekproef" if row["issue_reference_sample_complete"]
                  else "ONVOLLEDIG"))
         output.append(
-            "<article class='ticket' data-project='" + h(row["project"]) +
+            "<article class='ticket' tabindex='-1' data-project='" + h(row["project"]) +
             "' data-priority='" + h(row["priority"]) +
             "' data-issue='" + h(row["issue_url"]) +
             "' data-pr='" + h(pr or "") +
@@ -330,7 +330,12 @@ const project=document.getElementById('project'), state=document.getElementById(
 const visible=document.getElementById('visible'), prState=document.getElementById('pr-state');
 const focusBar=document.getElementById('focus-bar'),focusTitle=document.getElementById('focus-title');
 const focusClear=document.getElementById('focus-clear');
-let focusedPr=null;
+const focusNext=document.getElementById('focus-next');
+let focusedPr=null,focusIndex=-1;
+function linkedToFocus(t){
+ return Boolean(focusedPr)&&
+   [t.dataset.pr,...t.dataset.prs.trim().split(' ').filter(Boolean)].includes(focusedPr);
+}
 const prLabels={open:'Nog te beoordelen',review:'Wacht op review/CI',
  owner:'Wacht op huidige eigenaar',coordinate:'Afstemming tussen PRs nodig',
  followup:'Opvolging vastgelegd'};
@@ -342,8 +347,7 @@ function refresh(){
  for(const t of tickets){
   const text=[t.dataset.title,t.dataset.issue,t.dataset.pr,t.dataset.prs,
    t.dataset.project,t.dataset.category,t.dataset.next].join(' ').toLocaleLowerCase('nl');
-  const linked=[t.dataset.pr,...t.dataset.prs.trim().split(' ').filter(Boolean)];
-  const show=(!focusedPr||linked.includes(focusedPr))&&
+  const show=(!focusedPr||linkedToFocus(t))&&
    (!q||text.includes(q))&&(!priority.value||priority.value===t.dataset.priority)&&
    (!project.value||project.value===t.dataset.project)&&
    (!state.value||state.value===t.querySelector('.local-state').value);
@@ -362,13 +366,19 @@ function refresh(){
  visible.textContent=count+' van '+tickets.length+' issuekaarten en '+
    prCount+' van '+prs.length+' bestaande PR-groepen zichtbaar';
  focusBar.hidden=!focusedPr;
- if(focusedPr)focusTitle.textContent='PR '+focusedPr.split('/').pop()+
-   ': '+count+' gekoppelde bronissues in dit dossier. Geen fix- of mergebewijs.';
+ if(focusedPr){
+   const open=tickets.filter(t=>linkedToFocus(t)&&
+     t.querySelector('.local-state').value==='open');
+   focusTitle.textContent='PR '+focusedPr.split('/').pop()+
+     ': '+count+' gekoppelde bronissues in dit dossier, '+open.length+
+     ' nog te bekijken. Status is alleen lokaal; geen fix- of mergebewijs.';
+   focusNext.disabled=open.length===0;
+ }
 }
 function focusOnPr(url){
  const target=prs.find(p=>p.dataset.pr===url);
  if(!target)return;
- focusedPr=url;
+ focusedPr=url;focusIndex=-1;
  search.value='';priority.value='';project.value='';state.value='';prState.value='';
  refresh();
  focusBar.scrollIntoView({block:'start'});
@@ -379,12 +389,22 @@ for(const t of tickets){
  const button=t.querySelector('.focus-from-issue');
  if(button)button.addEventListener('click',()=>focusOnPr(t.dataset.pr));
 }
-focusClear.addEventListener('click',()=>{focusedPr=null;refresh();document.getElementById('q').focus();});
+focusClear.addEventListener('click',()=>{
+ focusedPr=null;focusIndex=-1;refresh();document.getElementById('q').focus();
+});
+focusNext.addEventListener('click',()=>{
+ const open=tickets.filter(t=>linkedToFocus(t)&&
+   t.querySelector('.local-state').value==='open'&&!t.hidden);
+ if(!open.length)return;
+ focusIndex=(focusIndex+1)%open.length;
+ open[focusIndex].scrollIntoView({block:'start'});
+ open[focusIndex].focus();
+});
 for(const c of [search,priority,project,state,prState])c.addEventListener('input',refresh);
 for(const t of tickets)t.querySelector('.local-state').addEventListener('change',refresh);
 for(const p of prs)p.querySelector('.pr-local-state').addEventListener('change',refresh);
 document.getElementById('reset').addEventListener('click',function(){
- focusedPr=null;search.value='';priority.value='';project.value='';state.value='';prState.value='';refresh();
+ focusedPr=null;focusIndex=-1;search.value='';priority.value='';project.value='';state.value='';prState.value='';refresh();
 });
 function safeText(value){
  return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#\x60~])/g,'\\$1').slice(0,720);
@@ -574,7 +594,8 @@ refresh();
         "background:#233248;color:white;border:1px solid #8595ac;border-radius:6px;"
         "padding:10px}button{cursor:pointer}.ticket{border:1px solid #526a83;"
         "background:#1b293c;border-radius:10px;padding:16px;margin:14px 0}"
-        ".ticket[hidden]{display:none}.ticket header{display:flex;gap:12px;"
+        ".ticket[hidden]{display:none}.ticket:focus{outline:3px solid #f0c976;scroll-margin:90px}"
+        ".ticket header{display:flex;gap:12px;"
         "align-items:center}.priority{font-weight:bold;background:#3a4d66;padding:2px 8px}"
         ".pr-panel{border:1px solid #70879f;border-radius:10px;padding:16px;"
         "margin:18px 0;background:#172338}.pr-panel ol{padding-left:24px}"
@@ -624,6 +645,7 @@ refresh();
         "<p id='session-status' aria-live='polite'></p>"
         "<div id='focus-bar' class='focus-bar' role='status' hidden>"
         "<strong id='focus-title'></strong>"
+        "<button id='focus-next' type='button'>Volgende nog te bekijken issue</button>"
         "<button id='focus-clear' type='button'>Terug naar alle bronissues</button></div>"
         "<p>Filters en PR-focus veranderen de privé-export niet: deze bevat alle bronkaarten.</p>" + hidden +
         "<main>" + groups_panel + "".join(output) + "</main>" + script + "</body></html>"
