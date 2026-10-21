@@ -194,6 +194,13 @@ Its own source-age calculation only adds HOLD reasons; a caller-provided stale
 flag can never be used to turn old evidence into fresh permission to retry.
 No live queue is read, no active claim is modified and no recovery action is run.
 
+The structured case report now carries the original case export UTC, observed
+queue UTC (or UNKNOWN), source-case-stale flag, and effective queue-stale flag.
+HTML and compact owner workorders show **both** source clocks and the later
+local evaluation time. A newly rendered handoff can no longer describe an old
+offline import as a freshly observed production state. Raw queue task/worker
+identifiers remain unavailable and there are no executable controls.
+
 The conversion ranks P0 before P1–P3, puts issue/PR examination first within
 a priority, and requires checking real GitHub source/required CI plus current
 Notion/worker/queue ownership. Grouped high queue claim attempts are not proof
