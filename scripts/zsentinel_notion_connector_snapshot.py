@@ -16,8 +16,11 @@ from zsentinel_recovery_router import read_json
 
 SCHEMA = "zsentinel-notion-connector-snapshot-v1"
 UUID = re.compile(r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$", re.I)
-PROJECT_URL = re.compile(\n    r"^https://app[.]notion[.]com/(?:p/)?([a-f0-9]{32})(?:[?]pvs=[1-9][0-9]{0,3})?$", re.I\n)\nWORK_ID = re.compile(r"^PWQ-([1-9][0-9]{0,8})$")
-ACTIVE = frozenset(("Claimed", "Running"))
+PROJECT_URL = re.compile(
+    r"^https://app[.]notion[.]com/(?:p/)?([a-f0-9]{32})(?:[?]pvs=[1-9][0-9]{0,3})?$", re.I
+)
+WORK_ID = re.compile(r"^PWQ-([1-9][0-9]{0,8})$")
+ACTIVE = frozenset(("Claimed", "Running", "Verifying"))
 MAX_BYTES = 131_072
 MAX_ROWS = 100
 UTC = timezone.utc
