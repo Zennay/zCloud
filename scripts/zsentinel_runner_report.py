@@ -1100,6 +1100,26 @@ def render_private_json_handoff(data):
                 "recovery_authorized": False,
             })
 
+    from zsentinel_runner_snapshot import _user_unit_states
+    user_observed = units.get("user_runner_units_observed") is True
+    user_services = None
+    user_counts = None
+    if user_observed:
+        valid_user = _user_unit_states({"units": units})
+        user_counts = {state: 0 for state in ("active", "failed", "inactive", "unknown")}
+        user_services = []
+        for name, row in sorted(valid_user.items()):
+            state = row["state"]
+            user_counts[state if state in user_counts else "unknown"] += 1
+            user_services.append({
+                "unit": name, "systemd_state": state, "scope": "user",
+                "github_job_assignment_verified": False,
+                "recovery_authorized": False,
+            })
+    else:
+        # Validate present saved data even if the user manager was inaccessible.
+        _user_unit_states({"units": units})
+
     pressure = {}
     for key in ("host_load", "cores", "memory_available_gib",
                 "swap_used_percent", "disk_unavailable_percent",
@@ -1157,6 +1177,32 @@ def render_private_json_handoff(data):
             break
     selected.reverse()
     total_transitions = sum(x["observed_transition_count"] for x in steps)
+    user_selected = []
+    user_total = 0
+    for index in range(len(pairs) - 1, -1, -1):
+        observed_users = pairs[index].get("user_transitions", [])
+        if not isinstance(observed_users, list) or len(observed_users) > 40:
+            raise ValueError("Unbounded user-systemd transition window")
+        user_total += len(observed_users)
+        for row in reversed(observed_users):
+            name, kind = row.get("unit"), row.get("change")
+            if (row.get("scope") != "user" or
+                    not isinstance(name, str) or len(name) > 160
+                    or not RUNNER_UNIT.fullmatch(name)
+                    or kind not in {"newly_observed", "no_longer_observed",
+                                    "service_state_changed", "previous_source_gap",
+                                    "current_source_gap"}):
+                raise ValueError("Invalid user manager transition receipt")
+            if len(user_selected) < 40:
+                user_selected.append({
+                    "window_index": index, "scope": "user", "unit": name,
+                    "change": kind,
+                    "source_complete": pairs[index].get(
+                        "complete_user_service_coverage") is True,
+                    "same_boot_verified": pairs[index].get("same_boot_verified") is True,
+                    "github_job_recovered": None, "action_authorized": False,
+                })
+    user_selected.reverse()
     payload = {
         "schema": "zsentinel.runner-owner-inbox.v1",
         "source": source_kind,
@@ -1167,6 +1213,11 @@ def render_private_json_handoff(data):
             "runner_inventory_complete": observed and units.get("runner_units_truncated") is False,
             "runner_service_counts": counts if observed else None,
             "runner_services": services,
+            "user_runner_inventory_observed": user_observed,
+            "user_runner_inventory_complete": (
+                user_observed and units.get("user_runner_units_truncated") is False),
+            "user_runner_service_counts": user_counts,
+            "user_runner_services": user_services,
             "capacity": pressure,
             "coach_quota_recommended_percent": data.get("quota")
                 if type(data.get("quota")) is int and data["quota"] in (60, 100, 175) else None,
@@ -1176,6 +1227,8 @@ def render_private_json_handoff(data):
         "observation_steps": steps,
         "observed_transitions": selected,
         "transition_items_omitted": total_transitions - len(selected),
+        "observed_user_transitions": user_selected,
+        "user_transition_items_omitted": user_total - len(user_selected),
         "owner_actions": [
             {"problem": _handoff_text(title, 160),
              "owner_action": _handoff_text(advice, 500),
