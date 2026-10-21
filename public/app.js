@@ -1622,7 +1622,10 @@ const SAFE_WORKER_COMPOSER_HINTS=Object.freeze({
   'composer-missing-manual-recovery-required':'Composer missing in an existing conversation; inspect assigned worker tab manually.',
   'composer-missing-operator-action-required':'Composer remains missing after bounded repair; inspect tab before resend.',
   'composer-missing-before-first-send':'One same-tab repair was requested before first send; resumed generation unverified.',
-  'new-chat-button-missing':'New chat button unavailable; operator action required.'
+  'new-chat-button-missing':'New chat button unavailable; operator action required.',
+  'composer-draft-preserved':'Unsent composer draft was preserved. Inspect the assigned tab and clear or save the draft manually before another worker send.',
+  'composer-text-not-confirmed':'The entire assigned prompt was not confirmed in the editor. No Send click was authorized; inspect the current composer.',
+  'composer-changed-before-send':'Composer content changed during fresh assignment verification. No Send click was authorized; inspect the assigned tab.'
 });
 function composerHint(row){
   if(row?.kind==='composer-restored')return 'Composer visible again; claim and generation still unverified.';
