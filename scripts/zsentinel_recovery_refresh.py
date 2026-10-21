@@ -220,6 +220,8 @@ def main():
     parser.add_argument("--issue-project", action="append",
                         help="canonical issue-source project ID (up to 3, repeatable)")
     parser.add_argument("--format", choices=("json", "text", "html", "ics", "desk"), default="text")
+    parser.add_argument("--output", type=Path,
+                        help="optional create-only owner-private 0600 report; avoids printing private source details")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
     args = parser.parse_args()
@@ -227,6 +229,19 @@ def main():
     try:
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
+        if args.output is not None:
+            extensions = {"json": ".json", "text": ".txt", "html": ".html", "ics": ".ics"}
+            if args.format not in extensions or args.output.suffix != extensions[args.format]:
+                raise ValueError("--output extension must match json, text, html or ics format")
+            if args.desk_output is not None:
+                raise ValueError("choose --output or --desk-output, not both")
+            protected = (
+                Path(args.bundle), args.registry, args.state, args.queue_database,
+                args.worker_events_database, args.notion_claims_export, args.desk_output,
+            )
+            if any(item is not None and args.output.resolve() == Path(item).resolve()
+                   for item in protected):
+                raise ValueError("--output overlaps a source, ledger or other private report")
         if args.worker_project and args.worker_events_database is None:
             raise ValueError("--worker-project requires --worker-events-database")
         if args.worker_events_database is not None:
@@ -368,11 +383,18 @@ def main():
             from zsentinel_incident_desk import write_private_html, review_html
             private_desk = rendered if args.format == "desk" else review_html(routed)
             write_private_html(args.desk_output, private_desk)
+        if args.output is not None:
+            from zsentinel_private_output import write_private_output
+            output_format = "txt" if args.format == "text" else args.format
+            write_private_output(args.output, rendered, output_format)
         # A broken HTML/source cannot silently acknowledge incident history.
         if args.state:
             write_json_atomic(args.state, updated)
         if args.format != "desk":
-            print(rendered)
+            if args.output is not None:
+                print("Privé zSentinel-rapport veilig aangemaakt (0600, create-only; niets overschreven).")
+            else:
+                print(rendered)
     except (OSError, ValueError, TypeError, KeyError) as exc:
         parser.exit(2, f"zSentinel read-only refresh refused: {exc}\n")
     finally:
