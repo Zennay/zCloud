@@ -424,8 +424,9 @@ def markdown(report):
            if report["source_batches_missing_in_any_snapshot"] else
            "NEE gemeld; geen bewijs van volledige actuele GitHub-inventaris"),
         "- Bronactualiteit: " + report["source_freshness"]["status"].upper() +
-          " · leeftijd " + (str(report["source_freshness"]["age_hours"]) + " uur"
-          if report["source_freshness"]["age_hours"] is not None else "ONBEKEND") +
+          " · leeftijd " + (
+              str(report["source_freshness"]["age_hours"]) + " uur"
+              if report["source_freshness"]["age_hours"] is not None else "ONBEKEND") +
           " · drempel " + str(report["source_freshness"]["stale_after_hours"]) +
           " uur · laatste bron UTC " +
           str(report["source_freshness"]["latest_observed_utc"] or "ONBEKEND"),
@@ -438,6 +439,36 @@ def markdown(report):
           " filtermatches · pagina " + str(report["display"]["page"]) + "/" +
           str(report["display"]["total_pages"]), "",
     ]
+    focus = report.get("issue_focus_summary")
+    if focus is not None:
+        if (focus.get("schema") != "zsentinel-issue-source-followup-v1"
+                or focus.get("live_issue_state_verified") is not False
+                or focus.get("current_owner_claim_verified") is not False
+                or focus.get("merge_authorized") is not False
+                or focus.get("deploy_authorized") is not False):
+            raise ValueError("Issue source overview has invalid authority flags")
+        lines.extend([
+            "", "## Geselecteerd issue · historische PR-koppelingen",
+            "- Gekoppeld in minstens één opgeslagen sample: " +
+                str(focus["matched_saved_prs"]) + " PRs (binnen huidige filters).",
+            "- Nog gekoppeld bij laatste waarneming van die PR: " +
+                str(focus["linked_in_last_observed_pr_sample"]) + ".",
+            "- PR én issuekoppeling samen in allerlaatste bron: " +
+                str(focus["linked_in_final_source_snapshot"]) + ".",
+            "- PRs zonder waarneming in de laatste bron: " +
+                str(focus["prs_absent_from_final_source_snapshot"]) +
+                " (geen merge- of sluitbewijs).",
+            "- Laatste bron met waargenomen koppeling: " +
+                str(focus["last_source_with_issue_link_index"] or "ONBEKEND") +
+                " (bronindex, GEEN live issue-status).",
+            "- Opeenvolgende samples, alleen begrensde waargenomen PRs: " +
+                ", ".join(
+                    "#" + str(row["source_index"]) + "=" +
+                    str(row["observed_linked_prs"]) +
+                    (" (batch ontbreekt)" if row["original_batches_missing"] else "")
+                    for row in focus["per_source_observed_linked_pr_counts"]),
+            "Deze cijfers zijn geen actuele PR-inventaris, issuefix, review of vrijgave.",
+        ])
     for s in report["source_snapshots"]:
         lines.append("- Bron " + str(s["index"]) + ": " +
                      s["latest_observed_utc"] + " · " +
