@@ -99,6 +99,11 @@ python3 scripts/zsentinel_saved_issue_delta.py \
   --previous ./saved-older.zip --current ./saved-newer.zip \
   --issue https://github.com/Zennay/zCloud/issues/1326 \
   --stale-after-hours 6 --format markdown --output ./private-single-issue.md
+
+python3 scripts/zsentinel_saved_issue_archive.py \
+  --input ./private-issue-handoff.zip \
+  --inspect-issue https://github.com/Zennay/zCloud/issues/1326 \
+  --stale-after-hours 6 --handoff-markdown ./private-archive-handoff.md
 ```
 
 Geen filter, versheidslabel of ZIP-receipt bewijst eigenaar, claimvrijgave,
