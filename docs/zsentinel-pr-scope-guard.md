@@ -2566,3 +2566,29 @@ De directe exact-HEAD werkbak toont nu twee verschillende soorten overlap naast 
 - **Bestand-/mapconflict**, zoals een PR die het bestand `src` wijzigt terwijl een andere PR `src/app.py` nodig heeft. Een Git-pad kan niet tegelijk een bestand en de bovenliggende map zijn.
 
 De werkbak hergebruikt de al verzamelde begrensde bestandspaden; er komen geen extra GitHub-verzoeken bij. De uitvoer noemt het aantal bestand-/mapconflicten en toont een begrensde set padparen. Het blijft steekproefbewijs: ontbrekende PR's, actieve eigenaarclaims, actuele branchbescherming en mergeautorisatie blijven onbekend en worden niet afgeleid.
+
+## 21 oktober · onafhankelijke productkandidaten wanneer een bestaande PR wacht
+
+De privé HTML-werkbak heeft naast **Volgende open bronissue (P0 eerst)** nu een
+aparte route: **Volgende kandidaat zonder PR-waarneming (P0 eerst)**. Deze
+route selecteert alleen issues die de opgeslagen, begrensde bron als
+`owner_before_new_product_work` classificeert en waarvoor geen gekoppelde PR
+in diezelfde bron is waargenomen. Dat is nadrukkelijk géén bewijs dat er geen
+PR bestaat, dat een PR-loze branch ontbreekt, dat de issue-eigenaar vrij is,
+of dat een actieve claim niet bestaat.
+
+**Download onafhankelijke productkandidaten (Markdown)** maakt één private
+overdracht met alle open kandidaten uit de huidige bronopname, ongeacht de
+zichtbare zoek-, prioriteits-, project- of PR-focusfilters. De export bewaart
+de bronklokken en het exacte lokale brontoken, prioriteit, issue- en projectlink,
+menselijke vervolgstap, waargenomen activiteitsklokken, PR-/issueverwijzings-
+dekking en eventuele lokale privénotitie. Kandidaten blijven in P0/P1/P2-volgorde;
+een lokaal genoteerde opvolging wordt niet opnieuw aangeboden als open kandidaat,
+maar is daarmee niet als opgelost gemarkeerd.
+
+**Werkwijze:** parkeer uitsluitend de PR waarvan de verplichte exacte-HEAD-CI
+wacht; open de kandidatenoverdracht en controleer voor de gekozen issue opnieuw
+de actuele open PRs, volledige PR-loze branch-inventaris en actieve claims.
+Kies pas daarna een onafhankelijke producttaak. De route doet geen GitHub-,
+Notion-, queue-, claim-, CI-, merge-, runner- of deployactie en verleent geen
+eigenaarschap of releasebevoegdheid.
