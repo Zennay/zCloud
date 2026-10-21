@@ -19,7 +19,7 @@ import stat
 import sys
 
 from zsentinel_pr_scope_guard import (
-    REPO, SHA, edit_path, unique, observe_conflict_graph,
+    REPO, SHA, csv_formula_inert, edit_path, unique, observe_conflict_graph,
 )
 
 SCHEMA = "zsentinel-saved-pr-cross-window-collisions-v1"
@@ -551,12 +551,8 @@ def render_private_csv(report):
             "\\u%04x" % ord(char) if ord(char) < 32 or ord(char) == 127
             else char for char in original
         )
-        # Quote dangerous formula prefixes, including after invisible Unicode
-        # format characters that some spreadsheet parsers strip automatically.
-        prefix = raw.lstrip(" \u200b\u200c\u200d\u2060\ufeff")
-        if prefix.startswith(("=", "+", "-", "@")):
-            return "'" + raw
-        return raw
+        # Keep this exporter aligned with the direct and portfolio CSVs.
+        return csv_formula_inert(raw)
 
     def row(kind, **facts):
         nonlocal count
