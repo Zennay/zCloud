@@ -22,6 +22,9 @@ SHA = re.compile("^[a-f0-9]{40}$")
 REPO_URL = re.compile(
     "^https://github[.]com/(Zennay)/([A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]*)$"
 )
+ISSUE_URL = re.compile(
+    "^https://github[.]com/(Zennay)/([A-Za-z0-9_.-]{1,100})/issues/([1-9][0-9]*)$"
+)
 MAX_BODY_BYTES = 160 * 1024
 MAX_CANDIDATES = 3
 MAX_LIST_PAGE = 30
@@ -77,6 +80,31 @@ def _limited_json(path, *, token=None):
         ) from exc
     except (URLError, TimeoutError, UnicodeError, json.JSONDecodeError) as exc:
         raise GitHubReadError("GitHub read unavailable or malformed") from exc
+
+
+def _issue_summary(payload, full_name, number):
+    """Current issue state, never proof a fix landed or was deployed."""
+    if (type(payload) is not dict or type(payload.get("number")) is not int
+            or payload["number"] != number
+            or payload.get("pull_request") is not None
+            or payload.get("state") not in ("open", "closed")
+            or payload.get("repository_url") !=
+                "https://api.github.com/repos/" + full_name):
+        raise GitHubReadError("live issue identity or status is unavailable")
+    state = payload["state"]
+    reason = payload.get("state_reason")
+    if reason not in (None, "completed", "not_planned", "reopened"):
+        reason = "UNKNOWN"
+    return {
+        "observed_state": state,
+        "reported_state_reason": reason or "UNKNOWN",
+        "source_issue_still_open": state == "open",
+        "closed_does_not_prove_fix_merged": True,
+        "source_link_to_candidate_reverified": False,
+        "owner_claim_verified": False,
+        "issue_work_cleared": False,
+        "observed_at_utc": utc(),
+    }
 
 
 def _pr_summary(payload, full_name, number):
@@ -217,10 +245,37 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
         "current_issue_pr_link_verified": False,
     }
     source_url = issue["source_urls"][0]
+    issue_match = ISSUE_URL.fullmatch(source_url)
+    if issue_match is None:
+        raise GitHubReadError("source issue is not a canonical repository issue")
     expected_repo = source_url.rsplit("/issues/", 1)[0]
+    issue_repo_name = issue_match[1] + "/" + issue_match[2]
+    issue_api = (
+        "/repos/" + quote(issue_match[1], safe="") + "/" +
+        quote(issue_match[2], safe="") + "/issues/" + issue_match[3]
+    )
+    current_issue = {
+        "status": "UNKNOWN_PROVIDER",
+        "observed_state": "UNKNOWN",
+        "source_issue_still_open": "UNKNOWN",
+        "source_link_to_candidate_reverified": False,
+        "owner_claim_verified": False,
+        "issue_work_cleared": False,
+    }
     observations = []
     provider_paused = False
     total_gets_attempted = 0
+    try:
+        total_gets_attempted += 1
+        current_issue = _issue_summary(
+            _limited_json(issue_api, token=token),
+            issue_repo_name, int(issue_match[3]),
+        )
+        current_issue["status"] = "LIVE_ISSUE_READ"
+    except GitHubReadError as exc:
+        current_issue["reason"] = str(exc)
+        if "authentication, quota or provider admission" in str(exc):
+            provider_paused = True
     for candidate in candidates:
         url = candidate["url"]
         match = REPO_URL.fullmatch(url)
@@ -350,6 +405,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
         "schema_version": 1, "policy": "zsentinel-live-pr-candidate-readonly-v1",
         "issue_project": issue["project_id"], "issue_id": issue["incident_id"],
         "original_issue_url": source_url,
+        "current_issue": current_issue,
         "historical_case_provenance": provenance,
         "observed_at_utc": utc(),
         "candidate_count": len(candidates),
@@ -366,7 +422,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
             )
         ],
         "provider_admission_paused": provider_paused,
-        "read_get_attempt_upper_bound": 4 * len(candidates),
+        "read_get_attempt_upper_bound": 1 + 4 * len(candidates),
         "get_attempts": total_gets_attempted,
         "live_observations": sum(row["status"] == "LIVE_PARTIAL_READ"
                                  for row in observations),
@@ -406,6 +462,12 @@ def owner_html(report):
         "<p>Source: <a href='" + esc(report["original_issue_url"]) +
         "' rel='noopener noreferrer'>" + esc(report["original_issue_url"]) +
         "</a> · checked: <code>" + esc(report["observed_at_utc"]) + "</code></p>",
+        "<p><strong>Current issue GET:</strong> " +
+        esc(report["current_issue"]["status"]) +
+        " · state: " + esc(report["current_issue"]["observed_state"]) +
+        " · reason: " + esc(report["current_issue"].get(
+            "reported_state_reason", "UNKNOWN")) +
+        " · CLOSED never means a fix is merged or the worker claim released.</p>",
         "<p><strong>Historical issue source (not reobserved):</strong> " +
         esc(report["historical_case_provenance"]["issue_source_observed_utc"] or "UNKNOWN") +
         " · original case export: " +
@@ -548,6 +610,9 @@ def markdown(report):
         "**Observed PR information only; NO CI, review, ownership or merge permission.**",
         "",
         "- Issue: " + report["original_issue_url"],
+        "- Current issue read: " + report["current_issue"]["status"],
+        "- Current issue state: " + report["current_issue"]["observed_state"],
+        "- Closed issue implies merged repair: NO",
         "- Observed live PRs: " + report["observed_at_utc"],
         "- Original case export: " + report["historical_case_provenance"]["case_export_utc"],
         "- Historical issue observed: " +
