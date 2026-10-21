@@ -195,17 +195,29 @@ jobs:
                   restore=""
                   if restore="$(sudo -n mktemp /usr/local/sbin/.zcloud-watchdog.restore.XXXXXXXX)" &&
                      sudo -n install -m 0755 -- "$backup" "$restore" &&
+                     sudo -n cmp -s -- "$backup" "$restore" &&
                      sudo -n mv -f -- "$restore" "$live"; then
                     echo "::warning::Previous standalone watchdog restored after failed install."
+                    python3 scripts/zsentinel_release_receipt.py --component watchdog --outcome rollback-restored || true
                   else
                     echo "::error::Watchdog rollback failed; retain private backup for owner restoration."
+                    python3 scripts/zsentinel_release_receipt.py --component watchdog --outcome rollback-failed || true
                   fi
                   if test -n "$restore"; then sudo -n rm -f -- "$restore" || true; fi
                 elif test "$was_installed" -eq 0; then
-                  sudo -n rm -f -- "$live" || echo "::error::Cannot undo newly created watchdog."
+                  if sudo -n rm -f -- "$live"; then
+                    python3 scripts/zsentinel_release_receipt.py --component watchdog --outcome rollback-new-file-removed || true
+                  else
+                    echo "::error::Cannot undo newly created watchdog."
+                    python3 scripts/zsentinel_release_receipt.py --component watchdog --outcome rollback-failed || true
+                  fi
+                else
+                  echo "::error::Cannot restore previous watchdog: backup missing."
+                  python3 scripts/zsentinel_release_receipt.py --component watchdog --outcome rollback-failed || true
                 fi
               else
                 echo "::error::Standalone watchdog changed since install; preserving owner work and backup."
+                python3 scripts/zsentinel_release_receipt.py --component watchdog --outcome rollback-owner-preserved || true
               fi
             fi
             if test -n "$staged"; then sudo -n rm -f -- "$staged" || true; fi
