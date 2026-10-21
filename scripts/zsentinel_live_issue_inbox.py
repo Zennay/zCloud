@@ -9,13 +9,12 @@ are safe to merge. Neither titles nor issue bodies leave the in-memory read.
 from __future__ import annotations
 
 import html
-import json
 import re
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 from zsentinel_pr_live_read import (
-    GitHubReadError, MAX_DISCOVERY_BODY_BYTES, _limited_json, utc,
+    GitHubReadError, MAX_DISCOVERY_BODY_BYTES, _limited_json,
 )
 
 REPO = re.compile(r"Zennay/([A-Za-z0-9_.-]{1,100})\Z")
@@ -26,7 +25,6 @@ MAX_PAGES = 3
 PAGE_SIZE = 30
 MAX_DISPLAY = 45
 MAX_LABELS = 100
-PRIORITIES = ("P0", "P1", "P2", "P3")
 RECOGNIZED = {
     prefix + priority for prefix in ("", "priority:", "priority/")
     for priority in ("p0", "p1", "p2", "p3")
@@ -240,7 +238,10 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         "invalid_or_inaccessible_rows_excluded": invalid_excluded,
         "total_issues_seen": len(issues), "displayed_issues": len(chosen),
         "display_truncated": len(issues) > MAX_DISPLAY,
-        "source_window_full": not last_page_short and source_error is None,
+        "source_window_full": (
+            not last_page_short and source_error is None
+            and not provider_incomplete
+        ),
         "source_partial_or_unknown": (
             bool(source_error) or provider_incomplete or not last_page_short
         ),
@@ -278,7 +279,11 @@ def markdown(report):
         "/" + str(report["max_pages"]),
         "- Source rows scanned: " + str(report["source_rows_scanned"]),
         "- Provider reported open issues: " +
-        str(report["provider_total_issue_count_at_observation"] or "UNKNOWN"),
+        str(
+            report["provider_total_issue_count_at_observation"]
+            if report["provider_total_issue_count_at_observation"] is not None
+            else "UNKNOWN"
+        ),
         "- GitHub search incomplete results: " +
         str(report["provider_incomplete_results"]),
         "- Issues visible: " + str(report["total_issues_seen"]),
@@ -347,7 +352,11 @@ def html_view(report):
         "<p>Pages " + esc(report["pages_read"]) + "/" +
         esc(report["max_pages"]) + " · scanned rows " +
         esc(report["source_rows_scanned"]) + " · provider count " +
-        esc(report["provider_total_issue_count_at_observation"] or "UNKNOWN") +
+        esc(
+            report["provider_total_issue_count_at_observation"]
+            if report["provider_total_issue_count_at_observation"] is not None
+            else "UNKNOWN"
+        ) +
         " · incomplete provider results: " +
         esc(report["provider_incomplete_results"]) +
         " · issues observed " +
