@@ -20,7 +20,10 @@ waarnemingen** met dezelfde HOLD-reden voegt zSentinel bovenaan een
 `HERHAALDE HOLD`-eigenaaractie toe. Dit signaleert terugkerend vastgelopen
 P0/P1-werk (maximaal twaalf zichtbare kandidaten) zonder te beweren dat
 de taak tussendoor onafgebroken vastzat. Dezelfde herhaalde HOLDs zijn
-beschikbaar in de read-only privé-CSV. Alleen actuele, exacte eigenaar-/
+beschikbaar in de read-only privé-CSV. Herhaalde HOLD-kaarten en
+gewone routewissels staan in HTML, Markdown en CSV **in één gezamenlijke
+P0-eerst sorteervolgorde**, zodat een herhaalde P2-blokkade nooit boven
+een nieuwe P0-bronwaarneming verschijnt. Alleen actuele, exacte eigenaar-/
 lease-/gatebronnen kunnen daarna daadwerkelijk werk vrijgeven.
 Alle opgeslagen bronmomenten moeten
 strikt oplopen (maximaal 72 uur tussen buren), dezelfde eerder
