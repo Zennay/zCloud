@@ -65,3 +65,8 @@ The standalone `public/zcloud-worker-v2-engine.js` and its embedded userscript c
 Some ChatGPT layouts retain a hidden old composer before the currently usable composer in the document. The previous first-match `querySelector` treated the hidden element as authoritative, making a healthy tab appear input-less and potentially entering the missing-composer recovery path. The existing selector priorities now search for a **visible** canonical composer first; only when none are visible does the engine preserve the prior first-match fallback for draft detection. No new DOM action, timer, network permission, worker claim, tab navigation, send or reset is introduced.
 
 Both deployed-source locations (`public/zcloud-worker-v2-engine.js` and the embedded copy inside `public/zcloud-worker.user.js`) were updated together. The source is not deployed merely because this PR exists: version-coordinated authorized distribution, independent review, exact-head CI and protected-main remain required.
+
+
+### Per-assignment blocker visibility without notification churn
+
+The local `lastBlock` duplicate-event suppression previously persisted across separate verified queue assignments. If a new assignment met the same missing-composer condition as the previous one, its operator could receive **no new** blocker event. `resetComposerRepair(queueId)` now resets the deduplication key **only when** the observed queue ID changes, including a transition to no verified assignment. Repeated polls in the same unchanged assignment still emit at most the original event. This does not create, claim, renew, abandon or mutate any lease, and the repair remains one-shot per verified queue assignment.
