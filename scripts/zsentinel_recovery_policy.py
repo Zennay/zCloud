@@ -879,6 +879,8 @@ CASE_ISSUE_URL = re.compile(
 CASE_PR_URL = re.compile(
     r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]*$"
 )
+CASE_PR_RELATIONSHIPS = frozenset({"closing_keyword_only", "text_reference_only"})
+CASE_PR_LINK_STATES = frozenset({"unlinked", "draft", "referenced"})
 
 
 def evaluate_recovery_case(data):
@@ -944,6 +946,7 @@ def evaluate_recovery_case(data):
         # the existing repair for this issue.
         issue_repo = url.rsplit("/issues/", 1)[0]
         urls = [url]
+        candidates = []
         for pr in refs:
             if (type(pr) is not dict or type(pr.get("number")) is not int
                     or not 1 <= pr["number"] <= 100000000
@@ -952,15 +955,49 @@ def evaluate_recovery_case(data):
                     or not pr["url"].endswith("/pull/" + str(pr["number"]))
                     or pr["url"].rsplit("/pull/", 1)[0] != issue_repo
                     or pr["url"] in urls
+                    or type(pr.get("draft")) is not bool
+                    or pr.get("relationship") not in CASE_PR_RELATIONSHIPS
                     or pr.get("claim_verified") is not False
                     or pr.get("fix_verified") is not False):
                 raise PolicyInputError("invalid or authorized PR reference")
             urls.append(pr["url"])
+            candidates.append({
+                "number": pr["number"], "url": pr["url"],
+                "draft_at_source": pr["draft"],
+                "relationship_at_source": pr["relationship"],
+                "current_pr_state_verified": False,
+                "current_claim_verified": False,
+                "merge_authorized": False,
+            })
+        expected_link = (
+            "unlinked" if not candidates else
+            "draft" if all(item["draft_at_source"] for item in candidates)
+            else "referenced"
+        )
+        if item.get("link_status") not in CASE_PR_LINK_STATES or (
+                item["link_status"] != expected_link):
+            raise PolicyInputError("issue PR link status contradicts sampled references")
         identity = (pid, "issue-" + str(number))
         if identity in seen:
             raise PolicyInputError("duplicate issue in recovery case")
         seen.add(identity)
         historical = item["observed_status"] != "sampled_open"
+        source_uncertain = (
+            historical or item["source_uncertain"] or issue_source_stale or issue_truncated
+        )
+        merge_first = (
+            "non_draft_reference" if expected_link == "referenced" else
+            "draft_only_reference" if expected_link == "draft" else
+            "no_sampled_pr_reference"
+        )
+        owner_next = (
+            "refresh_issue_source_first" if source_uncertain else
+            "check_existing_nondraft_pr_and_exact_head_gates_first"
+            if merge_first == "non_draft_reference" else
+            "finish_existing_draft_pr_with_owner_first"
+            if merge_first == "draft_only_reference" else
+            "verify_absence_of_existing_product_pr_before_new_work"
+        )
         orders.append({
             "project_id": pid, "incident_id": identity[1],
             "input_indexes": [], "proposed_actions": ["inspect_existing_prs"],
@@ -975,9 +1012,11 @@ def evaluate_recovery_case(data):
                                   "current_github_issue_and_pr_state",
                                   "exact_head_required_ci_and_review"],
             "source_urls": urls,
-            "next_step": ("refresh_issue_source_first" if (
-                historical or item["source_uncertain"] or issue_source_stale or issue_truncated
-            ) else "inspect_existing_prs_and_claims"),
+            "candidate_prs": candidates,
+            "candidate_count": len(candidates),
+            "pr_source_triage": merge_first,
+            "candidate_status_is_historical": True,
+            "next_step": owner_next,
             "human_review_required": True,
             "actions_executed": False,
             "priority": priority,
@@ -1065,6 +1104,8 @@ def evaluate_recovery_case(data):
     orders.sort(key=lambda x: (
         {"P0": 0, "P1": 1, "P2": 2, "P3": 3}[x["priority"]],
         0 if x["incident_id"].startswith("issue-") else 1,
+        {"non_draft_reference": 0, "draft_only_reference": 1,
+         "no_sampled_pr_reference": 2}.get(x.get("pr_source_triage"), 3),
         x["project_id"], x["incident_id"],
     ))
     return {
@@ -1089,6 +1130,11 @@ def evaluate_recovery_case(data):
         "incident_count": len(orders), "request_count": len(orders),
         "decision_counts": {"HOLD": len(orders), "READY_FOR_HUMAN_REVIEW": 0},
         "owner_workorders": orders,
+        "sampled_existing_pr_triage": {
+            status: sum(item.get("pr_source_triage") == status for item in orders)
+            for status in ("non_draft_reference", "draft_only_reference",
+                           "no_sampled_pr_reference")
+        },
         "advisory_only": True, "evidence_independently_verified": False,
         "actions_executed": False,
         "authority": {
