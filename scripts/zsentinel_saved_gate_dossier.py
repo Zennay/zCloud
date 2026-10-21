@@ -231,8 +231,10 @@ def _open_private_extract_parent(directory: Path) -> int:
         owner = os.fstat(descriptor)
         if (not stat.S_ISDIR(owner.st_mode)
                 or owner.st_uid != os.geteuid()
-                or owner.st_mode & 0o022):
-            raise ValueError("Private extract destination parent is not owned and safe")
+                or stat.S_IMODE(owner.st_mode) & 0o077):
+            raise ValueError(
+                "Private extract destination parent must be owned by current user "
+                "and inaccessible to group/others")
         return descriptor
     except BaseException:
         os.close(descriptor)
