@@ -103,8 +103,14 @@ def unique_fields(pairs):
     return result
 
 
-def read_json(path, limit, name):
-    """Read a bounded stable regular inode; reject symlinks and JSON ambiguity."""
+def read_json(path, limit, name, *, private_owner_only=False):
+    """Read bounded stable JSON; optionally enforce privacy on the OPEN inode.
+
+    Private archival sources must be checked after the no-follow open, not
+    just via an earlier pathname stat that can race a replacement file.
+    """
+    if type(private_owner_only) is not bool:
+        raise ValueError(f"{name}: invalid private-source admission")
     file_path = Path(path)
     before = file_path.lstat()
     if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
@@ -118,6 +124,12 @@ def read_json(path, limit, name):
                 or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
                 or opened.st_size > limit):
             raise ValueError(f"{name}: source inode changed")
+        if private_owner_only and (
+                opened.st_uid != os.geteuid()
+                or stat.S_IMODE(opened.st_mode) & 0o077
+                or opened.st_nlink != 1
+                or opened.st_size == 0):
+            raise ValueError(f"{name}: opened inode is not owner-private")
         with os.fdopen(os.dup(fd), "rb") as stream:
             raw = stream.read(limit + 1)
         after = os.fstat(fd)
