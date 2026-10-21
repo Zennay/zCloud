@@ -188,7 +188,16 @@
     if(!started)await blocked("composer-missing-operator-action-required");
     return true;
   }
-  const composer=()=>document.querySelector('#prompt-textarea,[contenteditable="true"][role="textbox"],textarea');
+  const composer=()=>{
+    // Responsive layouts can leave a hidden duplicate composer in the DOM.
+    // Never mistake the first hidden match for a missing live input.
+    const selectors=['#prompt-textarea','[contenteditable="true"][role="textbox"]','textarea'];
+    for(const selector of selectors){
+      const shown=[...document.querySelectorAll(selector)].find(visible);
+      if(shown)return shown;
+    }
+    return document.querySelector(selectors.join(",")); // Preserve draft detection if all are hidden.
+  };
   const sendButton=()=>document.querySelector('button[data-testid="send-button"],button[aria-label="Send message"],button[aria-label="Verzenden"]');
   async function fill(text){
     const box=composer();if(!visible(box))return false;
