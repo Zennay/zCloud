@@ -73,11 +73,18 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
         left_url = _same_repo_url(left.get("url"), repository)
         right_url = _same_repo_url(right.get("url"), repository)
         if left_url == pr_url:
-            related.add(right_url)
+            selected_sha, peer_url = left.get("head_sha"), right_url
         elif right_url == pr_url:
-            related.add(left_url)
+            selected_sha, peer_url = right.get("head_sha"), left_url
         else:
             continue
+        # A collision graph can be sampled before an independently refreshed
+        # gate receipt sees a newer PR HEAD. Never ascribe the old graph's
+        # shared files or peers to this newly observed HEAD.
+        if head is None or selected_sha != head:
+            paths_limited = True
+            continue
+        related.add(peer_url)
         for path in pair.get("shared_files", [])[:MAX_PATHS]:
             paths.add(edit_path(path))
     for source in (direct_overlaps or [])[:16]:
@@ -234,6 +241,11 @@ def collect_workorders(board):
         if paths_cut or item.get("non_green_jobs_hidden") or (
                 item.get("source_current_head_verified") is not True):
             notes.append("Brongegevens voor conflicterende paden/CI zijn mogelijk afgekapt.")
+        if paths_cut:
+            notes.append(
+                "Niet alle bestandsverbindingen zijn aan de exact waargenomen "
+                "PR-HEAD gebonden; een oude botsingssteekproef wordt niet "
+                "als actuele bestandsbotsing gepresenteerd.")
         if live_gate.get("observed_in_recent_pr_collision_sample") is False:
             notes.append(
                 "Dit is een expliciet geselecteerde oudere PR buiten het "
