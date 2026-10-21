@@ -138,9 +138,27 @@ additional deployment authority.
 A green GitHub job with a deferred action is **not** equivalent to a live
 upgrade. Where observation is denied by a missing debugger, worker activity or
 a failed reload, the summary explicitly recommends a later owner-approved
-activation window rather than silently declaring completion. A job that fails
-before it reaches the summary code remains a failed job, not a successful
-release receipt.
+activation window rather than silently declaring completion.
+
+If an on-disk installation **fails after the atomic rename**, its EXIT cleanup
+preserves the original failing job status and emits an additional operator
+observation where possible:
+
+| Failed-install observation | Meaning |
+| --- | --- |
+| `PREVIOUS_VERSION_RESTORED` | Previously installed addon/watchdog bytes were restored after failure |
+| `NEW_INSTALL_REMOVED` | First-time standalone watchdog install was removed; nothing existed before |
+| `CONCURRENT_OWNER_CHANGE_PRESERVED` | A newer installed version was observed and deliberately **not** overwritten by rollback |
+| `ROLLBACK_FAILED` | Automatic restoration failed; supervised recovery and the retained backup may be required |
+
+These outcomes do not make a failed job green. Receipt emission is
+best-effort during EXIT cleanup, cannot mask its original failure, and
+never grants mutation authority. The addon rollback refuses to replace a
+symlink or owner-modified add-on after its own promotion. The watchdog
+rollback stages and compares the private backup before restoring via an
+atomic rename; if restoration fails, the private backup is retained.
+A job that fails **before** installing anything remains a failed job,
+not a successful release receipt.
 
 The worker-add-on install and activation are separate shell steps. The
 activation step explicitly re-resolves its installed add-on directory; using
