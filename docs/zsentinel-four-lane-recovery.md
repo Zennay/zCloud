@@ -701,3 +701,43 @@ configuration the service has actually loaded. The four-lane
 `deployed_four_lane_profile` claim remains `NOT_VERIFIED`.
 An owner-action card makes the discrepancy visible without touching
 production server, SQLite, Notion, browser, runner or billing state.
+
+
+## 21 oktober · P0 én P1 als brongebonden herstel-inbox
+
+De vierbaan-herstelbalie ondersteunt nu een echte **productgerichte
+P0/P1-vervolgkeuze** in de bestaande operatoractiekaarten. Eerder werden
+uitsluitend projecten met wachtende P0-items opgenomen; als er alleen
+P1-issues wachtten, bleef het productwerk onzichtbaar in de korte
+herstelactielijst. De bestaande gescheiden portfolio-aggregaten zijn
+ongewijzigd.
+
+De adapter leest maximaal dertien canonieke lokale projectaggregaten,
+ordent ze stabiel op waargenomen aantallen en gebruikt lokale eligibility
+uitsluitend als *sorteerhint*. Twee P0-projecten gaan voor; er is daarnaast
+ruimte voor een apart P1-project. Zonder P0 kunnen maximaal drie
+P1-projecten verschijnen. Elke kaart toont wachtend, lokaal eligible
+en al in behandeling **afzonderlijk**, plus de expliciete opdracht om
+eerst bestaande product-PRs, GitHub-issues en actuele claims te bekijken.
+Een P1-project op dezelfde naam als een reeds gekozen P0-project maakt
+geen dubbele projectkaart. De afzonderlijke kaart wordt niet gebruikt om
+een nieuwe claim toe te wijzen.
+
+Deze kaarten blijven menselijke suggesties met
+`PR_AND_OWNER_GATE_REQUIRED`; ze staan *onder* urgente bron-,
+eigenaars- en lease-HOLDs in het bestaande maximum van negen actiekaarten.
+Bij hoge druk mogen veiligheidswaarschuwingen dus voorrang hebben.
+Dezelfde productinformatie is beschikbaar in tekst, private Markdown,
+JSON en offline HTML via de bestaande uitvoerfuncties; geen nieuwe
+endpoints, providerverzoeken of background jobs.
+
+Code: commits
+[b489837](https://github.com/Zennay/zCloud/commit/b489837983e0274c53054c924d9c41bf1eaa4a21)
+en
+[b68a744](https://github.com/Zennay/zCloud/commit/b68a744f27aea9b0b3d2bbc53cd7bb239a0cdef9)
+op dezelfde open [PR #1572](https://github.com/Zennay/zCloud/pull/1572).
+Geen QA-suite of handmatige CI gestart en geen queue, claim, runner,
+dienst, notificatie of andere productiebron gewijzigd. De bronwijziging
+is **niet** op main of live zolang exacte-head verplichte CI,
+onafhankelijke review, branchbescherming en eigenaarsautorisatie niet
+zijn afgerond.
