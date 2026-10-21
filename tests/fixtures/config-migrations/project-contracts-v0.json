@@ -1,0 +1,26 @@
+{
+  "resource_pools": {
+    "default": {
+      "slots": 2
+    }
+  },
+  "projects": {
+    "cloud": {
+      "queue_mode": "autonomous",
+      "lane_profile": "default",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "ai_worker",
+        "auto_start": true
+      },
+      "compute": {
+        "class": "control",
+        "pool": "default",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 512,
+        "priority": "normal",
+        "protected": true
+      }
+    }
+  }
+}
