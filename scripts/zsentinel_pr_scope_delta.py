@@ -295,8 +295,12 @@ def compare(previous, current):
             "scope_conflicts_only_in_previous_sample_not_proven_resolved": (
                 describe_scope(previous_scope_delta) if stable and not scope_comparable else []),
             "scope_conflict_sample_preview_truncated": (
-                stable and not scope_comparable and
-                (len(current_scope_delta) > 40 or len(previous_scope_delta) > 40)),
+                stable and not scope_comparable and (
+                    len(current_scope_delta) > 40 or len(previous_scope_delta) > 40
+                    or old.get("path_scope_collision_pairs_truncated") is True
+                    or new.get("path_scope_collision_pairs_truncated") is True
+                    or old.get("path_scope_examples_truncated") is True
+                    or new.get("path_scope_examples_truncated") is True)),
             "scope_conflict_comparison_unavailable": (
                 old_seen_scope is None or new_seen_scope is None),
             "connected_cluster_comparison_complete": both_complete,
