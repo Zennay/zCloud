@@ -1295,6 +1295,33 @@ def html_view(decision, registry=None):
         ' incidenten bekijken</summary>' + section(overflow_incidents, "") + '</details>'
         if overflow_incidents else ""
     )
+    worker_source = decision.get("worker_progress_observation")
+    worker_status = source.get("worker_progress") if isinstance(source, dict) else None
+    worker_projects = source.get("worker_projects") if isinstance(source, dict) else None
+    worker_panel = ""
+    if worker_status == "read_only_indexed_events":
+        if (type(worker_projects) is not list or not 1 <= len(worker_projects) <= 3
+                or len(set(worker_projects)) != len(worker_projects)
+                or worker_source is None
+                or type(worker_source) is not dict
+                or worker_source.get("selected_projects") != worker_projects):
+            raise ValueError("worker progress source does not match its selected project receipt")
+        from zsentinel_worker_progress_observer import worker_progress_html
+        worker_panel = worker_progress_html(worker_source)
+    elif worker_status == "degraded_unavailable_no_recovery_proof":
+        if (type(worker_projects) is not list or not 1 <= len(worker_projects) <= 3
+                or len(set(worker_projects)) != len(worker_projects)
+                or worker_source is not None):
+            raise ValueError("invalid degraded worker progress source receipt")
+        worker_panel = (
+            '<section aria-label="Read-only browserworker voortgang">'
+            '<h2>Browserworkers · bron onbeschikbaar</h2>'
+            '<p class="banner">WORKERBRON ONBEKEND — de expliciet gekozen read-only '
+            'eventbron ontbreekt of het schema is incompatibel. Dit bewijst niet dat '
+            'workers stil staan of gezond zijn. Geen claim, hervatting of herstart '
+            'is geautoriseerd.</p></section>')
+    elif worker_status is not None or worker_source is not None:
+        raise ValueError("unrecognized worker progress source status")
     warning = ("De bronnen zijn deels onbekend of niet actueel; afwezig betekent niet opgelost. "
                "Geen aanbeveling is een autorisatie voor claims, merges, financiële actie of deploy.")
     return ('<!doctype html><html lang="nl"><head><meta charset="utf-8">'
@@ -1348,6 +1375,7 @@ def html_view(decision, registry=None):
                       "Geen actuele individuele wachtrijincidenten. Claimherstel blijft handmatig geautoriseerd.")
             + '</section>'
             + blocked_queue_panel_html
+            + worker_panel
             + branch_panel
             + held_panel
             + gate_hold_panel
