@@ -569,3 +569,30 @@ doorgestreepte statuslabels kan injecteren.
 Dit is uitsluitend een render-/handoff-integriteitsmaatregel. De bron, prioriteit,
 lease, owner-claim, CI-status, recoverybeslissing en release-autorisatie worden
 niet gewijzigd. Bestaande CI en menselijke/branch-protectiongates blijven intact.
+
+## 21 oktober · aparte private CSV voor runtime-eigenaaracties
+
+De bestaande portfolio-CLI kan nu naast de normale HTML/JSON/tekstweergave een
+afzonderlijke CSV-werkbak maken. Voorbeeld:
+
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /pad/naar/bestaande-zcloud.sqlite \
+  --show-owner-handoff \
+  --owner-handoff-output /private/zsentinel-owner-actions.csv
+```
+
+De extra uitvoer bevat maximaal de bestaande begrensde prioritaire kaarten, hun
+bronmoment en brondekking, project/prioriteit, menselijke volgende stap,
+canonieke issue-/PR-links en eventueel de reeds waargenomen exacte GitHub-job
+en commit. De CSV is UTF-8 met BOM, met formuleprefixbeveiliging en zichtbare
+Unicode-controlmarkeringen; kolommen zijn stabiel en standaard CSV-escaping
+blijft actief. Zonder actiekaarten wordt een metadataregel geëxporteerd in
+plaats van een misleidend leeg bestand.
+
+`--owner-handoff-output` vereist `--show-owner-handoff`, een nieuw `.csv`-pad
+en een andere bestemming dan input-, historie-, cursor-, ledger- en andere
+rapportbestanden. Het bestaande directory-bound create-only outputmechanisme
+schrijft privé met modus 0600 en weigert overschrijven. Alle autorisatievelden
+blijven `false`; de CSV is geen schedulerinput, claim, CI-rerun, merge of
+deployopdracht.
