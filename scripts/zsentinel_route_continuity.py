@@ -152,6 +152,11 @@ def compare(previous, current, *, now=None):
     new = _index(newer)
     if new["observed"] > now + timedelta(minutes=2):
         raise ValueError("future current routing observation")
+    if now - new["observed"] > timedelta(minutes=10):
+        # An archived JSON export may be valid history but not a live
+        # operator task transition. Do not present old state as new routing.
+        return _result("current_routing_source_stale", new,
+                       previous_at=None, fresh=False)
     older = _decision(previous)
     if older is None:
         return _result("previous_routing_not_supplied", new,
