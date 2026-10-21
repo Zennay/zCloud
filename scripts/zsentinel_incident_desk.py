@@ -1195,6 +1195,20 @@ def private_action_briefing(decision, source):
 
 
 
+
+def private_action_output(decision):
+    """Create the same validated operator Markdown without browser interaction."""
+    branch_work_review_panel(decision)
+    existing_pr_merge_gate_panel(decision)
+    open_product_issue_owner_panel(decision)
+    github_exact_gate_panel(decision)
+    queue_owner_pressure_panel(decision)
+    blocked_work_owner_panel(decision)
+    runtime_source_panel(decision)
+    return private_action_briefing(decision, _source(decision))
+
+
+
 def review_html(decision):
     """One offline HTML view + bounded private operator handoff in browser."""
     # Validate optional branch data before using it in the source fingerprint.
