@@ -189,7 +189,8 @@ jobs:
             rc=$?
             if test "$rc" -ne 0 && test "$installed" -eq 1; then
               # Do not undo a concurrent owner's change to the installed file.
-              if sudo -n cmp -s -- scripts/zcloud_worker_watchdog.py "$live"; then
+              if test ! -L "$live" && test ! -L "${live%/*}" \
+                 && sudo -n cmp -s -- scripts/zcloud_worker_watchdog.py "$live"; then
                 if test "$was_installed" -eq 1 && test -f "$backup"; then
                   restore=""
                   if restore="$(sudo -n mktemp /usr/local/sbin/.zcloud-watchdog.restore.XXXXXXXX)" &&
@@ -235,6 +236,6 @@ jobs:
           installed=1
           sudo -n cmp -- scripts/zcloud_worker_watchdog.py "$live"
           echo "LIVE_WATCHDOG_NO_BROWSER_RESTART=1"
-          python3 scripts/zsentinel_release_receipt.py --component watchdog --outcome disk-installed
           echo "EXISTING_TABS_AND_FIREFOX_PROCESSES_UNTOUCHED=1"
           echo "Manual install handled without a shared runtime source overwrite."
+          python3 scripts/zsentinel_release_receipt.py --component watchdog --outcome disk-installed
