@@ -450,6 +450,7 @@ const activity=document.getElementById('activity');
 const visible=document.getElementById('visible'), prState=document.getElementById('pr-state');
 const nextOpenPr=document.getElementById('pr-review-next');
 const openPrSummary=document.getElementById('pr-review-summary');
+const projectExport=document.getElementById('project-export');
 const focusBar=document.getElementById('focus-bar'),focusTitle=document.getElementById('focus-title');
 const focusClear=document.getElementById('focus-clear');
 const focusNext=document.getElementById('focus-next');
@@ -560,6 +561,10 @@ function refresh(){
    +prs.length+' bron-PRs; '+unreviewed+' nog te beoordelen. '
    +'Lokale opvolging bewijst geen review, merge of fixes.';
  nextOpenPr.disabled=outstanding===0;
+ projectExport.disabled=!project.value;
+ projectExport.textContent=project.value?
+  'Download privéoverdracht voor project '+project.value:
+  'Kies eerst een project voor privéoverdracht';
  focusBar.hidden=!focusedPr;
  updateSessionIndicator();
  if(focusedPr){
@@ -760,6 +765,95 @@ function exportOutstandingPrHandoff(){
  privateDownload('zsentinel-prs-open-prive-eigenaaroverdracht.md',lines.join('\n')+'\n');
 }
 document.getElementById('pr-review-export').addEventListener('click',exportOutstandingPrHandoff);
+
+function exportProjectHandoff(){
+ const selected=project.value;
+ if(!selected||!Array.from(project.options).some(o=>o.value===selected&&selected))return;
+ const sourceTickets=tickets.filter(t=>t.dataset.project===selected);
+ const sourcePrs=prs.filter(p=>p.dataset.project===selected);
+ const sourceCollisions=collisionRows.filter(c=>c.dataset.project===selected);
+ if(!sourceTickets.length)return;
+ const parts=[
+  '# zSentinel · privé eigenaarsoverdracht '+safeText(selected),'',
+  '> Eén project uit de beperkte opgeslagen bronopname; geen actuele CI, eigenaars-, fix-, claim-, merge- of deployvrijgave.','',
+  '- Bron issue UTC: '+safeText(document.getElementById('issue-time').textContent),
+  '- Bron PR UTC: '+safeText(document.getElementById('pr-time').textContent),
+  '- Exact bron-token: '+safeText(document.body.dataset.sourceToken),
+  '- Project: '+safeText(selected),
+  '- Issuekaarten binnen opgeslagen venster: '+sourceTickets.length,
+  '- Bestaande PR-groepen binnen opgeslagen venster: '+sourcePrs.length,
+  '- Issues met meerdere bron-PRs in deze subset: '+sourceCollisions.length,
+  '- Bronpagina en filters zijn begrensd; onbekende issues/PRs en actieve Notion-claims blijven ONBEKEND.',
+  '- Huidige UI-zoekfilters en PR-focus beïnvloeden deze volledige projectsubset niet.','',
+  '## Bestaande product-PRs binnen bronvenster',''
+ ];
+ if(!sourcePrs.length)parts.push('Geen bestaande PR-groep in deze opgeslagen subset gezien. Dit is geen bewijs dat er geen PR bestaat.','');
+ for(const [index,p] of sourcePrs.entries()){
+  const pr=p.dataset.pr,head=p.dataset.head||'ONBEKEND';
+  const shown=p.dataset.issues.trim().split(' ').filter(Boolean);
+  const all=p.dataset.sourceIssues.trim().split(' ').filter(Boolean);
+  const local=p.querySelector('.pr-local-state').value;
+  parts.push(
+   '### '+(index+1)+'. [Bestaande PR #'+pr.split('/').pop()+']('+pr+')','',
+   '- Bron HEAD: '+safeText(head),
+   '- Historische gate: '+safeText(gateLabels[p.dataset.gate]||p.dataset.gate)+
+     ' ('+safeText(p.dataset.gate)+')',
+   '- Prioriteit: '+safeText(p.dataset.priority),
+   '- Menselijke gatevervolgstap: '+safeText(p.dataset.next),
+   '- Bestands-/historische overlapindicatie: '+
+     safeText(p.dataset.overlap)+' / '+safeText(p.dataset.movement),
+   '- Privé opvolgstatus: '+safeText(prLabels[local]||local),
+   '- Gekoppelde issuevermeldingen bron: '+all.length+
+     '; binnen dit venster: '+shown.length
+  );
+  if(head!=='ONBEKEND')parts.push(
+   '- Historische broncommit: [GitHub commit]('+pr.split('/pull/')[0]+'/commit/'+head+')');
+  const note=p.querySelector('.pr-note').value.trim();
+  if(note)parts.push('- Privé PR-notitie: '+safeText(note));
+  for(const issue of shown)parts.push('  - [Bronissue #'+issue.split('/').pop()+']('+issue+')');
+  if(all.length>shown.length)parts.push(
+   '- ONVOLLEDIG: '+(all.length-shown.length)+
+   ' aanvullende issuevermelding(en) buiten de huidige beperkte issuepagina.');
+  parts.push('');
+ }
+ parts.push('## Geobserveerde projectissues', '');
+ for(const [index,t] of sourceTickets.entries()){
+  const url=t.dataset.issue;
+  const state=t.querySelector('.local-state').value;
+  const candidates=[t.dataset.pr,...t.dataset.prs.split(' ').filter(Boolean)]
+    .filter(Boolean);
+  parts.push(
+   '### '+(index+1)+'. [Issue #'+url.split('/').pop()+']('+url+')','',
+   '- Prioriteit: '+safeText(t.dataset.priority),
+   '- Titel: '+safeText(t.dataset.title),
+   '- Bronroute: '+safeText(t.dataset.category),
+   '- Aanbevolen vervolgstap: '+safeText(t.dataset.next),
+   '- Privé issuestatus: '+safeText(labels[state]||state),
+   '- PR-kandidaten in bron: '+candidates.length
+  );
+  for(const pr of candidates){
+   const p=prs.find(x=>x.dataset.pr===pr);
+   parts.push('  - [Bestaande PR #'+pr.split('/').pop()+']('+pr+') · bron HEAD '+
+    safeText(p&&p.dataset.head||'ONBEKEND'));
+  }
+  const note=t.querySelector('textarea').value.trim();
+  if(note)parts.push('- Privé issuenotitie: '+safeText(note));
+  const collision=sourceCollisions.find(c=>c.dataset.issue===url);
+  if(collision){
+   const status=collision.querySelector('.collision-state').value;
+   parts.push('- Meerdere PRs: '+safeText(collisionLabels[status]||status)+
+    ' (geen aangetoonde bestandsbotsing)');
+   const note=collision.querySelector('.collision-note').value.trim();
+   if(note)parts.push('- Privé botsingsnotitie: '+safeText(note));
+  }
+  parts.push('');
+ }
+ parts.push('## Vereiste handmatige gates','',
+  'Controleer voor ieder bestaand PR opnieuw de huidige GitHub-HEAD, volledige verplichte CI, onafhankelijke review, branchbescherming en actuele Notion/workerclaims. Dit bestand is alleen een lokaal privé-overzicht; het heeft niets op GitHub, Notion of de VPS gewijzigd.','');
+ privateDownload('zsentinel-project-'+selected+'-prive-overdracht.md',parts.join('\n')+'\n');
+}
+projectExport.addEventListener('click',exportProjectHandoff);
+
 
 function exportCollisionHandoff(onlyUnresolved,focusIssue=null){
  if(focusIssue!==null&&!collisionRows.some(c=>c.dataset.issue===focusIssue))return;
@@ -1144,6 +1238,7 @@ refresh();
         "<p id='pr-review-summary' aria-live='polite'></p>"
         "<button id='pr-review-next' type='button'>Volgende PR zonder lokale opvolging</button>"
         "<button id='pr-review-export' type='button'>Download open PR-eigenaaroverdracht</button>"
+        "<button id='project-export' type='button' disabled>Kies eerst een project voor privéoverdracht</button>"
         "<p id='collision-visible' aria-live='polite'></p>"
         "<button id='collision-next' type='button'>Volgende open botsingsopvolging</button>"
         "<p id='session-status' aria-live='polite'></p>"
