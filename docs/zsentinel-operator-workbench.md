@@ -3355,3 +3355,66 @@ Deze aanvullende projectie verandert de bestaande handoff-schema's,
 operatornotities of importautoriteit niet; de inhoud is uitsluitend voor
 menselijke inspectie en vereist vóór daadwerkelijke actie een verse
 GitHub-/Notion-/queuebron en alle verplichte releasegates.
+
+
+## 21 oktober · gefilterde offline PR-herstelwerkbak en één-issue bronoverdracht
+
+De reeds bestaande interactieve zSentinel-werkbak integreert nu de
+PR-dossiergeschiedenis **als werkbare triagefunctie**, niet alleen als
+een tekstueel archief.
+
+### Historische PR-problemen in dezelfde issue-navigatie
+
+Met `--pr-dossier` verschijnen in de gewone issuefilters de
+historische PR-broncategorieën `Saved existing PR reference`,
+`Several historical PR candidates`, `PR issue-link disappeared`,
+`PR absent from last saved snapshot` en `No saved PR link · UNKNOWN`.
+De bestaande prioriteits-, project-, handmatige vervolgstatus- en
+boardvergelijkingsfilters blijven gecombineerd werken.
+
+Bij iedere zichtbare issuekaart staat een korte brongebonden aanduiding
+van de waargenomen PR-kandidaten, verloren links en verdwenen
+bronsteekproeven. Zonder `--pr-dossier` wordt het filter
+**uitgeschakeld** met de expliciete melding dat er geen historische
+PR-bron werd meegeleverd. Afwezigheid van die bron is nooit bewijs
+dat het issue geen bestaande PR of eigenaar heeft.
+
+### Reviewed source-only single-issue PR export
+
+Na selectie van een productissue in het detailpaneel kan een operator
+`Review historical PR source handoff (JSON)` kiezen. De eerste klik
+toont de volledige, **menselijk controleerbare** inhoud. Pas de
+afzonderlijke downloadactie schrijft een browserdownload, voor
+uitsluitend het gekozen issue. Bij een andere selectie of gewijzigde
+bronprojectie is een nieuwe preview nodig.
+
+Het bronrapport `zsentinel-saved-selected-issue-pr-handoff-v1` bevat
+uitsluitend de geregistreerde boardidentiteit/SHA256, het exacte
+originele issueadres, het gekozen project, de oorspronkelijke beperkte
+archiefbronvensters en hun reviewmanifest-/board-SHA256, alsmede de
+maximaal twaalf source-admitted PR-verwijzingen met laatste bekende
+HEAD-/issuekoppelings-/gategegevens. Het meldt aanvullend hoeveel
+eventuele PR-kandidaten bewust niet in het zichtbare deel zijn
+opgenomen. **Andere issues, privéannotaties, handmatige contacten,
+workerleasetokens of runtimeclaims worden niet geëxporteerd.**
+
+De export bevat de expliciete, niet-autoriserende waarden
+`active_claim_verified=false`,
+`exact_head_required_ci_review_verified=false`,
+`merged_main_verified=false`, `live_verified=false`,
+`claim_authorized=false`, `merge_authorized=false`,
+`deploy_authorized=false` en `dispatch_authorized=false`.
+Een ontbrekende historische issue-link blijft expliciet UNKNOWN.
+De bronprojectie gebruikt de bestaande grens van hoogstens twaalf
+archiefbronnen en twaalf getoonde PRs per issue.
+
+De browser werkt lokaal; GitHub, Notion, queue, CI en runner worden
+niet aangeroepen, er wordt geen bestaand bestand overschreven en
+geen actieve ownerclaim overgenomen. Deze export is een
+**historische menselijke overdracht**: voordat een merge, nieuwe
+product-PR, claimswitch of productieactie kan plaatsvinden, moeten
+exact-head verplichte CI, onafhankelijke review, protected main,
+eigenaar/leases en releasebevoegdheid opnieuw live worden vastgesteld.
+De gebruiker vroeg geen QA-suites; er zijn er ook geen geschreven
+of gedraaid. De bronimplementatie is uitsluitend direct syntactisch
+bekeken.
