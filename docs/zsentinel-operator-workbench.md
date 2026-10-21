@@ -3257,3 +3257,63 @@ mutatievlaggen blijven `false`; bij iedere daadwerkelijke actie zijn
 nieuwe, zelfstandige exact-head GitHub-, Notion-, queue- en releasebewijzen
 vereist. De PR is niet DONE zolang GitHub niet `merged=true` meldt en
 een eventuele geautoriseerde live-uitrol niet onafhankelijk is vastgesteld.
+
+
+## 21 oktober · bestaande operatorwerkbak integreert issue-PR herstelgeschiedenis
+
+De `--issue`-selectie in
+`scripts/zsentinel_saved_dossier_timeline.py` is opnieuw bruikbaar:
+de foutief dubbel ge-escapete reguliere expressie matchte legitieme
+GitHub-issue-URLs niet. De herstelde bron accepteert uitsluitend
+canonieke `https://github.com/Zennay/<repo>/issues/<nummer>`-adressen
+met een begrensde reposlug en issue-identiteit; ongeldige URLs worden
+afgewezen.
+
+Dezelfde bekende privé-PR-bronnen kunnen bovendien rechtstreeks worden
+meegenomen in de **bestaande interactieve operatorwerkbak**. Het
+`--pr-dossier`-argument bestond al; nu benut de hoofdwerkbak de
+historische issue-/PR-relaties voor zichtbare herstelbeslissingen.
+
+```sh
+umask 077
+python3 scripts/zsentinel_operator_workbench.py \
+  --board /private/zsentinel/product-board.json \
+  --pr-dossier /private/zsentinel/earlier-pr-dossier.zip \
+  --pr-dossier /private/zsentinel/later-pr-dossier.zip \
+  --output /private/zsentinel/product-recovery-workbench.html
+```
+
+**Productgedrag in de scriptvrije bronoverdrachtssectie:**
+
+- Per op het board aanwezig issue zijn de bestaande gekoppelde PRs te
+  openen met hun laatst opgenomen PR-HEAD én de HEAD toen de
+  issuekoppeling het laatst werd waargenomen. Waargenomen HEAD-wissels,
+  issuekoppelingen die verdwenen terwijl de PR wel werd gezien en PRs
+  die uit de laatste archiefsteekproef verdwenen krijgen afzonderlijke
+  tekst; geen hiervan bewijst merge of issue-afronding.
+- Een expliciete **historische bronactualiteit** vermeldt laatst
+  opgenomen tijdstip, geschatte leeftijd en ontbrekende ZIP-batches.
+  Geen ontbrekende batches gemeld is nooit gelijk aan complete live
+  dekking. Onbekende levenscycli blijven ONBEKEND.
+- Een uitklapbare projectlijst maakt de gevonden, met het board
+  overeenkomende historische PR-relaties per project zichtbaar:
+  P0/P1-issues, meerdere bestaande PR-kandidaten, verloren
+  issuekoppelingen, afwezige bron-PRs en boardissues zonder opgeslagen
+  PR-koppeling. De groepen worden P0-eerst gesorteerd; het maximum
+  blijft beperkt tot de reeds toegelaten boardkaarten.
+- Deze aanvullende broninformatie gebruikt exact de bestaande
+  `build_timeline(...)` en `issue_worklist(...)`-admissie;
+  er worden **geen** live providerverzoeken, claim-toewijzingen,
+  workflow-reruns, brokerbewerkingen of service-restarts aan de
+  operatorwerkbak toegevoegd.
+
+Dit is een historisch **beslisondersteunend** werkoverzicht en geen
+autonome productieherstelactie. Vóór daadwerkelijke merge of nieuwe
+werkclaim controleert een bevoegd eigenaar actuele issue-/PR-HEAD,
+verplichte exacte-head CI, onafhankelijke review, branch protection,
+Notion-/queueclaims en productie-releasevoorwaarden. Een historische
+PR-verwijzing vervangt geen eigenaarsautorisatie.
+
+De op deze branch gewijzigde Python-modules zijn syntactisch gecontroleerd
+op hun exacte gepinde GitHub-bron via verbonden zSSH. Geen nieuwe QA-
+of regressiesuites geschreven of gedraaid, geen live deploy uitgevoerd.
