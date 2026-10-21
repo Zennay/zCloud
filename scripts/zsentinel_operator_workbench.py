@@ -4181,7 +4181,8 @@ function mergeFirstCsv(){
      const row=item.row;
      Object.assign(record,{
        project_scope:[...new Set(row.issues.map(issue=>issue.project))].join(' | '),
-       pr_reference_state:'saved_pr_candidate_not_live',
+       pr_reference_state:row.no_issue_observed_in_saved_pr_source?
+         'historical_pr_without_sampled_issue_link':'saved_pr_candidate_not_live',
        pr_url:row.url,
        source_issue_links:row.issues.map(issue=>issue.url).join(' | '),
        source_issue_titles:row.issues.map(issue=>issue.title).join(' | '),
