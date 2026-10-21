@@ -1,0 +1,107 @@
+name: zCloud self telemetry report proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_self_telemetry_report.py
+      - tests/test_zcloud_self_telemetry_report.py
+      - tests/test_zcloud_self_telemetry_report_workflow.py
+      - docs/zcloud-self-telemetry-report.md
+      - .github/workflows/zcloud-self-telemetry-report-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-self-telemetry-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+      - name: Run focused self-telemetry contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_self_telemetry_report.py tests/test_zcloud_self_telemetry_report.py tests/test_zcloud_self_telemetry_report_workflow.py
+          python3 -m unittest -v tests.test_zcloud_self_telemetry_report tests.test_zcloud_self_telemetry_report_workflow
+
+  permanent-vps-proof:
+    needs: validate
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact candidate and permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+      - name: Read current zCloud self telemetry
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 scripts/zcloud_self_telemetry_report.py --projects projects.json)"
+          python3 - "$output" <<'PY'
+          import json
+          import re
+          import sys
+
+          payload = json.loads(sys.argv[1])
+          if payload.get("project_id") != "cloud":
+              raise SystemExit("wrong project")
+          github = payload.get("github") or {}
+          if github.get("repository") != "Zennay/zCloud":
+              raise SystemExit("wrong repository")
+          if not re.fullmatch(r"[0-9a-f]{40}", str(github.get("main_sha") or "")):
+              raise SystemExit("missing exact zCloud main SHA")
+          if not isinstance(github.get("open_pr_count"), int):
+              raise SystemExit("open PR count missing")
+          ci = github.get("ci") or {}
+          if ci.get("status") not in {"success", "failure", "in_progress", "not_configured", "unknown"}:
+              raise SystemExit("invalid CI state")
+          if int(ci.get("status_context_count") or 0) > 0 and ci.get("source") != "github_commit_status_exact_head":
+              raise SystemExit("exact-head commit status was not authoritative")
+          scorecard = payload.get("scorecard") or {}
+          if not scorecard.get("milestones"):
+              raise SystemExit("milestone evidence missing")
+          print("ZCLOUD_SELF_TELEMETRY_PROOF=" + json.dumps({
+              "main_sha": github["main_sha"],
+              "open_pr_count": github["open_pr_count"],
+              "ci_status": ci["status"],
+              "ci_source": ci["source"],
+              "status_context_count": ci["status_context_count"],
+              "milestone_count": len(scorecard["milestones"]),
+          }, sort_keys=True, separators=(",", ":")))
+          PY
