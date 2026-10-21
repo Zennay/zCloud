@@ -288,11 +288,14 @@ def _one(repo, number, token):
     elif (statuses["failure_observed"] or
           legacy_states["failure"] or legacy_states["error"]):
         gate_step = "inspect_current_head_failed_checks_with_owner"
+    elif requested:
+        # A current-head CHANGES_REQUESTED is actionable owner work even if
+        # an unrelated exact-head CI job is still queued. Do not hide it
+        # behind a generic "wait for CI" message.
+        gate_step = "owner_address_exact_head_review_changes"
     elif (statuses["pending_observed"] or statuses["other_observed"] or
           legacy_states["pending"]):
         gate_step = "wait_for_existing_current_head_checks"
-    elif requested:
-        gate_step = "owner_address_exact_head_review_changes"
     elif not check_rows and not latest_context:
         gate_step = "verify_missing_current_head_checks_and_rules"
     elif mergeable is None:
