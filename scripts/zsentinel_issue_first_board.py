@@ -110,8 +110,53 @@ def prioritize_observed_work(rows):
     return [row for _, row in sorted(ranked, key=lambda item: item[0])]
 
 
+def issue_local_claim_evidence(project, local_claims):
+    """Attach only validated local aggregate counts to a project issue card.
+
+    This is not issue ownership: local claims are project-wide and external
+    Notion/worker state remains unknown. No raw lease identifiers are exposed.
+    """
+    unknown = {
+        "source": "LOCAL_SQLITE_READ_ONLY",
+        "status": "UNKNOWN",
+        "active_local_leases_observed": None,
+        "expired_local_leases_observed": None,
+        "active_local_writers_observed": None,
+        "ambiguous_active_leases": None,
+        "notion_claim_status": "NOT_OBSERVED",
+        "owner_free": "NOT_INFERABLE",
+        "authorization": "NOT_GRANTED",
+    }
+    if (not isinstance(project, str)
+            or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", project)
+            or not isinstance(local_claims, dict)):
+        return {**unknown, "status": "LOCAL_PROJECT_MAPPING_UNKNOWN"}
+    row = local_claims.get(project)
+    if not isinstance(row, dict):
+        return {**unknown, "status": "LOCAL_SOURCE_UNAVAILABLE"}
+    allowed = {
+        "LOCAL_ACTIVE_CLAIMS_OBSERVED", "EXPIRED_LOCAL_LEASES_OBSERVED",
+        "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED", "LOCAL_SOURCE_UNAVAILABLE",
+        "CLAIM_INVENTORY_TRUNCATED", "CLAIM_SOURCE_INVALID",
+    }
+    status = row.get("status")
+    if status not in allowed:
+        return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
+    fields = (
+        "active_local_leases_observed", "expired_local_leases_observed",
+        "active_local_writers_observed", "ambiguous_active_leases",
+    )
+    counts = {}
+    for key in fields:
+        value = row.get(key)
+        if value is not None and (type(value) is not int or not 0 <= value <= 1000):
+            return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
+        counts[key] = value
+    return {**unknown, **counts, "status": status}
+
+
 def observed_issue_inbox(rows, unlinked, partial, repo_projects,
-                         source_inventory=None, limit=48):
+                         source_inventory=None, limit=48, local_claims=None):
     """Turn the *observed* P0/P1 issue window into a read-only action inbox.
 
     A selected PR's explicit issue reference is an inspection hint, not a fix,
@@ -122,6 +167,10 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
         raise ValueError("invalid bounded issue inbox limit")
     if not isinstance(repo_projects, dict):
         raise ValueError("missing canonical project registry")
+    if local_claims is None:
+        local_claims = {}
+    if not isinstance(local_claims, dict) or len(local_claims) > MAX_PROJECTS:
+        raise ValueError("invalid bounded local claim evidence")
     if source_inventory is None:
         source_inventory = []
     if not isinstance(source_inventory, list) or len(source_inventory) > 300:
@@ -233,6 +282,8 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
         else:
             item["project"] = "UNKNOWN"
             item["read_only_issue_command"] = None
+        item["local_claim_evidence"] = issue_local_claim_evidence(
+            item["project"], local_claims)
         item["operator_action"] = (
             "Inspect selected existing PR and exact-HEAD review/CI/claim gates"
             if item["linked_prs"] else
@@ -279,6 +330,17 @@ def render_issue_inbox(inbox):
              if pr["gate_actions"] else "; volgende gate: broncontrole nodig") +
             ")" for pr in prs)
             if prs else "Geen gekoppelde PR binnen deze selectie bevestigd")
+        local = issue.get("local_claim_evidence") or {}
+        count_text = lambda key: (
+            str(local.get(key)) if type(local.get(key)) is int else "UNKNOWN")
+        local_summary = (
+            "<br>Lokale projectclaims (alleen read-only): " +
+            esc(local.get("status", "UNKNOWN")) +
+            " · actief=" + esc(count_text("active_local_leases_observed")) +
+            " · verlopen=" + esc(count_text("expired_local_leases_observed")) +
+            " · schrijvers=" + esc(count_text("active_local_writers_observed")) +
+            " · ambigu=" + esc(count_text("ambiguous_active_leases")) +
+            ". Geen owner-vrijgave; Notion/externe claims blijven UNKNOWN.")
         outstanding = issue["uninspected_candidate_pr_numbers"]
         candidate_links = (" · ".join(
             "<a href='https://github.com/" + esc(issue["repo"]) +
@@ -293,6 +355,7 @@ def render_issue_inbox(inbox):
             "<br>Andere PRs uit bronlijst (nog niet opnieuw geverifieerd): " +
             candidate_links + " · extra kandidaten buiten venster: " +
             esc(issue["candidate_prs_omitted"]) +
+            local_summary +
             "<br>Volgende stap: " + esc(issue["operator_action"]) +
             ("<br>Lees bestaande PRs: <code>" +
              esc(issue["read_only_issue_command"]) + "</code>"
@@ -1185,11 +1248,11 @@ def main():
             repo: project for repo, project in registry.values()
             if project in args.project
         }
+        local_claims = observe_local_claims(DB, args.project)
         issue_inbox = (observed_issue_inbox(
             rows, unmatched, partial, repo_projects,
-            source_inventory=source_inventory)
+            source_inventory=source_inventory, local_claims=local_claims)
             if args.issue is None else None)
-        local_claims = observe_local_claims(DB, args.project)
         if args.output:
             board.private_write(board.Path(args.output),
                                 to_html(rows, unmatched, partial, observed,
@@ -1252,6 +1315,11 @@ def main():
                           issue["url"] + " inspected_prs=" + prs +
                           " uninspected_pr_candidates=" + hinted +
                           " next=" + issue["operator_action"] +
+                          " local_claims=" +
+                          str((issue.get("local_claim_evidence") or {}).get("status", "UNKNOWN")) +
+                          "(active=" + str((issue.get("local_claim_evidence") or {}).get("active_local_leases_observed", "UNKNOWN")) +
+                          ";expired=" + str((issue.get("local_claim_evidence") or {}).get("expired_local_leases_observed", "UNKNOWN")) +
+                          ";owner_free=NOT_INFERABLE)" +
                           " readonly_command=" +
                           (issue["read_only_issue_command"] or "UNAVAILABLE"))
             for item in rows:
