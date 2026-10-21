@@ -1103,6 +1103,20 @@ def render_html(bundle):
             "<p><strong>Blokkade:</strong> " + e(card["blocker"]) + "<br>"
             "<strong>Menselijke vervolgstap:</strong> " +
             e(card["human_next_step"]) + "</p>",
+            "<p><strong>GitHub bron bekijken:</strong> " +
+            "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+            e(card["review_url"]) + "\">PR en reviews</a> · " +
+            "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+            e(card["checks_url"]) + "\">Huidige checks</a> · " +
+            "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+            e(files) + "\">Gewijzigde bestanden</a></p>",
+            ("<p><strong>Bij bronmoment aangevraagde reviews:</strong> " +
+             e(card["pending_review_requests"]["individuals"]) +
+             " personen, " +
+             e(card["pending_review_requests"]["teams"]) +
+             " teams. <strong>Een verzoek is géén approval.</strong></p>"
+             if card["pending_review_requests"] is not None else
+             "<p>Reviewverzoeken: onbekend (geen betrouwbare exact-HEAD bron).</p>"),
             "<p class=\"meta\">Categorie: " + e(card["category"]) +
             " · HEAD bij observatie: <code>" + e(card["head_sha"] or "ONBEKEND") +
             "</code><br>Doelbasis: <code>" + e(card["base_sha"] or "ONBEKEND") +
@@ -1318,6 +1332,13 @@ def render_markdown(bundle):
             "",
             "**Huidige blokkade:** " + card["blocker"],
             "**Eerstvolgende menselijke actie:** " + card["human_next_step"],
+            "**Open huidige GitHub-checks:** " + card["checks_url"],
+            "**Open PR/reviews:** " + card["review_url"],
+            "**Aangevraagde onafhankelijke reviews op bronmoment:** " +
+            (str(card["pending_review_requests"]["individuals"]) +
+             " personen, " + str(card["pending_review_requests"]["teams"]) +
+             " teams (geen approval)" if card["pending_review_requests"] is not None
+             else "ONBEKEND (geen exact-HEAD bron)"),
             "**Werkvolgorde volgens bronopname:** " + card["attention_label"] +
             " (geen merge-/claimtoestemming)",
             "**Categorie:** " + card["category"],
