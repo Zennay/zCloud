@@ -307,7 +307,16 @@ def render_html(bundle):
         "code{overflow-wrap:anywhere}.notice{border-left:5px solid #606b7b;"
         "padding:.7rem 1rem;background:#e9ecf0;margin:1rem 0}"
         ".warning{border-left-color:#a34c20;background:#fff0df}"
-        ".meta{color:#425063;font-size:.92rem}</style></head><body>",
+        ".meta{color:#425063;font-size:.92rem}"
+        "nav{border:1px solid #cbd2dc;border-radius:12px;padding:.8rem 1.2rem;"
+        "background:#fff;margin:1rem 0}nav ol{margin:.4rem 0;padding-left:1.6rem}"
+        ".tag{display:inline-block;padding:.1rem .45rem;border:1px solid #7a8594;"
+        "border-radius:.35rem;font-size:.85rem}"
+        "article:target{outline:3px solid #17529b;outline-offset:2px}"
+        "@media print{body{max-width:none;padding:0;background:white}"
+        "nav{display:none}article{break-inside:avoid;border-color:#777}"
+        "a{color:inherit;text-decoration:underline}}"
+        "</style></head><body>",
         "<header><h1>zSentinel · private PR-werkopdrachten</h1>",
         "<p class=\"meta\">Waargenomen (UTC): " + e(bundle["source_observed_at_utc"]) +
         " · SHA256: <code>" + e(bundle["source_digest_sha256"]) + "</code></p>",
@@ -322,14 +331,30 @@ def render_html(bundle):
     if bundle.get("selection_is_not_full_open_pr_backlog") is True:
         parts.append("<p class=\"notice warning\">ONVOLLEDIGE SELECTIE: "
                      "meer open PRs en bestandsbotsingen mogelijk.</p>")
+    if bundle["items"]:
+        parts.append("<nav aria-label=\"Inhoud PR-werkopdrachten\"><strong>"
+                     "Werkvolgorde · " + str(len(bundle["items"])) +
+                     " geselecteerde PRs (geen volledige repositorydekking)"
+                     "</strong><ol>")
+        for summary in bundle["items"]:
+            parts.append("<li><a href=\"#pr-" + e(summary["number"]) + "\">" +
+                         e(summary["project"]) + " · PR #" +
+                         e(summary["number"]) + "</a> — " +
+                         e(summary["category"]) + "</li>")
+        parts.append("</ol></nav><main>")
     for card in bundle["items"]:
         repo = card["repository"]
         url = _same_repo_url(card["url"], repo)
         files = url + "/files"
         parts += [
-            "<article><h2>" + e(card["project"]) + " · <a target=\"_blank\" "
+            "<article id=\"pr-" + e(card["number"]) + "\"><h2>" +
+            e(card["project"]) + " · <a target=\"_blank\" "
             "rel=\"noopener noreferrer\" href=\"" + e(url) + "\">PR #" +
             e(card["number"]) + "</a></h2>",
+            "<p><span class=\"tag\">" +
+            ("HISTORISCH of HEAD ONBEKEND" if not card["source_current"]
+             else "HEAD vastgepind bij recente bronopname") +
+            "</span> · rang " + e(card["rank"]) + "</p>",
             "<p><strong>Blokkade:</strong> " + e(card["blocker"]) + "<br>"
             "<strong>Menselijke vervolgstap:</strong> " +
             e(card["human_next_step"]) + "</p>",
@@ -356,6 +381,11 @@ def render_html(bundle):
                              "href=\"" + e(link) + "\">" + e(check["name"]) +
                              "</a> · " + e(check["state"]) + "</li>")
             parts.append("</ul>")
+        if card.get("check_links_hidden"):
+            parts.append("<p class=\"notice warning\">Nog " +
+                         e(card["check_links_hidden"]) +
+                         " niet-groene checkbronnen buiten deze preview; "
+                         "dit is geen volledige CI-inventaris.</p>")
         if card.get("related_prs"):
             parts.append("<h3>Gerelateerde bron-PRs (geen mergeconflictbewijs)</h3><ul>")
             for related in card["related_prs"]:
@@ -372,6 +402,21 @@ def render_html(bundle):
             parts.append("<p>Ongeverifieerde issuevermeldingen: " +
                          ", ".join("#" + str(n) for n in
                                    card["unverified_issue_hints"]) + "</p>")
+        if card.get("overlap_paths_hidden"):
+            parts.append("<p class=\"notice warning\">"
+                         "Niet alle mogelijke gedeelde bestandspaden zijn "
+                         "getoond. Geen conflictvrije conclusie.</p>")
+        parts.append("<details><summary>Controlepunten vóór eventuele merge"
+                     " (altijd handmatig)</summary><ol>"
+                     "<li>Herlees exacte HEAD en basis en controleer actieve "
+                     "claim/werkafspraak.</li>"
+                     "<li>Controleer alle werkelijk verplichte exact-HEAD "
+                     "CI-checks, niet alleen deze steekproef.</li>"
+                     "<li>Vereiste onafhankelijke review en beschermde branchregels "
+                     "moeten voldaan zijn.</li>"
+                     "<li>Bevoegde releaser beslist over merge/deploy; geen "
+                     "automatische acties vanuit dit dossier.</li>"
+                     "</ol></details>")
         if card.get("source_warnings"):
             parts.append("<h3>Bronwaarschuwingen</h3><ul>")
             for warning in card["source_warnings"]:
@@ -379,7 +424,9 @@ def render_html(bundle):
             parts.append("</ul>")
         parts.append("<p class=\"meta\">Geen claim, workflowherstart, merge of "
                      "deploy geautoriseerd.</p></article>")
-    if not bundle["items"]:
+    if bundle["items"]:
+        parts.append("</main>")
+    else:
         parts.append("<p>Geen geselecteerde brongebonden PR-werkopdrachten.</p>")
     parts.append("</body></html>\n")
     output = "".join(parts)
