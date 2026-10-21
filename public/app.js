@@ -2570,6 +2570,17 @@ function zSentinelDeliveryBoard(){
   const retryCovered=!!retry&&(!focus||retry.scope.project==='all'||retry.scope.project===focus);
   const retryOrders=retryOwnerWorkorders(retry,focus);
   const retryStale=retry&&Date.now()-Date.parse(retry.observedAt)>6*3600000;
+  const recoveryTrend=ZSENTINEL_RETRY_TREND;
+  const trendMatches=retry&&recoveryTrend&&retryTrendMatchesSnapshot(recoveryTrend,retry)
+    &&(!focus||recoveryTrend.scope.project==='all'||recoveryTrend.scope.project===focus);
+  const increasingRetryProjects=trendMatches?recoveryTrend.projects.filter(item=>
+    ids.has(item.project)&&(!focus||item.project===focus)&&item.delta>0)
+    .sort((a,b)=>b.delta-a.delta||a.project.localeCompare(b.project)):[];
+  const recoveryTrendText=trendMatches?
+    'Compared '+date(recoveryTrend.before,true)+' → '+date(recoveryTrend.after,true)+
+    ' · '+increasingRetryProjects.length+' project(s) with higher observed high-attempt counts.'+
+    ' This does not prove failures or improvements outside the source window.':
+    'No comparable same-scope retry trend; recovery progress UNKNOWN.';
   const retryRows=retryOrders.slice(0,5).map(row=>
     '<div class="service-row"><div><strong>'+esc(row.priority)+' · '+
       esc(row.project)+'</strong><br><small>Problem: '+esc(row.problem)+
@@ -2642,6 +2653,11 @@ function zSentinelDeliveryBoard(){
       (retry.complete?' · bounded sample complete':' · PARTIAL sampled rows'):
       'NO COVERAGE for the selected project'):'NOT OBSERVED')+
     '. Claim attempts are not failures and do not authorize worker/CI retry.</p>'+
+    '<p class="detail-note">'+esc(recoveryTrendText)+'</p>'+
+    (increasingRetryProjects.length?'<div class="service-list">'+increasingRetryProjects.slice(0,4).map(item=>
+      '<div class="service-row"><strong>'+esc(item.project)+'</strong>'+
+      '<small>Observed high-attempt items '+item.before+' → '+item.after+
+      ' (+'+item.delta+'); owner/cause unverified</small></div>').join('')+'</div>':'')+
     (retryRows?'<div class="service-list">'+retryRows+'</div>':
      '<p class="detail-note">No source-bound workorder for this project. '+
      'Use Read VPS queue in the separate queue retry panel below; absence is not recovery proof.</p>')+
