@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/zcloud-state-receipt-coverage-audit.yml
+      - tests/test_state_receipt_coverage_audit_workflow.py
     types: [opened, synchronize, reopened]
   workflow_dispatch:
 
@@ -12,37 +13,110 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-state-receipt-coverage-audit
-  cancel-in-progress: true
+  group: zcloud-state-receipt-coverage-audit-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'live' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  audit:
+  validate:
+    name: Validate receipt-audit trust contract
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.actor == 'Zennay' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 6
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check out exact pull-request head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+          clean: true
+          fetch-depth: 1
 
-      - name: Verify permanent zCloud VPS runner
+      - name: Run focused receipt-audit regression
         shell: bash
         run: |
-          set -euo pipefail
-          test "$(id -un)" = ubuntu
-          python3 scripts/zcloud_vps_runner_guard.py --json
+          set -Eeuo pipefail
+          python3 -m unittest tests/test_state_receipt_coverage_audit_workflow.py
+
+  prove:
+    name: Prove receipt-audit contract on permanent VPS
+    needs: validate
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      ZCLOUD_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.ZCLOUD_EXPECTED_SHA }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Enforce exact head and permanent runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$(git rev-parse HEAD)" = "$ZCLOUD_EXPECTED_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(id -u)" -ne 0
+
+      - name: Run focused receipt-audit regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m unittest tests/test_state_receipt_coverage_audit_workflow.py
+
+  audit:
+    name: Audit live receipt coverage read-only
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      ZCLOUD_EXPECTED_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out exact zCloud main revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.ZCLOUD_EXPECTED_SHA }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify permanent zCloud VPS runner and exact revision
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_NAME" = "main"
+          test "$(git rev-parse HEAD)" = "$ZCLOUD_EXPECTED_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          test "$(id -u)" -ne 0
 
       - name: Read receipt coverage directly from VPS source of truth
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           python3 - <<'PY'
           import json
           import sqlite3
+          import urllib.parse
           from pathlib import Path
 
           import project_runtime
@@ -50,6 +124,11 @@ jobs:
           runtime_root = Path("/home/ubuntu/zennay-cloud")
           projects_path = runtime_root / "projects.json"
           db_path = runtime_root / "history.db"
+
+          if projects_path.is_symlink() or not projects_path.is_file():
+              raise SystemExit("runtime-owned projects.json must be a regular file")
+          if db_path.is_symlink() or not db_path.is_file():
+              raise SystemExit("runtime-owned history.db must be a regular file")
 
           projects = json.loads(projects_path.read_text(encoding="utf-8"))
           if not isinstance(projects, list):
@@ -63,11 +142,13 @@ jobs:
           if not active:
               raise SystemExit("no active runtime projects found")
 
-          connection = sqlite3.connect(db_path, timeout=15)
+          before = db_path.stat()
+          db_uri = "file:" + urllib.parse.quote(str(db_path), safe="/") + "?mode=ro"
+          connection = sqlite3.connect(db_uri, uri=True, timeout=15)
           connection.row_factory = sqlite3.Row
+          connection.execute("PRAGMA query_only=ON")
           connection.execute("PRAGMA busy_timeout=15000")
           try:
-              project_runtime.init_tables(connection)
               coverage = project_runtime.receipt_coverage(
                   connection,
                   active,
@@ -76,6 +157,9 @@ jobs:
               latest = project_runtime.latest_receipts(connection)
           finally:
               connection.close()
+          after = db_path.stat()
+          if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+              raise SystemExit("history.db changed during read-only coverage audit")
 
           receipts = {}
           for project_id in active:
@@ -86,15 +170,14 @@ jobs:
               receipts[project_id] = {
                   "id": receipt.get("id"),
                   "ci_status": receipt.get("ci_status"),
-                  "source": receipt.get("source"),
-                  "phase": receipt.get("phase"),
-                  "next_gate": receipt.get("next_gate"),
                   "observed_at": receipt.get("observed_at"),
               }
 
           payload = {
+              "active_project_count": len(active),
               "coverage": coverage,
               "receipts": receipts,
+              "db_immutable": True,
           }
           print(
               "ZCLOUD_RECEIPT_COVERAGE_AUDIT="
