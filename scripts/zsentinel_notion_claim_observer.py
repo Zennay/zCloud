@@ -103,6 +103,7 @@ def observe_claims(data_source_id, token, known_projects=None):
     rows = []
     seen_pages = set()
     incomplete = False
+    status_source_windows = []
     opener = urllib.request.build_opener(NoRedirect())
     # Reserve separate bounded Notion source windows. A large historic
     # Verifying backlog must not crowd out fresh Claimed/Running rows.
@@ -113,6 +114,9 @@ def observe_claims(data_source_id, token, known_projects=None):
     for requested_status, page_budget in status_windows:
         cursor = None
         seen_cursors = set()
+        status_pages = 0
+        status_matched = 0
+        status_partial = False
         for index in range(page_budget):
             payload = {
                 "page_size": PAGE_SIZE,
@@ -150,6 +154,7 @@ def observe_claims(data_source_id, token, known_projects=None):
             if (not isinstance(data, dict) or not isinstance(data.get("results"), list)
                     or len(data["results"]) > PAGE_SIZE):
                 raise ValueError("Invalid Notion claim page")
+            status_pages += 1
             for page in data["results"]:
                 if not isinstance(page, dict) or not isinstance(page.get("properties"), dict):
                     raise ValueError("Malformed Notion claim record")
@@ -172,7 +177,9 @@ def observe_claims(data_source_id, token, known_projects=None):
                     # An item changed state between Notion's filter and
                     # delivery. This window cannot claim completeness.
                     incomplete = True
+                    status_partial = True
                     continue
+                status_matched += 1
                 title = _text(props.get("Work item")) or "Onbenoemd actief werk"
                 number = _work_number(props.get("Work ID"))
                 rows.append({
@@ -192,6 +199,16 @@ def observe_claims(data_source_id, token, known_projects=None):
             seen_cursors.add(cursor)
             if index == page_budget - 1:
                 incomplete = True
+                status_partial = True
+        status_source_windows.append({
+            "status": requested_status,
+            "pages_read": status_pages,
+            "page_budget": page_budget,
+            "observed_rows": status_matched,
+            "coverage": "partial" if status_partial else "complete_within_source",
+            "read_only": True,
+            "claim_scope_verified": False,
+        })
     rows.sort(key=lambda row: (row["status"], row["work"]))
     counts, verifying_counts = {}, {}
     for row in rows:
@@ -210,6 +227,8 @@ def observe_claims(data_source_id, token, known_projects=None):
         "active_project_counts": dict(sorted(counts.items())),
         "verifying_project_counts": dict(sorted(verifying_counts.items())),
         "verifying_count": sum(verifying_counts.values()),
+        "status_source_windows": status_source_windows,
+        "total_pages_read": sum(row["pages_read"] for row in status_source_windows),
         "items": rows[:30],
         "items_truncated": len(rows) > 30,
         "claim_scope_verified": False,
