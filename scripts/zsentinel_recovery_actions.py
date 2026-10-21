@@ -305,7 +305,7 @@ def suggested_actions(packet):
             return 0
         if item["severity"] == "urgent":
             return 1
-        if identifier.startswith("p0-project-"):
+        if identifier.startswith(("p0-project-", "p1-project-")):
             return 2
         if item["severity"] == "review":
             return 3
