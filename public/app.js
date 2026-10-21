@@ -985,30 +985,49 @@ async function publicGitHubGET(repository,suffix){
   return JSON.parse(raw);
 }
 function fairPublicGitHubHistory(rows,coverage,limit=200){
-  // A globally timestamp-sorted 200-item cap lets active repositories crowd
-  // out quiet projects. Reserve one round-robin slot per covered project
-  // before sorting the retained events by their actual source timestamps.
+  // This is a bounded *view*, not an archive. Page 5 should not disappear
+  // merely because pages 1–4 contain 200 noisy PR updates or CI events.
+  // Share the budget across both canonical projects and explicitly loaded
+  // browser pages, then across PR, Actions and main-source categories.
   const ids=[...new Set((coverage||[]).map(row=>row.project))]
     .filter(id=>typeof id==='string').slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
-  const grouped=new Map(ids.map(id=>[id,[]]));
-  const seen=new Set();
+  const admitted=new Set(ids),groups=new Map(),seen=new Set();
   for(const row of rows||[]){
-    if(!row||!grouped.has(row.project)||typeof row.url!=='string'||typeof row.kind!=='string')continue;
+    if(!row||!admitted.has(row.project)||typeof row.url!=='string'||
+        typeof row.kind!=='string')continue;
     const key=row.project+'|'+row.kind+'|'+row.url;
     if(seen.has(key))continue;
-    seen.add(key);
     const ts=Date.parse(row.ts||'');
-    if(!Number.isFinite(ts)||ts>Date.now()+120000)continue;
-    grouped.get(row.project).push(row);
+    if(!Number.isFinite(ts)||ts>Date.now()+120000||ts<0)continue;
+    seen.add(key);
+    // Page 0 holds operator/VPS/legacy evidence, never assigned a fictitious
+    // public page. A new bounded browser page is 1..5; nothing is fetched here.
+    const page=Number.isInteger(row.sourcePage)&&row.sourcePage>=1&&row.sourcePage<=5
+      ?row.sourcePage:0;
+    const groupKey=row.project+':'+page;
+    if(!groups.has(groupKey))groups.set(groupKey,{project:row.project,page,
+      pr:[],ci:[],main:[],cursor:{pr:0,ci:0,main:0}});
+    const category=row.kind==='ci_run'?'ci':row.kind==='main_commit'?'main':'pr';
+    groups.get(groupKey)[category].push(row);
   }
-  for(const group of grouped.values())group.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts));
-  const result=[],offsets=new Map(ids.map(id=>[id,0]));
+  const ordered=[...groups.values()].sort((a,b)=>
+    ids.indexOf(a.project)-ids.indexOf(b.project)||a.page-b.page);
+  for(const group of ordered)
+    for(const category of ['pr','ci','main'])
+      group[category].sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts));
+  const result=[];
   while(result.length<limit){
     let progressed=false;
-    for(const id of ids){
-      if(result.length===limit)break;
-      const group=grouped.get(id),index=offsets.get(id);
-      if(index<group.length){result.push(group[index]);offsets.set(id,index+1);progressed=true;}
+    for(const group of ordered){
+      for(const category of ['pr','ci','main']){
+        const index=group.cursor[category];
+        if(index>=group[category].length)continue;
+        result.push(group[category][index]);
+        group.cursor[category]=index+1;
+        progressed=true;
+        if(result.length>=limit)break;
+      }
+      if(result.length>=limit)break;
     }
     if(!progressed)break;
   }
