@@ -438,18 +438,19 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         "current_issue_status_verified": False,
         "current_issue_pr_link_verified": False,
     }
-    source_url = issue["source_urls"][0]
+    # Validate source identity before indexing any untrusted saved
+    # recovery-case fields. Malformed input must fail as GitHubReadError.
+    source_urls = issue.get("source_urls")
+    if not isinstance(source_urls, list) or not source_urls:
+        raise GitHubReadError("issue has no canonical source URL")
+    source_url = source_urls[0]
+    if not isinstance(source_url, str) or ISSUE_URL.fullmatch(source_url) is None:
+        raise GitHubReadError("issue source URL is not canonical")
     historical_candidates = len(candidates)
     saved_candidates = candidates[:]
     # Saved URLs may later be shown as navigation-only links during a
     # focused review. Validate all of them, not just the live-read subset.
-    source_urls = issue.get("source_urls")
-    if not isinstance(source_urls, list) or not source_urls:
-        raise GitHubReadError("issue has no canonical source URL")
-    current_issue_match = ISSUE_URL.fullmatch(source_urls[0])
-    if current_issue_match is None:
-        raise GitHubReadError("issue source URL is not canonical")
-    issue_repo_url = source_urls[0].split("/issues/", 1)[0]
+    issue_repo_url = source_url.split("/issues/", 1)[0]
     for row in saved_candidates:
         if not isinstance(row, dict):
             raise GitHubReadError("historical PR candidate must be an object")
