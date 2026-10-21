@@ -345,6 +345,19 @@ def overlaps(wanted, changed):
             or target.startswith(changed + "/"))
 
 
+def overlap_relation(wanted, changed):
+    """Explain the exact relationship for a path pair already known to overlap."""
+    target = wanted.rstrip("/")
+    if changed == target:
+        return ("same_path_file_directory_conflict" if wanted.endswith("/")
+                else "exact_path")
+    if wanted.endswith("/") and changed.startswith(wanted):
+        return "target_directory_contains_changed_file"
+    if changed.startswith(target + "/"):
+        return "target_file_conflicts_with_descendant_path"
+    if target.startswith(changed + "/"):
+        return "changed_file_is_ancestor_of_target"
+    raise ValueError("path pair does not overlap")
 def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
             expanded_source_files=False, open_page=1, page_count=1):
     if (not REPO.fullmatch(repo) or not isinstance(wanted, list)
@@ -391,6 +404,10 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
                 hits.append({"path": candidate, "pr_number": pr["number"],
                              "pr_url": pr["url"], "observed_head_sha": pr["head_sha"],
                              "observed_base_sha": pr["base_sha"], "matching_files": matches[:32],
+                             "matching_path_relations": [
+                                 {"requested_path": candidate, "changed_path": changed,
+                                  "relation": overlap_relation(candidate, changed)}
+                                 for changed in matches[:32]],
                              "matches_truncated": len(matches) > 32})
     snapshots_after = [open_prs(repo, token, page_size, page=p) for p in page_numbers]
     snapshot_stable = not duplicate_numbers and snapshots_before == snapshots_after
@@ -491,9 +508,13 @@ def operator_text(report):
             str(src["expanded_source_file_pages_requested"]) + ".")
     if report["observed_overlaps"]:
         for hit in report["observed_overlaps"]:
+            relations = "; ".join(
+                item["changed_path"] + " [" + item["relation"] + "]"
+                for item in hit["matching_path_relations"])
             lines.append("OVERLAP " + hit["path"] + " | PR #" +
                          str(hit["pr_number"]) + " | " + hit["pr_url"] +
-                         " | " + ", ".join(hit["matching_files"]))
+                         " | " + ", ".join(hit["matching_files"]) +
+                         " | relatie: " + relations)
     else:
         lines.append("Geen overlap in de gelezen steekproef; dit is GEEN vrijgave.")
     if not report["open_pr_snapshot_stable"]:
@@ -518,10 +539,15 @@ def html_view(report):
         for row in report["open_pr_page_receipts"])
     for hit in report["observed_overlaps"]:
         link = escape(hit["pr_url"], quote=True)
+        relations = "; ".join(
+            item["changed_path"] + " [" + item["relation"] + "]"
+            for item in hit["matching_path_relations"])
         rows.append("<tr><td>" + escape(hit["path"]) +
                     "</td><td><a rel='noreferrer noopener' href='" + link +
                     "'>PR #" + str(hit["pr_number"]) + "</a></td><td>" +
-                    escape(", ".join(hit["matching_files"])) + "</td></tr>")
+                    escape(", ".join(hit["matching_files"])) +
+                    "<br><small>Relatie: " + escape(relations) +
+                    "</small></td></tr>")
     if not rows:
         rows.append("<tr><td colspan='3'>Geen botsing waargenomen in gelezen steekproef; geen vrijgave.</td></tr>")
     coverage = "Volledige huidige open-PR steekproef" if report["pr_file_scope_sample_complete"] else "Onvolledige bron: controleer overige PR's"
@@ -1240,9 +1266,13 @@ def as_markdown(report):
     if not report["observed_overlaps"]:
         lines.append("Geen overeenkomende paden gezien; dit is GEEN vrijgave.")
     for hit in report["observed_overlaps"]:
+        relations = "; ".join(
+            item["changed_path"] + " [" + item["relation"] + "]"
+            for item in hit["matching_path_relations"])
         lines.append("- [PR #" + str(hit["pr_number"]) + "](" + hit["pr_url"] +
                      ") raakt `" + hit["path"].replace("`", "\\`") +
                      "`; gevonden bestanden: " + str(len(hit["matching_files"])) +
+                     "; relatie: " + relations +
                      (" (gedeeltelijke weergave)" if hit["matches_truncated"] else ""))
     lines.extend([
         "",
