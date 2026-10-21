@@ -59,7 +59,7 @@ def _timeline_last_page(link_header, requested_path):
     expected_path = requested_path.partition("?")[0]
     for part in link_header.split(","):
         match = re.fullmatch(
-            r'\\s*<([^<>]{1,1000})>\\s*;\\s*rel=["\\\']?last["\\\']?\\s*',
+            r'\s*<([^<>]{1,1000})>\s*;\s*rel="last"\s*',
             part,
         )
         if not match:
