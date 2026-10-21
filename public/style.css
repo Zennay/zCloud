@@ -71,4 +71,21 @@
 .attention-copy strong{display:block;color:#ece7dc;font-size:13px;line-height:1.45}.attention-copy p{margin:4px 0 0;color:#948b7e;font-size:11px;line-height:1.5}
 .attention-links{margin-top:6px}.attention-links a,.attention-notion{color:#d6b46f;font-size:11px}.attention-item button{flex:0 0 auto;border:1px solid #50614e;background:#1a261b;color:#bde0bd;border-radius:8px;padding:8px 11px;font-size:11px}
 .attention-notion{display:inline-block;margin-top:13px}.detail-summary+.attention-panel{margin-top:-7px}
-@media(max-width:760px){.attention-panel{padding:16px;margin-bottom:18px}.attention-head h2{font-size:17px}.attention-item{align-items:flex-start;flex-direction:column}.attention-item button{width:100%;min-height:40px}.attention-count{min-width:32px;height:32px}}
+ 
+/* Dependency holds are preserved queue work, separate from terminal drops and human gates. */
+.blocked-queue-panel{border:1px solid #4b465b;background:linear-gradient(180deg,#1d1a28,#15141b);border-radius:13px;padding:18px 20px;margin:0 0 22px}
+.blocked-queue-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.blocked-queue-head h2{font-size:18px;margin:3px 0}
+.blocked-queue-head p,.blocked-queue-state{color:#aaa3ba;font-size:12px;line-height:1.55;margin:0}
+.blocked-queue-count{min-width:34px;height:34px;padding:0 10px;border-radius:999px;display:grid;place-items:center;background:#292438;border:1px solid #5a5273;color:#d7c9ff;font-weight:700}
+.blocked-queue-list{display:grid;gap:9px;margin-top:15px}
+.blocked-queue-item{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:13px 14px;border:1px solid #3c3749;border-radius:10px;background:#121118}
+.blocked-queue-copy{min-width:0}.blocked-queue-meta{display:flex;align-items:center;gap:8px;color:#c7bddf;font-size:10px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px}
+.blocked-queue-meta b{border:1px solid #5a5273;border-radius:999px;padding:2px 7px;font-size:10px}
+.blocked-queue-copy>strong{display:block;color:#eee9fa;font-size:13px;line-height:1.45}
+.blocked-queue-copy p{margin:5px 0;color:#aaa3ba;font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+.blocked-queue-copy small{display:block;color:#817a91;font-size:10px;line-height:1.45}
+.blocked-queue-item button{flex:0 0 auto;border:1px solid #5a5273;background:#252033;color:#e0d5ff;border-radius:8px;padding:8px 11px;font-size:11px}
+.blocked-queue-state{margin-top:14px}
+
+@media(max-width:760px){.attention-panel,.blocked-queue-panel{padding:16px;margin-bottom:18px}.attention-head h2,.blocked-queue-head h2{font-size:17px}.attention-item,.blocked-queue-item{align-items:flex-start;flex-direction:column}.attention-item button,.blocked-queue-item button{width:100%;min-height:40px}.attention-count,.blocked-queue-count{min-width:32px;height:32px}}
