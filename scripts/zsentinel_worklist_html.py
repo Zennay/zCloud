@@ -254,7 +254,7 @@ def render_html(board, max_rows=20):
             for candidate in candidates
         )
         collisions.append(
-            "<li class='collision' data-project='" + escape(card["project"], quote=True) +
+            "<li class='collision' tabindex='-1' data-project='" + escape(card["project"], quote=True) +
             "' data-issue='" + escape(card["issue_url"], quote=True) +
             "' data-title='" + escape(card["title"], quote=True) +
             "' data-priority='" + escape(card["priority"], quote=True) +
@@ -443,6 +443,9 @@ const focusExport=document.getElementById('focus-export');
 const collisionOnly=document.getElementById('collision-only');
 const collisionRows=Array.from(document.querySelectorAll('li.collision[data-issue]'));
 const collisionVisible=document.getElementById('collision-visible');
+const collisionStateFilter=document.getElementById('collision-state-filter');
+const collisionNext=document.getElementById('collision-next');
+let collisionIndex=-1;
 const collisionLabels={
  unreviewed:'Nog niet beoordeeld',
  owner:'Eigenaar bepalen',
@@ -513,11 +516,17 @@ function refresh(){
     (!q||source.includes(q))&&
     (!priority.value||priority.value===c.dataset.priority)&&
     (!project.value||project.value===c.dataset.project)&&
+    (!collisionStateFilter.value||collisionStateFilter.value===c.querySelector('.collision-state').value)&&
     (!activity.value||(activity.value==='unknown'?['source_clock_incoherent','activity_timestamp_unknown'].includes(c.dataset.activity):activity.value===c.dataset.activity));
   c.hidden=!show;if(show)collisionsShown++;
  }
+ const unattended=collisionRows.filter(c=>c.querySelector('.collision-state').value==='unreviewed').length;
+ const completed=collisionRows.filter(c=>c.querySelector('.collision-state').value==='followup').length;
+ const actionable=collisionRows.filter(c=>!c.hidden&&c.querySelector('.collision-state').value!=='followup').length;
  collisionVisible.textContent=collisionsShown+' van '+collisionRows.length+
-  ' issues met meerdere PRs in de beperkte bron zichtbaar';
+  ' meervoudige PR-bronissues zichtbaar · '+unattended+' nog niet beoordeeld · '+
+  completed+' met lokale opvolging (niet opgelost) · '+actionable+' zichtbare vervolgacties';
+ collisionNext.disabled=actionable===0;
  visible.textContent=count+' van '+tickets.length+' issuekaarten en '+
    prCount+' van '+prs.length+' bestaande PR-groepen zichtbaar';
  focusBar.hidden=!focusedPr;
@@ -559,12 +568,19 @@ focusNext.addEventListener('click',()=>{
  open[focusIndex].scrollIntoView({block:'start'});
  open[focusIndex].focus();
 });
-for(const c of [search,priority,project,activity,state,prState,collisionOnly])c.addEventListener('input',refresh);
+collisionNext.addEventListener('click',()=>{
+ const active=collisionRows.filter(c=>!c.hidden&&c.querySelector('.collision-state').value!=='followup');
+ if(!active.length)return;
+ collisionIndex=(collisionIndex+1)%active.length;
+ active[collisionIndex].scrollIntoView({block:'start'});
+ active[collisionIndex].focus();
+});
+for(const c of [search,priority,project,activity,state,prState,collisionOnly,collisionStateFilter])c.addEventListener('input',refresh);
 for(const t of tickets)t.querySelector('.local-state').addEventListener('change',refresh);
 for(const p of prs)p.querySelector('.pr-local-state').addEventListener('change',refresh);
 for(const c of collisionRows)c.querySelector('.collision-state').addEventListener('change',refresh);
 document.getElementById('reset').addEventListener('click',function(){
- focusedPr=null;focusIndex=-1;collisionOnly.checked=false;search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';refresh();
+ focusedPr=null;focusIndex=-1;collisionIndex=-1;collisionOnly.checked=false;collisionStateFilter.value='';search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';refresh();
 });
 function safeText(value){
  return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#\x60~])/g,'\\$1').slice(0,720);
@@ -930,6 +946,7 @@ refresh();
         ".pr-work{padding:12px;border-bottom:1px solid #526a83}"
         ".pr-work[hidden],.focus-bar[hidden],.collision[hidden]{display:none}"
         ".collision{border-bottom:1px solid #526a83;padding:14px 4px}"
+        ".collision:focus{outline:3px solid #f0c976;scroll-margin:90px}"
         ".collision ul{padding-left:26px}.collision li{margin:9px 0}"
         ".collision-controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
         "gap:12px;padding:12px 0}.collision-note{width:100%;box-sizing:border-box}"
@@ -979,6 +996,12 @@ refresh();
         "<option value='owner'>Wacht op huidige eigenaar</option>"
         "<option value='coordinate'>Afstemming tussen PRs nodig</option>"
         "<option value='followup'>Opvolging vastgelegd</option></select></label>"
+        "<label>Botsingsopvolging<select id='collision-state-filter'>"
+        "<option value=''>Alle botsingsstatussen</option>"
+        "<option value='unreviewed'>Nog niet beoordeeld</option>"
+        "<option value='owner'>Eigenaar bepalen</option>"
+        "<option value='coordinate'>Afstemmen met PR-eigenaren</option>"
+        "<option value='followup'>Opvolging vastgelegd (niet opgelost)</option></select></label>"
         "<button id='reset' type='button'>Wis filters</button>"
         "<button id='collision-export' type='button'>Download PR-botsingsdossier (Markdown)</button>"
         "<button id='export' type='button'>Download privéoverdracht (Markdown)</button>"
@@ -987,6 +1010,7 @@ refresh();
         "accept='.json,application/json'></label></div>"
         "<p id='visible' aria-live='polite'></p>"
         "<p id='collision-visible' aria-live='polite'></p>"
+        "<button id='collision-next' type='button'>Volgende open botsingsopvolging</button>"
         "<p id='session-status' aria-live='polite'></p>"
         "<p id='unsaved' role='status' aria-live='polite'></p>"
         "<div id='focus-bar' class='focus-bar' role='status' hidden>"
