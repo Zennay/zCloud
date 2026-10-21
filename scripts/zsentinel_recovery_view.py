@@ -370,6 +370,38 @@ def html_view(decision, registry=None):
     coverage = (source.get("github_coverage") if isinstance(source, dict)
                 else "not refreshed")
     coverage = phrase(coverage, 60)
+    # GitHub admission is an operator-owned access/budget incident, not a
+    # claim that the VPS listener, product job or billing account failed.
+    # Saved operator snapshots are untrusted; only fixed denial categories
+    # and bounded nonnegative request counts may enter the rendered UI.
+    github_access_panel = ""
+    if isinstance(source, dict):
+        denial = source.get("provider_admission_denial")
+        if denial not in (None, "authentication_required", "rate_limit_confirmed"):
+            raise ValueError("untrusted GitHub provider admission evidence")
+        attempted = source.get("requests_attempted_actual")
+        skipped = source.get("skipped_due_to_provider_denial")
+        if attempted is not None or skipped is not None:
+            if (type(attempted) is not int or not 0 <= attempted <= 16
+                    or type(skipped) is not int or not 0 <= skipped <= 8):
+                raise ValueError("untrusted GitHub refresh budget evidence")
+        if denial is not None:
+            instruction = (
+                "GitHub-authenticatie geweigerd: een bevoegde eigenaar moet "
+                "de tokeninstellingen herstellen; geen automatische retry."
+                if denial == "authentication_required" else
+                "GitHub API-verzoekbudget uitgeput: later opnieuw lezen na "
+                "providerherstel; geen Actions-rerun of betaalde runner starten."
+            )
+            github_access_panel = (
+                '<section aria-label="GitHub toegang">'
+                '<h2>GitHub-bron deels niet beschikbaar</h2><p>' +
+                phrase(instruction, 240) +
+                ' Gemeten GET-verzoeken: ' + str(attempted) +
+                '; niet opnieuw bevraagde jobs: ' + str(skipped) +
+                '. Alle eerdere resultaten zonder verse bron blijven ONBEKEND.'
+                '</p></section>'
+            )
     claims = decision.get("claim_inventory_complete") is True
     source_issues = phrase(triage.get("coverage"), 40)
     live = decision.get("live_sources")
@@ -1366,6 +1398,7 @@ def html_view(decision, registry=None):
             + ('<p class="muted">Historische lijst afgekapt tot 30 items; overige incidenten blijven '
                'onopgelost in het privéledger.</p>' if historic["truncated"] else "")
             + '</section>'
+            + github_access_panel
             + discovery_panel
             + runner_route_panel
             + f'<section><h2>Open productissues · P0/P1 eerst, daarna P2 en zonder label ({len(triage["issues"])})</h2>'
