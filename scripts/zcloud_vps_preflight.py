@@ -480,12 +480,6 @@ def required_evidence_for(code: str) -> list[str]:
     return list(evidence[:4])
 
 
-def action_with_evidence(action: str, code: str) -> str:
-    """Keep every existing renderer actionable while preserving the 3-line brief."""
-    evidence = required_evidence_for(code)
-    return action + " Required evidence: " + "; ".join(evidence)
-
-
 def operator_handoff(report: dict) -> list[dict[str, object]]:
     """Bounded, source-derived problem/action/status cards; always advisory.
 
@@ -508,10 +502,9 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
             "owner": "VPS resource / serialized release owner",
             "problem": "A prior snapshot cannot establish current recovery when its "
                        "boot/checkout source differs, is unknown, or is too old.",
-            "action": action_with_evidence(
-                "Obtain a new same-boot read-only source observation with the "
-                "responsible owner. Preserve prior evidence; do not infer "
-                "service recovery or authorize a release.", "BASELINE_SCOPE_REVIEW"),
+            "action": ("Obtain a new same-boot read-only source observation with the "
+                       "responsible owner. Preserve prior evidence; do not infer "
+                       "service recovery or authorize a release."),
             "required_evidence": required_evidence_for("BASELINE_SCOPE_REVIEW"),
             "status": "recovery_unverified",
             "trend": comparison.get("snapshot_freshness", "source_unverified"),
@@ -540,7 +533,7 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
             "code": recommendation["code"],
             "owner": recommendation["owner"],
             "problem": recommendation["reason"],
-            "action": action_with_evidence(recommendation["next_action"], recommendation["code"]),
+            "action": recommendation["next_action"],
             "required_evidence": required_evidence_for(recommendation["code"]),
             "status": status,
             "trend": trend,
@@ -558,9 +551,8 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
             "code": family_name + "_RECOVERY_UNVERIFIED",
             "owner": "Original incident owner / serialized release owner",
             "problem": "Prior source blocker has not been independently re-observed or resolved.",
-            "action": action_with_evidence(
-                "Repeat the same permitted read-only source observation and obtain original owner evidence; do not change services, queues or release state.",
-                family_name),
+            "action": ("Repeat the same permitted read-only source observation and obtain "
+                       "original owner evidence; do not change services, queues or release state."),
             "required_evidence": required_evidence_for(family_name),
             "status": "recovery_unverified",
             "trend": "source_missing_or_not_authoritative",
@@ -577,9 +569,8 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
             "code": "UNMAPPED_RECOVERY_UNVERIFIED",
             "owner": "Serialized release owner / original issue owner",
             "problem": "Previously observed source findings lack verified recovery evidence or an existing specialized owner route.",
-            "action": action_with_evidence(
-                "Inspect the original finding with its accountable owner and reproduce only the permitted read-only observation. Do not infer safe release.",
-                "UNMAPPED_RECOVERY_UNVERIFIED"),
+            "action": ("Inspect the original finding with its accountable owner and reproduce "
+                       "only the permitted read-only observation. Do not infer safe release."),
             "required_evidence": required_evidence_for("UNMAPPED_RECOVERY_UNVERIFIED"),
             "status": "recovery_unverified",
             "trend": "source_missing_or_unmapped",
@@ -1050,6 +1041,8 @@ def render_html(report: dict) -> str:
             esc(card["problem"]) + '</p>'
             '<p><strong>Action (' + esc(card["owner"]) + '):</strong> ' +
             esc(card["action"]) + '</p>'
+            '<p><strong>Required evidence:</strong> ' +
+            esc("; ".join(card.get("required_evidence", [])) or "Not specified") + '</p>'
             '<p><strong>Status:</strong> ' + esc(card["status"]) +
             ' · ' + esc(card["trend"]) + ' · ' +
             esc(", ".join(card["finding_codes"]) or "external owner gates") + '</p>'
@@ -1441,6 +1434,7 @@ def render_report_to_stdout(report: dict, args: argparse.Namespace) -> None:
         for card in report["owner_handoff"]:
             print("Problem [" + card["code"] + "]: " + card["problem"])
             print("Action [" + card["owner"] + "]: " + card["action"])
+            print("Required evidence: " + "; ".join(card.get("required_evidence", [])))
             print("Status: " + card["status"] + " · " + card["trend"] +
                   " · " + (", ".join(card["finding_codes"]) or "external gates"))
     else:
