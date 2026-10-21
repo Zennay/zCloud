@@ -6,6 +6,9 @@ queue, worker lease, incident source, merge state or deployment.
 """
 from __future__ import annotations
 
+import csv
+import io
+import re
 from datetime import datetime, timedelta, timezone
 from html import escape
 
@@ -14,6 +17,7 @@ from zsentinel_route_continuity import _decision, _index, _queue_origin, PRIORIT
 SCHEMA = "zsentinel-routing-history-v1"
 MAX_WINDOWS = 8
 MAX_VISIBLE = 48
+IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 ACTIONS = {
     "route_changed": "Controleer de huidige eigenaar, lease, PR en vereiste uitvoeringsgates.",
     "appeared_in_later_sample": "Controleer oorspronkelijke taak en claims; nieuw in de steekproef is niet nieuw werk.",
@@ -152,7 +156,57 @@ def _admit(report):
             or type(report.get("visible_events")) is not list
             or len(report["visible_events"]) > MAX_VISIBLE):
         raise ValueError("untrusted routing history owner report")
+    for event in report["visible_events"]:
+        if (type(event) is not dict
+                or event.get("kind") not in KINDS
+                or event.get("priority") not in PRIORITY
+                or type(event.get("project_id")) is not str
+                or not IDENT.fullmatch(event["project_id"])
+                or type(event.get("task_id")) is not str
+                or not IDENT.fullmatch(event["task_id"])
+                or event.get("next_owner_action") != ACTIONS[event["kind"]]
+                or event.get("claim_authorized") is not False
+                or event.get("dispatch_authorized") is not False
+                or type(event.get("window_before")) is not int
+                or type(event.get("window_after")) is not int
+                or not 1 <= event["window_before"] < event["window_after"] <= report["window_count"]):
+            raise ValueError("invalid or authorizing history owner event")
     return report
+
+
+def owner_csv(report):
+    """Portable, historical-only owner triage across all inspected windows."""
+    source = _admit(report)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow([
+        "source_status", "observed_after_utc", "window_before", "window_after",
+        "priority", "project_id", "task_id", "observation",
+        "previous_route", "next_route", "owner_next_step",
+        "owner_claim_verified", "claim_authorized", "dispatch_authorized",
+        "merge_authorized", "task_recovered_verified",
+    ])
+    if source["coverage"] not in ("historical_sampled_series",
+                                  "current_sampled_series"):
+        writer.writerow([source["coverage"], "", "", "", "", "", "", "UNKNOWN",
+                         "", "", "Original sources must be rechecked; no action authorized.",
+                         "false", "false", "false", "false", "false"])
+        return output.getvalue()
+    for event in source["visible_events"]:
+        writer.writerow([
+            source["coverage"], event["source_after_utc"],
+            event["window_before"], event["window_after"],
+            event["priority"], event["project_id"], event["task_id"],
+            event["kind"], event["before_reason"] or "",
+            event["after_reason"] or "", event["next_owner_action"],
+            "false", "false", "false", "false", "false",
+        ])
+    if source["events_truncated"]:
+        writer.writerow([source["coverage"], "", "", "", "", "", "",
+                         "SAMPLE_TRUNCATED_UNKNOWN", "", "",
+                         "More events omitted; no source or queue all-clear.",
+                         "false", "false", "false", "false", "false"])
+    return output.getvalue()
 
 
 def owner_text(report):
