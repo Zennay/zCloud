@@ -49,7 +49,13 @@ production writer from cancelling an in-flight deployment.
    decision is a bounded point-in-time observation, **not** a lock or
    replacement for actual owner approval. The old flow could already replace
    live addon bytes before doing its first idle check. Worker sessions and
-   tabs are not forcibly restarted.
+   tabs are not forcibly restarted. Denied admission has a fixed non-sensitive operator
+   category (`BUSY`, `CHANGED`, `SOURCE_UNAVAILABLE`,
+   `SOURCE_UNVERIFIABLE` or `MALFORMED_SOURCE`), without printing worker
+   identities, telemetry payloads or local paths. On 21 October a bounded
+   read-only observation of the existing local `/api/runner-live` route
+   timed out after seven seconds: no live-idle proof exists for that instant,
+   and source health must be resolved separately before an approved install.
 5. All three VPS checkout steps rely on the canonical GitHub workflow-event
    SHA selected by the pinned `actions/checkout`. Explicit `ref` expression
    overrides in these privileged jobs were removed because they were rejected
