@@ -30,7 +30,7 @@ from lane_generator import (
     recovery_scope_diagnostic,
 )
 from scripts.zsentinel_recovery_actions import suggested_actions
-from scripts.zsentinel_runner_presence import observe_local_runners, text_report
+from scripts.zsentinel_runner_presence import observe_local_runners, next_step_for, text_report
 from scripts.zsentinel_host_pressure import observe_host_pressure, pressure_sentence
 
 LANE_NAMES = {
@@ -1086,12 +1086,13 @@ def html_view(data):
             "<tr><th scope='row'>" + html.escape(name) + "</th>"
             "<td>" + str(item["listeners"]) + "</td><td>"
             + str(item["workers"]) + "</td><td>"
-            + html.escape(item["local_observation"]) + "</td></tr>"
+            + html.escape(item["local_observation"]) + "</td><td>"
+            + html.escape(item.get("recommended_next_step") or next_step_for(item["local_observation"])) + "</td></tr>"
             for name, item in sorted(proc["families"].items())
             if item["listeners"] or item["workers"]
         )
         if not families:
-            families = "<tr><td colspan='4'>Geen herkenbare processen. Geen uitvalbewijs.</td></tr>"
+            families = "<tr><td colspan='5'>Geen herkenbare processen. Geen uitvalbewijs.</td></tr>"
         incomplete = (
             "<p class='warn'>Procesbron onvolledig: ontbrekende processen niet bewezen.</p>"
             if not proc["source_complete"] else ""
@@ -1101,7 +1102,7 @@ def html_view(data):
             "<p>Een listenerproces betekent niet dat GitHub een job toewijst, "
             "dat runnerlabels kloppen of dat CI geslaagd is.</p>"
             "<div class='scroll'><table><thead><tr>"
-            "<th>Runner</th><th>Listener</th><th>Worker</th><th>Waarneming</th>"
+            "<th>Runner</th><th>Listener</th><th>Worker</th><th>Waarneming</th><th>Veilige vervolgstap</th>"
             "</tr></thead><tbody>" + families + "</tbody></table></div>"
             + incomplete + "</section>"
         )

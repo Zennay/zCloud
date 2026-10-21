@@ -11,6 +11,37 @@ from pathlib import Path
 import os
 
 MAX_PROC_ENTRIES = 20000
+
+NEXT_STEPS = {
+    "PROCESS_ARGV0_SEEN_NOT_VERIFIED": (
+        "Verifieer executable-metadata en GitHub job/runner-bewijs met de eigenaar; "
+        "herstart niet op basis van argv0 alleen."
+    ),
+    "EXECUTABLE_VERIFIED": (
+        "Koppel het proces aan GitHub-registratie en job-ID; aanwezigheid bewijst "
+        "geen online status of CI-succes."
+    ),
+    "WORKER_SEEN_LISTENER_NOT_OBSERVED": (
+        "Behoud de bestaande job en laat de bevoegde eigenaar de listener apart "
+        "controleren voordat herstel wordt overwogen."
+    ),
+    "ABSENCE_NOT_VERIFIED": (
+        "De procfs-bron is onvolledig; trek geen afwezigheidsconclusie en herstel "
+        "niets op basis van deze snapshot."
+    ),
+    "NOT_SEEN_IN_SNAPSHOT": (
+        "Controleer GitHub-registratie en jobtoewijzing onafhankelijk; lokale "
+        "afwezigheid alleen autoriseert geen herstart."
+    ),
+}
+
+
+def next_step_for(observation):
+    """Return bounded operator guidance, never recovery authorization."""
+    return NEXT_STEPS.get(
+        observation,
+        "Bronstatus onbekend; behoud bestaande toestand en vraag de bevoegde eigenaar om onafhankelijke observatie.",
+    )
 KNOWN_RUNNER_DIRS = {
     "actions-runner-zcloud": "zCloud",
     "actions-runner-ftmo": "FTMO",
@@ -137,6 +168,7 @@ def observe_local_runners(proc_root="/proc"):
             else "ABSENCE_NOT_VERIFIED" if not observation["source_complete"]
             else "NOT_SEEN_IN_SNAPSHOT"
         )
+        values["recommended_next_step"] = next_step_for(values["local_observation"])
     return observation
 
 
@@ -146,7 +178,8 @@ def text_report(data):
         if item["listeners"] or item["workers"]:
             lines.append(
                 f"  {family}: listener {item['listeners']}; "
-                f"worker {item['workers']}; {item['local_observation']}"
+                f"worker {item['workers']}; {item['local_observation']}; "
+                f"vervolgstap: {item.get('recommended_next_step') or next_step_for(item['local_observation'])}"
             )
     if any(v["workers"] and not v["listeners"]
            for v in data["families"].values()):

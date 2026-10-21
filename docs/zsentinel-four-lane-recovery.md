@@ -522,6 +522,10 @@ owner's [PR #1571](https://github.com/Zennay/zCloud/pull/1571),
 with a specific owner handoff; no conflicting server source files were
 modified by this PR.
 
+### Source-bound next step per runner family
+
+The read-only runner observation now attaches a fixed, allowlisted `recommended_next_step` to every family state, and the text/HTML operator desk renders it as a separate **Veilige vervolgstap** column. It distinguishes argv0-only evidence, executable-verified presence, worker-without-observed-listener, incomplete procfs coverage, and a complete snapshot with no recognized process. Older saved observations fall back to the same fixed mapping. The guidance never treats process presence/absence as GitHub registration, health, job assignment, or permission to restart a runner.
+
 ## Optional local GitHub runner presence desk
 
 Source addition: `scripts/zsentinel_runner_presence.py`, loaded only when
