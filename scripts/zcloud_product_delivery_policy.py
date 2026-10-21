@@ -248,6 +248,8 @@ def product_queue_snapshot(items, max_visible=8):
     active_missing_worker_slot = 0
     active_missing_claim_start = 0
     active_missing_claim_expiry = 0
+    active_claim_evidence_examples = []
+    active_claim_evidence_example_count = 0
     queued_visible = 0
     held_ineligible = 0
     held_slot_occupied = 0
@@ -293,18 +295,34 @@ def product_queue_snapshot(items, max_visible=8):
             # Evidence gaps are operator observations, not an expired lease
             # verdict and never authority to take or release a worker claim.
             # Count independently: the same active owner can lack both fields.
+            missing_fields = []
             if item.get("worker_slot") is None:
+                missing_fields.append("worker_slot")
                 active_missing_worker_slot += 1
                 if activity is not None:
                     activity["active_missing_worker_slot_visible"] += 1
             if item.get("claimed_at") in (None, ""):
+                missing_fields.append("claimed_at")
                 active_missing_claim_start += 1
                 if activity is not None:
                     activity["active_missing_claim_start_visible"] += 1
             if item.get("claim_expires") in (None, ""):
+                missing_fields.append("claim_expires")
                 active_missing_claim_expiry += 1
                 if activity is not None:
                     activity["active_missing_claim_expiry_visible"] += 1
+            if missing_fields:
+                active_claim_evidence_example_count += 1
+                # Only already exposed queue/project identifiers and fixed
+                # evidence-field codes. Never leak worker detail or claim tokens.
+                if len(active_claim_evidence_examples) < max_visible:
+                    active_claim_evidence_examples.append({
+                        "project_id": project,
+                        "queue_id": str(item.get("queue_id") or "")[:160],
+                        "status": status,
+                        "missing_fields": missing_fields,
+                        "owner_review_only": True,
+                    })
         if status != "queued":
             continue
         queued_visible += 1
@@ -434,6 +452,10 @@ def product_queue_snapshot(items, max_visible=8):
         "active_missing_claim_start_visible": active_missing_claim_start,
         "active_missing_claim_expiry_visible": active_missing_claim_expiry,
         "active_claim_evidence_is_advisory_only": True,
+        "active_claim_evidence_examples": active_claim_evidence_examples,
+        "active_claim_evidence_examples_truncated": (
+            active_claim_evidence_example_count > len(active_claim_evidence_examples)
+        ),
         "active_claim_evidence_gap_projects_observed": sum(
             bool(row["active_missing_worker_slot_visible"]
                  or row["active_missing_claim_start_visible"]
