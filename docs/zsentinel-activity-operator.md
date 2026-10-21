@@ -671,3 +671,14 @@ The operator can distinguish three important *unverified* outcomes: (1) the assi
 Sources are complementary **open** product PRs: producer [#1552](https://github.com/Zennay/zCloud/pull/1552) (real browser engine and userscript), current Activity integration [#1550](https://github.com/Zennay/zCloud/pull/1550), and the earlier read-model source [#1549](https://github.com/Zennay/zCloud/pull/1549). Their presence in GitHub branches does not imply that any is installed, deployed or merged. The Activity panel never authorizes a lease reset, workflow retry, claim, merge, browser restart or deployment, and never treats browser-reported events as independent proof of generated output.
 
 This documentation accompanies product source only. No new QA/regression suite was authored or run, no CI workflow was manually dispatched, and no live VPS/runner/queue/security or production state was changed. Existing exact-head CI, independent security/review and protected-main release requirements remain binding.
+
+
+## 21 October · Offline private worker-owner incident package
+
+**New explicit Activity action:** Choose a single canonical project, select a worker slot (1–8), press **Read progress**, then **Save private worker handoff**. The existing, authenticated `GET /api/worker-progress-history` is the **only** source; the download adds no API reads or server/Notion/queue writes. A missing or invalid source disables download instead of inventing an idle worker.
+
+The browser constructs a bounded local `zsentinel-private-worker-handoff-v1` JSON file containing the originally observed project/slot/time, at most 24 source event IDs, known fixed event names, bounded browser time/character counts and only explicitly allowlisted operator reason codes with human-safe next actions. It strips all other properties rather than copying raw event objects: **no prompt text, chat title, URL, token, owner identity, arbitrary exception, or queue/claim receipt** is exported. Noncanonical events are omitted; coverage/truncation is carried forward.
+
+The report includes explicit `authority: {claim:false, claim_epoch:false, worker_resumed:false, independent_generation:false, merge:false, deployment:false}`. Operator next action is to inspect the original queue claim, conversation, exact-head PR and CI with a permitted owner; this download never authorizes re-send, retry, claim, merge or deploy. The export is a local manual backup/handoff, **not** background monitoring, current runner status proof or a released user-facing feature until normal merge/deployment.
+
+Compatible with the independent original worker source [PR #1552](https://github.com/Zennay/zCloud/pull/1552) and this existing Activity integration [PR #1550](https://github.com/Zennay/zCloud/pull/1550). No new QA suites, workflow dispatch, mutation of SQLite, runner/worker, production service, billing or security settings.
