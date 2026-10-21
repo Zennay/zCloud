@@ -561,9 +561,11 @@ remain truncated/unknown. No lease is renewed, deleted, reclaimed or written.
 
 ### Per-issue recovery cards carry the local lease signal
 
-The cross-project P0/P1 issue inbox now carries the same validated, aggregate
-local-claim observation on each issue card, using the canonical repo→project
-mapping. This puts an expired-lease lead beside the existing PR/CI handoff
+The cross-project P0/P1 issue inbox and targeted `--issue` handoff now carry
+the same validated, aggregate local-claim observation, using the canonical
+repo→project mapping. The targeted HTML, text and JSON handoffs also show the
+project-wide signal beside the exact issue, so operators do not need to infer
+a relationship from the separate overview panel. This puts an expired-lease lead beside the existing PR/CI handoff
 instead of requiring the operator to mentally join a separate panel. HTML,
 text and JSON/private snapshots use the same project-level counts; no
 owner IDs, claim keys, raw metadata or row identifiers are copied.
