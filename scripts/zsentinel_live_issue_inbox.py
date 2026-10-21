@@ -33,7 +33,7 @@ RECOGNIZED = {
 }
 
 
-def _safe_issue(item, repository):
+def _safe_issue(item, repository, *, observed_at):
     """Reduce untrusted GitHub issue into non-sensitive advisory metadata."""
     if not isinstance(item, dict) or item.get("pull_request") is not None:
         return None
@@ -79,6 +79,20 @@ def _safe_issue(item, repository):
         next(iter(matched)) if labels_complete and len(matched) == 1
         else "UNKNOWN"
     )
+    age_hours = None
+    if updated_at is not None:
+        try:
+            parsed_update = datetime.fromisoformat(
+                updated_at.replace("Z", "+00:00")
+            )
+            age_seconds = (observed_at - parsed_update).total_seconds()
+            if age_seconds >= 0:
+                age_hours = int(age_seconds // 3600)
+        except ValueError:
+            pass
+    no_issue_update_for_72h = (
+        age_hours >= 72 if age_hours is not None else "UNKNOWN"
+    )
     title = item.get("title")
     title_hint = (
         "P0" if isinstance(title, str) and
@@ -86,14 +100,29 @@ def _safe_issue(item, repository):
         "P1" if isinstance(title, str) and
         re.match(r"^\s*P1\b(?:\s|[:\-])", title, re.IGNORECASE) else "NONE"
     )
-    effective = verified_label
-    if effective == "UNKNOWN":
-        rank = 4 if title_hint == "P0" else 5 if title_hint == "P1" else 6
+    # Priority rank puts explicitly labelled P0/P1 first. Title-only
+    # hints are lower-trust navigation signals; P2/P3 follow them.
+    # Conflicting labels cannot be silently overruled by title text.
+    if verified_label == "P0":
+        rank = 0
+    elif verified_label == "P1":
+        rank = 1
+    elif not conflict and title_hint == "P0":
+        rank = 2
+    elif not conflict and title_hint == "P1":
+        rank = 3
+    elif verified_label == "P2":
+        rank = 4
+    elif verified_label == "P3":
+        rank = 5
     else:
-        rank = PRIORITIES.index(effective)
+        rank = 6
 
     return {
         "number": number, "url": url, "updated_at_utc": updated_at,
+        "last_github_update_age_hours": age_hours,
+        "no_github_issue_update_for_72h": no_issue_update_for_72h,
+        "activity_age_does_not_prove_worker_stall": True,
         "priority_from_explicit_labels": verified_label,
         "explicit_priority_label_conflict": conflict,
         "label_source_complete": labels_complete,
@@ -121,6 +150,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
     name = match[1]
     api = "/repos/Zennay/" + quote(name, safe="")
     issues, seen = [], set()
+    observed_at = datetime.now(timezone.utc)
     total_rows = 0
     prs_excluded = 0
     invalid_excluded = 0
@@ -150,7 +180,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             if isinstance(raw, dict) and "pull_request" in raw:
                 prs_excluded += 1
                 continue
-            item = _safe_issue(raw, name)
+            item = _safe_issue(raw, name, observed_at=observed_at)
             if item is None:
                 invalid_excluded += 1
                 continue
@@ -164,7 +194,11 @@ def observe_repo_inbox(repo_full_name, *, token=None):
     # Labels are evidence, textual title prefixes are navigation-only hints.
     # Equal priorities retain GitHub's updated order; no untrusted free text
     # is emitted in any output format.
-    issues.sort(key=lambda x: x["triage_rank"])
+    issues.sort(key=lambda x: (
+        x["triage_rank"],
+        0 if x["no_github_issue_update_for_72h"] is True else 1,
+        -(x["last_github_update_age_hours"] or 0),
+    ))
     chosen = issues[:MAX_DISPLAY]
     by_rank = {}
     for item in issues:
@@ -180,7 +214,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
     return {
         "schema_version": 1, "policy": "zsentinel-live-github-issue-inbox-v1",
         "repository": repo_full_name,
-        "observed_at_utc": utc(),
+        "observed_at_utc": observed_at.isoformat().replace("+00:00", "Z"),
         "observation_mode": "bounded_recent_github_open_issues",
         "source": "github_rest_issues_list",
         "pages_read": pages_read, "max_pages": MAX_PAGES,
@@ -194,6 +228,12 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         "source_error": source_error,
         "get_attempts": attempts, "read_get_attempt_upper_bound": MAX_PAGES,
         "priority_breakdown_in_source_window": by_rank,
+        "explicit_p0_p1_without_github_issue_update_72h": sum(
+            row["priority_from_explicit_labels"] in ("P0", "P1")
+            and row["no_github_issue_update_for_72h"] is True
+            for row in issues
+        ),
+        "github_issue_update_age_does_not_prove_worker_stall": True,
         "unknown_priority_does_not_prove_low_severity": True,
         "no_issue_in_window_does_not_prove_absence": True,
         "title_prefix_priority_is_authoritative": False,
@@ -224,6 +264,9 @@ def markdown(report):
         "- Output truncated: " + str(report["display_truncated"]),
         "- GitHub GET attempts: " + str(report["get_attempts"]),
         "- Provider gap: " + (report["source_error"] or "none"),
+        "- Explicit P0/P1 issues with no GitHub issue update for 72h: " +
+        str(report["explicit_p0_p1_without_github_issue_update_72h"]),
+        "- Age of GitHub issue update does NOT prove a stalled worker",
         "- Explicit label priority is advisory; title prefix hints are unverified",
         "- Missing priority is not evidence of no P0/P1 incidents",
         "- Independent owner/required CI/current repair: UNKNOWN",
@@ -237,7 +280,9 @@ def markdown(report):
         lines.append(
             "- [Issue #" + str(row["number"]) + "](" + row["url"] +
             ") · label " + label + " · unverified title hint " + hint +
-            " · updated " + (row["updated_at_utc"] or "UNKNOWN") +
+            " · last issue update " + (row["updated_at_utc"] or "UNKNOWN") +
+            " · no GitHub issue update for 72h: " +
+            str(row["no_github_issue_update_for_72h"]) +
             " · owner/repair/merge UNKNOWN"
         )
     if not report["issues"]:
@@ -281,6 +326,9 @@ def html_view(report):
         esc(report["source_rows_scanned"]) + " · issues " +
         esc(report["total_issues_seen"]) + " · displayed " +
         esc(report["displayed_issues"]) + "</p>",
+        "<p>Explicit P0/P1 with no issue update for 72h: " +
+        esc(report["explicit_p0_p1_without_github_issue_update_72h"]) +
+        " · this is NOT proof of stalled workers.</p>",
         "<p>Source coverage partial/UNKNOWN: " +
         esc(report["source_partial_or_unknown"]) +
         " · output truncated: " + esc(report["display_truncated"]) +
@@ -297,7 +345,10 @@ def html_view(report):
             esc(item["unverified_title_prefix_hint"]) +
             " · last GitHub update " +
             esc(item["updated_at_utc"] or "UNKNOWN") +
-            "<br><small>Worker ownership, actual fix, required CI, "
+            " · no issue update for 72h: " +
+            esc(item["no_github_issue_update_for_72h"]) +
+            "<br><small>GitHub issue inactivity does NOT prove worker stall. "
+            "Worker ownership, actual fix, required CI, "
             "protected-main merge and production: UNKNOWN.</small></li>"
         )
     if not report["issues"]:
