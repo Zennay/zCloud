@@ -314,6 +314,12 @@ def select_page(report, *, priority=None, tag=None, issue_url=None,
     if issue_url is not None:
         last_snapshot = len(report["source_snapshots"])
         appearance = [0] * last_snapshot
+        # These categories come from the already admitted private ZIP
+        # schema. They are NOT fresh checks or required-gate conclusions.
+        gate_kinds = ("source", "failed", "pending", "changes",
+                      "partial", "review", "policy")
+        gates = {name: 0 for name in gate_kinds}
+        changed_heads_in_history = 0
         latest_pr_with_link = 0
         latest_source_with_link = 0
         vanished_from_last_sample = 0
@@ -321,6 +327,12 @@ def select_page(report, *, priority=None, tag=None, issue_url=None,
         for item in matched:
             observations = item["observations"]
             last_observed = observations[-1]
+            gate_kind = item["latest_sample_primary_gate"]
+            if gate_kind not in gates:
+                raise ValueError("Unrecognized archived PR gate class")
+            gates[gate_kind] += 1
+            if item["observed_head_changes"]:
+                changed_heads_in_history += 1
             for row in observations:
                 if issue_url in row["linked_issue_urls"]:
                     index = row["snapshot_index"]
@@ -341,6 +353,9 @@ def select_page(report, *, priority=None, tag=None, issue_url=None,
             "linked_in_last_observed_pr_sample": latest_pr_with_link,
             "linked_in_final_source_snapshot": latest_source_with_link,
             "prs_absent_from_final_source_snapshot": vanished_from_last_sample,
+            "prs_with_observed_head_changes": changed_heads_in_history,
+            "latest_observed_sample_gate_counts": gates,
+            "gate_counts_are_historical_not_required_ci_proof": True,
             "last_source_with_issue_link_index": last_seen_linked_source,
             "per_source_observed_linked_pr_counts": [
                 {"source_index": index + 1, "observed_linked_prs": count,
@@ -458,6 +473,14 @@ def markdown(report):
             "- PRs zonder waarneming in de laatste bron: " +
                 str(focus["prs_absent_from_final_source_snapshot"]) +
                 " (geen merge- of sluitbewijs).",
+            "- PRs met eerder waargenomen HEAD-wijzigingen: " +
+                str(focus["prs_with_observed_head_changes"]) +
+                " (CI/review van oude HEAD niet hergebruiken).",
+            "- Laatste geobserveerde gateklassen per PR: " +
+                ", ".join(name + "=" + str(total)
+                          for name, total in focus[
+                              "latest_observed_sample_gate_counts"].items()) +
+                " (historisch, NIET de actuele verplichte CI).",
             "- Laatste bron met waargenomen koppeling: " +
                 str(focus["last_source_with_issue_link_index"] or "ONBEKEND") +
                 " (bronindex, GEEN live issue-status).",
@@ -713,6 +736,10 @@ def html_content(report):
                 or focus.get("deploy_authorized") is not False
                 or focus.get("issue_url") != issue_filter):
             raise ValueError("Invalid source-only issue overview")
+        gate_details = "<ul>" + "".join(
+            "<li>" + e(key) + ": <strong>" + str(total) + "</strong></li>"
+            for key, total in focus["latest_observed_sample_gate_counts"].items()
+            if total) + "</ul>"
         bars = "".join(
             "<li>Bron " + str(row["source_index"]) + ": <strong>" +
             str(row["observed_linked_prs"]) + "</strong> gekoppelde PRs" +
@@ -728,8 +755,14 @@ def html_content(report):
             str(focus["linked_in_final_source_snapshot"]) +
             " nog gekoppeld in de laatste totale steekproef.</p><p>" +
             str(focus["prs_absent_from_final_source_snapshot"]) +
-            " PRs ontbreken in de laatste steekproef. Geen enkel aantal " +
+            " PRs ontbreken in de laatste steekproef; " +
+            str(focus["prs_with_observed_head_changes"]) +
+            " hadden een HEAD-wissel in opgeslagen bronnen. Geen enkel aantal " +
             "bewijst afronding, actuele ownership of merge.</p>" +
+            "<details><summary>Laatste historisch waargenomen gateklassen</summary>" +
+            gate_details +
+            "<p>Geen actuele verplichte check, review of mergegate geverifieerd.</p>"
+            "</details>" +
             "<details><summary>Geobserveerde koppelingen per bronmoment</summary><ol>" +
             bars + "</ol></details></section>"
         )
