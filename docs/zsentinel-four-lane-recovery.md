@@ -766,3 +766,44 @@ Broncommit:
 [cf2db868](https://github.com/Zennay/zCloud/commit/cf2db86886d355d3048536078596840cfa90b2f0).
 Nog steeds onderdeel van **dezelfde open PR #1572**; geen live
 installatie of onafhankelijke release-acceptatie verondersteld.
+
+
+## 21 oktober · Lokale CPU-/RAM-/swapdruk zonder ongeautoriseerde workeractie
+
+Het vierbanenbureau kan nu optioneel een **read-only
+Linux-hostcapaciteitsmoment** toevoegen aan hetzelfde operatorrapport:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --host-pressure
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --host-pressure --format json
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --host-pressure --format html --output /PRIVATE/NEW-report.html
+```
+
+`scripts/zsentinel_host_pressure.py` leest uitsluitend de lokale
+`/proc/meminfo` en `/proc/loadavg` (elk begrensd tot 4096 bytes,
+zonder symlink-following of filesystemwrite) en toont afgevlakte
+MemAvailable, swapgebruik en 1-minuut-load per CPU. Als bronvelden
+ontbreken of ongeldig zijn, blijft de status **UNKNOWN**; nul of
+"gezond" wordt niet verzonnen. Het resource-inzicht is expliciet
+**opt-in** met `--host-pressure`, zodat bestaande CLI-operaties geen
+nieuw /proc-werk hoeven te doen.
+
+Alle bestaande tekst-, JSON-, private Markdown- en offline HTML-weergaven
+tonen dezelfde bronbeperking. Bij lokale hoge/verhoogde druk ontstaat een
+drie-regelige menselijke eigenaaractie met
+`HOLD_CAPACITY_OWNER_REVIEW`. Geen signaal verleent nieuwe
+worker-admission; ook een lage drukmeting kan geen voldoende cgroup-,
+container-, resource-pool-, Notion-claim-, GitHub-job- of
+runnerbewijzen opleveren. Dit is **geen** nieuwe harde systeemgate.
+De bestaande planner, releasevoorwaarden en live-capaciteitsregeling
+worden niet gewijzigd.
+
+Code: [1f2e4d8](https://github.com/Zennay/zCloud/commit/1f2e4d8c02264e503734a9a02de4fa0b5056496d),
+[4920607](https://github.com/Zennay/zCloud/commit/4920607f1cfd1ef7a64419ad117a69be40bc431a),
+[a28530f](https://github.com/Zennay/zCloud/commit/a28530fd4fbe9ec67c22119956a5fcca6def21de)
+en [3238615](https://github.com/Zennay/zCloud/commit/3238615bcee5b89688c0806394e619955eac3405).
+Alle wijzigingen staan op dezelfde bestaande [product-PR #1572](https://github.com/Zennay/zCloud/pull/1572).
+Geen handmatige QA/regressie, workflow-retry, claimovername,
+onafhankelijke reviewbypass, VPS-writer, runnerrestart of deployment.
+Nog niet op main of live zolang bestaande exacte-head CI en releasegates
+openstaan.
