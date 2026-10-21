@@ -836,8 +836,13 @@ def output_html(report):
             str(inbox["distinct_existing_pr_groups_observed"]) +
             " verschillende bestaande PRs (" +
             str(inbox["multi_issue_existing_pr_groups_observed"]) +
-            " met meerdere issuelinks)</summary><p>Een bestaande PR wordt één "
-            "broncluster, niet meerdere onafhankelijke fixes.</p><ol>" +
+            " met meerdere issuelinks; HEAD onbekend " +
+            str(inbox["pr_groups_with_unknown_head"]) +
+            "; HEAD-bronconflict " +
+            str(inbox["pr_groups_with_inconsistent_head_receipts"]) +
+            ")</summary><p>Een bestaande PR wordt één broncluster, niet meerdere "
+            "onafhankelijke fixes. Een onbekende of conflicterende HEAD blijft "
+            "ONBEKEND; geen commit wordt gekozen of vrijgegeven.</p><ol>" +
             "".join(pr_group_items) + "</ol></details>"
             if pr_group_items else "")
         work_panel = (
