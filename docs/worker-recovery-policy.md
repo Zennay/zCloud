@@ -38,6 +38,7 @@ Supported proposed actions:
 - route_root_fix: deterministic failure, confirmed root cause, named owner, no active/unknown claim and owner authorization.
 - assign_independent_work: explicit ready task, positively established disjoint scope, no active/unknown claim, healthy capacity and owner authorization.
 - park_blocker: park only one dependent task when its blocker is confirmed external and unchanged; require a clear claim state, an authorized owner, healthy capacity and separately identified disjoint ready work.
+- escalate_human: route to a named human only for a specifically evidenced permission requirement, irreversible/high-risk decision or exhausted safe recovery routes; unknown claim state remains HOLD.
 - merge_pr: verified exact head, green required CI, independent approval, satisfied branch protection, zero unresolved review threads, verified not-yet-merged state and owner authorization.
 - deploy: exact-head CI/review/protection, verified merge on main, healthy post-merge state, release approval, runtime-owner authorization and healthy capacity.
 - restart_runner: verified unavailability, no running jobs, confirmed cause, runtime-owner authorization and explicit human approval.
