@@ -2982,3 +2982,42 @@ This avoids remaining stuck on one locally parked recovery lead while making
 the next project visible; it is navigation only, not a worker dispatch or
 claim release. Local `park-blocker` status is not proof that the original
 incident is resolved.
+
+
+## 21 October · Complete offline issue-to-PR relationship handoff
+
+The existing saved-gate bridge now supports `--format portfolio-issue-pr-csv`
+(with optional `--project Zennay/zCloud`) alongside the existing
+`portfolio-pr-csv` and `portfolio-zip` outputs. This is a **complete
+issue-to-PR matrix within the already admitted saved review snapshot**:
+one row per observed canonical issue/PR relationship, not just one row per
+PR or the first four links in the HTML issue preview. The existing project
+ZIP additionally includes `issue-pr-matrix.csv`; its SHA256 is recorded in
+the existing `source-checksums.json` along with the other payloads.
+
+For example, with the same original saved manifest and `--receipt` flags
+used by other portfolio exports:
+
+```sh
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./private-review.json \
+  --receipt ./private-gate-batch-1.json \
+  --format portfolio-issue-pr-csv \
+  --output ./private-issue-pr-matrix.csv
+```
+
+Supply all expected saved receipts, or explicitly use the existing
+`--allow-partial` mode: missing batches remain **UNKNOWN**. A project
+filter is applied *after* full source admission. Rows preserve the original
+review-manifest/board digests, observed UTC source interval, historical
+source HEAD or ONBEKEND, gate-source classification and human-only next
+action. They say that current GitHub state, active owners, required CI,
+review, main merge and live recovery are **ONBEKEND**, not approved.
+
+The offline issue index in the project HTML now shows **all five**
+source-admitted PR references for a single issue (the existing admission
+limit is five), ordered by observed priority and gate reason. A shared issue
+is not evidence of a file conflict, ownership transfer or fix. The CSV and
+ZIP are private create-only 0600 output with bounded size and SHA256
+receipts. Neither format performs live GitHub/Notion queries, tests, claims,
+retries, merges, production writes or deployments.
