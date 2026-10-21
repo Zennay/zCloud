@@ -346,7 +346,10 @@ def runtime_source_panel(decision):
                 "degraded_unavailable_no_claim_authority")
             or live.get("worker_progress") not in (
                 None, "not_requested", "read_only_indexed_events",
-                "degraded_unavailable_no_recovery_proof")):
+                "selected_project_event_slots_only",
+                "bounded_partial_or_no_events",
+                "degraded_unavailable_no_recovery_proof",
+                "unavailable_no_worker_recovery_proof")):
         raise ValueError("invalid private incident desk source authority")
     worker_status = live.get("worker_progress")
     worker = decision.get("worker_progress_observation")
@@ -354,7 +357,8 @@ def runtime_source_panel(decision):
     notion = decision.get("notion_claims_observation")
     if worker_status in (None, "not_requested") and worker is not None:
         raise ValueError("unexpected private worker source")
-    if worker_status == "degraded_unavailable_no_recovery_proof" and worker is not None:
+    if worker_status in ("degraded_unavailable_no_recovery_proof",
+                         "unavailable_no_worker_recovery_proof") and worker is not None:
         raise ValueError("degraded worker observation cannot carry a source")
     if notion_status in ("not_observed_no_ownership_claim",
                          "degraded_unavailable_no_claim_authority") and notion is not None:
@@ -366,15 +370,21 @@ def runtime_source_panel(decision):
               '<p class="banner">Alleen privé lokaal; een tijdstempel, Notion status'
               ' of browserevent bewijst geen actuele lease, claimeigenaar,'
               ' voortgang, merge- of hersteltoestemming.</p>']
-    if worker_status == "read_only_indexed_events":
-        if worker is None:
-            raise ValueError("worker source receipt without observation")
+    if worker_status in ("read_only_indexed_events",
+                         "selected_project_event_slots_only",
+                         "bounded_partial_or_no_events"):
+        if worker is None or (worker_status in (
+                "selected_project_event_slots_only",
+                "bounded_partial_or_no_events") and
+                worker.get("coverage") != worker_status):
+            raise ValueError("worker source receipt without matching observation")
         from zsentinel_worker_progress_observer import worker_progress_html
         # Reuse the existing strict source validator and script-free renderer.
         panels.append('<details><summary>Browserworker-bron · uitgeklapte'
                       ' eventtijdlijn en veilige eigenaarvervolgstappen</summary>'
                       + worker_progress_html(worker) + '</details>')
-    elif worker_status == "degraded_unavailable_no_recovery_proof":
+    elif worker_status in ("degraded_unavailable_no_recovery_proof",
+                           "unavailable_no_worker_recovery_proof"):
         panels.append('<p class="banner">Browserworker-bron aangevraagd maar'
                       ' onbeschikbaar. Niet interpreteren als vrije worker.</p>')
     if notion is not None:
