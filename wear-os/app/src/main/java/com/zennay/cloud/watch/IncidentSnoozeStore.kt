@@ -25,7 +25,10 @@ object IncidentSnoozeStore {
         alert.id + "\\u001f" + alert.occurredAt.orEmpty()
 
     fun episodeKey(alert: AlertItem): String =
-        alert.episodeId?.let { "source:" + it } ?: legacyEpisodeKey(alert)
+        // Project-scoped: the same provider incident ID in two projects must
+        // not share delivery or snooze state.
+        notificationTag(alert) + ":" +
+            (alert.episodeId?.let { "source:" + it } ?: "observed:" + legacyEpisodeKey(alert))
 
     private fun preferenceKey(episode: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -38,17 +41,11 @@ object IncidentSnoozeStore {
     fun remainingMillis(context: Context, alert: AlertItem, now: Long = System.currentTimeMillis()): Long {
         val prefs = context.applicationContext
             .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        // Preserve an already selected local snooze when the server first
-        // upgrades from timestamp-derived IDs to canonical episode IDs.
-        val deadlines = listOf(
-            prefs.getLong(preferenceKey(alert), 0L),
-            prefs.getLong(preferenceKey(legacyEpisodeKey(alert)), 0L)
-        )
-        // Clock rollback must never turn a one-hour user choice into days
-        // of silence. Old or implausibly distant deadlines fail open.
-        return deadlines.map { it - now }
-            .filter { it in 1L..DURATION_MS }
-            .maxOrNull() ?: 0L
+        // Legacy unscoped preferences are intentionally not inherited: their
+        // project ownership is unknowable and could silence another project.
+        val left = prefs.getLong(preferenceKey(alert), 0L) - now
+        // Clock rollback cannot turn a one-hour snooze into days of silence.
+        return if (left in 1L..DURATION_MS) left else 0L
     }
 
     fun snoozeForOneHour(context: Context, alert: AlertItem) {
@@ -84,7 +81,6 @@ object IncidentSnoozeStore {
         appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .remove(preferenceKey(alert))
-            .remove(preferenceKey(legacyEpisodeKey(alert)))
             .apply()
         // "Resume" restores eligibility for the NEXT regular poll even if
         // this episode had previously been delivered. No immediate alert,
@@ -96,8 +92,8 @@ object IncidentSnoozeStore {
         val deliveryPrefs = context.getSharedPreferences("zennay_alerts", Context.MODE_PRIVATE)
         val delivered = deliveryPrefs.getStringSet("delivered_ids", emptySet())
             .orEmpty().toMutableSet()
-        val removed = delivered.remove(episodeKey(alert)) or
-            delivered.remove(legacyEpisodeKey(alert))
+        // Only clear this project's exact episode receipt.
+        val removed = delivered.remove(episodeKey(alert))
         if (removed) {
             deliveryPrefs.edit().putStringSet("delivered_ids", delivered).apply()
         }
