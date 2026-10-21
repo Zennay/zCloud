@@ -43,6 +43,7 @@ FIELDS = (
     "independent_review_verified", "main_merge_verified", "deploy_authorized",
     "live_state_verified",
     "selection_repository", "selection_priority", "selection_record_type",
+    "selection_pr_url", "selection_issue_url",
     "source_record_count", "selected_record_count",
     "excluded_source_record_count", "selection_filter_applied",
 )
@@ -261,7 +262,8 @@ def prepare_rows(view, board_sha, saved, exported_at=None):
     return rows
 
 
-def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"):
+def select_owner_rows(rows, *, repository=None, priority=None, record_type="all",
+                      pr_url=None, issue_url=None):
     """Narrow a fully admitted historical owner list without granting ownership.
 
     Repository identity always comes from canonical issue/PR URLs, not from
@@ -276,6 +278,16 @@ def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"
         raise ValueError("unrecognized owner priority filter")
     if record_type not in ("all", "existing-pr", "issue-without-pr", "unlinked-pr"):
         raise ValueError("unrecognized owner record type")
+    if pr_url is not None and not re.fullmatch(
+        r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
+        pr_url
+    ):
+        raise ValueError("PR selector must be a canonical full GitHub PR URL")
+    if issue_url is not None and not re.fullmatch(
+        r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}",
+        issue_url
+    ):
+        raise ValueError("issue selector must be a canonical full GitHub issue URL")
     result = []
     for row in rows:
         original = row["pr_url"] or row["source_issue_urls"].split(" | ", 1)[0]
@@ -283,6 +295,10 @@ def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"
         if repository and source_repo != "https://github.com/" + repository:
             continue
         if priority and row["priority"] != priority:
+            continue
+        if pr_url is not None and row["pr_url"] != pr_url:
+            continue
+        if issue_url is not None and issue_url not in row["source_issue_urls"].split(" | "):
             continue
         state = row["pr_reference_state"]
         if record_type == "existing-pr" and not row["pr_url"]:
@@ -292,20 +308,29 @@ def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"
         if record_type == "unlinked-pr" and state != "historical_pr_without_sampled_issue_link":
             continue
         result.append(row)
+    # Exact PR/issue packets must exist in the admitted source selection.
+    # An absent observation is not evidence that work has been completed.
+    if (pr_url is not None or issue_url is not None) and not result:
+        raise ValueError(
+            "requested PR/issue not observed in this bounded source selection; "
+            "refresh current evidence before preparing an owner packet")
     return result
 
 
 def selection_metadata(total, rows, *, repository=None, priority=None,
-                       record_type="all"):
+                       record_type="all", pr_url=None, issue_url=None):
     """Explicit whole-source vs selected coverage for every export format."""
     return {
         "selection_repository": repository or "ALL_SOURCE_REPOSITORIES",
         "selection_priority": priority or "ALL_SOURCE_PRIORITIES",
         "selection_record_type": record_type,
+        "selection_pr_url": pr_url or "NOT_SELECTED",
+        "selection_issue_url": issue_url or "NOT_SELECTED",
         "source_record_count": total,
         "selected_record_count": len(rows),
         "excluded_source_record_count": total - len(rows),
-        "selection_filter_applied": bool(repository or priority or record_type != "all"),
+        "selection_filter_applied": bool(
+            repository or priority or record_type != "all" or pr_url or issue_url),
     }
 
 
@@ -342,6 +367,7 @@ def render_private_html(rows, source_metadata=None):
     missing_batches = metadata.get("saved_archive_batches_missing", "UNKNOWN")
     selection = {key: metadata.get(key, "UNKNOWN") for key in (
         "selection_repository", "selection_priority", "selection_record_type",
+        "selection_pr_url", "selection_issue_url",
         "source_record_count", "selected_record_count",
         "excluded_source_record_count", "selection_filter_applied")}
     parts.append(
@@ -350,6 +376,8 @@ def render_private_html(rows, source_metadata=None):
         '<p>Repository: ' + escape(str(selection["selection_repository"])) +
         ' · priority: ' + escape(str(selection["selection_priority"])) +
         ' · record type: ' + escape(str(selection["selection_record_type"])) + '</p>'
+        '<p>Exact selected PR: ' + escape(str(selection["selection_pr_url"])) +
+        ' · exact issue: ' + escape(str(selection["selection_issue_url"])) + '</p>'
         '<p>Source records before filtering: ' +
         escape(str(selection["source_record_count"])) +
         ' · displayed: ' + escape(str(selection["selected_record_count"])) +
@@ -459,6 +487,10 @@ def main(argv=None):
     parser.add_argument("--record-type", default="all",
                         choices=("all", "existing-pr", "issue-without-pr", "unlinked-pr"),
                         help="Select saved PRs, absent sampled PR links or unlinked PRs")
+    parser.add_argument("--inspect-pr-url",
+                        help="Create a source-observed exact-PR owner packet")
+    parser.add_argument("--inspect-issue-url",
+                        help="Select rows referencing an exact canonical source issue")
     parser.add_argument("--output", type=Path, required=True,
                         help="New private create-only destination")
     args = parser.parse_args(argv)
@@ -496,10 +528,12 @@ def main(argv=None):
         admitted_rows = prepare_rows(view, sha, saved, exported_at=exported_at)
         rows = select_owner_rows(
             admitted_rows, repository=args.repository, priority=args.priority,
-            record_type=args.record_type)
+            record_type=args.record_type, pr_url=args.inspect_pr_url,
+            issue_url=args.inspect_issue_url)
         selection = selection_metadata(
             len(admitted_rows), rows, repository=args.repository,
-            priority=args.priority, record_type=args.record_type)
+            priority=args.priority, record_type=args.record_type,
+            pr_url=args.inspect_pr_url, issue_url=args.inspect_issue_url)
         # Keep complete-source coverage explicit, even in a single selected row.
         html_metadata.update(selection)
         for row in rows:
