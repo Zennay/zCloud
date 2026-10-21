@@ -6,9 +6,11 @@ even an apparent free slot, expired lease or green CI is NOT authorization.
 """
 from __future__ import annotations
 
+import csv
 import json
 import re
 import unicodedata
+from io import StringIO
 from html import escape
 from datetime import datetime, timezone
 from zsentinel_selection_holds import admit as admit_selection_holds
@@ -1633,9 +1635,111 @@ def markdown(report):
     return "\n".join(lines)
 
 
+
+CSV_FIELDS = (
+    "record_type", "handoff_schema", "source_created_at_utc",
+    "source_coverage_json", "priority", "project", "kind", "next_step",
+    "evidence", "issue_url", "existing_pr_urls", "exact_github_job_run_id",
+    "exact_github_job_id", "exact_github_job_head_sha",
+    "exact_github_job_url", "exact_github_commit_url", "review_by_utc",
+    "review_overdue_at_export", "claim_authorized", "retry_authorized",
+    "merge_authorized", "deploy_authorized", "owner_verification_required",
+)
+
+
+def _csv_cell(value, limit=2000):
+    """Make source-derived spreadsheet cells inert without hiding Unicode controls."""
+    if value is None:
+        return ""
+    if type(value) is bool:
+        text = str(value).lower()
+    elif type(value) is int:
+        text = str(value)
+    elif type(value) is str:
+        if not value:
+            return ""
+        text = _short(value, limit)
+    else:
+        raise ValueError("unexpected value in private owner CSV")
+    if text.lstrip(" ").startswith(("=", "+", "-", "@")):
+        text = "'" + text
+    return text
+
+
+def csv_export(report):
+    """Render a separate source-bound owner CSV; no claim or release action."""
+    if (not isinstance(report, dict) or report.get("schema") != SCHEMA
+            or report.get("actions_performed") is not False
+            or report.get("merge_authorized") is not False
+            or report.get("owner_and_current_claim_verified") is not False):
+        raise ValueError("invalid runtime owner CSV source")
+    items = report.get("priority_items")
+    coverage = report.get("coverage")
+    if (not isinstance(items, list) or len(items) > MAX_ITEMS
+            or not isinstance(coverage, dict) or len(coverage) > 8):
+        raise ValueError("unbounded runtime owner CSV source")
+    # Reuse the existing canonical renderer's detailed card/URL/authorization
+    # validation; rendering it is local and has no provider or filesystem effects.
+    handoff_html(report)
+    stamp = _short(report.get("created_at_utc"), 40)
+    coverage_json = json.dumps(
+        coverage, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    rows = []
+    for item in items:
+        job = item.get("exact_github_job")
+        rows.append({
+            "record_type": "owner_action",
+            "handoff_schema": SCHEMA,
+            "source_created_at_utc": stamp,
+            "source_coverage_json": coverage_json,
+            "priority": item.get("priority"),
+            "project": item.get("project"),
+            "kind": item.get("kind"),
+            "next_step": item.get("next_step"),
+            "evidence": item.get("evidence"),
+            "issue_url": item.get("issue_url"),
+            "existing_pr_urls": " | ".join(item.get("existing_pr_urls", [])),
+            "exact_github_job_run_id": job.get("run_id") if job else None,
+            "exact_github_job_id": job.get("job_id") if job else None,
+            "exact_github_job_head_sha": job.get("head_sha") if job else None,
+            "exact_github_job_url": item.get("exact_github_job_url"),
+            "exact_github_commit_url": item.get("exact_github_commit_url"),
+            "review_by_utc": item.get("review_by_utc"),
+            "review_overdue_at_export": item.get("review_overdue_at_export"),
+            "claim_authorized": False,
+            "retry_authorized": False,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+            "owner_verification_required": True,
+        })
+    if not rows:
+        rows.append({
+            "record_type": "metadata_only_no_action_cards",
+            "handoff_schema": SCHEMA,
+            "source_created_at_utc": stamp,
+            "source_coverage_json": coverage_json,
+            "claim_authorized": False,
+            "retry_authorized": False,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+            "owner_verification_required": True,
+        })
+    stream = StringIO()
+    writer = csv.DictWriter(
+        stream, fieldnames=CSV_FIELDS, lineterminator=chr(13) + chr(10))
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: _csv_cell(row.get(key)) for key in CSV_FIELDS})
+    payload = chr(0xFEFF) + stream.getvalue()
+    if len(payload.encode("utf-8")) > 512 * 1024:
+        raise ValueError("private runtime owner CSV exceeds 512 KiB")
+    return payload
+
 def serialize(report, suffix):
     if suffix == ".md":
         return markdown(report)
     if suffix == ".json":
         return json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
-    raise ValueError("private handoff output must be .md or .json")
+    if suffix == ".csv":
+        return csv_export(report)
+    raise ValueError("private handoff output must be .md, .json or .csv")
