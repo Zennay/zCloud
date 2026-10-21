@@ -505,8 +505,33 @@ def main():
                            "owner/lease NOT VERIFIED." if provenance["notion"] ==
                            "private_connector_snapshot_unverified_origin" else "")
                 lines.append("NOTION: " + str(observed["active_count"]) +
-                             " observed Claimed/Running work items; coverage " +
+                             " observed Claimed/Running/Verifying work items; coverage " +
                              observed["coverage"] + "." + warning)
+                windows = observed.get("status_source_windows")
+                if (windows is not None
+                        and provenance["notion"] == "claim_status_observed_no_file_ownership"):
+                    expected = (("Claimed", 1), ("Running", 1), ("Verifying", 2))
+                    if type(windows) is not list or len(windows) != len(expected):
+                        raise ValueError("invalid Notion per-status live source window")
+                    for item, (status, budget) in zip(windows, expected):
+                        if (type(item) is not dict or item.get("status") != status
+                                or type(item.get("page_budget")) is not int
+                                or item["page_budget"] != budget
+                                or type(item.get("pages_read")) is not int
+                                or not 1 <= item["pages_read"] <= budget
+                                or type(item.get("observed_rows")) is not int
+                                or not 0 <= item["observed_rows"] <= 100 * item["pages_read"]
+                                or item.get("coverage") not in
+                                ("complete_within_source", "partial")
+                                or item.get("claim_scope_verified") is not False):
+                            raise ValueError("invalid Notion status window receipt")
+                        lines.append("  %s ≥%s · %s/%s pagina's · %s"
+                                     " · NO OWNER/CLAIM/RELEASE AUTHORITY" % (
+                            status, item["observed_rows"], item["pages_read"],
+                            budget, "INCOMPLETE: owner source recheck" if
+                            item["coverage"] == "partial" else "read within window"))
+                elif windows is not None:
+                    raise ValueError("saved Notion snapshot cannot claim live source windows")
             elif provenance["notion"] == "degraded_unavailable_no_claim_authority":
                 lines.append("NOTION: unavailable. No zero-claim assertion.")
             else:
