@@ -2596,3 +2596,16 @@ de actuele open PRs, volledige PR-loze branch-inventaris en actieve claims.
 Kies pas daarna een onafhankelijke producttaak. De route doet geen GitHub-,
 Notion-, queue-, claim-, CI-, merge-, runner- of deployactie en verleent geen
 eigenaarschap of releasebevoegdheid.
+
+## 21 oktober · onderscheid exacte bestandsbotsingen van bestand/map-ancestorconflicten
+
+De PR-conflictgraaf rapporteert nu twee afzonderlijke waarnemingen:
+
+- **Exact gedeeld bestand:** beide PRs wijzigen bijvoorbeeld `src/app.py`.
+- **Bestand/map-ancestorconflict:** de ene PR behandelt `src` als bestand terwijl de andere een pad zoals `src/app.py` toevoegt. Beide wijzigingen kunnen niet samen in dezelfde Git-tree bestaan, ook al zijn de bestandsnamen niet exact gelijk.
+
+Per waargenomen PR-paar worden de twee paden en de richting van de ancestorrelatie getoond in de JSON-, tekst-, HTML-, Markdown- en private CSV-uitvoer. De portfolio-conflictbalie en de bestaande private merge-first werkopdrachten nemen deze relatie afzonderlijk over; werkopdrachten binden de positieve melding aan de geselecteerde PR-HEAD en tonen de waargenomen peer-HEAD.
+
+De bron blijft begrensd: maximaal 200 zichtbare scope-conflictpaarkaarten en 24 padvoorbeelden per paar. Afgekapt bewijs wordt als onvolledig gemarkeerd. Exacte overlap en ancestor-overlap blijven aparte categorieën, zodat bestaande consumers van `shown_file_collision_pairs` hun oude betekenis behouden.
+
+**Interpretatie:** dit is een bestand/map-scopeconflict-signaal, niet automatisch een Git-mergeconflict, actieve eigenaar, lease of toestemming om een PR te wijzigen of te mergen. Een lege of gedeeltelijke steekproef is nooit vrijgave.
