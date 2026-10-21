@@ -1243,6 +1243,8 @@ function exportCollisionCalendar(){
   return;
  }
  const stamp=new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z');
+ const issueSourceTime=document.getElementById('issue-time').textContent.trim();
+ const prSourceTime=document.getElementById('pr-time').textContent.trim();
  const lines=['BEGIN:VCALENDAR','VERSION:2.0',
   'PRODID:-//zSentinel//Private PR Follow-up Calendar//NL','CALSCALE:GREGORIAN',
   'METHOD:PUBLISH','X-WR-CALNAME:zSentinel PR-afstemming (privé)'];
@@ -1259,7 +1261,8 @@ function exportCollisionCalendar(){
    'DTSTART;VALUE=DATE:'+start,'DTEND;VALUE=DATE:'+end,
    'SUMMARY:'+icsEscape('zSentinel · '+(c.dataset.project||'project')+' · issue #'+number+' · '+c.dataset.title),
    'DESCRIPTION:'+icsEscape('Lokale PR-afstemmingsopvolging; geen GitHub-deadline of SLA. Status: '+state+
-    '. Privé notities zijn bewust niet opgenomen. '+(dueHandoff(c)||'')),
+    '. Historische bronmomenten UTC: issues='+issueSourceTime+'; PRs='+prSourceTime+
+    '. Vóór handelen: hercontroleer actuele claims, PR-HEAD, verplichte CI, onafhankelijke review en branch protection. Privé notities zijn niet opgenomen. '+(dueHandoff(c)||'')),
    'URL:'+issue,'TRANSP:TRANSPARENT','STATUS:CONFIRMED','END:VEVENT');
  }
  lines.push('END:VCALENDAR');
