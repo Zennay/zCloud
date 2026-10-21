@@ -104,7 +104,11 @@ def digest(payload: dict) -> str:
         lines.append("GitHub PR: **" + source_pr + "** · GitHub Actions: **" +
                      source_ci + "** · main commits: **" + source_commit +
                      "** · branches: **" + branches + "** (not fully synchronized).")
-        if "bounded_truncated" in (source_pr, source_ci, source_commit, branches):
+        page_limits = item.get("page_limit_reached", {})
+        any_page_limited = isinstance(page_limits, dict) and any(value is True
+                            for value in page_limits.values())
+        if ("bounded_truncated" in (source_pr, source_ci, source_commit, branches)
+                or any_page_limited):
             lines.append("**Source page budget reached:** older GitHub events were not scanned; counts are lower bounds.")
         if state != "partial_sources":
             lines.append("Source is **incomplete or inaccessible**. Missing events are unknown, not zero.")
