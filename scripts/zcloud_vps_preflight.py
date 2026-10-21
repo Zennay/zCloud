@@ -679,10 +679,11 @@ def render_html(report: dict) -> str:
         comparison_html = (
             '<section aria-labelledby="diff"><h2 id="diff">Changes since previous report</h2>'
             f'<dl>{item("New findings", shown(comparison["new_findings"]))}'
-            f'{item("Resolved findings", shown(comparison["resolved_findings"]))}'
+            f'{item("Confirmed resolved", shown(comparison["resolved_findings"]))}'
+            f'{item("Not re-observed", shown(comparison["not_reobserved_findings"]))}'
             f'{item("Still present", shown(comparison["still_present"]))}'
             f'{item("Severity changed", shown([x["code"] + ": " + x["previous"] + " → " + x["current"] for x in comparison["severity_changes"]]))}</dl>'
-            '<p class="muted">Previous report was locally supplied and not independent runtime attestation.</p></section>'
+            '<p class="muted">An omitted/failed measurement never proves recovery. Previous report is locally supplied, not independent runtime attestation.</p></section>'
         )
     archive = report.get("archive_readiness")
     archive_html = ""
@@ -822,7 +823,8 @@ def main() -> int:
         if "comparison" in report:
             change = report["comparison"]
             print(f"New findings: {', '.join(change['new_findings']) or 'none'}")
-            print(f"Resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
+            print(f"Confirmed resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
+            print(f"Not re-observed: {', '.join(change['not_reobserved_findings']) or 'none'}")
             print(f"Still present: {', '.join(change['still_present']) or 'none'}")
             for entry in change["severity_changes"]:
                 print(f"Severity changed: {entry['code']} {entry['previous']} -> {entry['current']}")
