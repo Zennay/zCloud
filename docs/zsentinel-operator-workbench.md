@@ -1,5 +1,35 @@
 # zSentinel · Private Product Delivery Workbench
 
+## 21 oktober · gerichte, brongebonden merge-first eigenaarsexport
+
+De bestaande privé-owner-CLI heeft nu **project-, prioriteits- en PR-relatiegerichte selectie**. Alle originele board- en optionele ZIP-archieven worden eerst volledig toegelaten; filteren gebeurt pas nadat de canonieke issue-/PR-identiteiten, records en bronbeperkingen zijn vastgesteld.
+
+```sh
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --pr-dossier ./previously-saved-prs.zip \
+  --repository Zennay/zCloud --priority P0 \
+  --record-type existing-pr --format html \
+  --output ./private-zcloud-p0-existing-prs.html
+
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --repository Zennay/zCloud --record-type issue-without-pr \
+  --format json --output ./private-unmatched-zcloud-issues.json
+
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --pr-dossier ./previously-saved-prs.zip \
+  --record-type unlinked-pr --format csv \
+  --output ./private-unlinked-prs.csv
+```
+
+De keuzen voor `--record-type` zijn `all` (standaard), `existing-pr` (inclusief historische, niet-geassocieerde PR-kandidaten), `issue-without-pr` (uitsluitend issues zonder PR in deze beperkte bron) en `unlinked-pr` (alleen opgeslagen PR-kandidaten zonder gekoppeld bronissue). `--priority` accepteert `P0`, `P1`, `P2`, `Unspecified`. `--repository` vereist de canonieke `Zennay/<repo>` identiteit: afleiding gebeurt **uit de gevalideerde GitHub-URL**, nooit uit een interne projectslug.
+
+Elk exportformaat toont `source_record_count`, `selected_record_count`, `excluded_source_record_count`, de exacte filterkeuze en `selection_filter_applied`. CSV behoudt die gegevens per record, of in een expliciete metadata-only regel bij nul matches; HTML toont de bron- en selectieomvang ook zonder kaarten; JSON houdt het oorspronkelijke totale bronaantal naast de geselecteerde `record_count`. Dit voorkomt dat een operator een gefilterde lege lijst als portfolio-brede vrijgave interpreteert. Bron-UTC/SHA256, originele archiefmanifesten en ontbrekende batches blijven meegeleverd. De uitvoer behoudt dezelfde create-only/private, grootte-, Unicode- en CSV-formulebescherming als de reeds bestaande CLI.
+
+**Geen bevoegdheidsuitbreiding:** de selectielijst zegt niets over actuele GitHub-PR-status, claims, eigenaar, CI, onafhankelijke review, main-merge of deploy. Alle autorisatievelden blijven `false`. Voor productintegratie eerst live issue- en PR-inventaris, actuele claims en exacte-HEAD verplichte gates opnieuw bekijken; geen externe writes, runnerdispatch, QA- of regressiesuites in dit werkpakket.
+
 The [source-bound product delivery board](zsentinel-product-delivery-board.md) is a deliberately non-authorizing, offline summary of existing P0/P1 issue discovery, queue retry pressure, recent PR-less branches, optional explicit Notion claims and exact-head PR observations. The new **Product Delivery Workbench** turns one saved JSON board into an interactive, still fully local operator workspace.
 
 ## 21 oktober · projectgerichte issue-/PR-botsingswerkbak uit privé bronmomenten
