@@ -194,13 +194,28 @@ def _review_summary(rows):
     }
 
 
-def observe_candidate_prs(issue, *, token=None):
+def observe_candidate_prs(issue, *, token=None, source_case=None):
     """Read exactly an admitted issue's referenced PRs; leave each result untrusted."""
     candidates = issue.get("candidate_prs", [])
     if not isinstance(candidates, list) or len(candidates) > MAX_CANDIDATES:
         raise GitHubReadError("unbounded or absent candidate source")
     if not candidates:
         raise GitHubReadError("issue has no sampled PR; refresh/discover existing work first")
+    if (type(source_case) is not dict
+            or source_case.get("policy") != "zsentinel-recovery-case-handoff-v1"):
+        raise GitHubReadError(
+            "original admitted recovery-case provenance required for live PR review"
+        )
+    provenance = {
+        "case_export_utc": source_case["source_generated_at_utc"],
+        "issue_source_observed_utc": source_case["source_issues_observed_at_utc"],
+        "case_stale_at_import": source_case["source_case_stale"],
+        "issue_source_stale_at_import": source_case["source_issues_stale"],
+        "issue_sample_truncated": source_case["source_issues_truncated"],
+        "historical_candidate_set_is_complete": False,
+        "current_issue_status_verified": False,
+        "current_issue_pr_link_verified": False,
+    }
     source_url = issue["source_urls"][0]
     expected_repo = source_url.rsplit("/issues/", 1)[0]
     observations = []
@@ -335,6 +350,7 @@ def observe_candidate_prs(issue, *, token=None):
         "schema_version": 1, "policy": "zsentinel-live-pr-candidate-readonly-v1",
         "issue_project": issue["project_id"], "issue_id": issue["incident_id"],
         "original_issue_url": source_url,
+        "historical_case_provenance": provenance,
         "observed_at_utc": utc(),
         "candidate_count": len(candidates),
         "source_candidate_count": issue["candidate_count"],
@@ -390,6 +406,15 @@ def owner_html(report):
         "<p>Source: <a href='" + esc(report["original_issue_url"]) +
         "' rel='noopener noreferrer'>" + esc(report["original_issue_url"]) +
         "</a> · checked: <code>" + esc(report["observed_at_utc"]) + "</code></p>",
+        "<p><strong>Historical issue source (not reobserved):</strong> " +
+        esc(report["historical_case_provenance"]["issue_source_observed_utc"] or "UNKNOWN") +
+        " · original case export: " +
+        esc(report["historical_case_provenance"]["case_export_utc"]) +
+        (" · ISSUE SOURCE STALE" if report["historical_case_provenance"][
+            "issue_source_stale_at_import"] else "") +
+        (" · PARTIAL issue sample" if report["historical_case_provenance"][
+            "issue_sample_truncated"] else "") +
+        ". Current PR observations do NOT refresh historical issue links.</p>",
         "<p>Observed " + str(report["live_observations"]) + " / " +
         str(report["candidate_count"]) + " referenced candidates; " +
         str(report["unknown_observations"]) + " UNKNOWN · GET attempts " +
@@ -523,7 +548,15 @@ def markdown(report):
         "**Observed PR information only; NO CI, review, ownership or merge permission.**",
         "",
         "- Issue: " + report["original_issue_url"],
-        "- Observed: " + report["observed_at_utc"],
+        "- Observed live PRs: " + report["observed_at_utc"],
+        "- Original case export: " + report["historical_case_provenance"]["case_export_utc"],
+        "- Historical issue observed: " +
+        (report["historical_case_provenance"]["issue_source_observed_utc"] or "UNKNOWN"),
+        "- Historical issue source stale at import: " +
+        str(report["historical_case_provenance"]["issue_source_stale_at_import"]),
+        "- Historical issue sample truncated: " +
+        str(report["historical_case_provenance"]["issue_sample_truncated"]),
+        "- Current issue PR relationship reverified: NO",
         "- Source candidates: " + str(report["source_candidate_count"]),
         "- Live partial reads: " + str(report["live_observations"]),
         "- UNKNOWN candidates: " + str(report["unknown_observations"]),
