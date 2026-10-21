@@ -2834,6 +2834,83 @@ function drawDetail(){
     linkNode.click();setTimeout(()=>URL.revokeObjectURL(uri),1000);
     status.textContent='Saved one source-only issue/PR handoff locally. No other project notes, live claims, CI retries or releases were included.';
   };
+  // Same already admitted, bounded source as the JSON receipt: a human-readable
+  // handoff for one issue. No private annotations or current authority implied.
+  const markdownLine=v=>String(v??'UNKNOWN').replace(/[\\\\*_[\\]#`<>|]/g,' ').replace(/[\\r\\n\\t]+/g,' ').trim().slice(0,500);
+  const captureMarkdown=()=>{
+    const lines=[
+      '# zSentinel · historical PR handoff for one product issue','',
+      '> SOURCE SNAPSHOT ONLY. No current PR/claim, mandatory CI, independent review, main merge or live release verified.','',
+      '- Issue: ['+card.issue+']('+card.url+')',
+      '- Project: '+card.project+' · sampled priority: '+card.priority,
+      '- Board SHA256: '+boardSha,
+      '- Board observed UTC: '+board.observed_at_utc,
+      '- Historical PR ZIP source windows: '+savedPrHistory.original_archive_sources.length,
+      '- Historical issue link observed: '+(match?'YES, in saved ZIP data':'UNKNOWN, not observed'),
+      '- Ownership and release permission: **NOT VERIFIED / NOT AUTHORIZED**','',
+      '## Source evidence'
+    ];
+    for(const s of savedPrHistory.original_archive_sources){
+      lines.push('- Saved ZIP #'+s.source_index+' · '+s.earliest_observed_utc+
+        ' to '+s.latest_observed_utc+' UTC · manifest SHA256 `'+s.review_manifest_sha256+
+        '` · original board SHA256 `'+s.board_sha256+
+        '` · missing batches: '+(s.missing_batch_indexes.join(', ')||'none reported'));
+    }
+    lines.push('','## Previously linked PRs (not proof of active ownership)');
+    if(!match)lines.push('No link in these historical samples: **UNKNOWN**, not proof that there is no PR.');
+    else{
+      lines.push('Investigation focus: '+markdownLine(match.triage_focus));
+      for(const pr of match.prs){
+        lines.push('','### [PR #'+pr.number+']('+pr.url+')',
+          '- Last saved HEAD: `'+(pr.latest_observed_head||'UNKNOWN')+'`',
+          '- HEAD at last issue link: `'+(pr.head_at_last_issue_link||'UNKNOWN')+'`',
+          '- Historical gate label: '+markdownLine(pr.source_gate),
+          '- Observed HEAD changes: '+pr.head_changes,
+          '- PR missing final saved source: '+(pr.pr_missing_last_source?'YES (not proof of merge)':'NO in bounded sample'),
+          '- Issue link missing final saved source: '+(pr.issue_link_missing_last_source?'YES (not proof of fix)':'NO in bounded sample'),
+          '- PR seen after issue link disappeared: '+(pr.pr_observed_after_issue_link_absent?'YES':'NO'));
+      }
+      if(match.not_shown_count)lines.push('','**'+match.not_shown_count+
+        ' further historical PR links omitted from this bounded display.**');
+    }
+    lines.push('','## Required owner action',
+      '1. Reopen the original issue and all relevant GitHub PRs; check current exact HEAD and active Notion/queue claims.',
+      '2. Verify *all* required exact-head checks, independent review, branch protection and conflicting owners on GitHub.',
+      '3. Only an authorized merge with verified main SHA is source delivery; check live release independently.',
+      '',
+      'This is a private local source-only handoff, not an approval or automated action.');
+    return lines.join(String.fromCharCode(10))+String.fromCharCode(10);
+  };
+  const markdownPreview=elem('button','Review human-readable PR handoff (Markdown)');
+  markdownPreview.type='button';
+  const markdownDownload=elem('button','Download reviewed Markdown handoff');
+  markdownDownload.type='button';markdownDownload.disabled=true;
+  const markdownPanel=elem('div');markdownPanel.hidden=true;
+  const markdownOutput=elem('pre');markdownOutput.className='code';
+  markdownOutput.style.whiteSpace='pre-wrap';markdownOutput.style.overflowWrap='anywhere';
+  let markdownReviewed=null;
+  markdownPreview.onclick=()=>{
+    if(selected!==card.issue){markdownDownload.disabled=true;markdownPanel.hidden=true;return;}
+    markdownReviewed=captureMarkdown();
+    markdownOutput.textContent=markdownReviewed;
+    markdownDownload.disabled=false;markdownPanel.hidden=false;
+    status.textContent='Review the single-issue private Markdown handoff; no live status or owner permission is implied.';
+  };
+  markdownDownload.onclick=()=>{
+    if(selected!==card.issue||markdownReviewed===null||captureMarkdown()!==markdownReviewed){
+      markdownDownload.disabled=true;markdownPanel.hidden=true;
+      status.textContent='Selected issue or historical evidence changed. Review again before download.';
+      return;
+    }
+    const uri=URL.createObjectURL(new Blob([markdownReviewed],{type:'text/markdown;charset=utf-8'}));
+    const a=elem('a');a.href=uri;
+    a.download='zsentinel-private-pr-issue-'+card.project.replace(/[^a-z0-9-]/gi,'-').slice(0,50)+
+      '-'+card.issue.split('#').pop()+'.md';
+    a.click();setTimeout(()=>URL.revokeObjectURL(uri),1000);
+    status.textContent='Single-issue historical Markdown handoff downloaded locally. No private notes, live claims or authorizations included.';
+  };
+  markdownPanel.append(markdownOutput,markdownDownload);
+  historical.append(markdownPreview,markdownPanel);
   previewPanel.append(output,download);
   historical.append(preview,previewPanel);
   detail.append(historical);
