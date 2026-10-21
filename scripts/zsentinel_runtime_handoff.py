@@ -400,11 +400,108 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             priority = row["priority"] if row["priority"] in ("P0", "P1") else "P2"
             cards.append(_card(
                 priority, project, "incident_dependency_owner_hold",
-                "Routeerbare kandidaat " + row["id"] + " HOLD: "
+                "Routeerbare kandidaat " + row["id"] + " HOLD: " +
                 str(row["unresolved_count"]) + " incidentafhankelijkheden missen " +
                 "exacte job-reconciliatie. Bevoegde eigenaar herbeoordeelt " +
                 "originele bron/claims; GEEN dispatch of leasevrijgave.",
                 source="bounded_router_incident_dependency_hold"))
+    # Router gate/capacity/destination HOLDs are product blockers, not
+    # independent task suggestions. Preserve them in the central owner view
+    # using the same validated decision; never reinterpret them as dispatch.
+    gate = decision.get("routing_gate_holds")
+    gate_coverage = "not_supplied"
+    gate_count = None
+    gate_truncated = False
+    if gate is not None:
+        if (type(gate) is not dict
+                or gate.get("coverage") not in ("complete", "incomplete_or_stale")
+                or gate.get("exact_gate_recheck_required") is not True
+                or gate.get("claim_authorized") is not False
+                or gate.get("dispatch_authorized") is not False
+                or type(gate.get("count")) is not int
+                or not 0 <= gate["count"] <= 250
+                or type(gate.get("examples")) is not list
+                or len(gate["examples"]) > 8
+                or len(gate["examples"]) > gate["count"]
+                or gate.get("samples_truncated") is not (
+                    gate["count"] > len(gate["examples"]))
+                or type(gate.get("coverage_reasons")) is not list
+                or len(gate["coverage_reasons"]) > 7):
+            raise ValueError("untrusted router gate HOLD source")
+        allowed_coverage = {
+            "claim_inventory_not_complete", "task_inventory_not_complete",
+            "claim_observation_missing", "task_observation_missing",
+            "claim_observation_stale_or_future", "task_observation_stale_or_future",
+            "active_claim_scope_unknown",
+        }
+        if (any(reason not in allowed_coverage for reason in gate["coverage_reasons"])
+                or (gate["coverage"] == "complete" and gate["coverage_reasons"])):
+            raise ValueError("inconsistent router gate coverage")
+        gate_coverage = gate["coverage"]
+        gate_count = gate["count"] if gate_coverage == "complete" else None
+        gate_truncated = gate["samples_truncated"]
+        unique_holds = set()
+        for row in gate["examples"]:
+            if (type(row) is not dict
+                    or type(row.get("id")) is not str
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", row["id"])
+                    or row.get("priority") not in ("P0", "P1", "P2", "P3")
+                    or row.get("reason") not in (
+                        "required_gate_blocked",
+                        "self_hosted_capacity_not_advisory_headroom",
+                        "compute_destination_not_explicitly_routable")
+                    or row.get("claim_authorized") is not False
+                    or row.get("dispatch_authorized") is not False
+                    or type(row.get("required_gates")) is not list
+                    or not 1 <= len(row["required_gates"]) <= 3
+                    or len(set(row["required_gates"])) != len(row["required_gates"])
+                    or any(g not in ("github_hosted", "self_hosted", "none")
+                           for g in row["required_gates"])
+                    or type(row.get("blocked_required_gates")) is not list
+                    or len(row["blocked_required_gates"]) > 2
+                    or any(g not in row["required_gates"]
+                           for g in row["blocked_required_gates"])
+                    or row.get("capacity_state") not in (
+                        None, "unavailable", "stale", "overloaded",
+                        "advisory_headroom")):
+                raise ValueError("invalid router gate HOLD row")
+            pid = _project(row.get("project_id"))
+            unique_key = (pid, row["id"])
+            if unique_key in unique_holds:
+                raise ValueError("duplicate router gate owner card")
+            unique_holds.add(unique_key)
+            reason = row["reason"]
+            if reason == "required_gate_blocked":
+                if not row["blocked_required_gates"] or row["capacity_state"] is not None:
+                    raise ValueError("invalid blocked gate evidence")
+                action = ("GitHub/runner gate geblokkeerd: " +
+                          ", ".join(row["blocked_required_gates"]) +
+                          ". Laat bevoegde eigenaar actuele exacte gate verifiëren.")
+            elif reason == "self_hosted_capacity_not_advisory_headroom":
+                if ("self_hosted" not in row["required_gates"]
+                        or row["blocked_required_gates"]
+                        or row["capacity_state"] == "advisory_headroom"
+                        or row["capacity_state"] is None):
+                    raise ValueError("invalid self-hosted gate evidence")
+                action = ("Self-hosted capaciteit " + row["capacity_state"] +
+                          "; hosteigenaar controleert nieuwe bron en headroom.")
+            else:
+                if ("self_hosted" in row["required_gates"]
+                        or row["blocked_required_gates"]
+                        or row["capacity_state"] is not None):
+                    raise ValueError("invalid destination gate evidence")
+                action = ("Uitvoeringsbestemming niet bewezen; eigenaar stelt "
+                          "trusted non-VPS of expliciete VPS-route vast.")
+            priority = row["priority"] if row["priority"] in ("P0", "P1") else "P2"
+            card = _card(priority, pid, "routing_gate_owner_hold",
+                         "Taak " + row["id"] + " HOLD: " + action +
+                         " GEEN dispatch/claim.", source="bounded_router_gate_hold")
+            card["source_priority"] = row["priority"]
+            card["gate_hold_reason"] = reason
+            card["required_gates"] = row["required_gates"][:]
+            card["blocked_required_gates"] = row["blocked_required_gates"][:]
+            card["capacity_state"] = row["capacity_state"]
+            cards.append(card)
     notion_owner_status = _notion_owner_status_summary(
         decision.get("notion_claims_observation"), sources.get("notion"), registry)
     pr_cards, pr_coverage = _observed_pr_owner_cards(pr_desk, registry)
@@ -752,6 +849,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                   "queue_current_owner_review": 2,
                   "queue_lease_window_review": 3,
                   "incident_dependency_owner_hold": 4,
+                  "routing_gate_owner_hold": 4,
                   "vps_capacity_owner_review": 5,
                   "vps_capacity_source_incomplete": 6,
                   "open_pr_owner_review": 7, "open_product_issue": 8}
@@ -771,6 +869,14 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                      "issues": issue_coverage, "prs": pr_coverage,
                      "notion": _short(sources.get("notion"), 80)},
         "priority_items": cards[:MAX_ITEMS],
+        "routing_gate_owner_summary": {
+            "coverage": gate_coverage,
+            "held_count": gate_count,
+            "sample_truncated": gate_truncated,
+            "claim_authorized": False,
+            "dispatch_authorized": False,
+            "exact_gate_recheck_required": True,
+        },
         "incident_dependency_owner_summary": {
             "coverage": dependency_coverage,
             "held_count": dependency_count,
@@ -1337,6 +1443,26 @@ def markdown(report):
                      " verder routeerbare kandidaat-taken op HOLD; alleen exacte job-reconciliatie kan status herstellen." +
                      (" Steekproef afgekapt."
                       if dep["coverage"] == "bounded_examples_truncated" else ""))
+    gate_summary = report.get("routing_gate_owner_summary")
+    if type(gate_summary) is not dict or any(
+            gate_summary.get(flag) is not False
+            for flag in ("claim_authorized", "dispatch_authorized")):
+        raise ValueError("invalid routing gate owner summary")
+    if gate_summary.get("exact_gate_recheck_required") is not True:
+        raise ValueError("routing gate recheck must remain manual")
+    if gate_summary.get("coverage") in ("not_supplied", "incomplete_or_stale"):
+        if gate_summary.get("held_count") is not None:
+            raise ValueError("unknown gate source cannot assert zero")
+        lines.append("Uitvoergates: bron ONBEKEND of onvolledig; geen vrijgave.")
+    elif (gate_summary.get("coverage") == "complete"
+          and type(gate_summary.get("held_count")) is int
+          and 0 <= gate_summary["held_count"] <= 250):
+        lines.append("Uitvoergates: " + str(gate_summary["held_count"]) +
+                     " kandidaat-taken op HOLD; eigenaar controleert exacte gate." +
+                     (" Voorbeelden afgekapt." if
+                      gate_summary.get("sample_truncated") is True else ""))
+    else:
+        raise ValueError("invalid routing gate coverage")
     lines.append("")
     lines.append("## Prioritaire opvolging")
     for n, card in enumerate(report["priority_items"], 1):
