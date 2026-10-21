@@ -30,6 +30,7 @@ from lane_generator import (
 )
 from scripts.zsentinel_recovery_actions import suggested_actions
 from scripts.zsentinel_runner_presence import observe_local_runners, text_report
+from scripts.zsentinel_host_pressure import observe_host_pressure, pressure_sentence
 
 LANE_NAMES = {
     "release-integration": "PRs naar main",
@@ -225,7 +226,7 @@ def observe_local_contract(path):
     return packet
 
 
-def collect(database, maximum, include_runner_processes=False, contracts_file=None):
+def collect(database, maximum, include_runner_processes=False, contracts_file=None, include_host_pressure=False):
     """Capture one bounded, read-only SQLite snapshot without owner identities."""
     path = Path(database).absolute()
     if not path.is_file():
@@ -528,6 +529,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
     packet["runner_processes"] = (
         observe_local_runners() if include_runner_processes else None
     )
+    packet["host_pressure"] = observe_host_pressure() if include_host_pressure else None
     packet["recovery_actions"] = suggested_actions(packet)
     return packet
 
@@ -574,6 +576,8 @@ def text_view(data):
         out.append("  Status: " + item["status"])
     if data.get("runner_processes") is not None:
         out.append(text_report(data["runner_processes"]))
+    if data.get("host_pressure") is not None:
+        out.append(pressure_sentence(data["host_pressure"]))
     out.append("Open lokale P0/P1-queue per echt project (adviserend):")
     for item in data["portfolio_urgent_local"]:
         out.append(
@@ -775,6 +779,16 @@ def html_view(data):
         + "<p class='eyebrow'>" + html.escape(item["status"]) + "</p></article>"
         for item in data["recovery_actions"]
     )
+    host_section = ""
+    host = data.get("host_pressure")
+    if host is not None:
+        host_section = (
+            "<section class='notice'><h2>Hostdruk (adviserend)</h2><p>"
+            + html.escape(pressure_sentence(host))
+            + "</p><p>Deze hostmeting bewijst geen vrije cgroup-, "
+            "worker-, Notion- of runnercapaciteit; nieuwe workers blijven "
+            "achter bestaande resource- en eigenaarspoorten.</p></section>"
+        )
     runner_section = ""
     proc = data.get("runner_processes")
     if proc is not None:
@@ -870,7 +884,7 @@ def html_view(data):
         "<th scope='col'>P0 wacht</th><th scope='col'>P1 wacht</th>"
         "<th scope='col'>P0 actief</th><th scope='col'>P1 actief</th>"
         "</tr></thead><tbody>" + portfolio_rows + "</tbody></table></div>"
-        + portfolio_note + "</section>" + runner_section
+        + portfolio_note + "</section>" + host_section + runner_section
         + "<section class='notice'><h2>Grenzen en "
         "vervolgactie</h2><ul>" + details + "</ul></section>"
         "<footer>Alleen lokale read-only bron. Geen claim, CI-start, merge, "
@@ -925,6 +939,10 @@ def markdown_view(data):
     if data.get("runner_processes") is not None:
         lines.extend(("", "## Runnerprocessen (alleen /proc)", "",
                       text_report(data["runner_processes"]), ""))
+    if data.get("host_pressure") is not None:
+        lines.extend(("", "## Hostdruk (adviserend)", "",
+                      pressure_sentence(data["host_pressure"]),
+                      "Geen autorisatie voor extra workers of serviceacties.", ""))
     lines.extend(("", "## Urgente portfolio-queue (lokale bron)", "",
                   "| Project | P0 wacht | P1 wacht | P0 actief | P1 actief |",
                   "| --- | ---: | ---: | ---: | ---: |"))
@@ -1004,6 +1022,8 @@ def main():
     parser.add_argument("--max-rows", type=int, default=250)
     parser.add_argument("--runner-processes", action="store_true",
                         help="Read only local /proc listener presence; no job or online proof")
+    parser.add_argument("--host-pressure", action="store_true",
+                        help="Read bounded local host RAM/swap/load hints only; never admits workers")
     parser.add_argument("--format", choices=("text", "json", "html", "markdown"), default="text")
     parser.add_argument("--output", help="New owner-private file: .html or .md")
     args = parser.parse_args()
@@ -1014,7 +1034,8 @@ def main():
     try:
         packet = collect(args.db, args.max_rows,
                          include_runner_processes=args.runner_processes,
-                         contracts_file=args.contracts_file)
+                         contracts_file=args.contracts_file,
+                         include_host_pressure=args.host_pressure)
         if args.format == "html":
             save_private(args.output, html_view(packet), ".html")
             print("Privé herstelbalie gemaakt (0600); geen systeemactie.")
