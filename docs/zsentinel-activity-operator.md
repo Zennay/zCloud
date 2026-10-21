@@ -682,3 +682,13 @@ The browser constructs a bounded local `zsentinel-private-worker-handoff-v1` JSO
 The report includes explicit `authority: {claim:false, claim_epoch:false, worker_resumed:false, independent_generation:false, merge:false, deployment:false}`. Operator next action is to inspect the original queue claim, conversation, exact-head PR and CI with a permitted owner; this download never authorizes re-send, retry, claim, merge or deploy. The export is a local manual backup/handoff, **not** background monitoring, current runner status proof or a released user-facing feature until normal merge/deployment.
 
 Compatible with the independent original worker source [PR #1552](https://github.com/Zennay/zCloud/pull/1552) and this existing Activity integration [PR #1550](https://github.com/Zennay/zCloud/pull/1550). No new QA suites, workflow dispatch, mutation of SQLite, runner/worker, production service, billing or security settings.
+
+
+## 21 October · Recovery of private command acknowledgement after browser restart
+
+The matching browser source on existing [worker v2 PR #1552](https://github.com/Zennay/zCloud/pull/1552) now persists only unresolved command-result receipt identities in private Violentmonkey storage and reloads them after Firefox/browser tab replacement. Activity's existing **Read progress** view and both private handoff exports can now explain two **static, allowlisted** `send-blocked` reasons:
+
+- `command-ack-pending-no-new-send`: Browser action already occurred, but no authoritative acknowledgement of the separate zCloud command-result POST has been observed yet. The worker retries the **receipt only**, does not re-click Send, and defers any automatic next conversation prompt or New Chat reset.
+- `command-ack-ledger-unavailable`: Private browser persistence is unreadable or cannot prove a receipt was stored; never treat it as an empty command ledger. Stop worker command execution and request inspection of the original command, account-bound tab and storage with the operator.
+
+The events are still **browser-reported observations**, not proof that a remote task was completed. The report deliberately never exports command IDs, queue IDs, browser URLs, prompt text, tokens, private storage contents or unvalidated arbitrary status strings. An event missing from the local retention window means `UNKNOWN`, not healthy. Source PRs remain gated by independent review and required exact-head CI; neither the Activity interface nor its private export is a release authorization.
