@@ -457,3 +457,16 @@ inventarissen, verse observatietijden en bekende actieve claimscopes; het blijft
 advies en verleent geen claim-, retry-, merge- of deployrecht. De implementatie
 staat op de bestaande PR #1563 en vereist nog steeds de originele exacte-head
 CI, onafhankelijke review en protected-main release.
+
+
+### Bronoorzaak bij onbekende routering
+
+Bij `incomplete_or_stale` geeft dezelfde beslissing nu begrensde reden-codes
+mee: taak- of claiminventaris niet expliciet compleet, ontbrekende of te oude
+waarnemingstijd, of een actieve claim zonder bekende bestandsscope. De
+centrale HTML- en Markdown-eigenaaroverdracht vertaalt die codes naar
+concrete bronproblemen; het standaard tekstpaneel doet hetzelfde. Een ontbrekende
+oude coverage-sectie blijft generiek **ONBEKEND**. De compatibiliteitsproperty
+`claim_inventory_complete` blijft bestaan, terwijl
+`routing_inventory_complete` de gecombineerde verse taak-/claimtoelating
+expliciet maakt.
