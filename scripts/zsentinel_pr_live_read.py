@@ -150,9 +150,37 @@ def _issue_summary(payload, full_name, number):
     reason = payload.get("state_reason")
     if reason not in (None, "completed", "not_planned", "reopened"):
         reason = "UNKNOWN"
+    # Only explicit GitHub labels are classified; an issue title,
+    # arbitrary issue body or guessed severity cannot elevate priority.
+    labels = payload.get("labels")
+    observed_priorities = set()
+    labels_complete = isinstance(labels, list) and len(labels) <= 100
+    if labels_complete:
+        for row in labels:
+            label = row.get("name") if isinstance(row, dict) else None
+            if not isinstance(label, str):
+                labels_complete = False
+                break
+            normalized = label.strip().lower().replace(" ", "")
+            if normalized in {
+                    "p0", "p1", "p2", "p3", "priority:p0",
+                    "priority:p1", "priority:p2", "priority:p3",
+                    "priority/p0", "priority/p1", "priority/p2",
+                    "priority/p3"}:
+                observed_priorities.add(normalized[-2:].upper())
+    conflict = len(observed_priorities) > 1
+    explicit_priority = (
+        next(iter(observed_priorities))
+        if labels_complete and len(observed_priorities) == 1
+        else "UNKNOWN"
+    )
     return {
         "observed_state": state,
         "reported_state_reason": reason or "UNKNOWN",
+        "priority_from_explicit_labels": explicit_priority,
+        "priority_label_source_complete": labels_complete,
+        "priority_label_conflict": conflict,
+        "priority_is_authority": False,
         "source_issue_still_open": state == "open",
         "closed_does_not_prove_fix_merged": True,
         "source_link_to_candidate_reverified": False,
@@ -1105,6 +1133,11 @@ def owner_html(report):
         "<p><strong>Current issue GET:</strong> " +
         esc(report["current_issue"]["status"]) +
         " · state: " + esc(report["current_issue"]["observed_state"]) +
+        " · observed label priority: " +
+        esc(report["current_issue"].get(
+            "priority_from_explicit_labels", "UNKNOWN")) +
+        " · priority conflict: " +
+        esc(report["current_issue"].get("priority_label_conflict", "UNKNOWN")) +
         " · reason: " + esc(report["current_issue"].get(
             "reported_state_reason", "UNKNOWN")) +
         " · CLOSED never means a fix is merged or the worker claim released."
@@ -1376,6 +1409,11 @@ def markdown(report):
         "- Issue: " + report["original_issue_url"],
         "- Current issue read: " + report["current_issue"]["status"],
         "- Current issue state: " + report["current_issue"]["observed_state"],
+        "- Explicit GitHub issue-label priority: " +
+        report["current_issue"].get("priority_from_explicit_labels", "UNKNOWN"),
+        "- Priority labels conflicted: " +
+        str(report["current_issue"].get("priority_label_conflict", "UNKNOWN")),
+        "- Issue labels do not establish worker authority: YES",
         "- Current issue source was reobserved once, not continuously",
         "- Closed issue implies merged repair: NO",
         "- Observed live PRs: " + report["observed_at_utc"],
