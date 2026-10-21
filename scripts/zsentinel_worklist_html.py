@@ -390,6 +390,7 @@ const focusExport=document.getElementById('focus-export');
 const collisionOnly=document.getElementById('collision-only');
 const collisionRows=Array.from(document.querySelectorAll('li.collision[data-issue]'));
 const collisionVisible=document.getElementById('collision-visible');
+const collisionExport=document.getElementById('collision-export');
 let focusedPr=null,focusIndex=-1;
 function linkedToFocus(t){
  return Boolean(focusedPr)&&
@@ -547,6 +548,49 @@ function onePrHandoff(){
    lines.join('\n')+'\n');
 }
 focusExport.addEventListener('click',onePrHandoff);
+collisionExport.addEventListener('click',function(){
+ const lines=[
+  '# zSentinel · privé afstemming meervoudige PR-bronissues','',
+  '> Volledige beperkte opgeslagen botsingsinventaris; geen bewezen file conflict, fixes, eigenaren, CI of mergebevoegdheid.','',
+  '- Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
+  '- PR-bron UTC: '+safeText(document.getElementById('pr-time').textContent),
+  '- Exact privé bron-token: '+safeText(document.body.dataset.sourceToken),
+  '- Totale meervoudige bronissuevermeldingen: '+collisionRows.length,
+  '- Huidige UI-filters, geselecteerde PR en lokale status wijzigen deze broninventaris niet.',''
+ ];
+ for(const [i,c] of collisionRows.entries()){
+  const issue=c.dataset.issue, t=tickets.find(row=>row.dataset.issue===issue);
+  const sourcePrs=c.dataset.prs.split(' ').filter(Boolean);
+  lines.push('## '+(i+1)+'. [Issue #'+issue.split('/').pop()+']('+issue+')','',
+   'Prioriteit uit bron: '+safeText(c.dataset.priority),
+   'Project uit bron: '+safeText(c.dataset.project),
+   'Titel: '+safeText(c.dataset.title),
+   'PR-kandidaten uit hetzelfde beperkte issuevenster: '+sourcePrs.length,
+   'Een gedeeld issue bewijst geen overlapping van bestanden of twee complete fixes.','');
+  if(t){
+   lines.push('Handmatige lokale issuestatus: '+labels[t.querySelector('.local-state').value]);
+   const note=t.querySelector('textarea').value.trim();
+   if(note)lines.push('Privé issuenotitie: '+safeText(note));
+  }
+  for(const pr of sourcePrs){
+   const group=prs.find(p=>p.dataset.pr===pr);
+   const head=group&&group.dataset.head;
+   lines.push('- [Bestaande PR #'+pr.split('/').pop()+']('+pr+')',
+    '  - Geobserveerde bron HEAD: '+safeText(head||'ONBEKEND'),
+    '  - Gate: '+safeText(group?group.dataset.gate:'ONBEKEND'));
+   if(group){
+    lines.push('  - Menselijke gatevervolgstap: '+safeText(group.dataset.next),
+      '  - PR-bestandsoverlap in de bron: '+safeText(group.dataset.overlap),
+      '  - Handmatige lokale PR-status: '+prLabels[group.querySelector('.pr-local-state').value]);
+    const prNote=group.querySelector('.pr-note').value.trim();
+    if(prNote)lines.push('  - Privé PR-notitie: '+safeText(prNote));
+   }
+  }
+  lines.push('');
+ }
+ lines.push('Herlees op GitHub/Notion voor werkovername of merge: huidige claims en PR HEAD, verplichte CI, onafhankelijke reviews, branch protection en exacte scope.','');
+ privateDownload('zsentinel-pr-botsingen-prive-overdracht.md',lines.join('\n')+'\n');
+});
 document.getElementById('export').addEventListener('click',function(){
  const parts=['# zSentinel · private handmatige opvolging','',
   'Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
@@ -792,6 +836,7 @@ refresh();
         "<option value='coordinate'>Afstemming tussen PRs nodig</option>"
         "<option value='followup'>Opvolging vastgelegd</option></select></label>"
         "<button id='reset' type='button'>Wis filters</button>"
+        "<button id='collision-export' type='button'>Download PR-botsingsdossier (Markdown)</button>"
         "<button id='export' type='button'>Download privéoverdracht (Markdown)</button>"
         "<button id='session-save' type='button'>Bewaar lokale sessie (JSON)</button>"
         "<label>Heropen lokale sessie<input id='session-import' type='file' "
