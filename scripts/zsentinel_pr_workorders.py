@@ -162,6 +162,98 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
             sorted(related)[:8], sorted(hinted_issues)[:MAX_ISSUE_HINTS])
 
 
+
+def _collision_peer_receipts(view, selected_url, selected_head, repository,
+                             focused_sources=None):
+    """Exact observed peer commits; never infer current ownership or mergeability.
+
+    The whole sampled inventory must be stable, and the selected PR must be
+    independently head-pinned by the gate read. If a peer is observed at
+    two incompatible HEADs, drop the peer instead of choosing one.
+    """
+    if selected_head is None or view.get("open_pr_snapshot_stable") is not True:
+        return [], True
+    peers, conflicted = {}, set()
+    partial = (view.get("sample_complete") is not True or
+               view.get("source_truncated") is True)
+    def accept(raw_url, raw_sha, count, preview, truncated, provenance):
+        nonlocal partial
+        url = _same_repo_url(raw_url, repository)
+        if url == selected_url:
+            partial = True
+            return
+        if type(raw_sha) is not str or SHA.fullmatch(raw_sha) is None:
+            partial = True
+            return
+        if type(count) is not int or not 1 <= count <= 10000:
+            partial = True
+            return
+        if type(preview) is not list or len(preview) > MAX_PATHS:
+            partial = True
+            return
+        paths = sorted({edit_path(path) for path in preview})
+        if not paths or len(paths) > count:
+            partial = True
+            return
+        row = {"url": url, "head_sha_at_observation": raw_sha,
+               "shared_file_count_observed": count,
+               "shared_files_preview": paths,
+               "preview_incomplete": bool(truncated or len(paths) < count),
+               "source": provenance,
+               "owner_verified": False, "merge_authorized": False}
+        if url in conflicted:
+            return
+        if url in peers:
+            # Two independent source windows may show different peer heads
+            # or incompatible file lists. Never stitch incompatible evidence.
+            old = peers[url]
+            if (old["head_sha_at_observation"] != raw_sha or
+                    old["shared_file_count_observed"] != count or
+                    old["shared_files_preview"] != paths):
+                partial = True
+                conflicted.add(url)
+                peers.pop(url)
+            return
+        peers[url] = row
+
+    for pair in view.get("shown_collision_pairs", [])[:80]:
+        if (type(pair) is not dict or type(pair.get("left")) is not dict
+                or type(pair.get("right")) is not dict):
+            partial = True
+            continue
+        left, right = pair["left"], pair["right"]
+        if left.get("url") == selected_url:
+            owner, peer = left, right
+        elif right.get("url") == selected_url:
+            owner, peer = right, left
+        else:
+            continue
+        if owner.get("head_sha") != selected_head:
+            partial = True
+            continue
+        accept(peer.get("url"), peer.get("head_sha"),
+               pair.get("shared_file_count_observed"),
+               pair.get("shared_files"), pair.get("shared_files_truncated"),
+               "stable_open_pr_collision_sample")
+
+    for item in (focused_sources or [])[:16]:
+        if type(item) is not dict:
+            partial = True
+            continue
+        accept(item.get("other_pr_url"), item.get("other_pr_head_when_read"),
+               item.get("shared_file_count_observed"),
+               item.get("shared_paths_preview"),
+               item.get("shared_paths_preview_truncated") is True or
+               item.get("other_pr_file_list_incomplete") is True,
+               "focused_pr_overlap_with_stable_inventory")
+
+    if len(peers) > 8 or len(view.get("shown_collision_pairs", [])) > 80 or (
+            focused_sources is not None and len(focused_sources) > 16):
+        partial = True
+    result = [peers[url] for url in sorted(peers)[:8]]
+    return result, partial
+
+
 def collect_workorders(board):
     if (type(board) is not dict or board.get("schema") != BOARD
             or any(board.get(key) is not False for key in (
@@ -281,6 +373,11 @@ def collect_workorders(board):
             live_gate.get("sampled_file_overlaps_observed"))
         if live_gate.get("sampled_file_overlaps_hidden"):
             paths_cut = True
+        peer_evidence, peer_partial = _collision_peer_receipts(
+            projects[project], url, head if pinned else None, repo,
+            live_gate.get("sampled_file_overlaps_observed"))
+        if live_gate.get("sampled_file_overlaps_hidden"):
+            peer_partial = True
         # The summary can include an earlier file-scope sample, not
         # necessarily the second read's exact HEAD. Never surface those
         # links as positive overlap when the current HEAD could not be pinned.
@@ -418,6 +515,10 @@ def collect_workorders(board):
         if paths_cut or item.get("non_green_jobs_hidden") or (
                 item.get("source_current_head_verified") is not True):
             notes.append("Brongegevens voor conflicterende paden/CI zijn mogelijk afgekapt.")
+        if peer_partial:
+            notes.append("Peer-HEAD-vergelijking is onvolledig; overige "
+                         "open PRs, veranderde HEADs en ontbrekende paden "
+                         "kunnen niet worden uitgesloten.")
         if paths_cut:
             notes.append(
                 "Niet alle bestandsverbindingen zijn aan de exact waargenomen "
@@ -468,6 +569,8 @@ def collect_workorders(board):
             "overlap_paths": [_markdown(p) for p in paths],
             "overlap_paths_hidden": paths_cut,
             "related_prs": related, "unverified_issue_hints": hints,
+            "peer_head_evidence": peer_evidence,
+            "peer_head_evidence_partial": peer_partial,
             "source_warnings": notes,
             "owner_claim_verified": False, "required_checks_verified": False,
             "merge_authorized": False, "deploy_authorized": False,
