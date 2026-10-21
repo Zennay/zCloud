@@ -888,3 +888,38 @@ classificeerbaar, ook als de beschrijving tests of regressies noemt.
 
 De wijziging betreft uitsluitend nieuwe task-admission; reeds actieve
 werkers en claim-/lease-identiteiten blijven onaangeroerd.
+
+
+## 21 oktober · Claim-churn werkbak voor herstel zonder overname (#677)
+
+De bestaande geautoriseerde `GET /api/portfolio-queue` bevat in het
+`delivery_policy`-gedeelte nu een **brongebonden owner-werkbak** voor
+herhaalde taakclaims. Wanneer een zichtbare `queued`, `claimed`,
+`running` of `verifying` bronrij een echt niet-negatief geheel
+`attempts >= 3` heeft, wordt die **alleen** als onderzoekskandidaat
+geïndexeerd. Een integer `3` is géén bewezen storing, eindstatus of
+auto-retry-budget; ongeldige, boolean- of stringvormige counters worden
+niet als betrouwbaar bewijs geaccepteerd. De teller wijzigt niets aan de
+scheduler of de blijvende taak.
+
+Nieuwe operatorvelden: `repeated_claim_attempts_observed`, afzonderlijke
+`repeated_active_claim_attempts_observed` en
+`repeated_queued_claim_attempts_observed`, een per-project
+`repeated_claim_attempts_visible` plus beide status-subtellingen, en de
+maximaal `max_visible` lange `repeated_claim_workorders`-lijst.
+Daarin staat het oorspronkelijke `project_id`/`queue_id`, bronstatus,
+prioriteit, veilig begrensde claimattemptteller en de vaste opdracht
+`review_attempt_history_no_automatic_retry`. Selectie is
+**project-eerlijk**: eerst één geobserveerde lead per project, daarna de
+hoogste overige herhalingen. De truncatie-indicator is expliciet. Projecten
+met zulke signalen komen in de operatorlijst vóór gewone productwachtrij,
+maar onder ontbrekende actieve eigenaarsbewijzen. Exacte scheduler-P0/P1-
+prioriteiten en werkernavigatie blijven ongewijzigd.
+
+`repeated_claims_are_not_failures_or_retry_authority=true` en per
+werkorder `not_claimed_or_authorized=true` verduidelijken de grens.
+Bestaande #677 vereist nog steeds een door de **control-plane owner**
+geautoriseerde native writer/backoff-/NEEDS_AI-implementatie; deze wijziging
+claimt die implementatie niet. Geen automatische claim, vrijgave, retry,
+CI-dispatch of live-VPS-write. Zonder volledige bron kan een lage teller
+geen bewijs voor een gezonde of lege volledige queue zijn.
