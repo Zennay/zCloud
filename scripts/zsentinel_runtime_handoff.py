@@ -159,7 +159,32 @@ def _observed_pr_owner_cards(pr_desk, registry):
                     or type(reviews) is not dict
                     or reviews.get("head_sha") != head):
                 raise ValueError("PR owner card needs consistent exact HEAD")
+            counted = {name: ci.get(name) for name in
+                       ("failed", "pending", "inconclusive")}
+            sampled, total = ci.get("sampled"), ci.get("total_reported")
+            approvals = reviews.get("same_head_approvals_seen")
+            if (type(sampled) is not int or not 0 <= sampled <= 30
+                    or type(total) is not int or not sampled <= total <= 1000000
+                    or type(approvals) is not int or not 0 <= approvals <= 30
+                    or type(ci.get("all_checks_observed")) is not bool
+                    or type(reviews.get("review_page_full")) is not bool
+                    or any(type(group) is not list or len(group) > 8
+                           or any(type(name) is not str or len(name) > 100
+                                  for name in group)
+                           for group in counted.values())):
+                raise ValueError("untrusted PR exact-head gate sample")
             card["pr_observed_head_sha"] = head
+            card["pr_observed_gate_counts"] = {
+                "check_runs_sampled": sampled,
+                "check_runs_reported": total,
+                "checks_failed_seen_min": len(counted["failed"]),
+                "checks_pending_seen_min": len(counted["pending"]),
+                "checks_inconclusive_seen_min": len(counted["inconclusive"]),
+                "same_head_independent_approvals_seen": approvals,
+                "review_window_truncated": reviews["review_page_full"],
+                "check_run_window_complete": ci["all_checks_observed"],
+                "required_checks_and_reviews_verified": False,
+            }
         cards.append(card)
     return cards, "bounded_%d_open_prs_other_prs_unknown" % len(cards)
 
