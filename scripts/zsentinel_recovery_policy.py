@@ -885,7 +885,7 @@ def workorders_csv(batch):
         "owner_hint_unverified", "issue_url", "candidate_pr_urls_unverified",
         "source_receipts_unverified", "sampled_pr_triage", "pr_draft_state_at_source",
         "pr_link_relationships_at_source", "problem_codes", "required_evidence",
-        "proposed_actions",
+        "proposed_actions", "proposal_recommendations_json",
         "case_export_utc", "policy_evaluated_utc", "case_project_scope",
         "issues_observed_utc", "queue_observed_utc",
         "issue_source_stale", "queue_source_stale", "issue_sample_partial",
@@ -912,6 +912,18 @@ def workorders_csv(batch):
             "; ".join(item["problem_codes"]),
             "; ".join(item["required_evidence"]),
             "; ".join(item["proposed_actions"]),
+            json.dumps([
+                {
+                    "action": result["report"]["action"],
+                    "decision": result["report"]["decision"],
+                    "recommended_next_step": result["report"]["recommended_next_step"],
+                    "blocker_codes": [blocker["code"] for blocker in result["report"]["blockers"]],
+                    "required_evidence": result["report"]["required_evidence"],
+                }
+                for result in batch.get("results", [])
+                if result["report"]["project_id"] == item["project_id"]
+                and result["report"]["incident_id"] == item["incident_id"]
+            ], ensure_ascii=False, separators=(",", ":")),
             batch.get("source_generated_at_utc") or "",
             batch["evaluated_at_utc"],
             batch.get("source_project_scope") or "UNKNOWN",
