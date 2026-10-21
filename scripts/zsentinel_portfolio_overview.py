@@ -681,6 +681,25 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
     elif notion_mode == "degraded_unavailable_no_claim_authority":
         caption += (" NOTION ONBESCHIKBAAR: afwezige regels zijn ONBEKEND, "
                     "niet nul actieve claims.")
+    # Render the operator's next useful source read as a visible artifact,
+    # not just a generic "Notion incomplete" badge. Manual/private snapshots
+    # cannot claim live per-status coverage.
+    notion_windows = summary.get("notion_status_source_windows")
+    notion_coverage_html = (
+        '<p class="muted">Notion statusvensters: NIET afzonderlijk live '
+        'geverifieerd; opgeslagen of ontbrekende bron verleent geen rechten.</p>'
+        if notion_windows is None else
+        '<p class="muted">Notion read-only bronvensters: ' +
+        " · ".join(
+            escape(item["status"]) + " ≥" + str(item["observed_rows"]) +
+            " (" + str(item["pages_read"]) + "/" +
+            str(item["page_budget"]) + " pagina's; " +
+            ("ONVOLLEDIG · eigenaar moet bron herlezen"
+             if item["coverage"] == "partial"
+             else "afgerond binnen bronvenster")
+            for item in notion_windows
+        ) + ". GEEN bewijs van actieve lease, claimvrijgave of volledige queue.</p>'
+    )
     coverage = (
         "Huidige wachtrijmomentopname is volledig binnen de observerlimiet; "
         "maar er is GEEN geverifieerd bestandseigendom."
@@ -689,7 +708,8 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
     )
     table = (
         '<section><h2>Volledig portfolio · gedeeltelijke broncontrole</h2>'
-        '<p class="muted">' + caption + '</p><p class="banner">' + coverage +
+        '<p class="muted">' + caption + '</p>' + notion_coverage_html +
+        '<p class="banner">' + coverage +
         ' Geen claim, workflow, herstart, lease of deploy uitgevoerd.</p>'
         '<div class="wrap"><table><thead><tr><th scope="col">Project</th>'
         '<th scope="col">Wachtend</th><th scope="col">Bezet</th>'
@@ -1243,6 +1263,19 @@ def main():
             lines = ["zSentinel portfolio | venster %d/%d | GitHub: %s" % (
                 window_index + 1, len(windows), ", ".join(selected))]
             lines.append("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
+            notion_windows = summary.get("notion_status_source_windows")
+            if notion_windows is None:
+                lines.append("Notion statusvensters: ONBEKEND; geen afzonderlijk live bronbewijs.")
+            else:
+                for item in notion_windows:
+                    lines.append(
+                        "Notion %s: ≥%s werkregels uit %s/%s pagina's · %s; "
+                        "geen claim/lease/vrijgavebewijs." % (
+                            item["status"], item["observed_rows"],
+                            item["pages_read"], item["page_budget"],
+                            "ONVOLLEDIG: bron herlezen door eigenaar"
+                            if item["coverage"] == "partial"
+                            else "binnen venster gelezen"))
             if runner_cross_source is not None:
                 from zsentinel_runner_cross_source import as_text as runner_cross_text
                 lines.append(runner_cross_text(runner_cross_source))
