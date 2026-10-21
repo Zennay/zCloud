@@ -21,6 +21,8 @@ PROFILE_LANES = {
             "keywords": (
                 "merge", "pull request", "pr", "main", "branch",
                 "review", "approval", "integrate", "integration",
+                "mergen", "samenvoegen", "pullverzoek", "integreer",
+                "integreren", "naar main",
             ),
         },
         {
@@ -28,6 +30,8 @@ PROFILE_LANES = {
             "keywords": (
                 "issue", "issues", "bug", "fix", "repair", "defect",
                 "product", "feature", "ux", "ui", "customer",
+                "bouw", "repareer", "repareren", "probleem", "fout",
+                "functie", "gebruikersflow", "gebruikerservaring",
             ),
         },
         {
@@ -35,6 +39,8 @@ PROFILE_LANES = {
             "keywords": (
                 "worker", "scheduler", "queue", "claim", "browser",
                 "runtime", "memory", "ram", "swap", "crash", "stalled",
+                "wachtrij", "taakclaim", "browserwerker", "browserworker",
+                "workerblokkade", "vastgelopen",
             ),
         },
         {
@@ -42,6 +48,8 @@ PROFILE_LANES = {
             "keywords": (
                 "deploy", "workflow", "runner", "vps", "service",
                 "ci", "build", "release", "github actions", "pipeline",
+                "uitrollen", "uitrol", "deployment", "zelfgehoste runner",
+                "pijplijn",
             ),
         },
     ),
@@ -483,6 +491,10 @@ def work_package_rank(item):
         "implement", "build", "ship", "deliver", "complete", "finish",
         "integrate", "migrate", "fix", "repair", "recover", "restore",
         "launch", "enable", "harden", "connect", "refactor",
+        "bouw", "bouwen", "implementeer", "implementeren", "herstel",
+        "repareer", "repareren", "integreer", "integreren",
+        "merge", "mergen", "lever", "opleveren", "afronden",
+        "los op",
     )
     if any(re.search(r'\b' + word + r'\b', title) for word in words):
         return 0
