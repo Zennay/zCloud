@@ -2380,7 +2380,7 @@ function drawDetail(){
   try{
    const sourceUrl=new URL(card.url);
    if(sourceUrl.protocol!=='https:'||sourceUrl.hostname!=='github.com'||
-      !/\/(issues|pull)\/[1-9][0-9]{0,8}$/.test(sourceUrl.pathname))
+      !/\\/(issues|pull)\\/[1-9][0-9]{0,8}$/.test(sourceUrl.pathname))
     throw Error('Saved source is not a canonical GitHub issue or PR URL');
    const sourceStamp=board.source_times_utc?.inbox;
    if(typeof sourceStamp!=='string'||!sourceStamp.trim())
