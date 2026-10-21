@@ -67,8 +67,8 @@ leases, scheduler admissions, reviews or releases.
 
 ## 21 October · queue eligibility parity with the actual runtime
 
-The real `server.py` selects **eligible=1** rows for new worker
-assignment. The private four-lane desk intentionally reads all local
+The real `server.py` selects **eligible=1**, `status=queued` and
+`worker_slot IS NULL` rows for new worker assignment. The private four-lane desk intentionally reads all local
 `queued` rows to show blocked work, so its old lane generator could
 mislabel an ineligible item as a candidate. Recovery lanes now filter
 `queued` items unless their explicit `eligible` value equals 1.
@@ -76,6 +76,14 @@ A missing, false or non-1 value is not a permission to dispatch.
 Existing `claimed`/`running`/`verifying` items **remain active
 reservations**, even if `eligible` was later cleared, and continue
 to hold their declared write scopes.
+
+An otherwise eligible queued row with an existing workerslot is also
+excluded from new recovery admission. The generator records a bounded
+`deferred_assigned_packages` count per lane; the desk displays
+`HOLD_QUEUE_WORKER_SLOT_RESERVED` if those slot-linked records are
+the only work present. No slot IDs, worker IDs or claim keys appear in
+the public-facing report. Existing assignments are neither released
+nor automatically retried.
 
 The desk now exposes the count per lane as
 `deferred_ineligible_packages` in JSON, human-readable text, offline
