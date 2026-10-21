@@ -674,10 +674,14 @@ def portfolio_changes_html(data):
         for item in history["changed_projects"]:
             delta = item["delta"]
             links = html_inbox_links(item["project"])
+            triage = data["project_owner_decisions"][item["project_id"]]
             rows.append(
-                "<tr><th scope='row'>" + html.escape(item["project"]) +
+                "<tr><th scope='row'><a href='#project-" +
+                html.escape(item["project_id"], quote=True) + "'>" +
+                html.escape(item["project"]) + "</a>" +
                 links + "</th><td>" + html.escape(item["kind"]) +
-                "</td><td>" + f"{delta['queued_p0']:+d}" +
+                "<br><small>" + html.escape(triage["code"]) +
+                "</small></td><td>" + f"{delta['queued_p0']:+d}" +
                 "</td><td>" + f"{delta['queued_p1']:+d}" +
                 "</td><td>" + f"{delta['in_flight_p0']:+d}" +
                 "</td><td>" + f"{delta['in_flight_p1']:+d}" +
@@ -700,6 +704,9 @@ def portfolio_changes_html(data):
     return (
         "<section class='notice' id='owner-change-panel'>"
         "<h2>Portfolioverschil sinds privé bronmoment</h2>"
+        "<p>Projectnamen openen het brongebonden eigenaarsoverzicht; "
+        "de triagecode is alleen lokaal advies. Broncount-delta's "
+        "bewijzen geen acties of eigenaars.</p>"
         "<p>Vorige UTC " + html.escape(history["previous_observed_utc"]) +
         " · huidige UTC " + html.escape(history["current_observed_utc"]) +
         " · status " + html.escape(history["status"]) + "</p>"
