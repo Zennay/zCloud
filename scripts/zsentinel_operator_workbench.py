@@ -603,6 +603,13 @@ No private human notes or live claim states are included.</p>
 <div id="deltaCsvPanel" hidden><pre id="deltaCsvContent"></pre>
 <button type="button" id="downloadDeltaCsv" disabled>Download reviewed two-snapshot CSV</button></div>
 </div>
+<div class="brief" aria-label="Project recovery delta export">
+<h3>Project-level recovery change ledger</h3>
+<p>Compare issue-independent project coverage, sampled priority counts, queue pressure and the recommended human investigation across the same two saved boards. A missing project or queue sample is NOT resolution or a released claim.</p>
+<button type="button" id="previewProjectDeltaCsv" disabled>Preview project recovery CSV</button>
+<div id="projectDeltaCsvPanel" hidden><pre id="projectDeltaCsvContent"></pre>
+<button type="button" id="downloadProjectDeltaCsv" disabled>Download project recovery CSV</button></div>
+</div>
 <div class="brief">
 <h3>Reviewed human follow-up carry-forward</h3>
 <p>After loading the earlier source board, select its exact private handoff JSON.
@@ -864,7 +871,7 @@ window.addEventListener('beforeunload',event=>{
  if(!unsavedLocal)return;
  event.preventDefault();event.returnValue='';
 });
-let viewedBrief=null,viewedCsv=null,viewedDeltaCsv=null,viewedPrDesk=null,viewedPrManifest=null,viewedIssueHandoff=null,issueImportPreview=null;
+let viewedBrief=null,viewedCsv=null,viewedDeltaCsv=null,viewedProjectDeltaCsv=null,viewedPrDesk=null,viewedPrManifest=null,viewedIssueHandoff=null,issueImportPreview=null;
 let viewedCalendar=null,viewedCalendarStamp=null;
 function invalidateBrief(){
  viewedPrManifest=null;
@@ -879,6 +886,10 @@ function invalidateBrief(){
  document.getElementById('deltaCsvPanel').hidden=true;
  document.getElementById('deltaCsvContent').textContent='';
  document.getElementById('downloadDeltaCsv').disabled=true;
+ viewedProjectDeltaCsv=null;
+ document.getElementById('projectDeltaCsvPanel').hidden=true;
+ document.getElementById('projectDeltaCsvContent').textContent='';
+ document.getElementById('downloadProjectDeltaCsv').disabled=true;
  viewedCsv=null;
  document.getElementById('csvPanel').hidden=true;
  document.getElementById('csvContent').textContent='';
@@ -2090,6 +2101,7 @@ function refreshComparison(){
  stats.replaceChildren();list.replaceChildren();
  document.getElementById('clearBaseline').disabled=!baseline;
  document.getElementById('previewDeltaCsv').disabled=!baseline;
+ document.getElementById('previewProjectDeltaCsv').disabled=!baseline;
  const changeSelect=document.getElementById('change');
  changeSelect.disabled=!baseline;
  if(!baseline)changeSelect.value='';
@@ -3406,6 +3418,66 @@ function deltaCsvSource(){
  if(!rows.length)return null;
  return [cols,...rows].map(row=>row.map(csvCell).join(',')).join('\\r\\n')+'\\r\\n';
 }
+function projectDeltaCsvSource(){
+ if(!baseline||!baseline.sha)return null;
+ const cols=['previous_board_sha256','current_board_sha256',
+  'previous_observed_at_utc','current_observed_at_utc','change_kind',
+  'project','changed_source_fields','previous_project_coverage','current_project_coverage',
+  'previous_P0_sample','previous_P1_sample','previous_P2_sample','previous_Unspecified_sample',
+  'current_P0_sample','current_P1_sample','current_P2_sample','current_Unspecified_sample',
+  'previous_queue_active_items','current_queue_active_items',
+  'previous_queue_high_claim_attempts','current_queue_high_claim_attempts',
+  'previous_queue_expired_active_leases','current_queue_expired_active_leases',
+  'previous_queue_source_observed_at_utc','current_queue_source_observed_at_utc',
+  'previous_snapshot_partial_or_denied','current_snapshot_partial_or_denied',
+  'claim_authorized','merge_authorized','deploy_authorized'];
+ const oldPartial=baseline.coverage.inbox_truncated||
+  baseline.coverage.cards_truncated||baseline.coverage.github_denial;
+ const newPartial=board.coverage.inbox_truncated||
+  board.coverage.cards_truncated||board.coverage.github_denial;
+ const rows=projectChangesSinceBaseline().map(change=>{
+  const before=baseline.projectOperations.get(change.project);
+  const after=board.project_operations.find(row=>row.project===change.project);
+  const beforeCounts=before?.issue_counts_in_sample||{};
+  const afterCounts=after?.issue_counts_in_sample||{};
+  const beforeQueue=before?.queue_observation||{};
+  const afterQueue=after?.queue_observation||{};
+  return [baseline.sha,boardSha,baseline.observed_at_utc,board.observed_at_utc,
+   change.kind,change.project,change.changedFields?.join(' | ')||'',
+   before?.issue_coverage||'',after?.issue_coverage||'',
+   beforeCounts.P0??'',beforeCounts.P1??'',beforeCounts.P2??'',beforeCounts.Unspecified??'',
+   afterCounts.P0??'',afterCounts.P1??'',afterCounts.P2??'',afterCounts.Unspecified??'',
+   beforeQueue.active_items??'',afterQueue.active_items??'',
+   beforeQueue.high_claim_attempts??'',afterQueue.high_claim_attempts??'',
+   beforeQueue.expired_active_leases??'',afterQueue.expired_active_leases??'',
+   before?.queue_source_observed_at_utc||'',after?.queue_source_observed_at_utc||'',
+   String(oldPartial),String(newPartial),'false','false','false'];
+ });
+ if(!rows.length)return null;
+ return [cols,...rows].map(row=>row.map(csvCell).join(',')).join('\\r\\n')+'\\r\\n';
+}
+document.getElementById('previewProjectDeltaCsv').onclick=()=>{
+ viewedProjectDeltaCsv=projectDeltaCsvSource();
+ document.getElementById('projectDeltaCsvPanel').hidden=!viewedProjectDeltaCsv;
+ document.getElementById('projectDeltaCsvContent').textContent=
+  viewedProjectDeltaCsv||'';
+ document.getElementById('downloadProjectDeltaCsv').disabled=!viewedProjectDeltaCsv;
+ status.textContent=viewedProjectDeltaCsv?
+  'Review both exact board SHAs and each project recovery delta. Missing is not resolved.':
+  'No validated project recovery differences available for export.';
+};
+document.getElementById('downloadProjectDeltaCsv').onclick=()=>{
+ if(!viewedProjectDeltaCsv)return;
+ if(projectDeltaCsvSource()!==viewedProjectDeltaCsv){
+  invalidateBrief();status.textContent='Project recovery comparison changed. Preview again.';return;
+ }
+ const uri=URL.createObjectURL(new Blob(['\\ufeff',viewedProjectDeltaCsv],
+  {type:'text/csv;charset=utf-8'}));
+ const a=elem('a');a.href=uri;a.download='zsentinel-project-recovery-changes.csv';a.click();
+ setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ invalidateBrief();
+ status.textContent='Project recovery change ledger saved; no queue or owner state is inferred current.';
+};
 document.getElementById('previewDeltaCsv').onclick=()=>{
  viewedDeltaCsv=deltaCsvSource();
  document.getElementById('deltaCsvPanel').hidden=!viewedDeltaCsv;
