@@ -260,7 +260,14 @@
       // Recheck after asynchronous UI work; settings/allocation can change.
       if(!high()){await blocked("high-changed-before-send");return false}
       const fresh=await api("/runner-targets");
-      if(!ready(fresh.projects?.[id])||fresh.projects[id].queue_item.queue_id!==target.queue_item.queue_id){
+      const current=fresh.projects?.[id];
+      // A queue ID alone is not proof that the assignment still authorizes
+      // this exact prompt. A same-queue edit, slot move or owner change
+      // during the Thinking/editor wait must not dispatch stale instructions.
+      if(!ready(current)||current.project_id!==id||
+         current.queue_item.queue_id!==target.queue_item.queue_id||
+         current.prompt!==prompt||
+         Number(current.global_worker_slot)!==Number(target.global_worker_slot)){
         await blocked("assignment-changed-before-send");return false;
       }
       const button=sendButton();
@@ -364,11 +371,16 @@
       // pending generation timeout. It must be handled BEFORE the awaiting
       // guard, otherwise a failed page remains stuck forever.
       if(failedConversation()){
-        if(awaiting){
-          awaiting=false;everGenerating=false;next=false;
-          await status("generation-aborted",{reason:"conversation-load-failed"});
+        // A failed old /c/ page may hide a prompt already accepted before
+        // this userscript loaded. Never click New chat and resend that same
+        // queue item merely because the browser lost the reply surface.
+        // Only an unsent, blank new-chat route can use automatic recovery.
+        if(awaiting||everGenerating||promptAt>0||conversation()||
+           location.pathname!=="/"){
+          await blocked("conversation-load-failed-manual-review");
+          return;
         }
-        await newChat("could-not-load-conversation");
+        await newChat("could-not-load-conversation-before-send");
         return;
       }
       const result=reply();
