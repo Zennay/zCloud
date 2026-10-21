@@ -878,6 +878,15 @@ def render_csv(bundle):
         str(bundle.get("source_observation_stale") is True) +
         "; incomplete selection=" +
         str(bundle.get("selection_is_not_full_open_pr_backlog") is True)))
+    summary = bundle.get("review_request_worklist_summary")
+    if type(summary) is not dict or summary.get("review_requests_are_not_approvals") is not True:
+        raise ValueError("missing source-bound review summary")
+    add("review_request_overview", detail=(
+        "Already requested PRs=" + str(summary["pending_review_requested_prs"]) +
+        "; no request observed PRs=" +
+        str(summary["no_open_review_request_observed_prs"]) +
+        "; unknown PRs=" + str(summary["review_request_source_unknown_prs"]) +
+        "; requests are NOT approvals"))
     for card in bundle["items"]:
         repo = card["repository"]
         pr_url = _same_repo_url(card["url"], repo)
