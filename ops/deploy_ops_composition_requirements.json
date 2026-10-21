@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "purpose": "Prevent deploy-ops duplicate-owner cleanup from dropping unique safety controls when overlapping workflow hardening PRs are composed.",
+  "serialized_writer_gate": {
+    "owners": ["#580", "#576"],
+    "rule": "No live deploy, recovery, service, browser, SQLite, queue, runner-control, or Actions-write promotion bypasses the serialized writer window."
+  },
+  "pairs": [
+    {
+      "workflow": ".github/workflows/recover-pending-workers.yml",
+      "newer_owner": 876,
+      "older_owner": 689,
+      "compose_into_single_owner_before_retirement": true,
+      "required_newer_controls": [
+        "same-repository main admission",
+        "permanent [self-hosted,zcloud,vps] runner labels",
+        "exact credential-free checkout",
+        "ubuntu runtime-user proof",
+        "canonical zcloud_vps_runner_guard.py before mutation"
+      ],
+      "required_older_controls": [
+        "do not log full target/project payloads",
+        "do not log raw runner-control responses",
+        "do not log raw exception repr",
+        "bound evidence to selected/active/missing worker keys",
+        "bound command evidence to command IDs and ok state"
+      ]
+    },
+    {
+      "workflow": ".github/workflows/prove-workers-generating-now.yml",
+      "newer_owner": 879,
+      "older_owner": 691,
+      "compose_into_single_owner_before_retirement": true,
+      "required_newer_controls": [
+        "same-repository main admission",
+        "permanent [self-hosted,zcloud,vps] runner labels",
+        "exact credential-free checkout",
+        "ubuntu runtime-user proof",
+        "canonical zcloud_vps_runner_guard.py before mutation",
+        "non-cancelling live concurrency"
+      ],
+      "required_older_controls": [
+        "open history.db with SQLite URI mode=ro",
+        "enable and assert PRAGMA query_only=ON",
+        "verify history.db size/mtime stability across proof reads",
+        "do not expose event reasons or command results in DB evidence",
+        "replace full API/debug payloads with bounded summaries",
+        "log exception type only"
+      ]
+    },
+    {
+      "workflow": ".github/workflows/reactivate-workers-now.yml",
+      "newer_owner": 878,
+      "older_owner": 692,
+      "compose_into_single_owner_before_retirement": true,
+      "required_newer_controls": [
+        "same-repository main admission",
+        "permanent [self-hosted,zcloud,vps] runner labels",
+        "exact credential-free checkout",
+        "ubuntu runtime-user proof",
+        "canonical zcloud_vps_runner_guard.py before mutation"
+      ],
+      "required_older_controls": [
+        "do not dump full service journals on failure",
+        "do not dump full process argv on failure",
+        "use bounded systemd state and listener evidence",
+        "do not log complete settings/allocation/control payloads",
+        "bound recovery evidence to counts, worker keys, ok state, and command IDs"
+      ]
+    }
+  ],
+  "retirement_rule": "Neither owner in a pair may be closed as a duplicate until one surviving branch demonstrably contains both required_newer_controls and required_older_controls for that workflow."
+}
