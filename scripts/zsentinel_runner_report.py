@@ -671,10 +671,16 @@ def timeline_footprint(receipts):
 
     Repeated sampled failures are not separate crashes or proof of a retry.
     """
-    from zsentinel_runner_snapshot import _unit_states
+    from zsentinel_runner_snapshot import _unit_states, _user_unit_states
     failed = {}
     observed = {}
     failure_results = {}
+    user_failed = {}
+    user_observed = {}
+    user_failure_results = {}
+    incomplete_user = 0
+    latest_user_rows = {}
+    latest_user_coverage = False
     safe_results = {"oom-kill", "exit-code", "signal", "timeout",
                     "watchdog", "core-dump", "resources"}
     partial = 0
@@ -704,6 +710,23 @@ def timeline_footprint(receipts):
                     result = "unknown"
                 causes = failure_results.setdefault(name, {})
                 causes[result] = causes.get(result, 0) + 1
+        user_rows = _user_unit_states(receipt)
+        user_complete = (units.get("user_runner_units_observed") is True
+                         and units.get("user_runner_units_truncated") is False)
+        if not user_complete:
+            incomplete_user += 1
+        if index == len(receipts) - 1:
+            latest_user_rows = user_rows
+            latest_user_coverage = user_complete
+        for name, row in user_rows.items():
+            user_observed[name] = user_observed.get(name, 0) + 1
+            if row["state"] == "failed":
+                user_failed[name] = user_failed.get(name, 0) + 1
+                reason = row.get("reason")
+                if reason not in safe_results:
+                    reason = "unknown"
+                results = user_failure_results.setdefault(name, {})
+                results[reason] = results.get(reason, 0) + 1
         cap = receipt.get("capacity")
         if not isinstance(cap, dict) or cap.get("source_complete") is not True:
             unknown_capacity += 1
@@ -724,15 +747,43 @@ def timeline_footprint(receipts):
                                     load > 1.35 * cores)
     latest_failed = sorted(name for name, row in latest_service_rows.items()
                            if row["state"] == "failed")
+    latest_user_failed = sorted(
+        name for name, row in latest_user_rows.items() if row["state"] == "failed")
+    user_failures = [
+        {"scope": "user", "unit": name,
+         "failed_samples": count,
+         "seen_samples": user_observed[name],
+         "last_observed_state": (
+             latest_user_rows[name]["state"] if name in latest_user_rows
+             else "unknown_partial" if not latest_user_coverage
+             else "not_in_latest_sample"),
+         "last_systemd_result": (
+             latest_user_rows[name].get("reason")
+             if name in latest_user_rows
+             and latest_user_rows[name]["state"] == "failed"
+             and latest_user_rows[name].get("reason") in safe_results
+             else "unknown"),
+         "failure_results": [
+             {"result": reason, "sample_count": amount}
+             for reason, amount in sorted(user_failure_results.get(name, {}).items(),
+                                          key=lambda item: (-item[1], item[0]))
+         ]}
+        for name, count in sorted(user_failed.items(),
+                                  key=lambda pair: (-pair[1], pair[0]))[:20]
+    ]
     return {
         "samples": len(receipts), "incomplete_service_samples": partial,
+        "incomplete_user_service_samples": incomplete_user,
         "unknown_capacity_samples": unknown_capacity,
         "swap_high_samples": high_swap,
         "root_high_samples": high_disk,
         "load_high_samples": high_load,
         "latest_failed_services": latest_failed[:20],
+        "latest_user_failed_services": latest_user_failed[:20],
         "latest_pressure_high": latest_pressure_high,
         "latest_service_coverage_complete": latest_service_coverage,
+        "latest_user_service_coverage_complete": latest_user_coverage,
+        "user_failed_observations": user_failures,
         "failed_observations": [
             {"unit": name, "failed_samples": count,
              "seen_samples": observed[name],
