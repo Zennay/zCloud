@@ -129,6 +129,12 @@ onderdrukt de normale HTML/JSON/text stdout **niet**. De uitvoer bevat
 alleen handmatige adviezen met onzekere lease, owner en CI-gates expliciet
 onbewezen.
 
+In zowel de browserpreview als de headless `--action-output` staan voor elke
+bestaande PR de leesbare voorgestelde eigenaaractie, expliciete HEAD,
+mislukte/wachtende/onbesliste checknamen, klassieke statuscontexten en
+waargenomen onafhankelijke reviewtelling. Afzonderlijke branch protection
+en niet-gescande verplichte checks blijven altijd **NIET BEWEZEN**.
+
 ## Wat de werkbank laat zien
 
 - **Huidige incidentkaarten:** prioriteit, bronstatus, menselijke vervolgstap en lokaal bewaarde notities tot een expliciete privé-export.
