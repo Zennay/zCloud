@@ -32,6 +32,7 @@ FIELDS = (
     "source_issue_urls", "source_issue_titles", "project_scope",
     "pr_reference_state", "pr_url", "linked_issue_count",
     "multiple_issues_share_pr", "issue_has_alternative_prs",
+    "saved_peer_pr_count", "saved_peer_pr_urls", "saved_peer_inventory_current",
     "board_heads_observed", "archive_heads_observed",
     "head_variation_is_historical_not_merge_conflict",
     "historical_gate_labels", "sampled_board_unknown_gates",
@@ -173,12 +174,21 @@ def prepare_rows(view, board_sha, saved, exported_at=None):
         "main_merge_verified": False, "deploy_authorized": False,
         "live_state_verified": False,
     }
+    # Build historical peer links from the complete, already admitted mapped
+    # issue associations, not from a UI-limited page or a live GitHub guess.
+    issue_to_prs = {}
+    for pr_url, candidate in mapped.items():
+        for card, _has_alternatives in candidate["issues"].values():
+            issue_to_prs.setdefault(card["url"], set()).add(pr_url)
     rows = []
     for pr in mapped.values():
         issues = sorted((item for item, _ in pr["issues"].values()),
                         key=lambda item: (RANK[item["priority"]], item["issue"]))
         heads = pr["board_heads"] | pr["archive_heads"]
-        alternative = any(value for _, value in pr["issues"].values())
+        peers = sorted(set().union(
+            *(issue_to_prs[card["url"]] for card, _ in pr["issues"].values())
+        ) - {pr["url"]})
+        alternative = bool(peers)
         variation = len(heads) > 1
         action = ("inspect_competing_existing_prs_and_owner_claims" if alternative else
                   "refresh_current_exact_head_and_required_gates" if variation else
@@ -193,6 +203,9 @@ def prepare_rows(view, board_sha, saved, exported_at=None):
             "pr_url": pr["url"], "linked_issue_count": len(issues),
             "multiple_issues_share_pr": len(issues) > 1,
             "issue_has_alternative_prs": alternative,
+            "saved_peer_pr_count": len(peers),
+            "saved_peer_pr_urls": " | ".join(peers),
+            "saved_peer_inventory_current": False,
             "board_heads_observed": " | ".join(sorted(pr["board_heads"])),
             "archive_heads_observed": " | ".join(sorted(pr["archive_heads"])),
             "head_variation_is_historical_not_merge_conflict": variation,
@@ -213,6 +226,8 @@ def prepare_rows(view, board_sha, saved, exported_at=None):
             "pr_reference_state": "not_observed_in_bounded_sources_unknown",
             "pr_url": "", "linked_issue_count": 1,
             "multiple_issues_share_pr": False, "issue_has_alternative_prs": False,
+            "saved_peer_pr_count": 0, "saved_peer_pr_urls": "",
+            "saved_peer_inventory_current": False,
             "board_heads_observed": "UNKNOWN", "archive_heads_observed": "UNKNOWN",
             "head_variation_is_historical_not_merge_conflict": False,
             "historical_gate_labels": "UNKNOWN",
@@ -245,6 +260,8 @@ def prepare_rows(view, board_sha, saved, exported_at=None):
             "pr_url": pr_url, "linked_issue_count": 0,
             "multiple_issues_share_pr": False,
             "issue_has_alternative_prs": False,
+            "saved_peer_pr_count": 0, "saved_peer_pr_urls": "",
+            "saved_peer_inventory_current": False,
             "board_heads_observed": "UNKNOWN", "archive_heads_observed": "UNKNOWN",
             "head_variation_is_historical_not_merge_conflict": False,
             "historical_gate_labels": "UNKNOWN",
@@ -503,8 +520,19 @@ def render_private_html(rows, source_metadata=None):
             parts.append('<p>Saved HEAD observations differ; this is NOT '
                          'proof of conflict. Refresh current exact HEAD.</p>')
         if row["issue_has_alternative_prs"]:
-            parts.append('<p>Multiple saved PR candidates for an issue; '
-                         'check current owners before overlapping work.</p>')
+            parts.append('<p>Other historically sampled PR candidates share '
+                         'at least one source issue; this does NOT prove a '
+                         'file conflict, live PR status or owner release.</p>')
+            for peer in filter(None, row["saved_peer_pr_urls"].split(" | ")):
+                if not re.fullmatch(
+                    r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
+                    peer,
+                ):
+                    raise ValueError("noncanonical saved peer PR URL")
+                safe_peer = escape(peer, quote=True)
+                parts.append('<p>Saved peer PR: <a href="' + safe_peer +
+                             '" target="_blank" rel="noopener noreferrer">' +
+                             safe_peer + '</a></p>')
         parts.append('<p>Owner next step (advisory): ' +
                      escape(str(row["human_next_step_only"])) + '</p>')
         # Printed handoffs must contain the actual provenance without
@@ -652,6 +680,17 @@ def render_private_markdown(rows, source_metadata):
         else:
             lines.append("- No observed PR in this bounded saved source; "
                          "check current PR inventory before creating new work.")
+        for peer in filter(None, row["saved_peer_pr_urls"].split(" | ")):
+            if not re.fullmatch(
+                r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
+                peer,
+            ):
+                raise ValueError("noncanonical saved peer PR URL")
+            lines.append("- [Inspect historically associated peer PR](" + peer + ")")
+        if row["saved_peer_pr_urls"]:
+            lines.append("- Shared source issue is not proof of file conflict "
+                         "or current ownership; refresh live PR inventory.")
+
         lines.extend([
             "",
             "- Historical PR state: " + _markdown_evidence(
@@ -664,6 +703,9 @@ def render_private_markdown(rows, source_metadata):
                 row["historical_gate_labels"] or "UNKNOWN"),
             "- Historical missing batches: " + str(
                 row["saved_archive_batches_missing"]).lower(),
+            "- Other PRs sharing a saved issue: " + str(
+                row["saved_peer_pr_count"]),
+            "- Peer PR inventory current: false",
             "- Multiple candidates for linked issue: " + str(
                 row["issue_has_alternative_prs"]).lower(),
             "- Missing from final saved snapshot: " + str(
@@ -774,6 +816,9 @@ def main(argv=None):
                     "linked_issue_count": 0,
                     "multiple_issues_share_pr": False,
                     "issue_has_alternative_prs": False,
+                    "saved_peer_pr_count": 0,
+                    "saved_peer_pr_urls": "",
+                    "saved_peer_inventory_current": False,
                     "board_heads_observed": "UNKNOWN",
                     "archive_heads_observed": "UNKNOWN",
                     "head_variation_is_historical_not_merge_conflict": False,
