@@ -38,10 +38,13 @@ Supported proposed actions:
 - route_root_fix: deterministic failure, confirmed root cause, named owner, no active/unknown claim and owner authorization.
 - assign_independent_work: explicit ready task, positively established disjoint scope, no active/unknown claim, healthy capacity and owner authorization.
 - park_blocker: park only one dependent task when its blocker is confirmed external and unchanged; require a clear claim state, an authorized owner, healthy capacity and separately identified disjoint ready work.
+- resume_blocked: consider returning one exact preserved blocked queue item to normal queue selection only when a fresh source confirms the dependency is cleared, the previous blocker/evidence remain preserved, an explicit operator attests to resolution, no active/unknown claim exists and a named authorized owner approves. This action does not force a worker; normal queue capacity and lease checks remain in force.
 - escalate_human: route to a named human only for a specifically evidenced permission requirement, irreversible/high-risk decision or exhausted safe recovery routes; unknown claim state remains HOLD.
 - merge_pr: verified exact head, green required CI, independent approval, satisfied branch protection, zero unresolved review threads, verified not-yet-merged state and owner authorization.
 - deploy: exact-head CI/review/protection, verified merge on main, healthy post-merge state, release approval, runtime-owner authorization and healthy capacity.
 - restart_runner: verified unavailability, no running jobs, confirmed cause, runtime-owner authorization and explicit human approval.
+
+For `resume_blocked`, the request must also carry a bounded `blocked_task_id`, `dependency_cleared=true`, `dependency_unchanged=false`, `blocked_task_preserved=true`, `previous_blocker_preserved=true` and `operator_attestation=true`. The policy receipt adds `authority.queue_resumed=false` like all other actions: even READY_FOR_HUMAN_REVIEW is advisory and does not change queue state.
 
 The evidence is supplied by the operator and is not independently re-fetched or verified. Missing, stale, contradictory or adverse evidence yields HOLD. A clear result means only READY_FOR_HUMAN_REVIEW; it is not a grant of authority, merge approval or deployment permission. GitHub's actual exact-head checks, branch protection, review state and the responsible runtime/release owner remain authoritative.
 
