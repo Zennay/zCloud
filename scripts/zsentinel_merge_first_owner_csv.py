@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import re
 import sys
 import unicodedata
+from zipfile import BadZipFile
 
 from zsentinel_operator_workbench import read_source_and_sha, validated_view
 from zsentinel_product_delivery_board import write_create_only
@@ -388,8 +389,8 @@ def main(argv=None):
         write_create_only(args.output, payload)
         print(args.output)
         return 0
-    except (OSError, ValueError, KeyError, TypeError, UnicodeError) as exc:
-        print("zSentinel merge-first CSV refused: " + str(exc), file=sys.stderr)
+    except (OSError, ValueError, KeyError, TypeError, UnicodeError, BadZipFile) as exc:
+        print("zSentinel merge-first export refused: " + str(exc), file=sys.stderr)
         return 2
 
 
