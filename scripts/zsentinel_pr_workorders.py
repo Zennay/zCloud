@@ -90,7 +90,13 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
     """Only observed shared filenames, including an older focused PR."""
     paths, related, hinted_issues = set(), set(), set()
     paths_limited = False
-    for pair in view.get("shown_collision_pairs", [])[:80]:
+    # An unstable before/after GitHub inventory is not evidence of a
+    # collision at the selected exact HEAD. Suppress *positive* edges,
+    # including focused older-PR overlaps, until a stable source exists.
+    stable_scope = view.get("open_pr_snapshot_stable") is True
+    if not stable_scope:
+        paths_limited = True
+    for pair in (view.get("shown_collision_pairs", [])[:80] if stable_scope else []):
         if (type(pair) is not dict or type(pair.get("left")) is not dict
                 or type(pair.get("right")) is not dict):
             raise ValueError("malformed observed PR collision")
@@ -118,7 +124,7 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
     # fallback sample impersonate a current collision.
     if head is None and direct_overlaps:
         paths_limited = True
-    if head is not None:
+    if head is not None and stable_scope:
         for source in (direct_overlaps or [])[:16]:
             if type(source) is not dict:
                 raise ValueError("invalid older PR collision observation")
@@ -130,13 +136,15 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
     # Every title/body issue mention is an operator search hint, even when
     # no second PR mentions the same issue. Match exact observed PR HEAD to
     # avoid attaching stale issue text from a changed source branch.
-    for mention in view.get("observed_issue_to_pr_mentions_unverified", [])[:512]:
+    for mention in (view.get("observed_issue_to_pr_mentions_unverified", [])[:512]
+                    if stable_scope else []):
         if (type(mention) is dict and mention.get("pr_url") == pr_url
                 and mention.get("pr_head_sha") == head):
             n = mention.get("issue_number")
             if type(n) is int and 0 < n < 100000000:
                 hinted_issues.add(n)
-    for issue in view.get("shown_duplicate_issue_groups", [])[:80]:
+    for issue in (view.get("shown_duplicate_issue_groups", [])[:80]
+                  if stable_scope else []):
         if head is not None and any(
                 source.get("url") == pr_url and source.get("head_sha") == head
                 for source in issue.get("shown_pr_sources", [])):
