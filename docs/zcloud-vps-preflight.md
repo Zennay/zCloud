@@ -1,5 +1,40 @@
 # Read-only zCloud VPS deploy preflight
 
+
+## 21 oktober · optionele gedeelde VPS CPU-/I/O-druk vóór eigenaarvrijgave
+
+Voeg `--host-pressure` toe aan de bestaande **read-only** preflight:
+
+```bash
+python3 scripts/zcloud_vps_preflight.py --host-pressure --worker-safety --format html > /secure/private/preflight-pressure.html
+```
+
+Het nieuwe zelfstandige `scripts/zcloud_vps_host_pressure.py` leest enkel
+één 1-minuut host-loadmeting en kernel-PSI `avg10` uit CPU, geheugen en I/O.
+De JSON bevat `host_pressure` met logische CPU-telling, genormaliseerde
+1-minuut-vraag, percentages `cpu.some`, `memory.full`, `io.full`,
+bronstatus en expliciet `release_authorized=false`. Het mobiele, scriptvrije
+HTML-rapport toont alle drie bronnen naast de bestaande eigenaar- en releasekaart.
+
+- Een load/CPU-verhouding vanaf **1,0** meldt druk, vanaf **2,0** een blocker
+  voor aanvullende eigenaarbeoordeling. Dit is **runnable/I/O-vraag**,
+  niet werkelijk CPU-gebruik of een bewezen individuele schuldige worker.
+- `memory.full` of `io.full` van minstens **10% van de laatste 10 seconden**
+  is een blokkadesignaal voor gelijktijdige zware taken. Ontbrekende of
+  ongeldige CPU-/PSI-bronnen worden **onbekend/partieel**, nooit nul druk.
+- Het gecombineerde `host_capacity`-beslisbord en het bestaande
+  `CAPACITY_FIRST`-eigenaarsadvies gebruiken de nieuwe waarnemingen
+  **uitsluitend wanneer de optie is opgegeven**. Zonder de optie blijven de
+  bestaande preflight-observaties en resultaten ongewijzigd.
+- Geen CPU-kernreservering, procesbeëindiging, loop, runner-/serviceherstart,
+  workflowtrigger, claim-/databasewrite of wijziging aan training. Alleen de
+  bevoegde release-eigenaar beslist ná de oorspronkelijke exact-HEAD CI,
+  onafhankelijke review, bescherming van main en seriële productie-gates.
+
+Deze productaanvulling zit op bestaande PR #1540 en is niet op main of
+productie zolang GitHub de verplichte gates niet heeft vrijgegeven.
+
+
 Run from the connected, already-authorized zSSH channel:
 
 ```bash

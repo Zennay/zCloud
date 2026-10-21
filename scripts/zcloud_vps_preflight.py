@@ -13,6 +13,7 @@ from pathlib import Path
 import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
+from zcloud_vps_host_pressure import host_pressure_snapshot, pressure_findings
 
 RUNNER_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
 TRAINING_FREE_RESERVE_BYTES = 10 * 1024 ** 3
@@ -316,7 +317,8 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
         })
 
     if codes & {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE", "SWAP_TELEMETRY_INCOMPLETE",
-                "MEMORY_UNOBSERVABLE", "DISK_UNOBSERVABLE", "STORAGE_TRIAGE_PARTIAL"}:
+                "MEMORY_UNOBSERVABLE", "DISK_UNOBSERVABLE", "STORAGE_TRIAGE_PARTIAL",
+                "HOST_CPU_SATURATED", "HOST_CPU_BUSY", "HOST_MEMORY_STALL", "HOST_IO_STALL", "HOST_PRESSURE_INCOMPLETE"}:
         recommend("CAPACITY_FIRST", "VPS resource owner",
                   "Insufficient or unverified resource headroom can cause repeat OOM crashes or incomplete releases.",
                   "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
@@ -355,7 +357,9 @@ RECOVERY_FAMILIES = {
     "CAPACITY_FIRST": frozenset({
         "LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED",
         "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE", "SWAP_TELEMETRY_INCOMPLETE",
-        "MEMORY_UNOBSERVABLE", "DISK_UNOBSERVABLE", "STORAGE_TRIAGE_PARTIAL"}),
+        "MEMORY_UNOBSERVABLE", "DISK_UNOBSERVABLE", "STORAGE_TRIAGE_PARTIAL",
+        "HOST_CPU_SATURATED", "HOST_CPU_BUSY", "HOST_MEMORY_STALL", "HOST_IO_STALL",
+        "HOST_PRESSURE_INCOMPLETE"}),
     "RUNNER_OWNER": frozenset({
         "ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE",
         "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS",
@@ -451,7 +455,7 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
     return cards[:16]
 
 
-def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: bool = False, archive_readiness: bool = False, worker_safety: bool = False) -> dict:
+def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: bool = False, archive_readiness: bool = False, worker_safety: bool = False, host_pressure: bool = False) -> dict:
     findings: list[dict[str, str]] = []
     def mark(code: str, severity: str, detail: str) -> None:
         findings.append({"code": code, "severity": severity, "detail": detail})
@@ -561,6 +565,9 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         else:
             mark("WORKER_IDLE_NOT_PROVEN", "warn",
                  "No active browser/queue evidence in this bounded sample does not establish safe idle.")
+    pressure = host_pressure_snapshot() if host_pressure else None
+    if pressure is not None:
+        findings.extend(pressure_findings(pressure))
     blocked = any(f["severity"] == "block" for f in findings)
     recovery = actionable_recovery(findings)
     report = {
@@ -584,6 +591,7 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         "storage_inventory": inventory,
         "archive_readiness": archive,
         "worker_safety": worker_snapshot,
+        "host_pressure": pressure,
         "next_step": "Obtain existing owner/release approval; never use this report as deploy authorization.",
     }
     report["release_gates"] = release_gate_matrix(report)
@@ -628,14 +636,15 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
         runner_status = "process_observed_only"
     add("runner_identity", runner_status, "zCloud Actions runner owner (#1326)",
         "Listener existence does not prove current GitHub job assignment.")
-    if {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY"} & findings:
+    if {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY",
+        "HOST_CPU_SATURATED", "HOST_MEMORY_STALL", "HOST_IO_STALL"} & findings:
         capacity_status = "blocked"
-    elif "SWAP_TELEMETRY_INCOMPLETE" in findings or None in (resources["available_ram_pct"], resources["disk_free_pct"]):
+    elif "SWAP_TELEMETRY_INCOMPLETE" in findings or "HOST_PRESSURE_INCOMPLETE" in findings or None in (resources["available_ram_pct"], resources["disk_free_pct"]):
         capacity_status = "unknown"
     else:
         capacity_status = "locally_observed_only"
     add("host_capacity", capacity_status, "VPS resource owner",
-        "Capacity measurement does not reserve resources for a future release.")
+        "RAM, disk and opt-in CPU/PSI observations are advisory; capacity is not reserved for release.")
     if worker is None:
         worker_status = "not_inspected"
     elif worker["state"] not in {"no_active_evidence_unverified"}:
@@ -861,6 +870,19 @@ def render_html(report: dict) -> str:
             f'<ul>{entries}</ul><p>Incomplete summaries: {missing}</p>'
             '<p class="muted">Five fixed categories only. No files were changed or deleted.</p></section>'
         )
+    pressure = report.get("host_pressure")
+    pressure_html = ""
+    if pressure is not None:
+        pressure_html = (
+            '<section aria-labelledby="pressure"><h2 id="pressure">Shared-host CPU and I/O contention</h2><dl>'
+            + item("Observation", pressure["state"])
+            + item("One-minute load / CPU", val(pressure["load_per_cpu"]))
+            + item("Logical CPU count", val(pressure["cpu_count"]))
+            + item("CPU PSI some (10s)", val(pressure["cpu_some_avg10_pct"]))
+            + item("Memory PSI full (10s)", val(pressure["memory_full_avg10_pct"]))
+            + item("I/O PSI full (10s)", val(pressure["io_full_avg10_pct"]))
+            + '</dl><p class="muted">PSI values are percentages. Demand is not CPU utilization, nor proof of which worker caused pressure. No actions or release rights.</p></section>'
+        )
     checkout = report["checkout"]
     runner = report["runner"]
     resources = report["resources"]
@@ -905,6 +927,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 {item("Remaining reserve gap bytes", val(resources["training_reserve_gap_bytes"]))}
 </dl></section>
 {comparison_html}
+{pressure_html}
 {storage_html}
 {archive_html}
 {worker_html}
@@ -926,6 +949,8 @@ def main() -> int:
                         help="Optional bounded read-only du inventory of five known storage categories")
     parser.add_argument("--archive-readiness", action="store_true",
                         help="Read-only external archive mount inspection; never proves write permission")
+    parser.add_argument("--host-pressure", action="store_true",
+                        help="Opt-in bounded CPU load + kernel PSI pressure observation; no workload actions")
     parser.add_argument("--worker-safety", action="store_true",
                         help="Read-only portfolio queue and browser-event admission snapshot; cannot prove safe idle")
     parser.add_argument("--previous-report", type=Path, default=None,
@@ -937,7 +962,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
         parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
-    report = measure(args.root.resolve(), args.expected_main_sha, args.disk_hotspots, args.archive_readiness, args.worker_safety)
+    report = measure(args.root.resolve(), args.expected_main_sha, args.disk_hotspots, args.archive_readiness, args.worker_safety, args.host_pressure)
     if args.previous_report is not None:
         try:
             report["comparison"] = compare_snapshot(args.previous_report, report)
@@ -987,6 +1012,9 @@ def main() -> int:
         archive = report.get("archive_readiness")
         if archive is not None:
             print(f"External archive: {archive['state']} ({archive['mount_type'] or 'unknown'}); archive writes NOT authorized")
+        pressure = report.get("host_pressure")
+        if pressure is not None:
+            print(f"Host demand: {pressure['load_per_cpu']} per CPU; CPU PSI some={pressure['cpu_some_avg10_pct']}%; memory full={pressure['memory_full_avg10_pct']}%; IO full={pressure['io_full_avg10_pct']}%; source={pressure['state']}")
         worker = report.get("worker_safety")
         if worker is not None:
             print(f"Worker protection: {worker['state']}; claimed queue={worker['queued_claims']}; fresh generating={worker['fresh_generating_slots']}; safe idle NOT verified")
