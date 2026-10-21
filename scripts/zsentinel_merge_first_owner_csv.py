@@ -74,7 +74,7 @@ def _cell(value):
     return result
 
 
-def prepare_rows(view, board_sha, saved):
+def prepare_rows(view, board_sha, saved, exported_at=None):
     if saved is not None and (
         saved.get("owner_claim_verified") is not False
         or saved.get("main_merge_verified") is not False
@@ -82,7 +82,7 @@ def prepare_rows(view, board_sha, saved):
         raise ValueError("historical PR source cannot authorize work")
     archives = saved["source_snapshots"] if saved is not None else []
     # Advisory source age is calculated at export time, not board creation.
-    exported_at = datetime.now(timezone.utc)
+    exported_at = exported_at or datetime.now(timezone.utc)
     board_age = source_freshness(
         [{"latest_observed_utc": view["observed_at_utc"]}],
         evaluated_at=exported_at)["status"]
@@ -257,7 +257,7 @@ def prepare_rows(view, board_sha, saved):
     return rows
 
 
-def render_private_html(rows):
+def render_private_html(rows, source_metadata=None):
     """One standalone script-free private owner worklist; source evidence only."""
     parts = [
         '<!doctype html><html lang="en"><head><meta charset="utf-8">',
@@ -278,12 +278,26 @@ def render_private_html(rows):
         'review, main merge and production release: NOT VERIFIED.</p>',
         '<p>' + str(len(rows)) + ' source-bound records, including issues '
         'without an observed PR. A missing PR is UNKNOWN, not a clear queue.</p>',
-        '<p>Original board age at export (local device clock, not live proof): ' +
-        escape(str(rows[0]["board_age_at_export"] if rows else "unknown")) +
-        ' · historical PR archive age: ' +
-        escape(str(rows[0]["archive_age_at_export"] if rows else "unknown")) +
-        '. Even a recent-snapshot is NOT GitHub or worker validation.</p>',
     ]
+    metadata = source_metadata if isinstance(source_metadata, dict) else (
+        rows[0] if rows else {})
+    board_age = metadata.get("board_age_at_export", "unknown")
+    archive_age = metadata.get("archive_age_at_export", "not-provided")
+    board_sha = metadata.get("original_board_sha256", "UNKNOWN")
+    board_moment = metadata.get("board_observed_at_utc", "UNKNOWN")
+    manifests = metadata.get("source_archive_manifest_sha256s", "not-provided")
+    missing_batches = metadata.get("saved_archive_batches_missing", "UNKNOWN")
+    parts.append(
+        '<section aria-label="Original source custody"><h2>Original source custody</h2>'
+        '<p>Original board SHA256: ' + escape(str(board_sha)) +
+        ' · source UTC: ' + escape(str(board_moment)) + '</p>'
+        '<p>Saved archive manifest SHA256(s): ' + escape(str(manifests)) +
+        ' · missing batches: ' + escape(str(missing_batches)) + '</p>'
+        '<p>Board age at export: ' + escape(str(board_age)) +
+        ' · historical PR archive age: ' + escape(str(archive_age)) +
+        '. Device time is advisory; this is not live GitHub or worker validation.</p>'
+        '</section>'
+    )
     for row in rows:
         priority = escape(str(row["priority"]))
         has_pr = bool(row["pr_url"])
@@ -375,7 +389,26 @@ def main(argv=None):
         saved = None
         if args.pr_dossier:
             saved = issue_worklist(build_timeline(args.pr_dossier, minimum_sources=1))
-        rows = prepare_rows(view, sha, saved)
+        exported_at = datetime.now(timezone.utc)
+        archives = saved["source_snapshots"] if saved is not None else []
+        board_age = source_freshness(
+            [{"latest_observed_utc": view["observed_at_utc"]}],
+            evaluated_at=exported_at)["status"]
+        archive_age = (source_freshness(archives, evaluated_at=exported_at)["status"]
+                       if archives else "not-provided")
+        archive_manifests = [
+            item["original_review_manifest_sha256"] for item in archives]
+        missing_archive_batches = any(
+            bool(item["missing_batch_indexes"]) for item in archives)
+        html_metadata = {
+            "original_board_sha256": sha,
+            "board_observed_at_utc": view["observed_at_utc"],
+            "board_age_at_export": board_age,
+            "archive_age_at_export": archive_age,
+            "source_archive_manifest_sha256s": " | ".join(archive_manifests),
+            "saved_archive_batches_missing": missing_archive_batches,
+        }
+        rows = prepare_rows(view, sha, saved, exported_at=exported_at)
         if args.format == "csv":
             stream = StringIO()
             writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\r\n")
@@ -384,17 +417,8 @@ def main(argv=None):
                 writer.writerow({key: _cell(row.get(key)) for key in FIELDS})
             payload = stream.getvalue()
         elif args.format == "html":
-            payload = render_private_html(rows)
+            payload = render_private_html(rows, html_metadata)
         else:
-            exported_at = datetime.now(timezone.utc)
-            archives = saved["source_snapshots"] if saved is not None else []
-            board_age = (rows[0]["board_age_at_export"] if rows else
-                         source_freshness(
-                             [{"latest_observed_utc": view["observed_at_utc"]}],
-                             evaluated_at=exported_at)["status"])
-            archive_age = (rows[0]["archive_age_at_export"] if rows else
-                           source_freshness(archives, evaluated_at=exported_at)["status"]
-                           if archives else "not-provided")
             envelope = {
                 "schema": "zsentinel-merge-first-owner-export-v1",
                 "source": "validated_saved_board_and_optional_saved_pr_archives",
@@ -404,10 +428,8 @@ def main(argv=None):
                 "board_age_at_export": board_age,
                 "archive_age_at_export": archive_age,
                 "device_clock_authoritative": False,
-                "source_archive_manifest_sha256s": [
-                    item["original_review_manifest_sha256"] for item in archives],
-                "saved_archive_batches_missing": any(
-                    bool(item["missing_batch_indexes"]) for item in archives),
+                "source_archive_manifest_sha256s": archive_manifests,
+                "saved_archive_batches_missing": missing_archive_batches,
                 "record_count": len(rows),
                 "records": rows,
                 "claim_authorized": False,
