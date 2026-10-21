@@ -33,6 +33,8 @@ FIELDS = (
     "pr_reference_state", "pr_url", "linked_issue_count",
     "multiple_issues_share_pr", "issue_has_alternative_prs",
     "saved_peer_pr_count", "saved_peer_pr_urls", "saved_peer_inventory_current",
+    "archive_only_issue_count", "archive_only_source_issue_urls",
+    "board_issue_count", "board_issue_inventory_complete_verified",
     "board_heads_observed", "archive_heads_observed",
     "head_variation_is_historical_not_merge_conflict",
     "historical_gate_labels", "sampled_board_unknown_gates",
@@ -50,6 +52,7 @@ FIELDS = (
     "selected_existing_pr_count", "selected_issue_without_pr_count",
     "selected_unlinked_pr_count", "selected_competing_pr_count",
     "selected_missing_final_pr_count", "selected_head_variation_count",
+    "selected_archive_only_pr_count",
 )
 
 
@@ -119,7 +122,32 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
         # even when this bounded issue board contains ZERO issue cards from
         # that repository. No implicit cross-project inventory expansion.
         selected_repositories.add("https://github.com/" + repository_scope)
-    for card in view["cards"]:
+    # Retain previously sampled linked PRs even when their issues are
+    # outside the limited original issue board. Scope never expands to
+    # unrelated repositories without an explicit operator selection.
+    observed_board_issues = {card["url"] for card in view["cards"]}
+    candidate_cards = list(view["cards"])
+    for issue_url, archived_issue in historical.items():
+        if issue_url in observed_board_issues:
+            continue
+        if issue_url.split("/issues/", 1)[0] not in selected_repositories:
+            continue
+        if not re.fullmatch(
+            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}",
+            issue_url
+        ):
+            raise ValueError("noncanonical historical issue identity")
+        if not archived_issue["linked_existing_prs"]:
+            continue
+        candidate_cards.append({
+            "url": issue_url, "issue": archived_issue["issue_number"],
+            "title": "Issue title not observed in bounded original board",
+            "project": archived_issue["repository"],
+            "priority": archived_issue["highest_source_priority"],
+            "open_pr_candidates": [], "pr_gate_observations": [],
+            "_archive_only": True,
+        })
+    for card in candidate_cards:
         current = historical.get(card["url"])
         archive_refs = {p["pr_url"]: p for p in
                         current["linked_existing_prs"]} if current else {}
@@ -149,8 +177,13 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
                 "archive_heads": set(), "gates": set(),
                 "unknown_gates": set(), "missing": False,
                 "lost_link": False, "truncated": False,
+                "archive_only_issues": set(), "board_issues": set(),
             })
             slot["issues"][card["issue"]] = (card, len(refs) > 1)
+            if card.get("_archive_only"):
+                slot["archive_only_issues"].add(card["url"])
+            else:
+                slot["board_issues"].add(card["url"])
             board = next((p for p in card["pr_gate_observations"]
                           if p["url"] == url), None)
             if board:
@@ -197,7 +230,9 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
         ) - {pr["url"]})
         alternative = bool(peers)
         variation = len(heads) > 1
-        action = ("inspect_competing_existing_prs_and_owner_claims" if alternative else
+        action = ("inspect_archive_only_issue_links_and_current_pr_owner"
+                  if pr["archive_only_issues"] else
+                  "inspect_competing_existing_prs_and_owner_claims" if alternative else
                   "refresh_current_exact_head_and_required_gates" if variation else
                   "refresh_live_pr_and_issue_association" if pr["missing"] or pr["lost_link"] else
                   "inspect_existing_pr_exact_head_owner_ci_review_and_protection")
@@ -206,7 +241,15 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
             "source_issue_urls": " | ".join(i["url"] for i in issues),
             "source_issue_titles": " | ".join(i["title"] for i in issues),
             "project_scope": " | ".join(sorted({i["project"] for i in issues})),
-            "pr_reference_state": "saved_pr_candidate_not_live",
+            "pr_reference_state": (
+                "historical_pr_linked_to_issue_absent_from_board"
+                if pr["archive_only_issues"] and not pr["board_issues"] else
+                "saved_pr_candidate_with_archive_only_issues_not_live"
+                if pr["archive_only_issues"] else "saved_pr_candidate_not_live"),
+            "archive_only_issue_count": len(pr["archive_only_issues"]),
+            "archive_only_source_issue_urls": " | ".join(sorted(pr["archive_only_issues"])),
+            "board_issue_count": len(pr["board_issues"]),
+            "board_issue_inventory_complete_verified": False,
             "pr_url": pr["url"], "linked_issue_count": len(issues),
             "multiple_issues_share_pr": len(issues) > 1,
             "issue_has_alternative_prs": alternative,
@@ -231,6 +274,9 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
             "source_issue_titles": card["title"],
             "project_scope": card["project"],
             "pr_reference_state": "not_observed_in_bounded_sources_unknown",
+            "archive_only_issue_count": 0, "archive_only_source_issue_urls": "",
+            "board_issue_count": 1,
+            "board_issue_inventory_complete_verified": False,
             "pr_url": "", "linked_issue_count": 1,
             "multiple_issues_share_pr": False, "issue_has_alternative_prs": False,
             "saved_peer_pr_count": 0, "saved_peer_pr_urls": "",
@@ -264,6 +310,9 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
             "source_issue_titles": "No issue relationship observed in bounded PR ZIP",
             "project_scope": repo.removeprefix("https://github.com/"),
             "pr_reference_state": "historical_pr_without_sampled_issue_link",
+            "archive_only_issue_count": 0, "archive_only_source_issue_urls": "",
+            "board_issue_count": 0,
+            "board_issue_inventory_complete_verified": False,
             "pr_url": pr_url, "linked_issue_count": 0,
             "multiple_issues_share_pr": False,
             "issue_has_alternative_prs": False,
@@ -371,6 +420,8 @@ def selection_metadata(total, rows, *, repository=None, priority=None,
         "selected_head_variation_count": sum(
             bool(row["head_variation_is_historical_not_merge_conflict"])
             for row in rows),
+        "selected_archive_only_pr_count": sum(
+            bool(row["archive_only_issue_count"]) for row in rows),
     }
 
 
@@ -415,7 +466,8 @@ def render_private_html(rows, source_metadata=None):
         "excluded_source_record_count", "selection_filter_applied",
         "selected_existing_pr_count", "selected_issue_without_pr_count",
         "selected_unlinked_pr_count", "selected_competing_pr_count",
-        "selected_missing_final_pr_count", "selected_head_variation_count")}
+        "selected_missing_final_pr_count", "selected_head_variation_count",
+        "selected_archive_only_pr_count")}
     parts.append(
         '<section aria-label="Owner selection and bounded coverage">'
         '<h2>Owner selection · saved source scope</h2>'
@@ -441,6 +493,8 @@ def render_private_html(rows, source_metadata=None):
         escape(str(selection["selected_missing_final_pr_count"])) +
         ' · historically changing HEADs: ' +
         escape(str(selection["selected_head_variation_count"])) + '</p>'
+        '<p>Saved PRs referencing issues absent from original issue board: ' +
+        escape(str(selection["selected_archive_only_pr_count"])) + '</p>'
         '<p>Counts are source-only, may overlap, and are not live project or '
         'merge-gate evidence.</p>'
         '<p>Filtered: ' + escape(str(selection["selection_filter_applied"])) +
@@ -530,6 +584,11 @@ def render_private_html(rows, source_metadata=None):
                      escape(str(row["board_heads_observed"])) +
                      ' · historical archive HEAD(s): ' +
                      escape(str(row["archive_heads_observed"])) + '</small>')
+        if row["archive_only_issue_count"]:
+            parts.append('<p>Archive-only source issues: ' +
+                         str(row["archive_only_issue_count"]) +
+                         '. They are absent from the original issue board. '
+                         'Issue titles, current status and completeness UNKNOWN.</p>')
         if row["head_variation_is_historical_not_merge_conflict"]:
             parts.append('<p>Saved HEAD observations differ; this is NOT '
                          'proof of conflict. Refresh current exact HEAD.</p>')
@@ -660,6 +719,8 @@ def render_private_markdown(rows, source_metadata):
             metadata["selected_missing_final_pr_count"]),
         "- Historically varied HEAD references: " + str(
             metadata["selected_head_variation_count"]),
+        "- PRs with archive-only issue links: " + str(
+            metadata["selected_archive_only_pr_count"]),
         "",
         "**Selection exclusions and unobserved records remain UNKNOWN, "
         "never cleared, claimed or completed.**",
@@ -722,6 +783,9 @@ def render_private_markdown(rows, source_metadata):
                 row["archive_heads_observed"] or "UNKNOWN"),
             "- Historical gate labels: " + _markdown_evidence(
                 row["historical_gate_labels"] or "UNKNOWN"),
+            "- Archive-only issues absent from original board: " + str(
+                row["archive_only_issue_count"]),
+            "- Board issue inventory complete: false",
             "- Historical missing batches: " + str(
                 row["saved_archive_batches_missing"]).lower(),
             "- Other PRs sharing a saved issue: " + str(
@@ -835,6 +899,10 @@ def main(argv=None):
                     "source_issue_titles": "Metadata only: no owner rows in bounded saved source",
                     "project_scope": "",
                     "pr_reference_state": "metadata_only_no_owner_rows",
+                    "archive_only_issue_count": 0,
+                    "archive_only_source_issue_urls": "",
+                    "board_issue_count": 0,
+                    "board_issue_inventory_complete_verified": False,
                     "pr_url": "",
                     "linked_issue_count": 0,
                     "multiple_issues_share_pr": False,
