@@ -35,6 +35,7 @@ from zsentinel_issue_action_board import (
 )
 from zsentinel_worklist_html import render_html as render_private_worklist_html
 from zsentinel_issue_activity import classify as classify_issue_activity
+from zsentinel_private_report_writer import write_private_report
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 60
@@ -78,74 +79,6 @@ GATE_STEPS_NL = {
 }
 
 
-
-MAX_PRIVATE_OUTPUT_BYTES = 6 * 1024 * 1024
-
-
-def write_private_report(destination, content):
-    """Create a private report through a pinned owner-controlled directory FD."""
-    if not isinstance(destination, Path) or not isinstance(content, str):
-        raise ValueError("private report requires a path and text content")
-    destination = Path(os.path.abspath(destination))
-    if destination.name in ("", ".", ".."):
-        raise ValueError("invalid private report filename")
-    data = content.encode("utf-8")
-    if not 1 <= len(data) <= MAX_PRIVATE_OUTPUT_BYTES:
-        raise ValueError("private report is empty or exceeds 6 MiB")
-    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
-        raise ValueError("private directory-bound no-follow writes unsupported")
-
-    parent = destination.parent
-    before = parent.lstat()
-    if (not stat.S_ISDIR(before.st_mode) or before.st_uid != os.geteuid()
-            or stat.S_IMODE(before.st_mode) & 0o022):
-        raise ValueError("private report directory must be owned and not writable by others")
-    directory_fd = os.open(
-        parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
-        getattr(os, "O_CLOEXEC", 0))
-    try:
-        actual = os.fstat(directory_fd)
-        if (not stat.S_ISDIR(actual.st_mode)
-                or (actual.st_dev, actual.st_ino) != (before.st_dev, before.st_ino)
-                or actual.st_uid != os.geteuid()
-                or stat.S_IMODE(actual.st_mode) & 0o022):
-            raise ValueError("private report directory was replaced or became unsafe")
-        fd = None
-        created_inode = None
-        try:
-            fd = os.open(
-                destination.name,
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW |
-                getattr(os, "O_CLOEXEC", 0),
-                0o600, dir_fd=directory_fd)
-            info = os.fstat(fd)
-            created_inode = (info.st_dev, info.st_ino)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                raise ValueError("private report target is not a private regular inode")
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "wb") as sink:
-                fd = None
-                sink.write(data)
-                sink.flush()
-                os.fsync(sink.fileno())
-            os.fsync(directory_fd)
-        except BaseException:
-            if fd is not None:
-                os.close(fd)
-            # Never unlink a replacement that appeared after our create.
-            if created_inode is not None:
-                try:
-                    current = os.stat(
-                        destination.name, dir_fd=directory_fd,
-                        follow_symlinks=False)
-                    if (current.st_dev, current.st_ino) == created_inode:
-                        os.unlink(destination.name, dir_fd=directory_fd)
-                except OSError:
-                    pass
-            raise
-    finally:
-        os.close(directory_fd)
-    return len(data)
 
 def direct_issue_inbox(canonical, selected_projects, focus_issue, token):
     """Fetch one explicitly named still-open canonical GitHub product issue.
