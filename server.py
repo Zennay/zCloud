@@ -215,7 +215,7 @@ def project_runner_prompt(project_id, name):
         'HOLD alleen bij falende CI, scopeconflict of bewezen risico voor veiligheid, rechten, research of productie; beperk het tot de getroffen actie en herstel waar mogelijk. '
         'Ontbrekende data/toestemming blokkeren ander veilig fasewerk niet. Als iets wacht op CI, VPS of review, pak direct ander veilig uitvoerbaar werk. '
         'Kies steeds een vrij onderdeel, respecteer parallel eigenaarschap en ga door tot de runlimiet of echte afronding. '
-        'Sluit issues pas na aantoonbaar resultaat; rapporteer kort gebouwd, getest, gemerged, live en resterende echte blokkades.'
+        'Sluit issues pas na aantoonbaar productresultaat; rapporteer code/commit, bestaande CI of build, merged op main, live verificatie en echte blokkades apart; geen testaantallen.'
     )
 
 
@@ -2940,11 +2940,13 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         'Treat this assignment as a long-running implementation block: identify the highest-value safe unblocked roadmap area, '
         'then complete as many adjacent write-capable steps as can be safely finished in the same lane before yielding. '
         'Completion requires at least three material implementation actions across code/config/workflows/experiments/runtime state '
-        'OR one clearly large end-to-end implementation that spans multiple files/components, plus automated test/build/run evidence. '
+        'OR one clearly large end-to-end implementation that spans multiple files/components. ' 
+        'Check product behavior briefly through a build, already-running mandatory CI or direct functional inspection; ' 
+        'do not write, expand, or run extra QA/regression suites. ' 
         'A single tiny edit, one config tweak, one commit, read-only inspection, audit, status, checklist, documentation-only work, '
         'or evidence collection alone cannot complete this item. After every successful sub-step, immediately continue to the next '
         'safe adjacent roadmap step within the same assignment. Only return DONE when the work package is genuinely exhausted, '
-        'a meaningful milestone is proven green, or further progress requires a real human/external gate.'
+        'a meaningful product milestone is integrated with existing required gates, or further progress requires a real human/external gate.'
     )
     if next_step:
         criteria += ' Current project next-step hint: ' + next_step
