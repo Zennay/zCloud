@@ -76,6 +76,17 @@ Een verouderde, ontbrekende of meer dan vijf minuten in de toekomst liggende
 bronwaarneming vraagt expliciet om nieuwe broninspectie vóór een beslissing.
 Het evaluatiemoment UTC, de laatste waargenomen UTC-tijd en de drempel worden
 vastgelegd; de oorspronkelijke bronmanifest-hashes blijven ongewijzigd.
+Dezelfde optie werkt ook op de historische PR-tijdlijn:
+
+```sh
+python3 scripts/zsentinel_saved_dossier_timeline.py \
+  --source ./saved-older.zip --source ./saved-newer.zip \
+  --stale-after-hours 12 --format markdown --output ./private-pr-history.md
+```
+
+Beide CLI's gebruiken nu dezelfde gedeelde tijdstempelregels en leggen
+status, leeftijd, evaluatie-UTC en gekozen drempel vast in hun output.
+
 Geen filter, versheidslabel of ZIP-receipt bewijst eigenaar, claimvrijgave,
 issue-sluiting, verplichte CI, review, merge of live herstel.
 
