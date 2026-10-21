@@ -18,6 +18,28 @@ The classifier treats generic ticket words (`issue`, `fix`, `bug`,
 `runner`, `queue` and `merge` determine the lane when present.
 This is routing, not proof of ownership or permission to take a task.
 
+## 21 October · preserve current active recovery lanes
+
+The four-lane classifier no longer sends an unrecognized, keyword-free
+product work item to the first lane (`release-integration`): it defaults
+to `product-remediation` unless PR/merge/release words actually support
+another lane. This is classification only, never a new claim.
+
+A running, claimed or verifying recovery task with a **complete** persisted
+`execution_lane` (`profile=portfolio-recovery` plus one of the four exact
+canonical lane IDs) retains its recorded lane even when the task title or
+completion criteria change. The existing owner and *all* in-flight file
+scopes remain reserved. Queued work is classified from its current product
+description and is not allowed to spoof an active lane to get preferred
+placement.
+
+A missing/legacy/unknown active lane identifier is now an explicit
+`active_legacy_profile_unreconciled` HOLD for **new** parallel writers
+rather than a silently trusted matching profile name. Do not migrate or
+reassign existing workers based on an inferred lane; ask the active owner
+to reconcile the persisted source. Neither rule changes queue records,
+leases, scheduler admissions, reviews or releases.
+
 ## Reservations and collision visibility
 
 - All in-flight queue entries (`claimed`, `running`, `verifying`) reserve
