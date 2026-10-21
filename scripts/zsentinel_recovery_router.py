@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from zsentinel_diagnose import diagnose, utc_time
+from zsentinel_selection_holds import operator_lines as selection_hold_lines
 
 UTC = timezone.utc
 MAX_INPUT_BYTES = 1_000_000
@@ -1421,6 +1422,7 @@ def operator_text(result):
                      " · owner must recheck exact gate/source; no claim or dispatch")
     if gate_report["samples_truncated"]:
         lines.append("Further execution gate/capacity HOLD examples omitted; source count retained.")
+    lines.extend(selection_hold_lines(result.get("routing_selection_holds")))
     lines.append(f"Human-only watch candidates (NOT delivered): {len(result['watch_alert_candidates'])}")
     old_owner = result.get("historical_owner_recheck_candidates", [])
     lines.append("Historical human owner rechecks (NO notification, NO current incident): " +
