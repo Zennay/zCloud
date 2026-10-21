@@ -165,6 +165,9 @@ jobs:
             echo "::error::Runtime background differs from approved source; refusing to overwrite owner work."
             exit 1
           fi
+          # A running or unknown worker must not see a new installed add-on
+          # before the safe-idle decision. Unknown evidence refuses the write.
+          python3 scripts/zsentinel_addon_idle_gate.py
           # Only the installed add-on is replaced. Stage and preserve the old
           # bytes in its own directory, so rename and rollback are same-FS.
           # An interrupted process can leave an approved new file in place,
@@ -196,6 +199,9 @@ jobs:
           current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$current_main"
           test "$current_main" = "$GITHUB_SHA"
+          # Recheck the admission after the staged copy and backup. A worker
+          # may begin generation during the bounded copy window.
+          python3 scripts/zsentinel_addon_idle_gate.py
           mv -f -- "$staged" "$live/background.js"
           swapped=1
           cmp -- firefox-extension/background.js "$live/background.js"
@@ -217,52 +223,8 @@ jobs:
             echo "No running Firefox debugger: defer extension reload; never start a window."
             exit 0
           fi
-          if ! python3 - <<'PY'
-          import json
-          import time
-          import urllib.request
-
-          def read():
-              with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live",timeout=8) as response:
-                  data=json.load(response)
-              runners=data.get("chatgpt_runners")
-              if not isinstance(runners,dict) or not runners:
-                  raise ValueError("No reliable worker observations")
-              workers=[w for p in runners.values() if isinstance(p,dict)
-                       for w in (p.get("workers") or []) if isinstance(w,dict)]
-              if not workers:
-                  raise ValueError("No observed worker entries")
-              identities=set()
-              for worker in workers:
-                  if not worker.get("active"):
-                      continue
-                  wid=str(worker.get("worker_id") or "")
-                  if not wid or wid in identities:
-                      raise ValueError("Worker identity incomplete/colliding")
-                  identities.add(wid)
-                  if worker.get("generating") or worker.get("sending") or worker.get("desired_state")=="draining":
-                      raise ValueError("Worker is actively generating, sending or draining")
-                  if ((worker.get("command") or {}).get("status")=="pending"):
-                      raise ValueError("Command pending")
-                  age=worker.get("age_seconds")
-                  last=(worker.get("last_event") or {}).get("event")
-                  if last in {"prompt-sent","generation-started"} and (age is None or age < 180):
-                      raise ValueError("Recent generation not proven finished")
-              return identities
-
-          try:
-              first=read()
-              time.sleep(12)
-              second=read()
-              if first!=second:
-                  raise ValueError("Worker allocation changed during idle window")
-              print("SAFE_IDLE_WORKERS="+str(len(second)))
-          except Exception as e:
-              print("SKIP_WORKER_FIREFOX_RESTART="+str(e)[:200])
-              raise SystemExit(1)
-          PY
-          then
-            echo "Existing worker is busy/unknown: no forced browser restart. Patch will activate on next natural safe restart."
+          if ! python3 scripts/zsentinel_addon_idle_gate.py; then
+            echo "Existing worker busy/unknown: defer addon reload; no forced tab restart."
             exit 0
           fi
           # Reload only the extension, never terminate the visible Firefox
@@ -273,6 +235,11 @@ jobs:
           current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$current_main"
           test "$current_main" = "$GITHUB_SHA"
+          # Deny activation if the installed add-on changed after the last
+          # prewrite admission, even if the browser became idle again.
+          test ! -L "$live"
+          test ! -L "$live/background.js"
+          cmp -- firefox-extension/background.js "$live/background.js"
           if node scripts/zcloud_reload_extension.mjs; then
             echo "WORKER_TAB_GUARD_ACTIVATED_IN_PLACE=1"
           else
