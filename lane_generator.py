@@ -426,7 +426,8 @@ def _lane_score(text, lane, profile=None):
             # claim, deploy or merge signal when one is present.
             if profile == "portfolio-recovery" and keyword in {
                 "issue", "issues", "bug", "fix", "repair",
-                "product", "feature",
+                "product", "feature", "bouw", "repareer", "repareren",
+                "probleem", "fout", "functie",
             }:
                 weight = 0.25
             score += weight
