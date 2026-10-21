@@ -68,7 +68,7 @@ def _work_number(value):
     return None
 
 
-def _native_row(row, known):
+def _native_row(row, known, data_source_id):
     """Normalize one genuine Notion API property payload without titles.
 
     This remains an unverified, locally supplied source. A malformed source
@@ -76,8 +76,13 @@ def _native_row(row, known):
     """
     properties = row.get("properties")
     page_id = row.get("id")
+    parent = row.get("parent")
     if (type(properties) is not dict or not isinstance(page_id, str)
             or not UUID.fullmatch(page_id)
+            or type(parent) is not dict
+            or parent.get("type") != "data_source_id"
+            or type(parent.get("data_source_id")) is not str
+            or parent["data_source_id"].lower() != data_source_id.lower()
             or any(key in row for key in ("Work ID", "Status", "Project"))):
         raise ValueError("ambiguous or invalid native Notion row")
     work_prop = properties.get("Work ID")
@@ -132,9 +137,18 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
     response = source["response"]
     ids = response.get("data_source_ids")
     rows = response.get("results")
+    # Saved connector queries carry data_source_ids. Unmodified Notion REST
+    # query responses instead use object=list and per-page parent identity;
+    # permit that path only for nonempty exclusively native pages, never for
+    # an empty source that could misleadingly imply nobody is active.
+    connector_identity = type(ids) is list and ids == [data_source_id]
+    native_identity = (ids is None and response.get("object") == "list"
+                       and type(rows) is list and bool(rows)
+                       and all(type(row) is dict and "properties" in row
+                               for row in rows))
     if (type(response.get("has_more")) is not bool
             or response["has_more"] is not False
-            or type(ids) is not list or ids != [data_source_id]
+            or not (connector_identity or native_identity)
             or type(rows) is not list or len(rows) > MAX_ROWS
             or response.get("next_cursor") not in (None, "")):
         # An old or cursor-continued page is never a complete claim snapshot.
@@ -144,7 +158,7 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
         if type(row) is not dict:
             raise ValueError("invalid Notion work record")
         if "properties" in row:
-            work, status, label, page_id = _native_row(row, known)
+            work, status, label, page_id = _native_row(row, known, data_source_id)
             if page_id in page_ids:
                 raise ValueError("duplicate native Notion page identity")
             page_ids.add(page_id)
