@@ -1056,6 +1056,121 @@ def html_view(decision, registry=None):
             ('<p class="muted">Niet alle HOLD-voorbeelden getoond.</p>'
              if held["samples_truncated"] else '') + '</section>'
         )
+    # Keep otherwise-eligible tasks visible when an execution gate, VPS
+    # capacity receipt, or explicit destination prevents safe suggestion.
+    gate_report = decision.get("routing_gate_holds")
+    if gate_report is None:
+        gate_report = {
+            "coverage": "incomplete_or_stale", "coverage_reasons": [],
+            "count": 0, "examples": [], "samples_truncated": False,
+            "exact_gate_recheck_required": True,
+            "claim_authorized": False, "dispatch_authorized": False,
+        }
+    gate_examples = gate_report.get("examples") if type(gate_report) is dict else None
+    gate_coverage = gate_report.get("coverage") if type(gate_report) is dict else None
+    gate_reasons = gate_report.get("coverage_reasons") if type(gate_report) is dict else None
+    if (type(gate_report) is not dict
+            or gate_coverage not in ("complete", "incomplete_or_stale")
+            or type(gate_reasons) is not list or len(gate_reasons) > 7
+            or any(reason not in allowed_coverage_reasons for reason in gate_reasons)
+            or (gate_coverage == "complete" and gate_reasons)
+            or type(gate_report.get("count")) is not int
+            or not 0 <= gate_report["count"] <= 250
+            or type(gate_examples) is not list or len(gate_examples) > 8
+            or len(gate_examples) > gate_report["count"]
+            or gate_report.get("samples_truncated") is not (
+                gate_report["count"] > len(gate_examples))
+            or gate_report.get("exact_gate_recheck_required") is not True
+            or gate_report.get("claim_authorized") is not False
+            or gate_report.get("dispatch_authorized") is not False):
+        raise ValueError("untrusted routing gate-hold report")
+    gate_cards = []
+    gate_reason_labels = {
+        "required_gate_blocked": "Vereiste uitvoeringsgate is expliciet geblokkeerd.",
+        "self_hosted_capacity_not_advisory_headroom":
+            "Self-hosted werk is niet routeerbaar zonder verse advisory headroom.",
+        "compute_destination_not_explicitly_routable":
+            "De uitvoeringsbestemming is niet expliciet veilig routeerbaar.",
+    }
+    gate_next_steps = {
+        "required_gate_blocked":
+            "Bevoegde eigenaar herstelt/beoordeelt de vereiste gate; controleer daarna de exacte bron opnieuw. Geen retry of claim.",
+        "self_hosted_capacity_not_advisory_headroom":
+            "Vernieuw de read-only capaciteitsbron en laat de bevoegde eigenaar beslissen. Geen runner-herstart of dispatch.",
+        "compute_destination_not_explicitly_routable":
+            "Bevestig de uitvoeringsbestemming bij de taakeigenaar voordat de taak opnieuw wordt beoordeeld. Geen claim of dispatch.",
+    }
+    for item in gate_examples:
+        if (type(item) is not dict
+                or item.get("reason") not in gate_reason_labels
+                or item.get("claim_authorized") is not False
+                or item.get("dispatch_authorized") is not False
+                or item.get("priority") not in ("P0", "P1", "P2", "P3")
+                or type(item.get("id")) is not str
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", item["id"])
+                or type(item.get("project_id")) is not str
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", item["project_id"])):
+            raise ValueError("invalid routing gate-hold example")
+        required = item.get("required_gates")
+        blocked_for_task = item.get("blocked_required_gates")
+        cap_state = item.get("capacity_state")
+        if (type(required) is not list or not 1 <= len(required) <= 3
+                or any(gate not in ("github_hosted", "self_hosted", "none") for gate in required)
+                or len(set(required)) != len(required)
+                or ("none" in required and len(required) != 1)
+                or type(blocked_for_task) is not list or len(blocked_for_task) > 2
+                or len(set(blocked_for_task)) != len(blocked_for_task)
+                or any(gate not in ("github_hosted", "self_hosted") for gate in blocked_for_task)
+                or not set(blocked_for_task).issubset(required)):
+            raise ValueError("invalid routing gate-hold gate list")
+        reason = item["reason"]
+        if (reason == "required_gate_blocked"
+                and (not blocked_for_task or cap_state is not None)
+                or reason == "self_hosted_capacity_not_advisory_headroom"
+                and ("self_hosted" not in required or blocked_for_task
+                     or cap_state not in ("unavailable", "stale", "overloaded"))
+                or reason == "compute_destination_not_explicitly_routable"
+                and ("self_hosted" in required or blocked_for_task or cap_state is not None)):
+            raise ValueError("contradictory routing gate-hold evidence")
+        gate_cards.append(
+            '<article class="panel warn"><span class="tag">GATE-HOLD · ' +
+            phrase(item["priority"], 5) + '</span><h3>' +
+            phrase(item["project_id"], 80) + ' / ' + phrase(item["id"], 80) +
+            '</h3><p>' + gate_reason_labels[reason] + '</p><p class="muted">Vereiste gates: ' +
+            phrase(", ".join(required), 100) +
+            (' · geblokkeerd: ' + phrase(", ".join(blocked_for_task), 80)
+             if blocked_for_task else '') +
+            (' · VPS-capaciteit: ' + phrase(cap_state, 30) if cap_state else '') +
+            '</p><p>' + gate_next_steps[reason] +
+            '</p><p class="muted">Alleen anderszins routeerbare wachtrij-kandidaat; geen claim, retry of dispatch.</p></article>'
+        )
+    if gate_coverage == "complete":
+        gate_heading = "Werk vastgehouden door uitvoeringsgate/capaciteit (" + str(gate_report["count"]) + ")"
+        gate_status = (
+            '<p class="muted">Alleen taken die de huidige claim-, dependency- en branch-scope-admission passeerden, '
+            'maar niet veilig konden worden voorgesteld vanwege een vereiste gate, self-hosted capaciteitsstatus '
+            'of niet-expliciete uitvoeringsbestemming. Los dit op bij de bevoegde eigenaar en herlees de exacte bron.</p>'
+        )
+        gate_empty = "Geen anderszins routeerbare wachtrijtaak waargenomen die uitsluitend door gate/capaciteit/bestemming wordt tegengehouden."
+    else:
+        gate_heading = "Uitvoeringsgates/capaciteit — STATUS ONBEKEND"
+        gate_status = (
+            '<p class="muted">Taak-/claiminventaris ontbreekt, is onvolledig of verouderd. '
+            'Het getoonde aantal is geen totaal; nul voorbeelden bewijst niet dat uitvoering vrij is.</p>'
+        )
+        gate_empty = "Geen voorbeelden in de onvolledige/verouderde bron; totaal onbekend."
+    gate_coverage_notes = (
+        '<ul class="muted">' + ''.join(
+            '<li>' + phrase(reason_labels[reason], 180) + '</li>'
+            for reason in gate_reasons) + '</ul>'
+        if gate_reasons else ''
+    )
+    gate_hold_panel = (
+        '<section><h2>' + gate_heading + '</h2>' + gate_status +
+        gate_coverage_notes + section(gate_cards, gate_empty) +
+        ('<p class="muted">Niet alle gate-HOLD-voorbeelden getoond.</p>'
+         if gate_report["samples_truncated"] else '') + '</section>'
+    )
     # Urgent first; large portfolios keep the first five visible and make
     # remaining cards available under a native details disclosure (no JS).
     ordered_incidents = sorted(incidents, key=lambda i: (
@@ -1124,6 +1239,7 @@ def html_view(decision, registry=None):
             + '</section>'
             + branch_panel
             + held_panel
+            + gate_hold_panel
             + f'<section><h2>Onafhankelijke werkvoorstellen ({len(tasks)})</h2>'
             + section([task_card(row) for row in tasks],
                       "Geen claim- en gate-veilig onafhankelijk werk aangetoond.")
