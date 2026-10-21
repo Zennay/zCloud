@@ -62,7 +62,9 @@ def portfolio_delta(previous, current, *, stale_after_hours=6, evaluated_at=None
             added, missing, modified = [], earlier, []
             total_stable = 0
         else:
-            delta = issue_difference(previous, current, url)
+            delta = issue_difference(
+                previous, current, url, stale_after_hours=stale_after_hours,
+                evaluated_at=evaluated_at)
             added = delta["first_seen"]
             missing = delta["no_longer_seen"]
             modified = delta["changed"]
