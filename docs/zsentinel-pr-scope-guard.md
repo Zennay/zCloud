@@ -1,5 +1,34 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 21 oktober · vanuit bestaande PR alle gekoppelde issues afhandelen
+
+De privé, offline **merge-eerst werkbak** maakt een volledige lokale
+PR→issue-werkstroom mogelijk, zonder extra GitHub-tabbladen of netwerkcalls:
+
+1. Klik bij een bestaande PR-groep op **Bekijk gekoppelde issues in werkbak**,
+   of klik in een issuekaart op **Bekijk alle bronissues van deze PR**.
+   De werkbak maakt het gekozen bestaande PR-nummer zichtbaar en toont alleen
+   de issuekaarten die volgens de al bewaarde bron deze PR noemen — ook als
+   hij bij dat issue niet de primaire PR is.
+2. De andere zoek-/status-/projectfilters worden voor deze expliciete
+   PR-focus gewist zodat een eerder filter geen bronissues verbergt. Het
+   samenvattingspaneel toont hoeveel gekoppelde issues nog handmatig op
+   **Nog te bekijken** staan. Met **Volgende nog te bekijken issue** kun je
+   die kaarten één voor één openen; focus en schermpositie gaan mee, zonder
+   de daadwerkelijke issue-, PR-, queue- of GitHub-status te veranderen.
+3. Je kunt per issue en PR een aparte lokale notitie/status bewaren.
+   **Terug naar alle bronissues** of **Wis filters** schakelt de PR-focus uit.
+   Een export blijft uitdrukkelijk de **volledige broninventaris** bevatten,
+   inclusief verborgen kaarten; brongegevens en opmerkingen worden niet
+   stilzwijgend weggelaten bij een ingeschakelde UI-filter.
+
+De werkbak telt uitsluitend **issuevermeldingen in het reeds opgeslagen,
+begrensde bronvenster**. Een PR-link is geen bewezen fix voor al deze issues,
+geen actuele claim, geen CI-/reviewbewijs en geen merge- of deployrecht.
+Niet opgenomen issues/PRs zijn **ONBEKEND**, niet opgelost. De operator
+kan met het bestaande export-/herimportproces de menselijke voortgang
+bronvast bijhouden, zonder scripts, tests, externe APIs of runtime-mutaties.
+
 ## 21 oktober · bron-HEAD direct in issue→PR-overdracht
 
 De bestaande **issue-first merge-werkbak** toont nu bij de primaire PR,
