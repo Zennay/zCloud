@@ -1170,6 +1170,69 @@ def save_private_report(destination: Path, rendered: str) -> None:
                 pass
 
 
+
+def save_private_bundle(directory: Path, report: dict,
+                        args: argparse.Namespace) -> None:
+    """One operator-requested 0700 package from one read-only observation.
+
+    All file contents are derived from the identical in-memory report,
+    never independent re-probes. The directory must not exist already.
+    This creates private evidence files only; no runner/service/queue writes.
+    """
+    if not isinstance(directory, Path) or directory.name in ("", ".", ".."):
+        raise ValueError("invalid private preflight bundle directory")
+    brief_args = argparse.Namespace(**{
+        **vars(args), "json": False, "format": "brief",
+    })
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        render_report_to_stdout(report, brief_args)
+    content = {
+        "observation.json": json.dumps(report, indent=2, sort_keys=True) + "\n",
+        "preflight.html": render_html(report) + "\n",
+        "owner-handoff.md": render_markdown(report) + "\n",
+        "owner-brief.txt": buffer.getvalue(),
+    }
+    manifest = {
+        "schema": "zsentinel-private-vps-preflight-bundle-v1",
+        "observed_at": report["observed_at"],
+        "release_authorized": False,
+        "host_actions_executed": False,
+        "origin": "one_in_memory_read_only_operator_observation",
+        "source_scope_attested": False,
+        "artifacts": [
+            {
+                "filename": name,
+                "sha256": hashlib.sha256(value.encode("utf-8")).hexdigest(),
+                "bytes": len(value.encode("utf-8")),
+            }
+            for name, value in sorted(content.items())
+        ],
+    }
+    content["manifest.json"] = json.dumps(
+        manifest, sort_keys=True, indent=2) + "\n"
+    created_names = []
+    os.mkdir(directory, mode=0o700)
+    try:
+        for name, body in content.items():
+            save_private_report(directory / name, body)
+            created_names.append(name)
+    except (OSError, ValueError, UnicodeError):
+        # The 0700 newly-created folder belongs to this invocation; clean up
+        # only the exact artifact filenames we successfully created.
+        for name in reversed(created_names):
+            try:
+                (directory / name).unlink()
+            except FileNotFoundError:
+                pass
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+        raise
+
+
+
 def render_report_to_stdout(report: dict, args: argparse.Namespace) -> None:
     """Preserve existing stdout formatting across terminal and private output."""
     if args.json or args.format == "json":
