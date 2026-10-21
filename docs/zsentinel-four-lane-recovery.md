@@ -96,9 +96,15 @@ reservation:
   private offline HTML, Markdown and JSON. Self-reservation is displayed
   as `deferred_assigned_packages`, **not** falsely counted as a scope
   conflict. A true overlapping new-writer candidate increments
-  `assigned_slot_scope_conflicts` and is refused. **No worker IDs,
-  queue IDs, slot numbers or raw file paths** are exported by the
-  operator desk.
+  `assigned_slot_scope_conflicts` and is refused. The existing
+  operator's bounded cross-lane collision scan now also includes
+  all still-queued workerslot reservations alongside running/claimed/
+  verifying tasks; collisions **between two existing reserved lanes**
+  remain visible rather than being missed until another candidate
+  arrives. The scan retains its 64 protected-task source-coverage
+  ceiling and fails closed if that ceiling or metadata trust is lost.
+  **No worker IDs, queue IDs, slot numbers or raw file paths** are
+  exported by the operator desk.
 
 This remains a pure derivation/read-only operator feature. No live
 task is claimed, released, migrated, retried, restarted or deployed.
