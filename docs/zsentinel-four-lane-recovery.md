@@ -93,8 +93,12 @@ reservation:
 - Source diagnostics now distinguish held slot assignments, overlapping
   reserved-slot file scopes, unknown reserved file scopes and untrusted
   assigned-lane provenance, including bounded owner follow-ups in text,
-  private offline HTML, Markdown and JSON. **No worker IDs, queue IDs,
-  slot numbers or raw file paths** are exported by the operator desk.
+  private offline HTML, Markdown and JSON. Self-reservation is displayed
+  as `deferred_assigned_packages`, **not** falsely counted as a scope
+  conflict. A true overlapping new-writer candidate increments
+  `assigned_slot_scope_conflicts` and is refused. **No worker IDs,
+  queue IDs, slot numbers or raw file paths** are exported by the
+  operator desk.
 
 This remains a pure derivation/read-only operator feature. No live
 task is claimed, released, migrated, retried, restarted or deployed.
