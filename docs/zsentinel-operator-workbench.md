@@ -20,7 +20,7 @@ python3 scripts/zsentinel_operator_workbench.py \
 3. Open the HTML locally, on mobile or desktop. Search and filter the *already observed* real issues by project or priority. Each card links to the original GitHub issue, its bounded existing PR references, known evidence gaps and the owner's recommended next investigation. Choose a **human-only disposition**: investigate, inspect/integrate existing PR, coordinate owner, park external blocker, or candidate for new product implementation (requiring independent fresh claim verification).
 4. Add a private note for an issue. **Download private human handoff** to create a source-bound `zsentinel-human-handoff.json` in your browser. If you close the page, **Reopen own handoff** restores precisely that file only if the SHA-256 of the original board, observation timestamp, entire known issue inventory and read-only authorization flags match. Wrong, malformed, overlong or foreign handoffs leave the current notes alone. There is no automatic persistence, autosave, external API call or output to Notion.
 
-## Merge-first: exact gespeelde bron-HEAD en ontbrekende gatebewijzen
+## Merge-first: exact waargenomen bron-HEAD en ontbrekende gatebewijzen
 
 De bestaande opgeslagen PR-batch kan nu in de **projectpagina** én de
 **issue→PR-inbox** rechtstreeks verwijzen naar de **waargenomen commit-SHA**.
@@ -39,6 +39,14 @@ De bron-SHA betekent alleen *destijds waargenomen broncommit*; de actuele HEAD,
 voldoende verplichte CI, onafhankelijke review, actieve claim, werkelijke merge
 en live status blijven expliciet **apart** door de bevoegde operator te
 bevestigen.
+
+De volledige lokale projectpagina toont bovendien de ouderdom van de bron
+**op het moment van genereren**. Na zes uur is dit een duidelijke
+`VEROUDERDE BRON`-melding; ook een jongere bron wordt uitdrukkelijk *niet live*
+genoemd. Deze melding verschijnt ook in het project-Markdown-overzicht en in
+zowel project- als per-PR-CSV, zodat een geëxporteerd overzicht geen stilzwijgend
+tijdloos mergebewijs lijkt. De oorspronkelijke bron-UTC en beide
+manifest-digests blijven behouden.
 
 Deze wijzigingen lezen uitsluitend bestaande, begrensde offline brondata en
 genereren lokale HTML/Markdown/CSV. Ze voeren geen GitHub-GET uit tijdens het
