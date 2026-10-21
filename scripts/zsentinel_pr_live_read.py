@@ -204,18 +204,40 @@ def observe_candidate_prs(issue, *, token=None):
             continue
         try:
             total_gets_attempted += 1
-            before = _pr_summary(_limited_json(api + "/pulls/" + str(number), token=token),
-                                 full_name, number)
-            total_gets_attempted += 1
-            checks = _checks_summary(_limited_json(
-                api + "/commits/" + before["exact_head_sha"] +
-                "/check-runs?per_page=" + str(MAX_LIST_PAGE), token=token
-            ), before["exact_head_sha"])
-            total_gets_attempted += 1
-            reviews = _review_summary(_limited_json(
-                api + "/pulls/" + str(number) +
-                "/reviews?per_page=" + str(MAX_LIST_PAGE), token=token
-            ))
+            before = _pr_summary(_limited_json(
+                api + "/pulls/" + str(number), token=token,
+            ), full_name, number)
+            source_gaps = []
+            checks = None
+            reviews = None
+            # Check runs and reviews are independent read-only sources. An
+            # inaccessible secondary endpoint must not discard a stable PR
+            # HEAD that GitHub can still confirm with another PR GET.
+            try:
+                total_gets_attempted += 1
+                checks = _checks_summary(_limited_json(
+                    api + "/commits/" + before["exact_head_sha"] +
+                    "/check-runs?per_page=" + str(MAX_LIST_PAGE), token=token
+                ), before["exact_head_sha"])
+            except GitHubReadError as exc:
+                source_gaps.append("check-runs: " + str(exc))
+                if "authentication, quota or provider admission" in str(exc):
+                    provider_paused = True
+            if not provider_paused:
+                try:
+                    total_gets_attempted += 1
+                    reviews = _review_summary(_limited_json(
+                        api + "/pulls/" + str(number) +
+                        "/reviews?per_page=" + str(MAX_LIST_PAGE), token=token
+                    ))
+                except GitHubReadError as exc:
+                    source_gaps.append("reviews: " + str(exc))
+                    if "authentication, quota or provider admission" in str(exc):
+                        provider_paused = True
+            if provider_paused:
+                raise GitHubReadError(
+                    "provider admission denied before PR HEAD could be rechecked"
+                )
             total_gets_attempted += 1
             after = _pr_summary(_limited_json(
                 api + "/pulls/" + str(number), token=token
@@ -228,8 +250,11 @@ def observe_candidate_prs(issue, *, token=None):
             base.update(before)
             base["observed_at_utc"] = utc()
             base["status"] = "LIVE_PARTIAL_READ"
-            base["check_runs"] = checks
-            base["reviews"] = reviews
+            base["secondary_source_gaps"] = source_gaps
+            if checks is not None:
+                base["check_runs"] = checks
+            if reviews is not None:
+                base["reviews"] = reviews
             base["next_human_step"] = (
                 "already_merged_verify_main_commit_and_deploy" if before["reported_merged"] else
                 "not_open_refresh_project_and_issue" if before["observed_state"] != "open" else
