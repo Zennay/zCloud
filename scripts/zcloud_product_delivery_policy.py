@@ -269,7 +269,9 @@ def product_queue_snapshot(items, max_visible=8):
     repeated_claim_attempts_observed = 0
     repeated_active_claim_attempts_observed = 0
     repeated_queued_claim_attempts_observed = 0
-    repeated_claim_workorders = []
+    # Keep at most max_visible highest-attempt leads per project in RAM,
+    # even when the (already source-bounded) queue API holds a huge backlog.
+    repeated_claim_workorders_by_project = {}
     queued_visible = 0
     held_ineligible = 0
     held_slot_occupied = 0
@@ -327,7 +329,7 @@ def product_queue_snapshot(items, max_visible=8):
                 repeated_active_claim_attempts_observed += 1
                 if activity is not None:
                     activity["repeated_active_claim_attempts_visible"] += 1
-            repeated_claim_workorders.append({
+            owner_workorder = {
                 "project_id": project,
                 "queue_id": str(item.get("queue_id") or "")[:160],
                 "priority": str(item.get("priority") or "")[:4],
@@ -337,7 +339,15 @@ def product_queue_snapshot(items, max_visible=8):
                 "owner_action": "review_attempt_history_no_automatic_retry",
                 "attempts_are_not_task_failures": True,
                 "not_claimed_or_authorized": True,
-            })
+            }
+            project_workorders = repeated_claim_workorders_by_project.setdefault(
+                project, []
+            )
+            project_workorders.append(owner_workorder)
+            project_workorders.sort(key=lambda row: (
+                -row["claim_attempts_observed"], row["queue_id"],
+            ))
+            del project_workorders[max_visible:]
         if status in ("claimed", "running", "verifying"):
             active_owner_rows += 1
             if activity is not None:
@@ -518,6 +528,11 @@ def product_queue_snapshot(items, max_visible=8):
     # Show one high-attempt original task per project first, then the highest
     # remaining observed count. Never let one noisy project suppress every
     # other human recovery lead in the bounded owner list.
+    repeated_claim_workorders = [
+        row
+        for project_rows in repeated_claim_workorders_by_project.values()
+        for row in project_rows
+    ]
     repeated_claim_workorders.sort(key=lambda row: (
         -row["claim_attempts_observed"], row["project_id"], row["queue_id"],
     ))
@@ -552,7 +567,7 @@ def product_queue_snapshot(items, max_visible=8):
         "repeated_queued_claim_attempts_observed": repeated_queued_claim_attempts_observed,
         "repeated_claim_workorders": fair_repeated_claim_workorders,
         "repeated_claim_workorders_truncated": (
-            len(repeated_claim_workorders) > len(fair_repeated_claim_workorders)
+            repeated_claim_attempts_observed > len(fair_repeated_claim_workorders)
         ),
         "repeated_claims_are_not_failures_or_retry_authority": True,
         "active_claim_evidence_is_advisory_only": True,
