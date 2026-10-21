@@ -5,7 +5,10 @@ De opt-in zsentinel_vps_resource_observer.py leest voortaan tegelijk
 met vrije bytes op dezelfde database-filesystemmount ook f_files en
 f_favail via Linux statvfs. Private JSON toont inode_total,
 inode_available, inode_unavailable_percent en inode_source.
-Tegenstrijdige tellers worden geweigerd. Filesystems zonder
+Tegenstrijdige tellers worden geweigerd. De filesystemidentiteit komt uit één nonblocking O_NOFOLLOW geopend
+regulier databasebestand, met fstat + fstatvfs op dezelfde fd.
+Veranderend pad en symlinks worden geweigerd; er worden geen databasebytes
+gelezen of SQLite-transacties gestart. Filesystems zonder
 bruikbare inodetelling krijgen unsupported_or_unknown_not_zero;
 onbekend betekent NOOIT vrije inodes.
 

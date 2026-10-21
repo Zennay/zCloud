@@ -35,19 +35,33 @@ def observe_vps_capacity(database: Path):
         raise ValueError("Linux /proc resource counters required")
     if not isinstance(database, Path):
         raise ValueError("database must be a Path")
-    # Anchor the disk measurement to the actual existing database mount,
-    # rather than an unrelated filesystem with more free space.
-    if database.is_symlink() or not database.is_file():
-        raise ValueError("existing non-symlink database required for disk evidence")
-    db_stat = database.stat()
-    if not stat.S_ISREG(db_stat.st_mode):
-        raise ValueError("database must be a regular file")
+    # Pin the filesystem to one existing regular database inode. A path
+    # may change between is_file/stat/statvfs on a busy host; fd evidence
+    # prevents an unrelated mount from being mistaken for queue headroom.
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "fstatvfs"):
+        raise ValueError("Linux nofollow and fstatvfs required")
+    flags = (os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+             | getattr(os, "O_CLOEXEC", 0))
+    try:
+        fd = os.open(database, flags)
+    except OSError as exc:
+        raise ValueError("existing non-symlink database required") from exc
+    try:
+        db_stat = os.fstat(fd)
+        if not stat.S_ISREG(db_stat.st_mode):
+            raise ValueError("database must be a regular file")
+        # A rename/symlink swap while opening is not a trusted observation.
+        current_path = os.stat(database, follow_symlinks=False)
+        if (current_path.st_dev, current_path.st_ino) != (db_stat.st_dev, db_stat.st_ino):
+            raise ValueError("database path changed during resource observation")
+        fs = os.fstatvfs(fd)
+    finally:
+        os.close(fd)
     cores = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
     if type(cores) is not int or not 1 <= cores <= 128:
         raise ValueError("invalid CPU affinity")
     load = os.getloadavg()[1]
     available, swap = _memory_values()
-    fs = os.statvfs(database)
     if fs.f_blocks <= 0 or fs.f_frsize <= 0 or not 0 <= fs.f_bavail <= fs.f_blocks:
         raise ValueError("invalid database-mount capacity")
     free = fs.f_bavail * fs.f_frsize / (1024 ** 3)
