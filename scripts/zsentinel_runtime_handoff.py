@@ -1825,7 +1825,6 @@ CSV_FIELDS = (
     "all_sources_complete", "historical_recheck_count",
     "historical_rechecks_truncated", "priority", "project", "kind",
     "next_step", "evidence", "issue_url", "existing_pr_urls",
-    "linked_inspected_pr_gates_json", "related_prs_not_inspected",
     "exact_github_job_run_id", "exact_github_job_id",
     "exact_github_job_head_sha", "exact_github_job_url",
     "exact_github_commit_url", "review_by_utc", "review_overdue_at_export",
@@ -1908,20 +1907,27 @@ def csv_export(report):
     rows = []
     for item in items:
         job = item.get("exact_github_job")
+        linked = _linked_issue_pr_gates(item)
+        from zsentinel_pr_delivery import NEXT_ACTION_NL
+        # Preserve the existing CSV-v1 columns: clients can keep importing
+        # their saved owner handoffs. The original existing_pr_urls column
+        # holds navigation while next_step carries the exact source action.
+        linked_followup = "".join(
+            " · gekoppelde PR " + gate["pr_url"] +
+            " HEAD " + (gate["observed_head_sha"] or "ONBEKEND") +
+            ": " + NEXT_ACTION_NL[gate["next_step"]]
+            for gate in linked
+        )
         rows.append({
             **metadata,
             "record_type": "owner_action",
             "priority": item.get("priority"),
             "project": item.get("project"),
             "kind": item.get("kind"),
-            "next_step": item.get("next_step"),
+            "next_step": (item.get("next_step") or "") + linked_followup,
             "evidence": item.get("evidence"),
             "issue_url": item.get("issue_url"),
             "existing_pr_urls": " | ".join(item.get("existing_pr_urls", [])),
-            "linked_inspected_pr_gates_json": json.dumps(
-                _linked_issue_pr_gates(item), ensure_ascii=True,
-                separators=(",", ":")),
-            "related_prs_not_inspected": item.get("uninspected_related_pr_count"),
             "exact_github_job_run_id": job.get("run_id") if job else None,
             "exact_github_job_id": job.get("job_id") if job else None,
             "exact_github_job_head_sha": job.get("head_sha") if job else None,
