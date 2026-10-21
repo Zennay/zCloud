@@ -29,7 +29,7 @@ def _short(value, limit=MAX_TEXT):
         return "ONBEKEND"
     visible = []
     for char in value:
-        if char in "\\t\\r\\n":
+        if char in (chr(9), chr(10), chr(13)):
             visible.append(" ")
             continue
         category = unicodedata.category(char)
@@ -52,9 +52,9 @@ def _card(priority, project, kind, action, *, source="observed_partial", ref=Non
     card = {
         "priority": priority,
         "project": _project(project),
-        "kind": kind,
+        "kind": _short(kind, 80),
         "next_step": _short(action),
-        "evidence": source,
+        "evidence": _short(source, 80),
         "claim_authorized": False,
         "retry_authorized": False,
         "merge_authorized": False,
