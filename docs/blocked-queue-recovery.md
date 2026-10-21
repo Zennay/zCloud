@@ -17,7 +17,7 @@ Only a trusted admin client may send this action to `POST /api/portfolio-queue`:
 {
   "action": "resume_blocked",
   "queue_id": "the-exact-parked-queue-id",
-  "resolution_note": "The required review was approved by the authorized owner; approval URL: https://github.com/Zennay/zCloud/pull/1234"
+  "resolution_note": "The dependency was resolved; the authorized owner checked the current source and confirmed the resolution."
 }
 ```
 
