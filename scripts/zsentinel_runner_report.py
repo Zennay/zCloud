@@ -430,7 +430,7 @@ de service-eigenaar herstel toestaat. Controleer voor gestopte services eerst of
 Een actieve service bewijst geen GitHub job, succesvolle CI, main-merge of productieherstel.</p>
 <p>Onbekende bronnen en gedeeltelijke observaties blijven onbekend. Geen automatische
 retry, servicewijziging, GitHub-actie of portfolio-claim is uitgevoerd.</p></section>
-<footer>Bron: lokale Linux host- en systemd-observatie. Geen netwerkverzoek of credentialopslag.
+<footer>Bron: {("vooraf opgeslagen privéwaarneming; niet opnieuw live gelezen" if data.get("offline_replay") else "lokale Linux host- en systemd-observatie")}. Geen netwerkverzoek of credentialopslag.
 Alleen bedoeld als privé operatoroverzicht, niet als productie- of releasebewijs.</footer></main></body></html>"""
 
 
