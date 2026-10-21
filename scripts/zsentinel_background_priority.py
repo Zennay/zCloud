@@ -625,6 +625,14 @@ def human_preview(data):
     print("Vrije root-inodes: " +
           (str(data.get("root_inode_available_percent")) + "%" if
            data.get("root_inode_available_percent") is not None else "onbekend"))
+    print("Hostbrede memory PSI (laatste 10 s): some " +
+          (str(data.get("memory_psi_some_avg10_percent")) + "%" if
+           data.get("memory_psi_observed") is True else "onbekend") +
+          "; full " + (str(data.get("memory_psi_full_avg10_percent")) + "%"
+                        if data.get("memory_psi_observed") is True else "onbekend"))
+    print("Kernel-OOM sinds huidige Linux-boot (alle processen, GEEN runner-attributie): " +
+          (str(data["kernel_oom_kills_since_boot"])
+           if data.get("kernel_oom_counter_observed") is True else "onbekend"))
     if not data["unit_observed"]:
         print("Bestaande trainerinstellingen: niet uitleesbaar via user-systemd")
     elif not data["unit_active"]:
