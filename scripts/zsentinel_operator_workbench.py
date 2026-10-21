@@ -1876,6 +1876,42 @@ function acceptBaseline(data){
  const current=sourceInstant(board.observed_at_utc);
  if(earlier===null||current===null||earlier>=current||earlier>Date.now()+300000)
    throw Error('baseline must predate current observation');
+ const savedPrs=data.pr_delivery_observations===undefined?[]:data.pr_delivery_observations;
+ if(!Array.isArray(savedPrs)||savedPrs.length>5)throw Error('invalid earlier PR observation inventory');
+ const observedPrs=new Map();
+ let prObservedAt=null;
+ if(savedPrs.length){
+  const clocks=data.source_times_utc,fresh=data.fresh;
+  if(!clocks||Array.isArray(clocks)||typeof clocks!=='object'||
+     !fresh||Array.isArray(fresh)||typeof fresh!=='object'||fresh.prs!==true||
+     typeof clocks.prs!=='string')throw Error('earlier PR gates lack an admitted source clock');
+  const gateClock=sourceInstant(clocks.prs);
+  if(gateClock===null||gateClock>earlier)throw Error('earlier PR gate source is after its board');
+  prObservedAt=clocks.prs;
+  const prPattern=/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]{0,8}$/;
+  for(const row of savedPrs){
+   if(!row||Array.isArray(row)||typeof row!=='object'||
+      typeof row.url!=='string'||!prPattern.test(row.url)||observedPrs.has(row.url)||
+      typeof row.head_sha!=='string'||!/^[0-9a-f]{40}$/.test(row.head_sha)||
+      row.merge_authorized!==false||typeof row.observed_check_success!=='boolean'||
+      !(row.legacy_context_success===null||typeof row.legacy_context_success==='boolean')||
+      !Number.isInteger(row.observed_approvals)||row.observed_approvals<0||row.observed_approvals>100||
+      typeof row.mergeable_observed!=='boolean'||
+      !Array.isArray(row.blocking_unknowns)||row.blocking_unknowns.length>20||
+      row.blocking_unknowns.some(v=>typeof v!=='string'||!/^[a-z][a-z0-9_]{0,70}$/.test(v)))
+     throw Error('invalid earlier exact-head PR gate receipt');
+   observedPrs.set(row.url,{
+    url:row.url,head_sha:row.head_sha,
+    observed_check_success:row.observed_check_success,
+    legacy_context_success:row.legacy_context_success,
+    observed_approvals:row.observed_approvals,
+    mergeable_observed:row.mergeable_observed,
+    blocking_unknowns:row.blocking_unknowns.slice(),
+    source_observed_at_utc:prObservedAt,
+    merge_authorized:false
+   });
+  }
+ }
  const items=new Map();
  for(const c of data.cards){
   if(!c||Array.isArray(c)||typeof c.issue!=='string'||!issuePattern.test(c.issue)||
@@ -1893,9 +1929,18 @@ function acceptBaseline(data){
      typeof c.recommended_next_step!=='string'||c.recommended_next_step.length>650||
      c.open_pr_candidates.some(p=>!p.startsWith('https://github.com/'+c.issue.split('#')[0]+'/pull/')))
        throw Error('invalid earlier issue detail or cross-repository PR');
+  const linked=c.pr_delivery_candidates===undefined?[]:c.pr_delivery_candidates;
+  if(!Array.isArray(linked)||linked.length>3)throw Error('invalid earlier issue-linked PR gates');
+  const expected=c.open_pr_candidates.filter(url=>observedPrs.has(url)).map(url=>{
+   const {source_observed_at_utc,...receipt}=observedPrs.get(url);return receipt;
+  });
+  if(!sameJsonValue(linked,expected))
+   throw Error('earlier issue-linked PR gates disagree with their exact source inventory');
+  const prGates=new Map(c.open_pr_candidates.filter(url=>observedPrs.has(url))
+   .map(url=>[url,observedPrs.get(url)]));
   items.set(c.issue,{issue:c.issue,project:c.project,priority:c.priority,
    title:c.title,next:c.recommended_next_step,
-   prs:new Set(c.open_pr_candidates),gaps:new Set(c.evidence_gaps)});
+   prs:new Set(c.open_pr_candidates),gaps:new Set(c.evidence_gaps),prGates});
  }
  return {observed_at_utc:data.observed_at_utc,items,
   coverage:{projects:cov.projects,inbox_truncated:cov.inbox_truncated,
@@ -1916,6 +1961,32 @@ function changesSinceBaseline(){
      c.open_pr_candidates.some(p=>!old.prs.has(p)))changedFields.push('referenced PRs');
   if(old.gaps.size!==new Set(c.evidence_gaps).size||
      c.evidence_gaps.some(g=>!old.gaps.has(g)))changedFields.push('missing evidence');
+  const currentPrGates=new Map((c.pr_gate_observations||[]).map(row=>[row.url,row]));
+  for(const url of c.open_pr_candidates){
+   if(!old.prs.has(url))continue;
+   const before=old.prGates?.get(url)||null,after=currentPrGates.get(url)||null;
+   if(!before&&after){
+    changedFields.push('PR gate evidence newly captured: '+url);
+    continue;
+   }
+   if(before&&!after){
+    changedFields.push('PR gate evidence unavailable (UNKNOWN): '+url);
+    continue;
+   }
+   if(!before||!after)continue;
+   if(before.head_sha!==after.head_sha)
+    changedFields.push('PR observed HEAD changed: '+url);
+   const beforeBlockers=before.blocking_unknowns.slice().sort();
+   const afterBlockers=after.blocking_unknowns.slice().sort();
+   if(before.observed_check_success!==after.observed_check_success||
+      before.legacy_context_success!==after.legacy_context_success||
+      !sameJsonValue(beforeBlockers,afterBlockers))
+    changedFields.push('PR gate/check/blocker evidence changed: '+url);
+   if(before.observed_approvals!==after.observed_approvals)
+    changedFields.push('PR observed approval count changed: '+url);
+   if(before.mergeable_observed!==after.mergeable_observed)
+    changedFields.push('PR observed mergeability changed: '+url);
+  }
   result.push({kind:changedFields.length?'changed-evidence':'still-observed',
     issue:c.issue,priority:c.priority,changedFields});
  }
@@ -1951,10 +2022,14 @@ function refreshComparison(){
   '; unavailable/degraded projects: '+degraded(baseline.coverage)+
   '. Current: '+flag(board.coverage)+
   '; unavailable/degraded projects: '+degraded(board.coverage)+
-  '. Neither board establishes completeness, resolution or current ownership.';
+  '. Exact-head PR gate deltas compare only the same canonical PR link and admitted saved receipts; missing receipts remain UNKNOWN. Neither board establishes completeness, resolution, current ownership or merge clearance.';
  const events=changesSinceBaseline();
+ const gateChangedIssues=events.filter(e=>(e.changedFields||[]).some(field=>
+  field.startsWith('PR gate ')||field.startsWith('PR observed '))).length;
+ stats.append(elem('dt','Issues with changed saved PR gate evidence'),
+  elem('dd',String(gateChangedIssues)));
  const names=[['new-observation','New in current snapshot'],
-  ['changed-evidence','Changed priority/PR/gap observation'],
+  ['changed-evidence','Changed issue/PR/gate evidence'],
   ['still-observed','Still observed'],['not-observed','No longer in current snapshot (NOT resolved)']];
  for(const [kind,title] of names){
   const subset=events.filter(e=>e.kind===kind);
