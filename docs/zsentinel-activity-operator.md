@@ -828,3 +828,21 @@ The matching browser source on existing [worker v2 PR #1552](https://github.com/
 - `command-ack-ledger-unavailable`: Private browser persistence is unreadable or cannot prove a receipt was stored; never treat it as an empty command ledger. Stop worker command execution and request inspection of the original command, account-bound tab and storage with the operator.
 
 The events are still **browser-reported observations**, not proof that a remote task was completed. The report deliberately never exports command IDs, queue IDs, browser URLs, prompt text, tokens, private storage contents or unvalidated arbitrary status strings. An event missing from the local retention window means `UNKNOWN`, not healthy. Source PRs remain gated by independent review and required exact-head CI; neither the Activity interface nor its private export is a release authorization.
+
+
+## 21 October · snapshot freshness for imported Activity receipts
+
+The offline GitHub Activity digest and HTML now classify the receipt's
+`observed_at` timestamp using a six-hour freshness limit. A recent receipt
+shows its normalized UTC source time and age; a receipt older than six hours is
+explicitly **STALE** and instructs the operator to refresh the read-only source
+before drawing current conclusions. A missing/invalid timestamp stays
+**UNKNOWN**, and a timestamp more than two minutes in the future is marked as
+possible clock/source skew. None of these states imply that GitHub has no newer
+events.
+
+The freshness warning applies to the whole imported receipt; individual source
+coverage remains separate, so a recent receipt can still be incomplete due to
+API denial, pagination or bounded history. These are operator hints, not a
+live background monitor and not evidence of a worker resuming, a PR reaching
+canonical main, or a deployment.
