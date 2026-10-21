@@ -153,6 +153,25 @@ def issue_local_claim_evidence(project, local_claims):
         if value is not None and (type(value) is not int or not 0 <= value <= 1000):
             return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
         counts[key] = value
+    active = counts["active_local_leases_observed"]
+    expired = counts["expired_local_leases_observed"]
+    writers = counts["active_local_writers_observed"]
+    ambiguous = counts["ambiguous_active_leases"]
+    if status == "EXPIRED_LOCAL_LEASES_OBSERVED" and not (
+            active == 0 and type(expired) is int and expired > 0
+            and writers == 0 and ambiguous == 0):
+        return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
+    if status == "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED" and not (
+            active == 0 and expired == 0 and writers == 0 and ambiguous == 0):
+        return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
+    if status == "LOCAL_ACTIVE_CLAIMS_OBSERVED" and not (
+            (type(active) is int and active > 0)
+            or (type(ambiguous) is int and ambiguous > 0)):
+        return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
+    if status in {
+            "LOCAL_SOURCE_UNAVAILABLE", "CLAIM_INVENTORY_TRUNCATED",
+            "CLAIM_SOURCE_INVALID"} and any(value is not None for value in counts.values()):
+        return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
     return {**unknown, **counts, "status": status}
 
 
