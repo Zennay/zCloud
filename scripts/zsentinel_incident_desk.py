@@ -396,8 +396,13 @@ def existing_pr_merge_gate_panel(decision):
     from zsentinel_pr_delivery import pr_delivery_html
     # This uses the identical bounded source and its existing strict
     # next-action/CI/review render logic, without any new provider read.
-    return '<section class="panel" aria-label="Merge-first bestaand werk">' + (
-        pr_delivery_html(source)) + '</section>'
+    delta = decision.get("pr_gate_continuity")
+    delta_html = ""
+    if delta is not None:
+        from zsentinel_pr_hold_continuity import html_panel
+        delta_html = html_panel(delta)
+    return ('<section class="panel" aria-label="Merge-first bestaand werk">' +
+            pr_delivery_html(source) + '</section>' + delta_html)
 
 
 
