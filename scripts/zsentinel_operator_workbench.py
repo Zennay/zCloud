@@ -447,7 +447,9 @@ def project_operations_html(view: dict) -> str:
         'These are historical human investigation leads, never worker '
         'availability, confirmed failures or permission to retry.</p>'
         '<p id="recoveryDuePulse" role="status">No locally saved manual review dates loaded.</p>'
-        '<details><summary>Inspect <span id="recoveryVisibleCount">' +
+        '<p id="recoveryQueueSummary" role="status" aria-live="polite">Project candidate queue not yet refreshed.</p>'
+        '<button type="button" id="recoveryNextProject">Next non-parked project candidate (P0 first)</button>'
+        '<details id="recoveryLeads"><summary>Inspect <span id="recoveryVisibleCount">' +
         str(len(sections)) + '</span> project-level recovery leads (offline)' +
         '</summary>'
         '<ol>' + ''.join(sections) + '</ol></details>'
@@ -839,7 +841,7 @@ function dueState(info){
   'due today UTC':'scheduled by operator';
 }
 let selected=null;const handoffs=new Map();
-const recoveryHandoffs=new Map();
+const recoveryHandoffs=new Map();let lastRecoveryProject=null;
 const recoveryDecisions=new Set(['investigate','coordinate-owner','park-blocker']);
 const batchSelection=new Set();let batchPreview=null,batchUndo=null;
 function clearBatchUndo(){
@@ -2270,6 +2272,14 @@ function drawList(){
  if(pulse)pulse.textContent=overdue+' overdue · '+dueToday+
    ' due today UTC · '+missingContact+' dated entries missing a contact label. '+
    'Local human annotations only; no alerts sent or live worker ownership proven.';
+ const recoveryCandidates=projectRecoveryQueue();
+ const parkedProjects=board.project_operations.filter(row=>
+   recoveryHandoffs.get(row.project)?.decision==='park-blocker').length;
+ const recoverySummary=document.getElementById('recoveryQueueSummary');
+ if(recoverySummary)recoverySummary.textContent=recoveryCandidates.length+
+   ' non-parked project candidates · '+parkedProjects+' locally parked. P0 first; then due date and sampled queue pressure. Local status does not prove a free worker or claim; recheck current PRs, claims and branch rules.';
+ const recoveryNext=document.getElementById('recoveryNextProject');
+ if(recoveryNext)recoveryNext.disabled=recoveryCandidates.length===0;
  const view=filtered();issueList.replaceChildren();
  view.forEach(c=>{
    const li=elem('li'),b=elem('button');b.type='button';
@@ -2505,6 +2515,26 @@ document.addEventListener('keydown',event=>{
    event.preventDefault();navigateObserved(event.key==='j'?1:-1);
  }
 });
+function projectRecoveryQueue(){
+ const today=utcToday();
+ const rank=row=>{
+  const counts=row.issue_counts_in_sample||{};
+  const queue=row.queue_observation||{};
+  const entry=recoveryHandoffs.get(row.project);
+  const due=entry?.due;
+  const priority=counts.P0?0:counts.P1?1:2;
+  const dueRank=!due?3:due<today?0:due===today?1:2;
+  const pressure=queue.expired_active_leases?0:queue.high_claim_attempts?1:2;
+  return [priority,dueRank,pressure,row.project];
+ };
+ return board.project_operations.filter(row=>
+   recoveryHandoffs.get(row.project)?.decision!=='park-blocker')
+  .slice().sort((a,b)=>{
+   const left=rank(a),right=rank(b);
+   for(let i=0;i<left.length-1;i++)if(left[i]!==right[i])return left[i]-right[i];
+   return left[left.length-1].localeCompare(right[right.length-1]);
+  });
+}
 function recoveryReviewStatus(entry){
  if(!entry?.due)return 'No follow-up date entered; no automated reminder.';
  if(!entry.owner)return 'Contact label missing; manual owner reconciliation required.';
@@ -2570,6 +2600,27 @@ document.getElementById('projectRecoveryDesk').addEventListener('click',event=>{
  invalidateBrief();drawList();drawDetail();
  document.getElementById('previewBrief').click();
  document.getElementById('briefPanel').scrollIntoView({block:'nearest'});
+});
+document.getElementById('recoveryNextProject').addEventListener('click',()=>{
+ const queue=projectRecoveryQueue();
+ if(!queue.length)return;
+ const last=queue.findIndex(row=>row.project===lastRecoveryProject);
+ const target=queue[(last+1+queue.length)%queue.length];
+ lastRecoveryProject=target.project;
+ document.getElementById('project').value='';
+ drawList();
+ const panel=document.getElementById('recoveryLeads');
+ if(panel)panel.open=true;
+ const node=Array.from(document.querySelectorAll('[data-recovery-project]'))
+  .find(item=>item.dataset.recoveryProject===target.project);
+ if(!node)return;
+ node.scrollIntoView({block:'center'});
+ const control=node.querySelector('[data-recovery-choice]');
+ if(control)control.focus();
+ const due=recoveryHandoffs.get(target.project)?.due;
+ document.getElementById('status').textContent='Selected project candidate '+target.project+
+  (due?' · manual review due '+due:' · no manual review date entered')+
+  '. Local navigation only; verify current PRs, active claims, branch rules and owner before acting.';
 });
 ['search','priority','project','disposition','change','followupStatus'].forEach(id=>document.getElementById(id).addEventListener(
  'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
