@@ -653,6 +653,19 @@ document.getElementById('export').addEventListener('click',function(){
   if(note)parts.push('  - Privé PR-opvolging: '+safeText(note));
   parts.push('');
  }
+ if(collisionRows.length)parts.push('## Issues met meerdere bestaande PRs', '',
+  'Dit is een beperkte bronsteekproef, geen vastgestelde bestandsbotsing of eigenaarsclaim.','');
+ for(const c of collisionRows){
+  const issue=c.dataset.issue;
+  parts.push('- [Bronissue '+issue.split('/').pop()+']('+issue+') · '+
+    safeText(c.dataset.priority)+' · '+safeText(c.dataset.title));
+  parts.push('  - Bestaande PRs in bron: '+c.dataset.prs.split(' ')
+    .filter(Boolean).map(url=>'[PR '+url.split('/').pop()+']('+url+')').join(', '));
+  parts.push('  - Lokale botsingsopvolging: '+
+    collisionLabels[c.querySelector('.collision-state').value]);
+  const note=c.querySelector('.collision-note').value.trim();
+  if(note)parts.push('  - Privé botsingsnotitie: '+safeText(note));
+ }
  parts.push('Statussen zijn uitsluitend handmatig, lokaal en niet op GitHub/Notion vastgelegd.');
  const blob=new Blob([parts.join('\n')+'\n'],{type:'text/markdown;charset=utf-8'});
  const url=URL.createObjectURL(blob);const a=document.createElement('a');
