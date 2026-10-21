@@ -624,6 +624,87 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
     return packet
 
 
+
+def portfolio_changes_lines(data, markdown=False):
+    """Human-readable endpoint deltas; no suggestion of automatic recovery."""
+    history = data.get("portfolio_previous_comparison")
+    if history is None:
+        return []
+    lines = [
+        ("## Verandering sinds privé vorig bronmoment" if markdown else
+         "Verandering sinds privé vorig bronmoment (twee eindpunten):"),
+        "Vorige bron UTC: " + history["previous_observed_utc"],
+        "Huidige bron UTC: " + history["current_observed_utc"],
+        "Bronafstand (uur): " + str(history["elapsed_hours"]),
+        "Vergelijkbaarheid: " + history["status"],
+        history["note"],
+    ]
+    if history["status"] != "COMPARABLE_ENDPOINTS":
+        lines.append("Geen betekenisvolle projectdelta's gepubliceerd.")
+        return lines
+    if not history["changed_projects"]:
+        lines.append(
+            "Geen verandering in lokale P0/P1-counts op de twee bronmomenten; "
+            "geen bewijs dat daartussen niets gebeurd is."
+        )
+    for item in history["changed_projects"]:
+        delta = item["delta"]
+        lines.append(
+            item["project"] + " · " + item["kind"]
+            + " · P0 wacht " + f"{delta['queued_p0']:+d}"
+            + ", P1 wacht " + f"{delta['queued_p1']:+d}"
+            + ", P0 actief " + f"{delta['in_flight_p0']:+d}"
+            + ", P1 actief " + f"{delta['in_flight_p1']:+d}"
+            + " (bronmomentverschil, geen oorzaakbewijs)."
+        )
+    return lines
+
+
+def portfolio_changes_html(data):
+    history = data.get("portfolio_previous_comparison")
+    if history is None:
+        return ""
+    rows = []
+    if history["status"] == "COMPARABLE_ENDPOINTS":
+        for item in history["changed_projects"]:
+            delta = item["delta"]
+            links = html_inbox_links(item["project"])
+            rows.append(
+                "<tr><th scope='row'>" + html.escape(item["project"]) +
+                links + "</th><td>" + html.escape(item["kind"]) +
+                "</td><td>" + f"{delta['queued_p0']:+d}" +
+                "</td><td>" + f"{delta['queued_p1']:+d}" +
+                "</td><td>" + f"{delta['in_flight_p0']:+d}" +
+                "</td><td>" + f"{delta['in_flight_p1']:+d}" +
+                "</td></tr>"
+            )
+    if history["status"] != "COMPARABLE_ENDPOINTS":
+        body = ("<p class='warn'>Bronnen niet vergelijkbaar; "
+                "er worden geen projectverschillen afgeleid.</p>")
+    elif not rows:
+        body = ("<p>Geen countverschillen tussen deze bronmomenten, "
+                "niet bewezen dat er tussentijds geen werk was.</p>")
+    else:
+        body = (
+            "<div class='scroll'><table><thead><tr>"
+            "<th>Project</th><th>Signaal</th><th>Δ P0 wacht</th>"
+            "<th>Δ P1 wacht</th><th>Δ P0 actief</th><th>Δ P1 actief</th>"
+            "</tr></thead><tbody>" + "".join(rows) +
+            "</tbody></table></div>"
+        )
+    return (
+        "<section class='notice' id='owner-change-panel'>"
+        "<h2>Portfolioverschil sinds privé bronmoment</h2>"
+        "<p>Vorige UTC " + html.escape(history["previous_observed_utc"]) +
+        " · huidige UTC " + html.escape(history["current_observed_utc"]) +
+        " · status " + html.escape(history["status"]) + "</p>"
+        "<p>" + html.escape(history["note"]) + "</p>" + body +
+        "<p>Lokale P0/P1-delta's bewijzen geen workeruitval, oplossing, "
+        "vrij eigenaarschap of releasebevoegdheid.</p></section>"
+    )
+
+
+
 def text_view(data):
     out = [
         "zSentinel · herstelbalie (alleen lezen)",
