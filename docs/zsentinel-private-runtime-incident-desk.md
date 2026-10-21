@@ -391,3 +391,35 @@ De bestaande 0600 create-only writer weigert overschrijven.
 Een ontbrekende independent review, incomplete exact-head CI, actieve
 claim en branch protection blijven onverkort echte release-HOLDs.
 Deze bronuitbreiding is geen live recovery- of deploybewijs.
+
+
+## 21 oktober · issue → bestaande PR, exact dezelfde bron in eigenaarshandoff
+
+De privé `zsentinel_runtime_handoff.build_handoff(..., pr_desk=...)`
+koppelt nu `open_product_issue`-kaarten **uitsluitend** aan de
+bestaande geobserveerde, canonieke PR’s uit hetzelfde huidige
+`pr_delivery`-venster (hoogstens drie). De correlatie is repo-gebonden:
+een issue-referentie naar een andere repository wordt geweigerd.
+Het systeem voert geen extra GitHub GET uit en maakt geen nieuwe PR.
+
+Wanneer een issue naar één van deze reeds geïnspecteerde PR’s verwijst,
+toont de eigenaarkaart het PR-URL, de **daadwerkelijk geobserveerde exacte
+HEAD** als die betrouwbaar bestaat, het bronbereik en de volgende
+brongebonden menselijke stap (bijvoorbeeld huidige CI herstellen,
+onafhankelijke review aanvragen, of toegang herstellen). Bij mislukte
+GitHub-admission blijft de HEAD expliciet **ONBEKEND**. Niet
+geïnspecteerde issue-referenties blijven als ongetoetste links zichtbaar;
+het aantal ontbrekende exacte PR-inspecties wordt ook vastgelegd.
+
+De gecombineerde signalen verschijnen in de scriptvrije HTML-eigenaarstrip,
+in de Markdown-handoff en als gestructureerde, begrensde velden in JSON.
+De CSV houdt bewust exact dezelfde **CSV-v1 kolommen** voor bestaande
+importeurs, maar noemt binnen `next_step` ook de brongebonden gekoppelde
+PR-actie; `existing_pr_urls` behoudt de navigatielinks.
+Een gekoppelde open PR betekent **niet** dat het issue is opgelost,
+dat de huidige eigenaar/claim bekend is of dat merge/deploy mag.
+Het P0/P1 issue blijft zichtbaar naast de PR-ownerkaart, zodat
+beveiligings-/infrastructuurblokkades nooit als afgevinkt verdwijnen.
+
+Geen queueclaim, CI-rerun, PR-merge, workflowdispatch, accountbetaling,
+runnerrestart of live deploy wordt door deze eigenaarsoverdracht uitgevoerd.
