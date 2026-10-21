@@ -2299,3 +2299,32 @@ Gebruikersfunctionaliteit:
 - **CSV:** afzonderlijke `peer_head_collision`, `peer_shared_file` en `coverage_warning` records, geschikt voor lokale filtering en overdracht. De bestaande private 0600/O_EXCL output en formula-inerte CSV-cellen blijven behouden.
 
 Broncode: [19b915b](https://github.com/Zennay/zCloud/commit/19b915bdc941a4ff9c92061d161fb30259b17a7a), [dbe2225](https://github.com/Zennay/zCloud/commit/dbe22256b9a92d5efd55d94a7f819da7e9134647). Dit verandert geen productiequeue, workerclaim, live runtime, GitHub review, CI of deploy. Bestaande verplichte exacte-HEAD checks en menselijke eigenaars-/releasegoedkeuring zijn ongewijzigd. Alleen de nieuwe Python-source is via read-only opgehaalde exacte commit syntactisch geïnspecteerd; geen QA-/regressiesuite geschreven of gedraaid.
+
+## 21 oktober · issue-/PR-activiteit als conservatief stagnatiesignaal
+
+De bestaande live issue-first cockpit en de compacte privé P0/P1-werkbak tonen nu
+een expliciet activiteitssignaal voor ieder issue. De bestaande PR-scopebron
+behoudt hiervoor updated_at uit hetzelfde begrensde open-PR-bronvenster dat
+al voor de botsingsdesk wordt gelezen; er zijn geen extra GitHub-requests.
+De live issuebron bewaart created_at/updated_at in het SHA-gehashte privé
+bronpakket. Het nieuwe model in scripts/zsentinel_issue_activity.py vergelijkt de issue-update
+met de meest recente waargenomen update van de aan dat issue gekoppelde open
+PR-kandidaten, met een venster van 7 dagen.
+
+De UI onderscheidt:
+- recent_issue_activity_observed — het issue zelf is recent bijgewerkt;
+- recent_linked_pr_activity_observed — het issue is ouder, maar een gekoppelde
+  open PR toont recente activiteit;
+- quiet_over_7_days_observed_claims_unknown — issue en alle gekoppelde PR's
+  in de complete begrensde bron zijn ouder dan zeven dagen;
+- quiet_over_7_days_partial_pr_coverage — issue is ouder, maar gekoppelde
+  PR-activiteit of issueverwijzingsdekking is incompleet;
+- source_clock_incoherent / activity_timestamp_unknown — bronmomenten of
+  tijdstempels zijn onvoldoende betrouwbaar.
+
+Dit is bewust geen label 'stalled', geen owner/lease-detectie en geen
+bewijs dat een PR-loze branch of worker inactief is. Elke kaart zegt expliciet
+dat actieve claims, PR-loze branches en stilstand niet zijn geverifieerd.
+Dezelfde signaalvelden verschijnen in JSON, tekst/Markdown, de volledige
+offline HTML en de compacte privé HTML-werkbak. Er is geen queue-/Notion-write,
+claim, retry, CI-dispatch, merge, deploy of workeractie toegevoegd.

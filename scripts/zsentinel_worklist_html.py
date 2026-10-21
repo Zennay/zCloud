@@ -55,6 +55,18 @@ def render_html(board, max_rows=20):
                 or not 1 <= len(row["category_nl"]) <= 180
                 or type(row.get("human_next_step_nl")) is not str
                 or not 1 <= len(row["human_next_step_nl"]) <= 650
+                or row.get("activity_signal") not in {
+                    "source_clock_incoherent", "activity_timestamp_unknown",
+                    "recent_issue_activity_observed",
+                    "recent_linked_pr_activity_observed",
+                    "quiet_over_7_days_observed_claims_unknown",
+                    "quiet_over_7_days_partial_pr_coverage"}
+                or type(row.get("activity_label_nl")) is not str
+                or not 1 <= len(row["activity_label_nl"]) <= 180
+                or type(row.get("activity_note_nl")) is not str
+                or not 1 <= len(row["activity_note_nl"]) <= 500
+                or row.get("stalled_project_proven") is not False
+                or row.get("activity_window_hours") != 168
                 or type(row.get("pr_file_scope_sample_complete")) is not bool
                 or type(row.get("issue_reference_sample_complete")) is not bool
                 or row.get("claim_authorized") is not False
@@ -164,6 +176,7 @@ def render_html(board, max_rows=20):
             "' data-prs='" + h(" ".join(item[0] for item in alt_items)) +
             "' data-title='" + h(row["title"]) +
             "' data-category='" + h(row["category_nl"]) +
+            "' data-activity='" + h(row["activity_signal"]) +
             "' data-next='" + h(row["human_next_step_nl"]) + "'>"
             "<header><span class='priority'>" + h(row["priority"]) + "</span> "
             "<span>" + h(row["project"]) + "</span> <small>#" +
@@ -172,6 +185,15 @@ def render_html(board, max_rows=20):
             h(row["title"]) + "</a></h2>"
             "<p><strong>" + h(row["category_nl"]) + "</strong></p>"
             "<p>" + h(row["human_next_step_nl"]) + "</p>"
+            "<p class='activity'><strong>Activiteitssignaal:</strong> " +
+            h(row["activity_label_nl"]) +
+            " · issue update " + h(str(row["issue_updated_at"] or "ONBEKEND")) +
+            " (" + h(str(row["issue_inactivity_hours"])) + " uur geleden)" +
+            " · laatste gekoppelde open PR " +
+            h(str(row["latest_linked_open_pr_updated_at"] or "ONBEKEND")) +
+            " (" + h(str(row["latest_linked_open_pr_inactivity_hours"])) + " uur geleden)" +
+            " · dekking " + h(row["linked_pr_activity_coverage"]) +
+            "<br><small>" + h(row["activity_note_nl"]) + "</small></p>"
             "<p class='links'>" + pr_link +
             (" <button class='focus-from-issue' type='button'>"
              "Bekijk alle bronissues van deze PR</button>" if pr else "") +

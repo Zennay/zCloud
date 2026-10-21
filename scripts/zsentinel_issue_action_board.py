@@ -91,6 +91,32 @@ def build(report):
                 or issue.get("claim_authorized") is not False):
             raise ValueError("untrusted or duplicate source issue")
         seen.add(issue["url"])
+        activity = issue.get("activity")
+        if (type(activity) is not dict
+                or activity.get("signal") not in {
+                    "source_clock_incoherent", "activity_timestamp_unknown",
+                    "recent_issue_activity_observed",
+                    "recent_linked_pr_activity_observed",
+                    "quiet_over_7_days_observed_claims_unknown",
+                    "quiet_over_7_days_partial_pr_coverage"}
+                or type(activity.get("label_nl")) is not str
+                or not 1 <= len(activity["label_nl"]) <= 180
+                or type(activity.get("note_nl")) is not str
+                or not 1 <= len(activity["note_nl"]) <= 500
+                or activity.get("linked_pr_activity_coverage") not in {
+                    "complete_for_linked_prs_in_bounded_snapshot", "partial_or_unverified"}
+                or type(activity.get("as_of_utc")) is not str
+                or len(activity["as_of_utc"]) > 48
+                or activity.get("window_hours") != 168
+                or activity.get("active_claims_verified") is not False
+                or activity.get("prless_branch_owners_verified") is not False
+                or activity.get("stalled_project_proven") is not False
+                or activity.get("actions_authorized") is not False):
+            raise ValueError("invalid or authorizing issue activity evidence")
+        for field in ("issue_inactivity_hours", "latest_linked_open_pr_inactivity_hours"):
+            age = activity.get(field)
+            if age is not None and (type(age) is not int or not 0 <= age <= 10000000):
+                raise ValueError("invalid bounded issue activity age")
         if issue["project"] not in coverage:
             raise ValueError("issue has no matching project scope observation")
         scope = coverage[issue["project"]]
@@ -199,6 +225,17 @@ def build(report):
         card = {
             "issue": issue["issue"], "issue_url": issue["url"],
             "title": issue["title"], "priority": issue["priority"],
+            "activity_signal": activity["signal"],
+            "activity_label_nl": activity["label_nl"],
+            "activity_note_nl": activity["note_nl"],
+            "issue_updated_at": activity.get("issue_updated_at"),
+            "issue_inactivity_hours": activity.get("issue_inactivity_hours"),
+            "latest_linked_open_pr_updated_at": activity.get("latest_linked_open_pr_updated_at"),
+            "latest_linked_open_pr_inactivity_hours": activity.get("latest_linked_open_pr_inactivity_hours"),
+            "linked_pr_activity_coverage": activity["linked_pr_activity_coverage"],
+            "activity_window_hours": activity["window_hours"],
+            "activity_as_of_utc": activity.get("as_of_utc"),
+            "stalled_project_proven": False,
             "project": issue["project"], "category": action,
             "category_nl": LABELS[action], "human_next_step_nl": GUIDANCE[action],
             "existing_pr_count_in_sample": len(refs),
@@ -396,6 +433,15 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
              item["issue_reference_sample_complete"] else "ONVOLLEDIG") +
             "; actuele eigenaar/merge UNKNOWN.",
         ])
+        lines.append("   Activiteitssignaal: " + item["activity_label_nl"] +
+                     " · issue-updated_at=" + str(item["issue_updated_at"] or "ONBEKEND") +
+                     " (" + str(item["issue_inactivity_hours"]) + " uur geleden)" +
+                     " · laatste gekoppelde open PR=" +
+                     str(item["latest_linked_open_pr_updated_at"] or "ONBEKEND") +
+                     " (" + str(item["latest_linked_open_pr_inactivity_hours"]) + " uur geleden)" +
+                     " · PR-dekking=" + item["linked_pr_activity_coverage"] +
+                     " (geen bewijs van stilstand of vrije claim).")
+        lines.append("   " + item["activity_note_nl"])
         if item["candidate_existing_pr_url"]:
             url = item["candidate_existing_pr_url"]
             lines.append("   PR eerst: " + (

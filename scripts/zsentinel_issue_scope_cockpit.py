@@ -33,6 +33,7 @@ from zsentinel_issue_action_board import (
     build as build_human_work_inbox, render_compact_inbox,
 )
 from zsentinel_worklist_html import render_html as render_private_worklist_html
+from zsentinel_issue_activity import classify as classify_issue_activity
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 60
@@ -258,7 +259,15 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         title = raw.get("title")
         if type(title) is not str or not 1 <= len(title) <= 180:
             raise ValueError("raw source issue title missing or unbounded")
-        raw_by_issue[issue] = raw
+        raw_copy = dict(raw)
+        for field in ("created_at", "updated_at"):
+            if raw.get(field) is not None:
+                stamp = canonical_issue_clock(raw[field])
+                raw_copy[field] = stamp.isoformat(timespec="seconds")
+        if raw_copy.get("created_at") and raw_copy.get("updated_at"):
+            if canonical_issue_clock(raw_copy["created_at"]) > canonical_issue_clock(raw_copy["updated_at"]):
+                raise ValueError("issue activity clocks are inconsistent")
+        raw_by_issue[issue] = raw_copy
     saved_gates = saved_gates or {}
     if type(saved_gates) is not dict or len(saved_gates) > 5:
         raise ValueError("invalid saved PR gate map")
@@ -315,13 +324,35 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
                         or ref.get("fix_verified") is not False):
                     raise ValueError("ambiguous issue reference or source PR identity")
                 mentions.setdefault(number, set()).add(link)
-        heads = item.get("inspected_pr_heads", [])
-        # Current portfolio producer does not export these head receipts;
-        # never infer a PR is conflict-free just because it has no pair.
-        if heads and type(heads) is not list:
-            raise ValueError("malformed inspected PR metadata")
+        heads = item.get("sampled_open_pr_heads", [])
+        # The portfolio producer exports the exact bounded open-PR sample
+        # under sampled_open_pr_heads. Validate it before using updated_at;
+        # absence of a candidate from an incomplete sample remains UNKNOWN.
+        if type(heads) is not list or len(heads) > MAX_PRS_PER_PROJECT:
+            raise ValueError("malformed sampled open PR metadata")
+        observed_pr_heads = []
+        seen_head_urls = set()
+        for head in heads:
+            if type(head) is not dict:
+                raise ValueError("invalid sampled open PR receipt")
+            number, url = head.get("number"), head.get("url")
+            if (type(number) is not int or not 1 <= number <= 99999999
+                    or type(url) is not str
+                    or url != "https://github.com/" + repo + "/pull/" + str(number)
+                    or url in seen_head_urls
+                    or type(head.get("head_sha")) is not str
+                    or re.fullmatch(r"[a-f0-9]{40}", head["head_sha"]) is None
+                    or type(head.get("base_sha")) is not str
+                    or re.fullmatch(r"[a-f0-9]{40}", head["base_sha"]) is None):
+                raise ValueError("invalid sampled open PR identity")
+            updated = head.get("updated_at")
+            normalized_update = (canonical_issue_clock(updated).isoformat(timespec="seconds")
+                                 if updated is not None else None)
+            seen_head_urls.add(url)
+            observed_pr_heads.append({**head, "updated_at": normalized_update})
         exact[pid] = {"source": item["source_status"],
                       "complete": item["sample_complete"],
+                      "observed_pr_heads": observed_pr_heads,
                       "collisions": related,
                       "mentioned_issues": mentions,
                       "mention_snapshot_stable": mentions_stable,
@@ -407,7 +438,15 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             route = "inspect_existing_pr_and_owner_gates_first"
         else:
             route = "verify_live_owner_then_product_implementation"
+        activity = classify_issue_activity(
+            raw_by_issue[card["issue"]].get("updated_at"),
+            [ref["url"] for ref in refs],
+            state["observed_pr_heads"],
+            max(source_at, overlay_at).isoformat(timespec="seconds"),
+            coherent, state["complete"], state["mention_sample_complete"],
+        )
         issue_rows.append({
+            "activity": activity,
             "priority": card["priority"], "project": pid,
             "issue": card["issue"], "url": card["url"],
             "title": raw_by_issue[card["issue"]]["title"],
@@ -632,6 +671,15 @@ def output_text(report, markdown=False):
         lines.append(row["priority"] + " | " + row["project"] + " | " +
                      ref + " | " + operator_inline(row["title"], markdown) +
                      " | " + row["next_action_nl"])
+        activity = row["activity"]
+        lines.append("  Activiteit: " + activity["label_nl"] +
+                     " · issue update " + str(activity["issue_updated_at"] or "ONBEKEND") +
+                     " (" + str(activity["issue_inactivity_hours"]) + " uur geleden)" +
+                     " · laatste gekoppelde open PR " +
+                     str(activity["latest_linked_open_pr_updated_at"] or "ONBEKEND") +
+                     " (" + str(activity["latest_linked_open_pr_inactivity_hours"]) + " uur geleden)" +
+                     " · dekking " + activity["linked_pr_activity_coverage"])
+        lines.append("  " + activity["note_nl"])
         if row["multiple_open_pr_issue_text_mentions_observed"]:
             lines.append("  BESTAANDE PR's eerst: " +
                          str(row["open_pr_issue_text_mentions_in_sample"]) +
@@ -724,6 +772,14 @@ def output_html(report):
                 "</td><td><strong>" +
                 escape(item["category_nl"]) + "</strong><br>" +
                 escape(item["human_next_step_nl"]) +
+                "<br><small>Activiteitssignaal: " + escape(item["activity_label_nl"]) +
+                " · issue-update " + escape(str(item["issue_updated_at"] or "ONBEKEND")) +
+                " (" + escape(str(item["issue_inactivity_hours"])) + " uur geleden)" +
+                " · laatste gekoppelde open PR " +
+                escape(str(item["latest_linked_open_pr_updated_at"] or "ONBEKEND")) +
+                " (" + escape(str(item["latest_linked_open_pr_inactivity_hours"])) + " uur geleden)" +
+                " · PR-activiteitsdekking " + escape(item["linked_pr_activity_coverage"]) +
+                " · geen bewijs van stilstand of vrije claim</small>" +
                 "<br><small>PR-bestandsscope: " +
                 ("beperkte bron compleet" if item["pr_file_scope_sample_complete"]
                  else "ONVOLLEDIG") + " · PR-issueverwijzingen: " +
@@ -915,7 +971,15 @@ def output_html(report):
             escape(row["url"], quote=True) + "'>" + escape(row["title"]) +
             "</a></h2><p class='meta'>" + escape(row["issue"]) +
             " · issuebron: " + escape(row["project_issue_coverage"]) +
-            "</p>" +
+            "</p><p><strong>Activiteitssignaal:</strong> " +
+            escape(row["activity"]["label_nl"]) +
+            " · issue update " + escape(str(row["activity"]["issue_updated_at"] or "ONBEKEND")) +
+            " (" + escape(str(row["activity"]["issue_inactivity_hours"])) + " uur geleden)" +
+            " · laatste gekoppelde open PR " +
+            escape(str(row["activity"]["latest_linked_open_pr_updated_at"] or "ONBEKEND")) +
+            " (" + escape(str(row["activity"]["latest_linked_open_pr_inactivity_hours"])) + " uur geleden)" +
+            " · dekking " + escape(row["activity"]["linked_pr_activity_coverage"]) +
+            "<br><small>" + escape(row["activity"]["note_nl"]) + "</small></p>" +
             ("<p><strong>PR-beweging:</strong> " +
              str(row["historical_linked_prs_with_changes"]) +
              " bestaande PR(s) gewijzigd in opgeslagen bron; " +
@@ -1099,6 +1163,20 @@ def main(argv=None):
                 inbox = collect_live_issues(canonical, args.project,
                                             os.environ.get("GITHUB_TOKEN"), max_items=60)
             source = prepare_delivery_board(inbox, limit=60)
+            # Preserve current issue activity clocks in this private, source-
+            # hashed handoff; the canonical triage board does not own them.
+            clocks_by_issue = {
+                row.get("id"): row for row in inbox.get("items", [])
+                if type(row) is dict and type(row.get("id")) is str
+            }
+            for card in source.get("cards", []):
+                if type(card) is not dict:
+                    continue
+                original = clocks_by_issue.get(card.get("issue"))
+                if original is not None:
+                    for field in ("created_at", "updated_at"):
+                        if type(original.get(field)) is str:
+                            card[field] = original[field]
             raw = json.dumps(source, ensure_ascii=False, sort_keys=True,
                              separators=(",", ":")).encode("utf-8")
             sha = hashlib.sha256(raw).hexdigest()

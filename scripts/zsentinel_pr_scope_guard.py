@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import csv
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from html import escape
 import json
 import os
@@ -126,6 +126,20 @@ def github_json(repo, suffix, token):
         raise ValueError("github_payload_invalid") from None
 
 
+def source_clock(value):
+    """Normalize one GitHub activity timestamp without accepting naive/future data."""
+    if type(value) is not str or len(value) > 48:
+        raise ValueError("missing bounded GitHub activity timestamp")
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("invalid GitHub activity timestamp") from None
+    if (stamp.tzinfo is None or stamp.utcoffset() is None
+            or stamp > datetime.now(timezone.utc) + timedelta(minutes=5)):
+        raise ValueError("timezone-free or future GitHub activity timestamp")
+    return stamp.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
 def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
     # Fetch one beyond the requested inspection count when possible.
     # A full page is UNKNOWN, even if it may be the actual final page.
@@ -150,6 +164,7 @@ def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
         base_sha = base.get("sha") if isinstance(base, dict) else None
         body = row.get("body")
         title = row.get("title")
+        updated_at = source_clock(row.get("updated_at"))
         product_candidate = (type(title) is str and 0 < len(title) <= 256
                              and not QA_ONLY_TITLE.match(title))
         # Reuse the existing issue-first product semantics: explicit #N in
@@ -180,7 +195,7 @@ def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
             raise ValueError("incomplete PR identity")
         seen.add(n)
         result.append({"number": n, "head_sha": head_sha,
-                       "base_sha": base_sha,
+                       "base_sha": base_sha, "updated_at": updated_at,
                        "referenced_issue_numbers_unverified": refs,
                        "issue_reference_provenance": ref_provenance,
                        "issue_reference_title_covered": title_covered,
@@ -267,6 +282,7 @@ def selected_source_pr(repo, number, token, expanded_files=False):
     base_repo = base.get("repo") if isinstance(base, dict) else None
     sha = head.get("sha") if isinstance(head, dict) else None
     base_sha = base.get("sha") if isinstance(base, dict) else None
+    updated_at = source_clock(receipt.get("updated_at"))
     if (receipt.get("number") != number or receipt.get("state") != "open"
             or not isinstance(base_repo, dict)
             or base_repo.get("full_name") != repo
@@ -289,7 +305,7 @@ def selected_source_pr(repo, number, token, expanded_files=False):
         observed_pages = 1
     return {"number": number, "url": "https://github.com/" + repo +
             "/pull/" + str(number), "head_sha": sha,
-            "base_sha": base_sha, "paths": files,
+            "base_sha": base_sha, "updated_at": updated_at, "paths": files,
             "source_file_pages_observed": observed_pages,
             "product_candidate_based_on_title": product_candidate,
             "read_only": True}
@@ -706,6 +722,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         observed.append({
             "number": pr["number"], "url": pr["url"],
             "head_sha": pr["head_sha"], "base_sha": pr["base_sha"],
+            "updated_at": pr["updated_at"],
             "product_candidate_based_on_title": pr["product_issue_reference_candidate"],
             "file_count_observed": len(files),
             "file_paths_observed": files,
