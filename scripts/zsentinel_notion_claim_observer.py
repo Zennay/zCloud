@@ -90,6 +90,37 @@ def _work_number(prop):
     return value if type(value) is int and 0 < value < 10**9 else None
 
 
+
+def fair_active_samples(rows, limit=30):
+    """Bound visible examples fairly across the three observed work statuses.
+
+    The underlying per-project counts still use *all* observed rows. This
+    cannot prove completeness, unlock a claim, or infer a current worker.
+    """
+    if (type(rows) is not list or len(rows) > MAX_PAGES * PAGE_SIZE
+            or type(limit) is not int or not 1 <= limit <= 30):
+        raise ValueError("invalid bounded Notion sample request")
+    buckets = {status: [] for status in ("Claimed", "Running", "Verifying")}
+    for row in rows:
+        if type(row) is not dict or row.get("status") not in buckets:
+            raise ValueError("invalid Notion sampled work status")
+        buckets[row["status"]].append(row)
+    offsets = {status: 0 for status in buckets}
+    visible = []
+    while len(visible) < limit:
+        added = False
+        for status in buckets:
+            if offsets[status] < len(buckets[status]):
+                visible.append(buckets[status][offsets[status]])
+                offsets[status] += 1
+                added = True
+                if len(visible) == limit:
+                    break
+        if not added:
+            break
+    return visible
+
+
 def observe_claims(data_source_id, token, known_projects=None):
     if not isinstance(data_source_id, str) or not UUID.fullmatch(data_source_id):
         raise ValueError("Notion claim data source must be a canonical UUID")
@@ -209,7 +240,6 @@ def observe_claims(data_source_id, token, known_projects=None):
             "read_only": True,
             "claim_scope_verified": False,
         })
-    rows.sort(key=lambda row: (row["status"], row["work"]))
     counts, verifying_counts = {}, {}
     for row in rows:
         label = row["project"]
@@ -229,7 +259,8 @@ def observe_claims(data_source_id, token, known_projects=None):
         "verifying_count": sum(verifying_counts.values()),
         "status_source_windows": status_source_windows,
         "total_pages_read": sum(row["pages_read"] for row in status_source_windows),
-        "items": rows[:30],
+        "items": fair_active_samples(rows),
+        "items_sample_policy": "round_robin_source_order_by_work_status",
         "items_truncated": len(rows) > 30,
         "claim_scope_verified": False,
         "task_inventory_verified": False,
