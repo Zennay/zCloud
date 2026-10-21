@@ -7,7 +7,7 @@ import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, loggin
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
-from scripts import worker_scaling_report
+from scripts import worker_scaling_report, zcloud_worker_progress_history, zcloud_activity_fair_page, zcloud_github_activity_live, zcloud_queue_retry_live
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
 
 ROOT = Path(__file__).resolve().parent
@@ -4835,6 +4835,53 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
+        if u.path=='/api/queue-retry-incidents':
+            # Explicit operator read, not an admission, lease or recovery action.
+            # Apply the existing trusted management peer gate before DB access.
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):
+                return self.reply({'error':'Niet toegestaan'},403)
+            names=q.get('project',[])
+            if len(names)!=1:return self.reply({'error':'Selecteer exact een project of all'},400)
+            project_id=names[0]
+            if project_id!='all' and project_id not in PORTFOLIO_PROJECT_INDEX:
+                return self.reply({'error':'Onbekend project'},404)
+            try:
+                result=zcloud_queue_retry_live.snapshot(
+                    DB,set(PORTFOLIO_PROJECT_INDEX),project_id,threshold=3,limit=40
+                )
+            except zcloud_queue_retry_live.ObservationUnavailable:
+                # Never convert a denied/partial DB read into a false zero count.
+                return self.reply({'error':'Queue bron tijdelijk niet betrouwbaar'},503)
+            return self.reply(result)
+        if u.path in ('/api/github-activity-live','/api/product-issues-live'):
+            # On-demand only, never a queue/worker action. Private or remote
+            # API reads require the existing trusted management peer admission.
+            # Reject before a GitHub network request or refresh is scheduled.
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):
+                return self.reply({'error':'Niet toegestaan'},403)
+            names=q.get('project',[])
+            if len(names)!=1:return self.reply({'error':'Selecteer exact een project'},400)
+            project_id=names[0]
+            if project_id not in PORTFOLIO_PROJECT_INDEX:
+                return self.reply({'error':'Onbekend project'},404)
+            try:
+                kind='activity' if u.path=='/api/github-activity-live' else 'issues'
+                sample=zcloud_github_activity_live.read_live(ROOT/'projects.json',project_id,kind=kind)
+            except (ValueError,OSError):
+                return self.reply({'error':'GitHub bron niet beschikbaar'},400)
+            # Explicit state=refreshing is NOT a successful synced feed; clients
+            # may poll by user initiation, with the bounded cache guarding calls.
+            return self.reply(sample)
+        if u.path=='/api/worker-progress-history':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            project_id=str(q.get('project',[''])[0] or '').strip().lower()
+            if project_id not in PROJECT_INDEX:return self.reply({'error':'Onbekend project'},400)
+            try:
+                slot=int(q.get('slot',['1'])[0]);limit=int(q.get('limit',['24'])[0])
+                report=zcloud_worker_progress_history.read_worker_progress(DB,project_id,slot,limit)
+            except (ValueError,TypeError):
+                return self.reply({'error':'Ongeldige worker-selectie'},400)
+            return self.reply(report)
         if u.path=='/api/worker-debug':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply(worker_debug_report())
