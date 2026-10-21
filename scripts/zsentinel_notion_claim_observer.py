@@ -24,24 +24,40 @@ NOTION_PROJECT_URL = re.compile(r"^https://app[.]notion[.]com/p/([0-9a-f]{32})(?
 
 
 def project_labels(registry_path: Path, canonical: dict):
-    """Match known project relations to canonical registry, never arbitrary Notion titles."""
-    if not isinstance(registry_path, Path) or not registry_path.is_file():
+    """Bind Notion relations to the SAME canonical GitHub project identities.
+
+    The independent second read previously permitted unbounded, duplicate-key
+    JSON and silently skipped mismatched registry entries. An incomplete
+    mapping could hide a live worker claim behind an UNKNOWN project.
+    """
+    from zsentinel_product_issue_inbox import canonical_projects, MAX_CONFIG_BYTES
+    from zsentinel_recovery_router import read_json
+    if (not isinstance(registry_path, Path) or not isinstance(canonical, dict)
+            or not canonical or len(canonical) > 18):
         raise ValueError("canonical project registry unavailable")
-    entries = json.loads(registry_path.read_text(encoding="utf-8"))
+    entries = read_json(registry_path, MAX_CONFIG_BYTES, "Notion project register")
     if not isinstance(entries, list):
         raise ValueError("invalid canonical project registry")
+    # Pin this relation map to the same GitHub project set already admitted
+    # by the issue/PR collector, rather than accepting another registry.
+    if canonical_projects(registry_path) != canonical:
+        raise ValueError("Notion registry no longer matches canonical GitHub scope")
     result = {}
+    seen_projects = set()
     for entry in entries:
         if not isinstance(entry, dict) or entry.get("id") not in canonical:
-            continue
-        url = entry.get("notion_url")
+            raise ValueError("unregistered Notion relation project")
+        slug, url = entry["id"], entry.get("notion_url")
         match = NOTION_PROJECT_URL.fullmatch(url) if isinstance(url, str) else None
-        if match:
-            slug = entry["id"]
-            key = match.group(1).lower()
-            if key in result:
-                raise ValueError("duplicate Notion project mapping")
-            result[key] = slug
+        if not match or slug in seen_projects:
+            raise ValueError("invalid or duplicate project Notion relation")
+        key = match.group(1).lower()
+        if key in result:
+            raise ValueError("duplicate Notion project mapping")
+        result[key] = slug
+        seen_projects.add(slug)
+    if seen_projects != set(canonical):
+        raise ValueError("Notion project relation scope incomplete")
     return result
 
 
