@@ -642,6 +642,16 @@ def render_html(board):
                 or len(windows) > 6
                 or not isinstance(board.get("project_summary"), dict)):
             raise ValueError("untrusted portfolio window evidence")
+        inherited = board.get("historical_notion_action_overlays_dropped", 0)
+        if (type(inherited) is not int or not 0 <= inherited <= 144
+                or any(type(win.get("historical_notion_action_overlays_dropped", 0))
+                       is not int or
+                       not 0 <= win.get("historical_notion_action_overlays_dropped", 0) <= 24
+                       for win in windows)
+                or inherited != sum(
+                    win.get("historical_notion_action_overlays_dropped", 0)
+                    for win in windows)):
+            raise ValueError("invalid historical Notion owner-overlay receipt")
         lines = []
         for pid in board["projects"]:
             source = next((w for w in windows if pid in w["projects"]), None)
@@ -665,7 +675,14 @@ def render_html(board):
              'doorlopend gesynchroniseerd. ' if mode == "one_shot_live_read_only"
              else 'Dit zijn expliciet opgeslagen bronnen; GEEN live-opvraag. ') +
             'Er is géén actuele eigendoms-/herstelbevestiging. '
-            'Verouderde of ontbrekende bron vereist nieuwe observatie.</p>'
+            'Verouderde of ontbrekende bron vereist nieuwe observatie.</p>' +
+            ('<p class="notice">Hersteld: ' + str(inherited) +
+             ' historische Notion-eigenaarsmeldingen zijn uit de voorgestelde '
+             'nieuwe issue-acties verwijderd. Dit is GEEN bewijs van vrij '
+             'werk: hercontroleer actuele Notion-claims en bestaande PR’s.</p>'
+             if inherited else
+             '<p class="muted">Oude Notion-bronnen geven GEEN huidige '
+             'lease-, eigenaar- of werkgerechtigdheid.</p>') +
             '<ul>' + "".join(lines) + '</ul></section>'
         )
     # Merge-first existing PR inventory, sourced exclusively from the PR
@@ -975,6 +992,11 @@ def render_markdown(board):
         lines.extend(["", "## Gecombineerde portfolio-bronvensters",
                       "Dit is een samengevoegde momentopname, geen complete "
                       "portfolio-/eigenaarsinventaris."])
+        removed = board.get("historical_notion_action_overlays_dropped", 0)
+        if type(removed) is not int or not 0 <= removed <= 144:
+            raise ValueError("invalid inherited Notion action count")
+        lines.append("Historische Notion-actie-overlays geneutraliseerd: " +
+                     str(removed) + "; actuele eigenaar en claim ONBEKEND.")
         for win in windows:
             lines.append("- Venster " + str(win["index"]) + ": " +
                          ", ".join(win["projects"]) + " · " +
