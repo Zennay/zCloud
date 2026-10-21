@@ -3796,3 +3796,46 @@ using connected zSSH; no QA/regression suites were added or executed. Exact
 HEAD CI, independent review, protected-main and authorized runtime owner
 remain separate release gates.
 
+
+
+### Browser and CLI now preserve saved PR candidates without sampled issue links
+
+Saved private PR ZIPs contain a separate `unlinked_prs` inventory:
+canonical PRs that were sampled but had no observed issue association.
+Dropping those PRs from a *merge-first* product workflow could incorrectly
+suggest that work needs a fresh competing PR.
+
+Both owner handoff surfaces now retain such candidates:
+
+- **Offline CLI CSV and HTML:** previously saved PRs with no observed
+  issue association are included as
+  `historical_pr_without_sampled_issue_link`, with original observed
+  priority, PR URL, source archive manifest SHA256, `linked_issue_count=0`
+  and explicit UNKNOWN issue/owner/current-head status. They are limited
+  to canonical repositories represented by original issue cards in the
+  selected source board. No unrelated archived repository PR is exported.
+- **Interactive operator merge-first desk:** the original issue-workbench
+  source projection now retains the same repository-scoped historical
+  unlinked PR identities. The visible P0-first PR desk and reviewed CSV
+  include those PRs, while calling out absent issue relations. Source
+  search, historical-PR and change filters suppress unlinked results that
+  cannot be safely associated with their selected original issues;
+  project and priority filters continue to scope them.
+- **No silent truncation of valid large histories in the CLI:** the
+  earlier per-issue fifteen-reference guard was a UI display limit, not
+  the admitted source limit. A validated archive may contain up to 600
+  distinct PRs, so CLI exports preserve the bounded full reference set
+  instead of rejecting a source-rich P0 issue. The overall 900-row and
+  one-MiB private output ceilings remain enforced. An oversized result
+  is refused before writing, not silently clipped.
+
+[CLI full admitted history](https://github.com/Zennay/zCloud/commit/51db28bebc34d20367ae473b1e9506672b08eac4) ·
+[Repository-scoped historical PR inventory](https://github.com/Zennay/zCloud/commit/8a933bbf5e58d01c449a6c80095d60231df45e1f) ·
+[Browser source projection](https://github.com/Zennay/zCloud/commit/eb24022f4dbbfad3e601595f5543caeab9411ba3) ·
+[Browser merge-first desk integration](https://github.com/Zennay/zCloud/commit/8656b28cfb88a9bf18261e49c67ffa6de9d66bd9).
+
+All `unlinked` flags are historical **unknowns**, never permission to
+claim a worker, start a duplicate PR, retry CI, merge or deploy.
+Current GitHub inventory and current Notion/queue ownership must be read
+independently by the authorized operator before such decisions.
+
