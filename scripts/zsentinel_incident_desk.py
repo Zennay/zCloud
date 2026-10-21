@@ -1050,7 +1050,7 @@ def private_action_briefing(decision, source):
             raise ValueError("invalid bounded operator label")
         if any(ord(char) < 32 or ord(char) == 127 for char in value):
             raise ValueError("control in operator action label")
-        return "".join(("\\\" + ch if ch in "\\*_`[]()#<>!|~{}" else ch)
+        return "".join(("\\" + ch if ch in "\\*_`[]()#<>!|~{}" else ch)
                        for ch in value)
 
     lines = [
