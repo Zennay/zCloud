@@ -765,12 +765,96 @@ def triage_issue_inbox(inbox, now):
             "stopped_after_rate_or_auth_denial": inbox["stopped_after_rate_or_auth_denial"]}
 
 
+def _blocked_queue_summary(source, source_coverage):
+    """Validate aggregate-only status=blocked evidence without inferring a failure."""
+    raw = source.get("blocked_queue")
+    unknown = {
+        "coverage": "not_supplied", "aggregate_coverage": "not_supplied",
+        "source_coverage": source_coverage, "observed_at": None,
+        "total_items_observed": None, "project_groups": [],
+        "sample_truncated": True, "invalid_group_rows": None,
+        "claim_ownership_verified": False, "queue_write_authorized": False,
+        "automatic_retry_authorized": False,
+    }
+    if raw is None:
+        return unknown
+    required_flags = {
+        "claim_ownership_verified": False,
+        "queue_write_authorized": False,
+        "automatic_retry_authorized": False,
+    }
+    if (type(raw) is not dict
+            or raw.get("schema") != "zsentinel-blocked-queue-observation-v1"
+            or raw.get("status_filter") != "blocked"
+            or any(raw.get(key) is not value for key, value in required_flags.items())):
+        raise ValueError("untrusted or authorizing blocked-queue source")
+    coverage = raw.get("coverage")
+    groups = raw.get("project_groups")
+    if coverage == "not_observed":
+        if (raw.get("observed_at_utc") is not None
+                or raw.get("total_items_observed") is not None
+                or groups != [] or raw.get("sample_truncated") is not True
+                or raw.get("invalid_group_rows") is not None):
+            raise ValueError("contradictory unobserved blocked-queue source")
+        unknown["coverage"] = "not_observed"
+        unknown["aggregate_coverage"] = "not_observed"
+        return unknown
+    if (coverage not in ("complete", "partial")
+            or raw.get("observed_at_utc") != source.get("observed_at_utc")
+            or type(raw.get("total_items_observed")) is not int
+            or not 0 <= raw["total_items_observed"] <= 10**9
+            or type(groups) is not list or len(groups) > 250
+            or type(raw.get("sample_truncated")) is not bool
+            or type(raw.get("invalid_group_rows")) is not int
+            or not 0 <= raw["invalid_group_rows"] <= 251):
+        raise ValueError("invalid bounded blocked-queue coverage")
+    safe_groups, identities = [], set()
+    for row in groups:
+        if type(row) is not dict:
+            raise ValueError("invalid blocked-queue aggregate")
+        project, priority, items = row.get("project_id"), row.get("priority"), row.get("items")
+        if (type(project) is not str or not SLUG.fullmatch(project)
+                or priority not in PRIORITY
+                or type(items) is not int or not 1 <= items <= 10**9
+                or (project, priority) in identities):
+            raise ValueError("invalid or duplicate blocked-queue group")
+        identities.add((project, priority))
+        safe_groups.append({"project_id": project, "priority": priority, "items": items})
+    group_total = sum(row["items"] for row in safe_groups)
+    if coverage == "complete":
+        if (raw["sample_truncated"] or raw["invalid_group_rows"] != 0
+                or group_total != raw["total_items_observed"]):
+            raise ValueError("blocked-queue complete coverage contradicts aggregate")
+    elif not raw["sample_truncated"] and raw["invalid_group_rows"] == 0:
+        raise ValueError("partial blocked-queue source has no coverage reason")
+    effective = "stale" if source_coverage == "stale" else coverage
+    return {
+        "coverage": effective, "aggregate_coverage": coverage,
+        "source_coverage": source_coverage,
+        "observed_at": raw["observed_at_utc"],
+        "total_items_observed": raw["total_items_observed"],
+        "project_groups": safe_groups,
+        "sample_truncated": raw["sample_truncated"],
+        "invalid_group_rows": raw["invalid_group_rows"],
+        "claim_ownership_verified": False, "queue_write_authorized": False,
+        "automatic_retry_authorized": False,
+    }
+
+
 def queue_pressure_summary(source, now):
     """Read-only SQLite pressure in reports only, never a lease or retry claim."""
     if source is None:
         return {"coverage":"not_supplied", "totals":{}, "samples":[],
                 "sample_is_complete":False, "project_groups":[],
-                "project_groups_truncated":False, "claim_ownership_verified":False}
+                "project_groups_truncated":False, "claim_ownership_verified":False,
+                "blocked_queue": {
+                    "coverage": "not_supplied", "aggregate_coverage": "not_supplied",
+                    "source_coverage": "not_supplied", "observed_at": None,
+                    "total_items_observed": None, "project_groups": [],
+                    "sample_truncated": True, "invalid_group_rows": None,
+                    "claim_ownership_verified": False, "queue_write_authorized": False,
+                    "automatic_retry_authorized": False,
+                }}
     required = {"schema":"zsentinel-queue-pressure-v1",
                 "source":"local_sqlite_transaction_query_only",
                 "database_read_only":True, "automatic_retry_authorized":False,
@@ -791,6 +875,7 @@ def queue_pressure_summary(source, now):
     coverage = ("current" if now - observed <= timedelta(minutes=5) else "stale")
     if source.get("queue_inventory_complete") is not True and coverage == "current":
         coverage = "incomplete"
+    blocked_queue = _blocked_queue_summary(source, coverage)
     totals, samples = source.get("totals"), source.get("high_churn_samples")
     groups = source.get("project_groups")
     if (not isinstance(totals, dict) or not isinstance(samples, list) or len(samples) > 20
@@ -910,7 +995,8 @@ def queue_pressure_summary(source, now):
             "sample_is_complete":source["sample_is_complete"],
             "project_groups":safe_groups[:18] if coverage=="current" else [],
             "project_groups_truncated":len(safe_groups)>18,
-            "claim_ownership_verified":False}
+            "claim_ownership_verified":False,
+            "blocked_queue": blocked_queue}
 
 
 def plan(bundle, previous=None, now=None):
