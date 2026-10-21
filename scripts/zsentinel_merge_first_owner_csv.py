@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from html import escape
 from io import StringIO
 from pathlib import Path
 import re
@@ -165,17 +166,104 @@ def prepare_rows(view, board_sha, saved):
     return rows
 
 
+def render_private_html(rows):
+    """One standalone script-free private owner worklist; source evidence only."""
+    parts = [
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width,initial-scale=1">',
+        '<meta name="referrer" content="no-referrer">',
+        '<meta http-equiv="Content-Security-Policy" content="default-src '
+        "'none'; style-src 'unsafe-inline'; script-src 'none'; "
+        "img-src 'none'; connect-src 'none'; form-action 'none'; "
+        "frame-src 'none'; object-src 'none'; base-uri 'none'" '>',
+        '<title>zSentinel · Saved PR owner worklist</title>',
+        '<style>body{font:15px/1.55 system-ui,sans-serif;max-width:900px;'
+        'margin:20px auto;padding:0 16px;color:#14243b;background:#fff}'
+        'a{color:#075b91}article{border:1px solid #afc0d0;border-radius:8px;'
+        'margin:12px 0;padding:14px;break-inside:avoid}p,small{overflow-wrap:'
+        'anywhere}small{display:block;color:#42556c}@media print{body{margin:0}}'
+        '</style></head><body><h1>zSentinel · P0-first existing PR review</h1>',
+        '<p>SAVED source only. Active owner, required exact-head CI, independent '
+        'review, main merge and production release: NOT VERIFIED.</p>',
+        '<p>' + str(len(rows)) + ' source-bound records, including issues '
+        'without an observed PR. A missing PR is UNKNOWN, not a clear queue.</p>',
+    ]
+    for row in rows:
+        priority = escape(str(row["priority"]))
+        has_pr = bool(row["pr_url"])
+        parts.append('<article><h2>' + priority + ' · ' +
+                     ('Existing saved PR candidate' if has_pr else
+                      'PR relationship UNKNOWN') + '</h2>')
+        parts.append('<p><strong>' + escape(str(row["source_issue_titles"])) +
+                     '</strong> · ' + escape(str(row["project_scope"])) + '</p>')
+        for url in row["source_issue_urls"].split(" | "):
+            if not re.fullmatch(
+                r'https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}', url
+            ):
+                raise ValueError("noncanonical original issue URL")
+            safe = escape(url, quote=True)
+            parts.append('<p>Issue: <a href="' + safe +
+                         '" target="_blank" rel="noopener noreferrer">' +
+                         safe + '</a></p>')
+        if has_pr:
+            url = row["pr_url"]
+            if not re.fullmatch(
+                r'https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}', url
+            ):
+                raise ValueError("noncanonical saved PR URL")
+            safe = escape(url, quote=True)
+            parts.append('<p>Existing PR: <a href="' + safe +
+                         '" target="_blank" rel="noopener noreferrer">' +
+                         safe + '</a></p>')
+        else:
+            parts.append('<p>No saved PR reference found. Inspect the live '
+                         'GitHub issue and current owner before creating work.</p>')
+        parts.append('<small>Original issue-board HEAD(s): ' +
+                     escape(str(row["board_heads_observed"])) +
+                     ' · historical archive HEAD(s): ' +
+                     escape(str(row["archive_heads_observed"])) + '</small>')
+        if row["head_variation_is_historical_not_merge_conflict"]:
+            parts.append('<p>Saved HEAD observations differ; this is NOT '
+                         'proof of conflict. Refresh current exact HEAD.</p>')
+        if row["issue_has_alternative_prs"]:
+            parts.append('<p>Multiple saved PR candidates for an issue; '
+                         'check current owners before overlapping work.</p>')
+        parts.append('<p>Owner next step (advisory): ' +
+                     escape(str(row["human_next_step_only"])) + '</p>')
+        parts.append('<details><summary>Original source custody</summary>'
+                     '<small>Original board SHA256: ' +
+                     escape(str(row["original_board_sha256"])) +
+                     ' · UTC ' + escape(str(row["board_observed_at_utc"])) +
+                     '</small><small>Saved archive manifest SHA256s: ' +
+                     escape(str(row["source_archive_manifest_sha256s"])) +
+                     '</small><small>Missing saved batches: ' +
+                     escape(str(row["saved_archive_batches_missing"])) +
+                     '; historic gate labels: ' +
+                     escape(str(row["historical_gate_labels"])) +
+                     '; PR absent final sample: ' +
+                     escape(str(row["pr_missing_last_saved_snapshot"])) +
+                     '</small></details>')
+        parts.append('<small>Claim / CI / approval / merge / dispatch / '
+                     'deployment: NOT AUTHORIZED.</small></article>')
+    parts.append('<p>Recheck current GitHub/Notion/queue source and all '
+                 'normal exact-head security and release gates before '
+                 'any action.</p></body></html>\n')
+    return ''.join(parts)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--board", type=Path, required=True)
     parser.add_argument("--pr-dossier", action="append", type=Path,
                         help="Optional original private PR archive ZIP; repeat 1-12")
+    parser.add_argument("--format", choices=("csv", "html"), default="csv",
+                        help="P0-first owner CSV or standalone print-ready HTML")
     parser.add_argument("--output", type=Path, required=True,
-                        help="New private create-only .csv destination")
+                        help="New private create-only destination")
     args = parser.parse_args(argv)
     try:
-        if args.output.suffix != ".csv":
-            raise ValueError("output must be a private CSV path")
+        if args.output.suffix != "." + args.format:
+            raise ValueError("output suffix must match selected format")
         sources = [args.board, *(args.pr_dossier or [])]
         if len(sources) > 13 or len({str(x.resolve()) for x in sources + [args.output]}) != len(sources) + 1:
             raise ValueError("source archives, board and output must be distinct")
@@ -185,14 +273,17 @@ def main(argv=None):
         if args.pr_dossier:
             saved = issue_worklist(build_timeline(args.pr_dossier, minimum_sources=1))
         rows = prepare_rows(view, sha, saved)
-        stream = StringIO()
-        writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\r\n")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: _cell(row.get(key)) for key in FIELDS})
-        payload = stream.getvalue()
+        if args.format == "csv":
+            stream = StringIO()
+            writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\r\n")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: _cell(row.get(key)) for key in FIELDS})
+            payload = stream.getvalue()
+        else:
+            payload = render_private_html(rows)
         if len(payload.encode("utf-8")) > MAX_CSV_BYTES:
-            raise ValueError("CSV exceeds one MiB private-output limit")
+            raise ValueError("private owner export exceeds one MiB size limit")
         write_create_only(args.output, payload)
         print(args.output)
         return 0
