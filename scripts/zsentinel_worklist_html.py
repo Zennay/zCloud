@@ -369,7 +369,7 @@ def render_html(board, max_rows=20):
                        escape(url.rsplit("/", 1)[-1]) + "</a></li>"
                        for url in shown_links)
         grouped.append(
-            "<li class='pr-work' data-pr='" + escape(pr, quote=True) +
+            "<li class='pr-work' tabindex='-1' data-pr='" + escape(pr, quote=True) +
             "' data-project='" + escape(group_project, quote=True) +
             "' data-collision='" + ("yes" if any(url in collision_issues for url in shown_links) else "no") +
             "' data-priority='" + escape(group["highest_priority"], quote=True) +
@@ -448,6 +448,8 @@ const search=document.getElementById('q'), priority=document.getElementById('pri
 const project=document.getElementById('project'), state=document.getElementById('state');
 const activity=document.getElementById('activity');
 const visible=document.getElementById('visible'), prState=document.getElementById('pr-state');
+const nextOpenPr=document.getElementById('pr-review-next');
+const openPrSummary=document.getElementById('pr-review-summary');
 const focusBar=document.getElementById('focus-bar'),focusTitle=document.getElementById('focus-title');
 const focusClear=document.getElementById('focus-clear');
 const focusNext=document.getElementById('focus-next');
@@ -476,6 +478,7 @@ const gateLabels={
 const collisionExport=document.getElementById('collision-export');
 const collisionOpenExport=document.getElementById('collision-open-export');
 let focusedPr=null,focusIndex=-1;
+let lastPrReview=null;
 // The privacy-preserving baseline describes ONLY this browser's local edits;
 // never persist it automatically or mistake a completed download for a merge.
 let lastSavedState=null;
@@ -551,6 +554,12 @@ function refresh(){
  collisionNext.disabled=actionable===0;
  visible.textContent=count+' van '+tickets.length+' issuekaarten en '+
    prCount+' van '+prs.length+' bestaande PR-groepen zichtbaar';
+ const unreviewed=prs.filter(p=>p.querySelector('.pr-local-state').value==='open').length;
+ const outstanding=prs.filter(p=>p.querySelector('.pr-local-state').value!=='followup').length;
+ openPrSummary.textContent=outstanding+' PRs zonder afgeronde lokale opvolging uit '
+   +prs.length+' bron-PRs; '+unreviewed+' nog te beoordelen. '
+   +'Lokale opvolging bewijst geen review, merge of fixes.';
+ nextOpenPr.disabled=outstanding===0;
  focusBar.hidden=!focusedPr;
  updateSessionIndicator();
  if(focusedPr){
@@ -573,6 +582,16 @@ function focusOnPr(url){
  focusClear.focus();
 }
 for(const p of prs)p.querySelector('.focus-pr').addEventListener('click',()=>focusOnPr(p.dataset.pr));
+nextOpenPr.addEventListener('click',()=>{
+ const start=prs.findIndex(p=>p.dataset.pr===lastPrReview);
+ const order=[...prs.slice(start+1),...prs.slice(0,start+1)];
+ const target=order.find(p=>p.querySelector('.pr-local-state').value!=='followup');
+ if(!target)return;
+ lastPrReview=target.dataset.pr;
+ focusOnPr(lastPrReview);
+ target.scrollIntoView({block:'center'});
+ target.focus();
+});
 for(const button of document.querySelectorAll('.focus-alternative[data-focus-pr]')){
  button.addEventListener('click',()=>focusOnPr(button.dataset.focusPr));
 }
@@ -992,6 +1011,7 @@ refresh();
         ".pr-panel{border:1px solid #70879f;border-radius:10px;padding:16px;"
         "margin:18px 0;background:#172338}.pr-panel ol{padding-left:24px}"
         ".pr-work{padding:12px;border-bottom:1px solid #526a83}"
+        ".pr-work:focus{outline:3px solid #f0c976;scroll-margin:90px}"
         ".pr-work[hidden],.focus-bar[hidden],.collision[hidden]{display:none}"
         ".collision{border-bottom:1px solid #526a83;padding:14px 4px}"
         ".collision:focus{outline:3px solid #f0c976;scroll-margin:90px}"
@@ -1058,6 +1078,8 @@ refresh();
         "<label>Heropen lokale sessie<input id='session-import' type='file' "
         "accept='.json,application/json'></label></div>"
         "<p id='visible' aria-live='polite'></p>"
+        "<p id='pr-review-summary' aria-live='polite'></p>"
+        "<button id='pr-review-next' type='button'>Volgende PR zonder lokale opvolging</button>"
         "<p id='collision-visible' aria-live='polite'></p>"
         "<button id='collision-next' type='button'>Volgende open botsingsopvolging</button>"
         "<p id='session-status' aria-live='polite'></p>"
