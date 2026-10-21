@@ -124,6 +124,8 @@ def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
         comparable_receipt_changes = 0
         incomparable_receipt_pairs = 0
         issue_changes = 0
+        issue_links_added_observed = 0
+        issue_links_absent_observed = 0
         row_summaries = []
         heads_seen = []
         for idx, row in observations:
@@ -132,6 +134,10 @@ def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
             if head is not None and head not in heads_seen:
                 heads_seen.append(head)
             changed = []
+            linked_now = set(d["linked_issue_urls"])
+            links_added = []
+            links_absent = []
+            comparison_spans_gap = previous_index is not None and idx - previous_index > 1
             if prev_row is not None:
                 old = prev_row["data"]
                 if previous_index is not None and idx - previous_index > 1:
@@ -165,6 +171,13 @@ def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
                     tags.add("changed_issues")
                     issue_changes += 1
                     changed.append("issues")
+                    # These are differences between two SAVED observations,
+                    # never proof that an issue was opened/closed or fixed.
+                    linked_before = set(old["linked_issue_urls"])
+                    links_added = sorted(linked_now - linked_before)
+                    links_absent = sorted(linked_before - linked_now)
+                    issue_links_added_observed += len(links_added)
+                    issue_links_absent_observed += len(links_absent)
             row_summaries.append({
                 "snapshot_index": idx + 1,
                 "observed_utc": source[idx]["latest"].isoformat(),
@@ -173,6 +186,9 @@ def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
                 "primary_gate": d["primary_gate"],
                 "gate_source": d["gate_source"],
                 "linked_issue_urls": d["linked_issue_urls"],
+                "newly_observed_linked_issue_urls": links_added,
+                "no_longer_observed_linked_issue_urls": links_absent,
+                "issue_link_comparison_spans_unsampled_snapshot": comparison_spans_gap,
                 "observed_gate_counts": d.get("gate_observations"),
                 "changes_from_last_seen_source": changed,
                 "live_status_verified": False,
@@ -194,6 +210,9 @@ def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
         elif recent["primary_gate"] == "source":
             action = ("Bron/HEAD of gatebewijs ontbreekt; herstel de bronselectie "
                       "voordat je een releasebesluit neemt.")
+        elif "changed_issues" in tags:
+            action = ("Controleer de eerder en later waargenomen issuekoppelingen "
+                      "met de PR-eigenaar; steekproefverschil bewijst geen fix.")
         else:
             action = ("Controleer de PR en de huidige owner/CI/review-status live; "
                       "herhaalde opgeslagen signalen zijn geen releasebewijs.")
@@ -215,6 +234,8 @@ def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
             "same_exact_head_receipt_changes": comparable_receipt_changes,
             "incomparable_receipt_observation_pairs": incomparable_receipt_pairs,
             "observed_issue_changes": issue_changes,
+            "issue_links_added_between_saved_observations": issue_links_added_observed,
+            "issue_links_absent_between_saved_observations": issue_links_absent_observed,
             "tags": [tag for tag in TAGS if tag in tags],
             "observations": row_summaries,
             "human_next_action": action,
