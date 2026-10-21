@@ -35,6 +35,10 @@ production writer from cancelling an in-flight deployment.
    directory, saves the previous file there, and atomically renames the staged
    file into place; it verifies the installed result, restores the previous
    version on failure, and retains its recovery copy if restoration is denied.
+   After the final slow idle observation it checks the live file against the
+   previously saved bytes, verifies it has not turned into a symlink and
+   reconfirms source equality. Concurrent owner changes abort before the
+   atomic replacement rather than being silently overwritten.
    A killed process may leave the already verified approved version installed
    but cannot leave a half-copied background file. These are operator-denied
    installs, not permission to overwrite active-owner work. The new shared
