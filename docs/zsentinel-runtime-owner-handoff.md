@@ -587,8 +587,8 @@ De extra uitvoer bevat maximaal de bestaande begrensde prioritaire kaarten
 én afzonderlijke historische hercontrolekaarten (niet als actuele incidenten
 gemarkeerd), hun bronmoment en brondekking, project/prioriteit, menselijke
 volgende stap, canonieke issue-/PR-links en eventueel de reeds waargenomen
-exacte GitHub-job en commit. Het schema vermeldt expliciet aantallen,
-afkapping, onvolledige brondekking en historische hercontroles. De CSV is UTF-8
+exacte GitHub-job en commit. Het schema vermeldt expliciet de SHA-256 van het volledige canonieke handoff-object,
+aantallen, afkapping, onvolledige brondekking en historische hercontroles. De CSV is UTF-8
 met BOM, met formuleprefixbeveiliging en zichtbare Unicode-controlmarkeringen;
 kolommen zijn stabiel en standaard CSV-escaping blijft actief. Zonder actuele
 of historische kaarten wordt een metadataregel geëxporteerd in plaats van een
