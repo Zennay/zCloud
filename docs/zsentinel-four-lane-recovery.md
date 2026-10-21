@@ -807,3 +807,32 @@ Geen handmatige QA/regressie, workflow-retry, claimovername,
 onafhankelijke reviewbypass, VPS-writer, runnerrestart of deployment.
 Nog niet op main of live zolang bestaande exacte-head CI en releasegates
 openstaan.
+
+
+### Rechtstreekse read-only hostinspectie en zichtbare ernst
+
+De exacte [broncommit 93a755d](https://github.com/Zennay/zCloud/commit/93a755daac4250f97f1f5350622d7fa2af1768a0)
+van de nieuwe Linux-hostmodule is via de **verbonden zSSH** alleen
+in memory opgehaald en direct tegen host-`/proc` uitgevoerd
+(geen uitgepakte bestanden, SQLite-writes, herstarts of deploy).
+Waarneming op 21 oktober: **4.072 MiB MemAvailable (36,5%),
+swap 100% gebruikt, éénminuut-load/CPU 8,21**;
+`HIGH_LOCAL_PRESSURE`, `new_worker_authorized=false`.
+Dit is een echte lokale hostobservatie, geen bewijs voor een
+defecte GitHub-runner of het geladen workerpool-contract.
+
+De bron is daarop productmatig verder uitgewerkt:
+[684dda7](https://github.com/Zennay/zCloud/commit/684dda731ebf839af13391814b5c1e3757d834c2)
+houdt **hoge** hostdruk zichtbaar bij de maximaal negen
+herstelactiekaarten, zelfs met veel generieke queue-waarschuwingen;
+[270a930](https://github.com/Zennay/zCloud/commit/270a9302050ab5b30b8c8b944038ae385a7c65ce)
+maakt dezelfde brongebonden waarschuwing in de bovenkant van de
+offline HTML zichtbaar. Verhoogde druk geeft alleen adviserend
+eigenaaronderzoek; bij lage druk ontstaat geen vrijgave.
+
+De drie gewijzigde Python-productmodules zijn als exact gepinde
+GitHub-bron via zSSH **alleen op AST-syntax** gecontroleerd; er zijn
+geen QA-/regressiesuites geschreven of gestart. Deze bronwijzigingen
+zijn **OPEN/UNMERGED/NOT LIVE** op dezelfde PR totdat bestaande
+verplichte exacte-head CI, review, branchbescherming en release-eigenaar
+integratie toestaan.
