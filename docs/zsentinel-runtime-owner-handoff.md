@@ -472,3 +472,46 @@ oude coverage-sectie blijft generiek **ONBEKEND**. De compatibiliteitsproperty
 `claim_inventory_complete` blijft bestaan, terwijl
 `routing_inventory_complete` de gecombineerde verse taak-/claimtoelating
 expliciet maakt.
+
+
+## 21 oktober · router-uitvoergates nu onderdeel van de centrale eigenaarwerkbak
+
+De herstelrouter produceerde al `routing_gate_holds` wanneer een op zichzelf
+beschikbare taak niet uitvoerbaar was door (1) een expliciet geblokkeerde
+GitHub/self-hosted gate, (2) ontbrekende of onvoldoende bewezen VPS-capaciteit,
+of (3) een niet-bewezen uitvoeringsbestemming. De centrale eigenaaroverdracht
+toonde die routerbeslissing nog niet. Hierdoor zag een operator in de losse
+router wel een HOLD, maar ontbrak dezelfde relevante taak in de gezamenlijke
+`--show-owner-handoff`-werkbak.
+
+De gedeelde `build_handoff()` zet maximaal acht brongebonden voorbeelden om
+naar `routing_gate_owner_hold`-kaarten, sorteert ze P0-eerst tussen bestaande
+incident- en afhankelijkheidswerkorders, en bewaart de veilige instructie per
+reden. Alle outputvormen die deze gedeelde eigenaarwerkbak consumeren
+(HTML/Markdown/JSON/tekst) krijgen daardoor dezelfde kaarten zonder een tweede
+API- of SQLite-lezing. JSON bevat daarnaast
+`routing_gate_owner_summary` met de gecertificeerde dekking, een alleen bij
+complete inventaris betrouwbaar HOLD-totaal, en voorbeeldafkapping; offline
+HTML en Markdown zetten dit totaal ook om naar een menselijk leesbare melding.
+
+**Betekenis van de cijfers:** `complete` bewijst uitsluitend hoeveel
+*verder geschikte kandidaat-taken* binnen het begrensde routervenster aan
+deze drie uitvoergates werden tegengehouden. Het bewijst niet dat er geen
+andere taken bestaan, of dat een gebruiker kan dispatchen. Bij verouderde,
+ontbrekende of gedeeltelijke taak-/claimbronnen is het totaal **ONBEKEND**,
+niet nul. Tegenstrijdige gaten, ongeldige taken, herhaalde voorbeelden en
+actievlaggen anders dan `false` worden door de werkbak geweigerd.
+
+Er is ook een bronsyntaxfout verholpen in de reeds bestaande
+dependency-HOLD-actie: een ontbrekende Python-stringconcatenatie tussen het
+taaklabel en het aantal open incidentafhankelijkheden. Voorafgaande bron
+kon daardoor niet worden geïmporteerd; de huidige exacte commit wordt
+alleen via bronparse gecontroleerd, niet via een QA-suite.
+
+**Operator:** hercontroleer originele claim-/lease-eigenaar, exacte
+GitHub-status, self-hosted bron en benodigde uitvoeringsbestemming. Geen
+automatische claim, dispatch, runnerrestart, CI-rerun, merge of deploy vanuit
+deze lokale werkbak. De nieuwe inhoud staat voorlopig uitsluitend op
+[zCloud PR #1563](https://github.com/Zennay/zCloud/pull/1563) en moet door de
+gebruikelijke exacte-head CI, onafhankelijke review, branchbescherming en
+runtime-releasegates.
