@@ -285,13 +285,33 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
             item["read_only_issue_command"] = None
         item["local_claim_evidence"] = issue_local_claim_evidence(
             item["project"], local_claims)
-        item["operator_action"] = (
-            "Inspect selected existing PR and exact-HEAD review/CI/claim gates"
-            if item["linked_prs"] else
-            "Inspect an already-observed but not yet rechecked existing PR"
-            if item["candidate_pr_numbers"] else
-            "Search older existing PRs, then independently confirm ownership"
-        )
+        local_status = item["local_claim_evidence"]["status"]
+        if local_status == "EXPIRED_LOCAL_LEASES_OBSERVED":
+            item["operator_action"] = (
+                "Verify the observed expired lease against live worker, Notion "
+                "and queue state before any claim; then inspect existing PR gates"
+            )
+        elif local_status in {
+                "CLAIM_INVENTORY_TRUNCATED", "CLAIM_SOURCE_INVALID",
+                "LOCAL_SOURCE_UNAVAILABLE", "LOCAL_SOURCE_INVALID",
+                "LOCAL_PROJECT_MAPPING_UNKNOWN", "UNKNOWN"}:
+            item["operator_action"] = (
+                "Re-establish trusted current owner/lease evidence; never infer "
+                "vacancy from missing or incomplete local data; inspect existing PR gates"
+            )
+        elif local_status == "LOCAL_ACTIVE_CLAIMS_OBSERVED":
+            item["operator_action"] = (
+                "Respect observed local active/ambiguous claims; independently "
+                "confirm current owner and inspect exact-HEAD existing PR gates"
+            )
+        else:
+            item["operator_action"] = (
+                "Inspect selected existing PR and exact-HEAD review/CI/claim gates"
+                if item["linked_prs"] else
+                "Inspect an already-observed but not yet rechecked existing PR"
+                if item["candidate_pr_numbers"] else
+                "Search older existing PRs, then independently confirm ownership"
+            )
         item["merged_main"] = "NOT_PROVEN"
         item["live_verified"] = False
     limited = ordered[:limit]
