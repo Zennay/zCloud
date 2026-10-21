@@ -1210,6 +1210,63 @@ def project_owner_brief(data, project_id):
     return "\n".join(lines)
 
 
+def portfolio_owner_book(data):
+    """Portable complete private owner brief for all canonical real projects."""
+    partial = not data["source_complete"] or data["portfolio_priority_partial"]
+    if data["portfolio_unknown_project_groups"]:
+        partial = True
+    contents = [
+        "# zSentinel · privé portfolio-eigenaarboek",
+        "",
+        "**Bronmoment (UTC):** " + data["observed_utc"],
+        "**Geselecteerde projecten:** " + str(len(PORTFOLIO_PROJECTS)),
+        "**Brondekking:** " + (
+            "GEDEELTELIJK — niet alle lokale projectrijen zijn zeker waargenomen."
+            if partial else
+            "Lokale SQL-projectgroepen volledig waargenomen; externe bronnen ONBEKEND."
+        ),
+        "**Bevoegdheden:** geen actieve eigenaar geverifieerd; geen claim, CI, merge of deploy.",
+        "**Scope:** uitsluitend de dertien canonieke echte projecten; zSentinel is een rol.",
+        "",
+        "## Volgorde van menselijke opvolging",
+        "",
+    ]
+    for item in data["owner_review_shortlist"]:
+        contents.append(
+            "- " + item["priority"] + " " + item["project"] +
+            ": " + str(item["queued_local"]) + " wacht in lokale bron; " +
+            str(item["active_local"]) + " actief; huidige eigenaar ONBEKEND."
+        )
+    if data["owner_review_shortlist_partial"]:
+        contents.append(
+            "- ONVOLLEDIG: bovenste shortlist is begrensd of lokale bron onvolledig."
+        )
+    if not data["owner_review_shortlist"]:
+        contents.append(
+            "- Geen lokaal P0/P1-wachtwerk in deze steekproef; "
+            "er kunnen elders wel open issues of actieve claims zijn."
+        )
+    contents.extend((
+        "",
+        "## Dossiers per echt project",
+        "",
+        "Onderstaande dertien dossiers komen uit hetzelfde begrensde "
+        "SQLite-bronmoment; volgorde is alfabetisch, geen werktoewijzing.",
+        "",
+    ))
+    for project_id in sorted(PORTFOLIO_PROJECTS):
+        contents.extend((
+            "---",
+            "",
+            project_owner_brief(data, project_id).replace(
+                "# zSentinel · privé projecteigenaaroverdracht",
+                "### Project " + PORTFOLIO_PROJECTS[project_id], 1
+            ),
+            "",
+        ))
+    return "\n".join(contents)
+
+
 def save_private(path, markup, extension=".html"):
     dest = Path(path)
     if dest.suffix.lower() != extension or dest.name in ("", ".", ".."):
@@ -1250,14 +1307,14 @@ def main():
                         help="Read only local /proc listener presence; no job or online proof")
     parser.add_argument("--host-pressure", action="store_true",
                         help="Read bounded host RAM/swap/load and root disk headroom; never admits workers")
-    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief"), default="text")
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief", "owner-book"), default="text")
     parser.add_argument("--owner-project", choices=tuple(sorted(PORTFOLIO_PROJECTS)),
                         help="Canonical project id for a private single-project owner brief")
     parser.add_argument("--output", help="New owner-private file: .html or .md")
     args = parser.parse_args()
     if not 1 <= args.max_rows <= MAX_ROWS:
         parser.error("--max-rows must be between 1 and 500")
-    if (args.format in ("html", "markdown", "owner-brief")) != bool(args.output):
+    if (args.format in ("html", "markdown", "owner-brief", "owner-book")) != bool(args.output):
         parser.error("Private HTML/Markdown requires --output, other formats cannot write files")
     if (args.format == "owner-brief") != bool(args.owner_project):
         parser.error("--format owner-brief requires --owner-project; other modes reject it")
@@ -1275,6 +1332,9 @@ def main():
         elif args.format == "owner-brief":
             save_private(args.output, project_owner_brief(packet, args.owner_project), ".md")
             print("Privé projecteigenaaroverdracht gemaakt (0600); geen externe actie.")
+        elif args.format == "owner-book":
+            save_private(args.output, portfolio_owner_book(packet), ".md")
+            print("Privé portfolio-eigenaarboek gemaakt (0600); geen externe actie.")
         elif args.format == "json":
             print(json.dumps(packet, ensure_ascii=False, sort_keys=True))
         else:
