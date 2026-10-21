@@ -14,7 +14,7 @@ import re
 
 MAX_SOURCE_BYTES = 4096
 MEM_FIELDS = ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree")
-MEM_PATTERN = re.compile(r"^([A-Za-z_()]+):\\s*([0-9]+) kB$")
+MEM_PATTERN = re.compile(r"^([A-Za-z_()]+):\s*([0-9]+) kB$")
 
 
 def _proc_source(name):
