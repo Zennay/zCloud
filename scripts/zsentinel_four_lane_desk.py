@@ -547,14 +547,15 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         "local_candidate_external_gates": sum(lane["admission"]["code"] == "CANDIDATE_EXTERNAL_GATES" for lane in visible),
         "no_local_candidate_observed": sum(lane["admission"]["code"] == "NO_LOCAL_CANDIDATE" for lane in visible),
     }
+    owner_shortlist, shortlist_partial = owner_review_suggestions(portfolio)
     packet = {
         "schema": "zsentinel.four-lane-desk.v1",
         "observed_utc": now.replace(microsecond=0).isoformat(),
         "profile": "portfolio-recovery",
         "observed_queue": observed,
         "portfolio_urgent_local": portfolio,
-        "owner_review_shortlist": owner_review_suggestions(portfolio)[0],
-        "owner_review_shortlist_partial": owner_review_suggestions(portfolio)[1],
+        "owner_review_shortlist": owner_shortlist,
+        "owner_review_shortlist_partial": shortlist_partial,
         "portfolio_priority_partial": portfolio_partial,
         "portfolio_unknown_project_groups": unknown_project_groups,
         "queue_partial": queue_partial,
