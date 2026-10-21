@@ -1253,15 +1253,20 @@ function exportCollisionCalendar(){
   const next=new Date(due+'T00:00:00Z');next.setUTCDate(next.getUTCDate()+1);
   const end=next.toISOString().slice(0,10).replace(/-/g,'');
   const issue=c.dataset.issue,number=issue.split('/').pop();
+  const linkedPrs=(c.dataset.prs||'').split(' ').filter(url=>
+   /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[0-9]+$/.test(url))
+   .map(url=>'#'+url.split('/').pop()).slice(0,8);
+  const prSummary=linkedPrs.length?linkedPrs.join(', '):'onbekend in opgeslagen bron';
   const uid='zsentinel-'+issue.replace(/^https:\/\/github\.com\//,'')
    .replace(/[^A-Za-z0-9-]/g,'-')+'@zsentinel.local';
   const state=collisionLabels[c.querySelector('.collision-state').value]||
    c.querySelector('.collision-state').value;
   lines.push('BEGIN:VEVENT','UID:'+uid,'DTSTAMP:'+stamp,
    'DTSTART;VALUE=DATE:'+start,'DTEND;VALUE=DATE:'+end,
-   'SUMMARY:'+icsEscape('zSentinel · '+(c.dataset.project||'project')+' · issue #'+number+' · '+c.dataset.title),
+   'SUMMARY:'+icsEscape('zSentinel · '+(c.dataset.project||'project')+' · issue #'+number+' · PRs '+prSummary+' · '+c.dataset.title),
    'DESCRIPTION:'+icsEscape('Lokale PR-afstemmingsopvolging; geen GitHub-deadline of SLA. Status: '+state+
-    '. Historische bronmomenten UTC: issues='+issueSourceTime+'; PRs='+prSourceTime+
+    '. PR-kandidaten uit beperkte bron: '+prSummary+'. Een gedeeld issue bewijst geen bestandsconflict of dubbele fix.'+
+    ' Historische bronmomenten UTC: issues='+issueSourceTime+'; PRs='+prSourceTime+
     '. Vóór handelen: hercontroleer actuele claims, PR-HEAD, verplichte CI, onafhankelijke review en branch protection. Privé notities zijn niet opgenomen. '+(dueHandoff(c)||'')),
    'URL:'+issue,'TRANSP:TRANSPARENT','STATUS:CONFIRMED','END:VEVENT');
  }
