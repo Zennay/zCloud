@@ -253,6 +253,58 @@ def memory_pressure():
         return None, None
 
 
+
+def memory_oom_observation():
+    """Bounded read-only host PSI/OOM signals, never proof of a runner failure.
+
+    PSI percentages describe recent global memory stalls. The kernel oom_kill
+    counter is cumulative for this boot, for every workload on the host.
+    Missing procfs support stays unknown and NEVER becomes a healthy zero.
+    """
+    from math import isfinite
+    psi_some = psi_full = kills = None
+    try:
+        with open("/proc/pressure/memory", "rb") as src:
+            blob = src.read(4097)
+        if len(blob) <= 4096:
+            rows = blob.decode("ascii").splitlines()
+            for kind in ("some", "full"):
+                matching = [row for row in rows if row.startswith(kind + " ")]
+                if len(matching) != 1:
+                    continue
+                fields = dict(token.split("=", 1)
+                              for token in matching[0].split()[1:]
+                              if token.count("=") == 1)
+                raw = float(fields["avg10"])
+                if isfinite(raw) and 0 <= raw <= 100:
+                    if kind == "some":
+                        psi_some = round(raw, 2)
+                    else:
+                        psi_full = round(raw, 2)
+    except (OSError, UnicodeError, ValueError, KeyError):
+        pass
+    try:
+        with open("/proc/vmstat", "rb") as src:
+            blob = src.read(65537)
+        if len(blob) <= 65536:
+            rows = blob.decode("ascii").splitlines()
+            matches = [row.split() for row in rows
+                       if row.startswith("oom_kill ")]
+            if len(matches) == 1 and len(matches[0]) == 2:
+                raw = int(matches[0][1])
+                if 0 <= raw < 2 ** 63:
+                    kills = raw
+    except (OSError, UnicodeError, ValueError):
+        pass
+    return {
+        "memory_psi_some_avg10_percent": psi_some,
+        "memory_psi_full_avg10_percent": psi_full,
+        "kernel_oom_kills_since_boot": kills,
+        "memory_psi_observed": psi_some is not None and psi_full is not None,
+        "kernel_oom_counter_observed": kills is not None,
+    }
+
+
 def disk_used_fraction():
     """Check root filesystem pressure without traversing or reading files."""
     try:
@@ -304,6 +356,7 @@ def root_volume_identity():
 def snapshot():
     runner, sentinel, proc_ok = workers()
     memory, swap_used = memory_pressure()
+    oom = memory_oom_observation()
     disk_used = disk_used_fraction()
     root_dev, root_total = root_volume_identity()
     root_free = root_free_gib()
@@ -326,6 +379,7 @@ def snapshot():
         "root_inode_available_percent": inode_available,
         "root_inode_total": inode_total,
         "source_complete": not unknown,
+        **oom,
     }
 
 
