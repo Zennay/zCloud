@@ -193,6 +193,13 @@
   }
   async function newChat(reason){
     if(generating()||sending||awaiting)return false;
+    // Conversation rotation is an irreversible browser action too. Do not
+    // hide a prior accepted dispatch while its command ACK is unresolved.
+    if(commandAckStorageInvalid||pendingCommandAcks.size>0){
+      await blocked(commandAckStorageInvalid?"command-ack-ledger-unavailable":
+        "command-ack-pending-no-new-send");
+      return false;
+    }
     const button=newChatButton();
     if(!button){await blocked("new-chat-button-missing");return false}
     resetRoute=location.pathname;
@@ -511,6 +518,10 @@
     try{
       const payload=await api("/runner-targets"),actual=payload.projects?.[id]||null;
       target=actual;
+      // Receipt-only recovery must run even if this tab's old queue is now
+      // paused, rotated or missing its composer. Never require a new Send.
+      if(pendingCommandAcks.size>0&&!commandAckStorageInvalid)
+        await flushCommandAcks();
       if(!ready(actual)){
         resetComposerRepair();
         // An open browser tab is not an authorized dispatch. Report the
