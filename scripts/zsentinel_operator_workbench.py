@@ -944,8 +944,10 @@ Explicitly include private operator follow-ups, contact labels and notes</label>
 <p>Turn the currently selected issue filters into a portable, static HTML owner
 briefing with P0-first issue links, the real saved existing PR references,
 source manifest SHA256s and missing-gate warnings. Unlike the general Markdown
-briefing this export <strong>never</strong> contains private follow-up notes,
-contact labels or local operator status. No live GitHub or queue permission.</p>
+briefing this export <strong>never</strong> includes private follow-up notes,
+contact labels or manual status, and deliberately ignores private disposition
+and follow-up-status filters. Search, priority, project and historical source
+filters still apply. No live GitHub or queue permission.</p>
 <button type="button" id="portfolioHtmlReview">Preview source-only printable worklist</button>
 <div id="portfolioHtmlPanel" hidden>
 <div id="portfolioHtmlPreview" class="portfolio"></div>
@@ -1153,7 +1155,7 @@ function saveSelection(){
   }
  }
 }
-function filtered(){
+function filtered({includeHuman=true}={}){
  const q=document.getElementById('search').value.trim().toLowerCase();
  const p=document.getElementById('priority').value;
  const project=document.getElementById('project').value;
@@ -1178,8 +1180,8 @@ function filtered(){
  };
  const kinds=change&&baseline?new Map(changesSinceBaseline().map(x=>[x.issue,x.kind])):null;
  return board.cards.filter(c=>(!p||p===c.priority)&&(!project||project===c.project)&&
-   (!decision||decision===(handoffs.get(c.issue)?.decision||'investigate'))&&
-   followupStateMatches(handoffs.get(c.issue),followupStatus)&&
+   (!includeHuman||!decision||decision===(handoffs.get(c.issue)?.decision||'investigate'))&&
+   (!includeHuman||followupStateMatches(handoffs.get(c.issue),followupStatus))&&
    historicalMatches(c)&&
    (!change||(kinds&&(change==='new-or-changed'?
      ['new-observation','changed-evidence'].includes(kinds.get(c.issue)):
@@ -3972,7 +3974,7 @@ document.getElementById('briefIncludePrivate').addEventListener('change',invalid
 // snapshots without sending any operator annotations or accessing a provider.
 function staticPortfolioWorklist(){
  const rank={P0:0,P1:1,P2:2,Unspecified:3};
- const rows=filtered().slice().sort((a,b)=>
+ const rows=filtered({includeHuman:false}).slice().sort((a,b)=>
    rank[a.priority]-rank[b.priority]||a.project.localeCompare(b.project)||
    a.issue.localeCompare(b.issue));
  if(!rows.length)return null;
@@ -4044,7 +4046,7 @@ function staticPortfolioWorklist(){
 }
 let portfolioHtmlReviewed=null,portfolioHtmlSource=null;
 function portfolioHtmlIdentity(){
- return JSON.stringify({issues:filtered().map(c=>c.issue),boardSha,
+ return JSON.stringify({issues:filtered({includeHuman:false}).map(c=>c.issue),boardSha,
   project:document.getElementById('project').value,
   priority:document.getElementById('priority').value,
   search:document.getElementById('search').value,
