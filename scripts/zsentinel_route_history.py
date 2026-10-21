@@ -393,6 +393,8 @@ def owner_text(report):
                          " opeenvolgende bronmomenten (" +
                          str(row["first_window"]) + "→" + str(row["last_window"]) +
                          ") · " + row["hold_reason"] +
+                         " · UTC " + row["first_observed_utc"] + " → " +
+                         row["last_observed_utc"] +
                          (" · HISTORISCH, niet in laatste steekproef" if
                           not row["observed_in_latest_sample"] else
                           " · ook in laatste steekproef gezien") +
@@ -430,7 +432,10 @@ def owner_html(report):
                 str(row["consecutive_source_observations"]) +
                 ' opeenvolgende bronwaarnemingen (venster ' +
                 str(row["first_window"]) + '–' + str(row["last_window"]) +
-                '); geen continu herstelbewijs.</p><p>Status: ' +
+                '); geen continu herstelbewijs.</p><p>Bron UTC: ' +
+                escape(row["first_observed_utc"]) + ' → ' +
+                escape(row["last_observed_utc"]) +
+                '</p><p>Status: ' +
                 ('OOK IN LAATSTE STEEKPROEF' if
                  row["observed_in_latest_sample"] else
                  'HISTORISCH · NIET IN LAATSTE STEEKPROEF · NIET OPGELOST') +
