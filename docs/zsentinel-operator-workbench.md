@@ -1,5 +1,54 @@
 # zSentinel · Private Product Delivery Workbench
 
+## 21 oktober · eerder gekoppelde PR's herstellen buiten het begrensde issueboard
+
+De offline merge-first eigenaarsexport behoudt nu niet alleen
+`unlinked_prs` (historische PR's **zonder** waargenomen issuekoppeling),
+maar ook de omgekeerde situatie: een PR met een aantoonbaar gekoppeld
+issue in een volledig gevalideerd privé-PR-archief waarvan de issuekaart
+in het beperkte originele board **niet** voorkomt.
+
+Hiermee blijft een bestaande kandidaat voor hergebruik zichtbaar, ook
+als issue-sampling hem niet bevat. Scope volgt uitsluitend repositories
+die door het board zelf geïdentificeerd zijn of de expliciete
+`--repository Zennay/<repo>`-keuze; er wordt geen privé-archief van
+een ander project stilzwijgend toegevoegd.
+
+```sh
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --pr-dossier ./previously-saved-prs.zip \
+  --repository Zennay/zCloud \
+  --record-type archive-only-linked-pr --format html \
+  --output ./private-archived-linked-prs.html
+
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --pr-dossier ./previously-saved-prs.zip \
+  --record-type archive-only-linked-pr --format json \
+  --output ./private-archived-linked-prs.json
+```
+
+Een PR met uitsluitend archief-issuekoppelingen krijgt
+`historical_pr_linked_to_issue_absent_from_board`; bij een combinatie
+van board- en archieflinks krijgt hij
+`saved_pr_candidate_with_archive_only_issues_not_live`.
+De output vermeldt `archive_only_issue_count`,
+`archive_only_source_issue_urls`, `board_issue_count` en altijd
+`board_issue_inventory_complete_verified=false`, plus
+`selected_archive_only_pr_count` binnen de gefilterde selectie.
+De historische issue-URL en de aanwezige historische HEAD-/gatelabels
+blijven behouden; de oorspronkelijke issuetitel is **UNKNOWN** en wordt
+niet gefabriceerd. Een gedeeld issue is geen bewijs van conflict.
+De HTML/Markdown maken de archief-only aard expliciet zichtbaar;
+CSV/JSON behouden de afzonderlijke velden voor menselijke overdracht.
+
+Dit is uitsluitend **historisch leesbewijs**, geen huidige PR-/issue-status,
+actuele eigenaar, claim, verplichte exacte-head CI, goedkeuring, merge
+of productieherstel. Live GitHub en actuele Notion/queue-claims
+blijven verplicht vóór handelen. Geen nieuwe QA-suites, netwerk-,
+workflow-, worker-, queue- of releasewijzigingen.
+
 ## 21 oktober · expliciete repository-scope herstelt historische PR's bij leeg issueboard
 
 De bestaande archief-only export verloor een werkelijk in de **volledig
