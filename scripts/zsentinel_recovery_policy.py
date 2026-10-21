@@ -508,9 +508,20 @@ def _observation_disclosure(batch):
     state = "STALE" if batch["source_case_stale"] else "HISTORICAL"
     queue = batch.get("source_queue_observed_at_utc")
     queue_status = batch.get("source_queue_stale")
+    issue = batch.get("source_issues_observed_at_utc")
+    issue_status = batch.get("source_issues_stale")
+    issue_truncated = batch.get("source_issues_truncated")
+    queue_complete = batch.get("source_queue_complete")
+    queue_truncated = batch.get("source_queue_truncated")
     return (
         "Source case exported: " + generated + " [" + state + "]"
-        + (" | Queue observed: " + queue + (" [STALE]" if queue_status else " [sampled]")
+        + (" | Issues observed: " + issue
+           + (" [STALE]" if issue_status else " [sampled]")
+           + (" [PARTIAL]" if issue_truncated else "")
+           if issue is not None else " | Issue observation: UNKNOWN")
+        + (" | Queue observed: " + queue
+           + (" [STALE]" if queue_status else " [sampled]")
+           + (" [PARTIAL]" if queue_complete is False or queue_truncated else "")
            if queue is not None else " | Queue observation: UNKNOWN")
         + " | Policy evaluated locally: " + evaluated
         + " | No live source verification"
@@ -750,6 +761,23 @@ def evaluate_recovery_case(data):
             or type(recovery.get("workorders")) is not list
             or len(recovery["workorders"]) > 64):
         raise PolicyInputError("invalid or unbounded recovery case")
+    coverage = data.get("source_coverage")
+    issue_coverage = coverage.get("issues") if type(coverage) is dict else None
+    if (type(issue_coverage) is not dict
+            or type(issue_coverage.get("sample_truncated")) is not bool
+            or type(issue_coverage.get("selected_issue_count")) is not int
+            or issue_coverage["selected_issue_count"] != len(issues)):
+        raise PolicyInputError("missing or contradictory issue sample coverage")
+    issue_source_at = issue_coverage.get("observed_at")
+    if issue_source_at is not None:
+        issue_source_at = _timestamp(issue_source_at)
+        if issue_source_at > generated + timedelta(minutes=2):
+            raise PolicyInputError("issue observation postdates recovery case")
+    issue_source_stale = (
+        issue_source_at is None or case_old
+        or datetime.now(UTC) - issue_source_at > timedelta(hours=6)
+    )
+    issue_truncated = issue_coverage["sample_truncated"]
     seen = set()
     orders = []
     for item in issues:
@@ -801,25 +829,29 @@ def evaluate_recovery_case(data):
             "problem_codes": (["historical_issue_not_reobserved" if historical else
                                "source_only_open_issue",
                                "worker_claim_unverified"] +
-                              (["case_source_over_six_hours_old"] if case_old else [])),
+                              (["case_source_over_six_hours_old"] if case_old else []) +
+                              (["issue_source_stale_or_unknown"] if issue_source_stale else []) +
+                              (["issue_sample_truncated"] if issue_truncated else [])),
             "required_evidence": ["current_notion_worker_queue_ownership",
                                   "current_github_issue_and_pr_state",
                                   "exact_head_required_ci_and_review"],
             "source_urls": urls,
-            "next_step": "refresh_issue_source_first" if historical or item["source_uncertain"]
-                         else "inspect_existing_prs_and_claims",
+            "next_step": ("refresh_issue_source_first" if (
+                historical or item["source_uncertain"] or issue_source_stale or issue_truncated
+            ) else "inspect_existing_prs_and_claims"),
             "human_review_required": True,
             "actions_executed": False,
             "priority": priority,
         })
-    cov = data.get("source_coverage")
+    cov = coverage
     if type(cov) is not dict or type(cov.get("queue_retry")) is not dict:
         raise PolicyInputError("missing queue recovery coverage")
     retry_cov = cov["queue_retry"]
     covered = retry_cov.get("selected_project_covered")
     retry_stale = retry_cov.get("source_stale")
-    if type(retry_stale) is not bool:
-        raise PolicyInputError("queue source freshness status missing")
+    if type(retry_stale) is not bool or type(retry_cov.get("sample_complete")) is not bool:
+        raise PolicyInputError("queue source freshness or coverage status missing")
+    queue_incomplete = not retry_cov["sample_complete"]
     queue_observed = None
     if covered is True:
         try:
@@ -875,13 +907,16 @@ def evaluate_recovery_case(data):
             "owner": None, "decision": "HOLD",
             "problem_codes": (["high_claim_attempts_observed",
                                "live_owner_and_failure_cause_unverified"] +
-                              (["queue_snapshot_stale"] if retry_stale else [])),
+                              (["queue_snapshot_stale"] if retry_stale else []) +
+                               (["queue_source_incomplete"] if queue_incomplete else []) +
+                               (["queue_sample_truncated"] if recovery["workorders_truncated"] else [])),
             "required_evidence": ["current_queue_lease_and_worker_owner",
                                   "failure_classification_and_retry_budget",
                                   "authorized_runtime_owner"],
             "source_urls": [],
-            "next_step": ("refresh_queue_source_then_verify_owner" if retry_stale
-                          else "verify_live_owner_before_recovery"),
+            "next_step": ("refresh_queue_source_then_verify_owner" if (
+                retry_stale or queue_incomplete or recovery["workorders_truncated"]
+            ) else "verify_live_owner_before_recovery"),
             "human_review_required": True,
             "actions_executed": False, "priority": priority,
         })
@@ -898,6 +933,14 @@ def evaluate_recovery_case(data):
         "evaluated_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "source_generated_at_utc": generated.isoformat().replace("+00:00", "Z"),
         "source_case_stale": case_old,
+        "source_issues_observed_at_utc": (
+            issue_source_at.isoformat().replace("+00:00", "Z")
+            if issue_source_at is not None else None
+        ),
+        "source_issues_stale": issue_source_stale,
+        "source_issues_truncated": issue_truncated,
+        "source_queue_complete": not queue_incomplete if covered else None,
+        "source_queue_truncated": recovery["workorders_truncated"] if covered else None,
         "source_queue_observed_at_utc": (
             queue_observed.isoformat().replace("+00:00", "Z")
             if queue_observed is not None else None
