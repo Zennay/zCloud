@@ -223,7 +223,11 @@ def portfolio_html(selected, integrated, *, project=None):
             e(first["url"]) +
             '" target="_blank" rel="noopener noreferrer">' +
             e(first["priority"]) + ' · #' + str(first["pr_number"]) +
-            '</a> — ' + e(first["next_action"]) + '</p>' +
+            '</a> — ' + e(first["next_action"]) +
+            '<br>Bron HEAD: <strong>' +
+            e(first["head_observed"][:12] if first["head_observed"] else
+              "ONBEKEND") + '</strong> · ' +
+            e(source_gate_detail(first)) + '</p>' +
             '<details><summary>Alle ' + str(len(queue)) +
             ' bestaande PR-kandidaten en opvolgacties</summary>' +
             '<p>Alleen opgeslagen gedeeltelijke gatewaarnemingen; '
@@ -276,11 +280,20 @@ def portfolio_issue_html(selected, integrated, *, project=None):
         highest = min(prs, key=lambda pr: rank[pr["priority"]])
         links = []
         for pr in prs[:4]:
+            observed_head = pr["head_observed"]
+            head_label = (
+                '<a href="https://github.com/' + e(info["repo"]) +
+                '/commit/' + observed_head + '" target="_blank" ' +
+                'rel="noopener noreferrer">Bron HEAD <code>' +
+                observed_head[:12] + '</code></a>'
+                if observed_head else '<strong>Bron HEAD ONBEKEND</strong>')
             links.append(
                 '<li><a href="' + e(pr["url"]) + '" target="_blank" '
                 'rel="noopener noreferrer">' + e(pr["priority"]) +
                 ' · PR #' + str(pr["pr_number"]) + '</a> · ' +
-                e(LABELS[pr["primary_gate"]][0]) + '</li>')
+                e(LABELS[pr["primary_gate"]][0]) + '<br>' +
+                head_label + ' · ' + e(source_gate_detail(pr)) +
+                '</li>')
         remaining = len(prs) - len(links)
         cards.append(
             '<li><details><summary>' + e(highest["priority"]) +
