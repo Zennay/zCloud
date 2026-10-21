@@ -2525,3 +2525,42 @@ All source data remains immutable and local. The project selection neither
 confirms ownership nor dispatches tasks, reclaims leases, alters gate states,
 requests CI, merges or deploys. Selecting no visible issue card is never
 proof that the project has no unfinished work.
+
+### Local project incident actions and private JSON handoff (21 October)
+
+The issue-independent project recovery panel now allows a **human-only** per-project
+decision: Investigate, Coordinate current owner or Park external blocker.
+A separate optional operator note (up to 500 characters) records the perceived
+cause, required owner input or the next manual follow-up. These annotations exist
+only in the open browser tab; editing them invalidates any previously reviewed
+Markdown preview and warns before leaving with unsaved edits. Nothing is stored
+in localStorage or transmitted to a service.
+
+The **Download private human handoff** action now saves both the existing
+issue annotations and the new project annotations in a single explicit
+`schema_version: 4` local JSON file. Every record must match an actual
+project from the exact original read-only board SHA-256. The saved file continues
+to carry `authorizes_claim=false`, `authorizes_merge=false` and
+`authorizes_deploy=false`; no local decision is a real Notion task state.
+Project annotations are bounded, identity-checked, duplicate-refused and
+validated *before* replacing any current browser notes. Existing handoff
+versions 1–3 remain importable for their original issue annotations; missing
+project follow-ups remain blank. Cross-board or malformed imports are refused
+without partially changing the current notes.
+
+The existing **Preview current filtered briefing** now includes the human
+decision and private note for each selected project's recovery leads. Each
+project incident card provides **Preview private recovery handoff for this
+project**, which first selects that project, then opens the existing reviewable
+private Markdown preview. No file is downloaded without the separate explicit
+download action. The JSON handoff intentionally backs up **all** annotated
+issues and projects belonging to the exact source board, whereas the filtered
+Markdown handoff includes only the selected project's recovery leads.
+
+Earlier-source manual carry-forward can still reuse matching issue follow-ups
+from a v4 handoff, subject to its existing explicit review. Project incident
+notes are deliberately **not** auto-carried across a new board SHA; a live
+lease, original queue timestamp and ownership must be rechecked by a human.
+No network, CI dispatch, queue write, lease reclaim, workflow replay,
+service restart, production deployment, broker action or QA suite is created
+by this source-only UI.
