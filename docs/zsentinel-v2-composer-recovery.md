@@ -58,3 +58,10 @@ The original terminal-error detector scanned all visible `main.innerText`, inclu
 When a single same-tab New chat click has already been requested, the existing `resetRoute` barrier previously could remain in `new-chat-transition-pending` forever on a failed SPA transition. It now escalates after the existing 45-second composer grace to `new-chat-transition-operator-action-required` while keeping the same block on prompt dispatch. It **does not** click again, reload, navigate, steal another tab, clear queue leases or send a duplicate prompt. The operator must inspect the original tab and current assignment.
 
 The standalone `public/zcloud-worker-v2-engine.js` and its embedded userscript copy are updated together on this existing PR. This remains **unmerged source**, not a browser rollout or live recovery receipt. Existing exact-head CI, independent review, extension distribution/version contract and serialized release authorization still apply; no QA/regression suites, workflow dispatches or worker interruptions were performed.
+
+
+## 20 October · Visible input takes precedence over hidden responsive duplicates
+
+Some ChatGPT layouts retain a hidden old composer before the currently usable composer in the document. The previous first-match `querySelector` treated the hidden element as authoritative, making a healthy tab appear input-less and potentially entering the missing-composer recovery path. The existing selector priorities now search for a **visible** canonical composer first; only when none are visible does the engine preserve the prior first-match fallback for draft detection. No new DOM action, timer, network permission, worker claim, tab navigation, send or reset is introduced.
+
+Both deployed-source locations (`public/zcloud-worker-v2-engine.js` and the embedded copy inside `public/zcloud-worker.user.js`) were updated together. The source is not deployed merely because this PR exists: version-coordinated authorized distribution, independent review, exact-head CI and protected-main remain required.
