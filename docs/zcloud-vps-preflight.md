@@ -1,5 +1,37 @@
 # Read-only zCloud VPS deploy preflight
 
+## 21 oktober · bronvaste vergelijking van vorige VPS-snapshot
+
+De bestaande `--previous-report` gebruikt nu één race-bestendige, begrensde
+bronopening. De operator-aangeleverde vorige JSON wordt met `O_NOFOLLOW`
+en vastgepinde inode/device-identiteit geopend, maximaal 128 KiB gelezen
+en na het lezen op omvang en wijziging gecontroleerd. Symlinks en
+niet-reguliere bestanden worden geweigerd, evenals dubbele JSON-sleutels
+en niet-standaard numerieke constanten. Zo kan een wisselend bronpad
+niet tussen voorcontrole en read een ander herstelverhaal leveren.
+
+Iedere geslaagde vergelijking bevat voortaan `baseline_sha256`,
+`baseline_bytes` en `baseline_integrity`. Het exacte SHA-256 van de
+gelezen, onveranderde invoer staat in JSON, de standaard console,
+de private Markdown-overdracht en de offline HTML-werkbak.
+Dit is **herleidbaarheid van operator-aangeleverde bytes**, geen digitale
+handtekening, onafhankelijke hostmeting of vrijgave van herstel.
+Een ongeldige of veranderde baseline faalt gesloten; geen stilzwijgend
+verdwenen blocker krijgt op basis daarvan herstelkrediet.
+
+Voorbeeld (uitsluitend privé, alleen lezen):
+
+```bash
+umask 077
+python3 scripts/zcloud_vps_preflight.py --host-pressure \
+  --previous-report /secure/private/eerder.json \
+  --format markdown > /secure/private/herstelhandoff.md
+```
+
+De bestaande CI-, review-, worker-, release- en productieautoriteit blijft
+buiten deze preflight. Er worden geen claims of services gewijzigd.
+
+
 
 ## 21 oktober · CPU-/PSI-trend in bestaande private hersteloverdracht
 
