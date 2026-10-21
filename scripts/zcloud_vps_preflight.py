@@ -432,6 +432,21 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
     unknown_recovery = set(comparison.get("recovery_unverified_findings", []))
     stale_comparison = comparison.get("resolution_credit_allowed") is False
     cards: list[dict[str, object]] = []
+    if comparison and stale_comparison:
+        cards.append({
+            "code": "BASELINE_SCOPE_REVIEW",
+            "owner": "VPS resource / serialized release owner",
+            "problem": "A prior snapshot cannot establish current recovery when its "
+                       "boot/checkout source differs, is unknown, or is too old.",
+            "action": "Obtain a new same-boot read-only source observation with the "
+                      "responsible owner. Preserve prior evidence; do not infer "
+                      "service recovery or authorize a release.",
+            "status": "recovery_unverified",
+            "trend": comparison.get("snapshot_freshness", "source_unverified"),
+            "finding_codes": [],
+            "recovery_performed": False,
+            "release_authorized": False,
+        })
 
     for recommendation in report["recovery_priorities"][:8]:
         family = RECOVERY_FAMILIES.get(recommendation["code"], frozenset())
@@ -440,7 +455,7 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
                   else "active_blocker" if any(current[x] == "block" for x in active)
                   else "active_warning" if active else "observation_incomplete")
         if stale_comparison:
-            trend = "stale_baseline_no_resolution_credit"
+            trend = comparison.get("snapshot_freshness", "no_resolution_credit")
         elif active and family & escalated:
             trend = "escalated_to_blocker"
         elif active and family & newly_observed:
