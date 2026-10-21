@@ -623,9 +623,11 @@ def product_queue_snapshot(items, max_visible=8):
     ]
     owner_workorder_inbox = []
     inbox_seen = set()
-    owner_workorder_total_candidates = sum(
-        len(group) for group in owner_workorder_groups
-    )
+    owner_workorder_total_candidates = len({
+        (row["project_id"], row["queue_id"])
+        for group in owner_workorder_groups
+        for row in group
+    })
     for index in range(max_visible):
         for group in owner_workorder_groups:
             if index >= len(group):
