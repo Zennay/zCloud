@@ -237,10 +237,20 @@ receipts, the distinct original source/evaluation UTC clocks and explicit
 false verification/claim/merge/deploy authorization columns. CSV fields are
 properly quoted and all output modes retain the existing 128 KiB limit.
 
-The readable three-line text/Markdown owner list now leads with the
-observed P0/P1 priority and includes direct original issue and existing
-candidate repair-PR links without pretending that the candidate is still
-open, unclaimed or green. The offline HTML labels these candidate PR
+The human-facing plain-text owner list now leads with the observed P0/P1
+priority and includes canonical original issue and candidate repair-PR links.
+The separate `--case-input --format markdown` now produces a proper,
+source-linked P0-first private owner handoff with **three concise lines per
+incident (problem, human action, HOLD status)**, explicit original case /
+issue / queue UTC clocks, and the still-UNKNOWN live owner. An old export
+can never imply a live merge-ready candidate. For example:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json --format markdown \
+  > private-recovery-handoff.md
+``` The offline HTML labels these candidate PR
 links explicitly and displays the original priority on each incident
 card. All issue/PR links in this case path have already passed the importer
 same-repository and bounded-source requirements. They are navigation hints
