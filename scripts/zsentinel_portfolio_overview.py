@@ -1128,13 +1128,19 @@ def main():
                 pr_desk=pr_desk)
         unblock = blocker_first_board(summary, decision, problem_inbox, pr_desk=pr_desk)
         continuity = None
+        routing_transition = None
         if history_files:
             from zsentinel_blocker_continuity import _read, compare, compare_history
+            from zsentinel_route_continuity import compare as routing_compare
             current = {'portfolio': summary, 'blocker_first_handoff': unblock,
-                       'selected_projects': selected}
+                       'selected_projects': selected,
+                       'source_bound_decision': decision}
             snapshots = [_read(path) for path in history_files] + [current]
             continuity = (compare(snapshots[0], snapshots[1]) if len(snapshots) == 2
                           else compare_history(snapshots))
+            # Reuse the already-loaded, latest chronological saved source.
+            # A missing old router receipt stays UNKNOWN rather than healed.
+            routing_transition = routing_compare(snapshots[-2], current)
         disk_private_html = None
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
@@ -1208,6 +1214,12 @@ def main():
                     raise ValueError("incompatible portfolio HTML")
                 rendered = rendered.replace("<main>", "<main><section aria-label=\"Broncontinuïteit\">" +
                                             fragment + "</section>", 1)
+            if routing_transition is not None:
+                from zsentinel_route_continuity import as_html as routing_transition_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible portfolio HTML for route transitions")
+                rendered = rendered.replace(
+                    "<main>", "<main>" + routing_transition_html(routing_transition), 1)
         elif args.format == "ics":
             from zsentinel_human_agenda import human_calendar
             rendered = human_calendar(decision)
@@ -1248,6 +1260,7 @@ def main():
                 "next_problem_shortlist": problem_inbox,
                 "blocker_first_handoff": unblock,
                 "blocker_continuity": continuity,
+                "routing_transition": routing_transition,
                 "local_runner_observation": local_runner,
                 "runner_cross_source": runner_cross_source,
                 "queue_claim_churn": decision.get("queue_claim_churn"),
@@ -1393,6 +1406,9 @@ def main():
             if continuity is not None:
                 from zsentinel_blocker_continuity import as_text
                 rendered = as_text(continuity) + "\n" + rendered
+            if routing_transition is not None:
+                from zsentinel_route_continuity import as_text as routing_transition_text
+                rendered = routing_transition_text(routing_transition) + "\n\n" + rendered
         if disk_private_html is not None:
             from zsentinel_private_output import write_private_output
             write_private_output(args.disk_hotspots_output, disk_private_html, "html")
