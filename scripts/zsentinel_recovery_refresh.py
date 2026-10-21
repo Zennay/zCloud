@@ -397,7 +397,8 @@ def main():
             write_json_atomic(args.state, updated)
         if args.format != "desk":
             if args.output is not None:
-                print("Privé zSentinel-rapport veilig aangemaakt (0600, create-only; niets overschreven).")
+                print("Privé zSentinel-rapport veilig aangemaakt: " + args.output.name +
+                      " (0600, create-only; niets overschreven).")
             else:
                 print(rendered)
     except (OSError, ValueError, TypeError, KeyError) as exc:
