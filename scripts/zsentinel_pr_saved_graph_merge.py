@@ -21,6 +21,7 @@ import sys
 from zsentinel_pr_scope_guard import (
     REPO, SHA, csv_formula_inert, edit_path, unique, observe_conflict_graph,
 )
+from zsentinel_private_report_writer import write_private_report
 
 SCHEMA = "zsentinel-saved-pr-cross-window-collisions-v1"
 SOURCE = "zsentinel-pr-file-collision-graph-v1"
@@ -915,16 +916,8 @@ def main(argv=None):
         raw = render(report, args.format).encode("utf-8")
         if len(raw) > MAX_REPORT_BYTES:
             raise ValueError("output too large")
-        fd = os.open(args.output, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
-                     getattr(os, "O_NOFOLLOW", 0), 0o600)
-        try:
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(raw)
-                stream.flush()
-                os.fsync(stream.fileno())
-        except BaseException:
-            args.output.unlink(missing_ok=True)
-            raise
+        write_private_report(
+            args.output, raw.decode("utf-8"), max_bytes=MAX_REPORT_BYTES)
         print("Private " + report["collection_mode"] +
               " cross-window PR handoff written; NO claim/merge authority.")
         return 0
