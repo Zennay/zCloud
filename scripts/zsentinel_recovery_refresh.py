@@ -112,6 +112,7 @@ def refresh(bundle, registry, token=None):
             if (run_attempt is not None and job_attempt is not None
                     and job_attempt != run_attempt):
                 raise ValueError("github_run_job_attempt_mismatch")
+            attempt_verified = run_attempt is not None and job_attempt is not None
             status = job.get("status")
             if status not in STATUS:
                 raise ValueError("github_job_status_unknown")
@@ -142,6 +143,8 @@ def refresh(bundle, registry, token=None):
             updated = {
                 "run_id": run_id, "job_id": job_id,
                 "head_sha": sha, "job_status": status,
+                "verified_matching_run_attempt": attempt_verified,
+                "run_attempt": run_attempt if attempt_verified else None,
                 "queued_at": utc_string(queued_at),
                 "observed_at": utc_string(observed),
                 "runner_assigned": bool(runner_id),
@@ -179,7 +182,10 @@ def refresh(bundle, registry, token=None):
             output.append({"project_id": pid, "source": "github_exact_run_job",
                            "repository": repository,
                            "status": "refreshed", "run_id": run_id, "job_id": job_id,
-                           "head_sha": sha, "observed_at": utc_string(observed),
+                           "head_sha": sha,
+                           "verified_matching_run_attempt": attempt_verified,
+                           "run_attempt": run_attempt if attempt_verified else None,
+                           "observed_at": utc_string(observed),
                            "queued_at": utc_string(queued_at),
                            "job_status": status, "runner_assigned": bool(runner_id),
                            "canonical_zcloud_runner_assignment_observed": canonical_runner_assigned,
