@@ -250,17 +250,29 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
             "label": "Actieve schrijfscopes overlappen",
             "next_step": "Laat de betrokken bestaande eigenaren het bestandsconflict oplossen.",
         }
+    if state == "blocked" and any(
+        record.get("reason") == "queued_worker_slot_scope_conflict"
+        for record in blocked
+    ):
+        return {
+            "code": "HOLD_ASSIGNED_WORKER_SCOPE_CONFLICT",
+            "label": "Gereseveerd workerslot overlapt met nieuw schrijfbereik",
+            "next_step": "Laat de bestaande toegewezen worker eigenaar blijven en vraag bron-/bestandscope-afstemming; wijs geen tweede schrijver toe.",
+        }
+    if state == "blocked" and deferred_assigned and all(
+        record.get("reason") == "queued_worker_slot_reserved"
+        for record in blocked
+    ):
+        return {
+            "code": "HOLD_QUEUE_WORKER_SLOT_RESERVED",
+            "label": "Wachtwerk is al aan een workerslot gekoppeld",
+            "next_step": "Controleer de bestaande slot-/queue-eigenaar; neem de taak niet over en maak het workerslot niet automatisch vrij.",
+        }
     if blocked:
         return {
             "code": "HOLD_EXISTING_CLAIM_OR_SCOPE",
             "label": "Conflict of seriële schrijfgrens",
             "next_step": "Vergelijk actieve leases en bestandsbereiken met de huidige eigenaren.",
-        }
-    if state == "blocked" and deferred_assigned:
-        return {
-            "code": "HOLD_QUEUE_WORKER_SLOT_RESERVED",
-            "label": "Wachtwerk is al aan een workerslot gekoppeld",
-            "next_step": "Controleer de bestaande slot-/queue-eigenaar; neem de taak niet over en maak het workerslot niet automatisch vrij.",
         }
     if state == "blocked" and deferred_ineligible:
         return {
@@ -524,6 +536,9 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
     unknown_claim_scopes = max(
         (lane.get("unknown_claim_scope_count", 0) for lane in lanes), default=0
     )
+    unknown_assigned_scopes = max(
+        (lane.get("unknown_assigned_scope_count", 0) for lane in lanes), default=0
+    )
     untrusted_active_leases = max(
         (lane.get("untrusted_active_lease_count", 0) for lane in lanes), default=0
     )
@@ -559,6 +574,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         len(active_items) <= 64 and not queue_partial
         and not truncated_queue_fields
         and unknown_active_scopes == 0 and unknown_claim_scopes == 0
+        and unknown_assigned_scopes == 0
     )
     if cross_lane_coverage:
         for index, left in enumerate(active_items):
@@ -575,7 +591,8 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
     # Build source trust once, then apply it consistently in every lane card.
     source_complete = not (
         queue_partial or claims_partial or ambiguous or truncated_queue_fields
-        or unknown_active_scopes or unknown_claim_scopes or runtime_shadowed_active
+        or unknown_active_scopes or unknown_claim_scopes or unknown_assigned_scopes
+        or runtime_shadowed_active
         or portfolio_partial or unknown_project_groups
         or inconsistent_queue_claim_windows or untrusted_active_leases
         or active_profile_mismatch or local_config_mismatch
@@ -604,6 +621,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             "deferred_qa_packages": lane.get("deferred_qa_packages", 0),
             "deferred_ineligible_packages": lane.get("deferred_ineligible_packages", 0),
             "deferred_assigned_packages": lane.get("deferred_assigned_packages", 0),
+            "assigned_slot_scope_conflicts": lane.get("assigned_slot_scope_conflict_count", 0),
             "parallel_active_warning": lane.get("parallel_active_warning", False),
             "serialized_unscoped_queue_admitted": lane.get(
                 "serialized_unscoped_queue_admitted", False
@@ -661,6 +679,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         "local_contract_reconciliation_required": local_config_mismatch or local_config_unverified,
         "host_admission": host_admission,
         "active_claim_scopes_not_declared": unknown_claim_scopes,
+        "queued_assigned_scopes_not_declared": unknown_assigned_scopes,
         "untrusted_active_leases_observed": untrusted_active_leases,
         "runtime_active_filtered_by_eligibility": runtime_shadowed_active,
         "active_local_leases_observed": len(claims),
@@ -687,7 +706,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             or inconsistent_queue_claim_windows or untrusted_active_leases
             or ambiguous or queue_partial or claims_partial
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
-            or runtime_shadowed_active or portfolio_partial or unknown_project_groups
+            or unknown_assigned_scopes or runtime_shadowed_active or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
             or active_profile_mismatch or local_config_mismatch
             or local_config_unverified or any(collision_counts.values())
