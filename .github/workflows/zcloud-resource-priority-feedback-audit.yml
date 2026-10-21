@@ -1,0 +1,66 @@
+name: zCloud resource priority feedback audit
+
+on:
+  pull_request:
+    paths:
+      - public/enhancements.js
+      - scripts/zcloud_resource_priority_feedback_audit.py
+      - tests/test_resource_priority_feedback_audit.py
+      - tests/test_resource_priority_feedback_audit_workflow.py
+      - .github/workflows/zcloud-resource-priority-feedback-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-resource-priority-feedback-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Validate bounded resource-priority audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_resource_priority_feedback_audit tests.test_resource_priority_feedback_audit_workflow
+          python3 scripts/zcloud_resource_priority_feedback_audit.py --json
+
+  permanent-vps-proof:
+    needs: validate
+    if: ${{ github.event_name != 'pull_request' || (github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact head and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$(git rev-parse HEAD)" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Prove current resource-priority feedback baseline read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_resource_priority_feedback_audit tests.test_resource_priority_feedback_audit_workflow
+          python3 scripts/zcloud_resource_priority_feedback_audit.py --json
+          echo ZCLOUD_RESOURCE_PRIORITY_FEEDBACK_AUDIT_VPS_GREEN=1
