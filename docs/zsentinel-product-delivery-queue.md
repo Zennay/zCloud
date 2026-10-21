@@ -1000,3 +1000,59 @@ bestaande `portfolio_queue_items()` SQL/API-query is **niet** naar
 paginatie omgebouwd; dit voorkomt geen geheugengebruik bij het oorspronkelijk
 lezen van de API-rijen en claimt geen gemeten productieprestatie.
 Het verandert evenmin worker-dispatch, queue-opslag of actieve claims.
+
+
+## 21 oktober · Interactieve privé herstel-inbox zonder extra serverrechten
+
+De bestaande product-PR bevat nu `scripts/zcloud_product_delivery_inbox.py`:
+een **daadwerkelijke, offline bedienbare HTML-weergave** van de bestaande
+geauthenticeerde `GET /api/portfolio-queue`-bron. De operator krijgt in één
+scherm de al brongebonden acties voor ontbrekende eigenaarsgegevens,
+herhaalde claimpogingen en vrij productwerk. Zoek op taak of project en filter
+op categorie of P0–P3, zonder servercalls of externe assets.
+
+De opdracht voert **geen** API-authenticatie of netwerkfetch uit. Bewaar eerst
+via het bestaande *geautoriseerde* beheerproces één JSON-response
+privé. Het bestand mag **niet** publiek zijn. Maak op de eigen beheerhost
+een afgeschermde locatie aan:
+
+```sh
+install -d -m 700 "$HOME/.local/share/zcloud/private"
+# Leg hier als bevoegde beheerder een eerder geautoriseerde
+# /api/portfolio-queue JSON-response neer met chmod 600.
+python3 scripts/zcloud_product_delivery_inbox.py \
+  --input "$HOME/.local/share/zcloud/private/portfolio-queue.json" \
+  --output "$HOME/.local/share/zcloud/private/zsentinel-recovery.html"
+```
+
+Open het nieuwe privé HTML-bestand vervolgens **lokaal**. De renderer
+vereist een eigen 0600/0400 bronbestand en een eigen 0700 bestemmingsmap,
+weigert symlinks, dubbele JSON-sleutels, onverwachte metadata, ontbrekende
+veiligheidsflags en een bronbestand groter dan 4 MiB. Uitvoer is uitsluitend
+een nieuw 0600-bestand (`O_EXCL`); bestaande uitvoer wordt nooit overschreven.
+De creatie gebeurt relatief aan een vastgehouden bestandsdescriptor van de
+bestemmingsmap, zodat een mapwissel niet stilzwijgend naar een andere
+bestemming schrijft.
+
+De HTML bevat alleen expliciet toegelaten `project_id`, `queue_id`,
+prioriteit, vaste type-/vervolgcodes en aantallen: **geen** ruwe `items`,
+workerprompt, token, private metadata, URL, lokaal pad of queryinhoud.
+Onbekende labels en onbetrouwbare werkinstructies worden afgewezen. Tekst
+wordt HTML-geëscapet, inline JS en CSS worden aan een exacte CSP-hash
+gebonden, externe connecties zijn door CSP verboden en er wordt geen
+`innerHTML` gebruikt. De pagina meldt altijd dat de queue-snapshot
+gedeeltelijk is; een oudere of onbetrouwbare UTC-bron krijgt een expliciete
+tijdwaarschuwing. Ook bij een lege inbox of afgekapt venster is de
+onvolledigheid zichtbaar.
+
+Dit is een **operator-read-model**, geen bevoegdheidsbewijs: een werkorder
+start of hervat geen taak, neemt geen claim over, voert geen GitHub-retry uit,
+en geeft geen deploy- of merge-autoriteit. Openen van de HTML toont uitsluitend
+de toestand van het ingelezen bronmoment. Voor actuele beslissingen moeten
+de bevoegde eigenaar, Notion-, lease-, scope-, CI-, review- en releasegates
+opnieuw op de werkelijk actuele bronnen worden vastgesteld.
+
+**Leverbewijs:** script en documentatie op bestaande PR #1536; exacte
+broncommit en CI/review staan in de PR. Merge en VPS-release blijven
+afzonderlijke, geautoriseerde stappen. Geen QA-testmodule, QA-run,
+privébronexport, live-API-aanroep of worker-/SQLite-mutatie uitgevoerd.
