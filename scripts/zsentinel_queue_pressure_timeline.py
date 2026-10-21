@@ -100,8 +100,10 @@ def _observed_blocked_queue(queue, sampled, source_fresh_when_saved):
         raise ValueError("stale blocked queue exposes current project detail")
     fresh = (source_fresh_when_saved and raw["source_coverage"] == "current"
              and coverage in ("complete", "partial"))
+    effective_coverage = ("stale" if coverage == "stale" else
+                          coverage if fresh else "incomplete")
     return {
-        "coverage": coverage, "aggregate_coverage": raw["aggregate_coverage"],
+        "coverage": effective_coverage, "aggregate_coverage": raw["aggregate_coverage"],
         "source_coverage": raw["source_coverage"],
         "sampled_at_utc": blocked_at.isoformat(),
         "total_items_observed": raw["total_items_observed"],
