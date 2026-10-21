@@ -238,7 +238,10 @@ def render_private_html(rows):
                          'check current owners before overlapping work.</p>')
         parts.append('<p>Owner next step (advisory): ' +
                      escape(str(row["human_next_step_only"])) + '</p>')
-        parts.append('<details><summary>Original source custody</summary>'
+        # Printed handoffs must contain the actual provenance without
+        # depending on recipients expanding a collapsed disclosure widget.
+        parts.append('<section aria-label="Original source custody">'
+                     '<h3>Original source custody</h3>'
                      '<small>Original board SHA256: ' +
                      escape(str(row["original_board_sha256"])) +
                      ' · UTC ' + escape(str(row["board_observed_at_utc"])) +
@@ -250,7 +253,7 @@ def render_private_html(rows):
                      escape(str(row["historical_gate_labels"])) +
                      '; PR absent final sample: ' +
                      escape(str(row["pr_missing_last_saved_snapshot"])) +
-                     '</small></details>')
+                     '</small></section>')
         parts.append('<small>Claim / CI / approval / merge / dispatch / '
                      'deployment: NOT AUTHORIZED.</small></article>')
     parts.append('<p>Recheck current GitHub/Notion/queue source and all '
