@@ -16,7 +16,7 @@ from zsentinel_recovery_router import read_json
 
 SCHEMA = "zsentinel-notion-connector-snapshot-v1"
 UUID = re.compile(r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$", re.I)
-PROJECT_URL = re.compile(r"^https://app[.]notion[.]com/(?:p/)?([a-f0-9]{32})$", re.I)
+PROJECT_URL = re.compile(\n    r"^https://app[.]notion[.]com/(?:p/)?([a-f0-9]{32})(?:[?]pvs=[1-9][0-9]{0,3})?$", re.I\n)\nWORK_ID = re.compile(r"^PWQ-([1-9][0-9]{0,8})$")
 ACTIVE = frozenset(("Claimed", "Running"))
 MAX_BYTES = 131_072
 MAX_ROWS = 100
@@ -38,16 +38,34 @@ def _datetime(value):
 def _project(value, known):
     # A source relation comes from the Notion connector as one serialized URL.
     # Never infer ownership from titles, worker names or an unrecognized URL.
-    if not isinstance(value, str) or len(value) > 250:
-        return "onbekend"
-    try:
-        links = json.loads(value)
-    except (ValueError, TypeError):
-        return "onbekend"
+    # Notion connector exports can preserve the relation as a JSON list or
+    # serialize that exact list to a string. Accept neither titles nor
+    # unbounded aliases: identity must be one canonical project page URL.
+    if isinstance(value, str):
+        if len(value) > 500:
+            return "onbekend"
+        try:
+            links = json.loads(value)
+        except (ValueError, TypeError):
+            return "onbekend"
+    else:
+        links = value
     if not isinstance(links, list) or len(links) != 1 or not isinstance(links[0], str):
         return "onbekend"
     matched = PROJECT_URL.fullmatch(links[0])
     return known.get(matched.group(1).lower(), "onbekend") if matched else "onbekend"
+
+
+def _work_number(value):
+    # A Notion number property is sometimes emitted as an integer and
+    # sometimes rendered by the connector as the prefixed Work ID. Never
+    # strip arbitrary letters or silently accept zero-padded/float IDs.
+    if type(value) is int:
+        return value if 0 < value < 10**9 else None
+    if isinstance(value, str):
+        matched = WORK_ID.fullmatch(value)
+        return int(matched.group(1)) if matched else None
+    return None
 
 
 def observe_saved_connector(source_file: Path, data_source_id: str,
@@ -86,10 +104,10 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
         raise ValueError("Notion snapshot incomplete or not bound to exact source")
     seen, active, counts = set(), [], {}
     for row in rows:
-        if type(row) is not dict or type(row.get("Work ID")) is not int:
+        if type(row) is not dict:
             raise ValueError("invalid Notion work record")
-        work = row["Work ID"]
-        if not 0 < work < 10**9 or work in seen:
+        work = _work_number(row.get("Work ID"))
+        if work is None or work in seen:
             raise ValueError("duplicate/out-of-range Notion work identity")
         seen.add(work)
         status = row.get("Status")
