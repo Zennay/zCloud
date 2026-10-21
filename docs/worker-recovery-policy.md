@@ -475,6 +475,53 @@ closing keywords and their absence **never prove or disprove** GitHub
 cross-reference links or authorized ownership; no title/body, issue text,
 token or private prompt is exported.
 
+### Discover existing PRs before creating new work (explicit opt-in)
+
+When the *validated historical* recovery case has **zero referenced PRs**
+for an issue, the normal `--live-candidates` path fails closed. An operator
+can explicitly request **one bounded open-PR source window** instead:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json \
+  --view-project cloud --view-issue 1518 \
+  --live-candidates --discover-unlinked \
+  --format html > private-existing-pr-discovery.html
+```
+
+This is only for an issue whose imported `candidate_prs` list is empty;
+a case that already knows PR references must use the normal path first.
+No new PR is opened. The route reads one canonical GitHub
+`/repos/Zennay/<repo>/pulls?state=open&per_page=30` page, examines
+the returned PR descriptions **in memory** for the selected same-repo
+issue number, and selects at most three candidate references whose text
+contains that issue number or an ordinary closing keyword. It never
+exports raw PR descriptions or other issues. Other rows are skipped with
+a visible incomplete-source count; all returned candidate PRs still use
+the normal double-read HEAD/description-drift guard, check/review
+source bounds, and unauthorized-action flags.
+
+This opt-in path costs at most **14 canonical GitHub GETs**: one open-PR
+list page, one original issue GET, then at most four GETs per candidate.
+The result preserves `source_candidate_count=0` separately from the
+up to three newly observed `candidate_count`, and carries
+`optional_unlinked_discovery` with the scanned page length, matched
+textual references, malformed/skipped rows, truncated candidates,
+source completeness `false`, and `existing_repair_absence_verified=false`.
+HTML and Markdown explain the same limits. An empty first page or zero
+text matches **never prove no existing PR**: GitHub may have older pages,
+private/inaccessible PRs, text-free issue cross-references, different
+branch targets, or missing activity sources. An authorized human must
+still check the real repository PR inbox and active ownership before
+starting or assigning new work.
+
+Current open-PR text mention is **not** proof of an approved issue→PR
+relationship, PR ownership, exact-head required CI, independent reviewer
+approval or protected-main merge. It only provides bounded navigation
+toward potentially reusable existing work. GitHub admission/quota errors,
+stale issue sources and partial coverage stay UNKNOWN, never READY.
+
 ### Project- and priority-focused historical owner views
 
 Use `--view-project <project-id>` and/or `--through-priority P0|P1|P2|P3`
