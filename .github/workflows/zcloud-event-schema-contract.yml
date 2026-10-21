@@ -1,0 +1,81 @@
+name: Control Plane Event Schema Proof
+
+on:
+  pull_request:
+    paths:
+      - "schemas/control-plane-event-v1.json"
+      - "scripts/zcloud_event_schema_validate.py"
+      - "tests/test_event_schema_contract.py"
+      - "tests/test_event_schema_workflow.py"
+      - ".github/workflows/zcloud-event-schema-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    if: >-
+      github.actor == 'Zennay' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Guard permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused schema regressions
+        run: >-
+          python3 -m unittest
+          tests.test_event_schema_contract
+          tests.test_event_schema_workflow
+          -v
+
+      - name: Prove live event storage conformance read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          db=/home/ubuntu/zennay-cloud/history.db
+          test -f "$db"
+          test ! -L "$db"
+
+          report="$(
+            python3 scripts/zcloud_event_schema_validate.py               --schema schemas/control-plane-event-v1.json               --db "$db"
+          )"
+          REPORT_JSON="$report" python3 - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["REPORT_JSON"])
+          if not payload.get("ok"):
+              raise SystemExit("EVENT_SCHEMA_CONFORMANCE_NOT_OK")
+          storage = payload.get("storage") or {}
+          if storage.get("query_only") is not True:
+              raise SystemExit("EVENT_SCHEMA_QUERY_ONLY_NOT_PROVEN")
+          if storage.get("connection_total_changes") != 0:
+              raise SystemExit("EVENT_SCHEMA_WRITE_FREE_NOT_PROVEN")
+          event_types = storage.get("event_types") or {}
+          quality = storage.get("data_quality") or {}
+          print(
+              "ZCLOUD_EVENT_SCHEMA_GREEN "
+              f"rows={quality.get('total_rows')} "
+              f"event_types={event_types.get('total')} "
+              f"classified={event_types.get('classified')} "
+              f"unclassified={event_types.get('unclassified')} "
+              f"coverage_pct={event_types.get('classification_coverage_pct')} "
+              f"invalid_ts={quality.get('invalid_ts')} "
+              f"query_only={storage.get('query_only')} "
+              f"total_changes={storage.get('connection_total_changes')}"
+          )
+          PY

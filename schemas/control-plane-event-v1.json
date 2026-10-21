@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "schema_id": "zcloud.control-plane.event.v1",
+  "storage": {
+    "table": "runner_events",
+    "allow_unclassified_columns": false,
+    "columns": {
+      "id": {
+        "type": "INTEGER",
+        "privacy": "internal_key",
+        "required": true
+      },
+      "ts": {
+        "type": "TEXT",
+        "privacy": "safe_structured",
+        "required": true
+      },
+      "event": {
+        "type": "TEXT",
+        "privacy": "safe_structured",
+        "required": true
+      },
+      "target": {
+        "type": "TEXT",
+        "privacy": "never_export",
+        "required": true
+      },
+      "title": {
+        "type": "TEXT",
+        "privacy": "never_export",
+        "required": true
+      },
+      "generating": {
+        "type": "INTEGER",
+        "privacy": "safe_structured",
+        "required": true
+      },
+      "sending": {
+        "type": "INTEGER",
+        "privacy": "safe_structured",
+        "required": true
+      },
+      "reason": {
+        "type": "TEXT",
+        "privacy": "restricted_text",
+        "required": true
+      },
+      "tab_id": {
+        "type": "INTEGER",
+        "privacy": "never_export",
+        "required": true
+      },
+      "error": {
+        "type": "TEXT",
+        "privacy": "never_export",
+        "required": true
+      },
+      "project_id": {
+        "type": "TEXT",
+        "privacy": "safe_structured",
+        "required": true
+      },
+      "progress_at": {
+        "type": "TEXT",
+        "privacy": "safe_structured",
+        "required": true
+      },
+      "assistant_chars": {
+        "type": "INTEGER",
+        "privacy": "safe_structured",
+        "required": true
+      },
+      "worker_slot": {
+        "type": "INTEGER",
+        "privacy": "safe_structured",
+        "required": true
+      }
+    }
+  },
+  "canonical_projection": {
+    "version": 1,
+    "fields": {
+      "event_id": {
+        "source": "id",
+        "required": true
+      },
+      "observed_at": {
+        "source": "ts",
+        "required": true,
+        "format": "rfc3339"
+      },
+      "event_type": {
+        "source": "event",
+        "required": true,
+        "format": "kebab-case"
+      },
+      "project_id": {
+        "source": "project_id",
+        "required": false
+      },
+      "worker_slot": {
+        "source": "worker_slot",
+        "required": true,
+        "minimum": 1
+      },
+      "generating": {
+        "source": "generating",
+        "required": true,
+        "values": [
+          0,
+          1
+        ]
+      },
+      "sending": {
+        "source": "sending",
+        "required": true,
+        "values": [
+          0,
+          1
+        ]
+      },
+      "progress_at": {
+        "source": "progress_at",
+        "required": false,
+        "format": "rfc3339"
+      },
+      "assistant_chars": {
+        "source": "assistant_chars",
+        "required": false,
+        "minimum": 0
+      }
+    }
+  },
+  "privacy": {
+    "canonical_projection_classes": [
+      "safe_structured",
+      "internal_key"
+    ],
+    "restricted_classes": [
+      "internal_key",
+      "restricted_text",
+      "never_export"
+    ],
+    "never_export_fields": [
+      "target",
+      "title",
+      "tab_id",
+      "error"
+    ],
+    "free_text_fields": [
+      "target",
+      "title",
+      "reason",
+      "error"
+    ]
+  },
+  "event_type_contract": {
+    "allow_unclassified_types": true,
+    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    "families": {
+      "worker_lifecycle": [
+        "heartbeat",
+        "conversation-adopted",
+        "conversation-reset-requested",
+        "runner-started",
+        "runner-draining",
+        "runner-drained",
+        "runner-paused",
+        "runner-stopped",
+        "runner-config-updated",
+        "targets-loaded",
+        "injection-success",
+        "violentmonkey-missing-fallback"
+      ],
+      "generation_lifecycle": [
+        "prompt-sent",
+        "generation-started",
+        "generation-progress",
+        "generation-finished",
+        "generation-not-started",
+        "composer-stalled",
+        "stall-detected",
+        "stale-draft-replaced",
+        "push-skipped"
+      ],
+      "quality_recovery": [
+        "quality-recovery-requested",
+        "quality-retry-cleared",
+        "quality-retry-scheduled",
+        "startup-blocked",
+        "startup-waiting",
+        "send-blocked",
+        "auto-continue-blocked",
+        "thinking-effort-unavailable",
+        "thinking-effort-high-required",
+        "thinking-effort-high-verified",
+        "assignment-invalid",
+        "conversation-load-failed",
+        "runner-error",
+        "userscript-config-unavailable"
+      ],
+      "queue_coordination": [
+        "awaiting-vps-dispatch",
+        "vps-dispatch-ready",
+        "portfolio-queue-result",
+        "portfolio-work-project",
+        "scheduled-ready",
+        "scheduled-run-complete",
+        "worker-replacement-handoff-consumed"
+      ],
+      "autonomy_control": [
+        "autonomy-continue",
+        "autonomy-priority",
+        "autonomy-wait-vps",
+        "autonomy-wait-human",
+        "autonomy-complete",
+        "improvement-iteration-complete",
+        "improvement-review-green",
+        "improvement-review-open",
+        "improvement-audit-green",
+        "improvement-audit-failed"
+      ]
+    }
+  },
+  "semantic_target_types": [
+    "worker_started",
+    "task_claimed",
+    "task_completed",
+    "validation_failed",
+    "rollback",
+    "paused",
+    "resumed",
+    "resource_changed"
+  ],
+  "notes": [
+    "Version 1 contracts the existing runner_events row shape without changing writers.",
+    "Unclassified event types remain readable and are reported so migration can be incremental.",
+    "Free-text fields are never included in the canonical public projection.",
+    "Correlation IDs and immutable queue completion receipts require future writer/schema work."
+  ]
+}
