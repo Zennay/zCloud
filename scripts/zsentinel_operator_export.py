@@ -45,6 +45,7 @@ Vanaf deze map:
   python3 zsentinel_runner_report.py --format json --receipt T0.json --output inbox-opgenomen.json
   python3 zsentinel_runner_report.py --format json --t0 T0.json --t1 T1.json --output inbox-vergelijking.json
   python3 zsentinel_runner_report.py --format json --timeline T0.json T1.json T2.json --output inbox-historie.json
+  python3 zsentinel_operator_export.py --verify-dir PAKKET-B --compare-dir PAKKET-A --compare-format markdown
 
 Rapporten en de nieuwe gestructureerde JSON-eigenaarinbox worden create-only (0600)\ngemaakt in bestaande veilige doelmappen. JSON noemt bronmoment,\nbeperkte capaciteit/servicetellingen en maximaal drie handmatige acties.\nDe JSON-inbox activeert GEEN herstel of workflow. Ook Markdown kan direct\nvanuit de eenmalige live bron of twee historische bonnetjes worden gemaakt;\nook één opgeslagen privébon kan offline opnieuw als rapport worden getoond.\nHistorische bronmomenten blijven uitdrukkelijk niet actueel.
 Bij --previous is alleen de nieuwe meting actueel gelezen: de T0-bron blijft
@@ -238,7 +239,80 @@ def verify(bundle_dir):
                 or entry["bytes"] != len(content[name])
                 or entry.get("sha256") != hashlib.sha256(content[name]).hexdigest()):
             raise ValueError("operator source digest differs from manifest")
-    return {"verified_modules": len(SOURCES), "release_authorized": False}
+    return {
+        "verified_modules": len(SOURCES),
+        "release_authorized": False,
+        # The hashes below are derived from the actually opened bounded bytes,
+        # not from untrusted manifest labels or guessed release timestamps.
+        "digests": {name: hashlib.sha256(content[name]).hexdigest() for name in SOURCES},
+        "source_bytes": {name: len(content[name]) for name in SOURCES},
+    }
+
+
+def compare_packages(first_dir, second_dir):
+    """Compare two separately verified private source bundles, never execute code.
+
+    A and B are caller-selected snapshots: neither path nor local file metadata
+    establishes which release is newer or whether either is authorized/live.
+    """
+    first, second = verify(first_dir), verify(second_dir)
+    entries = []
+    for name in SOURCES:
+        a, b = first["digests"][name], second["digests"][name]
+        entries.append({
+            "module": name,
+            "changed": a != b,
+            "a_sha256": a,
+            "b_sha256": b,
+            "a_bytes": first["source_bytes"][name],
+            "b_bytes": second["source_bytes"][name],
+        })
+    return {
+        "schema": "zsentinel.private-operator-source-comparison.v1",
+        "scope": "two-locally-verified-private-manifests",
+        "source_order_proven": False,
+        "external_source_verified": False,
+        "release_authorized": False,
+        "installed_or_live_verified": False,
+        "changes": entries,
+        "changed_modules": sum(row["changed"] for row in entries),
+    }
+
+
+def render_comparison(data, format_name):
+    """Emit only fixed safe module basenames and checksums; never private paths."""
+    if format_name == "json":
+        return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2)
+    lines = [
+        "zSentinel · offline vergelijking van twee privé bronpakketten",
+        "Pakket A = --compare-dir, pakket B = --verify-dir.",
+        "A/B-volgorde zegt NIETS over releasevolgorde, CI, eigenaar of installatie.",
+        "Beide pakketten intern op bytes/SHA-256 gecontroleerd; niet extern vertrouwd.",
+        "Geen broncode uitgevoerd en geen dienst, claim, CI, merge of deploy gewijzigd.",
+        "",
+    ]
+    if format_name == "markdown":
+        lines = ["# " + lines[0], "", *lines[1:]]
+        lines += ["| Module | Vergelijking | A bytes | B bytes | A SHA-256 | B SHA-256 |",
+                  "| --- | --- | ---: | ---: | --- | --- |"]
+        for row in data["changes"]:
+            lines.append("| `" + row["module"] + "` | " +
+                         ("GEWIJZIGD" if row["changed"] else "identiek") +
+                         " | " + str(row["a_bytes"]) +
+                         " | " + str(row["b_bytes"]) +
+                         " | `" + row["a_sha256"] + "` | `" +
+                         row["b_sha256"] + "` |")
+    else:
+        for row in data["changes"]:
+            lines.append(("[GEWIJZIGD] " if row["changed"] else "[identiek]  ") +
+                         row["module"] + " · " + str(row["a_bytes"]) + " → " +
+                         str(row["b_bytes"]) + " bytes · SHA-256 " +
+                         row["a_sha256"][:16] + " → " + row["b_sha256"][:16])
+    lines += ["", "Gewijzigde modules: " + str(data["changed_modules"]) +
+              "/" + str(len(data["changes"])),
+              "Vergelijk daarna zelf exacte GitHub HEAD, verplichte checks, review en runtime-eigenaar.",
+              "Geen release- of herstelautorisatie."]
+    return "\n".join(lines)
 
 
 def main():
@@ -252,15 +326,25 @@ def main():
                         help="NEW 0700 bundle folder; no production operations")
     choice.add_argument("--verify-dir", type=Path,
                         help="READ ONLY check of an existing owner-private bundle")
+    parser.add_argument("--compare-dir", type=Path,
+                        help="Another EXISTING private bundle A, only with --verify-dir B")
+    parser.add_argument("--compare-format", choices=("text", "markdown", "json"),
+                        default="text", help="Offline operator comparison output")
     args = parser.parse_args()
+    if args.compare_dir is not None and args.verify_dir is None:
+        parser.error("--compare-dir requires --verify-dir for the second package")
     try:
-        if args.verify_dir is not None:
+        if args.compare_dir is not None:
+            info = compare_packages(args.compare_dir, args.verify_dir)
+        elif args.verify_dir is not None:
             info = verify(args.verify_dir)
         else:
             info = export(args.source_dir, args.output_dir)
     except (OSError, ValueError, UnicodeError, TypeError, KeyError):
         parser.exit(2, "Privé operatorpakket niet bruikbaar; controleer bron en map.\n")
-    if args.verify_dir is not None:
+    if args.compare_dir is not None:
+        print(render_comparison(info, args.compare_format))
+    elif args.verify_dir is not None:
         print("Privé bronpakket herkend: " + str(info["verified_modules"])
               + " modules stemmen overeen met manifest. Geen releaseautorisatie.")
     else:
