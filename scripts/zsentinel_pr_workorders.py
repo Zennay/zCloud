@@ -118,8 +118,14 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
             n = issue.get("issue_number")
             if type(n) is int and 0 < n < 100000000:
                 hinted_issues.add(n)
+    # A sampled list of paths is not a full repository clearance. Make
+    # project-level incomplete GitHub pagination, omitted collision pairs
+    # and focused peer-list truncation visible on each affected workorder.
+    project_scope_partial = (view.get("sample_complete") is not True or
+                             view.get("open_pr_snapshot_stable") is not True or
+                             view.get("source_truncated") is True)
     return (sorted(paths)[:MAX_PATHS],
-            len(paths) > MAX_PATHS or paths_limited,
+            len(paths) > MAX_PATHS or paths_limited or project_scope_partial,
             sorted(related)[:8], sorted(hinted_issues)[:MAX_ISSUE_HINTS])
 
 
@@ -204,6 +210,8 @@ def collect_workorders(board):
         paths, paths_cut, related, hints = _observed_overlap_paths(
             projects[project], url, head if pinned else None, repo,
             live_gate.get("sampled_file_overlaps_observed"))
+        if live_gate.get("sampled_file_overlaps_hidden"):
+            paths_cut = True
         # The summary can include an earlier file-scope sample, not
         # necessarily the second read's exact HEAD. Never surface those
         # links as positive overlap when the current HEAD could not be pinned.
