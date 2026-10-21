@@ -595,6 +595,7 @@ def main(argv=None):
     parser.add_argument("--source-url", help="canonical HTTPS GitHub/Notion source used by --template")
     parser.add_argument("--owner", help="known owner slug used by --template; omit if unknown")
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
+    parser.add_argument("--fail-on-hold", action="store_true", help="return exit code 2 when a valid evaluation contains any HOLD")
     parser.add_argument("--max-age-minutes", type=int, default=60,
                         help="maximum accepted observation age (1..1440; default 60)")
     args = parser.parse_args(argv)
@@ -607,6 +608,8 @@ def main(argv=None):
             parser.error("--template requires --project-id, --incident-id and --source-url")
         if args.format != "json":
             parser.error("--template emits JSON only")
+        if args.fail_on_hold:
+            parser.error("--fail-on-hold requires --input or --batch-input")
         try:
             report = template_request(args.template, args.project_id, args.incident_id,
                                       args.source_url, args.owner)
@@ -635,7 +638,7 @@ def main(argv=None):
             if len(encoded) > MAX_OUTPUT_BYTES:
                 raise PolicyInputError("output exceeds 128 KiB")
             sys.stdout.write(output)
-            return 0 if report["decision_counts"]["HOLD"] == 0 else 2
+            return 2 if args.fail_on_hold and report["decision_counts"]["HOLD"] > 0 else 0
         except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
             print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
             return 2
@@ -655,7 +658,7 @@ def main(argv=None):
         if len(encoded) > MAX_OUTPUT_BYTES:
             raise PolicyInputError("output exceeds 128 KiB")
         sys.stdout.write(output)
-        return 0
+        return 2 if args.fail_on_hold and report["decision"] == "HOLD" else 0
     except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
         print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
         return 2
