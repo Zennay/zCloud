@@ -2626,7 +2626,7 @@ De bron blijft begrensd: maximaal 200 zichtbare scope-conflictpaarkaarten en 24 
 De issue-/PR-cockpit, PR-bestandsscope-CSV-export, actuele PR-gatebon, PR-portfoliorapport en opgeslagen cross-window PR-collisionexport delen nu `scripts/zsentinel_private_report_writer.py` voor `--output`, in plaats van losse pathname-open/unlink-patronen. Deze routes:
 
 - vereist een bestaande directory die eigendom is van de huidige gebruiker en
-  niet door groep/anderen schrijfbaar is;
+  geen lees-, schrijf- of traverse-rechten voor groep/anderen heeft (dus `0700` of strikter);
 - controleert dat de directory-inode tussen de voorcontrole en de open gelijk
   bleef en gebruikt daarna die gepinde directory-FD;
 - weigert bestaande bestanden, symlinks en niet-reguliere doel-inodes;
