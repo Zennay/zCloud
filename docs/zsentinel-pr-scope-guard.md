@@ -1,5 +1,43 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 21 oktober · open PR-botsingen gericht afhandelen
+
+De bestaande privé merge-eerst werkbak heeft een complete, **handmatige**
+botsingswerkstroom voor issues met meer dan één opgeslagen PR-vermelding.
+
+1. **Botsingsopvolging** filtert de afzonderlijke bronissues op
+   `Nog niet beoordeeld`, `Eigenaar bepalen`, `Afstemmen met PR-eigenaren`
+   en `Opvolging vastgelegd (niet opgelost)`. Dit staat los van de
+   issuestatus en de PR-opvolging; het verandert geen GitHub-status.
+2. Boven de werkbak staat een teller met totaal zichtbaar, nog niet
+   beoordeeld, lokaal vastgelegde opvolging en resterende **zichtbare**
+   vervolgacties. **Volgende open botsingsopvolging** springt met
+   zichtbare toetsenbordfocus naar de volgende nog niet als `followup`
+   gemarkeerde bronissuekaart. De knop is uitgeschakeld als er in het
+   huidige filter geen vervolgactie over is. `Wis filters` herstelt
+   alle bronissues en reset de navigatie.
+3. **Download PR-botsingsdossier (Markdown)** blijft de **volledige**
+   beperkte broninventaris exporteren. De nieuwe **Download open afstemming
+   (Markdown)** levert juist een af te werken eigenaarslijst van issues
+   die **niet lokaal op `Opvolging vastgelegd`** staan, onafhankelijk
+   van zoekfilters en geselecteerde PR. Het bestand vermeldt het
+   oorspronkelijke totale aantal, het aantal meegenomen issues en de
+   lokaal gemarkeerde/overgeslagen items. De laatste zijn **niet**
+   noodzakelijk opgelost.
+4. **Download overdracht voor deze PR** neemt nu per gekoppeld bronissue
+   ook de lokale meervoudige-PR coördinatiestatus en privé-notitie mee.
+   Bij focus op een PR worden ook botsingsfilters gewist, zodat
+   niet-botsende gekoppelde bronissues niet verborgen blijven. De
+   oorspronkelijke bronlinks en exacte HEADs blijven ongewijzigd.
+
+De aparte lokale JSON-sessie behoudt dezelfde bron-token, v1/v2
+importgrenzen en bronvolgorde; de nieuwe navigatie en filters vereisen
+geen migratie. Er zijn **geen** extra GitHub-/Notion-reads of writes,
+geen actieve eigenaarclaims, automatische merges, downloads naar een
+server, CI-dispatches, QA-suites of productieacties. De werkbak toont
+historische bronobservaties: actuele CI, HEAD, onafhankelijke review,
+branch protection en bevoegde eigenaar moeten apart worden vastgesteld.
+
 ## 21 oktober · compleet botsingswerkblad voor PRs die hetzelfde issue noemen
 
 De bestaande offline privé **merge-eerst werkbak** bevat nu een afzonderlijk
