@@ -321,3 +321,18 @@ request policy remain in place.
 These behaviors are on the existing Activity product PR #1550 only. They
 confer no authorization for recovery actions, protected merges, checkout
 writes, credential access or production deployment.
+
+
+## 21 October — draft-preserving v2 operator reasons
+
+The Activity worker evidence renderer recognizes three fixed browser-blocker
+codes from existing v2 browser-worker [PR #1552](https://github.com/Zennay/zCloud/pull/1552):
+`composer-draft-preserved` (operator draft left unchanged),
+`composer-text-not-confirmed` (partial/altered prompt not sent), and
+`composer-changed-before-send` (content changed during the current lease
+read). All three map to actionable, fixed local human guidance rather than
+free-form browser or provider messages. A blocked event means **no authorized
+Send click**, not a new task, changed lease, verified generation or successful
+recovery. The dashboard and browser producer are **separate open PRs** and
+need their own independent review, exact-head CI and protected merges before
+runtime integration can be claimed.
