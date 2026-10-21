@@ -379,8 +379,6 @@ def render_delta(delta, format="text"):
                                  escape(conflict["relation"]) + "] (niet bewezen opgelost)</li>")
                 if row.get("scope_conflict_sample_preview_truncated"):
                     links.append("<li>Meer bestand/map-ancestorparen buiten zichtbare limiet.</li>")
-                if row.get("scope_conflict_comparison_unavailable"):
-                    links.append("<li>Bestand/map-historie onbekend: minstens één snapshot dateert van vóór deze bronvelden.</li>")
             if row["complete_open_pr_inventory_comparable"]:
                 for pair in row["added_collision_pairs_if_complete"]:
                     links.append("<li>Nieuwe waargenomen bestandsoverlap: " +
@@ -415,6 +413,8 @@ def render_delta(delta, format="text"):
             else:
                 links.append("<li>Verandering van verbonden PR-groepen ONBEKEND: " +
                              "minstens één snapshot was onvolledig.</li>")
+            if row.get("scope_conflict_comparison_unavailable"):
+                links.append("<li>Bestand/map-historie onbekend: minstens één snapshot mist de nieuwe bronvelden of was niet beschikbaar.</li>")
             sections.append("<section><h3>" + escape(row["project"]) + "</h3><p>" +
                             ("Twee volledige stabiele open-PR snapshots; claims NIET gecontroleerd."
                              if row["complete_open_pr_inventory_comparable"] else
