@@ -842,6 +842,13 @@ def html_view(data):
         + str(summary["local_candidate_external_gates"]) + " lokale kandidaten zonder externe toelating · "
         + str(summary["no_local_candidate_observed"]) + " zonder lokale taak.</p>"
     )
+    pressure = data.get("host_pressure")
+    host_notice = (
+        "<p class='warn' role='status'>"
+        + html.escape(pressure_sentence(pressure))
+        + "</p>"
+        if pressure is not None else ""
+    )
     return (
         "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -874,7 +881,7 @@ def html_view(data):
         "Portfolio recovery · operatorweergave</div><h1>Vier herstelbanen</h1>"
         "<p>Actueel lokaal bronmoment: "
         + html.escape(data["observed_utc"]) + "</p>"
-        + admission_banner + "</header><div class='grid'>"
+        + admission_banner + host_notice + "</header><div class='grid'>"
         + "".join(cards) + "</div><section class='notice'>"
         "<h2>Veilige herstelacties</h2><p>Elke kaart: probleem, actie en status. Alleen advies.</p>"
         "<div class='grid'>" + action_cards + "</div></section><section class='notice'>"
