@@ -1,0 +1,129 @@
+name: zGuard supplemental VPS quality proof
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/zguard-vps-quality-supplement.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-vps-quality-supplement-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify zGuard exact heads on permanent VPS
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 25
+    steps:
+      - name: Check out zCloud runner guard
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Check out zGuard history
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zGuard
+          ref: main
+          fetch-depth: 0
+          path: zguard-source
+          persist-credentials: false
+
+      - name: Verify supplemental zGuard quality heads
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          targets=(
+            "policy:39ec6ad61716530e5371ba7dbfb06f13cf5c78f8"
+            "portal:dca998663104d5e96dfac48166e01d6fd207a957"
+            "popup:9e7c2d76fd2b973db421b5a2a4d8728128e28801"
+            "hygiene:3e5a7db1f5e63077dac4cf3c11a261e2d4908864"
+            "docs:21816e232cb8d07b48de09f1472471c285dc2ded"
+            "containment:aa85c18c7daaffa390f32fa33e1c611e4c18721b"
+            "manifest:47dc81da54d57993ee3658ac5a71710d9191df6b"
+            "config:202cac88644d00e466eecc5cf9ad4026e5ec2553"
+            "proxy:78f7abd0319f3b50e6f7f35f88409e342047cb45"
+          )
+
+          tmp_root="$(mktemp -d)"
+          trap 'rm -rf "${tmp_root}"' EXIT
+
+          for target in "${targets[@]}"; do
+            mode="${target%%:*}"
+            target_ref="${target#*:}"
+
+            if ! target_sha="$(git -C zguard-source rev-parse "${target_ref}^{commit}" 2>/dev/null)"; then
+              git -C zguard-source fetch --no-tags origin "${target_ref}"
+              target_sha="$(git -C zguard-source rev-parse FETCH_HEAD)"
+            fi
+            test "${target_sha}" = "${target_ref}"
+
+            snapshot="${tmp_root}/${mode}-${target_sha}"
+            mkdir -p "${snapshot}"
+            git -C zguard-source archive "${target_sha}" | tar -x -C "${snapshot}"
+
+            printf 'ZGUARD_SUPPLEMENT mode=%s sha=%s host=%s runner=%s\n'               "${mode}" "${target_sha}" "$(hostname)" "${RUNNER_NAME:-unknown}"
+
+            (
+              cd "${snapshot}"
+              node tests/smoke.test.js
+              bash zbrowse/scripts/validate.sh
+
+              case "${mode}" in
+                policy)
+                  node tests/zbrowse.browser-policy.test.mjs
+                  ;;
+                portal)
+                  node tests/zbrowse.portal-accessibility.test.mjs
+                  ;;
+                popup)
+                  node tests/zguard.popup-accessibility.test.mjs
+                  node tests/zguard.popup-a11y-runtime.test.js
+                  ;;
+                hygiene)
+                  node tests/zbrowse.repository-hygiene.test.js
+                  hygiene_repo="${tmp_root}/gitignore-${target_sha}"
+                  mkdir -p "${hygiene_repo}/zbrowse"
+                  cp .gitignore "${hygiene_repo}/.gitignore"
+                  git -C "${hygiene_repo}" init -q
+                  touch "${hygiene_repo}/zbrowse/.env" "${hygiene_repo}/zbrowse/.env.example"
+                  git -C "${hygiene_repo}" check-ignore -q zbrowse/.env
+                  if git -C "${hygiene_repo}" check-ignore -q zbrowse/.env.example; then
+                    echo "zbrowse/.env.example must remain trackable" >&2
+                    exit 1
+                  fi
+                  ;;
+                docs)
+                  ;;
+                containment)
+                  node tests/zbrowse.runtime-containment.test.mjs
+                  node tests/zguard.permission-boundary.test.mjs
+                  ;;
+                manifest)
+                  node tests/zguard.manifest-integrity.test.js
+                  ;;
+                config)
+                  node tests/zbrowse.config-values.test.mjs
+                  ;;
+                proxy)
+                  node tests/zbrowse.request-ip.test.mjs
+                  ;;
+                *)
+                  echo "unknown validation mode: ${mode}" >&2
+                  exit 1
+                  ;;
+              esac
+
+              cd zbrowse/gateway
+              npm ci --omit=dev --ignore-scripts --no-audit
+              npm audit --omit=dev --audit-level=high
+            )
+          done
