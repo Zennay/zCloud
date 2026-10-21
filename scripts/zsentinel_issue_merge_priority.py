@@ -11,7 +11,7 @@ import re
 # These are candidate *references* only; GitHub issue state, reviews and
 # exact-head gates must still be observed independently.
 REF = re.compile(
-    r"\b(?:close[ds]?|fix(?:e[ds])?|resolve[ds]?|addresses|refs?)"
+    r"\b(?:close[ds]?|fix(?:e[ds])?|resolve[ds]?|addresses|refs?|relat(?:e[ds]?|ed)\s+to|see\s+also)"
     r"\s*:?\s+\#([1-9][0-9]{0,6})(?![0-9])"
     r"((?:\s*(?:,|&|\band\b|\bor\b)\s*\#(?:[1-9][0-9]{0,6})(?![0-9]))*)",
     re.IGNORECASE,
@@ -137,8 +137,12 @@ def link_candidates(pr_list, issues, repo=None):
     links = {}
     for item in pr_list:
         number = item.get("number")
-        if not isinstance(number, int):
+        if type(number) is not int or not (1 <= number <= 9999999):
             raise ValueError("invalid PR ref")
+        if number in links:
+            # A mutated provider source must not silently rewrite its PR
+            # priority evidence. Refresh the source rather than claim work.
+            raise ValueError("duplicate PR source")
         links[number] = reference_hints(item.get("title"), item.get("body"),
                                        issues, repo=repo)
     return links
