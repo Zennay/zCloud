@@ -346,6 +346,91 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
     return recommendations
 
 
+# Existing recovery priorities grouped by the exact immutable finding-code families.
+# Human owner handoff is derived only from current observation and validated
+# previous codes; it never decides releases, takes a claim or invokes recovery.
+RECOVERY_FAMILIES = {
+    "CAPACITY_FIRST": frozenset({
+        "LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED",
+        "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE", "SWAP_TELEMETRY_INCOMPLETE"}),
+    "RUNNER_OWNER": frozenset({
+        "ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE",
+        "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS",
+        "RUNNER_UNIT_TRANSITIONING", "RUNNER_LISTENER_DUPLICATED",
+        "RUNNER_WORKER_PROCESS_OBSERVED"}),
+    "WORKTREE_RECONCILE": frozenset({
+        "TRACKED_CHANGES", "UNTRACKED_FILES", "NOT_MAIN",
+        "CHECKOUT_STATUS_UNAVAILABLE"}),
+    "SOURCE_PROVENANCE": frozenset({
+        "MAIN_SHA_MISMATCH", "REMOTE_MAIN_UNBOUND", "CHECKOUT_UNAVAILABLE"}),
+    "ARCHIVE_ROUTE_OWNER": frozenset({
+        "ARCHIVE_COLD_TIER_NOT_READY", "ARCHIVE_WRITE_UNVERIFIED"}),
+    "WORKER_SAFE_IDLE_OWNER": frozenset({
+        "ACTIVE_WORK_REQUIRES_DRAIN", "WORKER_EVIDENCE_INCOMPLETE"}),
+}
+
+
+def operator_handoff(report: dict) -> list[dict[str, object]]:
+    """Bounded, source-derived problem/action/status cards; always advisory.
+
+    An omitted optional probe is not proof of recovery, and old snapshot notes
+    are never read into the cards. Each card names the current responsible
+    owner instead of attempting an automatic runner/worker recovery.
+    """
+    current = {row["code"]: row["severity"] for row in report["findings"]}
+    comparison = report.get("comparison") or {}
+    newly_observed = set(comparison.get("new_findings", []))
+    persisted = set(comparison.get("still_present", []))
+    escalated = {row["code"] for row in comparison.get("severity_changes", [])
+                 if row["current"] == "block"}
+    unknown_recovery = set(comparison.get("recovery_unverified_findings", []))
+    cards: list[dict[str, object]] = []
+
+    for recommendation in report["recovery_priorities"][:8]:
+        family = RECOVERY_FAMILIES.get(recommendation["code"], frozenset())
+        active = sorted(family & current.keys())
+        status = ("owner_release_gate" if recommendation["code"] == "EXTERNAL_RELEASE_GATES"
+                  else "active_blocker" if any(current[x] == "block" for x in active)
+                  else "active_warning" if active else "observation_incomplete")
+        if active and family & escalated:
+            trend = "escalated_to_blocker"
+        elif active and family & newly_observed:
+            trend = "newly_observed"
+        elif active and family & persisted:
+            trend = "still_observed"
+        else:
+            trend = "previous_comparison_unavailable" if not comparison else "no_confirmed_change"
+        cards.append({
+            "code": recommendation["code"],
+            "owner": recommendation["owner"],
+            "problem": recommendation["reason"],
+            "action": recommendation["next_action"],
+            "status": status,
+            "trend": trend,
+            "finding_codes": active,
+            "recovery_performed": False,
+            "release_authorized": False,
+        })
+    # Explicitly preserve vanished findings whose sources or authority cannot
+    # independently prove recovery. Never label them fixed or omit them.
+    for family_name, codes in RECOVERY_FAMILIES.items():
+        missing = sorted(codes & unknown_recovery)
+        if not missing:
+            continue
+        cards.append({
+            "code": family_name + "_RECOVERY_UNVERIFIED",
+            "owner": "Original incident owner / serialized release owner",
+            "problem": "Prior source blocker has not been independently re-observed or resolved.",
+            "action": "Repeat the same permitted read-only source observation and obtain original owner evidence; do not change services, queues or release state.",
+            "status": "recovery_unverified",
+            "trend": "source_missing_or_not_authoritative",
+            "finding_codes": missing,
+            "recovery_performed": False,
+            "release_authorized": False,
+        })
+    return cards[:16]
+
+
 def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: bool = False, archive_readiness: bool = False, worker_safety: bool = False) -> dict:
     findings: list[dict[str, str]] = []
     def mark(code: str, severity: str, detail: str) -> None:
