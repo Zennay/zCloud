@@ -335,8 +335,14 @@ def markdown(report):
         "",
         "- Repository: " + report["repository"],
         "- Observed: " + report["observed_at_utc"],
-        "- Open-issue source pages: " + str(report["pages_read"]) +
+        "- Recent open-issue pages: " + str(report["pages_read"]) +
         "/" + str(report["max_pages"]),
+        "- Recent window truncated: " +
+        str(report["recent_window_truncated"]),
+        "- Extra P0/P1 title recall performed: " +
+        str(report["priority_recall_performed"]),
+        "- Maximum bounded GETs: " +
+        str(report["read_get_attempt_upper_bound"]),
         "- Source rows scanned: " + str(report["source_rows_scanned"]),
         "- Provider reported open issues: " +
         str(
@@ -346,6 +352,7 @@ def markdown(report):
         ),
         "- GitHub search incomplete results: " +
         str(report["provider_incomplete_results"]),
+        "- P0/P1 title matches are navigation-only, not verified priority",
         "- Issues visible: " + str(report["total_issues_seen"]),
         "- Issues displayed: " + str(report["displayed_issues"]),
         "- Source partial/unknown: " + str(report["source_partial_or_unknown"]),
@@ -362,6 +369,20 @@ def markdown(report):
         "## Current issue links, P0/P1-first",
         "",
     ]
+    if report["priority_recall_performed"]:
+        lines.extend([
+            "### Targeted older P0/P1 issue recalls",
+            "",
+        ])
+        for scope in report["priority_recall_sources"]:
+            lines.append(
+                "- " + scope["priority"] + " title search: "
+                + str(scope["source_matches"]) + " provider matches, "
+                + str(scope["sampled_rows"]) + " sampled, truncated="
+                + str(scope["truncated"]) + ", provider incomplete="
+                + str(scope["provider_incomplete"]) + "; owner/priority UNKNOWN"
+            )
+        lines.append("")
     for row in report["issues"]:
         label = row["priority_from_explicit_labels"]
         hint = row["unverified_title_prefix_hint"]
@@ -371,6 +392,8 @@ def markdown(report):
             " · last issue update " + (row["updated_at_utc"] or "UNKNOWN") +
             " · no GitHub issue update for 72h: " +
             str(row["no_github_issue_update_for_72h"]) +
+            " · inbox sources: " +
+            ",".join(row["inbox_source_windows"]) +
             " · owner/repair/merge UNKNOWN"
         )
         lines.append(
@@ -429,12 +452,33 @@ def html_view(report):
         "<p>Explicit P0/P1 with no issue update for 72h: " +
         esc(report["explicit_p0_p1_without_github_issue_update_72h"]) +
         " · this is NOT proof of stalled workers.</p>",
+        "<p>Recent inventory truncated: " +
+        esc(report["recent_window_truncated"]) +
+        " · targeted older P0/P1 recall: " +
+        esc(report["priority_recall_performed"]) +
+        " · bounded GET attempts: " + esc(report["get_attempts"]) +
+        "/" + esc(report["read_get_attempt_upper_bound"]) + "</p>",
         "<p>Source coverage partial/UNKNOWN: " +
         esc(report["source_partial_or_unknown"]) +
         " · output truncated: " + esc(report["display_truncated"]) +
         " · source error: " + esc(report["source_error"] or "none") + "</p>",
         "</header><main><section><h2>P0/P1-first recent issues</h2><ol>",
     ]
+    if report["priority_recall_performed"]:
+        rows.append(
+            "<section><h2>Older priority-title recall coverage</h2>"
+            "<p>Search results only; P0/P1 text is not verified severity "
+            "and never establishes incident ownership or a repair.</p><ul>"
+        )
+        for scope in report["priority_recall_sources"]:
+            rows.append(
+                "<li>" + esc(scope["priority"]) + ": " +
+                esc(scope["source_matches"]) + " source matches, " +
+                esc(scope["sampled_rows"]) + " sampled, truncated " +
+                esc(scope["truncated"]) + ", provider incomplete " +
+                esc(scope["provider_incomplete"]) + "</li>"
+            )
+        rows.append("</ul></section>")
     for item in report["issues"]:
         rows.append(
             "<li><a rel='noopener noreferrer' href='" + esc(item["url"]) +
@@ -447,6 +491,8 @@ def html_view(report):
             esc(item["updated_at_utc"] or "UNKNOWN") +
             " · no issue update for 72h: " +
             esc(item["no_github_issue_update_for_72h"]) +
+            " · discovered in: " +
+            esc(", ".join(item["inbox_source_windows"])) +
             "<br><small>GitHub issue inactivity does NOT prove worker stall. "
             "Worker ownership, actual fix, required CI, "
             "protected-main merge and production: UNKNOWN.</small>"
