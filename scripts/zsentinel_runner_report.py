@@ -1372,8 +1372,24 @@ def save_private_incident_bundle(path, data):
     payload = json.loads(report_json)
     report_markdown = (render_private_handoff(data) if data.get("timeline") is not None
                        else render_private_immediate_handoff(data))
-    report_html = render(data)
     issue_draft = render_owner_issue_draft(data)
+    reference = hashlib.sha256(report_json.encode("utf-8")).hexdigest()[:24]
+    # Static links only to the same private directory; never to an external
+    # GitHub endpoint, nor to untrusted filenames or user-supplied URLs.
+    navigation = (
+        '<section class="panel"><h2>Bijbehorende privé overdracht</h2>'
+        '<p>Incidentreferentie: <code>' + reference + '</code></p>'
+        '<ul><li><a href="owner-handoff.md">Handmatige eigenaaroverdracht</a></li>'
+        '<li><a href="github-owner-issue-draft.md">Gerédigeerd GitHub-issueconcept</a></li>'
+        '<li><a href="owner-inbox.json">Machineleesbare incidentgegevens</a></li></ul>'
+        '<p>Deze links openen alleen lokale bestanden. Geen upload of herstelactie.</p>'
+        '</section>'
+    )
+    report_html = render(data)
+    if "<main>" not in report_html:
+        raise ValueError("Missing local report navigation insertion point")
+    report_html = report_html.replace("<main>", "<main>" + navigation, 1)
+    report_markdown = "Incidentreferentie: \`" + reference + "\`\\n\\n" + report_markdown
     rendered = {
         "incident.html": report_html.encode("utf-8"),
         "owner-handoff.md": report_markdown.encode("utf-8"),
