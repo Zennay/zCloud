@@ -1968,3 +1968,30 @@ vastgepinde commit-links; labels en bestandspaden worden HTML-ge-escaped.
 Ook dit formaat vereist een exclusief aangemaakt `0600` bestand en maximaal
 512 KiB output. Het verricht **geen** taakclaim, GitHub mutatie, CI-rerun,
 automatische merge, release of VPS-actie.
+
+## 20 oktober · Navigabele merge-first eigenaarwerkbak en HEAD-vaste botsingen
+
+De bestaande **private** `--format workorders-html` heeft nu een bovenliggende,
+toegankelijke inhoudsnavigatie naar de maximaal vier geselecteerde PR-kaarten.
+Kaarten tonen de relatieve actierang, **bronstatus op observatiemoment**, de
+exacte HEAD/basis, het aantal verborgen niet-groene checks, ontbrekende
+bestandsdekking en een uitklapbare handmatige release-checklist. Het dossier
+heeft een printweergave zonder navigatie en blijft volledig scriptvrij.
+Alleen de werkvolgorde van de bestaande bron wordt overgenomen: een
+versnapshotte kaart is geen actuele vrijgave.
+
+**Reparatie van een echte bronintegriteitsfout:** de recente bestandsbotsingslijst
+kon een PR-URL uit een oudere HEAD bevatten, terwijl de latere exact-HEAD
+gatewaarneming een nieuwe HEAD had gezien. De handoff sluit sindsdien de
+betreffende oude overlap-links én paden uit, tenzij de waargenomen HEAD van
+de botsingsbron **exact** overeenkomt. Bij ontbrekende of veranderde HEAD
+worden ook oudere gefocuste bestandssteekproeven en losse overlaplinks
+niet langer als positieve bronverbinding geëtaleerd. Incompleet blijft
+uitdrukkelijk incompleet en vereist herlezen; het betekent niet conflictvrij.
+
+**Issueverwijzingen zijn nu navigeerbaar maar nooit automatisch bewezen:**
+Markdown en HTML geven voor een maximaal twaalf getelde `#N`-tekstvermeldingen
+een canonieke eigen-repository `/issues/N`-link met expliciete waarschuwing dat
+het doel een PR, ontbrekend nummer of niet-relevant issue kan zijn.
+De operator controleert de echte identiteit/status zelf alvorens iets als
+opgelost te behandelen. Geen extra GitHub-aanroepen of automatische statusacties.
