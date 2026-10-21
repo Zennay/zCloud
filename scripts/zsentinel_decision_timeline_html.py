@@ -138,12 +138,18 @@ const queue=data.queue_pressure_history;
 $("queueStats").append(
  stat("Vergelijkbare bronparen",queue.compared_pairs),
  stat("Bronhiaten / niet vergelijkbaar",queue.unknown_pairs),
+ stat("Status=blocked vergelijkbare paren",queue.blocked_queue_compared_pairs),
+ stat("Status=blocked bronhiaat",queue.blocked_queue_unknown_pairs),
  stat("Aanhoudende eigenaarssignalen",queue.sustained_owner_attention_total),
  stat("Complete drievensterbronnen",queue.eligible_complete_three_window_sequences),
  stat("Actuele lease- of herstelstatus","NIET GECONTROLEERD")
 );
 for(const w of queue.windows){
  const q=w.queue;
+ const blocked=q.blocked_queue;
+ const blockedLabel=!blocked||blocked.total_items_observed===null?
+  " · status=blocked UNKNOWN":
+  " · status=blocked "+blocked.total_items_observed+" ("+blocked.coverage+")";
  $("queueWindows").append(line(
   "Wachtrijbron "+w.window,
   q.coverage==="not_supplied"?"NIET GELEZEN — geen nulclaim":(
@@ -156,7 +162,7 @@ for(const w of queue.windows){
     (q.totals.inconsistent_owner_lease_window_rows===null?
      "ONBEKEND":q.totals.inconsistent_owner_lease_window_rows)
     :" · BRON ONVOLLEDIG / HISTORISCH; niet als herstelbewijs gebruiken")
-  )
+  )+blockedLabel
  ));
 }
 for(const delta of queue.adjacent_comparisons){
@@ -172,6 +178,31 @@ for(const delta of queue.adjacent_comparisons){
    changes.inconsistent_owner_lease_window_rows)+
   (delta.owner_review_required ? " · EIGENAAR CONTROLEERT BRON": " · niet gelijk aan herstel")
  ));
+ const blocked=delta.blocked_queue_comparison;
+ $("queueDeltas").append(line(label+" · status=blocked",
+  !blocked||blocked.delta===null?
+   "ONBEKEND · bronhiaat of verouderde bron; geen nulclaim":
+   "rijen "+blocked.from_total+" → "+blocked.to_total+
+   " (Δ "+(blocked.delta>=0?"+":"")+blocked.delta+
+   ") · verandering is geen bewijs van herstel"));
+ const blockedDetails=el("details");
+ blockedDetails.append(el("summary",null,label+" · status=blocked per project"));
+ if(!blocked||blocked.project_deltas===null){
+  blockedDetails.append(el("p",null,"ONBEKEND: bron ontbreekt, is verouderd of projectverdeling onvolledig."));
+ }else if(!blocked.project_deltas.length){
+  blockedDetails.append(el("p",null,"Geen status=blocked projectgroepen in beide complete bronmomenten; geen herstelbewijs."));
+ }else{
+  const blockedList=el("ol");
+  for(const group of blocked.project_deltas){
+   const deltaCount=group.blocked_rows_delta_not_resolution_proof;
+   if(deltaCount===0)continue;
+   blockedList.append(el("li",null,group.priority+" · "+group.project_id+
+    " · status=blocked "+(deltaCount>=0?"+":"")+deltaCount+
+    " · eigenaar controleert actuele rij; geen automatische retry."));
+  }
+  blockedDetails.append(blockedList);
+ }
+ $("queueDeltas").append(blockedDetails);
  const details=el("details");
  details.append(el("summary",null,label+" · per project en prioriteit"));
  if(delta.project_deltas===null){
@@ -244,6 +275,8 @@ function queueMarkdown(){
   "- Bron SHA256: "+data.sources.map(x=>x.normalized_source_sha256).join(", "),
   "- Vergelijkbare vensters: "+history.compared_pairs,
   "- Niet-vergelijkbare vensters: "+history.unknown_pairs,
+  "- Status=blocked vergelijkbare paren: "+history.blocked_queue_compared_pairs,
+  "- Status=blocked bronhiaat: "+history.blocked_queue_unknown_pairs,
   "- Aanhoudende projectgroepen: "+history.sustained_owner_attention_total+
     (history.sustained_owner_attention_truncated?" (AFGEKAPT)":""),
   "- Complete drievensterreeksen: "+history.eligible_complete_three_window_sequences,"",
@@ -258,6 +291,23 @@ function queueMarkdown(){
  for(const row of history.adjacent_comparisons){
   const title="## Vensters "+row.from_window+" → "+row.to_window;
   out.push(title);
+  const blocked=row.blocked_queue_comparison;
+  if(!blocked||blocked.delta===null){
+   out.push("- Status=blocked: ONBEKEND door bronhiaat of verouderde bron.");
+  }else{
+   out.push("- Status=blocked rijen: "+blocked.from_total+" → "+blocked.to_total+
+    " (Δ "+(blocked.delta>=0?"+":"")+blocked.delta+
+    "); verandering bewijst geen taakherstel.");
+   if(blocked.project_deltas!==null){
+    for(const group of blocked.project_deltas){
+     if(group.blocked_rows_delta_not_resolution_proof===0)continue;
+     out.push("  - "+group.priority+" "+group.project_id+
+      " · status=blocked "+(group.blocked_rows_delta_not_resolution_proof>=0?"+":"")+
+      group.blocked_rows_delta_not_resolution_proof+
+      " · bevoegde eigenaar controleert actuele rij.");
+    }
+   }
+  }
   if(row.deltas===null){
    out.push("- Status: BRON ONBEKEND. Eigenaar verifieert originele queue/claims opnieuw.","");
    continue;
