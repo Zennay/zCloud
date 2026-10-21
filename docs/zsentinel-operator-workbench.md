@@ -24,6 +24,35 @@ python3 scripts/zsentinel_merge_first_owner_csv.py \
   --output ./private-unlinked-prs.csv
 ```
 
+### Exact één PR of bronissue als eigenaarspakket
+
+Voor een specifiek bestaand PR of een issue met meerdere PR-kandidaten kun je het
+volle toegelaten opgeslagen brondossier direct versmallen naar een concrete
+canonieke GitHub-identiteit:
+
+```sh
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --inspect-pr-url https://github.com/Zennay/zCloud/pull/1560 \
+  --format html --output ./private-one-pr-owner-packet.html
+
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --inspect-issue-url https://github.com/Zennay/zCloud/issues/1326 \
+  --format json --output ./private-one-issue-pr-links.json
+```
+
+`--inspect-pr-url` en `--inspect-issue-url` zijn afzonderlijk of samen met
+de repository-, prioriteits- en relatie-filters te gebruiken. Voor een
+issue blijven **alle** in deze bron waargenomen PR-kandidaten zichtbaar
+binnen de selectie; voor één PR worden zijn **alle** oorspronkelijke
+waargenomen bronissues bewaard. Een ongeldig of niet in de geselecteerde
+bron gevonden exact adres **weigert uitvoer vóór er een bestand ontstaat**,
+in plaats van een ogenschijnlijk vrijgegeven leeg eigenaarspakket.
+CSV, HTML en JSON leveren dezelfde exacte PR-/issuekeuze als metadata
+(`selection_pr_url`, `selection_issue_url`) naast totaal/excluded/timestamps.
+Ook deze dossiers blijven bron-only, zonder actuele claims of merge-toestemming.
+
 De keuzen voor `--record-type` zijn `all` (standaard), `existing-pr` (inclusief historische, niet-geassocieerde PR-kandidaten), `issue-without-pr` (uitsluitend issues zonder PR in deze beperkte bron) en `unlinked-pr` (alleen opgeslagen PR-kandidaten zonder gekoppeld bronissue). `--priority` accepteert `P0`, `P1`, `P2`, `Unspecified`. `--repository` vereist de canonieke `Zennay/<repo>` identiteit: afleiding gebeurt **uit de gevalideerde GitHub-URL**, nooit uit een interne projectslug.
 
 Elk exportformaat toont `source_record_count`, `selected_record_count`, `excluded_source_record_count`, de exacte filterkeuze en `selection_filter_applied`. CSV behoudt die gegevens per record, of in een expliciete metadata-only regel bij nul matches; HTML toont de bron- en selectieomvang ook zonder kaarten; JSON houdt het oorspronkelijke totale bronaantal naast de geselecteerde `record_count`. Dit voorkomt dat een operator een gefilterde lege lijst als portfolio-brede vrijgave interpreteert. Bron-UTC/SHA256, originele archiefmanifesten en ontbrekende batches blijven meegeleverd. De uitvoer behoudt dezelfde create-only/private, grootte-, Unicode- en CSV-formulebescherming als de reeds bestaande CLI.
