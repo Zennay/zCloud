@@ -771,3 +771,32 @@ edit and deliberately post any message to the correct real project. The
 read-only manifest verifier checks the optional fifth artifact's digest too
 and continues to support older four-file incident bundles. GitHub job
 recovery and production state remain **UNKNOWN** until separately proven.
+
+
+## Live source-gap handling and navigable incident handoff
+
+The live one-shot owner-action decision used by HTML, JSON, the redacted
+GitHub issue draft and `--bundle` now handles incomplete **CPU capacity**
+without throwing a comparison error: unknown/non-finite load, unknown or
+zero CPU cores, invalid swap/disk percentages, and invalid optional root
+free-space/inode percentages cause an owner-visible conservative **P0:
+capacity unknown or under pressure**. No workload is started, stopped,
+reshaped or declared recovered on such an observation. It does **not**
+replace the existing source-coverage, independent owner or GitHub-job gates.
+
+In newly generated coherent private incident bundles, `incident.html`
+offers static, relative navigation to three co-located files:
+`owner-handoff.md`, `github-owner-issue-draft.md` and
+`owner-inbox.json`. There is **no API call, remote URL, upload, browser
+script or auto-created GitHub issue**. The Markdown handoff and incident HTML
+show the identical 24-character `incident_ref` contained in
+`MANIFEST.json` and the redacted issue draft. Existing four-file bundles
+remain readable by `--verify-bundle`; older HTML files are not modified.
+
+Historical saved-receipt HTML now explicitly identifies its source as
+**historical owner-private evidence**, rather than implying a new live
+Linux/systemd observation. No offline content is evidence of current GitHub
+assignment, active claim, passed CI or a production release.
+
+All of these changes remain *PR-branch source code* until exact-head required
+CI, independent review and protected-main/release authorization complete.
