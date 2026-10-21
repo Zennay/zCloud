@@ -87,8 +87,9 @@ def _markdown(value):
 
 
 def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None):
-    """Only observed shared filenames, including an older focused PR."""
+    """Return exact shared files and distinct file/directory scope conflicts."""
     paths, related, hinted_issues = set(), set(), set()
+    scope_conflicts = []
     paths_limited = False
     # An unstable before/after GitHub inventory is not evidence of a
     # collision at the selected exact HEAD. Suppress *positive* edges,
@@ -133,6 +134,111 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
                               source.get("other_pr_file_list_incomplete") is True)
             for path in source.get("shared_paths_preview", [])[:12]:
                 paths.add(edit_path(path))
+    # File/directory collisions are a separate relation from exact shared
+    # filenames. Bind every positive relation to the selected PR's exact HEAD.
+    relation_map = {
+        "left_file_conflicts_with_right_descendant":
+            "selected_file_conflicts_with_peer_descendant",
+        "right_file_conflicts_with_left_descendant":
+            "peer_file_conflicts_with_selected_descendant",
+    }
+    if stable_scope and head is not None:
+        for pair in view.get("shown_path_scope_collision_pairs", [])[:80]:
+            if (type(pair) is not dict or type(pair.get("left")) is not dict
+                    or type(pair.get("right")) is not dict
+                    or type(pair.get("path_conflicts")) is not list):
+                paths_limited = True
+                continue
+            left, right = pair["left"], pair["right"]
+            left_url = _same_repo_url(left.get("url"), repository)
+            right_url = _same_repo_url(right.get("url"), repository)
+            if left_url == pr_url:
+                selected, peer, selected_side = left, right, "left"
+            elif right_url == pr_url:
+                selected, peer, selected_side = right, left, "right"
+            else:
+                continue
+            if selected.get("head_sha") != head:
+                paths_limited = True
+                continue
+            peer_url = _same_repo_url(peer.get("url"), repository)
+            peer_head = peer.get("head_sha")
+            if peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None:
+                paths_limited = True
+                continue
+            related.add(peer_url)
+            for conflict in pair["path_conflicts"][:24]:
+                if type(conflict) is not dict:
+                    paths_limited = True
+                    continue
+                left_path, right_path = conflict.get("left_path"), conflict.get("right_path")
+                relation = conflict.get("relation")
+                try:
+                    left_path, right_path = edit_path(left_path), edit_path(right_path)
+                except (TypeError, ValueError):
+                    paths_limited = True
+                    continue
+                if relation not in relation_map:
+                    paths_limited = True
+                    continue
+                if selected_side == "left":
+                    selected_path, peer_path = left_path, right_path
+                    normalized_relation = relation_map[relation]
+                else:
+                    selected_path, peer_path = right_path, left_path
+                    normalized_relation = relation_map[
+                        "right_file_conflicts_with_left_descendant"
+                        if relation == "left_file_conflicts_with_right_descendant"
+                        else "left_file_conflicts_with_right_descendant"]
+                scope_conflicts.append({
+                    "peer_pr_url": peer_url, "peer_head_sha": peer_head,
+                    "selected_path": selected_path, "peer_path": peer_path,
+                    "relation": normalized_relation,
+                    "source": "stable_open_pr_scope_collision_sample",
+                })
+    # The explicit focused-PR gate read can also report ancestor collisions
+    # with a stable, separately pinned peer; retain its exact selected/peer paths.
+    if head is not None and stable_scope:
+        for source in (direct_overlaps or [])[:16]:
+            if type(source) is not dict or not source.get("path_conflict_count_observed"):
+                continue
+            peer_url = _same_repo_url(source.get("other_pr_url"), repository)
+            peer_head = source.get("other_pr_head_when_read")
+            if peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None:
+                paths_limited = True
+                continue
+            for conflict in source.get("path_conflict_examples", [])[:12]:
+                if type(conflict) is not dict:
+                    paths_limited = True
+                    continue
+                try:
+                    selected_path = edit_path(conflict.get("selected_path"))
+                    peer_path = edit_path(conflict.get("other_path"))
+                except (TypeError, ValueError):
+                    paths_limited = True
+                    continue
+                relation = {
+                    "target_file_conflicts_with_descendant_path":
+                        "selected_file_conflicts_with_peer_descendant",
+                    "changed_file_is_ancestor_of_target":
+                        "peer_file_conflicts_with_selected_descendant",
+                }.get(conflict.get("relation"))
+                if relation is None:
+                    paths_limited = True
+                    continue
+                related.add(peer_url)
+                scope_conflicts.append({
+                    "peer_pr_url": peer_url, "peer_head_sha": peer_head,
+                    "selected_path": selected_path, "peer_path": peer_path,
+                    "relation": relation,
+                    "source": "focused_pr_overlap_with_stable_inventory",
+                })
+    deduped_scope = {}
+    for row in scope_conflicts:
+        key = (row["peer_pr_url"], row["peer_head_sha"], row["selected_path"],
+               row["peer_path"], row["relation"])
+        deduped_scope[key] = row
+    scope_conflicts = [deduped_scope[key] for key in sorted(deduped_scope)[:24]]
     # Every title/body issue mention is an operator search hint, even when
     # no second PR mentions the same issue. Match exact observed PR HEAD to
     # avoid attaching stale issue text from a changed source branch.
@@ -159,7 +265,8 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
                              view.get("source_truncated") is True)
     return (sorted(paths)[:MAX_PATHS],
             len(paths) > MAX_PATHS or paths_limited or project_scope_partial,
-            sorted(related)[:8], sorted(hinted_issues)[:MAX_ISSUE_HINTS])
+            sorted(related)[:8], sorted(hinted_issues)[:MAX_ISSUE_HINTS],
+            scope_conflicts)
 
 
 
@@ -368,7 +475,7 @@ def collect_workorders(board):
                 raise ValueError("owner workorder exact-HEAD/base mismatch")
         elif live_gate.get("status") == "current_exact_pr_head_and_sample_match":
             raise ValueError("current gate receipt lost exact HEAD in workorder")
-        paths, paths_cut, related, hints = _observed_overlap_paths(
+        paths, paths_cut, related, hints, scope_conflicts = _observed_overlap_paths(
             projects[project], url, head if pinned else None, repo,
             live_gate.get("sampled_file_overlaps_observed"))
         if live_gate.get("sampled_file_overlaps_hidden"):
@@ -571,6 +678,7 @@ def collect_workorders(board):
             "check_links_hidden": int(item.get("non_green_jobs_hidden", 0)),
             "overlap_paths": [_markdown(p) for p in paths],
             "overlap_paths_hidden": paths_cut,
+            "scope_path_conflicts": scope_conflicts,
             "related_prs": related, "unverified_issue_hints": hints,
             "peer_head_evidence": peer_evidence,
             "peer_head_evidence_partial": peer_partial,
