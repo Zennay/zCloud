@@ -593,7 +593,8 @@ def _discover_issue_timeline_prs(issue_url, *, token=None):
 
 
 def observe_candidate_prs(issue, *, token=None, source_case=None,
-                          discover_unlinked=False, focus_pr_number=None):
+                          discover_unlinked=False, focus_pr_number=None,
+                          live_issue_only=False):
     """Read exactly an admitted issue's referenced PRs; leave each result untrusted."""
     candidates = issue.get("candidate_prs", [])
     if not isinstance(candidates, list) or len(candidates) > MAX_CANDIDATES:
@@ -606,21 +607,39 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         raise GitHubReadError(
             "issue has no sampled PR; use explicit bounded discovery or refresh source"
         )
-    if (type(source_case) is not dict
-            or source_case.get("policy") != "zsentinel-recovery-case-handoff-v1"):
-        raise GitHubReadError(
-            "original admitted recovery-case provenance required for live PR review"
-        )
-    provenance = {
-        "case_export_utc": source_case["source_generated_at_utc"],
-        "issue_source_observed_utc": source_case["source_issues_observed_at_utc"],
-        "case_stale_at_import": source_case["source_case_stale"],
-        "issue_source_stale_at_import": source_case["source_issues_stale"],
-        "issue_sample_truncated": source_case["source_issues_truncated"],
-        "historical_candidate_set_is_complete": False,
-        "current_issue_status_verified": False,
-        "current_issue_pr_link_verified": False,
-    }
+    if live_issue_only:
+        if source_case is not None or candidates or not discover_unlinked:
+            raise GitHubReadError(
+                "direct live issue inspection needs no saved case and bounded discovery"
+            )
+        provenance = {
+            "case_export_utc": None,
+            "issue_source_observed_utc": None,
+            "case_stale_at_import": None,
+            "issue_source_stale_at_import": None,
+            "issue_sample_truncated": None,
+            "historical_candidate_set_is_complete": False,
+            "current_issue_status_verified": False,
+            "current_issue_pr_link_verified": False,
+            "historical_case_provided": False,
+        }
+    else:
+        if (type(source_case) is not dict or source_case.get("policy") !=
+                "zsentinel-recovery-case-handoff-v1"):
+            raise GitHubReadError(
+                "original admitted recovery-case provenance required for live PR review"
+            )
+        provenance = {
+            "case_export_utc": source_case["source_generated_at_utc"],
+            "issue_source_observed_utc": source_case["source_issues_observed_at_utc"],
+            "case_stale_at_import": source_case["source_case_stale"],
+            "issue_source_stale_at_import": source_case["source_issues_stale"],
+            "issue_sample_truncated": source_case["source_issues_truncated"],
+            "historical_candidate_set_is_complete": False,
+            "current_issue_status_verified": False,
+            "current_issue_pr_link_verified": False,
+            "historical_case_provided": True,
+        }
     # Validate source identity before indexing any untrusted saved
     # recovery-case fields. Malformed input must fail as GitHubReadError.
     source_urls = issue.get("source_urls")
@@ -962,6 +981,10 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         "schema_version": 1, "policy": "zsentinel-live-pr-candidate-readonly-v1",
         "issue_project": issue["project_id"], "issue_id": issue["incident_id"],
         "original_issue_url": source_url,
+        "observation_mode": (
+            "direct_live_issue_readonly" if live_issue_only
+            else "saved_case_plus_live_readonly"
+        ),
         "current_issue": current_issue,
         "historical_case_provenance": provenance,
         "observed_at_utc": utc(),
@@ -1004,6 +1027,31 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
         "action_executed": False,
         "no_candidate_does_not_prove_no_existing_pr": True,
     }
+
+
+def observe_live_issue(issue_url, *, token=None, focus_pr_number=None):
+    """Live issue PR desk without an invented historical case.
+
+    Strict Zennay issue identity, one GitHub issue GET and bounded discovery.
+    There is no Notion, queue, lease, claim, merge or deployment side effect.
+    """
+    if not isinstance(issue_url, str):
+        raise GitHubReadError("direct issue source must be a canonical URL")
+    match = ISSUE_URL.fullmatch(issue_url)
+    if not match:
+        raise GitHubReadError("direct issue source must be a Zennay GitHub issue")
+    _, repo, number = match.groups()
+    issue = {
+        "project_id": repo,
+        "incident_id": "issue-" + number,
+        "source_urls": [issue_url],
+        "candidate_prs": [],
+    }
+    return observe_candidate_prs(
+        issue, token=token, source_case=None, discover_unlinked=True,
+        focus_pr_number=focus_pr_number, live_issue_only=True,
+    )
+
 
 
 def owner_html(report):
