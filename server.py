@@ -3479,6 +3479,23 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
                       (receipt,ts,queue_id))
         if cur.rowcount!=1:
             return {'resumed':False,'queue_id':queue_id,'reason':'state-changed'}
+        project_runtime.record_receipt(
+            c,
+            str(row['project_id']),
+            phase=str(project.get('phase') or ''),
+            action=f"Operator resumed parked task {queue_id}",
+            ci_status='queued',
+            blocker='',
+            next_gate=str(row['title'] or ''),
+            source='portfolio_queue_resume_blocked',
+            observed_at=ts,
+            evidence={
+                'queue_id':queue_id,
+                'actor':actor,
+                'operator_attestation':note,
+                'dependency_independently_verified':False,
+            },
+        )
     # This is an explicit operator attestation, not an independent dependency check.
     # Normal scheduler capacity, lease, project-cap and memory guards still apply.
     return {
