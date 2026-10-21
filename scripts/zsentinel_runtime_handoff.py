@@ -7,6 +7,7 @@ even an apparent free slot, expired lease or green CI is NOT authorization.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import re
 import unicodedata
@@ -1637,8 +1638,9 @@ def markdown(report):
 
 
 CSV_FIELDS = (
-    "record_type", "handoff_schema", "source_created_at_utc",
-    "source_coverage_json", "observed_action_card_count", "items_truncated",
+    "record_type", "handoff_schema", "source_report_sha256",
+    "source_created_at_utc", "source_coverage_json",
+    "observed_action_card_count", "items_truncated",
     "all_sources_complete", "historical_recheck_count",
     "historical_rechecks_truncated", "priority", "project", "kind",
     "next_step", "evidence", "issue_url", "existing_pr_urls",
@@ -1694,8 +1696,12 @@ def csv_export(report):
     stamp = _short(report.get("created_at_utc"), 40)
     coverage_json = json.dumps(
         coverage, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    source_report_sha256 = hashlib.sha256(json.dumps(
+        report, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
     metadata = {
         "handoff_schema": SCHEMA,
+        "source_report_sha256": source_report_sha256,
         "source_created_at_utc": stamp,
         "source_coverage_json": coverage_json,
         "observed_action_card_count": len(items),
