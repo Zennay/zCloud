@@ -423,3 +423,64 @@ beveiligings-/infrastructuurblokkades nooit als afgevinkt verdwijnen.
 
 Geen queueclaim, CI-rerun, PR-merge, workflowdispatch, accountbetaling,
 runnerrestart of live deploy wordt door deze eigenaarsoverdracht uitgevoerd.
+
+
+## 21 oktober · actuele PR-HOLD vergelijken met vorige privé-bron (geen nieuwe GET)
+
+De bestaande one-shot live-cockpit en bundle-refresh ondersteunen nu
+`--previous-pr-report /pad/ouder.json`. Dit is één **bestaand privaat,
+ongewijzigd** JSON-rapport uit een eerdere `--inspect-existing-prs`
+(of `--read-existing-prs`) run. Het wordt gelezen via de bestaande
+begrensde, inode-gecontroleerde no-follow bestandslezer; er wordt
+**geen extra GitHub-aanvraag** gedaan voor de vergelijking.
+
+Een operator kan nu twee verschillende bronmomenten vergelijken:
+
+```sh
+umask 077
+python3 scripts/zsentinel_live_cockpit.py \
+  --github-only --project cloud \
+  --inspect-existing-prs --existing-pr cloud:1563 \
+  --format json --output /secure/operator-only/pr-vorige-bron.json
+
+# Later, na een nieuwe actuele source-observatie:
+python3 scripts/zsentinel_live_cockpit.py \
+  --github-only --project cloud \
+  --inspect-existing-prs --existing-pr cloud:1563 \
+  --previous-pr-report /secure/operator-only/pr-vorige-bron.json \
+  --format desk --desk-output /secure/operator-only/pr-actueel-nieuw.html \
+  --handoff-output /secure/operator-only/pr-vervolgactie-nieuw.md
+```
+
+Dezelfde optie werkt op `scripts/zsentinel_recovery_refresh.py` met
+`--read-existing-prs`, inclusief privé `--format json`, `text`,
+`html` en `desk`. Vorige en huidige bronnen mogen niet dezelfde
+bestandsnaam/inode zijn; oude rapporten worden niet overschreven.
+
+De vergelijking is gebonden aan de **SHA256 van de oude bron**, maximaal
+drie bestaande PR’s per bron, canonieke URLs en exact waargenomen HEAD.
+Ze maakt in het huidige JSON `pr_gate_continuity` zichtbaar.
+Offline HTML/desk bevat de bronwijzigingen direct naast het merge-first
+PR-overzicht; privé tekst en de bestaande P0-eerst eigenaarshandoff
+tonen welke exacte PR-HEAD of menselijke gate-actie veranderde.
+Markdown, HTML, JSON en CSV-handoff behouden hun bestaande
+releasebeperkingen; de CSV-v1 kolommen blijven gelijk.
+
+**Belangrijke interpretatie:**
+- HEAD veranderd: controleer de exacte verplichte CI/reviews opnieuw;
+  dit is géén nieuwe mergeautorisatie.
+- Zelfde HEAD en zelfde huidige menselijke vervolgstap: alleen deze
+  twee beperkte bronvelden lijken gelijk; het zegt **niets** over andere
+  statuschecks, eigenaarclaims of productieherstel.
+- Wel in het huidige, niet in het vorige venster: **niet** automatisch
+  een nieuwe PR.
+- Niet meer in het huidige venster: **niet** automatisch gemerged of
+  gesloten. Volledige backlog- en eigenaarinventaris blijven onbekend.
+- API-auth/rate-denial, incomplete bron, ontbrekende of onvergelijkbare
+  brontijden: verandering **ONBEKEND** in plaats van een fictieve 'geen
+  veranderingen'-bevestiging.
+
+De vergelijking verandert geen Notion-statussen, claimlease,
+GitHub-review of PR, CI-run, queue, VPS-service, worker, billing
+of deployment. Bestaande exact-HEAD CI, independent review,
+branch protection en bevoegde releasehouder blijven vereist.
