@@ -1,5 +1,29 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 21 oktober · bron-HEAD direct in issue→PR-overdracht
+
+De bestaande **issue-first merge-werkbak** toont nu bij de primaire PR,
+iedere alternatieve bestaande PR en elke gegroepeerde PR één naar de originele
+GitHub-commit verwijzende **waargenomen bron-HEAD**, mits de tweede exacte
+PR-HEAD-bronlezing stabiel was, het SHA canoniek is en het issue-/bronvenster
+niet verouderd of onderling onsamenhangend is. Bij ontbrekende of onzekere
+bron blijft **Bron HEAD ONBEKEND** staan; er wordt geen veilige current-HEAD,
+CI-success of mergevrijgave geconstrueerd.
+
+Wanneer meerdere bronissues dezelfde PR noemen, moeten hun HEAD-receipts
+identiek zijn voordat de werkgroep één link mag tonen. Tegenstrijdige data
+faalt gesloten. Het privé export-/herimporttoken bindt nu tevens aan deze
+broncommits en aan alle bron-PR-kandidaten; een oude privé-opvolging kan niet
+stilzwijgend aan een andere bron-HEAD gekoppeld worden. Legacy-sessies
+behouden uitsluitend hun bestaande beperkte oude broncontract.
+
+Dit is uitsluitend **navigatie van opgeslagen, read-only GitHub-evidence**.
+De bron kan inmiddels gewijzigd zijn. Huidige claim, exact-head verplichte
+CI, onafhankelijke review, main-branch protection en release-eigenaarschap
+blijven afzonderlijk bij GitHub/Notion te controleren. De functie wijzigt
+geen claims, workflows, PRs, runner, live queue of productie; er zijn geen
+handmatige QA- of regressiesuites geschreven of gedraaid.
+
 ## Wat dit voor de operator oplevert
 
 Voor een voorgestelde codewijziging toont het programma uit welke **momenteel open GitHub-pullrequests** dezelfde bestandspaden worden aangepast. Het is een read-only broncontrole **vóór** de eigenlijke implementatie: je kunt de bestaande PR openen en een overlap gericht afstemmen. Dit is geen eigenaar-, claim-, release- of mergebesluit.
