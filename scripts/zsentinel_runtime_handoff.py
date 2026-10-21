@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from html import escape
 from datetime import datetime, timezone
 from zsentinel_selection_holds import admit as admit_selection_holds
@@ -23,10 +24,21 @@ SAFE_PR = re.compile(r"^https://github\.com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-
 
 
 def _short(value, limit=MAX_TEXT):
+    """Bound source text while making invisible Unicode controls observable."""
     if not isinstance(value, str):
         return "ONBEKEND"
-    return " ".join(value.split())[:limit] or "ONBEKEND"
-
+    visible = []
+    for char in value:
+        if char in "\\t\\r\\n":
+            visible.append(" ")
+            continue
+        category = unicodedata.category(char)
+        if (category in ("Cc", "Cs", "Cf", "Zl", "Zp")
+                or (char.isspace() and char != " ")):
+            visible.append("⟦U+%04X⟧" % ord(char))
+        else:
+            visible.append(char)
+    return " ".join("".join(visible).split())[:limit] or "ONBEKEND"
 
 def _project(value):
     if not isinstance(value, str) or not SAFE_PROJECT.fullmatch(value):
@@ -976,12 +988,10 @@ def _pr_gate_brief(card):
 def _md(value, limit=MAX_TEXT):
     """Neutralize untrusted GitHub/worker text inside Markdown handoffs."""
     value = _short(value, limit)
-    for marker in ("\\", chr(96), "*", "_", "{", "}", "[", "]",
-                   "(", ")", "<", ">", "#", "!", "|"):
-        value = value.replace(marker, "\\" + marker)
+    for marker in ("\\\\", chr(96), "*", "_", "{", "}", "[", "]",
+                   "(", ")", "<", ">", "#", "!", "|", "~"):
+        value = value.replace(marker, "\\\\" + marker)
     return value
-
-
 
 def _current_queue_owner_note(report):
     """One bounded first-run queue read, never an owner or lease-release proof."""
