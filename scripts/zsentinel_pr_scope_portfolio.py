@@ -408,6 +408,14 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "observed_independent_exact_head_approvals":
                     gate["observed_independent_exact_head_approvals"],
                 "exact_head_review_evidence_sha256": gate["exact_head_review_evidence_sha256"],
+                "pending_individual_review_requests_observed":
+                    gate["pending_individual_review_requests_observed"],
+                "pending_team_review_requests_observed":
+                    gate["pending_team_review_requests_observed"],
+                "pending_review_requests_stable_on_second_read":
+                    gate["pending_review_requests_stable_on_second_read"],
+                "pending_review_request_evidence_sha256":
+                    gate["pending_review_request_evidence_sha256"],
                 "observed_exact_head_changes_requested":
                     gate["observed_exact_head_changes_requested"],
                 "human_next_gate_step": gate["human_next_gate_step"],
@@ -564,6 +572,10 @@ GATE_LABELS = {
     "inspect_incomplete_current_head_gate_source": "Controleer ontbrekende huidige CI/reviewbron.",
     "inspect_current_head_failed_checks_with_owner": "Laat PR-eigenaar mislukte CI herstellen.",
     "wait_for_existing_current_head_checks": "Bestaande exacte-head CI loopt nog.",
+    "owner_finish_draft_before_merge_review": "De PR-eigenaar maakt concept reviewklaar.",
+    "owner_resolve_current_base_conflicts": "Los bestaand mergeconflict op met de PR-eigenaar.",
+    "wait_for_github_mergeability_evaluation": "GitHub mergeability is nog onbekend.",
+    "wait_for_requested_independent_review": "Reviewverzoek is al uitgezet; wacht op onafhankelijke beslissing.",
     "owner_address_exact_head_review_changes": "PR-eigenaar moet reviewwijzigingen verwerken.",
     "verify_missing_current_head_checks_and_rules": "Controleer branchregels en ontbrekende CI.",
     "request_independent_current_head_review": "Vraag onafhankelijke review op actuele HEAD.",
@@ -602,10 +614,13 @@ def current_gate_blocker(row):
     if (row["check_runs_total_observed"] == 0
             and row["legacy_contexts_observed"] == 0):
         return "no_ci_check_or_legacy_context_seen"
-    if row["observed_independent_exact_head_approvals"] < 1:
-        return "independent_review_not_seen"
     if row["github_mergeable_boolean_observed"] is None:
         return "github_mergeability_not_determined"
+    if row["observed_independent_exact_head_approvals"] < 1:
+        if (row["pending_individual_review_requests_observed"] or
+                row["pending_team_review_requests_observed"]):
+            return "independent_review_requested_waiting"
+        return "independent_review_not_seen"
     return "branch_rules_ownership_and_release_not_verified"
 
 
@@ -620,7 +635,9 @@ BLOCKER_DESCRIPTIONS = {
     "review_changes_requested": "Er zijn op de exacte HEAD wijzigingen gevraagd.",
     "checks_still_running": "Bestaande Check Runs of legacy-statuscontexten lopen nog.",
     "check_source_not_terminal": "CI-status kon niet als volledig afgerond worden bevestigd.",
-    "independent_review_not_seen": "Geen onafhankelijke approval voor deze exacte HEAD gezien.",
+    "independent_review_not_seen": "Geen onafhankelijke approval of open reviewverzoek voor deze exacte HEAD gezien.",
+    "independent_review_requested_waiting":
+        "Onafhankelijke review is al aangevraagd; beslissing ontbreekt.",
     "branch_rules_ownership_and_release_not_verified":
         "Branch protection, eigenaarschap en release-toestemming niet bevestigd.",
 }
@@ -713,6 +730,11 @@ def current_gate_lines(board, markdown=False):
             str(gate["observed_exact_head_changes_requested"]) +
             " · onafhankelijke approvals gezien " +
             str(gate["observed_independent_exact_head_approvals"]) +
+            " · review aangevraagd bij " +
+            str(gate["pending_individual_review_requests_observed"]) +
+            " persoon/personen en " +
+            str(gate["pending_team_review_requests_observed"]) +
+            " team(s); aanvragen zijn GEEN approvals" +
             " · vervolg: " + GATE_LABELS.get(
                 gate["human_next_gate_step"], "Bron onvolledig; actuele gates inspecteren."))
         lines.append("  Laatste poging per checknaam/app: " +
@@ -758,6 +780,7 @@ ATTENTION_RANK = {
     "check_source_not_terminal": 2,
     "no_ci_check_or_legacy_context_seen": 2,
     "independent_review_not_seen": 3,
+    "independent_review_requested_waiting": 3,
     "github_mergeability_not_determined": 3,
     "branch_rules_ownership_and_release_not_verified": 4,
 }
