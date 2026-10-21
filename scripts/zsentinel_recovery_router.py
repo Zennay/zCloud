@@ -1070,7 +1070,7 @@ def plan(bundle, previous=None, now=None):
         key for key, entry in next_state.items()
         if entry["status"] == "exact_job_completed_source_reconciled"
     }
-    routes, claims_verified, branches, branch_suppressed, dependency_holds = eligible_tasks(
+    routes, routing_inventory_complete, branches, branch_suppressed, dependency_holds = eligible_tasks(
         bundle, blocked, now, capacity, exact_reconciled_dependencies)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
     queue_triage = queue_pressure_summary(bundle.get("queue_pressure"), now)
@@ -1125,7 +1125,10 @@ def plan(bundle, previous=None, now=None):
         "mutations_performed": False, "runner_restarted": False,
         "queue_claims_changed": False, "ci_retried": False,
         "deployment_authorized": False,
-        "claim_inventory_complete": claims_verified,
+        # Legacy field name retained for existing consumers; this is the
+        # combined safe-routing gate, not a claim-only source declaration.
+        "claim_inventory_complete": routing_inventory_complete,
+        "routing_inventory_complete": routing_inventory_complete,
         "vps_resource_admission": capacity,
         "incidents": incidents,
         "unattributed_progress_or_jobs": unattributed,
@@ -1145,7 +1148,7 @@ def plan(bundle, previous=None, now=None):
         "incident_dependency_holds": {
             # A zero count is meaningful only when the task AND claim source
             # inventories are complete and their observation clocks are fresh.
-            "coverage": "complete" if claims_verified else "incomplete_or_stale",
+            "coverage": "complete" if routing_inventory_complete else "incomplete_or_stale",
             "count": len(dependency_holds),
             "examples": dependency_holds[:8],
             "samples_truncated": len(dependency_holds) > 8,
@@ -1255,8 +1258,8 @@ def operator_text(result):
     if result.get("unattributed_progress_or_jobs"):
         lines.append("Unattributed runtime/jobs (no incident ownership): " +
                      str(result["unattributed_progress_or_jobs"]))
-    if not result["claim_inventory_complete"]:
-        lines.append("Claim coverage incomplete: routing suppressed.")
+    if result.get("routing_inventory_complete", result["claim_inventory_complete"]) is not True:
+        lines.append("Task/claim routing coverage incomplete or stale: suggestions suppressed.")
     branch = result.get("recent_branch_ownership", {})
     if branch.get("supplied"):
         lines.append("Recent zCloud branches without PR: " + branch["coverage"] +
