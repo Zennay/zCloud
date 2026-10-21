@@ -170,19 +170,24 @@ jobs:
           # An interrupted process can leave an approved new file in place,
           # but never a partially copied live background.js.
           live_dir="${live%/*}"
-          staged="$(mktemp "$live_dir/.background.zsentinel.new.XXXXXXXX")"
-          backup="$(mktemp "$live_dir/.background.zsentinel.old.XXXXXXXX")"
+          staged=""
+          backup=""
           swapped=0
           cleanup_live_install() {
             rc=$?
             if test "$rc" -ne 0 && test "$swapped" -eq 1; then
               if ! mv -f -- "$backup" "$live/background.js"; then
-                echo "::error::Failed to restore previous live add-on; operator intervention required."
+                echo "::error::Failed to restore previous live add-on; backup retained for operator recovery."
+                # Do not delete the only remaining recoverable copy.
+                backup=""
               fi
             fi
-            rm -f -- "$staged" "$backup"
+            if test -n "$staged"; then rm -f -- "$staged"; fi
+            if test -n "$backup"; then rm -f -- "$backup"; fi
           }
           trap cleanup_live_install EXIT
+          staged="$(mktemp "$live_dir/.background.zsentinel.new.XXXXXXXX")"
+          backup="$(mktemp "$live_dir/.background.zsentinel.old.XXXXXXXX")"
           install -m 0644 firefox-extension/background.js "$staged"
           cmp -- firefox-extension/background.js "$staged"
           cp -p -- "$live/background.js" "$backup"
