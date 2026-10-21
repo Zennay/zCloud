@@ -392,14 +392,26 @@ async function resumeBlockedQueue(queueId,button){
       render();
       throw new Error('The dependency or task state changed since confirmation. Review the refreshed card and confirm again.');
     }
+    // The server rechecks the exact version and dependency evidence within
+    // its SQLite BEGIN IMMEDIATE transaction. No update is accepted when
+    // another owner has replaced the blocked task since this GET.
+    const expectedVersion=matches[0].updated_at;
+    if(typeof expectedVersion!=='string'||!expectedVersion||expectedVersion.length>80){
+      throw new Error('The queue source has no valid update version. Resume refused.');
+    }
     button.textContent='Resuming…';
-    const response=await fetch('/api/portfolio-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'resume_blocked',queue_id:queueId,resolution_note:note.trim()}),signal:AbortSignal.timeout(10000)});
+    const response=await fetch('/api/portfolio-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      action:'resume_blocked',queue_id:queueId,resolution_note:note.trim(),
+      expected_updated_at:expectedVersion,
+      expected_blocker:String(matches[0].blocker||''),
+      expected_evidence:String(matches[0].evidence||'')
+    }),signal:AbortSignal.timeout(10000)});
     const result=await response.json().catch(()=>({}));
     if(!response.ok||!result.ok)throw new Error(result.error||result.result?.reason||'Could not resume the parked task');
     // HTTP 200 / ok:true may be an idempotent no-op if another worker moved
     // the row. Require the exact successful transaction receipt.
     if(result.result?.resumed!==true||result.result?.status!=='queued'||
-       String(result.result?.queue_id||'')!==queueId){
+       String(result.result?.queue_id||'')!==queueId||result.result?.dependency_source_guarded!==true){
       await refresh(true);
       throw new Error('The parked task was not resumed ('+(result.result?.reason||'state changed')+'). Review the refreshed queue before acting again.');
     }
