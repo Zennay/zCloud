@@ -263,14 +263,14 @@ def observed_queue(decision, source_time):
     }
 
 
-def _blocked_queue_delta(left, right):
+def _blocked_queue_delta(left, right, allow_comparison=True):
     unknown = {
         "coverage": "UNKNOWN_source_gap",
         "from_total": None, "to_total": None, "delta": None,
         "project_deltas": None, "count_change_is_not_resolution_proof": True,
         "claim_authorized": False, "retry_authorized": False,
     }
-    if (type(left) is not dict or type(right) is not dict
+    if (not allow_comparison or type(left) is not dict or type(right) is not dict
             or left.get("source_fresh_when_saved") is not True
             or right.get("source_fresh_when_saved") is not True
             or type(left.get("total_items_observed")) is not int
@@ -327,7 +327,8 @@ def summarize_queue_windows(source_windows):
                 "observed_increased_refs_total": None,
                 "observed_increased_refs_truncated": False,
                 "blocked_queue_comparison": _blocked_queue_delta(
-                    left.get("blocked_queue"), right.get("blocked_queue")),
+                    left.get("blocked_queue"), right.get("blocked_queue"),
+                    allow_comparison=False),
                 "positive_refs_only_not_an_exhaustive_retry_inventory": True,
                 "owner_review_required": True,
             })
