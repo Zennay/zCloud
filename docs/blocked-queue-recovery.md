@@ -85,7 +85,7 @@ Het blokkadepaneel gebruikt wijzigingen in `public/app.js` en
 `public/style.css`. De startpagina op deze PR verwijst daarom naar
 het **exacte** Git-blobfragment van beide assets:
 
-- `app.js`: `adfa2fae05f` — bevat de strikte
+- `app.js`: `cb8ffd1e8ecd` — bevat de strikte
   `resumed=true` / `status=queued` / exact-`queue_id` afhandeling.
 - `style.css`: `11567f347b38` — bevat de bijbehorende
   Dependency holds- en Attention-presentatie.
@@ -118,3 +118,18 @@ Een onbereikbare queue toont expliciet `unavailable`, geen
 niet meer onbereikbaar; ook minder recente P0/P1-items worden
 boven laagprioritaire cards getoond. De gewijzigde `app.js` wordt
 via de bijgewerkte exact-blobversie in `public/index.html` geladen.
+
+
+## Snelle P0/P1-triage zonder claimwijziging
+
+De `Only P0/P1`-knop filtert lokaal de **reeds gelezen** geblokkeerde
+queue-items naar urgente P0- en P1-holds. De kaartteller in de header
+blijft het totale aantal uit de steekproef; een aparte toelichting
+maakt het geselecteerde deel zichtbaar. De knop `Show all priorities`
+herstelt zonder netwerkactie de volledige bronselectie.
+
+Elk filterwissel zet de kaartpaginering terug naar de eerste twaalf;
+`Show next 12` navigeert door de gefilterde selectie. De filter
+schrijft geen wachtrij-, claim- of Attention-toestand en verandert
+geen autorisatie voor hervatten. Bij geen urgente items geeft het
+scherm expliciet aan dat dit **alleen de geladen steekproef** betreft.
