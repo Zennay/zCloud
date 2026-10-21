@@ -1625,7 +1625,13 @@ const SAFE_WORKER_COMPOSER_HINTS=Object.freeze({
   'new-chat-button-missing':'New chat button unavailable; operator action required.',
   'composer-draft-preserved':'Unsent composer draft was preserved. Inspect the assigned tab and clear or save the draft manually before another worker send.',
   'composer-text-not-confirmed':'The entire assigned prompt was not confirmed in the editor. No Send click was authorized; inspect the current composer.',
-  'composer-changed-before-send':'Composer content changed during fresh assignment verification. No Send click was authorized; inspect the assigned tab.'
+  'composer-changed-before-send':'Composer content changed during fresh assignment verification. No Send click was authorized; inspect the assigned tab.',
+  'assignment-changed-before-send':'The queue, worker slot or assigned prompt changed while preparing Send. Nothing was sent; check the current owner and assignment.',
+  'conversation-load-failed-manual-review':'An existing conversation failed to load and may already contain an accepted prompt. No automatic New chat or resend; reconcile the original queue.',
+  'previous-queue-send-after-reload-manual-review':'This browser tab previously dispatched the same queue before reload. Preserve the original claim and conversation; no duplicate Send or New chat.',
+  'generation-unconfirmed-manual-review-no-retry':'After five minutes the browser still cannot confirm generation. A remote execution is possible; review the original task before any new dispatch.',
+  'dispatch-ledger-unavailable':'The tab could not save its conservative sent-queue marker. No Send click was allowed; inspect browser storage or use a newly authorized assignment.',
+  'new-chat-transition-operator-action-required':'One in-tab New chat attempt did not produce a usable composer. No further retry or prompt dispatch was authorized.'
 });
 function composerHint(row){
   if(row?.kind==='composer-restored')return 'Composer visible again; claim and generation still unverified.';
@@ -1643,7 +1649,7 @@ function workerProgressPanel(){
   ]:[];
   const composerAlerts=(scoped?.recent_events||[]).filter(row=>
     composerHint(row)&&row.clock?.status==='observed').slice(0,4).map(row=>
-    '<div class="service-row"><div><strong>Composer · browser observation</strong><br><small>'+
+    '<div class="service-row"><div><strong>Worker · operator attention</strong><br><small>'+
     esc(row.clock?.utc||'Unknown time')+' · '+esc(composerHint(row))+'</small></div></div>').join('');
   const cards=facts.map(([label,item])=>'<div class="service-row"><div><strong>'+esc(label)+'</strong><br><small>'+
     esc(item?.kind||'No observation')+' · '+esc(item?.clock?.utc||'No UTC timestamp')+' · '+
