@@ -500,11 +500,26 @@ official GitHub **issue-only search** (`is:issue is:open`), not the
 repository issues listing that also contains PRs. It independently
 rejects any PR-shaped result, validates every retained issue URL and
 repository, and displays at most 45 links. Maximum network cost:
-**3 GitHub GETs**, each capped at 2 MiB. The provider's reported
-`total_count` and `incomplete_results` flags are exposed. An
-incomplete search, truncated display, inaccessible source or a change
-between pages never proves absence of P0 incidents or authorizes a
-duplicate repair PR.
+**5 GitHub Search GETs**, each capped at 2 MiB. The normal recent
+inventory has at most 3 pages; only when that window is truncated or
+GitHub flags an incomplete result does the inbox make two **additional**
+issue-only source queries for `P0 in:title` and `P1 in:title`, one
+30-item page each. These independent bounded searches can surface
+urgent-looking issues beyond the recent window without recrawling
+the entire repository. A title match is an **unverified navigation hint**,
+not an official label, active claim or independently established blocker.
+If GitHub reports more than 30 older P0/P1 matches, the limited recall
+is explicitly marked truncated. Repeated issue URLs are deduplicated
+and every reported issue records the source window(s) where it was
+observed. If the complete recent issue set is already in the inventory,
+extra title searches are skipped.
+
+The JSON, Markdown and HTML report the provider's `total_count`,
+`incomplete_results`, actual source queries/cutoffs, recent coverage
+and older priority-recall coverage separately. Incomplete search,
+truncated display, an inaccessible source or a change between pages
+never proves the absence of P0 incidents or permits duplicate repair
+PR creation.
 
 Only explicit `P0`–`P3` or `priority:p0`–`priority:p3`
 (and slash variants) GitHub labels establish the **advisory** source
