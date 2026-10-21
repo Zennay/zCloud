@@ -110,6 +110,108 @@ def prioritize_observed_work(rows):
     return [row for _, row in sorted(ranked, key=lambda item: item[0])]
 
 
+def observed_issue_inbox(rows, unlinked, partial, limit=48):
+    """Turn the *observed* P0/P1 issue window into a read-only action inbox.
+
+    A selected PR's explicit issue reference is an inspection hint, not a fix,
+    ownership grant or merge permission. Unlinked issues are only unlinked
+    within the bounded *selected* product PR window, never unowned.
+    """
+    if type(limit) is not int or not 1 <= limit <= 120:
+        raise ValueError("invalid bounded issue inbox limit")
+    issue_map = {}
+    for row in rows:
+        repo = row["repo"]
+        for ref in row.get("observed_issue_refs") or []:
+            if ref.get("priority") not in {"P0", "P1"}:
+                continue
+            key = (repo, ref["number"])
+            entry = issue_map.setdefault(key, {
+                "repo": repo, "number": ref["number"], "priority": ref["priority"],
+                "title": ref["title"], "url": ref["url"],
+                "reference_coverage": "SELECTED_PR_SOURCE_ONLY",
+                "linked_prs": [], "ownership": "NOT_INFERABLE",
+            })
+            if (entry["priority"] != ref["priority"]
+                    or entry["title"] != ref["title"] or entry["url"] != ref["url"]):
+                raise ValueError("issue identity changed inside source window")
+            if len(entry["linked_prs"]) >= board.MAX_PRS:
+                raise ValueError("unbounded PRs linked to one issue")
+            entry["linked_prs"].append({
+                "number": row["number"], "status": row["status"],
+                "url": f"https://github.com/{repo}/pull/{row['number']}",
+            })
+    for ref in unlinked:
+        key = (ref["repo"], ref["number"])
+        if key in issue_map:
+            continue
+        issue_map[key] = {
+            "repo": ref["repo"], "number": ref["number"],
+            "priority": ref["priority"], "title": ref["title"],
+            "url": ref["url"], "reference_coverage": "UNLINKED_WITHIN_SELECTED_PR_WINDOW",
+            "linked_prs": [], "ownership": "NOT_INFERABLE",
+        }
+    # First prefer existing PRs for the same severity; source-unknown issues
+    # are still explicitly shown, never silently assigned to a new worker.
+    ordered = sorted(issue_map.values(), key=lambda item: (
+        0 if item["priority"] == "P0" else 1,
+        0 if item["linked_prs"] else 1,
+        item["repo"].casefold(), item["number"]))
+    for item in ordered:
+        item["operator_action"] = (
+            "Inspect the existing PR and its exact-HEAD review/CI/claim gates"
+            if item["linked_prs"] else
+            "Search older existing PRs, then independently confirm ownership"
+        )
+        item["merged_main"] = "NOT_PROVEN"
+        item["live_verified"] = False
+    limited = ordered[:limit]
+    return {
+        "coverage": "PARTIAL_OBSERVATION" if partial else "SELECTED_SOURCE_WINDOW_ONLY",
+        "ownership": "NOT_INFERABLE",
+        "total_observed_issues": len(ordered),
+        "linked_observed_issues": sum(bool(x["linked_prs"]) for x in ordered),
+        "unlinked_in_sample": sum(not x["linked_prs"] for x in ordered),
+        "visible": len(limited),
+        "omitted": len(ordered) - len(limited),
+        "items": limited,
+    }
+
+
+def render_issue_inbox(inbox):
+    """Private offline HTML; values are escaped, no new network requests."""
+    esc = lambda value: html.escape(str(value), quote=True)
+    if not inbox["total_observed_issues"]:
+        return ("<section><h2>P0/P1 issue-inbox</h2><p>Geen issues in het "
+                "begrensde bronvenster waargenomen; dit bewijst geen lege backlog."
+                "</p></section>")
+    cards = []
+    for issue in inbox["items"]:
+        prs = issue["linked_prs"]
+        links = (" · ".join(
+            "<a href='" + esc(pr["url"]) + "'>PR #" + esc(pr["number"]) +
+            "</a> (" + esc(pr["status"]) + ")" for pr in prs)
+            if prs else "Geen gekoppelde PR binnen deze selectie bevestigd")
+        cards.append(
+            "<li><strong>" + esc(issue["priority"]) + "</strong> · "
+            "<a href='" + esc(issue["url"]) + "'>" + esc(issue["repo"]) + "#" +
+            esc(issue["number"]) + " · " + esc(issue["title"]) + "</a>"
+            "<br>Geselecteerde bestaande PRs: " + links +
+            "<br>Volgende stap: " + esc(issue["operator_action"]) +
+            "<br><small>Eigenaarschap: onbekend · main: niet bewezen · "
+            "live: niet geverifieerd</small></li>")
+    return ("<section aria-label='P0/P1 issue-inbox'><h2>P0/P1 "
+            "issue-inbox · bestaande PR eerst</h2><p>Waargenomen issues: " +
+            esc(inbox["total_observed_issues"]) + "; gekoppeld binnen "
+            "de geselecteerde PRs: " + esc(inbox["linked_observed_issues"]) +
+            "; zonder waargenomen PR-link: " + esc(inbox["unlinked_in_sample"]) +
+            "; niet getoond: " + esc(inbox["omitted"]) + ".</p><p>"
+            "Dit is een begrensde bronselectie, geen compleet issue-overzicht "
+            "en geen toestemming tot claim, merge of deploy. Dekking: " +
+            esc(inbox["coverage"]) + ".</p><ol>" +
+            "".join(cards) + "</ol></section>")
+
+
 def collect(projects, registry, budget):
     rows, unmatched, partial = [], [], []
     for project in projects:
@@ -720,7 +822,7 @@ def render_claim_visibility(source):
 
 
 def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=None,
-            local_claims=None):
+            local_claims=None, issue_inbox=None):
     raw = board.render(rows, observed)
     esc = lambda x: html.escape(str(x), quote=True)
     cards = []
@@ -861,7 +963,8 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
             )
         target_section += "</section>"
     claim_panel = render_claim_visibility(local_claims or {})
-    return raw.replace("<main>", claim_panel + target_section +
+    inbox_panel = render_issue_inbox(issue_inbox) if issue_inbox is not None else ""
+    return raw.replace("<main>", claim_panel + inbox_panel + target_section +
                        render_issue_sections(unmatched, partial) +
                        related + "<main>", 1)
 
@@ -953,13 +1056,16 @@ def main():
             rows, unmatched, partial = collect(args.project, registry, budget)
             target_coverage = None
         observed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        issue_inbox = (observed_issue_inbox(rows, unmatched, partial)
+                       if args.issue is None else None)
         local_claims = observe_local_claims(DB, args.project)
         if args.output:
             board.private_write(board.Path(args.output),
                                 to_html(rows, unmatched, partial, observed,
                                         targeted=targeted,
                                         target_coverage=target_coverage,
-                                        local_claims=local_claims))
+                                        local_claims=local_claims,
+                                        issue_inbox=issue_inbox))
         payload = {
             "observed_utc": observed,
             "project_ids": args.project,
@@ -971,6 +1077,7 @@ def main():
             "targeted_issue": targeted,
             "targeted_coverage": target_coverage,
             "observed_unlinked_issues": unmatched,
+            "issue_inbox": issue_inbox,
             "local_claims": local_claims,
             "prs": rows,
             "missing_authorization": "EXACT_CI_REVIEW_CLAIM_AND_RELEASE_REQUIRE_SEPARATE_EVIDENCE",
@@ -992,6 +1099,18 @@ def main():
                       f"leases={claim['active_local_leases_observed']}; "
                       f"writers={claim['active_local_writers_observed']}; "
                       "Notion/other ownership remains UNKNOWN")
+            if issue_inbox:
+                print("P0_P1_ISSUE_INBOX observed=" +
+                      str(issue_inbox["total_observed_issues"]) +
+                      " linked=" + str(issue_inbox["linked_observed_issues"]) +
+                      " unlinked_within_sample=" + str(issue_inbox["unlinked_in_sample"]) +
+                      " coverage=" + issue_inbox["coverage"])
+                for issue in issue_inbox["items"]:
+                    prs = ",".join("#" + str(pr["number"]) + ":" + pr["status"]
+                                   for pr in issue["linked_prs"]) or "UNKNOWN"
+                    print("ISSUE_ACTION " + issue["priority"] + " " +
+                          issue["url"] + " existing_prs=" + prs +
+                          " next=" + issue["operator_action"])
             for item in rows:
                 refs = ", ".join(
                     str(issue["priority"]) + "#" + str(issue["number"]) +
