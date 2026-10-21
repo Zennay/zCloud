@@ -3150,3 +3150,27 @@ van open issue-ownership. De operator moet vóór actie actuele GitHub HEAD,
 verplichte CI, reviews, protected-main, Notion/queue-eigenaarschap en
 releasebevoegdheid onafhankelijk bevestigen. Deze uitbreiding maakt geen
 claim, dispatch, merge, CI-herstart, VPS-mutatie of deploy mogelijk.
+
+
+### Gegevens bij issuegerichte bronselectie
+
+Bij `--issue` bewaart elke geselecteerde PR-kaart nu aanvullend
+`selected_issue_source_history` met het eersteklas, exacte issue-URL,
+de chronologische bronindexen waarin de link voorkwam, het laatste
+bronmoment mét die koppeling, en twee verschillende booleans:
+`linked_in_last_observed_pr_snapshot` en
+`linked_in_latest_source_snapshot`. De laatste is uitsluitend waar als
+zowel de PR als de issuekoppeling voorkwamen in de laatste ingelezen
+bronsteekproef.
+
+Dat onderscheid voorkomt dat een operator een oude PR met historische
+issuekoppeling voor actuele open issue-ownership aanziet. JSON, HTML,
+Markdown en CSV hebben dezelfde waarheidsgrens: verdwenen PR uit een
+begrensde bron, verdwenen issuekoppeling, oud HEAD of afgenomen
+checktellingen betekenen **niet** dat de fix op `main` staat.
+`current_issue_resolved_verified=false` en
+`live_owner_verified=false` blijven harde onderdelen van deze export.
+De geobserveerde bronkaarten creëren geen review, actiebevoegdheid of
+claim. Vóór een daadwerkelijke PR-merge of herstelactie zijn nog steeds
+verse originele GitHub-/Notion-/queue-receipts en de bestaande
+verplichte gates vereist.
