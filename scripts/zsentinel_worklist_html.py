@@ -909,7 +909,7 @@ function oneIssueHandoff(t){
    '- Historisch geobserveerde HEAD: '+safeText(head),
    '- Historische gatebron: '+safeText(gate)+(sourceMismatch?' · TEGENSTRIJDIGE HEADs; herlees bron':''),
    '- PR-groep in werkbak: '+(p?'JA':'NEE, geen actuele bronconclusie'));
-  if(head!=='ONBEKEND')lines.push(
+  if(/^[0-9a-f]{40}$/.test(head))lines.push(
    '- Exact broncommit: [GitHub commit]('+url.split('/pull/')[0]+'/commit/'+head+')');
   if(p){
    lines.push(
