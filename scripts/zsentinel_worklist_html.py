@@ -544,7 +544,8 @@ function refresh(){
 function focusOnPr(url){
  const target=prs.find(p=>p.dataset.pr===url);
  if(!target)return;
- focusedPr=url;focusIndex=-1;
+ focusedPr=url;focusIndex=-1;collisionIndex=-1;
+ collisionOnly.checked=false;collisionStateFilter.value='';
  search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';
  refresh();
  focusBar.scrollIntoView({block:'start'});
