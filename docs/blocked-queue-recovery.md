@@ -58,3 +58,22 @@ Already `claimed`, `running` or `verifying` tasks are **never silently dropped b
 For a queue-derived Attention (`attention_id=queue:<queue_id>`), the dashboard now presents **Confirm & resume** rather than an independent **Done** button. It requires the exact blocked task to be visible in the current queue read; if the queue read failed or the task is no longer blocked, the action is disabled. The existing resume dialog asks for a concrete resolution note and confirms that the operator is attesting, not independently verifying, the dependency. On a successful backend resume with `attention_resolved=true`, the dashboard removes both the parked task row and its Attention card before refreshing.
 
 Ordinary, non-queue Attention notices retain their Done action. The click handler also refuses any stale queue-derived Attention Done event. This prevents an apparent green human-alert panel from hiding a task that remains `blocked`/`eligible=0`; it does not authorize release or preempt a worker.
+
+
+## Dashboard: een HTTP 200 is geen hervatte taak
+
+De resume-API kan bij een inmiddels gewijzigde status een veilige no-op
+teruggeven: HTTP 200 met `ok=true`, maar `result.resumed=false`
+en reden `not-blocked-or-already-resumed` of `state-changed`.
+De UI mocht in dat geval niet de originele taak wegfilteren en de
+knop tijdelijk als `Queued` tonen. Dat zou de operator onterecht
+laten denken dat de geblokkeerde taak is hervat.
+
+De interface vereist nu **alle drie** de contractvelden vóór optimistische
+UI-opruiming: `result.resumed === true`, `result.status === "queued"`
+en `result.queue_id` gelijk aan de geselecteerde exacte taak. Een
+no-op of afwijkende respons leidt tot een nieuwe read-only queue-refresh
+en een expliciet operatorbericht; oude lokale Attention-status wordt
+niet als opgelost gemarkeerd. De backend blijft de werkelijke
+autorisatie- en transactiebeslissing nemen; deze bronwijziging voert
+zelf geen queue-mutatie, workerclaim of automatische resume uit.
