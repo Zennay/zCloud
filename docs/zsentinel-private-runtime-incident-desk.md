@@ -68,6 +68,32 @@ Ontbrekende review, incomplete exact-HEAD-gates of afgewezen GitHub-bron
 blijven menselijke HOLD; deze UI voert zelf nooit een merge uit. Een
 afgeronde groene oude commit is geen huidige mergevrijgave.
 
+## Eén privé operatoractiebriefing uit hetzelfde bronmoment
+
+De interactieve incidentenbalie biedt nu **Actieoverdracht voorvertonen**
+en daarna **Download privé acties (.md)**. De brongebonden briefing maakt
+uit dezelfde al gelezen en gevalideerde gegevens een uitvoerbaar menselijk
+overzicht, in deze vaste volgorde: (1) bestaande PR's met exacte HEAD en
+ontbrekende merge-/reviewgates, (2) P0-eerst open GitHub-productissues met
+open PR-kandidaten, (3) maximaal acht exacte GitHub run/job/HEAD-links en
+runnerroute, (4) wachtrijpressure/lease-onzekerheid en de maximaal dertig
+hoogste actieve bronincidenten.
+
+Elke briefing draagt de incidentbron SHA-256, eventuele operationele
+broncontext SHA-256 en oorspronkelijke observatietijd. De Markdown wordt
+in de private HTML ingebed met scriptveilige escaping, uitsluitend lokaal
+als tekst voorvertoond en pas na een bewuste tweede klik met een
+`Blob`-download aangeboden; er is geen netwerkverzoek, autoretry,
+ownerclaim, workflow dispatch of automatische CI-/PR-merge. Dezelfde
+incidentenbalie houdt afzonderlijk zijn incidenteigen notitie-export.
+Een status `queued` of een ontbrekende bron wordt NOOIT als een gefaalde
+job of vrijgegeven werk vertaald.
+
+Dit is géén live autorisatie of volledige portfolio-inventaris. Een
+operator controleert alle exacte PR-HEAD-gates, eigenaarclaims, tijdvensters
+en relevante P0 veiligheidsbeslissingen opnieuw voordat die handmatig
+een herstelactie zou autoriseren.
+
 ## Wat de werkbank laat zien
 
 - **Huidige incidentkaarten:** prioriteit, bronstatus, menselijke vervolgstap en lokaal bewaarde notities tot een expliciete privé-export.
