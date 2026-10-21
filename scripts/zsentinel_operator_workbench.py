@@ -556,6 +556,59 @@ def html_document(view: dict, board_sha: str, saved_pr_context=None) -> str:
     # The JSON is embedded into an inline script. Escape HTML syntax even if
     # the JSON was formed from malicious public issue titles or operator notes.
     records = records.replace("<", "\\u003c").replace(">", "\\u003e")
+    # Display-only, source-admitted historical PR projection beside the
+    # selected board issue. This never supplants current exact-head gates.
+    saved_issue_details = {
+        "sources_provided": saved_pr_context is not None,
+        "source_is_live": False,
+        "issues": {},
+    }
+    if saved_pr_context is not None:
+        historical = {row["issue_url"]: row
+                      for row in saved_pr_context["issues"]}
+        if len(historical) != len(saved_pr_context["issues"]):
+            raise ValueError("Duplicate saved issue identities")
+        source_freshness = saved_pr_context["source_freshness"]
+        if (source_freshness.get("source_is_live") is not False
+                or saved_pr_context.get("owner_claim_verified") is not False
+                or saved_pr_context.get("main_merge_verified") is not False):
+            raise ValueError("Untrusted historical PR source")
+        for card in view["cards"]:
+            item = historical.get(card["url"])
+            if item is None:
+                continue
+            links = item["linked_existing_prs"]
+            saved_issue_details["issues"][card["issue"]] = {
+                "triage_focus": item["triage_focus"],
+                "source_age_status": source_freshness["status"],
+                "issue_links_lost_while_pr_sampled":
+                    item["links_lost_while_pr_still_sampled"],
+                "prs_missing_last_saved_snapshot":
+                    item["sampled_prs_missing_from_final"],
+                "multiple_existing_prs": len(links) > 1,
+                "source_pr_total": len(links),
+                "not_shown_count": max(0, len(links) - 12),
+                "prs": [{
+                    "url": row["pr_url"],
+                    "number": row["pr_number"],
+                    "latest_observed_head": row["observed_head"],
+                    "head_at_last_issue_link": row["head_at_last_issue_link"],
+                    "head_changes": row["observed_head_changes"],
+                    "source_gate": row["observed_primary_gate"],
+                    "last_issue_link_source": row["issue_ref_last_seen_snapshot"],
+                    "issue_link_missing_last_source":
+                        row["issue_ref_absent_in_last_snapshot"],
+                    "pr_missing_last_source":
+                        row["missing_from_final_sample"],
+                    "pr_observed_after_issue_link_absent":
+                        row["pr_observed_after_link_absent"],
+                    "required_ci_review_verified": False,
+                    "merge_verified": False,
+                } for row in links[:12]],
+            }
+    issue_history_json = json.dumps(
+        saved_issue_details, ensure_ascii=True, separators=(",", ":")
+    ).replace("<", "\\u003c").replace(">", "\\u003e")
     choices = "".join(
         '<option value="' + escape(p, quote=True) + '">' + escape(p) + '</option>'
         for p in view["projects"]
@@ -891,6 +944,7 @@ Downloaded notes belong to the operator and are not authorization to act on queu
 <script>
 const board = """ + records + """;
 const boardSha = """ + json.dumps(board_sha) + """;
+const savedPrHistory = """ + issue_history_json + """;
 const baselineSchema = 'zsentinel-product-delivery-triage-v1';
 const issuePattern = /^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$/;
 let baseline=null,carryPreview=null,prGateImport=null,prGatePrevious=null;
