@@ -1237,9 +1237,6 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
     // Provider failure MUST NOT turn previously observed PR/CI activity into
     // an empty current result. Incomplete source windows can retain older
     // evidence, clearly labelled stale/partial, until a full new sample arrives.
-    const previousGitHub=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
-    const previousCoverage=previousGitHub.coverage.find(row=>row.project===projectId);
-    const previousRows=previousGitHub.events.filter(row=>row.project===projectId);
     // "First seen" is an observation delta, not proof a PR was created now.
     // Compare only complete bounded PR/CI/main/branch snapshots.
     if(!older&&completeSample&&comparablePrior){
