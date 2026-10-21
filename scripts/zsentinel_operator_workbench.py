@@ -3988,6 +3988,184 @@ document.getElementById('applyIssueImport').onclick=()=>{
 document.getElementById('briefIncludePrivate').addEventListener('change',invalidateBrief);
 // Portable HTML owner worklist reuses the already-admitted board and ZIP
 // snapshots without sending any operator annotations or accessing a provider.
+// One source-bound PR may serve several issues, and one issue may have
+// several PR references. Merge-first reuse should expose these relationships
+// before an operator creates competing work. Never infer live ownership.
+function mergeFirstInventory(){
+ const priorityRank={P0:0,P1:1,P2:2,Unspecified:3};
+ const cards=filtered({includeHuman:false}).slice();
+ const rows=new Map();
+ let unknownIssues=0,alternateIssues=0;
+ for(const card of cards){
+   const archived=savedPrHistory.issues[card.issue];
+   const references=new Set(card.open_pr_candidates);
+   if(archived)archived.prs.forEach(pr=>references.add(pr.url));
+   if(!references.size)unknownIssues++;
+   if(references.size>1)alternateIssues++;
+   for(const url of references){
+     let row=rows.get(url);
+     if(!row){
+       row={url,issues:[],boardHeads:new Set(),archiveHeads:new Set(),
+         sourceKinds:new Set(),archivedGates:new Set(),
+         boardGates:new Set(),missingFinal:false,lostIssueLink:false,
+         unobservedAdditionalPrs:false};
+       rows.set(url,row);
+     }
+     row.issues.push({issue:card.issue,url:card.url,priority:card.priority,
+       title:card.title,alternatives:references.size>1});
+     if(card.open_pr_candidates.includes(url)){
+       row.sourceKinds.add('original_issue_board');
+       const observation=card.pr_gate_observations.find(pr=>pr.url===url);
+       if(observation){
+         row.boardHeads.add(observation.head_sha);
+         observation.blocking_unknowns.forEach(reason=>row.boardGates.add(reason));
+       }
+     }
+     if(archived){
+       const pr=archived.prs.find(candidate=>candidate.url===url);
+       if(pr){
+         row.sourceKinds.add('saved_historical_pr_zip');
+         if(pr.latest_observed_head)row.archiveHeads.add(pr.latest_observed_head);
+         if(pr.head_at_last_issue_link)row.archiveHeads.add(pr.head_at_last_issue_link);
+         row.archivedGates.add(pr.source_gate);
+         row.missingFinal ||=pr.pr_missing_last_source;
+         row.lostIssueLink ||=pr.issue_link_missing_last_source||
+                              pr.pr_observed_after_issue_link_absent;
+         row.unobservedAdditionalPrs ||=archived.not_shown_count>0;
+       }
+     }
+   }
+ }
+ const ordered=[...rows.values()].map(row=>{
+   row.issues.sort((a,b)=>priorityRank[a.priority]-priorityRank[b.priority]||
+     a.issue.localeCompare(b.issue));
+   const heads=[...new Set([...row.boardHeads,...row.archiveHeads])].sort();
+   return {
+     url:row.url,priority:row.issues[0].priority,issues:row.issues,
+     board_heads:[...row.boardHeads].sort(),
+     archived_heads:[...row.archiveHeads].sort(),
+     distinct_source_heads:heads.length,
+     source_head_variation:heads.length>1,
+     source_kinds:[...row.sourceKinds].sort(),
+     board_gate_unknowns:[...row.boardGates].sort(),
+     historical_gate_labels:[...row.archivedGates].sort(),
+     missing_final_archived_pr_sample:row.missingFinal,
+     issue_link_disappeared_in_archive:row.lostIssueLink,
+     archived_candidates_truncated:row.unobservedAdditionalPrs,
+     issue_has_alternative_prs:row.issues.some(issue=>issue.alternatives),
+     same_pr_covers_multiple_issues:row.issues.length>1,
+     active_owner_verified:false,required_ci_verified:false,
+     independent_review_verified:false,main_merge_verified:false,
+     dispatch_authorized:false,merge_authorized:false,deploy_authorized:false,
+   };
+ }).sort((a,b)=>priorityRank[a.priority]-priorityRank[b.priority]||
+   Number(b.issue_has_alternative_prs)-Number(a.issue_has_alternative_prs)||
+   Number(b.source_head_variation)-Number(a.source_head_variation)||
+   a.url.localeCompare(b.url));
+ return {rows:ordered,selected_issues:cards.length,source_only:true,
+   unknown_issue_prs:unknownIssues,issues_with_alternative_prs:alternateIssues,
+   total_saved_prs:ordered.length,hidden_due_to_display_limit:Math.max(0,ordered.length-80)};
+}
+function mergeFirstCsv(){
+ const report=mergeFirstInventory();
+ if(!report.selected_issues)return null;
+ const columns=['original_board_sha256','board_observed_at_utc',
+   'source_age_not_live','priority','pr_url','source_issue_links',
+   'linked_issue_count','multiple_issues_share_pr','issue_has_alternative_prs',
+   'source_types','board_heads_observed','archived_heads_observed',
+   'source_head_variation_not_conflict_proof','sampled_original_board_blocking_unknowns',
+   'sampled_historical_gate_labels','pr_missing_last_saved_sample',
+   'issue_link_absent_in_saved_sample','archived_pr_candidates_truncated',
+   'active_owner_verified','required_ci_verified','independent_review_verified',
+   'main_merge_verified','claim_authorized','merge_authorized','deploy_authorized'];
+ const lines=[columns.map(csvCell).join(',')];
+ for(const row of report.rows){
+  const values=[boardSha,board.observed_at_utc,'historical_saved_evidence_only',
+   row.priority,row.url,row.issues.map(issue=>issue.url).join(' | '),
+   row.issues.length,row.same_pr_covers_multiple_issues,
+   row.issue_has_alternative_prs,row.source_kinds.join(' | '),
+   row.board_heads.join(' | '),row.archived_heads.join(' | '),
+   row.source_head_variation,row.board_gate_unknowns.join(' | '),
+   row.historical_gate_labels.join(' | '),
+   row.missing_final_archived_pr_sample,row.issue_link_disappeared_in_archive,
+   row.archived_candidates_truncated,false,false,false,false,false,false,false];
+  lines.push(values.map(csvCell).join(','));
+ }
+ return lines.join('\r\n')+'\r\n';
+}
+let mergeFirstReviewed=null;
+function refreshMergeFirst(){
+ const data=mergeFirstInventory();
+ const summary=document.getElementById('mergeFirstSummary');
+ summary.textContent=data.selected_issues+' source-filtered issue(s), '+
+   data.total_saved_prs+' distinct historical/board PR reference(s), '+
+   data.issues_with_alternative_prs+' issue(s) with multiple PR candidates, '+
+   data.unknown_issue_prs+' issue(s) without an admitted PR reference (UNKNOWN). '+
+   (data.hidden_due_to_display_limit?
+     data.hidden_due_to_display_limit+' PRs omitted from visible desk only; full reviewed CSV preserves them. ':'')+
+   'No present owner, exact-head required CI or merge approval verified.';
+ const container=document.getElementById('mergeFirstRows');
+ container.replaceChildren();
+ const list=elem('ol');
+ for(const row of data.rows.slice(0,80)){
+   const item=elem('li');
+   item.append(link(row.priority+' · existing PR ↗',row.url),
+     elem('p','Linked saved issues: '+row.issues.length+
+       ' · original board HEADs '+(row.board_heads.join(', ')||'UNKNOWN')+
+       ' · historical ZIP HEADs '+(row.archived_heads.join(', ')||'UNKNOWN'),'meta'));
+   if(row.issue_has_alternative_prs)
+      item.append(elem('strong','Multiple PR candidates exist for at least one linked issue. Inspect current ownership before adding or merging work.'));
+   if(row.source_head_variation)
+      item.append(elem('p','Different saved HEADs observed across source records. Could be ordinary history; current exact HEAD and required gates UNKNOWN.','meta'));
+   if(row.same_pr_covers_multiple_issues)
+      item.append(elem('p','Same saved PR is associated with multiple issues; review once for potential reuse, not proof all issues are fixed.','meta'));
+   if(row.missing_final_archived_pr_sample||row.issue_link_disappeared_in_archive)
+      item.append(elem('p','Saved PR/issue link disappeared from a later bounded archive. NOT evidence of closure or a merge.','meta'));
+   const links=elem('div');
+   for(const issue of row.issues){
+     const p=elem('p',issue.priority+' · ');
+     p.append(link(issue.issue+' ↗',issue.url));
+     links.append(p);
+   }
+   item.append(links);list.append(item);
+ }
+ if(!data.rows.length)container.append(elem('p',
+    'No PR references in the selected bounded sources. Live PR inventory UNKNOWN; not clear for new work.'));
+ else container.append(list);
+ // Revoke previews after selection or source-only filters changed.
+ if(mergeFirstReviewed && mergeFirstReviewed!==mergeFirstCsv()){
+   mergeFirstReviewed=null;
+   document.getElementById('mergeFirstPanel').hidden=true;
+   document.getElementById('mergeFirstDownload').disabled=true;
+ }
+}
+document.getElementById('mergeFirstReview').onclick=()=>{
+ saveSelection();
+ mergeFirstReviewed=mergeFirstCsv();
+ const panel=document.getElementById('mergeFirstPanel');
+ panel.hidden=!mergeFirstReviewed;
+ document.getElementById('mergeFirstPreview').textContent=mergeFirstReviewed||'';
+ document.getElementById('mergeFirstDownload').disabled=!mergeFirstReviewed;
+ status.textContent=mergeFirstReviewed?
+   'Review the complete source-only merge-first PR CSV. All current owner/CI/review/merge permissions are unknown.':
+   'No bounded issues selected, so no PR worklist was exported.';
+};
+document.getElementById('mergeFirstDownload').onclick=()=>{
+ saveSelection();
+ if(!mergeFirstReviewed||mergeFirstReviewed!==mergeFirstCsv()){
+   mergeFirstReviewed=null;
+   document.getElementById('mergeFirstPanel').hidden=true;
+   document.getElementById('mergeFirstDownload').disabled=true;
+   status.textContent='Source filters or references changed. Review again before exporting.';
+   return;
+ }
+ const url=URL.createObjectURL(new Blob([mergeFirstReviewed],{type:'text/csv;charset=utf-8'}));
+ const a=elem('a');a.href=url;a.download='zsentinel-private-merge-first-pr-source-worklist.csv';a.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+ mergeFirstReviewed=null;document.getElementById('mergeFirstDownload').disabled=true;
+ status.textContent='Private read-only PR source CSV saved. No claim, CI, merge or deploy performed.';
+};
+
 function staticPortfolioWorklist(){
  const rank={P0:0,P1:1,P2:2,Unspecified:3};
  const rows=filtered({includeHuman:false}).slice().sort((a,b)=>
