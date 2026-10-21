@@ -1,28 +1,80 @@
 name: zSSH privilege-mode verify
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zssh-privilege-mode-verify.yml"
+      - "tests/test_zssh_privilege_mode_verify_workflow.py"
   push:
     branches: [main]
     paths:
-      - .github/workflows/zssh-privilege-mode-verify.yml
+      - ".github/workflows/zssh-privilege-mode-verify.yml"
+      - "tests/test_zssh_privilege_mode_verify_workflow.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: zssh-privilege-mode-verify-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'live' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  verify:
-    runs-on: self-hosted
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact zCloud candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact zCloud candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+
+      - name: Validate privilege-mode workflow contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zssh_privilege_mode_verify_workflow
+
+  verify:
+    if: github.event_name != 'pull_request' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
     steps:
+      - name: Checkout exact zCloud revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify permanent VPS runner and exact revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Verify live zSSH privilege mode
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(id -un)" = "ubuntu"
           systemctl --user is-active --quiet zssh.service
           test "$(systemctl --user show zssh.service -p NoNewPrivileges --value)" = "no"
           grep -q '^ZSSH_EXEC_MODE=full$' "$HOME/.config/zssh/gateway.env"
