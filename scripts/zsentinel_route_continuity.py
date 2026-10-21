@@ -7,6 +7,8 @@ release, CI completion or permission to claim, retry, merge or dispatch.
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import re
 from pathlib import Path
@@ -386,6 +388,80 @@ def as_html(report):
              'geen bewijs dat alle taken vrij zijn.</p>') + '</section>')
 
 
+def as_csv(report):
+    """Create a private importable owner queue, never a task/claim instruction.
+
+    All exported columns have bounded values from the admitted report; status
+    and owner action make historical and unobserved tasks non-executable.
+    """
+    as_text(report)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow([
+        "source_kind", "source_previous_utc", "source_current_utc",
+        "queue_origin_verified", "source_inventory_complete",
+        "observation", "priority", "project_id", "task_id",
+        "previous_route", "current_route", "owner_next_action",
+        "claim_authorized", "dispatch_authorized",
+        "merge_authorized", "task_released_verified",
+    ])
+    kind = report["coverage"]
+    comparison = kind in ("bounded_source_comparison",
+                          "historical_bounded_source_comparison")
+    base = [
+        kind, report["previous_observed_at_utc"] or "",
+        report["observed_at_utc"] or "",
+        "false" if not report["same_queue_origin_verified"] else "true",
+        ("true" if report["prior_coverage_complete"] and
+         report["current_coverage_complete"] else "false"),
+    ]
+    if not comparison:
+        writer.writerow([*base, "UNKNOWN", "", "", "", "", "",
+                         "Refresh original sources; no current claim or recovery proof.",
+                         "false", "false", "false", "false"])
+        return output.getvalue()
+    sections = [
+        ("ROUTE_CHANGED", report["state_transitions"],
+         "Verify original issue, current claim/lease, PR and gate before any action."),
+        ("NEW_IN_SAMPLE", report["newly_observed"],
+         "Verify source, current owner and file scope before starting work."),
+        ("NOT_REOBSERVED_NOT_RESOLVED", report["not_reobserved_not_resolved"],
+         "Recheck original source; missing sample never means freed or resolved."),
+        ("UNCHANGED", report["unchanged_observed"],
+         "Do not repeat unchanged recovery action without new evidence."),
+    ]
+    for kind_label, rows, next_step in sections:
+        for row in rows:
+            if (type(row) is not dict or row.get("priority") not in PRIORITY
+                    or type(row.get("project_id")) is not str
+                    or not IDENT.fullmatch(row["project_id"])
+                    or type(row.get("id")) is not str
+                    or not IDENT.fullmatch(row["id"])):
+                raise ValueError("untrusted transition CSV task")
+            if kind_label == "ROUTE_CHANGED":
+                before = row["before_reason"]
+                after = row["after_reason"]
+            else:
+                before = row["reason"] if kind_label in (
+                    "NOT_REOBSERVED_NOT_RESOLVED", "UNCHANGED") else ""
+                after = row["reason"] if kind_label in (
+                    "NEW_IN_SAMPLE", "UNCHANGED") else ""
+            if any(not isinstance(value, str) or value not in KINDS
+                   for value in (before, after) if value):
+                raise ValueError("untrusted transition CSV route reason")
+            writer.writerow([
+                *base, kind_label, row["priority"], row["project_id"], row["id"],
+                before, after, next_step + (" HISTORICAL REPLAY ONLY." if
+                report["coverage"] == "historical_bounded_source_comparison" else ""),
+                "false", "false", "false", "false",
+            ])
+    if report["samples_truncated"] or report["current_source_examples_truncated"] or report["previous_source_examples_truncated"]:
+        writer.writerow([*base, "SAMPLE_TRUNCATED_UNKNOWN", "", "", "", "",
+                         "", "Additional tasks outside bounded samples remain UNKNOWN.",
+                         "false", "false", "false", "false"])
+    return output.getvalue()
+
+
 def main(argv=None):
     """Standalone offline operator comparison; never fetch live data or mutate it."""
     parser = argparse.ArgumentParser(description="zSentinel privé routing snapshot comparison (read-only)")
@@ -393,7 +469,7 @@ def main(argv=None):
                         help="existing private 0600 portfolio JSON snapshot")
     parser.add_argument("--current", required=True, type=Path,
                         help="later saved private portfolio JSON snapshot")
-    parser.add_argument("--format", choices=("json", "html", "text"), default="html")
+    parser.add_argument("--format", choices=("json", "html", "text", "csv"), default="html")
     parser.add_argument("--output", type=Path, required=True,
                         help="new create-only private .json, .html or .md file")
     args = parser.parse_args(argv)
@@ -420,6 +496,9 @@ def main(argv=None):
                     'max-width:900px;margin:auto;padding:2rem}li{margin:.4rem}</style>'
                     '</head><body><main>' + as_html(result) + '</main></body></html>')
             suffix = "html"
+        elif args.format == "csv":
+            body = as_csv(result)
+            suffix = "csv"
         else:
             body = as_text(result)
             suffix = "md"
