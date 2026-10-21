@@ -1794,7 +1794,7 @@ def main():
                         help="Read only local /proc listener presence; no job or online proof")
     parser.add_argument("--host-pressure", action="store_true",
                         help="Read bounded host RAM/swap/load and root disk headroom; never admits workers")
-    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief", "owner-book", "owner-snapshot"), default="text")
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief", "owner-book", "owner-snapshot", "change-brief"), default="text")
     parser.add_argument("--owner-project", choices=tuple(sorted(PORTFOLIO_PROJECTS)),
                         help="Canonical project id for a private single-project owner brief")
     parser.add_argument("--output", help="New owner-private file: .html, .md or .json")
@@ -1803,10 +1803,12 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.max_rows <= MAX_ROWS:
         parser.error("--max-rows must be between 1 and 500")
-    if (args.format in ("html", "markdown", "owner-brief", "owner-book", "owner-snapshot")) != bool(args.output):
+    if (args.format in ("html", "markdown", "owner-brief", "owner-book", "owner-snapshot", "change-brief")) != bool(args.output):
         parser.error("Private HTML/Markdown requires --output, other formats cannot write files")
     if (args.format == "owner-brief") != bool(args.owner_project):
         parser.error("--format owner-brief requires --owner-project; other modes reject it")
+    if args.format == "change-brief" and not args.previous_owner_snapshot:
+        parser.error("--format change-brief requires --previous-owner-snapshot")
     try:
         packet = collect(args.db, args.max_rows,
                          include_runner_processes=args.runner_processes,
@@ -1834,6 +1836,9 @@ def main():
         elif args.format == "owner-book":
             save_private(args.output, portfolio_owner_book(packet), ".md")
             print("Privé portfolio-eigenaarboek gemaakt (0600); geen externe actie.")
+        elif args.format == "change-brief":
+            save_private(args.output, owner_change_brief(packet), ".md")
+            print("Privé gewijzigde-projectenoverdracht gemaakt (0600); geen externe actie.")
         elif args.format == "json":
             print(json.dumps(packet, ensure_ascii=False, sort_keys=True))
         else:
