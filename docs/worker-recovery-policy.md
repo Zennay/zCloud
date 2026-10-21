@@ -214,6 +214,39 @@ fresh independent project groups remain visible. This imports existing source
 metadata and does not add provider reads, runner restarts, workflow dispatches,
 queue mutations or permission changes.
 
+### Actionable private owner handoffs
+
+The operator's existing Activity recovery-case import has a direct,
+bounded `--format csv` output in addition to JSON, HTML, Markdown and
+three-line text. It produces **one row per P0-first incident**, never one
+row per approval or runnable worker task:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json --format csv \
+  > private-owner-workorders.csv
+```
+
+The same `--format csv` works with `--batch-input incidents.json`
+(where priorities are UNKNOWN because operator-supplied policy requests do
+not have independently established issue severity). Every CSV row carries
+the review action, HOLD reasons, missing owner evidence, canonical original
+issue URL and already-referenced candidate repair PRs, **unverified** source
+receipts, the distinct original source/evaluation UTC clocks and explicit
+false verification/claim/merge/deploy authorization columns. CSV fields are
+properly quoted and all output modes retain the existing 128 KiB limit.
+
+The readable three-line text/Markdown owner list now leads with the
+observed P0/P1 priority and includes direct original issue and existing
+candidate repair-PR links without pretending that the candidate is still
+open, unclaimed or green. The offline HTML labels these candidate PR
+links explicitly and displays the original priority on each incident
+card. All issue/PR links in this case path have already passed the importer
+same-repository and bounded-source requirements. They are navigation hints
+only: **recheck current GitHub status, exact-head CI/review and active
+Notion/worker/queue ownership before acting**.
+
 The conversion ranks P0 before P1–P3, puts issue/PR examination first within
 a priority, and requires checking real GitHub source/required CI plus current
 Notion/worker/queue ownership. Grouped high queue claim attempts are not proof
