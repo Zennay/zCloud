@@ -65,6 +65,29 @@ reassign existing workers based on an inferred lane; ask the active owner
 to reconcile the persisted source. Neither rule changes queue records,
 leases, scheduler admissions, reviews or releases.
 
+## 21 October · queue eligibility parity with the actual runtime
+
+The real `server.py` selects **eligible=1** rows for new worker
+assignment. The private four-lane desk intentionally reads all local
+`queued` rows to show blocked work, so its old lane generator could
+mislabel an ineligible item as a candidate. Recovery lanes now filter
+`queued` items unless their explicit `eligible` value equals 1.
+A missing, false or non-1 value is not a permission to dispatch.
+Existing `claimed`/`running`/`verifying` items **remain active
+reservations**, even if `eligible` was later cleared, and continue
+to hold their declared write scopes.
+
+The desk now exposes the count per lane as
+`deferred_ineligible_packages` in JSON, human-readable text, offline
+HTML, and Markdown. If ineligible work is the only remaining work,
+the lane is visibly `blocked` and its human-only admission verdict is
+`HOLD_QUEUE_NOT_ELIGIBLE`, not `idle` or a locally suggested new
+writer. The operator must reconcile eligibility with the original
+queue/Notion owner. A local eligible=1 observation is **not**
+permission to claim, deploy or merge; all other external gates remain
+unchanged. This change does not alter the SQLite queue, existing
+claims, runner processes or production scheduler.
+
 ## Reservations and collision visibility
 
 - All in-flight queue entries (`claimed`, `running`, `verifying`) reserve
