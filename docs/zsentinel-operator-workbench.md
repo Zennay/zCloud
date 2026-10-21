@@ -3514,3 +3514,47 @@ GitHub approvals, PR HEADs, issue status or worker leases. Original archive
 hashes, timestamps and underlying source admission remain unchanged. There
 is no network refresh, privileged action, lease acquisition, CI retry or deploy.
 
+
+
+## 21 October · portable, printable recovery worklists without local notes
+
+The existing `scripts/zsentinel_operator_workbench.py --board <saved.json>
+--pr-dossier <saved.zip> --output <private.html>` operator page now has **two
+standalone, script-free HTML owner handoffs**.
+
+**Selected issue:** choose an issue and use **Preview printable single-issue
+PR dossier (HTML)** in the historical existing-PR panel. The preview displays
+the original issue link, bounded original board/ZIP archive SHA256 receipts,
+archive timestamps and missing batches, up to twelve saved PR references,
+historical HEADs, disappearing issue links and the exact next human owner
+actions. Only after preview can the operator download the self-contained HTML
+page. This is independent of the existing reviewed JSON and Markdown
+single-issue exports. No local notes, contact labels, other issue cards or
+credentials are carried over.
+
+**Portfolio issue worklist:** keep the normal saved board filters for project,
+priority, search, historical PR relationship and manual status, then select
+**Preview source-only printable worklist**. The separate owner-oriented page
+lists *only* matching saved issues, ordered P0 first, shows original issue and
+existing-PR URLs, original archive SHA256s and missing-batch warnings, observed
+PR HEAD and gate labels, and the required live approval checks. It reports
+how many other source issues were excluded by the chosen filters.
+The download button is enabled only after the preview, and any source filter
+or selection change requires a fresh preview before download.
+
+Both documents are generated in the browser from the **already independently
+admitted** source board and PR ZIPs. They have no JavaScript and use a strict
+CSP blocking scripts, images, forms, embeds and network requests. Public issue
+titles and other source strings enter HTML exclusively through DOM text nodes,
+not executable markup. External canonical GitHub links open only when the
+recipient chooses them. No live API calls, new queue task, claim acquisition,
+workflow dispatch, CI rerun, merge, service restart or deployment occurs.
+
+The archive-age indicator is recomputed when previewed, but it relies on the
+*local device clock*, not a trustworthy live GitHub response. Unobserved
+historical PRs, absent links, stale archives, existing checks and missing owner
+information remain **UNKNOWN**. Merge and production acceptance require
+fresh live source verification, exact-head mandatory CI, independent review,
+active owner/lease check, branch protection, verified merge SHA and authorized
+release. These portable worklists are never permission to act.
+
