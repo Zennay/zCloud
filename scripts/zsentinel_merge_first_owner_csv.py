@@ -478,6 +478,13 @@ def render_private_html(rows, source_metadata=None):
             label = escape(priority + " · " + repo + " (" + str(count) + ")")
             parts.append('<a href="#owner-' + str(first) + '">' + label + '</a>')
         parts.append('</p></nav>')
+    # Only peers still present under the user's filters receive a local
+    # offline jump. Peers outside the selection are still explicitly linked
+    # to GitHub, but not fabricated as hidden or completed local records.
+    local_peer_anchor = {
+        row["pr_url"]: index for index, row in enumerate(rows, 1)
+        if row["pr_url"]
+    }
     for index, row in enumerate(rows, 1):
         priority = escape(str(row["priority"]))
         has_pr = bool(row["pr_url"])
@@ -530,6 +537,13 @@ def render_private_html(rows, source_metadata=None):
                 ):
                     raise ValueError("noncanonical saved peer PR URL")
                 safe_peer = escape(peer, quote=True)
+                local = local_peer_anchor.get(peer)
+                if local is not None:
+                    parts.append('<p><a href="#owner-' + str(local) +
+                                 '">Jump to saved peer card in this file</a></p>')
+                else:
+                    parts.append('<p>Peer record is outside this local '
+                                 'selection; full live inventory UNKNOWN.</p>')
                 parts.append('<p>Saved peer PR: <a href="' + safe_peer +
                              '" target="_blank" rel="noopener noreferrer">' +
                              safe_peer + '</a></p>')
