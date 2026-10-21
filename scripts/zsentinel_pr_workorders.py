@@ -729,6 +729,9 @@ def render_csv(bundle):
         "head_sha_at_observation", "current_source_verified", "rank",
         "category", "blocker", "human_next_step", "source_observed_at_utc",
         "source_sha256", "link", "detail",
+        "scope_conflict_peer_pr_url", "scope_conflict_peer_head_sha",
+        "scope_conflict_selected_path", "scope_conflict_peer_path",
+        "scope_conflict_relation",
         "change_since_previous_observation", "new_evidence_since_previous",
         "repeat_hold_deferred", "historical_next_step",
         "previous_source_observed_at_utc", "historical_comparison_status",
@@ -848,6 +851,23 @@ def render_csv(bundle):
         for related in card["related_prs"][:8]:
             add("related_pr", card, link=_same_repo_url(related, repo),
                 detail="Observed shared-file hint; Git merge conflict UNKNOWN")
+        for conflict in card["scope_path_conflicts"][:24]:
+            if type(conflict) is not dict:
+                raise ValueError("invalid file/directory scope conflict")
+            peer_url = _same_repo_url(conflict.get("peer_pr_url"), repo)
+            peer_head = conflict.get("peer_head_sha")
+            if (peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None
+                    or conflict.get("relation") not in (
+                        "selected_file_conflicts_with_peer_descendant",
+                        "peer_file_conflicts_with_selected_descendant")):
+                raise ValueError("invalid file/directory peer receipt")
+            add("file_directory_scope_conflict", card, link=peer_url,
+                scope_conflict_peer_pr_url=peer_url,
+                scope_conflict_peer_head_sha=peer_head,
+                scope_conflict_selected_path=edit_path(conflict.get("selected_path")),
+                scope_conflict_peer_path=edit_path(conflict.get("peer_path")),
+                scope_conflict_relation=conflict["relation"],
+                detail="File/directory ancestor collision observed; not merge authority")
         for path in card["overlap_paths"][:MAX_PATHS]:
             add("overlap_path", card, detail=edit_path(path))
         if card["overlap_paths_hidden"]:
@@ -1091,6 +1111,25 @@ def render_html(bundle):
                              "href=\"" + e(_same_repo_url(related, repo)) +
                              "\">" + e(related) + "</a></li>")
             parts.append("</ul>")
+        if card.get("scope_path_conflicts"):
+            parts.append("<h3>Bestand/map-ancestorconflicten (geen mergevrijgave)</h3><ul>")
+            for conflict in card["scope_path_conflicts"][:24]:
+                if type(conflict) is not dict:
+                    raise ValueError("invalid HTML file/directory scope conflict")
+                peer_url = _same_repo_url(conflict.get("peer_pr_url"), repo)
+                peer_head = conflict.get("peer_head_sha")
+                relation = conflict.get("relation")
+                if (peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None
+                        or relation not in ("selected_file_conflicts_with_peer_descendant",
+                                            "peer_file_conflicts_with_selected_descendant")):
+                    raise ValueError("invalid HTML file/directory peer receipt")
+                selected_path = edit_path(conflict.get("selected_path"))
+                peer_path = edit_path(conflict.get("peer_path"))
+                parts.append("<li><a rel=\"noopener noreferrer\" href=\"" + e(peer_url) +
+                             "\">Peer PR</a> · HEAD <code>" + e(peer_head[:12]) +
+                             "</code> · <code>" + e(selected_path) + "</code> ↔ <code>" +
+                             e(peer_path) + "</code> · " + e(relation) + "</li>")
+            parts.append("</ul><p class=\"notice\">Dit is een bestand/map-scopeconflict, geen bewijs van een Git-mergeconflict of eigenaar.</p>")
         if card.get("overlap_paths"):
             parts.append("<h3>Waargenomen gedeelde paden</h3><ul>")
             for path in card["overlap_paths"]:
@@ -1267,6 +1306,24 @@ def render_markdown(bundle):
             lines.append("")
         if card["peer_head_evidence_partial"]:
             lines.append("**ONVOLLEDIGE peer-HEAD bron:** geen conflictvrije conclusie.\n")
+        if card.get("scope_path_conflicts"):
+            lines.append("### Bestand/map-ancestorconflicten (geen mergevrijgave)")
+            for conflict in card["scope_path_conflicts"][:24]:
+                if type(conflict) is not dict:
+                    raise ValueError("invalid Markdown file/directory scope conflict")
+                peer_url = _same_repo_url(conflict.get("peer_pr_url"), card["repository"])
+                peer_head = conflict.get("peer_head_sha")
+                relation = conflict.get("relation")
+                if (peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None
+                        or relation not in ("selected_file_conflicts_with_peer_descendant",
+                                            "peer_file_conflicts_with_selected_descendant")):
+                    raise ValueError("invalid Markdown file/directory peer receipt")
+                selected_path = edit_path(conflict.get("selected_path"))
+                peer_path = edit_path(conflict.get("peer_path"))
+                lines.append("- [Peer PR] (" + peer_url + ") · HEAD `" + peer_head[:12] +
+                             "` · `" + selected_path.replace("`", "\\`") + "` ↔ `" +
+                             peer_path.replace("`", "\\`") + "` · " + relation)
+            lines.append("Geen eigenaar-, lease- of mergeautorisatie volgt uit deze padrelatie.\n")
         if card["overlap_paths"] or card["related_prs"]:
             lines.append("### Bestandscope-overlap (geen bevestigd Git-conflict)")
             for path in card["overlap_paths"]:
