@@ -177,10 +177,12 @@ def observe_claims(data_source_id, token, known_projects=None):
         if index == MAX_PAGES - 1:
             incomplete = True
     rows.sort(key=lambda row: (row["status"], row["work"]))
-    counts = {}
+    counts, verifying_counts = {}, {}
     for row in rows:
         label = row["project"]
         counts[label] = counts.get(label, 0) + 1
+        if row["status"] == "Verifying":
+            verifying_counts[label] = verifying_counts.get(label, 0) + 1
     return {
         "source": "notion_readonly_data_source_pages",
         "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -190,6 +192,8 @@ def observe_claims(data_source_id, token, known_projects=None):
         # not proof of file-level claims or active worker leases.
         # All bounded pages contribute even when only 30 examples are shown.
         "active_project_counts": dict(sorted(counts.items())),
+        "verifying_project_counts": dict(sorted(verifying_counts.items())),
+        "verifying_count": sum(verifying_counts.values()),
         "items": rows[:30],
         "items_truncated": len(rows) > 30,
         "claim_scope_verified": False,
