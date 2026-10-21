@@ -295,6 +295,16 @@ def main():
             raise ValueError("--pin-issue cannot be combined with --skip-github-issues")
         if args.read_notion_claims and args.notion_claims_export is not None:
             raise ValueError("choose either live Notion token or saved connector snapshot")
+        # The extra private incident desk is NOT a stdout sink. A normal
+        # HTML/JSON/text format still reaches print(rendered), which may embed
+        # worker events and live/saved Notion details. Require private 0600
+        # --output unless the only selected output is --format desk.
+        if (args.worker_events_database is not None or args.read_notion_claims
+                or args.notion_claims_export is not None):
+            if args.format not in ("html", "json", "text", "desk"):
+                raise ValueError("private worker/Notion observations need a private report format")
+            if args.format != "desk" and args.output is None:
+                raise ValueError("private worker/Notion evidence needs --output; --desk-output does not suppress stdout")
         if args.github_only:
             if args.database is not None:
                 raise ValueError("--github-only requires omitting --database")
