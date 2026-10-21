@@ -1,6 +1,12 @@
 name: Reconcile exact worker prompt now
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-exact-worker-prompt-reconcile.yml"
+      - "tests/test_exact_worker_prompt_reconcile_workflow.py"
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
     paths:
@@ -10,17 +16,54 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: zcloud-exact-worker-prompt-reconcile-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate reconcile safety contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          python3 -m unittest -v tests.test_exact_worker_prompt_reconcile_workflow
+
   reconcile:
+    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
     steps:
-      - name: Check out current main
-        uses: actions/checkout@v4
+      - name: Check out exact reconcile source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
           clean: true
           fetch-depth: 32
+          persist-credentials: false
+
+      - name: Verify exact candidate and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Validate prompt sources
         shell: bash
@@ -50,6 +93,26 @@ jobs:
             cp -a "$runtime_bg" "$backup/runtime-background.js"
           fi
 
+          rollback_runtime() {
+            rc=$?
+            if [[ "$rc" -eq 0 ]]; then
+              return
+            fi
+            trap - EXIT
+            set +e
+            install -m 0644 "$backup/server.py" "$root/server.py"
+            install -m 0644 "$backup/public/zcloud-worker.user.js" "$root/public/zcloud-worker.user.js"
+            install -m 0644 "$backup/firefox-extension/background.js" "$root/firefox-extension/background.js"
+            if [[ -f "$backup/runtime-background.js" ]]; then
+              install -m 0644 "$backup/runtime-background.js" "$runtime_bg"
+            fi
+            sudo -n systemctl reset-failed zennay-cloud.service || true
+            sudo -n systemctl restart zennay-cloud.service || true
+            echo "ZCLOUD_PROMPT_RUNTIME_ROLLBACK_ATTEMPTED=1"
+            exit "$rc"
+          }
+          trap rollback_runtime EXIT
+
           install -m 0644 server.py "$root/server.py"
           install -m 0644 public/zcloud-worker.user.js "$root/public/zcloud-worker.user.js"
           install -m 0644 firefox-extension/background.js "$root/firefox-extension/background.js"
@@ -74,6 +137,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import hashlib
           import json
           import urllib.request
           import server as candidate_server
@@ -99,10 +163,19 @@ jobs:
                   base, name, "", slot, total, cfg.get("queue_item")
               )
               actual = str(cfg.get("prompt") or "")
+              actual_sha = hashlib.sha256(actual.encode("utf-8")).hexdigest()
+              expected_sha = hashlib.sha256(expected.encode("utf-8")).hexdigest()
               if actual != expected:
-                  raise SystemExit(f"PROMPT_MISMATCH {key}: {actual!r} != {expected!r}")
+                  raise SystemExit(
+                      f"PROMPT_MISMATCH {key} actual_sha256={actual_sha} "
+                      f"expected_sha256={expected_sha}"
+                  )
               checked += 1
-              evidence.append({"worker": key, "prompt": actual})
+              evidence.append({
+                  "worker": key,
+                  "prompt_sha256": actual_sha,
+                  "prompt_length": len(actual),
+              })
 
           if checked < 1:
               raise SystemExit("no active normal workers available for exact-prompt proof")
