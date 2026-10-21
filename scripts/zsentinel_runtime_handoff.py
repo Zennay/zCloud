@@ -224,7 +224,7 @@ def _notion_owner_status_summary(observed, source_mode, registry):
             or any(observed.get(key) is not False for key in
                    ("claim_scope_verified", "task_inventory_verified",
                     "can_dispatch", "can_release_claim"))
-            or type(registry) is not dict):
+            or (registry is not None and type(registry) is not dict)):
         raise ValueError("untrusted Notion handoff work-status source")
     if mode[0] == "user_supplied_notion_connector_export_unverified_origin" and (
             observed.get("origin_authenticity_verified") is not False
@@ -297,7 +297,7 @@ def _notion_owner_status_summary(observed, source_mode, registry):
     known = []
     unknown_total = 0
     for pid, total in counts.items():
-        if pid not in registry:
+        if registry is None or pid not in registry:
             unknown_total += total
             continue
         _project(pid)
