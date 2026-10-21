@@ -220,6 +220,34 @@ def archive_mount_readiness(mount_path: Path = Path("/home/ubuntu/VPS-Archief"))
     outcome["state"] = "mounted_write_unverified"
     return outcome
 
+
+def local_source_scope(root: Path) -> dict:
+    """Opaque, advisory boot+checkout binding for private saved observations.
+
+    A digest of a locally observed boot UUID is not an attestation: an
+    operator-supplied prior file can still be forged. Never emit the raw
+    host UUID, machine-id, absolute checkout path or process arguments.
+    """
+    source = {"state": "unverified", "fingerprint_sha256": None,
+              "attested": False, "release_authorized": False}
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text(
+            encoding="ascii").strip().lower()
+        if not re.fullmatch(
+                r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", boot):
+            return source
+        checkout = os.fsencode(root.resolve(strict=True))
+        digest = hashlib.sha256(
+            boot.encode("ascii") + b"\\0" + checkout + b"\\0" +
+            RUNNER_UNIT.encode("ascii")).hexdigest()
+    except (OSError, UnicodeError, ValueError, RuntimeError):
+        return source
+    return {"state": "local_boot_checkout_observed",
+            "fingerprint_sha256": digest,
+            "attested": False, "release_authorized": False}
+
+
+
 def worker_safety_snapshot(root: Path) -> dict:
     """Advisory live workload snapshot from a strictly read-only SQLite handle.
 
@@ -586,6 +614,7 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
     report = {
         "schema": 1, "observed_at": datetime.now(timezone.utc).isoformat(),
         "mode": "read_only", "release_authorized": False,
+        "source_scope": local_source_scope(root),
         "result": "blocked" if blocked else ("partial" if findings else "preflight_clear"),
         "checkout": {"branch": branch, "sha": sha, "expected_main_sha": expected_main_sha, "tracked_changes": tracked_count,
                      "untracked_entries": untracked_count},
