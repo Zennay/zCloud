@@ -62,6 +62,12 @@ NEXT_ACTIONS_NL = {
 
 
 GATE_STEPS_NL = {
+    "owner_finish_draft_before_merge_review":
+        "Concept-PR: bevoegde eigenaar rondt product af en zet PR reviewklaar; nog geen merge.",
+    "owner_resolve_current_base_conflicts":
+        "GitHub meldt een mergeconflict op de actuele basis; bevoegde PR-eigenaar lost dit op.",
+    "wait_for_github_mergeability_evaluation":
+        "GitHub heeft samenvoegbaarheid nog niet berekend; wacht op nieuwe actuele bron.",
     "inspect_incomplete_current_head_gate_source":
         "Onvolledige check-, legacy-status- of reviewbron; eerst volledig bronbewijs ophalen.",
     "inspect_current_head_failed_checks_with_owner":
