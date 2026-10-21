@@ -382,6 +382,13 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
             else:
                 owner_action = "verify_required_ci_independent_review_protection_and_owner"
                 review_rank = 2
+            if (current_issue["status"] == "LIVE_ISSUE_READ"
+                    and current_issue["observed_state"] == "closed"
+                    and not before["reported_merged"]):
+                # The source issue has been closed since the historical
+                # import. Do not turn its old PR into an unsolicited fix.
+                owner_action = "verify_issue_closure_and_existing_repair_before_reopening"
+                review_rank = 5
             base["next_human_step"] = owner_action
             base["owner_review_priority"] = review_rank
             base["release_gate_summary"] = {
@@ -467,7 +474,8 @@ def owner_html(report):
         " · state: " + esc(report["current_issue"]["observed_state"]) +
         " · reason: " + esc(report["current_issue"].get(
             "reported_state_reason", "UNKNOWN")) +
-        " · CLOSED never means a fix is merged or the worker claim released.</p>",
+        " · CLOSED never means a fix is merged or the worker claim released."
+        " This single issue read is not a continuous issue-state guarantee.</p>",
         "<p><strong>Historical issue source (not reobserved):</strong> " +
         esc(report["historical_case_provenance"]["issue_source_observed_utc"] or "UNKNOWN") +
         " · original case export: " +
@@ -612,6 +620,7 @@ def markdown(report):
         "- Issue: " + report["original_issue_url"],
         "- Current issue read: " + report["current_issue"]["status"],
         "- Current issue state: " + report["current_issue"]["observed_state"],
+        "- Current issue source was reobserved once, not continuously",
         "- Closed issue implies merged repair: NO",
         "- Observed live PRs: " + report["observed_at_utc"],
         "- Original case export: " + report["historical_case_provenance"]["case_export_utc"],
