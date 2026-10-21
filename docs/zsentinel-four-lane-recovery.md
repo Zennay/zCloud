@@ -33,6 +33,14 @@ scopes remain reserved. Queued work is classified from its current product
 description and is not allowed to spoof an active lane to get preferred
 placement.
 
+New recovery admission also rejects explicitly Dutch QA-only titles
+(e.g. `regressietests`, `kwaliteitsvalidatie`, `validatieronde`,
+`schrijf tests` and `voer tests uit`) and corresponding persisted
+QA-only lane labels. It does not filter a real product bugfix merely
+because its requirements mention tests, and it never removes or
+preempts an already active task. Mandatory CI still runs on its
+independent existing gates.
+
 The same routing decision is now shown in the existing operator desk's
 text, JSON (`lanes[].routing_origin`) and script-free offline HTML:
 `PERSISTED_ACTIVE_LANE`, `KEYWORD_CLASSIFICATION`,
