@@ -269,3 +269,16 @@ it does not invent a recovery change or resolved finding. Every card remains
 advisory with `recovery_performed=false` and `release_authorized=false`. This
 route does not call GitHub, change services, mutate claims or grant release
 authority.
+## 21 October · stale snapshots cannot prove recovery
+
+`--previous-report` still accepts an older bounded read-only report for historical
+context, but a baseline older than **24 hours** no longer earns resolution credit.
+Every finding that disappeared relative to that stale baseline is retained in
+`recovery_unverified_findings`; `resolved_findings` stays empty. JSON, console,
+offline HTML, Markdown and owner-handoff trend fields show
+`stale_baseline_no_resolution_credit` plus the measured baseline age.
+
+This is separate from the stricter CPU/PSI trend window (at most 60 minutes).
+A stale baseline is not rejected as a whole and cannot hide current findings;
+it simply cannot establish that a blocker was recently resolved. No service,
+worker, queue, claim or release state is changed.
