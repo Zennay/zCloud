@@ -2584,7 +2584,11 @@ de bronklokken en het exacte lokale brontoken, prioriteit, issue- en projectlink
 menselijke vervolgstap, waargenomen activiteitsklokken, PR-/issueverwijzings-
 dekking en eventuele lokale privénotitie. Kandidaten blijven in P0/P1/P2-volgorde;
 een lokaal genoteerde opvolging wordt niet opnieuw aangeboden als open kandidaat,
-maar is daarmee niet als opgelost gemarkeerd.
+maar is daarmee niet als opgelost gemarkeerd. Het nieuwe privésessietoken bindt
+nu ook project, prioriteit, actieclassificatie en beide dekkingsvlaggen; een
+gewijzigde kandidaatclassificatie kan daardoor niet stilzwijgend dezelfde lokale
+notities hergebruiken. Het afzonderlijke legacy-token blijft alleen voor de
+bestaande issue-only sessie-import bestaan.
 
 **Werkwijze:** parkeer uitsluitend de PR waarvan de verplichte exacte-HEAD-CI
 wacht; open de kandidatenoverdracht en controleer voor de gekozen issue opnieuw
