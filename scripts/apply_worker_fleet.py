@@ -47,6 +47,12 @@ def get_plan() -> tuple[dict, list[tuple[str, int, int]]]:
         raise RuntimeError("Deploy the updated server.py worker capacity first")
     if not provider_match or int(provider_match.group(1)) < max(providers.values()):
         raise RuntimeError("Deploy the updated per-provider capacity first")
+    contracts = json.loads((ROOT / "project-contracts.json").read_text(encoding="utf-8"))
+    for project_id, desired in projects.items():
+        contract = contracts.get("projects", {}).get(project_id, {})
+        hard_cap = int(contract.get("ai_worker_cap", contracts.get("defaults", {}).get("ai_worker_cap", 1)))
+        if hard_cap < desired:
+            raise RuntimeError(f"{project_id} hard cap {hard_cap} is below requested {desired}")
     slots = []
     global_slot = 1
     for project_id, desired in projects.items():
@@ -112,6 +118,7 @@ def main() -> int:
                 "dynamic_worker_limit": plan["active_workers"],
                 "dynamic_worker_chatgpt_count": plan["providers"]["chatgpt"],
                 "dynamic_worker_claude_count": plan["providers"]["claude"],
+                "manual_selection_mode": 1,
             }
             for name, value in values.items():
                 conn.execute(
