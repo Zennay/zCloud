@@ -1018,13 +1018,15 @@ def html_view(decision, registry=None):
                 'Geen claim, retry of automatische dispatch.</p></article>'
             )
         if coverage == "complete":
-            hold_heading = "Incidentafhankelijke taken op HOLD (" + str(held["count"]) + ")"
+            hold_heading = "Routeerbare kandidaat-taken op incident-HOLD (" + str(held["count"]) + ")"
             hold_status = (
-                '<p class="muted">Verdwenen incidenten tellen niet als opgelost. Alleen exacte '
-                'succesvolle job-reconciliatie uit het bestaande incidentledger kan een '
-                'expliciete taakafhankelijkheid opheffen; geen bewijs van algeheel runtime-herstel.</p>'
+                '<p class="muted">Deze telling omvat alleen verder routeerbare wachtrijtaken die '
+                'door onopgeloste incidentafhankelijkheden worden tegengehouden. Verdwenen '
+                'incidenten tellen niet als opgelost. Alleen exacte succesvolle job-reconciliatie '
+                'uit het bestaande incidentledger kan een afhankelijkheid opheffen; geen bewijs '
+                'van algeheel runtime-herstel.</p>'
             )
-            empty_holds = "Geen open afhankelijke taken in de complete, actuele taak- en claimbron."
+            empty_holds = "Geen verder routeerbare kandidaat-taken met onopgeloste incidentafhankelijkheden in de complete, actuele taak- en claimbron."
         else:
             hold_heading = "Incidentafhankelijkheden — STATUS ONBEKEND"
             hold_status = (
