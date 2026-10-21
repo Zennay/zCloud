@@ -871,7 +871,7 @@ def text_view(data):
         if lane["active_cross_lane_scope_conflicts"]:
             extra += " | CONFLICT MET ANDERE ACTIEVE OF GERESERVEERDE BAAN"
         elif lane["active_cross_lane_scope_conflicts"] is None:
-            extra += " | ACTIEVE SCOPEDEKKING ONVOLLEDIG"
+            extra += " | ACTIEVE/GERESERVEERDE SCOPEDEKKING ONVOLLEDIG"
         out.append(
             f"{lane['name']}: {lane['status']}; actieve taken "
             f"{lane['active_backlog_count']}; conflicten "
@@ -1098,7 +1098,7 @@ def html_view(data):
         if lane["active_cross_lane_scope_conflicts"]:
             warning += "<p class='warn'>Actief of gereserveerd scopeconflict met andere herstelbaan.</p>"
         elif lane["active_cross_lane_scope_conflicts"] is None:
-            warning += "<p class='warn'>Actieve scopevergelijking onvolledig.</p>"
+            warning += "<p class='warn'>Actieve/gereserveerde scopevergelijking onvolledig.</p>"
         cards.append(
             "<article><div class='eyebrow'>Herstelbaan</div><h2>"
             + html.escape(lane["name"]) + "</h2><p class='state'>"
@@ -1205,7 +1205,7 @@ def html_view(data):
             "Gedeeltelijke of ambigue lokale bron: geen automatische herverdeling."
         )
     if not data["active_cross_lane_coverage_complete"]:
-        warnings.append("Actieve cross-lane scopevergelijking is beperkt tot 64 taken.")
+        warnings.append("Actieve en workerslot-gereserveerde cross-lane scopevergelijking is beperkt tot 64 taken.")
     warnings.append(
         "Queue-eligible betekent alleen een lokaal veld, niet dat de taak "
         "claimbaar is: controleer de externe eigenaar en releasegates."
