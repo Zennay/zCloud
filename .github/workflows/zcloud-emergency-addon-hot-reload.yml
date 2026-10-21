@@ -141,6 +141,19 @@ jobs:
           test "$(id -un)" = "ubuntu"
           python3 scripts/zcloud_vps_runner_guard.py --json
           python3 scripts/zcloud_emergency_addon_idle_guard_20261013_w1.py
+          # The earlier read-only add-on check is not an immutable admission:
+          # re-verify the exact installed bytes after the final idle/main gate.
+          source="firefox-extension/background.js"
+          live="$HOME/snap/firefox/common/chatgpt-project-extension/background.js"
+          if test -L "$source" || test -L "$live" || test -L "${live%/*}"; then
+            echo "::error::Add-on source/installed path changed to a symlink; deny reload."
+            exit 1
+          fi
+          test -f "$source"
+          test -f "$live"
+          cmp -- "$source" "$live"
+          ! grep -Fq 'browser.tabs.create(' "$live"
+          ! grep -Fq 'browser.tabs.remove(' "$live"
           main_pid="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
           test -n "$main_pid"
           kill -0 "$main_pid"
