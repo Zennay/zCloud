@@ -70,3 +70,35 @@ Both deployed-source locations (`public/zcloud-worker-v2-engine.js` and the embe
 ### Per-assignment blocker visibility without notification churn
 
 The local `lastBlock` duplicate-event suppression previously persisted across separate verified queue assignments. If a new assignment met the same missing-composer condition as the previous one, its operator could receive **no new** blocker event. `resetComposerRepair(queueId)` now resets the deduplication key **only when** the observed queue ID changes, including a transition to no verified assignment. Repeated polls in the same unchanged assignment still emit at most the original event. This does not create, claim, renew, abandon or mutate any lease, and the repair remains one-shot per verified queue assignment.
+
+
+## 21 October · exact-prompt send admission and draft preservation
+
+The actual v2 send path previously treated **any nonempty composer content**
+as a successful fill. A responsive input could retain stale text, a user's
+unfinished draft or only part of a worker prompt; after high-effort and
+queue checks the browser would still click Send. This was a product
+misdelivery risk in [issue #698](https://github.com/Zennay/zCloud/issues/698).
+
+The v2 engine and embedded userscript now:
+
+- Refuse to overwrite a nonempty *different* composer draft, including a
+  second refusal after ensureHigh has interacted with the browser.
+- Verify the complete normalized prompt after DOM insertion rather than only
+  checking for nonempty text. Failure emits a bounded operator blocker and
+  never advances promptAt or awaiting.
+- Reconfirm the visible composer still contains the intended exact prompt
+  immediately before the send click, after the fresh queue lease read.
+- Choose a **visible** send control among responsive duplicates; ignore hidden
+  stop controls when determining whether generation is active.
+
+These changes do not increase polling, authorize edits to an operator's
+draft, create a conversation, take a new claim, retry an unconfirmed send,
+expand an API permission or bypass Thinking High, fresh queue identity,
+protected GitHub main, approvals or release gates. Mismatched input is
+preserved for human inspection rather than silently overwritten.
+
+Both standalone v2 engine and its embedded, byte-identical userscript copy
+were updated in source, without changing the userscript version/distribution
+contract. No browser worker was restarted or QA/regression suite created or
+run; deployment and real-device recovery remain **NOT VERIFIED**.
