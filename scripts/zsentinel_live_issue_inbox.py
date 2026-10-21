@@ -128,6 +128,12 @@ def _safe_issue(item, repository, *, observed_at):
         "triage_rank": rank,
         "state": "open",
         "source_type": "github_recent_open_issue",
+        "owner_next_step": "inspect_current_issue_and_existing_repair_prs",
+        "followup_command": (
+            "python3 scripts/zsentinel_recovery_policy.py"
+            " --live-issue-url " + url + " --format html"
+        ),
+        "followup_command_executed": False,
         "current_issue_details_fetched": False,
         "repair_prs_checked": False,
         "issue_owner_claim_verified": False,
@@ -313,6 +319,10 @@ def markdown(report):
             str(row["no_github_issue_update_for_72h"]) +
             " · owner/repair/merge UNKNOWN"
         )
+        lines.append(
+            "  - Next: `" + row["followup_command"] + "` "
+            "(not executed)"
+        )
     if not report["issues"]:
         lines.append(
             "- No issues observed in this bounded source window. "
@@ -385,7 +395,9 @@ def html_view(report):
             esc(item["no_github_issue_update_for_72h"]) +
             "<br><small>GitHub issue inactivity does NOT prove worker stall. "
             "Worker ownership, actual fix, required CI, "
-            "protected-main merge and production: UNKNOWN.</small></li>"
+            "protected-main merge and production: UNKNOWN.</small>"
+            "<br><code>" + esc(item["followup_command"]) +
+            "</code> <small>(not executed)</small></li>"
         )
     if not report["issues"]:
         rows.append(
