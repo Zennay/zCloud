@@ -202,10 +202,12 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
     fair_rows = []
     for issue in sorted(issue_map.values(), key=lambda item: (
             0 if item["priority"] == "P0" else 1,
-            0 if item["linked_prs"] else 1,
+            0 if item["linked_prs"] else
+            1 if item["candidate_pr_numbers"] else 2,
             item["repo"].casefold(), item["number"])):
         level = 0 if issue["priority"] == "P0" else 1
-        reuse = 0 if issue["linked_prs"] else 1
+        reuse = (0 if issue["linked_prs"] else
+                 1 if issue["candidate_pr_numbers"] else 2)
         key = (level, reuse, issue["repo"])
         position = fair_slots.get(key, 0)
         fair_slots[key] = position + 1
@@ -219,15 +221,25 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
             item["project"] = project
             item["read_only_issue_command"] = (
                 "python3 scripts/zsentinel_issue_first_board.py --project " +
-                project + " --issue " + str(item["number"]))
+                project + " --issue " + str(item["number"]) +
+                (" --candidate-pr " + str(item["candidate_pr_numbers"][0])
+                 if item["candidate_pr_numbers"] and not item["linked_prs"]
+                 else ""))
         else:
             item["project"] = "UNKNOWN"
             item["read_only_issue_command"] = None
         item["operator_action"] = (
-            "Inspect the existing PR and its exact-HEAD review/CI/claim gates"
+            "Inspect selected existing PR and exact-HEAD review/CI/claim gates"
             if item["linked_prs"] else
+            "Inspect an already-observed but not yet rechecked existing PR"
+            if item["candidate_pr_numbers"] else
             "Search older existing PRs, then independently confirm ownership"
         )
+        selected = {pr["number"] for pr in item["linked_prs"]}
+        item["uninspected_candidate_pr_numbers"] = [
+            number for number in item["candidate_pr_numbers"]
+            if number not in selected
+        ]
         item["merged_main"] = "NOT_PROVEN"
         item["live_verified"] = False
     limited = ordered[:limit]
@@ -236,7 +248,12 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
         "ownership": "NOT_INFERABLE",
         "total_observed_issues": len(ordered),
         "linked_observed_issues": sum(bool(x["linked_prs"]) for x in ordered),
-        "unlinked_in_sample": sum(not x["linked_prs"] for x in ordered),
+        "uninspected_pr_candidate_issues": sum(
+            bool(x["uninspected_candidate_pr_numbers"]) and not x["linked_prs"]
+            for x in ordered),
+        "unlinked_in_sample": sum(
+            not x["linked_prs"] and not x["candidate_pr_numbers"]
+            for x in ordered),
         "visible": len(limited),
         "omitted": len(ordered) - len(limited),
         "items": limited,
