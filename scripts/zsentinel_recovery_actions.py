@@ -20,6 +20,33 @@ def action(identifier, severity, problem, next_step, status):
 def _number(value):
     return value if type(value) is int and 0 <= value <= 1000000 else 0
 
+def _psi_owner_context(pressure):
+    """Bounded explanation of local 60-second stalls, not a job diagnosis."""
+    psi = pressure.get("psi")
+    if not isinstance(psi, dict) or psi.get("status") != "OBSERVED":
+        return " Kernelwachttijden (PSI) niet volledig waargenomen."
+    resources = psi.get("resources") or {}
+    candidates = []
+    labels = (
+        ("memory", "full", "geheugen: volledige stilstand"),
+        ("io", "full", "I/O: volledige stilstand"),
+        ("cpu", "some", "CPU: deels wachtend"),
+        ("memory", "some", "geheugen: deels wachtend"),
+        ("io", "some", "I/O: deels wachtend"),
+    )
+    for source, scope, description in labels:
+        try:
+            value = resources[source]["measurements"][scope]["avg60_pct"]
+        except (KeyError, TypeError):
+            continue
+        if type(value) in (float, int) and 0 <= value <= 100:
+            candidates.append((value, description))
+    if not candidates:
+        return " Kernelwachttijden (PSI) onbekend."
+    percent, reason = max(candidates, key=lambda item: item[0])
+    return f" Kernel-PSI piek over 60s: {reason} {percent:.2f}%; geen jobbewijs."
+
+
 def _runner_pressure_context(packet):
     """Correlate only two LOCAL observations; never infer remote job status."""
     proc = packet.get("runner_processes")
@@ -207,9 +234,10 @@ def suggested_actions(packet):
                 "urgent" if hint == "HIGH_LOCAL_PRESSURE" else "review",
                 "De lokale host heeft verhoogde RAM-, swap-, CPU- of schijfruimtedruk; "
                 "dit is geen bewijs dat een GitHub-job vastzit."
+                + _psi_owner_context(pressure)
                 + _runner_pressure_context(packet),
                 "Behoud bestaande jobs en claims. Vergelijk cgroup-limieten, "
-                "runner-toewijzing en workerprogressie met de bevoegde eigenaar "
+                "runner-toewijzing, procfs-PSI en workerprogressie met de bevoegde eigenaar "
                 "vóór capaciteitsverhoging, opslagopschoning of serviceactie.",
                 "HOLD_CAPACITY_OWNER_REVIEW",
             ))
