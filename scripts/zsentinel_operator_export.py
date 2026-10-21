@@ -28,6 +28,8 @@ GEEN systemd-timer, runner, GitHub workflow, wachtrij, model of productiecode
 gestart, gestopt, gedeployed of gewijzigd.
 
 Vanaf deze map:
+  # Systeem- én gebruikersservices van GitHub runners onafhankelijk bekijken.
+  # De user-manager kan niet bereikbaar zijn; dat betekent BRON ONBEKEND.
   python3 zsentinel_background_priority.py --preview --human --runners
   python3 zsentinel_background_priority.py --preview --human --report NIEUW.html
   python3 zsentinel_background_priority.py --preview --snapshot T0.json
@@ -66,6 +68,17 @@ Het nieuwe --bundle maakt een verse 0700 map met incident.html,
 owner-handoff.md, owner-inbox.json, github-owner-issue-draft.md en
 MANIFEST.json; ieder bestand is 0600.
 De drie rapporten delen dezelfde bronobservatie.
+Bij lokale runnerinventarisatie worden systeem- en gebruikersservices
+apart via systemctl en systemctl --user gelezen. Beide managers behouden hun
+eigen begrensde bronstatus (waargenomen, gedeeltelijk, onbekend).
+Service-namen kunnen bij beide managers gelijk zijn; ze worden niet
+samengevoegd. Ook mislukte services met een systemctl foutmarker worden
+getoond. Een service die niet in een onvolledige bron voorkomt is niet
+hersteld of bewezen afwezig.
+De privébon bewaart beide scopes afzonderlijk; de T0/T1 bronvergelijking
+geeft onafhankelijke overgangslijsten en de HTML en eigenaarinbox tonen die.
+Bij oudere privébonnen zonder user-bron is de herkomst expliciet ONBEKEND.
+Geen enkele systemd-status bewijst een GitHub job of staat herstart toe.
 Het incident.html start met lokale navigatie naar de eigenaaroverdracht,
 het geredigeerde GitHub-issueconcept en de JSON-inbox; geen webformulier,
 upload of externe verbinding. HTML en Markdown tonen dezelfde incidentreferentie.
