@@ -257,6 +257,7 @@
   async function send(reason){
     if(sending||awaiting||generating()||!target||!ready(target))return false;
     const dispatchedQueue=String(target.queue_item.queue_id);
+    const dispatchedSlot=Number(target.global_worker_slot);
     if(!sentInThisDocument&&sameQueueWasSentBeforeReload(dispatchedQueue)){
       await blocked("previous-queue-send-after-reload-manual-review");
       return false;
@@ -286,10 +287,13 @@
       // A queue ID alone is not proof that the assignment still authorizes
       // this exact prompt. A same-queue edit, slot move or owner change
       // during the Thinking/editor wait must not dispatch stale instructions.
-      if(!ready(current)||current.project_id!==id||
-         current.queue_item.queue_id!==target.queue_item.queue_id||
-         current.prompt!==prompt||
-         Number(current.global_worker_slot)!==Number(target.global_worker_slot)){
+      if(!ready(current)||current.project_id!==id||target.project_id!==id||
+         current.queue_item.queue_id!==dispatchedQueue||
+         target.queue_item?.queue_id!==dispatchedQueue||
+         String(current.prompt||"").trim()!==prompt||
+         String(target.prompt||"").trim()!==prompt||
+         Number(current.global_worker_slot)!==dispatchedSlot||
+         Number(target.global_worker_slot)!==dispatchedSlot){
         await blocked("assignment-changed-before-send");return false;
       }
       const button=sendButton();
