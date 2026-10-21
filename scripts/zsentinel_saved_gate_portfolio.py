@@ -125,6 +125,34 @@ def project_worklist(selected, integrated, *, project=None):
     return ordered
 
 
+def source_gate_detail(candidate):
+    """Human-readable completeness of one SAVED exact-head observation.
+
+    These are evidence markers, never branch-protection or merge approval.
+    """
+    gate = candidate["gate_observations"]
+    if gate is None:
+        return "HEAD ONBEKEND · gatebron afwezig of gewijzigd"
+    flags = []
+    if gate["checks_page_complete"]:
+        flags.append("checks-pagina volledig gezien")
+    else:
+        flags.append("checks-pagina ONVOLLEDIG")
+    if gate["reviews_page_may_be_truncated"]:
+        flags.append("reviewpagina mogelijk afgekapt")
+    else:
+        flags.append("reviewpagina niet als afgekapt gemarkeerd")
+    if gate["legacy_page_may_be_truncated"]:
+        flags.append("legacy statusbron mogelijk afgekapt")
+    if gate["changes_requested_observed"]:
+        flags.append(str(gate["changes_requested_observed"]) + " wijzigingsverzoeken gezien")
+    if gate["legacy_failed_observed"]:
+        flags.append("legacy checkfout gezien")
+    if gate["legacy_pending_observed"]:
+        flags.append("legacy check loopt")
+    return " · ".join(flags) + " · bronwaarneming is GEEN mergevrijgave"
+
+
 def portfolio_html(selected, integrated, *, project=None):
     """Offline accessible project-level prioritization with original PR links."""
     projects = project_worklist(selected, integrated, project=project)
@@ -145,6 +173,14 @@ def portfolio_html(selected, integrated, *, project=None):
                 "source_unavailable_or_head_changed": "Bron/HEAD niet vastgepind",
                 "observed_partial_gate_receipt": "Gedeeltelijke gatebron",
             }[candidate["gate_source"]]
+            head = candidate["head_observed"]
+            head_receipt = (
+                '<a href="https://github.com/' + e(p["repository"]) +
+                '/commit/' + head + '" target="_blank" ' +
+                'rel="noopener noreferrer">Bron HEAD <code>' +
+                head[:12] + '</code></a>'
+                if head is not None else '<strong>Bron HEAD ONBEKEND</strong>')
+            receipt_completeness = source_gate_detail(candidate)
             counters = candidate["gate_observations"]
             counter_detail = (
                 " · Exact-HEAD steekproef: afgerond " +
@@ -163,7 +199,8 @@ def portfolio_html(selected, integrated, *, project=None):
                 '<br><small>' + e(observation) + ' · Batch ' +
                 str(candidate["batch_index"]) + ' · ' + e(combined) +
                 ' · Gekoppelde bronissues: ' + issue_links +
-                e(counter_detail) + '</small></li>')
+                e(counter_detail) + '<br>' + head_receipt +
+                ' · ' + e(receipt_completeness) + '</small></li>')
         counts = " · ".join(
             str(p["primary_categories"][key]) + " " + LABELS[key][0]
             for key in LABELS if p["primary_categories"][key])
@@ -408,7 +445,8 @@ def portfolio_pr_csv(selected, integrated, *, project=None):
         "Prioriteit", "Bestaande PR", "Originele PR URL",
         "Gekoppelde issue URLs", "Bronbatch", "Gatebron",
         "Hoofdblokkade", "Gelijktijdige blokkades", "Waargenomen HEAD SHA",
-        "Menselijke vervolgactie", "Huidige eigenaar en mainwriter",
+        "Menselijke vervolgactie", "Bron gate integriteit",
+        "Huidige eigenaar en mainwriter",
         "Exact-head vereiste CI en review", "Gemerged op main", "Live herstel",
     ])
     for item in projects:
@@ -425,8 +463,8 @@ def portfolio_pr_csv(selected, integrated, *, project=None):
                 LABELS[candidate["primary_gate"]][0],
                 " | ".join(LABELS[key][0] for key in candidate["concurrent_gates"]),
                 candidate["head_observed"] or "ONBEKEND",
-                candidate["next_action"], "ONBEKEND", "ONBEKEND",
-                "ONBEKEND", "ONBEKEND",
+                candidate["next_action"], source_gate_detail(candidate),
+                "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND",
             ])
     result = "\ufeff" + stream.getvalue()
     if len(result.encode("utf-8")) > 1024 * 1024:
@@ -496,6 +534,9 @@ def portfolio_markdown(selected, integrated, *, project=None):
                 "  - Gelijktijdige signalen: " + blockers,
                 "  - Batch " + str(candidate["batch_index"]) +
                 ": " + status_labels[candidate["gate_source"]],
+                "  - Waargenomen bron HEAD: " +
+                (candidate["head_observed"] or "ONBEKEND"),
+                "  - Bronintegriteit: " + source_gate_detail(candidate),
                 "  - Exact-HEAD CI steekproef: " +
                 (("afgerond " + str(candidate["gate_observations"]["checks_completed"]) +
                   ", lopend " + str(candidate["gate_observations"]["checks_pending"]) +
