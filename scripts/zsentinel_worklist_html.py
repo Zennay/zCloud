@@ -207,7 +207,11 @@ def render_html(board, max_rows=20):
             "' data-title='" + h(row["title"]) +
             "' data-category='" + h(row["category_nl"]) +
             "' data-activity='" + h(row["activity_signal"]) +
-            "' data-next='" + h(row["human_next_step_nl"]) + "'>"
+            "' data-next='" + h(row["human_next_step_nl"]) +
+            "' data-issue-updated='" + h(str(row["issue_updated_at"] or "ONBEKEND")) +
+            "' data-pr-updated='" + h(str(row["latest_linked_open_pr_updated_at"] or "ONBEKEND")) +
+            "' data-scope-complete='" + ("yes" if row["pr_file_scope_sample_complete"] else "no") +
+            "' data-references-complete='" + ("yes" if row["issue_reference_sample_complete"] else "no") + "'>"
             "<header><span class='priority'>" + h(row["priority"]) + "</span> "
             "<span>" + h(row["project"]) + "</span> <small>#" +
             str(pos) + "</small></header><h2><a rel='noopener noreferrer' "
@@ -241,7 +245,8 @@ def render_html(board, max_rows=20):
             "<option value='followup'>Opvolging genoteerd</option>"
             "</select></label><label>Privé werknotitie (alleen dit browservenster)"
             "<textarea maxlength='700' rows='2' placeholder='Handmatige afspraak, geen automatische claim'></textarea>"
-            "</label></div></article>"
+            "</label></div><button type='button' class='issue-export-one'>"
+            "Download privé eigenaarsdossier voor dit issue</button></article>"
         )
     # Multiple saved PR mentions for one issue are actionable OWNER TRIAGE,
     # not evidence of file collision, a shared owner, or two complete fixes.
@@ -770,6 +775,77 @@ function onePrHandoff(){
  privateDownload('zsentinel-pr-'+url.split('/').pop()+'-privé-overdracht.md',
    lines.join('\n')+'\n');
 }
+function oneIssueHandoff(t){
+ const issue=t.dataset.issue;
+ if(!tickets.includes(t))return;
+ const candidates=[t.dataset.pr,...t.dataset.prs.trim().split(' ').filter(Boolean)]
+  .filter(Boolean);
+ const c=collisionRows.find(row=>row.dataset.issue===issue);
+ const lines=[
+  '# zSentinel · privé eigenaarsdossier voor issue '+issue.split('/').pop(),'',
+  '> Eén issue uit de begrensde offline bronopname. Geen actuele claim, PR-eigenaar, CI, review, merge, fix of deployvrijgave.','',
+  '- Bronissue: [GitHub issue]('+issue+')',
+  '- Project: '+safeText(t.dataset.project),
+  '- Prioriteit uit bron: '+safeText(t.dataset.priority),
+  '- Titel: '+safeText(t.dataset.title),
+  '- Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
+  '- PR-bron UTC: '+safeText(document.getElementById('pr-time').textContent),
+  '- Issue laatst waargenomen update: '+safeText(t.dataset.issueUpdated||'ONBEKEND'),
+  '- Gekoppelde PR laatst waargenomen update: '+safeText(t.dataset.prUpdated||'ONBEKEND'),
+  '- Historisch activiteitssignaal: '+safeText(t.dataset.activity),
+  '- PR-bestandsdekking: '+(t.dataset.scopeComplete==='yes'?'binnen bronsteekproef compleet':'ONVOLLEDIG'),
+  '- Issue-PR-verwijzingsdekking: '+(t.dataset.referencesComplete==='yes'?'binnen bronsteekproef compleet':'ONVOLLEDIG'),
+  '- Exact privé brontoken: '+safeText(document.body.dataset.sourceToken),'',
+  '## Menselijke issueopvolging','',
+  '- Geobserveerde bronroute: '+safeText(t.dataset.category),
+  '- Aanbevolen stap: '+safeText(t.dataset.next),
+  '- Handmatige issuestatus: '+safeText(labels[t.querySelector('.local-state').value]),
+  '- PR-kandidaten binnen deze bron: '+candidates.length
+ ];
+ const note=t.querySelector('textarea').value.trim();
+ if(note)lines.push('- Privé issuenotitie: '+safeText(note));
+ if(c){
+  lines.push('- Meer dan één PR verwijst naar dit issue: GEZIEN, geen bewezen bestandsbotsing of dubbele fix.',
+   '- Lokale afstemming: '+safeText(collisionLabels[c.querySelector('.collision-state').value]));
+  const cnote=c.querySelector('.collision-note').value.trim();
+  if(cnote)lines.push('- Privé PR-afstemmingsnotitie: '+safeText(cnote));
+ }
+ lines.push('','## Bestaande PR-kandidaten uit opgeslagen bron','');
+ if(!candidates.length)lines.push(
+  'Geen gekoppelde PR in deze beperkte steekproef waargenomen. Dat bewijst NIET dat er geen bestaande PR bestaat.','');
+ for(const [i,url] of candidates.entries()){
+  const p=prs.find(group=>group.dataset.pr===url);
+  const head=p&&p.dataset.head||'ONBEKEND';
+  lines.push('### '+(i+1)+'. [Bestaande PR #'+url.split('/').pop()+']('+url+')','',
+   '- Historisch geobserveerde HEAD: '+safeText(head),
+   '- Historische gatebron: '+(p?safeText(gateLabels[p.dataset.gate]||p.dataset.gate):'ONBEKEND / niet gekoppeld aan dit bronvenster'),
+   '- PR-groep in werkbak: '+(p?'JA':'NEE, geen actuele bronconclusie'));
+  if(head!=='ONBEKEND')lines.push(
+   '- Exact broncommit: [GitHub commit]('+url.split('/pull/')[0]+'/commit/'+head+')');
+  if(p){
+   lines.push(
+    '- Gatevervolgstap uit bron: '+safeText(p.dataset.next),
+    '- Waargenomen PR-bestandsoverlap: '+safeText(p.dataset.overlap),
+    '- Historische PR-beweging: '+safeText(p.dataset.movement),
+    '- Privé PR-status: '+safeText(prLabels[p.querySelector('.pr-local-state').value])
+   );
+   const pnote=p.querySelector('.pr-note').value.trim();
+   if(pnote)lines.push('- Privé PR-notitie: '+safeText(pnote));
+   const linked=p.dataset.sourceIssues.trim().split(' ').filter(Boolean);
+   const others=linked.filter(other=>other!==issue);
+   if(others.length){
+    lines.push('- Andere bronissuevermeldingen bij deze PR (geen bewezen fixes):');
+    for(const other of others)lines.push('  - [Issue #'+other.split('/').pop()+']('+other+')'+
+      (tickets.some(card=>card.dataset.issue===other)?'':' · buiten huidig beperkt venster'));
+   }
+  }
+  lines.push('');
+ }
+ lines.push('**Volgende geautoriseerde stap:** herlees actuele open issues, actieve claims, exacte PR-HEADs, verplichte CI, onafhankelijke review en branch protection. Deze privé-overdracht heeft nergens extern iets gewijzigd.','');
+ privateDownload('zsentinel-issue-'+issue.split('/').pop()+'-prive-eigenaarsdossier.md',lines.join('\n')+'\n');
+}
+for(const t of tickets)t.querySelector('.issue-export-one').addEventListener('click',
+ ()=>oneIssueHandoff(t));
 focusExport.addEventListener('click',onePrHandoff);
 function exportOutstandingPrHandoff(){
  const outstanding=prs.filter(p=>p.querySelector('.pr-local-state').value!=='followup');
