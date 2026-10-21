@@ -1050,8 +1050,11 @@ def private_action_briefing(decision, source):
             raise ValueError("invalid bounded operator label")
         if any(ord(char) < 32 or ord(char) == 127 for char in value):
             raise ValueError("control in operator action label")
+        visible = "".join(
+            f"⟦U+{ord(ch):04X}⟧" if unicodedata.category(ch) in ("Cf", "Zl", "Zp")
+            else ch for ch in value)
         return "".join(("\\" + ch if ch in "\\*_`[]()#<>!|~{}" else ch)
-                       for ch in value)
+                       for ch in visible)
 
     lines = [
         "# zSentinel · privé actieoverdracht",
@@ -1123,7 +1126,43 @@ def private_action_briefing(decision, source):
                          "; runnergezondheid en recovery ONBEKEND.")
     else:
         lines.append("- Geen exact-jobbron geselecteerd; geen runnerdiagnose.")
-    lines += ["", "## 4. Bestaande queue en incidenten"]
+    lines += ["", "## 4. Notion-status en workercontinuïteit · geen leasebewijs"]
+    notion = decision.get("notion_claims_observation")
+    if type(notion) is dict:
+        lines.append("- Notionbron: " + md(notion["coverage"], 65) +
+                     " · " + str(notion["active_count"]) +
+                     " waargenomen Claimed/Running/Verifying-regels (alleen ondergrens).")
+        active_counts = notion.get("active_project_counts", {})
+        if type(active_counts) is dict:
+            for project, count in sorted(active_counts.items())[:12]:
+                if (type(count) is not int or not 0 <= count <= 400):
+                    raise ValueError("invalid Notion active project count")
+                lines.append("  - " + md(project, 80) + ": ≥" + str(count) +
+                             " statusregels; bestandsclaim/owner NIET bewezen.")
+        if notion["coverage"] != "current_pages_only":
+            lines.append("  - Brondekking onvolledig of snapshot niet actueel; geen vrijgave.")
+    else:
+        lines.append("- Notion-bron ONBEKEND; werkitems zijn mogelijk actief.")
+    workers = decision.get("worker_progress_observation")
+    if type(workers) is dict:
+        lines.append("- Workerbron: " + md(workers["coverage"], 65) +
+                     " · eventtijdlijn is geen huidige werkhervatting.")
+        for row in workers.get("owner_followup_candidates", [])[:12]:
+            if (type(row) is not dict or
+                    row.get("owner_claim_verified") is not False
+                    or row.get("recovery_authorized") is not False
+                    or row.get("continuation_verified") is not False
+                    or type(row.get("worker_slot")) is not int
+                    or not 0 <= row["worker_slot"] <= 100):
+                raise ValueError("untrusted worker handoff summary")
+            lines.append("  - " + md(row["project_id"], 80) +
+                         " worker " + str(row["worker_slot"]) +
+                         " · " + md(row["classification"], 100) +
+                         " · veilig owneradvies " + md(row["safe_followup"], 180))
+        lines.append("  - Beperkte bron; geen automatische hervatting of ownerclaim.")
+    else:
+        lines.append("- Workercontinuïteit ONBEKEND; geen runnerherstelbewijs.")
+    lines += ["", "## 5. Bestaande queue en incidenten"]
     q = decision.get("live_queue_pressure")
     if type(q) is dict and q.get("coverage") in ("current", "incomplete", "stale"):
         t = q["totals"]
