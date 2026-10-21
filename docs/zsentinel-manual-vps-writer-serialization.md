@@ -130,6 +130,8 @@ additional deployment authority.
 | Manual operation | GitHub summary outcome | What it actually means |
 | --- | --- | --- |
 | Worker addon install, after source bytes are compared | `INSTALLED_ON_DISK` | Installed file verified; **browser activation not confirmed** |
+| Worker addon already equals reviewed main | `ALREADY_CURRENT_ON_DISK` | No installed-file rewrite; separate guarded reload may still be necessary |
+| Root-owned standalone watchdog already has approved bytes and 0755 mode | `ALREADY_CURRENT_ON_DISK` | No backup or live executable replacement |
 | Worker addon: no debugger, busy/unverified idle, or failed reload command | `RELOAD_DEFERRED` | Disk install may be complete; **not actively reloaded** |
 | Worker addon: in-place reload command returned success | `RELOAD_COMMAND_SUCCEEDED` | Reload command worked; **not independent end-to-end live proof** |
 | Standalone watchdog install with final byte comparison | `INSTALLED_ON_DISK` | Standalone executable updated; **no live recovery proof** |
@@ -159,6 +161,17 @@ rollback stages and compares the private backup before restoring via an
 atomic rename; if restoration fails, the private backup is retained.
 A job that fails **before** installing anything remains a failed job,
 not a successful release receipt.
+
+Repeated manually authorized installs are **idempotent** where possible:
+after the existing exact-main, runtime-source and non-symlink checks, the
+addon install step emits `ALREADY_CURRENT_ON_DISK` and skips the disk
+replacement when its current installed bytes equal the reviewed source.
+The subsequent activation step runs independently under the same existing
+safe-idle and owner gates: an earlier deferred reload can still be retried
+without rewriting a correct installed file. Similarly, the standalone
+watchdog install skips both backup and root-file mutation when the existing
+canonical executable is root-owned, has mode 0755 and matches approved
+source bytes. Unknown ownership or mode is not treated as already current.
 
 The worker-add-on install and activation are separate shell steps. The
 activation step explicitly re-resolves its installed add-on directory; using
