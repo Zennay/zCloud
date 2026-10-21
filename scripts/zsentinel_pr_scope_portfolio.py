@@ -150,7 +150,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
     is rejected as a cross-source match rather than called merge-ready.
     """
     from zsentinel_pr_gate_now import observe_many
-    from zsentinel_pr_scope_guard import selected_source_pr
+    from zsentinel_pr_scope_guard import selected_source_pr, overlaps
 
     if (type(board) is not dict
             or board.get("schema") != "zsentinel-portfolio-pr-collision-board-v1"
@@ -293,9 +293,17 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                         if item["project"] == project)
             if view.get("open_pr_snapshot_stable") is True:
                 for recent in view.get("sampled_open_pr_heads", []):
-                    shared = sorted(set(direct["paths"]).intersection(
-                        recent.get("file_paths_observed", [])))
-                    if recent["number"] == direct["number"] or not shared:
+                    recent_paths = recent.get("file_paths_observed", [])
+                    shared = sorted(set(direct["paths"]).intersection(recent_paths))
+                    path_conflicts = sorted({
+                        (selected_path, recent_path)
+                        for selected_path in direct["paths"]
+                        for recent_path in recent_paths
+                        if selected_path != recent_path
+                        and overlaps(selected_path, recent_path)
+                    })
+                    if (recent["number"] == direct["number"]
+                            or not shared and not path_conflicts):
                         continue
                     observed_overlaps.append({
                         "other_pr_url": recent["url"],
@@ -303,12 +311,19 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                         "shared_file_count_observed": len(shared),
                         "shared_paths_preview": shared[:12],
                         "shared_paths_preview_truncated": len(shared) > 12,
+                        "path_conflict_count_observed": len(path_conflicts),
+                        "path_conflict_examples": [
+                            {"selected_path": left, "other_path": right}
+                            for left, right in path_conflicts[:12]],
+                        "path_conflict_examples_truncated": len(path_conflicts) > 12,
+                        "collision_count_observed": len(shared) + len(path_conflicts),
                         "other_pr_file_list_incomplete":
                             not recent.get("file_list_complete", False),
                         "complete_repo_collision_scan_verified": False,
                     })
             observed_overlaps.sort(
-                key=lambda item: (-item["shared_file_count_observed"],
+                key=lambda item: (-item.get("collision_count_observed",
+                                            item["shared_file_count_observed"]),
                                   item["other_pr_url"]))
             selected.append((project, repo, {
                 **direct,
@@ -629,6 +644,16 @@ def current_gate_lines(board, markdown=False):
                     "  WAARGENOMEN gedeelde paden met " + other + ": " +
                     str(collision["shared_file_count_observed"]) + " (" +
                     ", ".join(collision["shared_paths_preview"]) + ")")
+                if collision.get("path_conflict_count_observed"):
+                    examples = collision.get("path_conflict_examples", [])
+                    labels = [
+                        left["selected_path"].replace("`", "\\`") + " ↔ " +
+                        right["other_path"].replace("`", "\\`")
+                        for left in examples]
+                    lines.append(
+                        "  WAARGENOMEN bestand/mapconflicten met " + other + ": " +
+                        str(collision["path_conflict_count_observed"]) + " (" +
+                        "; ".join(labels) + ")")
             if gate["sampled_file_overlaps_hidden"]:
                 lines.append(
                     "  Extra overlaplinks buiten de beperkte voorvertoning: " +
@@ -1163,12 +1188,22 @@ def as_html(board):
                 collision_links = []
                 for other in gate["sampled_file_overlaps_observed"]:
                     other_url = escape(other["other_pr_url"], quote=True)
+                    path_conflict_html = ""
+                    if other.get("path_conflict_count_observed"):
+                        labels = [
+                            row["selected_path"] + " ↔ " + row["other_path"]
+                            for row in other.get("path_conflict_examples", [])]
+                        path_conflict_html = (
+                            "<br><strong>Bestand/mapconflicten (" +
+                            str(other["path_conflict_count_observed"]) + "):</strong> " +
+                            escape("; ".join(labels)))
                     collision_links.append(
                         "<li><a href='" + other_url +
                         "' rel='noopener noreferrer'>" + other_url +
                         "</a>: " + str(other["shared_file_count_observed"]) +
-                        " gedeelde paden (steekproef), o.a. " +
-                        escape(", ".join(other["shared_paths_preview"])) + "</li>")
+                        " exact gedeelde paden (steekproef), o.a. " +
+                        escape(", ".join(other["shared_paths_preview"])) +
+                        path_conflict_html + "</li>")
                 source_note = (
                     "<p><strong>Gericht gelezen oudere PR</strong>: " +
                     (str(gate["focused_pr_file_pages_observed"]) +
