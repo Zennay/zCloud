@@ -226,6 +226,14 @@ run-GET en het job-GET van status veranderen. In dat geval moet de operator
 later **een nieuw bronmoment** ophalen, niet op basis van de oude snapshot
 herstarten of CI opnieuw starten.
 
+Ook de bestaande brongebonden ownerhandoff neemt een echte GitHub 401 op als
+**P1 GitHub-tokenherstel voor de bevoegde eigenaar**. Een 403 zonder
+bewezen quota-uitputting krijgt maximaal drie projectgebonden P1-kaarten
+voor repo-/toegangscontrole. Een bevestigde 429 is een bronwachtstatus:
+zichtbaar in de cockpit, maar **geen nieuw menselijk alarm** en geen
+reden om runner/CI te herstarten. Dat voorkomt dat acht mislukte GETs
+acht schijnincidenten veroorzaken.
+
 De herstelroute geeft op basis van deze observaties nooit zelfstandig claims,
 GitHub-reruns, runner-restarts, Notion-acties, betaalde capaciteit, merges of
 deploys vrij. Bevoegde eigenaren en exacte-head CI/review blijven de enige
