@@ -14,7 +14,7 @@ import os
 import re
 import stat
 from pathlib import Path
-from zipfile import ZIP_STORED, ZipFile
+from zipfile import ZIP_STORED, BadZipFile, LargeZipFile, ZipFile
 
 from zsentinel_operator_packet import MEMBERS, MAX_PACKET_BYTES, build_packet
 from zsentinel_runtime_handoff import (
@@ -128,7 +128,8 @@ def main():
     try:
         report = open_packet(args.packet)
     except (OSError, ValueError, TypeError, KeyError,
-            UnicodeError, RecursionError) as exc:
+            UnicodeError, RecursionError, EOFError, BadZipFile,
+            LargeZipFile, RuntimeError) as exc:
         parser.exit(2, f"zSentinel owner packet refused: {exc}\n")
     if args.format == "json":
         print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
