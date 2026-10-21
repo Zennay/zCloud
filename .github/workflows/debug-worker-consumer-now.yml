@@ -1,45 +1,177 @@
-# FTMO verify72 zSSH consumer diagnostic trigger 2026-10-02T09:22Z
 name: Debug zCloud worker consumer now
+
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/debug-worker-consumer-now.yml"
+      - "tests/test_debug_worker_consumer_workflow.py"
   push:
     branches: [main]
     paths:
       - ".github/workflows/debug-worker-consumer-now.yml"
+      - "tests/test_debug_worker_consumer_workflow.py"
+  workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: debug-zcloud-worker-consumer-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  debug:
-    runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 2
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
-      - name: Capture live worker consumer state
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+
+      - name: Validate diagnostic workflow contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_debug_worker_consumer_workflow
+
+  debug:
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout exact zCloud revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify permanent VPS runner and exact revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Capture sanitized live worker consumer state
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, sqlite3, urllib.request
-          BASE="http://127.0.0.1:8765"
+          from collections import Counter
+          import json
+          from pathlib import Path
+          import sqlite3
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8765"
+          DB = Path("/home/ubuntu/zennay-cloud/history.db")
+          ALLOWED_WORKER_STATES = {
+              "waiting",
+              "running",
+              "blocked",
+              "failed",
+              "paused",
+              "draining",
+          }
+
           def get(path):
-              with urllib.request.urlopen(BASE+path, timeout=10) as r:
-                  return json.load(r)
-          print("WORKER_DEBUG="+json.dumps(get("/api/worker-debug"),sort_keys=True))
-          status=get("/api/status")
-          print("STATUS="+json.dumps({
-              "dynamic_workers":status.get("dynamic_workers"),
-              "chatgpt_firefox":status.get("chatgpt_firefox"),
-              "chatgpt_runners":status.get("chatgpt_runners"),
-              "errors":status.get("errors"),
-          },sort_keys=True))
-          with sqlite3.connect("/home/ubuntu/zennay-cloud/history.db",timeout=5) as c:
-              c.row_factory=sqlite3.Row
-              events=[dict(r) for r in c.execute(
-                  "SELECT id,ts,event,project_id,worker_slot,target,reason,error,generating,sending "
-                  "FROM runner_events ORDER BY id DESC LIMIT 120"
-              ).fetchall()]
-              commands=[dict(r) for r in c.execute(
-                  "SELECT id,project_id,action,status,created_at,updated_at,result "
-                  "FROM runner_commands ORDER BY id DESC LIMIT 80"
-              ).fetchall()]
-          print("RECENT_EVENTS="+json.dumps(events,sort_keys=True))
-          print("RECENT_COMMANDS="+json.dumps(commands,sort_keys=True))
+              with urllib.request.urlopen(BASE + path, timeout=10) as response:
+                  return json.load(response)
+
+          def cardinality(value):
+              if isinstance(value, (dict, list, tuple, set)):
+                  return len(value)
+              return int(bool(value))
+
+          worker_debug = get("/api/worker-debug")
+          workers = worker_debug.get("workers") or []
+          state_counts = Counter()
+          for worker in workers:
+              state = str((worker or {}).get("state") or "other").strip().lower()
+              state_counts[state if state in ALLOWED_WORKER_STATES else "other"] += 1
+
+          status = get("/api/status")
+          api_summary = {
+              "worker_count": len(workers),
+              "worker_states": dict(sorted(state_counts.items())),
+              "dynamic_workers_count": cardinality(status.get("dynamic_workers")),
+              "chatgpt_runners_count": cardinality(status.get("chatgpt_runners")),
+              "chatgpt_firefox_available": bool(status.get("chatgpt_firefox")),
+          }
+          print("WORKER_CONSUMER_SUMMARY=" + json.dumps(api_summary, sort_keys=True))
+
+          if DB.is_symlink() or not DB.is_file():
+              raise SystemExit("live_history_db_invalid")
+          connection = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=5)
+          try:
+              connection.execute("PRAGMA query_only=ON")
+              event_row = connection.execute(
+                  """
+                  SELECT
+                    COUNT(*) AS total,
+                    COALESCE(SUM(CASE WHEN generating THEN 1 ELSE 0 END), 0) AS generating,
+                    COALESCE(SUM(CASE WHEN sending THEN 1 ELSE 0 END), 0) AS sending,
+                    MAX(ts) AS latest_ts
+                  FROM (
+                    SELECT ts, generating, sending
+                    FROM runner_events
+                    ORDER BY id DESC
+                    LIMIT 120
+                  )
+                  """
+              ).fetchone()
+              command_row = connection.execute(
+                  """
+                  SELECT
+                    COUNT(*) AS total,
+                    COALESCE(SUM(CASE WHEN status IN ('queued', 'pending') THEN 1 ELSE 0 END), 0) AS queued,
+                    COALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END), 0) AS running,
+                    COALESCE(SUM(CASE WHEN status IN ('done', 'success') THEN 1 ELSE 0 END), 0) AS succeeded,
+                    COALESCE(SUM(CASE WHEN status IN ('failed', 'error') THEN 1 ELSE 0 END), 0) AS failed,
+                    MAX(updated_at) AS latest_updated_at
+                  FROM (
+                    SELECT status, updated_at
+                    FROM runner_commands
+                    ORDER BY id DESC
+                    LIMIT 80
+                  )
+                  """
+              ).fetchone()
+          finally:
+              connection.close()
+
+          db_summary = {
+              "events": {
+                  "total": event_row[0],
+                  "generating": event_row[1],
+                  "sending": event_row[2],
+                  "latest_ts": event_row[3],
+              },
+              "commands": {
+                  "total": command_row[0],
+                  "queued": command_row[1],
+                  "running": command_row[2],
+                  "succeeded": command_row[3],
+                  "failed": command_row[4],
+                  "latest_updated_at": command_row[5],
+              },
+          }
+          print("WORKER_CONSUMER_DB_SUMMARY=" + json.dumps(db_summary, sort_keys=True))
           PY
