@@ -16,7 +16,7 @@ import stat
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunsplit
 
 MAX_INPUT_BYTES = 256 * 1024
 MAX_OUTPUT_BYTES = 128 * 1024
@@ -150,7 +150,9 @@ def _source_url(value):
                 "github.com", "app.notion.com", "www.notion.so", "notion.so",
             }):
         raise PolicyInputError("source_url must use an approved HTTPS host")
-    return value
+    # Query strings and fragments are not part of the source identity. They may
+    # contain auth tokens or tracking data, so never echo them into receipts.
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", ""))
 
 
 def _validate(data):
@@ -575,7 +577,7 @@ def template_request(action, project_id, incident_id, source_url, owner):
         raise PolicyInputError("project_id must be a bounded ASCII identifier")
     if type(incident_id) is not str or not SLUG.fullmatch(incident_id):
         raise PolicyInputError("incident_id must be a bounded ASCII identifier")
-    _source_url(source_url)
+    source = _source_url(source_url)
     if owner is not None and (type(owner) is not str or not SLUG.fullmatch(owner)):
         raise PolicyInputError("owner must be null or a bounded ASCII identifier")
     evidence = {field: None for field in sorted(EVIDENCE_FIELDS)}
@@ -585,7 +587,7 @@ def template_request(action, project_id, incident_id, source_url, owner):
         "project_id": project_id,
         "incident_id": incident_id,
         "observed_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "source_url": source_url,
+        "source_url": source,
         "owner": owner,
         "evidence": evidence,
     }
