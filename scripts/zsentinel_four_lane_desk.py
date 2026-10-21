@@ -7,6 +7,7 @@ production actions. Queue occupancy and ownership are deliberately distinct.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import datetime, timezone
 import html
 import json
@@ -612,6 +613,10 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             or missing_local_claim
         ),
     }
+    packet["portfolio_source_key"] = hashlib.sha256(
+        (os.uname().nodename + "\\x00" + str(path.resolve()))
+        .encode("utf-8")
+    ).hexdigest()
     packet["runner_processes"] = (
         observe_local_runners() if include_runner_processes else None
     )
@@ -1336,6 +1341,7 @@ def owner_snapshot(data):
     return {
         "schema": OWNER_SNAPSHOT_SCHEMA,
         "observed_utc": data["observed_utc"],
+        "source_key": data["portfolio_source_key"],
         "coverage_complete": bool(
             not data["portfolio_priority_partial"]
             and not data["portfolio_unknown_project_groups"]
@@ -1368,11 +1374,16 @@ def read_owner_snapshot(path):
     doc = json.loads(raw.decode("utf-8"))
     if (type(doc) is not dict
             or set(doc) != {
-                "schema", "observed_utc", "coverage_complete", "projects",
+                "schema", "observed_utc", "source_key",
+                "coverage_complete", "projects",
                 "owner_verified", "claim_authorized", "merge_authorized",
                 "release_authorized",
             }
             or doc["schema"] != OWNER_SNAPSHOT_SCHEMA
+            or type(doc["source_key"]) is not str
+            or len(doc["source_key"]) != 64
+            or any(char not in "0123456789abcdef"
+                   for char in doc["source_key"])
             or type(doc["coverage_complete"]) is not bool
             or any(doc[key] is not False for key in (
                 "owner_verified", "claim_authorized", "merge_authorized",
@@ -1402,7 +1413,9 @@ def owner_snapshot_changes(data, previous):
         raise ValueError("Owner snapshots must be strictly chronological")
     seconds = (time_now - prior_time).total_seconds()
     status = "COMPARABLE_ENDPOINTS"
-    if not previous["coverage_complete"] or not current["coverage_complete"]:
+    if previous["source_key"] != current["source_key"]:
+        status = "NOT_COMPARABLE_DIFFERENT_LOCAL_SOURCE"
+    elif not previous["coverage_complete"] or not current["coverage_complete"]:
         status = "NOT_COMPARABLE_PARTIAL_SOURCE"
     elif seconds > 7 * 86400:
         status = "NOT_COMPARABLE_OLD_BASELINE"
