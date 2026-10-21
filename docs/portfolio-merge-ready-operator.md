@@ -539,3 +539,21 @@ If GitHub accepted a merge but the follow-up receipt is unavailable, it reports 
 ## Boundaries
 
 Never use a claim from a different project, treat old approvals as current, bypass protected-main checks, increase GitHub billing, restart a runner or claim ownership on behalf of another worker. The current PR is source-only until its own required exact-head CI, independent review, protected-main merge and serialized release are satisfied. No QA or regression suite is created or manually run by this feature.
+
+
+## Expired local leases are recovery signals, not free-owner evidence
+
+The issue-first board's local claim panel now separates **unexpired local
+leases**, **expired lease rows**, exclusive writer capabilities and ambiguous
+lease records. A row whose `lease_until` is already past contributes to
+`expired_local_leases_observed` and, when no active or ambiguous lease is
+present, changes the display status to `EXPIRED_LOCAL_LEASES_OBSERVED`
+instead of hiding the record under a generic no-active-lease status.
+
+This is a bounded, read-only observation of the local `task_claims` table
+only. An expired lease does **not** prove that the worker stopped, the lease
+was safely released, the queue recovered, or the owner is free. The panel
+continues to report Notion/external ownership as `NOT_OBSERVED`, owner
+availability as `NOT_INFERABLE`, and authorization as `NOT_GRANTED`.
+Malformed lease timestamps remain ambiguous; oversized claim inventories
+remain truncated/unknown. No lease is renewed, deleted, reclaimed or written.
