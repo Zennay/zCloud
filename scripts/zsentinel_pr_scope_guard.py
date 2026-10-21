@@ -1733,7 +1733,12 @@ def graph_private_csv(report):
             raise ValueError("private PR CSV byte count too large")
 
     row("source_summary", operator_notice=(
-        "Partial or non-atomic GitHub PR sample; claims, owner and merge gates UNKNOWN."))
+        "Partial or non-atomic GitHub PR sample; claims, owner and merge gates UNKNOWN. " +
+        "Connected file/directory scope groups observed=" +
+        str(report["observed_connected_path_scope_collision_clusters"]) +
+        ", shown=" + str(len(report["linked_pr_path_scope_collision_clusters"])) +
+        ", groups_truncated=" + str(report["path_scope_collision_clusters_truncated"]) +
+        "; this is path-scope evidence, not merge authority."))
     for cluster in report["linked_pr_collision_clusters"]:
         for file_row in cluster["shared_file_pr_matrix"]:
             for pr in file_row["touching_prs"]:
