@@ -126,6 +126,7 @@ def _safe_issue(item, repository, *, observed_at):
         "label_source_complete": labels_complete,
         "unverified_title_prefix_hint": title_hint,
         "triage_rank": rank,
+        "source_window_identity_drift": False,
         "state": "open",
         "source_type": "github_recent_open_issue",
         "owner_next_step": "inspect_current_issue_and_existing_repair_prs",
@@ -168,6 +169,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
     pages_read = 0
     provider_total_count = None
     provider_incomplete = False
+    recent_provider_count_drift = False
     recent_window_truncated = True
     recall_performed = False
     recall_sources = []
@@ -213,8 +215,23 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             if existing is None:
                 item["inbox_source_windows"] = [source]
                 collected[item["number"]] = item
-            elif source not in existing["inbox_source_windows"]:
-                existing["inbox_source_windows"].append(source)
+            else:
+                if source not in existing["inbox_source_windows"]:
+                    existing["inbox_source_windows"].append(source)
+                if (existing["updated_at_utc"] != item["updated_at_utc"]
+                        or existing["priority_from_explicit_labels"] !=
+                            item["priority_from_explicit_labels"]
+                        or existing["unverified_title_prefix_hint"] !=
+                            item["unverified_title_prefix_hint"]):
+                    # GitHub result pages are not an atomic snapshot.
+                    # Drift means the original derived priority is no longer
+                    # reliable and cannot remain prioritized as a P0.
+                    existing["source_window_identity_drift"] = True
+                    existing["priority_from_explicit_labels"] = "UNKNOWN"
+                    existing["unverified_title_prefix_hint"] = "NONE"
+                    existing["triage_rank"] = 6
+                    existing["no_github_issue_update_for_72h"] = "UNKNOWN"
+                    existing["last_github_update_age_hours"] = None
 
     # Read recent issues first. Exact repo+issue-only filters exclude PR
     # storms from the inventory. Any GitHub permission denial ends this
@@ -226,6 +243,8 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             source_error = str(exc)
             break
         pages_read += 1
+        if provider_total_count is not None and provider_total_count != count:
+            recent_provider_count_drift = True
         provider_total_count = count
         provider_incomplete = provider_incomplete or incomplete
         admit_rows(items, "recent")
@@ -290,6 +309,10 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         "pull_requests_excluded": prs_excluded,
         "provider_total_issue_count_at_observation": provider_total_count,
         "provider_incomplete_results": provider_incomplete,
+        "recent_provider_count_drift": recent_provider_count_drift,
+        "issue_rows_with_cross_window_drift": sum(
+            item["source_window_identity_drift"] for item in issues
+        ),
         "recent_window_truncated": recent_window_truncated,
         "priority_recall_performed": recall_performed,
         "priority_recall_sources": recall_sources,
@@ -301,8 +324,9 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             recent_window_truncated and source_error is None
         ),
         "source_partial_or_unknown": (
-            bool(source_error) or provider_incomplete
+            bool(source_error) or provider_incomplete or recent_provider_count_drift
             or recent_window_truncated or recall_partial
+            or any(item["source_window_identity_drift"] for item in issues)
         ),
         "source_error": source_error,
         "get_attempts": attempts,
