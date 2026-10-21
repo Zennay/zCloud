@@ -597,6 +597,7 @@ def html_view(report):
 
 MAX_CONFLICT_PAIRS = 200
 MAX_SHARED_FILES_PER_PAIR = 24
+MAX_SCOPE_PATH_PAIRS_PER_PAIR = 24
 MAX_REFERENCED_ISSUES = 32
 MAX_DUPLICATE_ISSUE_GROUPS = 80
 MAX_IDENTITY_LOOKUPS = 8
@@ -863,11 +864,49 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         for index, left in enumerate(involved):
             for right in involved[index + 1:]:
                 pairs.setdefault((left, right), []).append(path)
+    # Exact same-file collisions and file/directory ancestor collisions are
+    # distinct evidence classes. The latter is missed by a filename-keyed
+    # index (e.g. PR A adds `src` while PR B adds `src/app.py`).
+    by_num = {pr["number"]: pr for pr in observed}
+    scope_pairs = {}
+    scope_prs = sorted(observed, key=lambda row: row["number"])
+    for left_index, left in enumerate(scope_prs):
+        for right in scope_prs[left_index + 1:]:
+            conflicts = []
+            for left_path in left["file_paths_observed"]:
+                for right_path in right["file_paths_observed"]:
+                    if left_path == right_path:
+                        continue  # reported separately as an exact shared file
+                    if right_path.startswith(left_path + "/"):
+                        relation = "left_file_conflicts_with_right_descendant"
+                    elif left_path.startswith(right_path + "/"):
+                        relation = "right_file_conflicts_with_left_descendant"
+                    else:
+                        continue
+                    conflicts.append({"left_path": left_path,
+                                      "right_path": right_path,
+                                      "relation": relation})
+            if conflicts:
+                scope_pairs[(left["number"], right["number"])] = sorted(
+                    conflicts, key=lambda row: (row["left_path"],
+                                                row["right_path"],
+                                                row["relation"]))
+    ordered_scope = sorted(scope_pairs.items(),
+                           key=lambda item: (-len(item[1]), item[0]))
+    scope_cards = [{
+        "left": by_num[left], "right": by_num[right],
+        "path_conflict_count_observed": len(conflicts),
+        "path_conflicts": conflicts[:MAX_SCOPE_PATH_PAIRS_PER_PAIR],
+        "path_conflicts_truncated": len(conflicts) > MAX_SCOPE_PATH_PAIRS_PER_PAIR,
+        "action": "inspect_existing_prs_and_current_claims_before_edit",
+        "merge_conflict_verified": False,
+        "same_active_owner_verified": False,
+    } for (left, right), conflicts in ordered_scope[:MAX_CONFLICT_PAIRS]]
+    scope_pairs_truncated = len(ordered_scope) > MAX_CONFLICT_PAIRS
     # Priority for operator inspection: most shared files first, then exact
     # PR identifiers. This is NOT a claim or merge recommendation.
     ordered = sorted(pairs.items(), key=lambda item: (-len(item[1]), item[0]))
     cards = []
-    by_num = {pr["number"]: pr for pr in observed}
     for (a, b), paths in ordered[:MAX_CONFLICT_PAIRS]:
         cards.append({
             "left": by_num[a], "right": by_num[b],
@@ -884,12 +923,16 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
     for left, right in pairs:
         collided.add(left)
         collided.add(right)
+    for left, right in scope_pairs:
+        collided.add(left)
+        collided.add(right)
     # Combining bounded pages improves collision discovery, not claim admission.
     # With more than one page we never infer whole-inventory completeness.
     fully_sampled = (page_count == 1 and open_page == 1
                      and len(before) < page_size and len(before) <= limit
                      and not suspicious_lists and stable
-                     and len(ordered) <= MAX_CONFLICT_PAIRS)
+                     and len(ordered) <= MAX_CONFLICT_PAIRS
+                     and not scope_pairs_truncated)
     # An unpaired PR is a useful independent-work candidate ONLY after the
     # entire open-PR source sample is complete and stable. An unchecked PR
     # could otherwise touch the exact same path.
@@ -959,6 +1002,11 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
             all(pr["issue_reference_text_covered"] for pr in chosen),
         "observed_file_collision_pairs": len(ordered),
         "shown_file_collision_pairs": cards,
+        "observed_path_scope_collision_pairs": len(ordered_scope),
+        "shown_path_scope_collision_pairs": scope_cards,
+        "path_scope_collision_pairs_truncated": scope_pairs_truncated,
+        "path_scope_examples_truncated": any(
+            row["path_conflicts_truncated"] for row in scope_cards),
         "observed_connected_pr_collision_clusters": len(clusters),
         "linked_pr_collision_clusters": clusters,
         "clusters_are_observed_edges_only_not_ownership_or_merge_authority": True,
@@ -973,7 +1021,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
                                               len(snapshots_before[-1]) == page_size),
         "open_pr_snapshot_stable": stable,
         "pr_file_scope_sample_complete": fully_sampled,
-        "source_result": ("collisions_observed" if ordered else
+        "source_result": ("collisions_observed" if ordered or ordered_scope else
                           "incomplete_no_collisions_observed" if not fully_sampled
                           else "no_open_pr_shared_paths_observed"),
         "findings_are_merge_conflicts": False,
@@ -1000,6 +1048,8 @@ def graph_operator_text(report):
         " / gezien " + str(report["observed_open_prs"]) +
         " · opeenvolgende pagina's: " + str(report["open_pr_page_count"]),
         "Gedeelde-bestandparen: " + str(report["observed_file_collision_pairs"]),
+        "Bestand/map-ancestorparen: " +
+        str(report["observed_path_scope_collision_pairs"]),
         "Optionele GH issueidentiteit: " +
         str(report["issue_identity_lookups_performed"]) + " opgevraagd, " +
         str(report["observed_confirmed_open_issue_groups"]) + " open issues (" +
@@ -1053,6 +1103,22 @@ def graph_operator_text(report):
             result.append("  " + file)
         if row["shared_files_truncated"]:
             result.append("  Meer bestandspaden niet weergegeven.")
+    for row in report["shown_path_scope_collision_pairs"]:
+        a, b = row["left"], row["right"]
+        result.append("BESTAND/MAP-CONFLICT PR #" + str(a["number"]) +
+                      " ↔ PR #" + str(b["number"]) + ": " +
+                      str(row["path_conflict_count_observed"]) +
+                      " padparen (geen mergeconflict- of eigenaarsbewijs)")
+        for conflict in row["path_conflicts"]:
+            result.append("  " + conflict["left_path"] + " ↔ " +
+                          conflict["right_path"] + " [" +
+                          conflict["relation"] + "]")
+        if row["path_conflicts_truncated"]:
+            result.append("  Extra padparen buiten begrensde voorvertoning.")
+    if not report["shown_path_scope_collision_pairs"]:
+        result.append("Geen bestand/map-ancestorparen waargenomen in deze steekproef.")
+    if report["path_scope_collision_pairs_truncated"]:
+        result.append("Bestand/map-conflictpaarlijst afgekapt; overige paren onbekend.")
     for group in report["shown_duplicate_issue_groups"]:
         result.append("GELIJK NUMMER IN PR-TEKST #" + str(group["issue_number"]) +
                       " · " + str(group["open_pr_mentions_observed"]) +
@@ -1097,6 +1163,25 @@ def graph_html(report):
             "</td></tr>")
     if not rows:
         rows.append("<tr><td colspan='3'>Geen gedeelde bestandspaden in de gelezen PR-steekproef.</td></tr>")
+    scope_rows = []
+    for row in report["shown_path_scope_collision_pairs"]:
+        a, b = row["left"], row["right"]
+        examples = "<br>".join(
+            "<code>" + escape(item["left_path"]) + "</code> ↔ <code>" +
+            escape(item["right_path"]) + "</code><br><small>" +
+            escape(item["relation"]) + "</small>"
+            for item in row["path_conflicts"])
+        if row["path_conflicts_truncated"]:
+            examples += "<br>...meer padparen"
+        scope_rows.append(
+            "<tr><td><a rel='noopener noreferrer' href='" +
+            escape(a["url"], quote=True) + "'>PR #" + str(a["number"]) +
+            "</a> ↔ <a rel='noopener noreferrer' href='" +
+            escape(b["url"], quote=True) + "'>PR #" + str(b["number"]) +
+            "</a></td><td>" + str(row["path_conflict_count_observed"]) +
+            "</td><td>" + examples + "</td></tr>")
+    if not scope_rows:
+        scope_rows.append("<tr><td colspan='3'>Geen bestand/map-ancestorparen waargenomen in de gelezen PR-steekproef.</td></tr>")
     completeness = ("volledig, uitsluitend voor huidige open PR's"
                     if report["pr_file_scope_sample_complete"]
                     else "onvolledig; bron/venster niet stabiel of afgekapt")
@@ -1202,6 +1287,10 @@ def graph_html(report):
             "</ol><table><thead><tr><th>Open PR's</th><th>Overlap</th>"
             "<th>Gedeelde bestanden</th></tr></thead><tbody>" +
             "".join(rows) + "</tbody></table>"
+            "<h2>Bestand/map-ancestorconflicten</h2>"
+            "<p>Een PR gebruikt een pad als bestand terwijl een andere PR daaronder bestanden toevoegt. Dit is een scopeconflict-signaal, geen bewezen Git-mergeconflict of eigenaarschap.</p>"
+            "<table><thead><tr><th>Open PR's</th><th>Padparen</th><th>Waargenomen paden en relatie</th></tr></thead><tbody>" +
+            "".join(scope_rows) + "</tbody></table>"
             "<h2>Meerdere open PR's noemen hetzelfde issue</h2>"
             "<p>Positieve PR-tekstvermeldingen, geen bewezen fix of mergevrijgave.</p><ul>" +
             ("".join(duplicate_cards) or
@@ -1341,6 +1430,25 @@ def graph_markdown(report):
                      " waargenomen gedeelde bestanden")
     if not report["shown_file_collision_pairs"]:
         lines.append("Geen gemeenschappelijke bestandsnamen waargenomen.")
+    lines.extend(["", "## Bestand/map-ancestorconflicten", "",
+                  "Een PR gebruikt een pad als bestand terwijl een andere PR "
+                  "daaronder bestanden toevoegt. Dit is een scopeconflict-signaal, "
+                  "geen bewezen Git-mergeconflict of eigenaarschap.", ""])
+    for row in report["shown_path_scope_collision_pairs"]:
+        left, right = row["left"], row["right"]
+        lines.append("- [#" + str(left["number"]) + "](" + left["url"] +
+                     ") ↔ [#" + str(right["number"]) + "](" + right["url"] +
+                     "): " + str(row["path_conflict_count_observed"]) + " padparen")
+        for conflict in row["path_conflicts"]:
+            lines.append("  - `" + conflict["left_path"].replace("`", "\\`") +
+                         "` ↔ `" + conflict["right_path"].replace("`", "\\`") +
+                         "` [" + conflict["relation"] + "]")
+        if row["path_conflicts_truncated"]:
+            lines.append("  - Extra padparen buiten begrensde voorvertoning.")
+    if not report["shown_path_scope_collision_pairs"]:
+        lines.append("Geen bestand/map-ancestorparen waargenomen in de gelezen bron.")
+    if report["path_scope_collision_pairs_truncated"]:
+        lines.append("**ONVOLLEDIG:** overige bestand/map-conflicpparen buiten de weergavelimiet.")
     lines.extend(["", "## Mogelijk dubbel werk rond hetzelfde issue (titel of body)", ""])
     for group in report["shown_duplicate_issue_groups"]:
         lines.append("- [Nummer #" + str(group["issue_number"]) + "](" +
@@ -1385,8 +1493,9 @@ def graph_private_csv(report):
         "record_type", "repository", "source_page", "source_complete",
         "cluster_number", "shared_filename", "pr_number", "pr_url",
         "pr_head_sha", "related_pr_url", "related_pr_head_sha",
-        "shared_files_observed", "unverified_issue_number",
-        "issue_identity_status", "observed_issue_priority",
+        "shared_files_observed", "scope_conflict_relation",
+        "scope_conflict_left_path", "scope_conflict_right_path",
+        "unverified_issue_number", "issue_identity_status", "observed_issue_priority",
         "owner_verified", "merge_authorized", "operator_notice"
     )
     writer.writerow(header)
@@ -1439,6 +1548,23 @@ def graph_private_csv(report):
             related_pr_head_sha=pair["right"]["head_sha"],
             shared_files_observed=pair["shared_file_count_observed"],
             operator_notice="Same filename is NOT a proven merge conflict.")
+    for pair in report["shown_path_scope_collision_pairs"]:
+        for conflict in pair["path_conflicts"]:
+            row("file_directory_scope_conflict",
+                pr_number=pair["left"]["number"],
+                pr_url=pair["left"]["url"],
+                pr_head_sha=pair["left"]["head_sha"],
+                related_pr_url=pair["right"]["url"],
+                related_pr_head_sha=pair["right"]["head_sha"],
+                shared_files_observed=pair["path_conflict_count_observed"],
+                scope_conflict_relation=conflict["relation"],
+                scope_conflict_left_path=conflict["left_path"],
+                scope_conflict_right_path=conflict["right_path"],
+                operator_notice="File/directory ancestor scope conflict; inspect both PRs. Not merge authorization.")
+        if pair["path_conflicts_truncated"]:
+            row("source_warning", operator_notice="More file/directory path conflict examples omitted for PR pair.")
+    if report["path_scope_collision_pairs_truncated"]:
+        row("source_warning", operator_notice="Additional file/directory PR pairs beyond bounded output cap.")
     for group in report["shown_duplicate_issue_groups"]:
         for pr in group["shown_pr_sources"]:
             row("unverified_issue_number", pr_url=pr["url"],
