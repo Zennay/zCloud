@@ -139,9 +139,19 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects, limit=48):
                 raise ValueError("issue identity changed inside source window")
             if len(entry["linked_prs"]) >= board.MAX_PRS:
                 raise ValueError("unbounded PRs linked to one issue")
+            # Keep exact-HEAD gate *observations* attached to their own PR:
+            # a headline HOLD alone cannot tell the operator what to inspect.
+            # This is not an authorization or a required-context inventory.
             entry["linked_prs"].append({
                 "number": row["number"], "status": row["status"],
                 "url": f"https://github.com/{repo}/pull/{row['number']}",
+                "review": row.get("review", "UNKNOWN"),
+                "checks": row.get("checks", "UNKNOWN"),
+                "workflows": row.get("workflows", "UNKNOWN"),
+                "gate_actions": [
+                    action[:160] for action in (row.get("actions") or [])[:3]
+                    if isinstance(action, str)
+                ],
             })
     for ref in unlinked:
         key = (ref["repo"], ref["number"])
@@ -202,7 +212,9 @@ def render_issue_inbox(inbox):
         prs = issue["linked_prs"]
         links = (" · ".join(
             "<a href='" + esc(pr["url"]) + "'>PR #" + esc(pr["number"]) +
-            "</a> (" + esc(pr["status"]) + ")" for pr in prs)
+            "</a> (" + esc(pr["status"]) + "; review " +
+            esc(pr["review"]) + "; CI " + esc(pr["checks"]) +
+            "; workflows " + esc(pr["workflows"]) + ")" for pr in prs)
             if prs else "Geen gekoppelde PR binnen deze selectie bevestigd")
         cards.append(
             "<li><strong>" + esc(issue["priority"]) + "</strong> · "
@@ -1127,8 +1139,12 @@ def main():
                       " unlinked_within_sample=" + str(issue_inbox["unlinked_in_sample"]) +
                       " coverage=" + issue_inbox["coverage"])
                 for issue in issue_inbox["items"]:
-                    prs = ",".join("#" + str(pr["number"]) + ":" + pr["status"]
-                                   for pr in issue["linked_prs"]) or "UNKNOWN"
+                    prs = ",".join(
+                        "#" + str(pr["number"]) + ":" + pr["status"] +
+                        "(review=" + str(pr["review"]) + ";ci=" +
+                        str(pr["checks"]) + ";workflows=" +
+                        str(pr["workflows"]) + ")"
+                        for pr in issue["linked_prs"]) or "UNKNOWN"
                     print("ISSUE_ACTION " + issue["priority"] + " " +
                           issue["url"] + " existing_prs=" + prs +
                           " next=" + issue["operator_action"] +
