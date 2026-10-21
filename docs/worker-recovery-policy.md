@@ -178,6 +178,22 @@ requires refresh *before* owner verification. Every actual issue/queue
 workorder is an unconditional `HOLD`; no locally imported evidence can make
 it `READY_FOR_HUMAN_REVIEW` or acquire an owner.
 
+### Source identity and queue-clock admission
+
+The private recovery-case importer binds every referenced repair PR to the
+**same canonical GitHub repository as its issue**. Cross-repository or duplicate
+PR references are rejected as ambiguous evidence rather than presented as
+existing fixes. Neither a matching repository nor an imported PR link proves
+current PR ownership, green checks or merge eligibility.
+
+A covered queue sample must have a valid UTC observation timestamp no later
+than two minutes after the export was generated. The importer independently
+marks queue evidence **STALE** once the queue observation or overall recovery
+case exceeds six hours, even if the export supplied `source_stale=false`.
+Its own source-age calculation only adds HOLD reasons; a caller-provided stale
+flag can never be used to turn old evidence into fresh permission to retry.
+No live queue is read, no active claim is modified and no recovery action is run.
+
 The conversion ranks P0 before P1–P3, puts issue/PR examination first within
 a priority, and requires checking real GitHub source/required CI plus current
 Notion/worker/queue ownership. Grouped high queue claim attempts are not proof
