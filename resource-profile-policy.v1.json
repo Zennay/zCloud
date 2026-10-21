@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "description": "Candidate per-project CPU resource profiles. Non-authoritative until serialized scheduler integration; target preserves current cpu_soft_cores behavior.",
+  "projects": {
+    "cloud": {"minimum_cpu_cores": 1, "target_cpu_cores": 1, "maximum_cpu_cores": 1},
+    "zssh": {"minimum_cpu_cores": 1, "target_cpu_cores": 1, "maximum_cpu_cores": 1},
+    "ftmo": {"minimum_cpu_cores": 0, "target_cpu_cores": 4, "maximum_cpu_cores": 4},
+    "haxlab": {"minimum_cpu_cores": 0, "target_cpu_cores": 1, "maximum_cpu_cores": 1},
+    "supa": {"minimum_cpu_cores": 0, "target_cpu_cores": 2, "maximum_cpu_cores": 2},
+    "raiseai": {"minimum_cpu_cores": 0, "target_cpu_cores": 2, "maximum_cpu_cores": 2},
+    "ulab": {"minimum_cpu_cores": 0, "target_cpu_cores": 0, "maximum_cpu_cores": 0},
+    "lightup": {"minimum_cpu_cores": 0, "target_cpu_cores": 2, "maximum_cpu_cores": 2},
+    "zguard": {"minimum_cpu_cores": 0, "target_cpu_cores": 1, "maximum_cpu_cores": 1}
+  }
+}
