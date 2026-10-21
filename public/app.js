@@ -990,7 +990,7 @@ async function publicGitHubGET(repository,suffix){
     // repository internals and network exception details.
     const confirmedLimit=response.status===429||
       (response.status===403&&(response.headers?.get('X-RateLimit-Remaining')==='0'
-        ||response.headers?.get('Retry-After')!==null));
+        ||response.headers?.get('Retry-After')!=null));
     if(confirmedLimit)pauseForConfirmedGitHubLimit(response);
     // Ambiguous repository-level 403 must not stop other canonical projects.
     // A confirmed global limit must stop every subsequent operator fetch.
