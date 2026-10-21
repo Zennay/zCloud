@@ -194,6 +194,8 @@ def _validate(data):
 
 
 def evaluate(data, max_age_minutes, *, now=None):
+    if type(max_age_minutes) is not int or not 1 <= max_age_minutes <= 1440:
+        raise PolicyInputError("max_age_minutes must be an integer from 1 to 1440")
     observed, source, evidence = _validate(data)
     now = datetime.now(UTC) if now is None else now
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
@@ -562,6 +564,8 @@ def markdown_batch(batch):
 
 
 def template_request(action, project_id, incident_id, source_url, owner):
+    if type(action) is not str or action not in ACTIONS:
+        raise PolicyInputError("action must be one of: " + ", ".join(sorted(ACTIONS)))
     if type(project_id) is not str or not SLUG.fullmatch(project_id):
         raise PolicyInputError("project_id must be a bounded ASCII identifier")
     if type(incident_id) is not str or not SLUG.fullmatch(incident_id):
