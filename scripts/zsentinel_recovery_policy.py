@@ -1429,6 +1429,8 @@ def main(argv=None):
                         help="create HOLD-by-default policy request for a sampled existing PR; case-input only")
     parser.add_argument("--candidate-pr-number", type=int,
                         help="sampled issue repair PR number, for --prepare-merge-review")
+    parser.add_argument("--live-candidates", action="store_true",
+                        help="read up to 3 live GitHub candidate PRs for one source-linked issue; advisory only")
     parser.add_argument("--through-priority", choices=("P0", "P1", "P2", "P3"),
                         help="show up to this severity in --case-input (default P3)")
     parser.add_argument("--format", choices=("json", "markdown", "workorders", "html", "csv"), default="json")
@@ -1436,6 +1438,15 @@ def main(argv=None):
     parser.add_argument("--max-age-minutes", type=int, default=60,
                         help="maximum accepted observation age (1..1440; default 60)")
     args = parser.parse_args(argv)
+    if args.live_candidates:
+        if (not args.case_input or not args.view_project or args.view_issue is None
+                or args.prepare_merge_review or args.candidate_pr_number is not None
+                or args.through_priority is not None or args.fail_on_hold
+                or args.format not in ("json", "markdown")):
+            parser.error(
+                "--live-candidates requires --case-input, --view-project, "
+                "--view-issue and --format json|markdown; no conflicting action modes"
+            )
     if args.prepare_merge_review:
         if (not args.case_input or not args.view_project or args.view_issue is None
                 or args.candidate_pr_number is None
@@ -1485,6 +1496,29 @@ def main(argv=None):
             data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                               parse_constant=_reject_constant)
             report = evaluate_recovery_case(data)
+            if args.live_candidates:
+                from zsentinel_pr_live_read import (
+                    observe_candidate_prs,
+                    markdown as live_candidates_markdown,
+                    GitHubReadError,
+                )
+                selected = select_case_view(
+                    report, project=args.view_project, issue_number=args.view_issue,
+                )["owner_workorders"][0]
+                try:
+                    live = observe_candidate_prs(
+                        selected, token=os.environ.get("GITHUB_TOKEN") or None,
+                    )
+                except GitHubReadError as exc:
+                    raise PolicyInputError("live PR source: " + str(exc)) from exc
+                output = (
+                    live_candidates_markdown(live) if args.format == "markdown"
+                    else json.dumps(live, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+                )
+                if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                    raise PolicyInputError("live PR output exceeds 128 KiB")
+                sys.stdout.write(output)
+                return 0
             if args.prepare_merge_review:
                 request = merge_review_template_from_case(
                     report, project=args.view_project,
