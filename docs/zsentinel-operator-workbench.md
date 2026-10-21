@@ -3615,7 +3615,11 @@ The worklist intentionally applies **only source filters** from the page,
 not locally entered human dispositions, private due dates, follow-up
 status, notes or contact labels. No private annotations enter the owner CSV.
 The CSV escapes control characters and spreadsheet formula prefixes using
-the existing CSV cell encoder. Its per-PR authorization flags explicitly
+the existing CSV cell encoder. Formula detection also looks past Unicode whitespace,
+separator characters, zero-width marks and bidirectional format controls before
+adding a protective apostrophe; this prevents visually obscured formula prefixes
+from reaching a spreadsheet as executable cells while preserving source text
+apart from control-character sanitization. Its per-PR authorization flags explicitly
 deny claim, dispatch, CI/review approval, merge and deploy authority.
 If source filters or references change after preview, the download is
 refused until reviewed again.
