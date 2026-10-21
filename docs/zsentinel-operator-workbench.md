@@ -3199,3 +3199,61 @@ onzichtbare steekproefgaten als afgeronde issues te presenteren. De
 bronbestanden worden niet gewijzigd. Deze functie is uitsluitend lokale,
 handmatige leesweergave en verleent geen claim, merge, deploy of
 runnerherstelfunctie.
+
+
+## 21 oktober · issuegerichte hersteloverdracht over meerdere archiefmomenten
+
+De bestaande [zSentinel PR #1560](https://github.com/Zennay/zCloud/pull/1560)
+breidt de privé **issue-first PR-geschiedenis** uit tot een compleet
+operatoroverzicht. De selectie `--issue` blijft beperkt tot exacte,
+canonieke GitHub-issue-URLs en leest uitsluitend maximaal twaalf reeds
+opgeslagen, chronologisch brongebonden ZIP-dossiers. Er worden geen
+nieuwe live GitHub-, Notion-, queue- of servicebronnen geraadpleegd.
+
+De eigenaar ziet nu op één plek, berekend over **alle gefilterde PR-kandidaten
+en niet alleen de zichtbare pagina**:
+
+- het aantal PRs dat ooit in de opgeslagen steekproeven aan dit issue
+  gekoppeld was; hoeveel in hun laatste PR-waarneming nog de issuekoppeling
+  hadden; en hoeveel zowel als PR als gekoppeld issue in het **laatste
+  volledige archiefmoment** werden waargenomen;
+- PRs die in het laatste archiefmoment ontbreken (zonder dit als
+  gesloten of gemerged te labelen), PRs met eerder waargenomen HEAD-wissels,
+  en de historische primaire gateklassen `source`, `failed`,
+  `pending`, `changes`, `partial`, `review`, `policy`;
+- een maximaal twaalf rijen lange tijdlijn met het **aantal geobserveerde
+  issue-gekoppelde PRs per bronmoment** en expliciete melding van
+  ontbrekende originele dossierbatches;
+- dezelfde samenhangende samenvatting boven de bestaande PR-kaarten in
+  scriptvrije offline HTML, plus menselijke Markdown en het
+  machineleesbare `issue_focus_summary`-JSON. CSV behoudt zijn
+  bestaande bronkolommen en draagt nu per rij ook de complete
+  issue-overzichtstellingen.
+
+**Bediening op een bevoegde operatorhost:**
+
+```sh
+umask 077
+python3 scripts/zsentinel_saved_dossier_timeline.py \
+  --source /private/zsentinel/earlier.zip \
+  --source /private/zsentinel/later.zip \
+  --issue https://github.com/Zennay/zCloud/issues/1518 \
+  --format html \
+  --output /private/zsentinel/issue-1518-history.html
+```
+
+De CSV-versie gebruikt `--format csv --output /private/zsentinel/issue-1518-history.csv`.
+De uitvoer blijft private create-only 0600/no-follow in een reeds bestaande
+map. De gewijzigde bronnen zijn alleen syntactisch gecontroleerd; geen
+QA- of regressiesuites zijn geschreven of gedraaid.
+
+**Belangrijk onderscheid:** dit herstelt niet zelfstandig issue #1518's
+live mobiele Activity-feed. Het maakt bestaande opgeslagen PR-/issuebronnen
+beter bruikbaar voor een bevoegde eigenaar. Een historische gateklasse,
+tijdlijn, verdwenen koppeling, vervallen PR-HEAD of zelfs een recente
+archiefwaarneming bewijst **geen actuele verplicht geslaagde CI, review,
+actieve claimvrijgave, merge op `main` of live deployment**. Alle
+mutatievlaggen blijven `false`; bij iedere daadwerkelijke actie zijn
+nieuwe, zelfstandige exact-head GitHub-, Notion-, queue- en releasebewijzen
+vereist. De PR is niet DONE zolang GitHub niet `merged=true` meldt en
+een eventuele geautoriseerde live-uitrol niet onafhankelijk is vastgesteld.
