@@ -654,3 +654,9 @@ Use a new output filename in an existing owner-controlled private directory. The
 ## Claim-state gates for execution-impacting recovery
 
 Retry, root-fix routing, independent task admission, parking/resuming a task, merging a PR, deploying and restarting a runner now all require the observed claim state to be explicitly none. Missing or unknown claim evidence is a HOLD; an active claim must not be displaced by a second recovery action. Human escalation is different: it may be routed to a known current owner, but unknown ownership remains blocked. These policy decisions are advisory only and do not change any live claim, queue, runner or release state.
+
+## Actionable next steps in policy reports
+
+Single-request JSON, Markdown and HTML reports now include a deterministic `recommended_next_step`. It directs stale evidence to refresh, active/unknown claims to the current owner, pending/red exact-head gates to the normal CI/review path, unhealthy capacity to wait, missing approval to the authorized owner, and dependency/overlap problems to evidence collection rather than mutation. Batch Markdown also carries the per-proposal recommendation; competing actions for one incident are explicitly routed to an owner to choose one route.
+
+The recommendation is advisory and is recomputed after batch conflict detection adds a HOLD. It does not acquire claims, dispatch retries, change queue state, merge, deploy or restart a runner.
