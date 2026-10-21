@@ -575,7 +575,7 @@ def render_zip(report):
         "writes_performed_to_external_systems": False,
     }
     manifest_data = (json.dumps(
-        manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\\n").encode("utf-8")
+        manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
     if not manifest_data or len(manifest_data) > MAX_BYTES:
         raise ValueError("Private delta bundle manifest exceeds size budget")
     output = BytesIO()
