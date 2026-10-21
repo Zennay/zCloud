@@ -283,6 +283,54 @@ def _render(payload, rows, truncated):
     )
 
 
+
+def _render_markdown(payload, rows, truncated):
+    """Private text briefing for the responsible owner, not an action command."""
+    def clean(value):
+        # Escape inline markup even if a formerly fixed field changes later.
+        return re.sub(r"([\\*_{}\[\]()#+\-.!|>])", r"\\\1", str(value))
+
+    source, age = _source_clock(payload.get("time"))
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines = [
+        "# zSentinel - private hersteloverdracht",
+        "",
+        "Bronmoment: " + clean(source),
+        "Gegenereerd: " + clean(timestamp),
+        "",
+        "**" + clean(age) + "**",
+        "",
+        "Deze snapshot is altijd gedeeltelijk, niet live geverifieerd en",
+        "geen toestemming voor claim, retry, CI, merge of deploy.",
+        "",
+    ]
+    if truncated:
+        lines.extend([
+            "**AFGEKAPT: er zijn meer mogelijke werkorders dan hier getoond.**",
+            "",
+        ])
+    if not rows:
+        lines.extend(["Geen werkorders in dit begrensde venster.", ""])
+    for kind in KINDS:
+        group = [row for row in rows if row["kind"] == kind]
+        if not group:
+            continue
+        lines.extend(["## " + clean(KINDS[kind][0]), ""])
+        for row in group:
+            lines.extend([
+                "- **" + clean(row["priority"]) + " / " +
+                clean(row["project"]) + "** - " + clean(row["queue"]),
+                "  - " + clean(row["detail"]),
+                "  - Owner-actie: " + clean(row["step"]),
+                "  - Status: alleen handmatige beoordeling, geen overname.",
+            ])
+        lines.append("")
+    lines.append("Gebaseerd op een private JSON-export. "
+                 "Bestandsrechten bewijzen de bronherkomst niet.")
+    return "\n".join(lines) + "\n"
+
+
+
 def _private_create(path: Path, document: str):
     # Bind the final file creation to one held directory descriptor. Checking
     # parent.stat() and opening by an absolute string permits directory-swap
@@ -316,12 +364,16 @@ def main(argv=None):
     cli.add_argument("--input", required=True, type=Path,
                      help="Private 0600 JSON van geautoriseerde /api/portfolio-queue")
     cli.add_argument("--output", required=True, type=Path,
-                     help="Nieuw HTML-bestand in eigen 0700 directory")
+                     help="Nieuw privébestand in eigen 0700 directory")
+    cli.add_argument("--format", choices=("html", "markdown"), default="html",
+                     help="Offline HTML of Markdown-eigenaarsoverdracht")
     opts = cli.parse_args(argv)
     try:
         payload = _bounded_private_read(opts.input)
         rows, truncated = _validate(payload)
-        _private_create(opts.output, _render(payload, rows, truncated))
+        document = (_render(payload, rows, truncated) if opts.format == "html"
+                    else _render_markdown(payload, rows, truncated))
+        _private_create(opts.output, document)
     except (OSError, UnicodeError, ValueError, TypeError) as exc:
         # Do not print paths, source contents, arbitrary exception payload,
         # bearer credentials, or queue IDs in stderr.
