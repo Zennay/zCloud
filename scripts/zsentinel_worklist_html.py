@@ -453,6 +453,7 @@ const collisionLabels={
  followup:'Opvolging vastgelegd (niet opgelost)'
 };
 const collisionExport=document.getElementById('collision-export');
+const collisionOpenExport=document.getElementById('collision-open-export');
 let focusedPr=null,focusIndex=-1;
 // The privacy-preserving baseline describes ONLY this browser's local edits;
 // never persist it automatically or mistake a completed download for a merge.
@@ -637,6 +638,14 @@ function onePrHandoff(){
   }
   const note=t.querySelector('textarea').value.trim();
   if(note)lines.push('  - Privé issuenotitie: '+safeText(note));
+  const conflict=collisionRows.find(c=>c.dataset.issue===issue);
+  if(conflict){
+   lines.push('  - Meervoudige PR-vermelding: handmatige afstemmingsstatus '+
+     collisionLabels[conflict.querySelector('.collision-state').value]+
+     ' (geen bewezen bestandsbotsing of oplossing)');
+   const conflictNote=conflict.querySelector('.collision-note').value.trim();
+   if(conflictNote)lines.push('  - Privé PR-afstemmingsnotitie: '+safeText(conflictNote));
+  }
  }
  lines.push('','## Privé PR-eigenaarsopvolging','',
    '- Handmatige PR-status: '+prLabels[p.querySelector('.pr-local-state').value]);
@@ -647,17 +656,23 @@ function onePrHandoff(){
    lines.join('\n')+'\n');
 }
 focusExport.addEventListener('click',onePrHandoff);
-collisionExport.addEventListener('click',function(){
+function exportCollisionHandoff(onlyUnresolved){
+ const selectedCollisions=collisionRows.filter(c=>!onlyUnresolved||
+  c.querySelector('.collision-state').value!=='followup');
  const lines=[
-  '# zSentinel · privé afstemming meervoudige PR-bronissues','',
+  '# zSentinel · '+(onlyUnresolved?'openstaande privé PR-afstemming':'privé afstemming meervoudige PR-bronissues'),'',
   '> Volledige beperkte opgeslagen botsingsinventaris; geen bewezen file conflict, fixes, eigenaren, CI of mergebevoegdheid.','',
   '- Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
   '- PR-bron UTC: '+safeText(document.getElementById('pr-time').textContent),
   '- Exact privé bron-token: '+safeText(document.body.dataset.sourceToken),
   '- Totale meervoudige bronissuevermeldingen: '+collisionRows.length,
-  '- Huidige UI-filters, geselecteerde PR en lokale status wijzigen deze broninventaris niet.',''
+  '- In dit bestand: '+selectedCollisions.length,
+  '- Handmatig opvolging vastgelegd (niet opgelost), overgeslagen bij open werk: '+
+    (collisionRows.length-selectedCollisions.length),
+  '- Huidige UI-filters of geselecteerde PR veranderen de opgeslagen bronlijst niet.',
+  '- Open-werkexport sluit alleen lokaal gemarkeerde opvolging uit; bewijst geen oplossing.',''
  ];
- for(const [i,c] of collisionRows.entries()){
+ for(const [i,c] of selectedCollisions.entries()){
   const issue=c.dataset.issue, t=tickets.find(row=>row.dataset.issue===issue);
   const sourcePrs=c.dataset.prs.split(' ').filter(Boolean);
   lines.push('## '+(i+1)+'. [Issue #'+issue.split('/').pop()+']('+issue+')','',
@@ -692,8 +707,11 @@ collisionExport.addEventListener('click',function(){
   lines.push('');
  }
  lines.push('Herlees op GitHub/Notion voor werkovername of merge: huidige claims en PR HEAD, verplichte CI, onafhankelijke reviews, branch protection en exacte scope.','');
- privateDownload('zsentinel-pr-botsingen-prive-overdracht.md',lines.join('\n')+'\n');
-});
+ privateDownload(onlyUnresolved?'zsentinel-pr-botsingen-open-afstemming.md':
+  'zsentinel-pr-botsingen-prive-overdracht.md',lines.join('\n')+'\n');
+}
+collisionExport.addEventListener('click',()=>exportCollisionHandoff(false));
+collisionOpenExport.addEventListener('click',()=>exportCollisionHandoff(true));
 document.getElementById('export').addEventListener('click',function(){
  const parts=['# zSentinel · private handmatige opvolging','',
   'Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
@@ -1004,6 +1022,7 @@ refresh();
         "<option value='followup'>Opvolging vastgelegd (niet opgelost)</option></select></label>"
         "<button id='reset' type='button'>Wis filters</button>"
         "<button id='collision-export' type='button'>Download PR-botsingsdossier (Markdown)</button>"
+        "<button id='collision-open-export' type='button'>Download open afstemming (Markdown)</button>"
         "<button id='export' type='button'>Download privéoverdracht (Markdown)</button>"
         "<button id='session-save' type='button'>Bewaar lokale sessie (JSON)</button>"
         "<label>Heropen lokale sessie<input id='session-import' type='file' "
