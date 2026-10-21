@@ -19,7 +19,8 @@ from zipfile import ZIP_STORED, BadZipFile, LargeZipFile, ZipFile
 from zsentinel_operator_packet import MEMBERS, MAX_PACKET_BYTES, build_packet
 from zsentinel_runtime_handoff import (
     SCHEMA, _short, _source_report_digest, handoff_html,
-)from zsentinel_private_output import write_private_output
+)
+from zsentinel_private_output import write_private_output
 
 
 JSON_MAX = 1024 * 1024
