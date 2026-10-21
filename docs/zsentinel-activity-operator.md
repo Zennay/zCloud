@@ -675,7 +675,7 @@ This documentation accompanies product source only. No new QA/regression suite w
 
 ## 21 October · Offline private worker-owner incident package
 
-**New explicit Activity action:** Choose a single canonical project, select a worker slot (1–8), press **Read progress**, then **Save private worker handoff**. The existing, authenticated `GET /api/worker-progress-history` is the **only** source; the download adds no API reads or server/Notion/queue writes. A missing or invalid source disables download instead of inventing an idle worker.
+**New explicit Activity action:** Choose a single canonical project, select a worker slot (1–8), press **Read progress**, then choose **Save private worker handoff JSON** or **Save readable owner brief**. The latter produces a Markdown owner note from exactly the same bounded selected source, with fixed safe next actions and explicit unknown-claim/release status. The existing, authenticated `GET /api/worker-progress-history` is the **only** source; the download adds no API reads or server/Notion/queue writes. A missing or invalid source disables download instead of inventing an idle worker.
 
 The browser constructs a bounded local `zsentinel-private-worker-handoff-v1` JSON file containing the originally observed project/slot/time, at most 24 source event IDs, known fixed event names, bounded browser time/character counts and only explicitly allowlisted operator reason codes with human-safe next actions. It strips all other properties rather than copying raw event objects: **no prompt text, chat title, URL, token, owner identity, arbitrary exception, or queue/claim receipt** is exported. Noncanonical events are omitted; coverage/truncation is carried forward.
 
