@@ -15,7 +15,9 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from zsentinel_product_issue_inbox import bounded_get, canonical_projects, collect
+from zsentinel_product_issue_inbox import (
+    GithubAdmissionError, bounded_get, canonical_projects, collect,
+)
 from zsentinel_recovery_router import (
     MAX_INPUT_BYTES, MAX_STATE_BYTES, plan, read_json, write_json_atomic,
     operator_text, utc_string, load_state, acquire_private_ledger_lock,
@@ -55,6 +57,8 @@ def refresh(bundle, registry, token=None):
     new_bundle = copy.deepcopy(bundle)
     output = []
     targets = []
+    requests_attempted = 0
+    stop_after_provider_denial = None
     for entry in new_bundle["evidence"]["projects"]:
         if not isinstance(entry, dict):
             raise ValueError("invalid source project")
@@ -77,9 +81,22 @@ def refresh(bundle, registry, token=None):
         repository = registry[pid]
         gh = project["github"]
         run_id, job_id = gh["run_id"], gh["job_id"]
+        if stop_after_provider_denial is not None:
+            # A 401 or proven rate-budget exhaustion is shared across this
+            # token, not a new incident for every remaining pinned job.
+            # Invalidate their historical job receipts rather than reusing
+            # a stale green/failure signal as a newly refreshed source.
+            project["github"] = {}
+            output.append({"project_id": pid, "source": "github_exact_run_job",
+                           "status": "degraded",
+                           "reason": "github_read_skipped_after_admission_denial",
+                           "admission_category": stop_after_provider_denial})
+            continue
         prefix = f"https://api.github.com/repos/{repository}"
         try:
+            requests_attempted += 1
             run = bounded_get(f"{prefix}/actions/runs/{run_id}", token)
+            requests_attempted += 1
             job = bounded_get(f"{prefix}/actions/jobs/{job_id}", token)
             if not isinstance(run, dict) or not isinstance(job, dict):
                 raise ValueError("github_run_or_job_shape_invalid")
@@ -204,13 +221,28 @@ def refresh(bundle, registry, token=None):
                                else "unknown_not_proven"),
                            "may_restart_runner": False})
         except ValueError as exc:
+            # Unauthorized GitHub reads and exhausted provider rate budgets
+            # cannot become per-project stale evidence or an N-times retry
+            # loop. 403 without an explicit rate-limit header stays scoped:
+            # it could be repository permissions rather than global quota.
+            denial = exc.category if isinstance(exc, GithubAdmissionError) else None
+            if denial in ("authentication_required", "rate_limit_confirmed"):
+                stop_after_provider_denial = denial
             # Unavailable/partial GitHub must not cause stale old receipts to
             # become fresh or create a false runner outage/CI failure.
             project["github"] = {}
-            output.append({"project_id": pid, "source": "github_exact_run_job",
-                           "status": "degraded", "reason": str(exc)[:100]})
+            row = {"project_id": pid, "source": "github_exact_run_job",
+                   "status": "degraded", "reason": str(exc)[:100]}
+            if denial is not None:
+                row["admission_category"] = denial
+            output.append(row)
     return new_bundle, {
         "requests_attempted_max": len(targets) * 2,
+        "requests_attempted_actual": requests_attempted,
+        "provider_admission_denial": stop_after_provider_denial,
+        "skipped_due_to_provider_denial": sum(
+            row.get("reason") == "github_read_skipped_after_admission_denial"
+            for row in output),
         "refreshed_projects": output,
         "github_coverage": "partial" if len(output) < len(items) or
                            any(row["status"] != "refreshed" for row in output)
