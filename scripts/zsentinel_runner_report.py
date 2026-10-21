@@ -267,6 +267,38 @@ def render_comparison(comparison):
     if not capacity.get("root_comparable"):
         capacity_html += ('<p class="warning">Geen identieke root-mount en '
                           'volumeomvang vastgesteld; schijfdelta is daarom onbekend.</p>')
+    oom = comparison.get("memory_oom_comparison")
+    if isinstance(oom, dict):
+        if oom.get("oom_counter_same_boot_comparable") is True:
+            count = oom.get("kernel_oom_kills_delta")
+            kill_text = (
+                "Kernel-OOM-toename in hetzelfde geverifieerde Linux-bootvenster: "
+                + str(count) + "."
+                if type(count) is int and 0 <= count < 2 ** 63
+                else "Ongeldige kernel-OOM-bron: ONBEKEND."
+            )
+        else:
+            kill_text = ("Kernel-OOM-verschil ONBEKEND (bron ontbreekt, "
+                         "tegenstrijdig of opnieuw opgestart).")
+        psi_text = (
+            "Hostbrede PSI full avg10: "
+            + _value(oom.get("previous_psi_full_avg10_percent"), "%") +
+            " → " + _value(oom.get("current_psi_full_avg10_percent"), "%") +
+            "; some avg10: "
+            + _value(oom.get("previous_psi_some_avg10_percent"), "%") +
+            " → " + _value(oom.get("current_psi_some_avg10_percent"), "%") + "."
+            if oom.get("memory_psi_source_comparable") is True
+            else "Geheugen-PSI-bron op een of beide momenten ONBEKEND."
+        )
+    else:
+        kill_text = "Geen kerneltellervergelijking in dit oude bronformaat."
+        psi_text = "Geen geheugen-PSI-vergelijking in dit oude bronformaat."
+    memory_html = (
+        '<h3>Hostbreed OOM- en geheugenstagnatiebewijs</h3><p>'
+        + escape(kill_text) + '</p><p>' + escape(psi_text) + '</p>'
+        '<p class="muted">Een positieve kernel-OOM-delta bewijst geen '
+        'oorzaak bij een bepaalde runner of voltooide herstelactie.</p>'
+    )
     coach = comparison.get("coach_comparison")
     if isinstance(coach, dict) and isinstance(coach.get("previous"), dict) and isinstance(coach.get("current"), dict):
         p, q = coach["previous"], coach["current"]
@@ -304,7 +336,7 @@ def render_comparison(comparison):
         + '</p><p><strong>Brontoestand:</strong> ' + escape(heading)
         + ' · ' + escape(str(comparison["elapsed_seconds"])) + ' seconden</p>'
         + boot_note
-        + '<ul class="transitions">' + items + '</ul>' + capacity_html + coach_html +
+        + '<ul class="transitions">' + items + '</ul>' + capacity_html + memory_html + coach_html +
         '<p class="warning">Dit toont alleen waargenomen systemd-statusverschillen. '
         'Ook failed→active bewijst geen toegewezen GitHub-job, geslaagde CI, merge '
         'of live herstel. Niet gezien ≠ opgelost; geen automatische herstart.</p></section>'
