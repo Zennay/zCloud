@@ -106,7 +106,7 @@ def _source(decision):
     # The explicit older-source notes carry route can still be used by a human.
     runtime_keys = ("live_github_read", "live_sources",
                     "live_queue_pressure", "worker_progress_observation",
-                    "notion_claims_observation")
+                    "notion_claims_observation", "open_product_issue_triage")
     operational_sources = {key: decision[key] for key in runtime_keys
                            if key in decision}
     context_sha = None
@@ -349,6 +349,98 @@ def branch_work_review_panel(decision):
 
 
 
+
+
+
+
+def open_product_issue_owner_panel(decision):
+    """Actionable, P0-first existing PR reuse from canonical issue triage only."""
+    source = decision.get("open_product_issue_triage")
+    if source is None:
+        return ('<section class="panel"><h2>P0/P1 productissues</h2>'
+                '<p>Issue-inventaris niet aangeleverd; geen all-clear.</p></section>')
+    if (type(source) is not dict
+            or source.get("source") not in ("not_supplied", "github_readonly_issue_inbox")
+            or source.get("coverage") not in ("unknown", "partial", "degraded", "stale")
+            or type(source.get("issues")) is not list
+            or len(source["issues"]) > 8):
+        raise ValueError("noncanonical existing product issue triage")
+    if source["source"] == "not_supplied":
+        if source["coverage"] != "unknown" or source["issues"]:
+            raise ValueError("unknown issue source cannot show scoped work")
+        return ('<section class="panel"><h2>P0/P1 productissues</h2>'
+                '<p class="banner">GitHub-issuebron NIET opgevraagd.'
+                ' Geen vrije taak of bestaande PR afleiden.</p></section>')
+    observed = _stamp(source.get("observed_at"))
+    if (type(source.get("truncated")) is not bool or
+            type(source.get("stopped_after_rate_or_auth_denial")) is not bool):
+        raise ValueError("unbounded product issue coverage")
+    ranked = []
+    seen = set()
+    for row in source["issues"]:
+        if type(row) is not dict:
+            raise ValueError("malformed issue owner card")
+        pid, priority = row.get("project_id"), row.get("priority")
+        url, title = row.get("issue_url"), row.get("title")
+        linked = row.get("open_pr_candidates")
+        if (type(pid) is not str or not SLUG.fullmatch(pid)
+                or priority not in ("P0", "P1", "P2", "Unspecified")
+                or type(url) is not str
+                or re.fullmatch(
+                    r"https://github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}",
+                    url) is None
+                or url in seen
+                or type(title) is not str or not 1 <= len(title) <= 180
+                or any(ord(char) < 32 or ord(char) == 127 for char in title)
+                or type(linked) is not list or len(linked) > 3
+                or row.get("status") != "inspection_only_ownership_unverified"
+                or type(row.get("pinned_exact_issue_read")) is not bool):
+            raise ValueError("invalid P0/P1 GitHub issue/claim receipt")
+        seen.add(url)
+        scope_prefix = url.rsplit("/issues/", 1)[0] + "/pull/"
+        urls = []
+        for pr in linked:
+            if (type(pr) is not str or
+                    re.fullmatch(
+                        r"https://github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}",
+                        pr) is None
+                    or not pr.startswith(scope_prefix) or pr in urls):
+                raise ValueError("invalid issue-linked existing PR scope")
+            urls.append(pr)
+        action = ("Eerst bestaande PR en actieve eigenaar/reviewgates controleren."
+                  if urls else
+                  "Eerst actuele eigenaarsclaims en bestandscope controleren.")
+        links = (' · '.join(
+            '<a href="' + escape(pr, quote=True) +
+            '" target="_blank" rel="noopener noreferrer">PR #' +
+            escape(pr.rsplit("/", 1)[1]) + '</a>' for pr in urls)
+            if urls else '<span>Geen open PR binnen dit bronvenster gezien</span>')
+        card = (
+            '<li><strong>' + escape(priority) + ' · ' + escape(pid) +
+            '</strong> · <a href="' + escape(url, quote=True) +
+            '" target="_blank" rel="noopener noreferrer">' +
+            escape(title) + '</a><p>Reeds zichtbare PR-kandidaten: ' +
+            links + '</p><p class="meta">' + escape(action) +
+            ' Geen QA-lane, claim of mergeautoriteit.</p></li>'
+        )
+        ranked.append((("P0", "P1", "P2", "Unspecified").index(priority), pid, card))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    if source["coverage"] == "stale":
+        notice = "VEROUDERDE BRON · issue- en PR-links zijn historisch; actueler lezen vereist."
+    elif source["coverage"] == "degraded":
+        notice = "GEDEGRADEERDE BRON · onvolledig GitHub-issues/PR-beeld."
+    else:
+        notice = "PARTIËLE STEEKPROEF · afwezigheid is geen bewijs van oplossing."
+    return ('<section class="panel" aria-label="P0-first product backlog">'
+            '<h2>Open productissues · P0 eerst, PR hergebruiken</h2>'
+            '<p class="banner">' + escape(notice) + ' Brontijd: ' +
+            escape(observed) +
+            (' · bron afgekapt' if source["truncated"] else '') +
+            (' · GitHub admission/rate-limit' if
+             source["stopped_after_rate_or_auth_denial"] else '') +
+            '</p><ol>' + ''.join(row[2] for row in ranked) +
+            '</ol><p>Issue/Pull-link bewijst geen huidige file-owner, required'
+            ' CI of onafhankelijke review; nooit automatisch claimen.</p></section>')
 
 
 
@@ -887,7 +979,8 @@ def review_html(decision):
     """One offline HTML view + bounded private operator handoff in browser."""
     # Validate optional branch data before using it in the source fingerprint.
     branch_panel = branch_work_review_panel(decision)
-    runtime_panel = (github_exact_gate_panel(decision) +
+    runtime_panel = (open_product_issue_owner_panel(decision) +
+                     github_exact_gate_panel(decision) +
                      queue_owner_pressure_panel(decision) +
                      blocked_work_owner_panel(decision) +
                      runtime_source_panel(decision))
