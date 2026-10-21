@@ -618,3 +618,21 @@ Bestaande bestanden, symlinks en gewijzigde directory-inodes worden geweigerd;
 bij een schrijffout wordt uitsluitend de eigen nieuwe inode opgeruimd. Fout-
 meldingen tonen geen privépaden. De uitvoer blijft uitsluitend advies/HOLD:
 het bestand geeft geen live-status, claim, retry, merge- of deploybevoegdheid.
+
+
+## Merge-review packets: JSON, Markdown and HTML
+
+The existing --prepare-merge-review flow can now produce a machine-readable JSON request or a human-readable Markdown/HTML handoff. Select an issue and a candidate PR that are already present in the imported recovery case; this does not discover a new PR or refresh live status.
+
+```sh
+install -d -m 700 "$HOME/.local/state/zsentinel"
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json \
+  --view-project "$PROJECT_SLUG" --view-issue "$ISSUE_NUMBER" \
+  --prepare-merge-review --candidate-pr-number "$SAMPLED_PR_NUMBER" \
+  --format html --output "$HOME/.local/state/zsentinel/merge-review.html"
+```
+
+Use --format markdown with a .md output path, or keep --format json for the policy request alone. The human handoff links the original issue and sampled PR, preserves the issue-source observation timestamp, and provides an explicit checklist for current exact-head CI, independent review, branch protection, unresolved review threads, merge state, owner approval and claim clearance. It is script-free offline HTML with no external resources.
+
+**Merge safety:** the policy evaluator now requires evidence.active_claim = "none" for merge_pr. An active or unknown claim is a HOLD, even when the other fields appear ready. Every request field is left null in the generated template; the saved draft/non-draft label is historical only. The packet does not run checks, acquire claims, merge, deploy or restart a runner.
