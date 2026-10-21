@@ -701,6 +701,10 @@ def portfolio_single_pr_markdown(selected, integrated, *, pr_url, project=None):
         str(gate["independent_approvals_observed"])
         if gate is not None else "Geen bruikbare exacte HEAD-gatebron")
     related_issues = candidate["linked_issue_urls"]
+    peer_issues = single_pr_related_peers(
+        selected, integrated, pr_url=pr_url)
+    observed_peer_count = len({peer["url"] for related in
+                               peer_issues.values() for peer in related})
     lines = [
         "# zSentinel · privédossier voor één bestaande product-PR",
         "",
@@ -743,11 +747,27 @@ def portfolio_single_pr_markdown(selected, integrated, *, pr_url, project=None):
         "",
         "## Gekoppelde bronissues (geen fixbewijs)",
         "",
+        "Afzonderlijke andere PR-kandidaten bij dezelfde issuevermelding "
+        "in deze oorspronkelijke beperkte PR-steekproef: " +
+        str(observed_peer_count) + ". Dit is geen bestandsoverlap- "
+        "of actueel eigenaarsbewijs.",
+        "",
     ]
-    lines.extend(
-        "- [Issue #" + url.rsplit("/", 1)[-1] + "](" + url + ")"
-        for url in related_issues
-    )
+    for url in related_issues:
+        lines.append("- [Issue #" + url.rsplit("/", 1)[-1] + "](" + url + ")")
+        others = peer_issues[url]
+        if others:
+            for peer in others:
+                lines.append(
+                    "  - Andere PR bij hetzelfde bronissue: [#" +
+                    peer["url"].rsplit("/", 1)[-1] + "](" +
+                    peer["url"] + ") — " + peer["priority"] +
+                    "; gatebron " + peer["gate_source"] +
+                    "; HEAD " + (peer["head_observed"] or "ONBEKEND") +
+                    "; apart beoordelen, geen bewezen conflict/fix.")
+        else:
+            lines.append("  - Geen tweede PR in deze opgeslagen PR-steekproef; "
+                         "buiten steekproef ONBEKEND.")
     if not related_issues:
         lines.append("- Geen issuevermelding in deze opgeslagen steekproef; "
                      "actuele open issues ONBEKEND.")
