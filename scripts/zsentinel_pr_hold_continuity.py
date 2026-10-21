@@ -172,3 +172,56 @@ def text_summary(report):
     if not report["current_prs"] and not report["previously_sampled_not_current_NOT_MERGED"]:
         lines.append("Geen vergelijkbare PR’s in dit beperkte venster; portfolio status ONBEKEND.")
     return "\n".join(lines)
+
+
+def html_panel(report):
+    """Script-free operator cards for changed existing-PR gates, never release."""
+    from html import escape
+    # One validation path shared by owner text and offline HTML.
+    text_summary(report)
+    descriptions = {
+        "exact_head_changed_REINSPECT_GATE":
+            "HEAD gewijzigd · controleer verplichte CI en reviews opnieuw",
+        "same_head_owner_step_changed_REVIEW_GATE":
+            "Vervolgactie gewijzigd · huidige gate opnieuw bekijken",
+        "same_observed_head_and_owner_step_NOT_ALL_CLEAR":
+            "Zelfde geobserveerde HEAD en gate-actie · geen bewijs van herstel",
+        "newly_in_bounded_sample_NOT_NEW_PR":
+            "Nu in beperkte steekproef · niet bewezen nieuw",
+        "partial_exact_source_NO_GATE_DELTA":
+            "Onvolledige bron · echte gatewijziging onbekend",
+        "incomparable_source_times_NO_GATE_DELTA":
+            "Bronmomenten niet vergelijkbaar · wijzigingen onbekend",
+    }
+    cards = []
+    for item in report["current_prs"]:
+        state = item["state"]
+        if state not in descriptions or not PR_URL.fullmatch(item["pr_url"]):
+            raise ValueError("untrusted private PR delta card")
+        head = item.get("observed_head_sha")
+        if head is not None and (type(head) is not str or not HEAD.fullmatch(head)):
+            raise ValueError("invalid private current PR commit")
+        cards.append(
+            '<li><a target="_blank" rel="noopener noreferrer" href="' +
+            escape(item["pr_url"], quote=True) + '">' +
+            escape(item["pr_url"].rsplit("/", 1)[-1]) + '</a> · ' +
+            escape(descriptions[state]) + ' · HEAD ' +
+            escape(head[:12] if head else "ONBEKEND") + '</li>')
+    previously_missing = report["previously_sampled_not_current_NOT_MERGED"]
+    if not isinstance(previously_missing, list) or len(previously_missing) > MAX_ROWS:
+        raise ValueError("invalid previously sampled PR delta count")
+    for url in previously_missing:
+        if type(url) is not str or not PR_URL.fullmatch(url):
+            raise ValueError("untrusted missing sampled PR URL")
+        cards.append('<li><a href="' + escape(url, quote=True) +
+                     '" target="_blank" rel="noopener noreferrer">' +
+                     escape(url.rsplit("/", 1)[-1]) +
+                     '</a> · Niet opnieuw gezien, geen bewijs van merge/sluiting</li>')
+    warning = ("Bronmomenten niet vergelijkbaar, delta ONBEKEND."
+               if not report["source_clocks_comparable"]
+               else "Alleen binnen de huidige/beperkte PR-bron. Geen eigenaarschap of mergebevoegdheid.")
+    return ('<section><h2>Bestaande PR’s · bronwijzigingen sinds vorige privéweergave</h2>'
+            '<p class="muted">' + escape(warning) + '</p><ul>' +
+            (''.join(cards) if cards else
+             '<li>Geen vergelijkbare PR’s; status niet bewezen vrij.</li>') +
+            '</ul></section>')
