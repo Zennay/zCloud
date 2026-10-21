@@ -1,5 +1,33 @@
 # Read-only zCloud VPS deploy preflight
 
+## 21 oktober · geen vals herstelbewijs na reboot of ongekoppelde bron
+
+De preflight levert voortaan `source_scope` bij elke nieuwe **lokale**
+observatie: een SHA-256-afleiding van de lokale Linux boot UUID, de
+geobserveerde absolute checkoutroot en de vaste zCloud-runnerunit. De ruwe
+boot UUID, machine-id, checkoutpad en procesargumenten verschijnen niet in
+de private export. Dit is **geen cryptografische hostattestatie**: eerdere
+rapporten zijn operator-aangeleverde JSON en kunnen niet als onafhankelijke
+bron worden vertrouwd.
+
+`--previous-report` geeft alleen brongebonden `resolved_findings`
+wanneer beide snapshots dezelfde waargenomen boot+checkout-binding hebben,
+de voorgaande opname hoogstens 24 uur oud is en het betreffende signaal echt
+opnieuw is uitgelezen. Zonder bronbinding (ook voor bestaande oudere
+rapporten zonder dit veld) of na een reboot blijven verdwenen signalen
+`recovery_unverified_findings` en `resolution_credit_allowed=false`.
+CPU-/PSI-trends worden bij verschillende of ontbrekende bronbindingen
+`source_scope_not_bound` met onbekende trend. Een legitieme herstart
+vernietigt geen opgeslagen eerdere gegevens, maar kan ook geen automatisch
+recovery-succes bewijzen.
+
+De JSON, standaard CLI, drieregels-eigenaarsoverzicht, private Markdown en
+offline HTML noemen de scope-coverage. Een nieuwe eigenaarshandoff
+`BASELINE_SCOPE_REVIEW` vraagt om een nieuwe veilige waarneming met de
+bevoegde eigenaar voordat oude incidenten als hersteld worden behandeld.
+Deze bronstatus heeft nooit invloed op claims, training, services of
+bestaande GitHub-/releasebeveiliging: de tool leest slechts bronnen.
+
 ## 21 oktober · bronvaste vergelijking van vorige VPS-snapshot
 
 De bestaande `--previous-report` gebruikt nu één race-bestendige, begrensde
