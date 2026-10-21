@@ -811,6 +811,9 @@ def owner_html(report):
             esc(row.get("pr_body_issue_text_observation", "UNKNOWN")) +
             " · textual signal only, not a verified GitHub issue relationship"
             "</dd>",
+            "<dt>Current PR title text</dt><dd>" +
+            esc(row.get("pr_title_issue_text_observation", "UNKNOWN")) +
+            " · textual signal only; no PR title is exported</dd>",
             "<dt>Required CI</dt><dd>UNKNOWN · sampled check runs are not "
             "branch-protection rules</dd>",
             "<dt>Independent review / active owner / deployment</dt>"
@@ -984,6 +987,8 @@ def markdown(report):
             "- Source-observed relationship: " + row["source_relationship"],
             "- Current PR body issue text: " +
             row.get("pr_body_issue_text_observation", "UNKNOWN"),
+            "- Current PR title issue text: " +
+            row.get("pr_title_issue_text_observation", "UNKNOWN"),
             "- Text mention proves current PR-issue link: NO",
             "- Historical draft: " + str(row["source_draft"]),
             "- Live draft: " + str(row.get("observed_draft", "UNKNOWN")),
