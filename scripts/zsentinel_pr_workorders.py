@@ -63,6 +63,14 @@ def _same_repo_url(value, repository):
     return value
 
 
+def _commit_link(card, sha):
+    """Canonical pinned source-only GitHub commit link, never merge clearance."""
+    _same_repo_url(card["url"], card["repository"])
+    if type(sha) is not str or SHA.fullmatch(sha) is None:
+        raise ValueError("invalid exact commit SHA in private work order")
+    return "https://github.com/" + card["repository"] + "/commit/" + sha
+
+
 def _article_anchor(card):
     """Unique offline URL fragment across repositories with the same PR number."""
     url = _same_repo_url(card["url"], card["repository"])
@@ -564,6 +572,13 @@ def render_csv(bundle):
         add("pr", card, link=pr_url + "/files", detail=(
             "CURRENT STATUS NOT VERIFIED" if not card["source_current"]
             else "EXACT HEAD AT SOURCE MOMENT; NOT MERGE AUTHORITY"))
+        if card["head_sha"] and card["base_sha"]:
+            add("observed_head_commit", card,
+                link=_commit_link(card, card["head_sha"]),
+                detail="PINNED AT SOURCE MOMENT ONLY; recheck before any merge")
+            add("observed_base_commit", card,
+                link=_commit_link(card, card["base_sha"]),
+                detail="OBSERVED TARGET BASE ONLY; branch may have moved")
         if card["change_since_previous_observation"] != "not_compared":
             add("observed_change", card,
                 link=pr_url,
@@ -757,6 +772,15 @@ def render_html(bundle):
             "</code> · <a target=\"_blank\" rel=\"noopener noreferrer\" "
             "href=\"" + e(files) + "\">Bestandswijzigingen</a></p>",
         ]
+        if card["head_sha"] and card["base_sha"]:
+            parts.append("<p class=\"meta\">Bronlinks: "
+                         "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+                         e(_commit_link(card, card["head_sha"])) +
+                         "\">Geobserveerde HEAD-commit</a> · "
+                         "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+                         e(_commit_link(card, card["base_sha"])) +
+                         "\">Geobserveerde doelbranchbasis</a>. "
+                         "Historische links, geen gatevrijgave.</p>")
         if card.get("historical_next_step"):
             parts.append("<p><strong>Vervolg op bronvergelijking:</strong> " +
                          e(card["historical_next_step"]) +
@@ -926,8 +950,14 @@ def render_markdown(bundle):
              if card["change_since_previous_observation"] in (
                  "changed_or_uncertain_head", "incomplete_gate_source",
                  "newly_selected_not_new_pr") else ""),
-            "**Exact PR HEAD:** `" + (card["head_sha"] or "ONBEKEND") + "`",
-            "**Exact doelbranchbasis:** `" + (card["base_sha"] or "ONBEKEND") + "`",
+            "**Exact PR HEAD:** " + (
+                "[`" + card["head_sha"] + "`](" +
+                _commit_link(card, card["head_sha"]) + ")" if card["head_sha"]
+                else "ONBEKEND"),
+            "**Exact doelbranchbasis:** " + (
+                "[`" + card["base_sha"] + "`](" +
+                _commit_link(card, card["base_sha"]) + ")" if card["base_sha"]
+                else "ONBEKEND"),
             "**Bestandsdiff:** " + card["files_url"],
             "",
             "### Verifieer vóór verandering of merge",
