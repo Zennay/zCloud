@@ -8,6 +8,7 @@ runners. Operator-supplied evidence is never treated as independently verified.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -19,6 +20,7 @@ from urllib.parse import urlparse
 
 MAX_INPUT_BYTES = 256 * 1024
 MAX_OUTPUT_BYTES = 128 * 1024
+MAX_BATCH_REQUESTS = 25
 UTC = timezone.utc
 SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 ACTIONS = frozenset({
@@ -191,9 +193,12 @@ def _validate(data):
     return observed, source, evidence
 
 
-def evaluate(data, max_age_minutes):
+def evaluate(data, max_age_minutes, *, now=None):
     observed, source, evidence = _validate(data)
-    now = datetime.now(UTC)
+    now = datetime.now(UTC) if now is None else now
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        raise PolicyInputError("evaluation clock must be timezone-aware")
+    now = now.astimezone(UTC)
     age = now - observed
     blockers = []
     requirements = []
@@ -425,6 +430,48 @@ def evaluate(data, max_age_minutes):
     }
 
 
+def evaluate_batch(data, max_age_minutes):
+    """Evaluate a bounded set of proposals against one shared clock snapshot."""
+    if type(data) is not list or not 1 <= len(data) <= MAX_BATCH_REQUESTS:
+        raise PolicyInputError("batch input must be a JSON array of 1 to 25 requests")
+
+    evaluated_at = datetime.now(UTC)
+    results = []
+    seen = set()
+    for index, item in enumerate(data):
+        report = evaluate(item, max_age_minutes, now=evaluated_at)
+        identity = (report["project_id"], report["incident_id"], report["action"])
+        if identity in seen:
+            raise PolicyInputError(
+                "batch contains duplicate project/incident/action entries"
+            )
+        seen.add(identity)
+        results.append({"index": index, "report": report})
+
+    decisions = [item["report"]["decision"] for item in results]
+    return {
+        "schema_version": 1,
+        "policy": "zsentinel-recovery-policy-batch-v1",
+        "evaluated_at_utc": evaluated_at.isoformat().replace("+00:00", "Z"),
+        "request_count": len(results),
+        "decision_counts": {
+            "HOLD": decisions.count("HOLD"),
+            "READY_FOR_HUMAN_REVIEW": decisions.count("READY_FOR_HUMAN_REVIEW"),
+        },
+        "results": results,
+        "advisory_only": True,
+        "evidence_independently_verified": False,
+        "actions_executed": False,
+        "authority": {
+            "claim_acquired": False,
+            "ci_retried": False,
+            "merge_executed": False,
+            "deployment_executed": False,
+            "runner_restarted": False,
+        },
+    }
+
+
 def markdown(report):
     lines = [
         "# zSentinel recovery policy decision",
@@ -463,6 +510,57 @@ def markdown(report):
     return "\n".join(lines)
 
 
+def markdown_batch(batch):
+    lines = [
+        "# zSentinel recovery policy batch",
+        "",
+        "- Evaluated at: " + batch["evaluated_at_utc"],
+        "- Requests: " + str(batch["request_count"]),
+        "- HOLD: " + str(batch["decision_counts"]["HOLD"]),
+        "- Ready for human review: " + str(batch["decision_counts"]["READY_FOR_HUMAN_REVIEW"]),
+        "- Evidence independently verified: no",
+        "- Actions executed: no",
+        "",
+    ]
+    for item in batch["results"]:
+        report = item["report"]
+        lines.extend([
+            "## " + str(item["index"] + 1) + ". " + report["project_id"] + " / " + report["incident_id"],
+            "",
+            "- Proposed action: **" + report["action"] + "**",
+            "- Decision: **" + report["decision"] + "**",
+            "- Source observation: " + report["observed_at_utc"],
+            "- Source: <code>" + html.escape(report["source_url"], quote=True) + "</code>",
+            "- Source age: " + str(report["source_age_seconds"]) + " seconds",
+            "- Evidence independently verified: no",
+            "- Action executed: no",
+            "",
+        ])
+        if report["blockers"]:
+            lines.extend(["### Holds to resolve", ""])
+            lines.extend(
+                "- " + entry["code"] + " — " + entry["message"]
+                for entry in report["blockers"]
+            )
+        else:
+            lines.extend([
+                "### Remaining boundary",
+                "",
+                "The supplied fields meet the local policy profile; this is not approval or execution.",
+            ])
+        if report["required_evidence"]:
+            lines.extend(["", "### Required evidence", ""])
+            lines.extend("- " + field for field in report["required_evidence"])
+        lines.append("")
+    lines.extend([
+        "## Side-effect boundary",
+        "",
+        "The batch is advisory only. No claim, retry, merge, deployment or runner operation was performed.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def template_request(action, project_id, incident_id, source_url, owner):
     if type(project_id) is not str or not SLUG.fullmatch(project_id):
         raise PolicyInputError("project_id must be a bounded ASCII identifier")
@@ -488,7 +586,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Explain whether a proposed recovery action is ready for human review; never execute it."
     )
-    parser.add_argument("--input", help="bounded JSON file path, or - for stdin")
+    parser.add_argument("--input", help="one bounded JSON request file path, or - for stdin")
+    parser.add_argument("--batch-input", help="bounded JSON array of 1–25 independent requests, file path or - for stdin")
     parser.add_argument("--template", choices=sorted(ACTIONS),
                         help="emit a fresh, fail-closed JSON request template")
     parser.add_argument("--project-id", help="project slug used by --template")
@@ -502,8 +601,8 @@ def main(argv=None):
     if not 1 <= args.max_age_minutes <= 1440:
         parser.error("--max-age-minutes must be between 1 and 1440")
     if args.template:
-        if args.input:
-            parser.error("--template and --input cannot be used together")
+        if args.input or args.batch_input:
+            parser.error("--template cannot be used with --input or --batch-input")
         if not all((args.project_id, args.incident_id, args.source_url)):
             parser.error("--template requires --project-id, --incident-id and --source-url")
         if args.format != "json":
@@ -519,8 +618,29 @@ def main(argv=None):
         except (OSError, UnicodeError, PolicyInputError) as exc:
             print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
             return 2
+    if args.batch_input:
+        if args.input:
+            parser.error("--input and --batch-input cannot be used together")
+        if any((args.project_id, args.incident_id, args.source_url, args.owner)):
+            parser.error("template identity options require --template")
+        try:
+            raw = _read_input(args.batch_input)
+            data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                              parse_constant=_reject_constant)
+            report = evaluate_batch(data, args.max_age_minutes)
+            output = markdown_batch(report) if args.format == "markdown" else (
+                json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            )
+            encoded = output.encode("utf-8")
+            if len(encoded) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("output exceeds 128 KiB")
+            sys.stdout.write(output)
+            return 0 if report["decision_counts"]["HOLD"] == 0 else 2
+        except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
+            print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
+            return 2
     if not args.input:
-        parser.error("either --input or --template is required")
+        parser.error("either --input, --batch-input or --template is required")
     if any((args.project_id, args.incident_id, args.source_url, args.owner)):
         parser.error("template identity options require --template")
     try:

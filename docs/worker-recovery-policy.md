@@ -48,6 +48,18 @@ The evidence is supplied by the operator and is not independently re-fetched or 
 Every result explicitly records advisory_only=true, evidence_independently_verified=false, actions_executed=false, and false claim/retry/merge/deploy/restart side-effect flags. The tool cannot acquire a claim, retry a workflow, merge a PR, deploy or restart a runner.
 
 
+### Batch triage for independent recovery proposals
+
+Use `--batch-input` to review **1–25 separate, complete policy requests** in one operator pass:
+
+```bash
+python3 scripts/zsentinel_recovery_policy.py --batch-input incidents.json --format markdown
+```
+
+The input must be one UTF-8 JSON array, within the same 256 KiB input bound. Every item is validated against the exact single-request schema; duplicate JSON keys, duplicate `(project_id, incident_id, action)` entries, unknown fields or any invalid request fail the entire batch closed rather than emitting a partial report. Source-age decisions use one shared evaluation-clock snapshot. JSON output includes each individual policy receipt plus bounded HOLD/ready counts; Markdown output groups each request with its own blockers and required evidence.
+
+Batch mode remains advisory: it does not fetch or independently verify sources, acquire claims, retry CI, merge, deploy or restart runners. Exit code is `0` only when every request is `READY_FOR_HUMAN_REVIEW`; otherwise it is `2`. A ready result is never an approval to act.
+
 ### Start from a fresh request template
 
 Generate a schema-complete request with every evidence field set to unknown, rather than hand-writing the JSON shape. The timestamp is generated at invocation time.
