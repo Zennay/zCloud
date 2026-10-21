@@ -706,7 +706,7 @@ afwijkende ledenvolgorde, compressie, niet-canonieke JSON-bronhash en elk
 archief waarvan de **volledige bytes** niet overeenkomen met een heropbouw
 via de bestaande serializer. Hij toont per brongebonden kaart prioriteit,
 project, probleem, menselijke vervolgstap en de canonieke bestaande issue-/PR-
-links, plus een aparte historische teller. Privénotities of ongevalideerde
+links, plus een afzonderlijke HISTORISCH-sectie met maximaal vijf eerdere P0/P1-owneracties, oorspronkelijke waarnemingstijd en, waar brongebonden, de oude exacte GitHub-joblink. De historische sectie blijft nadrukkelijk NIET ACTUEEL en verleent geen incident- of herstelstatus. Privénotities of ongevalideerde
 provider-output worden niet in een claim/actie omgezet. De waarschuwing
 `partial_source=true` en alle autorisatievlaggen `false` blijven zichtbaar;
 het bestand kan niet bewijzen dat de oorspronkelijke PR nog open is,
