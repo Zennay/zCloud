@@ -20,8 +20,9 @@ from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 from zsentinel_saved_gate_dossier import (
     ISSUE_URL, PR_URL, SHA, _open_private_extract_parent, _save_private_handoff,
-    read_archive, source_recency_summary, strict_json,
+    read_archive, strict_json,
 )
+from zsentinel_saved_dossier_timeline import source_freshness
 
 FILES = ("issue-dossier.html", "issue-actions.md", "issue-prs.csv",
          "source-receipt.json", "source-checksums.json")
@@ -286,11 +287,15 @@ def extract_private(files, destination: Path):
 
 
 
-def human_issue_handoff(manifest, source, issue):
+def human_issue_handoff(manifest, source, issue, *, stale_after_hours=6):
     """Read-only human handoff from admitted receipt; not a release decision."""
     if (not canonical_issue(issue["issue_url"]) or
             manifest.get("selected_issue") not in (None, issue["issue_url"])):
         raise ValueError("Handoff issue not part of original source scope")
+    freshness = source_freshness(
+        source["source_snapshots"], stale_after_hours=stale_after_hours)
+    age = (str(freshness["age_hours"]) + " hours"
+           if freshness["age_hours"] is not None else "UNKNOWN")
     lines = [
         "# zSentinel · private historical issue owner handoff",
         "",
@@ -299,6 +304,12 @@ def human_issue_handoff(manifest, source, issue):
         "",
         "- Original GitHub issue: " + issue["issue_url"],
         "- Historical linked priority: " + issue["highest_source_priority"],
+        "- Source freshness: " + freshness["status"].upper() +
+          " · age " + age + " · threshold " +
+          str(freshness["stale_after_hours"]) + " hours",
+        "- Latest source UTC: " + str(freshness["latest_observed_utc"] or "UNKNOWN"),
+        "- Freshness evaluated UTC: " + freshness["evaluated_at_utc"] +
+          " · live recheck required before action",
         "- Saved PR candidates: " + str(len(issue["linked_existing_prs"])),
         "- Source manifest SHA256 identities (not provider signatures):",
     ]
@@ -338,6 +349,8 @@ def main(argv=None):
     parser.add_argument("--input", type=Path, required=True,
                         help="One previously generated private issue continuity ZIP")
     parser.add_argument("--inspect-issue", help="Canonical issue URL in saved source")
+    parser.add_argument("--stale-after-hours", type=int, default=6,
+                        help="Mark saved evidence stale after 1..168 hours (default: 6)")
     parser.add_argument("--limit", type=int, default=20,
                         help="Maximum printed issue groups (1..50)")
     parser.add_argument("--extract-to", type=Path,
@@ -363,7 +376,13 @@ def main(argv=None):
         print("Original manifest identities: " +
               ", ".join(s["original_review_manifest_sha256"][:12]
                         for s in samples))
-        print(source_recency_summary(samples[-1].get("latest_observed_utc")))
+        freshness = source_freshness(
+            samples, stale_after_hours=args.stale_after_hours)
+        print("Source freshness: " + freshness["status"].upper() +
+              " / age hours " + str(freshness["age_hours"]) +
+              " / stale threshold " + str(freshness["stale_after_hours"]))
+        print("Freshness evaluated UTC: " + freshness["evaluated_at_utc"] +
+              " / live state remains UNKNOWN")
         print("Human issue groups shown: " + str(min(len(issues), args.limit)) +
               " of " + str(len(issues)) + " in this saved selection")
         for issue in issues[:args.limit]:
@@ -395,7 +414,9 @@ def main(argv=None):
             target = args.inspect_issue or manifest["selected_issue"]
             if target is None or target != issues[0]["issue_url"]:
                 raise ValueError("Private handoff requires one exact saved issue")
-            note = human_issue_handoff(manifest, report, issues[0])
+            note = human_issue_handoff(
+                manifest, report, issues[0],
+                stale_after_hours=args.stale_after_hours)
             _save_private_handoff(args.handoff_markdown, note)
             print("New private source-bound issue handoff created; "
                   "no release or owner authority.")
