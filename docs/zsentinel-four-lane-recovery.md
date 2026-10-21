@@ -54,6 +54,32 @@ to make these labels turn green.
 
 ## Private four-lane operator desk
 
+### 21 October · offline project drilldown and local owner-state parity
+
+The existing four-lane offline `--format html` desk now has a navigable
+**owner drilldown for every canonical real portfolio project**, including
+projects with no P0/P1 observation. Its top-priority cards and urgent queue
+table link into the appropriate `<details>` project dossier. Each dossier
+separates local P0/P1 waiting and eligible hints from P0/P1 active work, links
+to the existing canonical GitHub PR and issue inboxes, and offers a single
+human-only next step. HTML is **scriptless** under the existing strict CSP;
+the user manually expands the dossier after following the fragment link.
+
+The same conservative owner-state explanation is serialized as
+`project_owner_decisions` in JSON and included in the single-project and
+portfolio Markdown handoffs, all computed from the same read-only local
+SQLite snapshot. Priority of evidence is: a positively observed active
+task preserves its owner even when the source is partial; otherwise,
+partial/unknown source is a HOLD, no local P0/P1 group is merely NOT
+OBSERVED, and a local eligible-hint is only an OWNER REVIEW REQUEST,
+not permission to claim, merge or deploy. A project with both P0 and P1
+rows retains both queue totals (rather than showing only its P0 group)
+while P0 still takes review precedence.
+
+This is a product-side operator workflow only. It creates no browser
+storage, JavaScript, connector calls, additional database reads, queue or
+Notion mutations, CI retries, automated owner assignment or releases.
+
 ### 21 October · private owner brief for a specific real project
 
 The existing read-only four-lane desk now includes a targeted **owner handoff**
