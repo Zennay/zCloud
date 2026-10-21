@@ -398,6 +398,14 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
         "Waargenomen issues: " + str(board["issue_count"]) +
         "; met een bestaande PR in de beperkte bron: " +
         str(board["existing_pr_first_issues"]),
+        ("PR-groepen met onbekende HEAD: " +
+         str(board["pr_groups_with_unknown_head"]) +
+         "; afwijkende HEAD-bronontvangsten: " +
+         str(board["pr_groups_with_inconsistent_head_receipts"]) +
+         ". Bij bronconflict wordt geen commit gekozen."
+         if type(board.get("pr_groups_with_unknown_head")) is int
+         and type(board.get("pr_groups_with_inconsistent_head_receipts")) is int
+         else "PR-HEAD-groepsdekking: ONBEKEND (geen tellerbron)."),
         "GEEN huidige claims, verplichte branchregels, mergebevoegdheid of "
         "live herstel geverifieerd.",
         "",
