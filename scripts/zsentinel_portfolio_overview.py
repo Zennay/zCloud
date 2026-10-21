@@ -1129,6 +1129,7 @@ def main():
         unblock = blocker_first_board(summary, decision, problem_inbox, pr_desk=pr_desk)
         continuity = None
         routing_transition = None
+        routing_history = None
         if history_files:
             from zsentinel_blocker_continuity import compare, compare_history
             from zsentinel_route_continuity import compare as routing_compare
@@ -1148,6 +1149,11 @@ def main():
             # Reuse the already-loaded, latest chronological saved source.
             # A missing old router receipt stays UNKNOWN rather than healed.
             routing_transition = routing_compare(snapshots[-2], current)
+            # Previously all but the last saved source were ignored for
+            # task routing. Retain source-bound route movement across the
+            # entire already-read window without further provider calls.
+            from zsentinel_route_history import build_history
+            routing_history = build_history(snapshots)
         disk_private_html = None
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
@@ -1227,6 +1233,12 @@ def main():
                     raise ValueError("incompatible portfolio HTML for route transitions")
                 rendered = rendered.replace(
                     "<main>", "<main>" + routing_transition_html(routing_transition), 1)
+            if routing_history is not None:
+                from zsentinel_route_history import owner_html as route_history_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible portfolio HTML for route history")
+                rendered = rendered.replace(
+                    "<main>", "<main>" + route_history_html(routing_history), 1)
         elif args.format == "ics":
             from zsentinel_human_agenda import human_calendar
             rendered = human_calendar(decision)
@@ -1266,6 +1278,10 @@ def main():
                 from zsentinel_route_continuity import as_text as routing_history_text
                 rendered = ("## zSentinel · veranderingen in werkroutering\n\n" +
                             routing_history_text(routing_transition) + "\n\n" + rendered)
+            if routing_history is not None:
+                from zsentinel_route_history import owner_text as route_history_text
+                rendered = ("## zSentinel · herstelgeschiedenis over alle bronvensters\n\n" +
+                            route_history_text(routing_history) + "\n\n" + rendered)
         elif args.format == "json":
             rendered = json.dumps({
                 "portfolio": summary, "selected_window": window_index,
@@ -1276,6 +1292,7 @@ def main():
                 "blocker_first_handoff": unblock,
                 "blocker_continuity": continuity,
                 "routing_transition": routing_transition,
+                "routing_history": routing_history,
                 "local_runner_observation": local_runner,
                 "runner_cross_source": runner_cross_source,
                 "queue_claim_churn": decision.get("queue_claim_churn"),
@@ -1424,6 +1441,9 @@ def main():
             if routing_transition is not None:
                 from zsentinel_route_continuity import as_text as routing_transition_text
                 rendered = routing_transition_text(routing_transition) + "\n\n" + rendered
+            if routing_history is not None:
+                from zsentinel_route_history import owner_text as route_history_text
+                rendered = route_history_text(routing_history) + "\n\n" + rendered
         if disk_private_html is not None:
             from zsentinel_private_output import write_private_output
             write_private_output(args.disk_hotspots_output, disk_private_html, "html")
