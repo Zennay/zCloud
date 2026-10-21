@@ -1256,13 +1256,24 @@ Import van een ander bronmoment verandert niets.</p>
 <div class="row"><button id="previewBrief" type="button">Voorvertoning maken</button>
 <button id="downloadBrief" type="button" disabled>Download deze briefing (.md)</button></div>
 <pre id="briefText" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto"></pre>
-<p id="briefStatus" class="meta" aria-live="polite">Geen briefing voorbereid.</p></section></div></div>
+<p id="briefStatus" class="meta" aria-live="polite">Geen briefing voorbereid.</p></section>
+<section class="panel controls" aria-label="Complete merge-first owner action briefing">
+<h2>Privé actieoverdracht · merge eerst</h2>
+<p>Een enkele brongebonden P0- en PR-first overdracht voor bevoegde eigenaren:
+lopende PR-gates, productissues, exacte GitHub-jobs, queue-/leaserisico en bronincidenten.
+Geen dispatch, eigendomsovername of goedkeuring. Alleen handmatige download na preview.</p>
+<div class="row"><button id="previewAction" type="button">Actieoverdracht voorvertonen</button>
+<button id="downloadAction" type="button" disabled>Download privé acties (.md)</button></div>
+<pre id="actionText" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto"></pre>
+<p id="actionStatus" class="meta" aria-live="polite">Nog niet voorbereid; bron blijft een gedeeltelijke momentopname.</p>
+</section></div></div>
 <footer><p class="meta">Een ontbrekend incident kan door incomplete GitHub-bron, rate-limit,
 scope of tijdvenster komen. Een lokale opvolgstatus bewijst geen eigenaargoedkeuring
 of systeemherstel. Bronstatus blijft ongewijzigd.</p></footer>
 <script>
 "use strict";
 const source=__SOURCE__;
+const actionBrief=__ACTION_BRIEF__;
 const $=id=>document.getElementById(id);
 const choices=["nog-niet-beoordeeld","eigenaar-benaderen","in-behandeling-bij-eigenaar",
                "extern-geparkeerd","bron-opnieuw-verifieren"];
@@ -1587,16 +1598,43 @@ $("downloadBrief").onclick=()=>{
   $("briefStatus").textContent="Privébriefing aangeboden. Niets verstuurd of goedgekeurd.";
  }catch(_){invalidateBrief();$("briefStatus").textContent="Voorvertoning verlopen. Controleer filters en maak opnieuw.";}
 };
+let reviewedAction=null;
+$("previewAction").onclick=()=>{
+ try{
+  if(typeof actionBrief!=="string"||actionBrief.length>100000||
+     !actionBrief.includes(source.fingerprint))
+    throw Error("Bron en actieoverdracht komen niet overeen");
+  $("actionText").textContent=actionBrief;
+  $("actionStatus").textContent="Privé bronoverdracht voorvertoond. Controleer alle onbekende eigenaars en gates handmatig.";
+  reviewedAction={source:source.fingerprint,content:actionBrief};
+  $("downloadAction").disabled=false;
+ }catch(_){reviewedAction=null;$("downloadAction").disabled=true;
+   $("actionStatus").textContent="Privé overdracht niet beschikbaar: bronvalidatie ontbreekt.";}
+};
+$("downloadAction").onclick=()=>{
+ try{
+  if(!reviewedAction||reviewedAction.source!==source.fingerprint||
+     reviewedAction.content!==actionBrief)throw Error("Verouderde preview");
+  const url=URL.createObjectURL(new Blob([actionBrief],{type:"text/markdown;charset=utf-8"}));
+  const a=el("a");a.href=url;a.download="zsentinel-private-owner-action-brief.md";
+  document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  $("actionStatus").textContent="Privéoverdracht aangeboden; niets verzonden of goedgekeurd.";
+ }catch(_){reviewedAction=null;$("downloadAction").disabled=true;
+  $("actionStatus").textContent="Voorvertoning ongeldig; beoordeel de bron opnieuw.";}
+};
 isFresh();render();
 </script></html>"""
     # Split the ORIGINAL template before inserting either source-derived
     # value. Never scan an inserted incident/branch value for another marker.
     if (html.count("__BRANCH_PANEL__") != 1 or
             html.count("__RUNTIME_PANEL__") != 1 or
-            html.count("__SOURCE__") != 1):
+            html.count("__SOURCE__") != 1 or
+            html.count("__ACTION_BRIEF__") != 1):
         raise ValueError("offline incident desk template has ambiguous placeholders")
     before_branch, rest = html.split("__BRANCH_PANEL__", 1)
     between_panels, rest = rest.split("__RUNTIME_PANEL__", 1)
     between, after_source = rest.split("__SOURCE__", 1)
+    before_action, after_action = after_source.split("__ACTION_BRIEF__", 1)
     return (before_branch + branch_panel + between_panels + runtime_panel +
-            between + payload + after_source)
+            between + payload + before_action + action_payload + after_action)
