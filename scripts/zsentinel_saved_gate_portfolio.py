@@ -415,12 +415,14 @@ Alleen vrijwillig openen van de originele GitHub-links navigeert extern.</p>
 
 def portfolio_csv(selected, integrated, *, project=None):
     """One compact Excel-friendly human triage row per observed project."""
+    _oldest, latest, _missing = _admit(selected, integrated)
     projects = project_worklist(selected, integrated, project=project)
     stream = StringIO(newline="")
     writer = csv.writer(stream, delimiter=";", quotechar='"',
                         lineterminator="\r\n")
     writer.writerow([
         "Repository", "Oudste bron UTC", "Manifest SHA256",
+        "Bronleeftijd bij export",
         "PR kandidaten bron", "P0 kandidaten bron", "P1 kandidaten bron",
         "PR gatebron onbekend", "Hoofdblokkades bron",
         "Gelijktijdige blokkades bron", "Eerste PR prioriteit",
@@ -437,7 +439,7 @@ def portfolio_csv(selected, integrated, *, project=None):
         writer.writerow([
             p["repository"], integrated["earliest_observed_at_utc"],
             integrated["original_review_manifest_sha256"],
-            p["source_prs_observed"], p["p0_prs_in_sample"],
+            source_age_warning(latest), p["source_prs_observed"], p["p0_prs_in_sample"],
             p["p1_prs_in_sample"], p["unknown_gate_source_prs"],
             labels("primary_categories"), labels("concurrent_categories"),
             first["priority"], first["url"], first["next_action"],
