@@ -1008,12 +1008,10 @@ def main() -> int:
     if args.previous_report is not None:
         try:
             report["comparison"] = compare_snapshot(args.previous_report, report)
+            report["owner_handoff"] = operator_handoff(report)
         except ValueError as exc:
             print(f"PREVIOUS_REPORT_INVALID: {exc}", file=sys.stderr)
             return 2
-    # Owner handoff is useful on a fresh one-shot observation too. Historical
-    # comparison only enriches its trend; it is not a prerequisite for the CLI.
-    report["owner_handoff"] = operator_handoff(report)
     if args.json or args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
     elif args.format == "html":
