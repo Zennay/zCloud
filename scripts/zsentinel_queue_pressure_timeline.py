@@ -188,6 +188,57 @@ def summarize_queue_windows(source_windows):
                 or differences["ten_plus_claim_attempt_items"] > 0
                 or differences["expired_owner_lease_rows"] > 0),
         })
+    # Three consecutive *complete, same-identity project samples* expose
+    # persistent owner-attention signals. Counts may refer to different jobs;
+    # neither continuity of an individual lease nor a failed retry is proven.
+    sustained = []
+    eligible_triples = 0
+    for first, middle, last in zip(source_windows, source_windows[1:],
+                                    source_windows[2:]):
+        times = [_moment(w["observed_at_utc"]) for w in (first, middle, last)]
+        if (not all(w["queue_pressure"]["coverage"] == "current"
+                    and w["queue_pressure"].get("source_fresh_when_saved") is True
+                    and w["queue_pressure"].get("project_groups_complete") is True
+                    and w["queue_pressure"].get("sample_is_complete") is True
+                    for w in (first, middle, last))
+                or not times[0] < times[1] < times[2]
+                or times[2] - times[0] > timedelta(minutes=45)):
+            continue
+        eligible_triples += 1
+        groups = [{
+            (g["project_id"], g["priority"]): g
+            for g in w["queue_pressure"]["project_groups"]
+        } for w in (first, middle, last)]
+        for key in sorted(set(groups[0]) & set(groups[1]) & set(groups[2]),
+                          key=lambda x: (PRIORITIES.index(x[1]), x[0])):
+            rows = [g[key] for g in groups]
+            signal = ("persistent_high_claim_attempt_counts"
+                      if all(r["high_claim_attempts"] > 0 for r in rows)
+                      else "persistent_expired_lease_row_counts"
+                      if all(r["expired_owner_lease_rows"] > 0 for r in rows)
+                      else None)
+            if signal:
+                sustained.append({
+                    "project_id": key[0], "priority": key[1],
+                    "first_window": first["index"], "last_window": last["index"],
+                    "signal": signal,
+                    "observed_counts": [
+                        r["high_claim_attempts"] if signal.startswith("persistent_high")
+                        else r["expired_owner_lease_rows"] for r in rows],
+                    "original_task_identity_verified": False,
+                    "retry_or_lease_mutation_authorized": False,
+                    "owner_next_step": (
+                        "Reconcile exact current queue row and active lease with its "
+                        "existing owner; do not reset, retry or take over work."),
+                })
+    # Deduplicate overlapping triples by project+priority+signal. Preserve
+    # latest interval as *observation*, never as a current authority claim.
+    latest = {}
+    for row in sustained:
+        latest[(row["project_id"], row["priority"], row["signal"])] = row
+    sustained = sorted(latest.values(), key=lambda row: (
+        PRIORITIES.index(row["priority"]), row["project_id"], row["signal"]))
+    visible = sustained[:12]
     return {
         "schema": "zsentinel-historical-queue-pressure-v1",
         "windows": [{
@@ -196,6 +247,11 @@ def summarize_queue_windows(source_windows):
             "queue": w["queue_pressure"],
         } for w in source_windows],
         "adjacent_comparisons": comparisons,
+        "sustained_owner_attention": visible,
+        "sustained_owner_attention_total": len(sustained),
+        "sustained_owner_attention_truncated": len(sustained) > len(visible),
+        "eligible_complete_three_window_sequences": eligible_triples,
+        "sustained_signal_is_not_same_task_proof": True,
         "compared_pairs": sum(
             row["deltas"] is not None for row in comparisons),
         "unknown_pairs": sum(

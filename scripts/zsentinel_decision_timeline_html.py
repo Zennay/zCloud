@@ -65,6 +65,11 @@ Geen claims vrijgeven, jobs herstarten of automatische retries uitvoeren.</p>
 <div id="queueStats" class="statgrid"></div>
 <div id="queueWindows"></div>
 <div id="queueDeltas"></div>
+<h3>Druk herhaald gezien in drie complete bronmomenten</h3>
+<p>Vergelijkt alleen identieke project-/prioriteitsgroepen, niet dezelfde taak of
+lease. Ontbrekende of afgekapte bronnen bewijzen geen herstel; huidige eigenaar controleert
+het echte werk vóór elke actie.</p>
+<div id="queuePersistent"></div>
 <p>Voor menselijke beoordeling zonder runner- of queueacties:</p>
 <button id="queuePreview">Bekijk privé wachtrijoverdracht</button>
 <button id="queueDownload" disabled>Download wachtrijoverdracht als Markdown</button>
@@ -133,6 +138,8 @@ const queue=data.queue_pressure_history;
 $("queueStats").append(
  stat("Vergelijkbare bronparen",queue.compared_pairs),
  stat("Bronhiaten / niet vergelijkbaar",queue.unknown_pairs),
+ stat("Aanhoudende eigenaarssignalen",queue.sustained_owner_attention_total),
+ stat("Complete drievensterbronnen",queue.eligible_complete_three_window_sequences),
  stat("Actuele lease- of herstelstatus","NIET GECONTROLEERD")
 );
 for(const w of queue.windows){
@@ -179,6 +186,23 @@ for(const delta of queue.adjacent_comparisons){
  }
  $("queueDeltas").append(details);
 }
+if(queue.sustained_owner_attention_truncated){
+ $("queuePersistent").append(line("Bronlimiet","Meer groepen waargenomen dan getoond; geen afwezigheidsclaim."));
+}
+if(!queue.sustained_owner_attention.length){
+ $("queuePersistent").append(line("Aanhoudende bronwaarneming",
+  queue.eligible_complete_three_window_sequences===0?
+  "ONBEKEND: geen drie volledige tijdig opeenvolgende bronmomenten.":
+  "Geen herhaalde signalen in de begrensde complete projectgroepen; geen herstelbewijs."));
+}
+for(const row of queue.sustained_owner_attention){
+ $("queuePersistent").append(line(
+  row.priority+" · "+row.project_id+" · bronvensters "+row.first_window+"–"+row.last_window,
+  (row.signal==="persistent_high_claim_attempt_counts"?
+   "Hoge claimpogingen":"Verlopen lease-rijen")+
+  " in drie waarnemingen: "+row.observed_counts.join(" → ")+
+  ". Controleer huidige eigenaar/rij. GEEN retry of leasevrijgave."));
+}
 let queuePreview=null;
 function queueMarkdown(){
  const history=data.queue_pressure_history;
@@ -193,7 +217,17 @@ function queueMarkdown(){
   "- Laatste routerbron: "+data.last_source_observed_at_utc,
   "- Bron SHA256: "+data.sources.map(x=>x.normalized_source_sha256).join(", "),
   "- Vergelijkbare vensters: "+history.compared_pairs,
-  "- Niet-vergelijkbare vensters: "+history.unknown_pairs,"",
+  "- Niet-vergelijkbare vensters: "+history.unknown_pairs,
+  "- Aanhoudende projectgroepen: "+history.sustained_owner_attention_total+
+    (history.sustained_owner_attention_truncated?" (AFGEKAPT)":""),
+  "- Complete drievensterreeksen: "+history.eligible_complete_three_window_sequences,"",
+  "## Drie opeenvolgende waarnemingen, géén taakidentiteit","",
+  ...history.sustained_owner_attention.map(row=>
+   "- "+row.priority+" "+row.project_id+" · vensters "+
+   row.first_window+"–"+row.last_window+" · "+row.signal+
+   " · "+row.observed_counts.join(" / ")+
+   " · huidige rij en lease eerst met bevoegde eigenaar verifiëren."),
+  "",
  ];
  for(const row of history.adjacent_comparisons){
   const title="## Vensters "+row.from_window+" → "+row.to_window;

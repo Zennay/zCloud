@@ -164,6 +164,15 @@ def render_text(report):
             report["worker_continuity_history"]["unknown_or_partial_pairs"],
             report["worker_continuity_history"]["observed_generation_signal_pairs"]),
     ]
+    queue_history = report["queue_pressure_history"]
+    lines.append("Aanhoudende eigenaarssignalen %d%s (3 complete opeenvolgende bronnen, GEEN retries):" % (
+        queue_history["sustained_owner_attention_total"],
+        " AFGKAPT" if queue_history["sustained_owner_attention_truncated"] else ""))
+    for row in queue_history["sustained_owner_attention"]:
+        lines.append("  %s %s vensters %d-%d: %s [%s]; actuele claim opnieuw inspecteren." % (
+            row["priority"], row["project_id"], row["first_window"],
+            row["last_window"], row["signal"],
+            ", ".join(str(x) for x in row["observed_counts"])))
     for pair in report["queue_pressure_history"]["adjacent_comparisons"]:
         if pair["deltas"] is None:
             lines.append("Queue venster %d → %d: ONBEKEND, bronhiaat." %
@@ -228,7 +237,21 @@ def render_markdown(report):
         for pair in report["queue_pressure_history"]["adjacent_comparisons"]
     ] + [
         "",
-        "## Historische workergebeurtenissen (geen product-/claimbewijs)", "",
+        "## Aanhoudende eigenaarssignalen (geen identiek taakbewijs)", "",
+        "Volledige bronreeksen van drie: " +
+        str(report["queue_pressure_history"]["eligible_complete_three_window_sequences"]) +
+        "; groepen " + str(report["queue_pressure_history"]["sustained_owner_attention_total"]) +
+        (" (AFGEKAPT)" if report["queue_pressure_history"]["sustained_owner_attention_truncated"]
+         else "") + ".",
+    ] + [
+        "- " + row["priority"] + " " + row["project_id"] + " · " +
+        row["signal"] + " · vensters " +
+        str(row["first_window"]) + "–" + str(row["last_window"]) +
+        "; geobserveerde aantallen " + "/".join(str(x) for x in row["observed_counts"]) +
+        "; eigenaar controleert opnieuw, GEEN leasevrijgave of retry."
+        for row in report["queue_pressure_history"]["sustained_owner_attention"]
+    ] + [
+        "", "## Historische workergebeurtenissen (geen product-/claimbewijs)", "",
     ] + [
         ("- Vensters %d → %d · %s · slots %d" %
          (pair["from_window"], pair["to_window"],

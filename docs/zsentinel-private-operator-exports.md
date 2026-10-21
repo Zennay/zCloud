@@ -230,6 +230,27 @@ of per-projectgroepen en verwarring tussen originele observatietijd en het
 moment van latere rapportexport. De oorspronkelijke bron-UTC en
 niet-autorisatiestatus blijven bij ieder venster zichtbaar.
 
+### 21 oktober · aanhoudende bronwaarnemingen in de queue-werkbak
+
+Bij minimaal drie strikt opeenvolgende, volledige wachtrijmetingen
+uit dezelfde bronsoort binnen 45 minuten toont de bestaande offline
+tijdlijn nu terugkerende hoge claimpogingen of verlopen lease-rijen per
+project en P0/P1/P2/P3. De reeks wordt alleen getoond wanneer dezelfde
+project-/prioriteitsgroep in alle drie volledige projectinventarissen
+met een positieve teller voorkomt. Onvolledige bron, oudere snapshots,
+ontbrekende groepen of pauzes breken de reeks; geen fictieve nulwaarde.
+Bij meerdere overlappende reeksen blijft de laatst waargenomen
+reeks per project en signaal over. Het dashboard toont maximaal twaalf
+bronsignalen en maakt bronafkapping expliciet.
+
+De gegevens staan in bestaande JSON-, mobiele HTML-, Markdown- en
+tekstoverdrachten, inclusief drie geobserveerde tellingen en bronvensters.
+De nadrukkelijke eigenaaractie is: lees de oorspronkelijke actuele
+queue-rij en actieve lease bij de bevoegde eigenaar voordat een mens
+iets verandert. Historische group-totalen bewijzen geen identieke
+taak, mislukte retry, vastgelopen worker of herstelde claim.
+Er wordt geen queue-, GitHub-, Notion- of VPS-mutatie uitgevoerd.
+
 ### Private eigenaarsoverdracht voor wachtrij-/claimdruk
 
 Naast de eerdere incidentenoverdracht bevat de offline HTML nu een tweede,
