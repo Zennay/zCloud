@@ -283,13 +283,19 @@ def verify(bundle_dir):
     }
 
 
-def compare_packages(first_dir, second_dir):
-    """Compare two separately verified private source bundles, never execute code.
+def _source_view(source_dir):
+    files = read_local_source(source_dir)
+    guide = README.encode("utf-8")
+    return {
+        "digests": {name: hashlib.sha256(body).hexdigest() for name, body in files.items()},
+        "source_bytes": {name: len(body) for name, body in files.items()},
+        "readme_sha256": hashlib.sha256(guide).hexdigest(),
+        "readme_bytes": len(guide),
+    }
 
-    A and B are caller-selected snapshots: neither path nor local file metadata
-    establishes which release is newer or whether either is authorized/live.
-    """
-    first, second = verify(first_dir), verify(second_dir)
+
+def _compare_views(first, second, scope, source_a, source_b):
+    """Compare observed bytes only, never assert source chronology or authority."""
     entries = []
     for name in SOURCES:
         a, b = first["digests"][name], second["digests"][name]
@@ -304,7 +310,9 @@ def compare_packages(first_dir, second_dir):
     readme_changed = first["readme_sha256"] != second["readme_sha256"]
     return {
         "schema": "zsentinel.private-operator-source-comparison.v1",
-        "scope": "two-locally-verified-private-manifests",
+        "scope": scope,
+        "source_a": source_a,
+        "source_b": source_b,
         "source_order_proven": False,
         "external_source_verified": False,
         "release_authorized": False,
@@ -322,15 +330,37 @@ def compare_packages(first_dir, second_dir):
     }
 
 
+def compare_packages(first_dir, second_dir):
+    """Compare two separately verified local private packages, A then B."""
+    return _compare_views(
+        verify(first_dir), verify(second_dir),
+        "two-locally-verified-private-manifests",
+        "owner-private-package-A", "owner-private-package-B",
+    )
+
+
+def compare_worktree(package_dir, source_dir):
+    """Compare a verified A bundle to a pinned read-only local B checkout."""
+    return _compare_views(
+        verify(package_dir), _source_view(source_dir),
+        "verified-private-manifest-vs-local-source-observation",
+        "owner-private-package-A", "local-checkout-B",
+    )
+
+
 def render_comparison(data, format_name):
     """Emit only fixed safe module basenames and checksums; never private paths."""
     if format_name == "json":
         return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2)
     lines = [
         "zSentinel · offline vergelijking van twee privé bronpakketten",
-        "Pakket A = --compare-dir, pakket B = --verify-dir.",
+        ("Pakket A = --verify-dir; bron B = --compare-source-dir (lokale checkout)."
+         if data["scope"] == "verified-private-manifest-vs-local-source-observation"
+         else "Pakket A = --compare-dir; pakket B = --verify-dir."),
         "A/B-volgorde zegt NIETS over releasevolgorde, CI, eigenaar of installatie.",
-        "Beide pakketten intern op bytes/SHA-256 gecontroleerd; niet extern vertrouwd.",
+        ("Pakket A intern op byte/SHA-256 gecontroleerd; bron B twee keer lokaal gelezen. "
+         "Geen Git-commit-/CI-bewijs." if data["source_b"] == "local-checkout-B"
+         else "Beide pakketten intern op bytes/SHA-256 gecontroleerd; niet extern vertrouwd."),
         "Geen broncode uitgevoerd en geen dienst, claim, CI, merge of deploy gewijzigd.",
         "",
     ]
@@ -408,27 +438,33 @@ def main():
                         help="NEW 0700 bundle folder; no production operations")
     choice.add_argument("--verify-dir", type=Path,
                         help="READ ONLY check of an existing owner-private bundle")
-    parser.add_argument("--compare-dir", type=Path,
-                        help="Another EXISTING private bundle A, only with --verify-dir B")
+    compare = parser.add_mutually_exclusive_group()
+    compare.add_argument("--compare-dir", type=Path,
+                         help="Another existing private bundle A, only with --verify-dir B")
+    compare.add_argument("--compare-source-dir", type=Path,
+                         help="Read local checkout B against --verify-dir private bundle A")
     parser.add_argument("--compare-format", choices=("text", "markdown", "json"),
                         default="text", help="Offline operator comparison output")
     parser.add_argument("--compare-output", type=Path,
                         help="Optional NEW owner-private 0600 .txt/.md/.json comparison file")
     args = parser.parse_args()
-    if args.compare_dir is not None and args.verify_dir is None:
-        parser.error("--compare-dir requires --verify-dir for the second package")
-    if args.compare_output is not None and args.compare_dir is None:
-        parser.error("--compare-output requires two existing private packages")
+    comparing = args.compare_dir is not None or args.compare_source_dir is not None
+    if comparing and args.verify_dir is None:
+        parser.error("source comparison requires --verify-dir")
+    if args.compare_output is not None and not comparing:
+        parser.error("--compare-output requires a selected comparison")
     try:
         if args.compare_dir is not None:
             info = compare_packages(args.compare_dir, args.verify_dir)
+        elif args.compare_source_dir is not None:
+            info = compare_worktree(args.verify_dir, args.compare_source_dir)
         elif args.verify_dir is not None:
             info = verify(args.verify_dir)
         else:
             info = export(args.source_dir, args.output_dir)
     except (OSError, ValueError, UnicodeError, TypeError, KeyError):
         parser.exit(2, "Privé operatorpakket niet bruikbaar; controleer bron en map.\n")
-    if args.compare_dir is not None:
+    if comparing:
         comparison = render_comparison(info, args.compare_format)
         if args.compare_output is not None:
             try:
