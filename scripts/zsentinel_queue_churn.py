@@ -219,10 +219,18 @@ def compare(previous, current, now=None):
     group_changes = group_changes[:40]
     count = len(increases)
     inconsistent_leases = total1["inconsistent_owner_lease_window_rows"]
-    stage = ("observed_same_item_claim_attempt_increase" if count else
-             "observed_inconsistent_lease_owner_review" if inconsistent_leases else
-             "no_confirmed_repeat_within_bounded_sample")
-    if count:
+    observed_stage = ("observed_same_item_claim_attempt_increase" if count else
+                      "observed_inconsistent_lease_owner_review" if inconsistent_leases else
+                      "no_confirmed_repeat_within_bounded_sample")
+    stage = ("stale_current_snapshot_requires_refresh"
+             if current_snapshot_stale else observed_stage)
+    if current_snapshot_stale:
+        action = (
+            "Het nieuwste opgeslagen bronmoment is ouder dan zes uur. "
+            "Vernieuw de read-only bron vóór uitspraken over de huidige wachtrij; "
+            "de waargenomen beweging blijft uitsluitend historisch. "
+            "Geen automatische retry, claimrelease of failover.")
+    elif count:
         action = ("Bevoegd queue-eigenaar onderzoekt de exacte lease- en worker-events van "
                   "waargenomen items. Geen automatische retry, claimrelease of failover.")
     elif inconsistent_leases:
@@ -244,6 +252,7 @@ def compare(previous, current, now=None):
         "current_snapshot_max_age_seconds": MAX_CURRENT_AGE_HOURS * 3600,
         "coverage": "matched_private_active_sample_only",
         "stage": stage,
+        "observed_stage": observed_stage,
         "action": action,
         "observed_same_item_attempt_increases": count,
         "observed_claim_attempt_increment_min": sum(
@@ -295,6 +304,8 @@ def public_summary(report):
     return {
         "schema": "zsentinel-queue-claim-trend-public-v1",
         "coverage": report["coverage"],
+        "stage": report["stage"],
+        "observed_stage": report["observed_stage"],
         "current_observed_at_utc": report["current_observed_at_utc"],
         "current_snapshot_age_seconds": report["current_snapshot_age_seconds"],
         "current_snapshot_stale": report["current_snapshot_stale"],
@@ -329,6 +340,8 @@ def human_text(report):
     return ("zSentinel queue #677 | bronmoment: " +
             summary["current_observed_at_utc"] + " | leeftijd: " + age_label +
             "\nBRONSTATUS: " + freshness +
+            ("\nHISTORISCHE CLASSIFICATIE: " + summary["observed_stage"]
+             if summary["current_snapshot_stale"] else "") +
             "\nPROBLEEM: " +
             ("bij " + str(count) + " dezelfde actieve items steeg de claimpogingenteller."
              if count else "geen herhaalde claimpoging binnen de begrensde overlap bewezen.") +
@@ -345,7 +358,8 @@ def public_html(report):
     age_label = str(age // 3600) + "u " + str((age % 3600) // 60) + "m"
     freshness = (
         '<p><strong>VEROUDERD BRONMOMENT</strong> · Alleen historische trend; '
-        'lees de actuele read-only wachtrij opnieuw vóór operationele conclusies.</p>'
+        'lees de actuele read-only wachtrij opnieuw vóór operationele conclusies. '
+        'Historische classificatie: ' + escape(r["observed_stage"]) + '.</p>'
         if r["current_snapshot_stale"] else
         '<p>Bronmoment ' + escape(r["current_observed_at_utc"]) +
         ' · leeftijd ' + age_label + ' · maximaal 6 uur oud.</p>')
