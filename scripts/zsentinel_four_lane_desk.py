@@ -53,6 +53,14 @@ PORTFOLIO_PROJECTS = {
     "fuckball": "Fuckball", "tuddy": "Tuddy",
 }
 PORTFOLIO_GROUP_LIMIT = 128
+OWNER_SNAPSHOT_SCHEMA = "zsentinel.portfolio-owner-local.v1"
+OWNER_SNAPSHOT_LIMIT = 65536
+# Compare bounded endpoint counts only; no durable owner IDs, queue IDs,
+# individual titles, claim secrets or process details enter this projection.
+OWNER_COUNT_FIELDS = (
+    "queued_p0", "queued_p1", "eligible_queued_p0",
+    "eligible_queued_p1", "in_flight_p0", "in_flight_p1",
+)
 
 # Verified GitHub repository names. Only this static allowlist can produce
 # outgoing navigation; never interpolate a queue title/URL or guessed repo.
@@ -1221,6 +1229,139 @@ def markdown_view(data):
         "",
     ))
     return "\n".join(lines)
+
+
+
+
+def owner_snapshot(data):
+    """Create a minimal private all-project summary, never a queue receipt."""
+    reverse = {name: key for key, name in PORTFOLIO_PROJECTS.items()}
+    rows = {key: {field: 0 for field in OWNER_COUNT_FIELDS}
+            for key in sorted(PORTFOLIO_PROJECTS)}
+    for item in data["portfolio_urgent_local"]:
+        key = reverse.get(item["project"])
+        if key is None:
+            raise ValueError("Unmapped portfolio project in local owner snapshot")
+        if any(type(item[field]) is not int or item[field] < 0
+               for field in OWNER_COUNT_FIELDS):
+            raise ValueError("Invalid bounded portfolio aggregate")
+        rows[key] = {field: item[field] for field in OWNER_COUNT_FIELDS}
+    return {
+        "schema": OWNER_SNAPSHOT_SCHEMA,
+        "observed_utc": data["observed_utc"],
+        "coverage_complete": bool(
+            data["source_complete"] and not data["portfolio_priority_partial"]
+            and not data["portfolio_unknown_project_groups"]
+        ),
+        "projects": rows,
+        "owner_verified": False,
+        "claim_authorized": False,
+        "merge_authorized": False,
+        "release_authorized": False,
+    }
+
+
+def read_owner_snapshot(path):
+    """Read only the current owner's regular 0600 file; no source discovery."""
+    fd = os.open(
+        str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
+    )
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o077
+                or not 1 <= info.st_size <= OWNER_SNAPSHOT_LIMIT):
+            raise ValueError("Owner-private regular snapshot required")
+        raw = os.read(fd, OWNER_SNAPSHOT_LIMIT + 1)
+        if len(raw) > OWNER_SNAPSHOT_LIMIT:
+            raise ValueError("Owner snapshot too large")
+    finally:
+        os.close(fd)
+    doc = json.loads(raw.decode("utf-8"))
+    if (type(doc) is not dict
+            or set(doc) != {
+                "schema", "observed_utc", "coverage_complete", "projects",
+                "owner_verified", "claim_authorized", "merge_authorized",
+                "release_authorized",
+            }
+            or doc["schema"] != OWNER_SNAPSHOT_SCHEMA
+            or type(doc["coverage_complete"]) is not bool
+            or any(doc[key] is not False for key in (
+                "owner_verified", "claim_authorized", "merge_authorized",
+                "release_authorized"
+            ))
+            or type(doc["projects"]) is not dict
+            or set(doc["projects"]) != set(PORTFOLIO_PROJECTS)
+            or _utc(doc["observed_utc"]) is None):
+        raise ValueError("Untrusted owner snapshot structure or authority")
+    for project in doc["projects"].values():
+        if (type(project) is not dict
+                or set(project) != set(OWNER_COUNT_FIELDS)
+                or any(type(value) is not int or not 0 <= value <= 1000000
+                       for value in project.values())
+                or project["eligible_queued_p0"] > project["queued_p0"]
+                or project["eligible_queued_p1"] > project["queued_p1"]):
+            raise ValueError("Contradictory historical portfolio counts")
+    return doc
+
+
+def owner_snapshot_changes(data, previous):
+    """Compare only two endpoints; never assert continuous queue movement."""
+    current = owner_snapshot(data)
+    prior_time, time_now = (_utc(previous["observed_utc"]),
+                            _utc(current["observed_utc"]))
+    if not prior_time or not time_now or prior_time >= time_now:
+        raise ValueError("Owner snapshots must be strictly chronological")
+    seconds = (time_now - prior_time).total_seconds()
+    status = "COMPARABLE_ENDPOINTS"
+    if not previous["coverage_complete"] or not current["coverage_complete"]:
+        status = "NOT_COMPARABLE_PARTIAL_SOURCE"
+    elif seconds > 7 * 86400:
+        status = "NOT_COMPARABLE_OLD_BASELINE"
+    rows = []
+    if status == "COMPARABLE_ENDPOINTS":
+        for project_id, name in sorted(PORTFOLIO_PROJECTS.items()):
+            old = previous["projects"][project_id]
+            new = current["projects"][project_id]
+            change = {field: new[field] - old[field]
+                      for field in OWNER_COUNT_FIELDS}
+            if not any(change.values()):
+                continue
+            kind = (
+                "P0_WAIT_INCREASED" if change["queued_p0"] > 0 else
+                "P1_WAIT_INCREASED" if change["queued_p1"] > 0 else
+                "ENDPOINT_COUNT_CHANGED"
+            )
+            rows.append({
+                "project": name,
+                "project_id": project_id,
+                "kind": kind,
+                "delta": change,
+                "previous": old,
+                "current": new,
+                "owner_verified": False,
+                "claim_authorized": False,
+            })
+        rank = {"P0_WAIT_INCREASED": 0, "P1_WAIT_INCREASED": 1,
+                "ENDPOINT_COUNT_CHANGED": 2}
+        rows.sort(key=lambda item: (
+            rank[item["kind"]], -item["delta"]["queued_p0"],
+            -item["delta"]["queued_p1"], item["project"]
+        ))
+    return {
+        "status": status,
+        "previous_observed_utc": previous["observed_utc"],
+        "current_observed_utc": current["observed_utc"],
+        "elapsed_hours": round(seconds / 3600, 2),
+        "changed_projects": rows,
+        "comparison_authorizes_owner_action": False,
+        "note": ("Twee lokale eindpunten, geen continu log of oorzaakbewijs. "
+                 "Actuele externe claims en releasegates blijven ONBEKEND."
+                 if status == "COMPARABLE_ENDPOINTS" else
+                 "Brondekking of bronleeftijd verhindert verantwoorde "
+                 "projectdelta's; geen nultelling of herstelbewijs."),
+    }
 
 
 
