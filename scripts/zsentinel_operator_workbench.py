@@ -379,7 +379,10 @@ def project_operations_html(view: dict) -> str:
             '<label>Private operator note (local only; max 500 chars)' +
             '<textarea data-recovery-note="' +
             escape(row["project"], quote=True) +
-            '" maxlength="500" rows="2" placeholder="Cause, owner input and next recheck"></textarea></label></li>'
+            '" maxlength="500" rows="2" placeholder="Cause, owner input and next recheck"></textarea></label>' +
+            '<button type="button" data-preview-recovery="' +
+            escape(row["project"], quote=True) +
+            '">Preview private recovery handoff for this project</button></li>'
         )
     return (
         '<section class="portfolio" id="projectRecoveryDesk">'
@@ -671,7 +674,7 @@ No personal notes, no credentials, no permission to claim, merge or deploy.</p>
 </article>
 </div>
 <div class="toolbar">
-<button id="export" type="button">Download private human handoff</button>
+<button id="export" type="button">Download private human handoff (all local issue + project notes)</button>
 <label>Reopen own handoff<input id="restore" type="file" accept=".json,application/json"></label>
 <button id="print" type="button">Print selected issue</button>
 </div>
@@ -2324,6 +2327,19 @@ document.getElementById('projectRecoveryDesk').addEventListener('input',event=>{
  setUnsaved(true);invalidateBrief();
  status.textContent='Local project follow-up changed; export private handoff to preserve it.';
 });
+document.getElementById('projectRecoveryDesk').addEventListener('click',event=>{
+ const target=event.target.closest('[data-preview-recovery]');
+ if(!target)return;
+ const project=target.dataset.previewRecovery;
+ if(!board.project_operations.some(item=>item.project===project))return;
+ saveSelection();
+ const selector=document.getElementById('project');
+ if(![...selector.options].some(item=>item.value===project))return;
+ selector.value=project;
+ invalidateBrief();drawList();drawDetail();
+ document.getElementById('previewBrief').click();
+ document.getElementById('briefPanel').scrollIntoView({block:'nearest'});
+});
 ['search','priority','project','disposition','change','followupStatus'].forEach(id=>document.getElementById(id).addEventListener(
  'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
 document.getElementById('export').onclick=()=>{
@@ -2684,7 +2700,7 @@ document.getElementById('previewBrief').onclick=()=>{
  document.getElementById('downloadBrief').disabled=!viewedBrief;
  status.textContent=viewedBrief?
   'Read the complete private briefing and choose your own destination. No action was sent.':
-  'No currently visible issue cards; no briefing produced.';
+  'No issue cards or saved project recovery leads visible; no briefing produced.';
 };
 document.getElementById('downloadBrief').onclick=()=>{
  if(!viewedBrief)return;
