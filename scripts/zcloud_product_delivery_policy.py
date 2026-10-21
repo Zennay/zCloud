@@ -385,6 +385,7 @@ def product_queue_snapshot(items, max_visible=8):
                         "project_id": project,
                         "queue_id": str(item.get("queue_id") or "")[:160],
                         "status": status,
+                        "priority": str(item.get("priority") or "")[:4],
                         "missing_fields": missing_fields,
                         "owner_review_only": True,
                     })
@@ -568,6 +569,77 @@ def product_queue_snapshot(items, max_visible=8):
             fair_repeated_claim_workorders.append(row)
             if len(fair_repeated_claim_workorders) >= max_visible:
                 break
+    # One bounded operator inbox combines urgent owner evidence, repeated
+    # attempts and independent product leads. Round-robin across *kinds*
+    # prevents a high-volume blocked source from hiding every free work lead.
+    # This is not a claim queue: entries carry no execution authority.
+    owner_workorder_groups = [
+        [
+            {
+                "kind": "active_owner_evidence_gap",
+                "project_id": row["project_id"],
+                "queue_id": row["queue_id"],
+                "priority": row["priority"],
+                "operator_next_step": (
+                    "owner_reconcile_active_claim_evidence_before_any_new_work"
+                ),
+                "missing_fields": row["missing_fields"],
+                "status": row["status"],
+                "owner_only": True,
+                "not_claimed_or_authorized": True,
+            }
+            for row in sorted(active_claim_evidence_examples, key=lambda row: (
+                priorities.get(str(row["priority"]).upper(), 4),
+                row["project_id"], row["queue_id"],
+            ))
+        ],
+        [
+            {
+                "kind": "repeated_claim_attempts",
+                "project_id": row["project_id"],
+                "queue_id": row["queue_id"],
+                "priority": row["priority"],
+                "operator_next_step": row["owner_action"],
+                "claim_attempts_observed": row["claim_attempts_observed"],
+                "attempts_are_not_task_failures": True,
+                "owner_only": True,
+                "not_claimed_or_authorized": True,
+            }
+            for row in fair_repeated_claim_workorders
+        ],
+        [
+            {
+                "kind": "queued_product_lead",
+                "project_id": row["project_id"],
+                "queue_id": row["first_queue_id"],
+                "priority": row["highest_priority"],
+                "operator_next_step": row["owner_next_step"],
+                "active_claims_visible": row["active_claims_visible"],
+                "owner_only": True,
+                "not_claimed_or_authorized": True,
+            }
+            for row in project_shortlist[:project_shortlist_limit]
+        ],
+    ]
+    owner_workorder_inbox = []
+    inbox_seen = set()
+    owner_workorder_total_candidates = sum(
+        len(group) for group in owner_workorder_groups
+    )
+    for index in range(max_visible):
+        for group in owner_workorder_groups:
+            if index >= len(group):
+                continue
+            row = group[index]
+            identity = (row["project_id"], row["queue_id"])
+            if identity in inbox_seen:
+                continue
+            inbox_seen.add(identity)
+            owner_workorder_inbox.append(row)
+            if len(owner_workorder_inbox) >= max_visible:
+                break
+        if len(owner_workorder_inbox) >= max_visible:
+            break
     return {
         "policy": "product-delivery-2026-10-17",
         "source_coverage": "visible_api_rows_only_not_full_queue",
@@ -609,6 +681,14 @@ def product_queue_snapshot(items, max_visible=8):
         "distinct_projects_with_visible_product_work": len(project_leads),
         "project_shortlist_truncated": len(project_shortlist) > project_shortlist_limit,
         "project_shortlist_is_advisory_only": True,
+        "operator_workorder_inbox": owner_workorder_inbox,
+        "operator_workorder_inbox_truncated": (
+            owner_workorder_total_candidates > len(owner_workorder_inbox)
+            or active_claim_evidence_example_count > len(active_claim_evidence_examples)
+            or repeated_claim_attempts_observed > len(fair_repeated_claim_workorders)
+            or len(project_shortlist) > project_shortlist_limit
+        ),
+        "operator_workorder_inbox_is_advisory_only": True,
         "project_activity_source_coverage": "visible_api_rows_only_not_full_queue",
         "project_activity_is_advisory_only": True,
         "project_activity_truncated": len(pressure) > 20,
