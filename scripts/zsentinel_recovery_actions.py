@@ -101,6 +101,33 @@ def _runner_pressure_context(packet):
 def suggested_actions(packet):
     """Return a bounded prioritized list; observation is never authorization."""
     result = []
+    # Keep queued records with existing worker slots out of any new
+    # admission. The private desk deliberately never reveals slot IDs.
+    reserved_slots = sum(
+        _number(lane.get("deferred_assigned_packages"))
+        for lane in packet.get("lanes", [])[:4] if isinstance(lane, dict)
+    )
+    if reserved_slots:
+        result.append(action(
+            "queued-worker-slot-owner-check", "urgent",
+            f"{reserved_slots} lokale wachtrijtaken zijn al aan een workerslot gekoppeld.",
+            "Laat de bestaande runtime- en queuemeester vaststellen of die "
+            "reserveringen nog geldig zijn; niet automatisch vrijmaken, "
+            "herclaimen of parallel starten.",
+            "HOLD_QUEUE_WORKER_SLOT_RESERVED",
+        ))
+    noneligible = sum(
+        _number(lane.get("deferred_ineligible_packages"))
+        for lane in packet.get("lanes", [])[:4] if isinstance(lane, dict)
+    )
+    if noneligible:
+        result.append(action(
+            "queued-eligibility-owner-check", "review",
+            f"{noneligible} lokale wachtrijtaken hebben eligible niet op 1.",
+            "Laat de actuele queue-/Notion-eigenaar de eligibilityreden "
+            "beoordelen; geen automatische heractivering of nieuwe claim.",
+            "HOLD_QUEUE_NOT_ELIGIBLE",
+        ))
     deferred_qa = sum(
         _number(lane.get("deferred_qa_packages"))
         for lane in packet.get("lanes", [])[:4]
