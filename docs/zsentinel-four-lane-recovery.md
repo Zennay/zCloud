@@ -91,9 +91,16 @@ identity is copied. Private output reuses the original create-only,
 owner-private directory, symlink-denying `0600` save implementation.
 Previous files must be regular, current-user-owned, private, bounded
 (64 KiB), schema-exact, count-consistent, and strictly **older** than
-the current observation. Incomplete local source or a baseline older
-than seven days yields an explicit **NOT_COMPARABLE** state and no
-per-project deltas; no falsely precise zeros are emitted. Do not
+the current observation. Each baseline carries an opaque SHA256 key
+derived from the observing machine name and canonical local SQLite
+source path; the original path/hostname are never exported. A different
+machine/database path therefore produces **NOT_COMPARABLE_DIFFERENT_LOCAL_SOURCE**,
+rather than a misleading cross-source count delta. This source identifier
+is only an equality hint, not cryptographic authentication, and the
+user must still ensure the same actual database has not been replaced.
+Incomplete **portfolio aggregate** coverage, distinct local sources or
+a baseline older than seven days yields an explicit **NOT_COMPARABLE**
+state and no per-project deltas; no falsely precise zeros are emitted. Do not
 manually alter the saved source or interpret counter decreases as
 successful issue resolution.
 
