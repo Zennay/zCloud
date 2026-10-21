@@ -252,7 +252,34 @@ python3 scripts/zsentinel_recovery_policy.py \
   > private-recovery-handoff.md
 ``` The offline HTML labels these candidate PR
 links explicitly and displays the original priority on each incident
-card. All issue/PR links in this case path have already passed the importer
+card.
+
+### Project- and priority-focused historical owner views
+
+Use `--view-project <project-id>` and/or `--through-priority P0|P1|P2|P3`
+with `--case-input` for a focused *projection of the already imported
+source*, without rereading or modifying Notion, GitHub, the worker queue or
+any lease. P0-only operator review for one project:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json \
+  --view-project cloud --through-priority P0 \
+  --format html > private-cloud-p0-workorders.html
+```
+
+The original case may cover `all` or a single project; a requested
+project outside its source scope is rejected. An explicit slice with no
+matching source observations also fails closed instead of producing a
+misleading empty or green backlog. A successful sliced report preserves the
+original case/issue/queue source clocks and source coverage, includes a
+`source_case_view` JSON field recording the selected project, priority cap,
+total original incidents, number hidden, `projection_only=true` and
+`backlog_clear_verified=false`. HTML, text, Markdown and CSV disclose
+the selected slice and the number hidden. Every retained incident remains
+HOLD-only, P0-first, owner-unverified and non-executable. Slice options are
+unavailable for normal single-request and batch-policy inputs. All issue/PR links in this case path have already passed the importer
 same-repository and bounded-source requirements. They are navigation hints
 only: **recheck current GitHub status, exact-head CI/review and active
 Notion/worker/queue ownership before acting**.
