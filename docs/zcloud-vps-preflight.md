@@ -1,5 +1,52 @@
 # Read-only zCloud VPS deploy preflight
 
+## 21 oktober · privé preflightbewijs direct opslaan en bundelen
+
+De bestaande read-only bronwaarneming kan nu **expliciet op verzoek**
+als een nieuw privébestand worden opgeslagen. `--output` ondersteunt dezelfde
+`text`, `json`, `html`, `markdown` en `brief` uitvoer als stdout:
+
+```bash
+python3 scripts/zcloud_vps_preflight.py --host-pressure --worker-safety \
+  --format html --output /secure/private/zsentinel-preflight.html
+```
+
+Het doel mag nog **niet** bestaan; ook symlinks, eerder geschreven
+rapporten en bestanden van andere workers worden niet overschreven.
+Een maximaal 4 MiB grote weergave wordt eerst in een nieuw tijdelijk
+bestand in dezelfde map geschreven (0600, fsync) en pas na volledige
+uitvoer door een atomic no-replace hardlink aangeboden. Deze optionele
+rapportwrite wijzigt geen productiecheckout, service, claim, queue,
+workflows, runner of brongegevens. Zonder `--output` werkt stdout
+hetzelfde als voorheen. Exitcodes van de VPS-preflight blijven
+inhoudelijk hetzelfde: blocked=2, partial=1, locally-clear=0; een fout
+bij privé-opslag geeft 2 terug en laat bestaande bestanden intact.
+
+Een **volledige privé overdrachtsbundel** gebruikt één en dezelfde
+bronmeting voor vier leesbare representaties:
+
+```bash
+python3 scripts/zcloud_vps_preflight.py --host-pressure --worker-safety \
+  --archive-readiness --bundle-dir /secure/private/preflight-20261021-1
+```
+
+`--bundle-dir` en `--output` zijn onderling exclusief. De doelmap
+mag niet bestaan en wordt met private rechten `0700` aangemaakt:
+`observation.json` (ook geschikt voor een latere `--previous-report`),
+`preflight.html`, `owner-handoff.md`, `owner-brief.txt` en
+`manifest.json`. Elk rapport wordt alleen voor deze opdracht geschreven,
+met rechten `0600`. Het manifest bevat de SHA-256 en byteomvang van de
+vier bestanden, één gedeeld bronmoment en expliciete
+`release_authorized=false` en `source_scope_attested=false`. Een SHA
+van eigen rapportbytes is **controleerbare integriteit binnen dit lokale
+pakket**, géén onafhankelijke hostattestatie of externe toestemming.
+
+Bij mislukte opslag rapporteert de CLI alleen een generieke fout zonder
+private padnamen in logs. De nieuwe opslagopties worden nooit automatisch
+geactiveerd. Een volledig bronrapport blijft uitsluitend een werkdocument
+voor de bevoegde eigenaar; alle verplichte exact-HEAD CI, review,
+branch protection, worker-idle en releasevoorwaarden blijven bestaan.
+
 ## 21 oktober · geen vals herstelbewijs na reboot of ongekoppelde bron
 
 De preflight levert voortaan `source_scope` bij elke nieuwe **lokale**
