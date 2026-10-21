@@ -236,6 +236,7 @@ def html_content(result):
                 ' · PR-laatste HEAD ' + e(p["observed_head"] or "ONBEKEND") +
                 ' · issue-link HEAD ' +
                 e(p["head_at_last_issue_link"] or "ONBEKEND") +
+                ' · bron-UTC bij issue-link ' + e(p["time_at_last_issue_link"]) +
                 ' · gate bij issue-link ' + e(p["gate_at_last_issue_link"]) +
                 ' · issue-link prioriteit toen ' +
                 e(p["priority_at_last_issue_link"]) +
@@ -361,6 +362,7 @@ def markdown_content(result):
                          " · gate " + p["observed_primary_gate"] +
                          " · HEAD op laatste echte issue-link " +
                          (p["head_at_last_issue_link"] or "ONBEKEND") +
+                         " · bron-UTC op issue-link " + p["time_at_last_issue_link"] +
                          " · gate op issue-link " + p["gate_at_last_issue_link"] +
                          " · issue-link prioriteit toen " +
                          p["priority_at_last_issue_link"] +
@@ -402,6 +404,7 @@ def csv_content(result):
         "HEAD op laatste issue-link", "Gate op laatste issue-link",
         "PR later zonder gekoppeld issue bemonsterd",
         "Prioriteit tijdens laatste echte issue-link",
+        "Originele bron-UTC bij laatste issue-link",
     ])
     first_manifest = result["source_snapshots"][0]["original_review_manifest_sha256"]
     last_manifest = result["source_snapshots"][-1]["original_review_manifest_sha256"]
@@ -426,6 +429,7 @@ def csv_content(result):
                 p["gate_at_last_issue_link"],
                 "JA, VERBAND ONBEKEND" if p["pr_observed_after_link_absent"] else "NEE",
                 p["priority_at_last_issue_link"],
+                p["time_at_last_issue_link"],
             ])
     for p in result["unlinked_prs"]:
         writer.writerow([
@@ -437,7 +441,7 @@ def csv_content(result):
             "Geen betrouwbaar bronissue; inspecteer actuele PR.", "ONBEKEND",
             "ONBEKEND", "ONBEKEND", "ONBEKEND",
             first_manifest, last_manifest,
-            "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND",
+            "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND",
         ])
     return "\ufeff" + source.getvalue()
 
