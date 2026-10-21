@@ -996,6 +996,15 @@ const PUBLIC_GITHUB_LAST_FETCH=new Map();
 const PUBLIC_GITHUB_PAGE=new Map(),PUBLIC_GITHUB_VIEW_PAGE=new Map();
 const PUBLIC_GITHUB_MORE=new Map(); // More history may exist only when an observed page is full.
 let PUBLIC_GITHUB_PAUSE_UNTIL=0; // In-memory global provider cooldown, never stored.
+const PUBLIC_GITHUB_READ_TIMES=[];
+const PUBLIC_GITHUB_HOURLY_READ_LIMIT=8; // Four GETs per batch; leave headroom for the independent issue source.
+function publicGitHubReadBudget(now=Date.now()){
+  while(PUBLIC_GITHUB_READ_TIMES.length&&now-PUBLIC_GITHUB_READ_TIMES[0]>=3600000)
+    PUBLIC_GITHUB_READ_TIMES.shift();
+  return {used:PUBLIC_GITHUB_READ_TIMES.length,
+    remaining:Math.max(0,PUBLIC_GITHUB_HOURLY_READ_LIMIT-PUBLIC_GITHUB_READ_TIMES.length),
+    resetsAt:PUBLIC_GITHUB_READ_TIMES.length?PUBLIC_GITHUB_READ_TIMES[0]+3600000:now};
+}
 function pauseForConfirmedGitHubLimit(response){
   // GitHub 429 and explicit 403 exhaustion/cooldown apply across ALL projects.
   // Use trusted numeric headers only; never expose raw provider header text.
@@ -1109,7 +1118,15 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
     IMPORTED_GITHUB_ERROR='Public GitHub may be rate limited. Recheck is limited to once per project every two minutes.';
     if(!quiet)render();return;
   }
-  PUBLIC_GITHUB_BUSY=true;PUBLIC_GITHUB_LAST_FETCH.set(projectId,Date.now());
+  const budget=publicGitHubReadBudget();
+  if(!budget.remaining){
+    IMPORTED_GITHUB_ERROR='Browser GitHub hourly source budget reached ('+
+      PUBLIC_GITHUB_HOURLY_READ_LIMIT+' batches; four bounded GETs each). Existing observations remain available; next read after '+
+      new Date(budget.resetsAt).toISOString()+'. No request dispatched.';
+    if(!quiet)render();return;
+  }
+  PUBLIC_GITHUB_BUSY=true;PUBLIC_GITHUB_READ_TIMES.push(Date.now());
+  PUBLIC_GITHUB_LAST_FETCH.set(projectId,Date.now());
   if(!quiet){IMPORTED_GITHUB_ERROR='Reading public PR, CI, main and branch-head page '+readPage+'…';render();}
   const suffixes=['pulls?state=all&sort=updated&direction=desc&per_page=20&page='+readPage,
     'actions/runs?per_page=20&page='+readPage,'commits?sha=main&per_page=15&page='+readPage,
@@ -1380,6 +1397,7 @@ async function readVpsGitHubActivity(){
 }
 function githubActivityImportPanel(){
   const snapshot=IMPORTED_GITHUB_ACTIVITY;
+  const sourceBudget=publicGitHubReadBudget();
   const visible=new Set((DATA?.projects||[]).map(p=>p.id));
   const loadedPage=filter?(PUBLIC_GITHUB_PAGE.get(filter)||0):0;
   const viewedPage=filter?(PUBLIC_GITHUB_VIEW_PAGE.get(filter)||1):1;
@@ -1428,7 +1446,7 @@ function githubActivityImportPanel(){
     '<button type="button" class="runner-action" data-vps-github-refresh '+
     (VPS_GITHUB_BUSY?'disabled aria-busy="true"':'')+'>Read VPS GitHub</button> '+
     (VPS_GITHUB_ERROR?'<p class="detail-note" role="status">'+esc(VPS_GITHUB_ERROR)+'</p>':'')+
-    '<span class="detail-note">Opt-in browser GET only · four bounded requests per selected project. Branch heads are source-time observations, not branch creation/last-commit times; private refs remain unknown. Up to 16 bounded project snapshots retained in this tab; no credentials or background sync.</span><br>'+ 
+    '<span class="detail-note">Opt-in browser GET only · four bounded requests per selected project. Browser budget: '+sourceBudget.remaining+'/'+PUBLIC_GITHUB_HOURLY_READ_LIMIT+' source batches left in the rolling hour. Branch heads are source-time observations, not branch creation/last-commit times; private refs remain unknown. Up to 16 bounded project snapshots retained in this tab; no credentials or background sync.</span><br>'+ 
     '<label for="githubReceiptFile">Or import a JSON receipt created by the zCloud GitHub activity observer</label> '+
     '<input type="file" id="githubReceiptFile" accept=".json,application/json" aria-label="Import read-only GitHub activity JSON receipt">'+
     (snapshot?'<button type="button" class="runner-action" data-github-receipt-clear>Clear snapshot</button>':'')+
