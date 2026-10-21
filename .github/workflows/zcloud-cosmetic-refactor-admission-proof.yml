@@ -1,0 +1,87 @@
+name: zCloud cosmetic-refactor admission proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_cosmetic_refactor_admission.py
+      - tests/test_cosmetic_refactor_admission.py
+      - tests/test_cosmetic_refactor_admission_workflow.py
+      - docs/cosmetic-refactor-admission-contract.md
+      - .github/workflows/zcloud-cosmetic-refactor-admission-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-cosmetic-refactor-admission-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+      - name: Run policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_cosmetic_refactor_admission.py tests/test_cosmetic_refactor_admission.py tests/test_cosmetic_refactor_admission_workflow.py
+          python3 -m unittest -v tests.test_cosmetic_refactor_admission tests.test_cosmetic_refactor_admission_workflow
+
+  permanent-vps-proof:
+    needs: validate
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact candidate and permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+      - name: Prove cosmetic-refactor stopgate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_cosmetic_refactor_admission tests.test_cosmetic_refactor_admission_workflow
+          set +e
+          printf '%s\n' '{"schema_version":1,"change":{"id":"cosmetic-1","kind":"cosmetic_refactor"},"open_reliability_issues":[{"id":"rel-p1","priority":"P1"}]}'             | python3 scripts/zcloud_cosmetic_refactor_admission.py --require-allowed             > "$RUNNER_TEMP/cosmetic-admission.json"
+          RC=$?
+          set -e
+          test "$RC" -eq 3
+          python3 - "$RUNNER_TEMP/cosmetic-admission.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          payload=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert payload["schema_version"] == "cosmetic-refactor-admission-v1", payload
+          assert payload["decision"] == "RELIABILITY_WORK_REQUIRED", payload
+          assert payload["urgent_reliability_ids"] == ["rel-p1"], payload
+          print("ZCLOUD_COSMETIC_REFACTOR_ADMISSION_VPS_GREEN=1")
+          PY
