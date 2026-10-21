@@ -259,6 +259,13 @@
     if(sending||awaiting||generating()||!target||!ready(target))return false;
     if(!(await forceAllowed())){await blocked("force-tab-handoff-required");return false}
     const prompt=String(target.prompt||"").trim();if(!prompt)return false;
+    // An operator's existing draft is never permission to replace it with
+    // an automated queue prompt, even before the Thinking menu opens.
+    const initialComposer=composer();
+    if(visible(initialComposer)){
+      const draft=composerText(initialComposer);
+      if(draft&&draft!==prompt){await blocked("composer-draft-preserved");return false}
+    }
     sending=true;markBusy();
     try{
       if(!(await ensureHigh())){await blocked("high-not-verified");return false}
@@ -277,6 +284,12 @@
       const button=sendButton();
       if(!visible(button)||button.disabled||button.getAttribute("aria-disabled")==="true"){
         await blocked("send-button-unavailable");return false;
+      }
+      // Human edits or late SPA transitions can happen while checking the
+      // current queue lease. Never send a stale or partially replaced draft.
+      const currentEditor=composer();
+      if(!visible(currentEditor)||composerText(currentEditor)!==prompt){
+        await blocked("composer-changed-before-send");return false;
       }
       baseline=reply();baselineAssistantCount=assistantCount();button.click();promptAt=Date.now();awaitingAt=promptAt;
       awaiting=true;everGenerating=false;next=false;lastBlock="";
