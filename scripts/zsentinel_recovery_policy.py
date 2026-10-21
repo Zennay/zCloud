@@ -1373,6 +1373,43 @@ def template_request(action, project_id, incident_id, source_url, owner):
     }
 
 
+def merge_review_template_from_case(case_report, *, project, issue_number, pr_number):
+    """Source-pinned, empty merge-policy request from a sampled repair PR.
+
+    This is an operator convenience only. No source observation authorizes
+    merge; the copied original issue timestamp prevents a fresh template
+    from disguising stale historical evidence as a new provider reading.
+    """
+    if type(pr_number) is not int or not 1 <= pr_number <= 100000000:
+        raise PolicyInputError("review PR number must be a positive canonical integer")
+    if type(issue_number) is not int or type(project) is not str:
+        raise PolicyInputError("prepare-merge-review requires project and issue")
+    selected = select_case_view(
+        case_report, project=project, issue_number=issue_number
+    )
+    issue = selected["owner_workorders"][0]
+    matches = [row for row in issue.get("candidate_prs", [])
+               if row["number"] == pr_number]
+    if len(matches) != 1:
+        raise PolicyInputError(
+            "PR was not sampled for selected issue; recheck current GitHub first"
+        )
+    source_observed = case_report["source_issues_observed_at_utc"]
+    if source_observed is None:
+        raise PolicyInputError(
+            "issue observation timestamp is unknown; refresh source before review"
+        )
+    request = template_request(
+        "merge_pr", project, "pr-" + str(pr_number),
+        matches[0]["url"], None,
+    )
+    # The evaluated policy subsequently checks source age and exact-head CI,
+    # independent review, branch protection and owner authorization. A
+    # historic draft/non-draft flag must never prefill these evidence fields.
+    request["observed_at_utc"] = source_observed
+    return request
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Explain whether a proposed recovery action is ready for human review; never execute it."
@@ -1388,6 +1425,10 @@ def main(argv=None):
     parser.add_argument("--owner", help="known owner slug used by --template; omit if unknown")
     parser.add_argument("--view-project", help="select one source-bound project for --case-input only")
     parser.add_argument("--view-issue", type=int, help="select one issue number, requires --view-project")
+    parser.add_argument("--prepare-merge-review", action="store_true",
+                        help="create HOLD-by-default policy request for a sampled existing PR; case-input only")
+    parser.add_argument("--candidate-pr-number", type=int,
+                        help="sampled issue repair PR number, for --prepare-merge-review")
     parser.add_argument("--through-priority", choices=("P0", "P1", "P2", "P3"),
                         help="show up to this severity in --case-input (default P3)")
     parser.add_argument("--format", choices=("json", "markdown", "workorders", "html", "csv"), default="json")
@@ -1395,6 +1436,17 @@ def main(argv=None):
     parser.add_argument("--max-age-minutes", type=int, default=60,
                         help="maximum accepted observation age (1..1440; default 60)")
     args = parser.parse_args(argv)
+    if args.prepare_merge_review:
+        if (not args.case_input or not args.view_project or args.view_issue is None
+                or args.candidate_pr_number is None
+                or args.format != "json" or args.fail_on_hold
+                or args.through_priority is not None):
+            parser.error(
+                "--prepare-merge-review requires --case-input, --view-project, "
+                "--view-issue, --candidate-pr-number and JSON output only"
+            )
+    elif args.candidate_pr_number is not None:
+        parser.error("--candidate-pr-number requires --prepare-merge-review")
     if not args.case_input and (
         args.view_project or args.through_priority or args.view_issue is not None
     ):
@@ -1433,6 +1485,16 @@ def main(argv=None):
             data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                               parse_constant=_reject_constant)
             report = evaluate_recovery_case(data)
+            if args.prepare_merge_review:
+                request = merge_review_template_from_case(
+                    report, project=args.view_project,
+                    issue_number=args.view_issue, pr_number=args.candidate_pr_number,
+                )
+                output = json.dumps(request, ensure_ascii=False, indent=2, sort_keys=True) + "\\n"
+                if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                    raise PolicyInputError("output exceeds 128 KiB")
+                sys.stdout.write(output)
+                return 0
             if args.view_project or args.through_priority or args.view_issue is not None:
                 report = select_case_view(
                     report, project=args.view_project,
