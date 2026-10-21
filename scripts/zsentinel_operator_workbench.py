@@ -1923,7 +1923,7 @@ function currentBrief(){
   return ranks[a.priority]-ranks[b.priority] ||
     a.project.localeCompare(b.project) || a.issue.localeCompare(b.issue);
  });
- if(!rows.length)return null;
+ if(!rows.length && !board.project_operations.length)return null;
  const lines=[
   '# zSentinel · PRIVATE human product handoff',
   '',
@@ -1963,6 +1963,32 @@ function currentBrief(){
   if(human?.note)lines.push('Private human note: '+line(human.note,1000));
   lines.push('');
  });
+ // Portfolio-wide queue pressure is independent of the issue-inbox sample.
+ // Include every admitted project lead, even projects with zero issue cards.
+ // This is historical operator evidence, never current claim/worker authority.
+ if(board.project_operations.length){
+  lines.push('## Project-level recovery leads · FULL saved portfolio snapshot',
+    'Independent from the filtered issue selection. Queue values are sampled claim cycles, not failures.',
+    'Project count: '+board.project_operations.length,
+    '');
+  board.project_operations.forEach(row=>{
+   const totals=row.issue_counts_in_sample;
+   const pressure=row.queue_observation;
+   lines.push('### Project '+line(row.project,80),
+     'GitHub issue source coverage: '+line(row.issue_coverage,30)+' (bounded/incomplete)',
+     'P0/P1/P2/unspecified sampled issues: '+totals.P0+'/'+totals.P1+'/'+
+       totals.P2+'/'+totals.Unspecified,
+     'Queue source: '+(pressure?
+       pressure.active_items+' sampled rows; '+pressure.high_claim_attempts+
+       ' high claim cycles; '+pressure.expired_active_leases+' expired leases':
+       'unavailable; current worker state UNKNOWN'),
+     'Observed claim context: '+line(row.claim_context,50)+
+       ' (not a present owner lease)',
+     'Human investigation: '+line(row.recommended_next_step,650),
+     'Required: independently verify current claims, exact-head CI, review and release permission.',
+     '');
+  });
+ }
  if(baseline){
   const diff=changesSinceBaseline();
   lines.push('## Historical source comparison (not resolution evidence)','',
