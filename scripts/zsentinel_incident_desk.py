@@ -329,6 +329,94 @@ def branch_work_review_panel(decision):
 
 
 
+
+def blocked_work_owner_panel(decision):
+    """Bring the existing bounded status=blocked portfolio rows into the desk.
+
+    A blocked queue status is a human routing signal, not a retry permission
+    or proof that a GitHub job, worker or product run actually failed.
+    """
+    queue = decision.get("live_queue_pressure")
+    blocked = queue.get("blocked_queue") if type(queue) is dict else None
+    if blocked is None:
+        return ('<section class="panel"><h2>Geblokkeerde werkregels</h2>'
+                '<p>Geen afzonderlijk status=blocked bronbewijs: ONBEKEND.</p></section>')
+    if (type(blocked) is not dict or blocked.get("coverage") not in (
+            "not_supplied", "not_observed", "complete", "partial", "stale")
+            or blocked.get("aggregate_coverage") not in (
+                "not_supplied", "not_observed", "complete", "partial")
+            or blocked.get("source_coverage") not in (
+                "not_supplied", "current", "stale", "incomplete")
+            or blocked.get("claim_ownership_verified") is not False
+            or blocked.get("queue_write_authorized") is not False
+            or blocked.get("automatic_retry_authorized") is not False
+            or type(blocked.get("sample_truncated")) is not bool
+            or type(blocked.get("project_groups")) is not list
+            or len(blocked["project_groups"]) > 250):
+        raise ValueError("untrusted blocked-queue owner source")
+    coverage = blocked["coverage"]
+    if coverage in ("not_supplied", "not_observed"):
+        if (blocked.get("total_items_observed") is not None
+                or blocked["project_groups"]
+                or blocked["sample_truncated"] is not True):
+            raise ValueError("unknown blocked-queue source falsely reports zero")
+        return ('<section class="panel"><h2>Geblokkeerde werkregels</h2>'
+                '<p class="banner">Bron niet gezien; aantal geblokkeerde'
+                ' werkregels ONBEKEND. Geen vrijgave of retry.</p></section>')
+    total = blocked.get("total_items_observed")
+    when = blocked.get("observed_at")
+    if (type(total) is not int or not 0 <= total <= 10**9
+            or type(when) is not str or len(when) > 45):
+        raise ValueError("untrusted blocked-queue totals or date")
+    _stamp(when)
+    if coverage == "stale":
+        if blocked["project_groups"] or blocked["source_coverage"] != "stale":
+            raise ValueError("stale blocked-queue source may not expose current rows")
+        return ('<section class="panel"><h2>Geblokkeerde werkregels</h2>'
+                '<p class="banner">HISTORISCH · ' + str(total) +
+                ' status=blocked regels geobserveerd op ' + escape(when) +
+                '; actuele blokkades en eigenaarschap ONBEKEND.</p></section>')
+    if blocked["aggregate_coverage"] != coverage:
+        raise ValueError("blocked-queue partial/complete coverage contradiction")
+    groups = []
+    identities = set()
+    for row in blocked["project_groups"]:
+        if type(row) is not dict:
+            raise ValueError("invalid blocked-queue group")
+        pid, priority, count = (row.get("project_id"), row.get("priority"),
+                                row.get("items"))
+        if (type(pid) is not str or not SLUG.fullmatch(pid)
+                or priority not in ("P0", "P1", "P2", "P3")
+                or type(count) is not int or not 1 <= count <= 10**9
+                or (pid, priority) in identities):
+            raise ValueError("noncanonical blocked-queue row identity")
+        identities.add((pid, priority))
+        groups.append((pid, priority, count))
+    if (coverage == "complete" and
+            (blocked["sample_truncated"] or
+             sum(row[2] for row in groups) != total)):
+        raise ValueError("blocked-queue complete coverage mismatch")
+    groups.sort(key=lambda x: (("P0", "P1", "P2", "P3").index(x[1]),
+                               -x[2], x[0]))
+    display = groups[:40]
+    items = ''.join('<li><strong>' + escape(prio) + ' · ' +
+                    escape(pid) + '</strong>: ' + str(count) +
+                    ' status=blocked; eigenaar moet bron handmatig inspecteren.</li>'
+                    for pid, prio, count in display)
+    return ('<section class="panel" aria-label="Geblokkeerde portfolio werkregels">'
+            '<h2>Geblokkeerde werkregels · P0 eerst</h2><p>' + str(total) +
+            ' status=blocked geobserveerd op ' + escape(when) + '. ' +
+            ('ONVOLLEDIGE DEKKING; totaal/risico mogelijk groter.' if
+             coverage == "partial" else 'Bronaggregatie compleet in gekozen venster.') +
+            '</p><details><summary>Projectprioriteiten (' + str(len(display)) +
+            (' van ' + str(len(groups)) + ', afgekapt' if len(groups)>len(display) else '') +
+            ')</summary><ol>' + items +
+            '</ol></details><p class="meta">Blocked-status is geen'
+            ' bewezen technische fout, en verleent geen claim, retry of deploy.</p>'
+            '</section>')
+
+
+
 def queue_owner_pressure_panel(decision):
     """Private queue/lease owner worklist from the *existing* routed snapshot.
 
@@ -602,7 +690,9 @@ def review_html(decision):
     """One offline HTML view + bounded private operator handoff in browser."""
     # Validate optional branch data before using it in the source fingerprint.
     branch_panel = branch_work_review_panel(decision)
-    runtime_panel = queue_owner_pressure_panel(decision) + runtime_source_panel(decision)
+    runtime_panel = (queue_owner_pressure_panel(decision) +
+                     blocked_work_owner_panel(decision) +
+                     runtime_source_panel(decision))
     source = _source(decision)
     payload = json.dumps(source, ensure_ascii=True, separators=(",", ":"))
     payload = (payload.replace("<", "\\u003c").replace(">", "\\u003e")
