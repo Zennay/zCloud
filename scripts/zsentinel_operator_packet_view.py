@@ -140,9 +140,9 @@ def _safe_link(url, label):
     if type(url) is not str:
         return ""
     patterns = (
-        (r"https://github\\.com/Zennay/[A-Za-z0-9_.-]+/(?:issues|pull)/[1-9][0-9]*", "issue"),
-        (r"https://github\\.com/Zennay/[A-Za-z0-9_.-]+/actions/runs/[1-9][0-9]*/job/[1-9][0-9]*", "job"),
-        (r"https://github\\.com/Zennay/[A-Za-z0-9_.-]+/commit/[0-9a-f]{40}", "commit"),
+        (r"https://github\.com/Zennay/[A-Za-z0-9_.-]+/(?:issues|pull)/[1-9][0-9]*", "issue"),
+        (r"https://github\.com/Zennay/[A-Za-z0-9_.-]+/actions/runs/[1-9][0-9]*/job/[1-9][0-9]*", "job"),
+        (r"https://github\.com/Zennay/[A-Za-z0-9_.-]+/commit/[0-9a-f]{40}", "commit"),
     )
     if not any(re.fullmatch(pattern, url) for pattern, _kind in patterns):
         return ""
