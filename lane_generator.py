@@ -306,11 +306,20 @@ def recovery_scope_diagnostic(item):
 
 
 def recovery_active_profile_mismatch(item):
-    """Old active lane metadata is a reservation, not new four-lane authority."""
+    """Unreconciled active lane provenance must not admit another writer.
+
+    A matching profile name alone is insufficient: malformed or missing lane
+    IDs previously looked compatible, so a title change could silently route
+    an active writer into a different lane and free its original lane.
+    """
     record = _metadata(item).get("execution_lane")
     if not isinstance(record, dict):
         return True  # Missing provenance does not prove a safe migration.
-    return str(record.get("profile") or "").strip().lower() != "portfolio-recovery"
+    if record.get("profile") != "portfolio-recovery":
+        return True
+    return record.get("lane_id") not in {
+        lane["id"] for lane in PROFILE_LANES["portfolio-recovery"]
+    }
 
 
 def _recovery_scope_from_item(item):
