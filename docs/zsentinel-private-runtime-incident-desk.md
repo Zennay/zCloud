@@ -44,10 +44,34 @@ python3 scripts/zsentinel_portfolio_overview.py \
 
 Bij weggelaten gevoelige opt-in bronnen blijft de bestaande openbare, bronbegrensde stdout-route beschikbaar. Deze weigering geldt alleen voor privéstatusdetails. De uitvoerrechten en de bestaande CI-/review-/releasegates veranderen niet.
 
+## Merge-first in dezelfde privéwerkbank
+
+De portfolio-CLI kan nu optioneel een bestaande PR-inspectie rechtstreeks
+in dezelfde privécockpit weergeven. De eerder bestaande bronadapter leest
+hoogstens drie expliciete of begrensd gevonden PR's en hergebruikt zijn eigen
+immutable-HEAD, CI-context, reviews en veilige volgende eigenaarstap.
+Dezelfde PR-observatie verschijnt zonder tweede GitHub-GET in de privébalie
+en wordt meegenomen in de broncontext-SHA voor exact-source notitie-import.
+
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /secure/existing-zcloud.sqlite3 \
+  --window 0 \
+  --inspect-pr cloud:1563 \
+  --discover-open-prs \
+  --format desk \
+  --desk-output /secure/operator-only/merge-first-new.html
+```
+
+`--inspect-pr PROJECT:NUMBER` moet binnen het gekozen projectvenster vallen.
+Ontbrekende review, incomplete exact-HEAD-gates of afgewezen GitHub-bron
+blijven menselijke HOLD; deze UI voert zelf nooit een merge uit. Een
+afgeronde groene oude commit is geen huidige mergevrijgave.
+
 ## Wat de werkbank laat zien
 
 - **Huidige incidentkaarten:** prioriteit, bronstatus, menselijke vervolgstap en lokaal bewaarde notities tot een expliciete privé-export.
-- **Open productissues:** P0/P1-eerst shortlist uit maximaal acht canonieke GitHub-issuekaarten, met bestaande open PR-kandidaten uit hetzelfde repository, actieve eigenaar expliciet ONBEKEND, en complete bronouderdom/degradatie. Geen QA-only werk of nieuwe claims.\n- **Exacte GitHub-jobroute:** immutable run/job/HEAD-links, vereiste runnerlabels, queued versus waiting/pending, per-job bronmoment en >10-minuten-stale waarschuwing; nooit een automatische CI-, merge- of runnerdiagnose. De aanvullende discovery toont alleen de expliciet begrensde workflowvensters.\n- **Geblokkeerde werkregels:** apart P0-eerst status=blocked-overzicht uit dezelfde observatie, maximaal veertig getoonde project-/prioriteitcombinaties, onderscheid tussen complete/partiële/verouderde/ontbrekende bron. Een geblokkeerde status is geen bewezen workflowfout of retrytoestemming.\n- **Wachtrijdruk:** toont uit één bestaande SQLite-observatie aantallen wachtend/bezet, herhaalde claimpogingen (≥3 en ≥10), verlopen leases, onbekende leaseklokken en inconsistente claimvensters. Tot 18 project/prioriteitgroepen worden risicogericht gerangschikt. Verouderde/onvolledige bron verbergt projectdetails en wordt nooit als actuele vrijgave voorgesteld; geen extra SQLite-transactie.\n- **Workerpaneel:** index-gedragen recente eventtijdlijn en veilige eigenaaropvolging voor maximaal drie gekozen projecten. `generation-progress` is browsersignaal, geen onafhankelijke bewijsvoering dat het werk werkelijk doorgaat.
+- **Bestaande PR's:** éénmalig gelezen exacte PR-HEAD met niet-groene CI, review- en merge/HOLD-richtlijn; bronbeperkingen en geen automatische integratie.\n- **Open productissues:** P0/P1-eerst shortlist uit maximaal acht canonieke GitHub-issuekaarten, met bestaande open PR-kandidaten uit hetzelfde repository, actieve eigenaar expliciet ONBEKEND, en complete bronouderdom/degradatie. Geen QA-only werk of nieuwe claims.\n- **Exacte GitHub-jobroute:** immutable run/job/HEAD-links, vereiste runnerlabels, queued versus waiting/pending, per-job bronmoment en >10-minuten-stale waarschuwing; nooit een automatische CI-, merge- of runnerdiagnose. De aanvullende discovery toont alleen de expliciet begrensde workflowvensters.\n- **Geblokkeerde werkregels:** apart P0-eerst status=blocked-overzicht uit dezelfde observatie, maximaal veertig getoonde project-/prioriteitcombinaties, onderscheid tussen complete/partiële/verouderde/ontbrekende bron. Een geblokkeerde status is geen bewezen workflowfout of retrytoestemming.\n- **Wachtrijdruk:** toont uit één bestaande SQLite-observatie aantallen wachtend/bezet, herhaalde claimpogingen (≥3 en ≥10), verlopen leases, onbekende leaseklokken en inconsistente claimvensters. Tot 18 project/prioriteitgroepen worden risicogericht gerangschikt. Verouderde/onvolledige bron verbergt projectdetails en wordt nooit als actuele vrijgave voorgesteld; geen extra SQLite-transactie.\n- **Workerpaneel:** index-gedragen recente eventtijdlijn en veilige eigenaaropvolging voor maximaal drie gekozen projecten. `generation-progress` is browsersignaal, geen onafhankelijke bewijsvoering dat het werk werkelijk doorgaat.
 - **Notionpaneel:** maximaal dertig gesamplede `Claimed`, `Running` en `Verifying`-werkregels met originele bronstatus en afkappingswaarschuwing; labels zijn geen bewijs van actuele queue- of file-scope-eigendom.
 
 De privé-overdracht is nu **op de volledige geselecteerde operationele broncontext gebonden**: de SHA-256 van de bestaande GitHub-, queue-, worker- en Notion-gegevens wordt bij de incidentfingerprint meegenomen. Nieuwe gegevens met dezelfde incident-ID's kunnen daardoor een oud exact-source-notitiebestand niet ongemerkt als actuele opvolging importeren. De operator kan oude notities alleen via de reeds bestaande expliciete **Herbruik oude notities**-route dragen, die nieuwe bronbeoordeling vereist. Bij invalidatie van bronautoriteit, discrepante status of misvormde brongegevens weigert de renderer de werkbank vóór het bijwerken van het optionele incidenteledger.
