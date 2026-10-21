@@ -640,7 +640,9 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
                 item.get("kind") == "claim" for item in conflicts
             ),
             "conflicting_queue_entries": sum(
-                item.get("kind") == "queue" for item in conflicts
+                item.get("kind") == "queue"
+                and item.get("reason") != "queued_worker_slot_reserved"
+                for item in conflicts
             ),
             # Scope, queue IDs and worker/claim identity are intentionally absent.
         })
@@ -854,6 +856,8 @@ def text_view(data):
             extra += f" | {lane['deferred_ineligible_packages']} niet-eligible taken uitgesloten"
         if lane["deferred_assigned_packages"]:
             extra += f" | {lane['deferred_assigned_packages']} al aan worker gekoppelde taken beschermd"
+        if lane["assigned_slot_scope_conflicts"]:
+            extra += f" | {lane['assigned_slot_scope_conflicts']} overlap(pen) met gereserveerde slots"
         if lane["serialized_unscoped_queue_admitted"]:
             extra += " | MAXIMAAL EEN SCHRIJVER ZONDER SCOPE"
         if lane["new_write_admission_held"]:
@@ -1078,6 +1082,9 @@ def html_view(data):
         if lane["deferred_assigned_packages"]:
             warning += ("<p class='warn'>" + str(lane["deferred_assigned_packages"])
                         + " reeds toegewezen workerslots beschermd tegen dubbele selectie.</p>")
+        if lane["assigned_slot_scope_conflicts"]:
+            warning += ("<p class='warn'>" + str(lane["assigned_slot_scope_conflicts"])
+                        + " bron-/bestandscopeconflicten met gereserveerde slots; geen tweede schrijver.</p>")
         if lane["serialized_unscoped_queue_admitted"]:
             warning += "<p class='warn'>Wachtende taak zonder schrijfscope: uitsluitend seriële kandidaat, geen claimautorisatie.</p>"
         if lane["new_write_admission_held"]:
@@ -1404,6 +1411,7 @@ def markdown_view(data):
             "- **Uitgestelde QA-opdrachten:** " + str(lane["deferred_qa_packages"]),
             "- **Niet-eligible wachtrijtaken:** " + str(lane["deferred_ineligible_packages"]),
             "- **Bestaande queued workerslot-reserveringen:** " + str(lane["deferred_assigned_packages"]),
+            "- **Scopeconflicten met gereserveerde slots:** " + str(lane["assigned_slot_scope_conflicts"]),
         ))
     lines.extend(("", "## Geprioriteerde herstelacties"))
     for action in data["recovery_actions"]:
