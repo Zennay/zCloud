@@ -544,10 +544,20 @@ def workorders_text(batch):
         needed = ", ".join(order["required_evidence"][:4]) or "live authorization"
         if len(order["required_evidence"]) > 4:
             needed += ", ..."
+        is_case = "priority" in order
+        # Case links were admitted against canonical same-repository issue/PR
+        # identities; these are candidate references, not current PR state.
+        urls = order["source_urls"]
+        source_note = (
+            " | issue: " + urls[0] +
+            "".join(" | candidate PR (verify): " + url for url in urls[1:])
+            if is_case and urls else ""
+        )
         lines.extend([
-            "Problem [" + order["project_id"] + "/" + order["incident_id"] + "]: " + issues,
+            "Problem [" + (order["priority"] + " " if is_case else "") +
+            order["project_id"] + "/" + order["incident_id"] + "]: " + issues,
             "Action: " + order["next_step"] + " | required: " + needed +
-            " | owner: " + (order["owner"] or "UNKNOWN"),
+            " | owner: " + (order["owner"] or "UNKNOWN") + source_note,
             "Status: " + order["decision"] +
             " | human approval required; no claim/retry/merge/deploy performed.",
             "",
@@ -701,7 +711,8 @@ def workorders_html(batch):
         )
         parts.extend([
             "<section" + ("" if held else " class='ready'") + " aria-label='Incident'>",
-            "<h2>" + esc(item["project_id"]) + " / " + esc(item["incident_id"]) + "</h2>",
+            "<h2>" + (esc(item["priority"]) + " · " if "priority" in item else "") +
+            esc(item["project_id"]) + " / " + esc(item["incident_id"]) + "</h2>",
             "<p><strong>Problem:</strong> " + esc(codes) + "</p>",
             "<p><strong>Action:</strong> " + esc(item["next_step"]) +
             " · proposals: " + esc(", ".join(item["proposed_actions"])) +
@@ -714,8 +725,12 @@ def workorders_html(batch):
             "Human review required; no retry, claim, merge, deploy or restart.</p>",
             "<ul>",
         ])
-        for url in item["source_urls"]:
-            parts.append("<li><a href='" + esc(url) +
+        for index, url in enumerate(item["source_urls"]):
+            source_label = (
+                "Issue" if index == 0 else
+                "Candidate repair PR — verify current ownership and gates"
+            ) if "priority" in item else "Evidence"
+            parts.append("<li><strong>" + esc(source_label) + ":</strong> <a href='" + esc(url) +
                          "' target='_blank' rel='noopener noreferrer'>" +
                          esc(url) + "</a></li>")
         parts.append("</ul></details></section>")
