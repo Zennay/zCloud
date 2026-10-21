@@ -122,9 +122,6 @@ jobs:
           prewrite_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$prewrite_main"
           test "$prewrite_main" = "$GITHUB_SHA"
-          backup="$HOME/.local/state/zcloud/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
-          mkdir -p "$(dirname "$backup")"
-          if test -f "$live"; then cp -p "$live" "$backup"; fi
           if test -d "$root/scripts"; then
             # The shared runtime checkout may carry active owner changes or
             # untracked scripts. This manual job must never overwrite them.
@@ -156,6 +153,25 @@ jobs:
           else
             echo "Runtime repository absent; only canonical standalone path is eligible."
           fi
+          # Admission must precede all write-side effects, even the backup.
+          # Refuse symlinked root targets or preexisting backup collisions.
+          if test -L "$live" || test -L "${live%/*}"; then
+            echo "::error::Standalone watchdog path is symlinked; refusing owner promotion."
+            exit 1
+          fi
+          backup="$HOME/.local/state/zcloud/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
+          if test -e "$backup" || test -L "$backup"; then
+            echo "::error::Run-specific private watchdog backup already exists."
+            exit 1
+          fi
+          umask 077
+          mkdir -p -- "$(dirname "$backup")"
+          if test -f "$live"; then
+            install -m 0600 -- "$live" "$backup"
+            echo "PRIVATE_WATCHDOG_BACKUP_CREATED=1"
+          else
+            echo "NO_PRIOR_STANDALONE_WATCHDOG=1"
+          fi
           # A second bounded proof denies root-owned promotion after a
           # moving-main race during the optional runtime-source update.
           final_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
@@ -165,4 +181,4 @@ jobs:
           sudo -n cmp scripts/zcloud_worker_watchdog.py "$live"
           echo "LIVE_WATCHDOG_NO_BROWSER_RESTART=1"
           echo "EXISTING_TABS_AND_FIREFOX_PROCESSES_UNTOUCHED=1"
-          echo "Backup recorded: $backup"
+          echo "Manual install handled without a shared runtime source overwrite."
