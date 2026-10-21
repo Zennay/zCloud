@@ -156,7 +156,7 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
             or response.get("next_cursor") not in (None, "")):
         # An old or cursor-continued page is never a complete claim snapshot.
         raise ValueError("Notion snapshot incomplete or not bound to exact source")
-    seen, page_ids, active, counts = set(), set(), [], {}
+    seen, page_ids, active, counts, verifying_counts = set(), set(), [], {}, {}
     for row in rows:
         if type(row) is not dict:
             raise ValueError("invalid Notion work record")
@@ -176,6 +176,8 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
             # Filtering to active Notion statuses is mandatory, not optional.
             raise ValueError("Notion snapshot not restricted to active work")
         counts[label] = counts.get(label, 0) + 1
+        if status == "Verifying":
+            verifying_counts[label] = verifying_counts.get(label, 0) + 1
         active.append({"work": f"PWQ-{work}", "project": label, "status": status})
     active.sort(key=lambda r: (r["project"], r["work"]))
     return {
@@ -184,6 +186,8 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
         "coverage": "saved_single_page_not_live_current_claims_unknown",
         "active_count": len(active),
         "active_project_counts": dict(sorted(counts.items())),
+        "verifying_project_counts": dict(sorted(verifying_counts.items())),
+        "verifying_count": sum(verifying_counts.values()),
         "items": active[:30],
         "items_truncated": len(active) > 30,
         "claim_scope_verified": False,
