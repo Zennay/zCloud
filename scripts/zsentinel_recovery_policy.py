@@ -287,7 +287,7 @@ def _validate(data):
 def recommended_next_step_code(action, blockers):
     """Stable machine-readable routing hint, not permission to execute the route."""
     codes = {item["code"] for item in blockers}
-    if "source_stale" in codes:
+    if codes & {"source_stale", "source_not_verified"}:
         return "refresh_source"
     if codes & {"claim_not_clear", "claim_state_unknown"}:
         if codes & {"owner_missing", "human_owner_missing"}:
@@ -303,10 +303,19 @@ def recommended_next_step_code(action, blockers):
     if codes & {"capacity_not_healthy", "running_jobs_unknown_or_active",
                 "runner_unavailability_unproven"}:
         return "wait_for_capacity_and_runtime_evidence"
+    if "blocked_task_id_missing" in codes:
+        return "identify_exact_blocked_task"
+    if codes & {"escalation_reason_missing", "permission_gate_unconfirmed",
+                "irreversible_risk_unconfirmed", "safe_routes_not_exhausted"}:
+        return "confirm_escalation_basis"
+    if "main_health_unverified" in codes:
+        return "verify_post_merge_health"
     if codes & {"human_owner_missing", "owner_missing"}:
         return "identify_authorized_owner"
+    if "operator_attestation_missing" in codes:
+        return "request_operator_attestation"
     if codes & {"owner_authorization_missing", "runtime_owner_missing",
-                "human_approval_missing"}:
+                "human_approval_missing", "release_approval_missing"}:
         return "request_authorized_owner_approval"
     if codes & {"retry_budget_exhausted_or_unknown", "backoff_not_elapsed"}:
         return "confirm_bounded_retry_budget"
@@ -314,7 +323,8 @@ def recommended_next_step_code(action, blockers):
         return "confirm_failure_classification"
     if codes & {"dependency_not_reconfirmed", "dependency_not_confirmed_cleared",
                 "blocked_task_not_preserved", "previous_blocker_evidence_missing",
-                "dependency_not_external", "dependency_scope_too_broad"}:
+                "dependency_not_external", "dependency_kind_unknown",
+                "dependency_scope_too_broad"}:
         return "refresh_exact_dependency_evidence"
     if codes & {"scope_overlap_unknown", "task_not_ready", "independent_work_not_ready"}:
         return "verify_disjoint_scope_and_task_readiness"
@@ -336,8 +346,8 @@ def recommended_next_step_code(action, blockers):
 def recommended_next_step(action, blockers, required_evidence):
     """Give a deterministic safe handoff; never turn policy output into execution."""
     codes = {item["code"] for item in blockers}
-    if "source_stale" in codes:
-        return "Refresh the original source observation and reevaluate; stale evidence cannot clear a HOLD."
+    if codes & {"source_stale", "source_not_verified"}:
+        return "Refresh or verify the original source observation and reevaluate; stale/unverified evidence cannot clear a HOLD."
     if codes & {"claim_not_clear", "claim_state_unknown"}:
         if codes & {"owner_missing", "human_owner_missing"}:
             return "Identify the current claim owner from live source evidence; do not preempt, reassign, or mutate the queue."
@@ -352,10 +362,19 @@ def recommended_next_step(action, blockers, required_evidence):
     if codes & {"capacity_not_healthy", "running_jobs_unknown_or_active",
                 "runner_unavailability_unproven"}:
         return "Wait for current capacity and runner/job evidence; do not launch or restart workers from this report."
+    if "blocked_task_id_missing" in codes:
+        return "Identify the exact blocked queue item from current source evidence; do not resume an entire project lane."
+    if codes & {"escalation_reason_missing", "permission_gate_unconfirmed",
+                "irreversible_risk_unconfirmed", "safe_routes_not_exhausted"}:
+        return "Confirm the specific permission/risk reason and whether safe routes are exhausted before escalating."
+    if "main_health_unverified" in codes:
+        return "Verify health of the exact merged main commit before considering deployment."
     if codes & {"human_owner_missing", "owner_missing"}:
         return "Identify the responsible owner from current source evidence; do not invent ownership, and obtain explicit authorization before any action."
+    if "operator_attestation_missing" in codes:
+        return "Obtain explicit attestation from the authorized operator that this dependency is cleared; do not resume on inference."
     if codes & {"owner_authorization_missing", "runtime_owner_missing",
-                "human_approval_missing"}:
+                "human_approval_missing", "release_approval_missing"}:
         return "Route the scoped request to the authorized owner and obtain explicit approval before any change."
     if codes & {"retry_budget_exhausted_or_unknown", "backoff_not_elapsed"}:
         return "Do not retry now; confirm the bounded retry budget and backoff or choose an independently safe route."
@@ -363,7 +382,8 @@ def recommended_next_step(action, blockers, required_evidence):
         return "Collect the missing failure classification and root-cause evidence before routing a repair or retry."
     if codes & {"dependency_not_reconfirmed", "dependency_not_confirmed_cleared",
                 "blocked_task_not_preserved", "previous_blocker_evidence_missing",
-                "dependency_not_external", "dependency_scope_too_broad"}:
+                "dependency_not_external", "dependency_kind_unknown",
+                "dependency_scope_too_broad"}:
         return "Refresh evidence for the exact dependent queue item and preserve its blocker history; do not change the queue yet."
     if codes & {"scope_overlap_unknown", "task_not_ready", "independent_work_not_ready"}:
         return "Identify a ready task and positively establish disjoint scope from every active claim before admission."
