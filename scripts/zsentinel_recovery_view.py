@@ -402,6 +402,13 @@ def html_view(decision, registry=None):
                 '. Alle eerdere resultaten zonder verse bron blijven ONBEKEND.'
                 '</p></section>'
             )
+    # Reuse the same exact-HEAD PR evidence as the private desk. HTML keeps
+    # merge-first decisions visible even when the operator chooses the
+    # standalone recovery cockpit rather than its editable owner desk.
+    pr_panel = ""
+    if decision.get("pr_delivery") is not None:
+        from zsentinel_pr_delivery import pr_delivery_html
+        pr_panel = pr_delivery_html(decision["pr_delivery"])
     claims = decision.get("claim_inventory_complete") is True
     source_issues = phrase(triage.get("coverage"), 40)
     live = decision.get("live_sources")
@@ -1414,6 +1421,7 @@ def html_view(decision, registry=None):
                'onopgelost in het privéledger.</p>' if historic["truncated"] else "")
             + '</section>'
             + github_access_panel
+            + pr_panel
             + discovery_panel
             + runner_route_panel
             + f'<section><h2>Open productissues · P0/P1 eerst, daarna P2 en zonder label ({len(triage["issues"])})</h2>'
