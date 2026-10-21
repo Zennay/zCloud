@@ -25,6 +25,26 @@ HUMAN_ONLY = frozenset({
     "https://github.com/Zennay/zCloud/issues/1523",
 })
 
+# One immutable, owner-safe action per canonical issue route. Saved portfolio
+# windows must regenerate this wording rather than carry old Notion owner
+# warnings into a later combined operator run.
+ISSUE_ROUTE_ACTIONS = {
+    "authorized_infrastructure_owner_required":
+        "Bevoegde infrastructuureigenaar nodig; geen runner-restart, betaling of claim.",
+    "review_existing_pr_first":
+        "Begin bij bestaande PR en controleer eigenaar, vereiste CI en actuele scope.",
+    "check_assignee_and_current_claim":
+        "GitHub heeft een assignee; controleer daarnaast actuele queueclaim, PR's en bestanden.",
+    "verify_ownership_and_scope":
+        "Controleer actuele claims, branches en bestandscope vóór zelfstandige productimplementatie.",
+}
+
+
+def canonical_issue_action(route):
+    if type(route) is not str or route not in ISSUE_ROUTE_ACTIONS:
+        raise ValueError("unknown canonical issue action route")
+    return ISSUE_ROUTE_ACTIONS[route]
+
 
 def build_workboard(inbox, registry, token=None):
     """Select previously referenced PRs first, never mint owner authority."""
@@ -82,16 +102,13 @@ def build_workboard(inbox, registry, token=None):
                 seen_pr.add(key)
         if human_only:
             route = "authorized_infrastructure_owner_required"
-            action = "Bevoegde infrastructuureigenaar nodig; geen runner-restart, betaling of claim."
         elif matches:
             route = "review_existing_pr_first"
-            action = "Begin bij bestaande PR en controleer eigenaar, vereiste CI en actuele scope."
         elif row.get("has_assignee"):
             route = "check_assignee_and_current_claim"
-            action = "GitHub heeft een assignee; controleer daarnaast actuele queueclaim, PR's en bestanden."
         else:
             route = "verify_ownership_and_scope"
-            action = "Controleer actuele claims, branches en bestandscope vóór zelfstandige productimplementatie."
+        action = canonical_issue_action(route)
         sampled.append({
             "project_id": row["project"], "priority": row["priority"],
             "issue_url": row["url"], "title": str(row.get("title", ""))[:180],
