@@ -868,6 +868,12 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
     # distinct evidence classes. The latter is missed by a filename-keyed
     # index (e.g. PR A adds `src` while PR B adds `src/app.py`).
     by_num = {pr["number"]: pr for pr in observed}
+    def scope_pr_ref(pr):
+        # Ancestor-pair cards can be numerous; avoid copying each PR's full
+        # changed-file inventory into every edge in the bounded output.
+        return {key: pr[key] for key in (
+            "number", "url", "head_sha", "base_sha", "updated_at",
+            "file_count_observed", "file_list_complete")}
     scope_pairs = {}
     scope_prs = sorted(observed, key=lambda row: row["number"])
     for left_index, left in enumerate(scope_prs):
@@ -894,7 +900,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
     ordered_scope = sorted(scope_pairs.items(),
                            key=lambda item: (-len(item[1]), item[0]))
     scope_cards = [{
-        "left": by_num[left], "right": by_num[right],
+        "left": scope_pr_ref(by_num[left]), "right": scope_pr_ref(by_num[right]),
         "path_conflict_count_observed": len(conflicts),
         "path_conflicts": conflicts[:MAX_SCOPE_PATH_PAIRS_PER_PAIR],
         "path_conflicts_truncated": len(conflicts) > MAX_SCOPE_PATH_PAIRS_PER_PAIR,
