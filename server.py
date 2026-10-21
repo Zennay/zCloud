@@ -3491,7 +3491,7 @@ def portfolio_queue_drop(queue_id,evidence=''):
     return {'dropped':dropped,'queue_id':queue_id,'queue_audit':audit}
 
 
-def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
+def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_updated_at=None, expected_blocker=None, expected_evidence=None):
     """Resume one parked task after an authenticated operator records resolution evidence."""
     queue_id=str(queue_id or '').strip()
     note=re.sub(r'[\x00-\x1f\x7f]+',' ',str(resolution_note or ''))
@@ -3503,6 +3503,21 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
         raise ValueError('Geef een concrete notitie van minimaal 12 tekens over de opgeloste afhankelijkheid')
     if not actor:
         raise ValueError('Een geauthenticeerde operator is vereist')
+    # Optional optimistic source guards keep legacy operator clients usable;
+    # newer dashboard clients bind the attestation to their final fresh read.
+    guards=(expected_updated_at,expected_blocker,expected_evidence)
+    if expected_updated_at is not None and (
+            not isinstance(expected_updated_at,str) or not 1<=len(expected_updated_at)<=80):
+        raise ValueError('Ongeldig bronmoment voor geblokkeerde taak')
+    if expected_blocker is not None and (
+            not isinstance(expected_blocker,str) or len(expected_blocker)>4000):
+        raise ValueError('Ongeldige bronblokkade voor hervatten')
+    if expected_evidence is not None and (
+            not isinstance(expected_evidence,str) or len(expected_evidence)>6000):
+        raise ValueError('Ongeldige bronevidence voor hervatten')
+    if (expected_updated_at is None and
+            (expected_blocker is not None or expected_evidence is not None)):
+        raise ValueError('Bronversie is vereist bij een dependency-hercontrole')
     ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
@@ -3511,6 +3526,15 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
                       (queue_id,)).fetchone()
         if not row:
             return {'resumed':False,'queue_id':queue_id,'reason':'not-blocked-or-already-resumed'}
+        # Compare within the SAME BEGIN IMMEDIATE transaction that writes the
+        # queued transition. A changed blocker/evidence must be reconfirmed,
+        # even if a browser observed the prior state only milliseconds ago.
+        if expected_updated_at is not None and (
+                str(row['updated_at'] or '')!=expected_updated_at or
+                (expected_blocker is not None and str(row['blocker'] or '')!=expected_blocker) or
+                (expected_evidence is not None and str(row['evidence'] or '')!=expected_evidence)):
+            return {'resumed':False,'queue_id':queue_id,
+                    'reason':'dependency-source-changed-reconfirm'}
         project=PROJECT_INDEX.get(str(row['project_id'] or '')) or {}
         if (not project or str(project.get('status') or 'active')!='active'
                 or str(project.get('queue_mode') or '').lower()=='human-gated'):
@@ -3561,6 +3585,7 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
         'resumed':True,'queue_id':queue_id,'status':'queued',
         'project_id':str(row['project_id']),'priority':str(row['priority']),
         'resume_basis':'operator_attestation_not_independently_verified',
+        'dependency_source_guarded':expected_updated_at is not None,
         'attention_resolved':bool(attention_updated),
         'note':'Task returned to normal queue selection; no worker or slot was forced.',
     }
@@ -4859,6 +4884,9 @@ class Handler(BaseHTTPRequestHandler):
                             payload.get('queue_id'),
                             payload.get('resolution_note') or payload.get('evidence') or '',
                             request_actor(self),
+                            expected_updated_at=payload.get('expected_updated_at'),
+                            expected_blocker=payload.get('expected_blocker'),
+                            expected_evidence=payload.get('expected_evidence'),
                         )
                         return self.reply({
                             'ok':bool(item.get('resumed')),
