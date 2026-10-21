@@ -174,14 +174,17 @@ def discover_open_prs(registry, selected_projects, token=None, limit=MAX_PRS,
             "merge_authorized": False}
 
 
-def observe_prs(registry, selections, token=None, inspect_no_start_annotations=False):
+def observe_prs(registry, selections, token=None, inspect_no_start_annotations=False,
+                skip_provider_denial=None):
     """Capture exact source head, bounded check-runs and same-head reviews.
 
     No output claims that checks are *required*, full, protection-satisfying,
     owner-approved or merge-ready. Other PRs and unobserved jobs stay UNKNOWN.
     """
     if (not isinstance(registry, dict) or not isinstance(selections, list)
-            or len(selections) > MAX_PRS or type(inspect_no_start_annotations) is not bool):
+            or len(selections) > MAX_PRS or type(inspect_no_start_annotations) is not bool
+            or skip_provider_denial not in (
+                None, "authentication_required", "rate_limit_confirmed")):
         raise ValueError("invalid bounded PR selection")
     seen = set()
     items = []
@@ -207,6 +210,15 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
             "action_authorized": False, "merge_authorized": False,
             "deploy_authorized": False, "owner_verified": False,
         }
+        if skip_provider_denial is not None:
+            # A prior verified denial on the same token applies to this
+            # observation window. Retain the operator's pinned PR link but
+            # refuse extra GETs or invented exact-head/review evidence.
+            item["coverage"] = "not_queried_after_auth_or_rate_limit"
+            item["provider_admission"] = skip_provider_denial
+            item["next_step"] = "verify_pr_source_with_owner"
+            items.append(item)
+            continue
         if rate_limited or repo in denied_repositories:
             item["coverage"] = "not_queried_after_auth_or_rate_limit"
             item["next_step"] = "verify_pr_source_with_owner"
