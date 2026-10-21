@@ -15,7 +15,8 @@ from zsentinel_saved_gate_portfolio import (
     portfolio_page_html, portfolio_markdown, portfolio_pr_csv, portfolio_json,
     portfolio_issue_pr_csv,
     portfolio_single_pr_html, portfolio_single_pr_markdown, project_worklist,
-    single_pr_related_peers,
+    single_pr_related_peers, single_issue_candidates,
+    portfolio_single_issue_html, portfolio_single_issue_markdown,
 )
 
 MAX_ENTRY_BYTES = 1024 * 1024
@@ -186,3 +187,83 @@ def private_single_pr_package(selected, integrated, *, pr_url, project=None):
         raise ValueError("Private single-PR dossier ZIP exceeds one MiB")
     return content
 
+
+
+
+def private_single_issue_package(selected, integrated, *, issue_url, project=None):
+    """Private issue-first evidence bundle; never a CI/merge authorization.
+
+    Every related source PR is included and pinned to the same immutable
+    saved-review digest. No current GitHub, Notion, claim or deployment read.
+    """
+    repo, candidates = single_issue_candidates(
+        selected, integrated, issue_url=issue_url, project=project)
+    data = {
+        "issue-pr-dossier.html": portfolio_single_issue_html(
+            selected, integrated, issue_url=issue_url, project=project
+        ).encode("utf-8"),
+        "issue-pr-actions.md": portfolio_single_issue_markdown(
+            selected, integrated, issue_url=issue_url, project=project
+        ).encode("utf-8"),
+        "issue-pr-matrix.csv": portfolio_issue_pr_csv(
+            selected, integrated, issue_url=issue_url, project=project
+        ).encode("utf-8"),
+    }
+    receipt = {
+        "schema": "zsentinel-private-single-issue-pr-dossier-zip-v1",
+        "source": "bounded_saved_review_and_gate_batches_not_live",
+        "source_issue_url": issue_url,
+        "source_repository": repo,
+        "observed_linked_pr_count": len(candidates),
+        "observed_pr_refs": [
+            {"url": pr["url"], "observed_head": pr["head_observed"],
+             "gate_source": pr["gate_source"]}
+            for pr in candidates
+        ],
+        "original_review_manifest_sha256":
+            integrated["original_review_manifest_sha256"],
+        "original_board_sha256": integrated["original_board_sha256"],
+        "earliest_observed_at_utc": integrated["earliest_observed_at_utc"],
+        "latest_observed_at_utc": integrated["latest_observed_at_utc"],
+        "missing_batch_indexes": sorted(integrated["missing_batch_indexes"]),
+        "all_current_issue_prs_verified": False,
+        "current_head_verified": False,
+        "claim_authorized": False,
+        "required_ci_review_verified": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "live_verified": False,
+    }
+    data["source-receipt.json"] = (
+        json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2) +
+        "\n").encode("utf-8")
+    if (any(not payload or len(payload) > MAX_ENTRY_BYTES
+            for payload in data.values())
+            or sum(map(len, data.values())) > MAX_TOTAL_BYTES):
+        raise ValueError("Private issue dossier exceeds source output bounds")
+    checksum = {
+        "schema": "zsentinel-private-single-issue-checksums-v1",
+        "source_issue_url": issue_url,
+        "original_review_manifest_sha256":
+            integrated["original_review_manifest_sha256"],
+        "files_sha256": {
+            name: hashlib.sha256(payload).hexdigest()
+            for name, payload in data.items()
+        },
+    }
+    data["source-checksums.json"] = (
+        json.dumps(checksum, ensure_ascii=False, sort_keys=True, indent=2) +
+        "\n").encode("utf-8")
+    out = BytesIO()
+    with ZipFile(out, mode="w", compression=ZIP_DEFLATED,
+                 compresslevel=6, allowZip64=False) as archive:
+        for name, payload in data.items():
+            entry = ZipInfo(filename=name, date_time=(2020, 1, 1, 0, 0, 0))
+            entry.compress_type = ZIP_DEFLATED
+            entry.create_system = 3
+            entry.external_attr = 0o100600 << 16
+            archive.writestr(entry, payload, compress_type=ZIP_DEFLATED)
+    content = out.getvalue()
+    if not content or len(content) > MAX_ARCHIVE_BYTES:
+        raise ValueError("Private single-issue dossier ZIP exceeds one MiB")
+    return content
