@@ -3056,3 +3056,24 @@ mandatory CI/review, branch protection, active Notion/queue claims and
 release permissions before any privileged action. These exports do not run
 QA suites, dispatch CI, read live providers, claim workers, retry blocked
 jobs, write production state, merge or deploy.
+
+
+## Saved-board comparison includes exact-head PR gate drift
+
+The two-snapshot issue comparison now compares the validated saved PR gate
+receipts as well as issue priority/title, PR links and evidence gaps. For a
+canonical PR URL that remains linked in both snapshots, it reports separately
+whether the observed HEAD changed, native/legacy check or blocker evidence
+changed, observed approval count changed, or the sampled mergeability value
+changed. It also flags when a gate receipt is newly present or no longer
+available; a missing receipt is **UNKNOWN**, not success or resolution.
+
+The baseline import admits gate receipts only when they match the earlier
+board's bounded top-level PR observation inventory and its original PR source
+clock. The captured timestamp must not postdate that earlier board, and the
+source must have been marked fresh at capture. It does not fetch GitHub or
+re-evaluate freshness at import time. A changed receipt is only a change in
+saved observations: current PR head, required branch rules, live owner, actual
+review state, mergeability and release permission must still be checked
+independently. The existing two-snapshot CSV includes these differences in
+its `changed_source_fields` column without carrying private human notes.
