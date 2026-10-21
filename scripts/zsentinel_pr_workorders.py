@@ -377,6 +377,8 @@ def render_csv(bundle):
         "head_sha_at_observation", "current_source_verified", "rank",
         "category", "blocker", "human_next_step", "source_observed_at_utc",
         "source_sha256", "link", "detail",
+        "change_since_previous_observation", "new_evidence_since_previous",
+        "repeat_hold_deferred", "historical_next_step",
     )
     def inert(value):
         value = "" if value is None else str(value)
@@ -408,6 +410,12 @@ def render_csv(bundle):
                 "rank": card["rank"], "category": card["category"],
                 "blocker": card["blocker"],
                 "human_next_step": card["human_next_step"],
+                "change_since_previous_observation":
+                    card["change_since_previous_observation"],
+                "new_evidence_since_previous":
+                    card["new_evidence_since_previous_sample"],
+                "repeat_hold_deferred": card["repeat_hold_deferred"],
+                "historical_next_step": card["historical_next_step"],
             })
         row.update(extra)
         writer.writerow([inert(row.get(key)) for key in fields])
@@ -424,6 +432,12 @@ def render_csv(bundle):
         add("pr", card, link=pr_url + "/files", detail=(
             "CURRENT STATUS NOT VERIFIED" if not card["source_current"]
             else "EXACT HEAD AT SOURCE MOMENT; NOT MERGE AUTHORITY"))
+        if card["change_since_previous_observation"] != "not_compared":
+            add("observed_change", card,
+                link=pr_url,
+                detail=("BOUNDED HISTORICAL COMPARISON; NO UNINTERRUPTED "
+                        "STATE OR RELEASE CLEARANCE. Code: " +
+                        str(card["historical_change_code"])))
         for check in card["check_links"][:MAX_CHECKS]:
             link = check["url"]
             if not (re.fullmatch(
