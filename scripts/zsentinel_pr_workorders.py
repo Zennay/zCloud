@@ -857,6 +857,21 @@ def render_markdown(bundle):
             lines.append("**Historische vervolgstap:** " +
                          card["historical_next_step"] +
                          " (geen bewijs over tussenliggende periode).\n")
+        if card["historical_changed_gate_evidence_categories"]:
+            lines.append("### Veranderd gatebewijs")
+            for category in card["historical_changed_gate_evidence_categories"]:
+                lines.append("- " + category)
+            lines.append("")
+        if card["historical_changed_job_links"]:
+            lines.append("### Historisch waargenomen checkverschillen")
+            for change in card["historical_changed_job_links"]:
+                lines.append("- " + change["kind"] + ": [" + change["label"] +
+                             "](" + change["url"] + ")")
+            lines.append("")
+        if card["historical_changed_job_links_hidden"]:
+            lines.append("Meer historische checkverschillen buiten voorvertoning: " +
+                         str(card["historical_changed_job_links_hidden"]) +
+                         " (geen volledige gatebron).\n")
         if card["check_links"]:
             lines.append("### Directe niet-groene check-/statusbronnen")
             for check in card["check_links"]:
