@@ -1,0 +1,63 @@
+name: FTMO trainer live ensure
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-trainer-live-ensure.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ftmo-trainer-live-ensure.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ftmo-trainer-live-ensure
+  cancel-in-progress: false
+
+jobs:
+  ensure:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 5
+    steps:
+      - name: Ensure FTMO autonomous trainer is active and doing compute
+        shell: bash
+        run: |
+          test "${RUNNER_NAME:-}" = "vps-bb300bba-ftmo"
+          test "$(hostname)" = "vps-bb300bba"
+          set -euo pipefail
+          service=ftmo-autonomous-marathon.service
+          before_state="$(systemctl is-active "$service" 2>/dev/null || true)"
+          echo "FTMO_TRAINER_PRE_STATE=$before_state"
+          if [[ "$before_state" != "active" ]]; then
+            sudo -n systemctl reset-failed "$service" || true
+            sudo -n systemctl enable --now "$service"
+            echo "FTMO_TRAINER_RECOVERY=started"
+          else
+            echo "FTMO_TRAINER_RECOVERY=not_needed"
+          fi
+
+          state="$(systemctl is-active "$service")"
+          enabled="$(systemctl is-enabled "$service" 2>/dev/null || true)"
+          pid="$(systemctl show "$service" -p MainPID --value)"
+          cpu_before="$(systemctl show "$service" -p CPUUsageNSec --value)"
+          sleep 8
+          cpu_after="$(systemctl show "$service" -p CPUUsageNSec --value)"
+          delta=$((cpu_after-cpu_before))
+
+          echo "FTMO_TRAINER_STATE=$state"
+          echo "FTMO_TRAINER_ENABLED=$enabled"
+          echo "FTMO_TRAINER_PID=$pid"
+          echo "FTMO_TRAINER_CPU_NS_BEFORE=$cpu_before"
+          echo "FTMO_TRAINER_CPU_NS_AFTER=$cpu_after"
+          echo "FTMO_TRAINER_CPU_NS_DELTA=$delta"
+
+          test "$state" = "active"
+          [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+          test "$delta" -gt 0
+
+          echo "FTMO_TRAINER_JOURNAL"
+          sudo -n journalctl -u "$service" --since "10 minutes ago" --no-pager -n 100 || true
