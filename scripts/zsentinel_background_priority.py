@@ -586,14 +586,14 @@ def human_preview(data):
             print("  Let op: gedeeltelijk overzicht; niet alle services zijn gezien.")
     elif data.get("runner_units_observed") is False:
         print("GitHub system runner-services: niet uitleesbaar.")
-    if data.get("user_runner_units_observed") is True:
+    if "user_runner_units_observed" in data and data.get("user_runner_units_observed") is True:
         print("GitHub user runner-services (geen bewijs van toegewezen GitHub-job):")
         for entry in data.get("user_runner_units", []):
             reason = f" ({entry['reason']})" if entry["reason"] else ""
             print(f"  {entry['unit']}: {entry['state']}/{entry['detail']}{reason}")
         if data.get("user_runner_units_truncated"):
             print("  User systemd: gedeeltelijk overzicht.")
-    else:
+    elif "user_runner_units_observed" in data:
         print("GitHub user runner-services: bron onbekend/onleesbaar.")
     if "promotion_status" in data:
         print("Effectieve CPU-regeling: "
