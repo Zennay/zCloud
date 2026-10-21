@@ -2794,7 +2794,9 @@ def _blocker_needs_human(evidence):
         'human','user action','manual approval','physical','watch','participant','maintainer',
         'credential','api key','secret','oauth approval','review submission','external gate',
         'independent review','required review','branch protection','owner consent',
-        'billing owner','permission required','needs_human','wait_human'
+        'billing owner','billing','spending limit','payment failed','account payments',
+        'permission required','permission denied','runner listener requires owner',
+        'needs_human','wait_human'
     )
     return any(marker in text for marker in markers)
 
@@ -2807,6 +2809,10 @@ def _attention_action_for_blocker(project_id,title,evidence):
         return f'{name}: complete the physical device test'
     if 'credential' in text or 'api key' in text or 'secret' in text:
         return f'{name}: add or approve the required account credential'
+    if 'billing' in text or 'spending limit' in text or 'payment failed' in text:
+        return f'{name}: resolve the GitHub Actions billing/spending-limit gate with the account owner'
+    if 'branch protection' in text or 'independent review' in text or 'required review' in text or 'owner consent' in text:
+        return f'{name}: obtain the required independent review and protected-main owner authorization'
     if 'review' in text or 'submission' in text:
         return f'{name}: complete the external review/submission step'
     return f'{name}: your input is needed to unblock this step'
