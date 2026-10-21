@@ -472,6 +472,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="zSentinel privé routing snapshot comparison (read-only)")
     parser.add_argument("--previous", required=True, type=Path,
                         help="existing private 0600 portfolio JSON snapshot")
+    parser.add_argument("--older", action="append", type=Path, default=[],
+                        help="additional older private sources in chronological order, at most six")
     parser.add_argument("--current", required=True, type=Path,
                         help="later saved private portfolio JSON snapshot")
     parser.add_argument("--format", choices=("json", "html", "text", "csv"), default="html")
@@ -479,15 +481,21 @@ def main(argv=None):
                         help="new create-only private .json, .html or .md file")
     args = parser.parse_args(argv)
     try:
-        paths = [args.previous.resolve(), args.current.resolve(), args.output.resolve()]
-        if len(set(paths)) != 3:
-            raise ValueError("private source and output files must be distinct")
+        if len(args.older) > 6:
+            raise ValueError("at most six additional prior routing windows")
+        paths = [p.resolve() for p in
+                 [*args.older, args.previous, args.current, args.output]]
+        if len(set(paths)) != len(paths):
+            raise ValueError("all saved sources and private output must be distinct")
         from zsentinel_recovery_router import read_json
         from zsentinel_private_output import write_private_output
         # The standalone operator path handles PRIVATE owner dossiers, not
         # public JSON fixtures. Verify the opened inodes and 0600-equivalent
         # permissions, not merely the filename or a pre-open pathname stat.
         bound = 6 * 1024 * 1024
+        history_sources = [
+            read_json(path, bound, "older private portfolio",
+                      private_owner_only=True) for path in args.older]
         before = read_json(args.previous, bound, "previous private portfolio",
                            private_owner_only=True)
         after = read_json(args.current, bound, "current private portfolio",
@@ -495,8 +503,22 @@ def main(argv=None):
         # Historical-only is an explicit request in this OFFLINE command.
         # Never present an archived comparison as current admission.
         result = compare(before, after, allow_historical=True)
+        series = None
+        if history_sources:
+            from zsentinel_route_history import build_history
+            series = build_history(
+                [*history_sources, before, after], allow_historical=True)
+        if series is not None:
+            from zsentinel_route_history import (
+                owner_html as owner_history_html,
+                owner_text as owner_history_text,
+                owner_csv as owner_history_csv,
+            )
         if args.format == "json":
-            body = json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2)
+            body = json.dumps(
+                {"latest_pair": result, "routing_history": series}
+                if series is not None else result,
+                ensure_ascii=True, sort_keys=True, indent=2)
             suffix = "json"
         elif args.format == "html":
             body = ('<!doctype html><html lang="nl"><head><meta charset="utf-8">'
@@ -517,13 +539,16 @@ def main(argv=None):
                     'border-radius:20px;padding:.15rem .55rem;font-size:.75rem}'
                     '.muted{color:#b5cadb}p{overflow-wrap:anywhere}'
                     'li{margin:.4rem}</style>'
-                    '</head><body><main>' + as_html(result) + '</main></body></html>')
+                    '</head><body><main>' +
+                    (owner_history_html(series) if series is not None else "") +
+                    as_html(result) + '</main></body></html>')
             suffix = "html"
         elif args.format == "csv":
-            body = as_csv(result)
+            body = owner_history_csv(series) if series is not None else as_csv(result)
             suffix = "csv"
         else:
-            body = as_text(result)
+            body = ((owner_history_text(series) + "\n\n")
+                    if series is not None else "") + as_text(result)
             suffix = "md"
         write_private_output(args.output, body, suffix)
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
