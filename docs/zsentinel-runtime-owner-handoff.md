@@ -530,6 +530,10 @@ drie-of-meer-vensterreeksen tot nu toe uit het overzicht doordat alleen de
   redenwissel of overgang naar **suggestion only** sluit een episode af.
 - Elke episode draagt het eerste en laatste 1-gebaseerde bronvenster,
   oorspronkelijke UTC-bronstempels en het aantal opeenvolgende waarnemingen.
+  De rendering verifieert de exacte bronvensterpositie, de canonieke UTC-
+  stempels en overeenstemming tussen zichtbare voorbeelden, episode-totaal en
+  afkappingsvlag. Onvolledige of tegenstrijdige episode-export wordt geweigerd
+  in plaats van als geldig eigenaarbewijs gepresenteerd.
   De nieuwe booleaan `observed_in_latest_sample` zegt alleen dat deze exacte
   HOLD in het laatste beperkte bronvenster **voorkwam**. Ook `true` is geen
   bewijs van voortdurende blokkade of huidige claimeigenaar.
