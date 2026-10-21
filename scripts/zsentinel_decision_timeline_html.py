@@ -193,14 +193,17 @@ for(const delta of queue.adjacent_comparisons){
   blockedDetails.append(el("p",null,"Geen status=blocked projectgroepen in beide complete bronmomenten; geen herstelbewijs."));
  }else{
   const blockedList=el("ol");
+  let blockedChanges=0;
   for(const group of blocked.project_deltas){
    const deltaCount=group.blocked_rows_delta_not_resolution_proof;
    if(deltaCount===0)continue;
+   blockedChanges++;
    blockedList.append(el("li",null,group.priority+" · "+group.project_id+
     " · status=blocked "+(deltaCount>=0?"+":"")+deltaCount+
     " · eigenaar controleert actuele rij; geen automatische retry."));
   }
-  blockedDetails.append(blockedList);
+  if(blockedChanges)blockedDetails.append(blockedList);
+  else blockedDetails.append(el("p",null,"Geen geaggregeerde status=blocked-wijziging; dit is geen herstelbewijs."));
  }
  $("queueDeltas").append(blockedDetails);
  const details=el("details");
