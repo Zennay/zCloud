@@ -103,10 +103,36 @@ def observe_psi():
             or io_some >= 5 or io_full >= 1
         ) else "NO_LOCAL_THRESHOLD_CROSSED"
     )
+    window_contrast = {}
+    all_differences = []
+    for source in SOURCES:
+        data = result["resources"][source]["measurements"]
+        differences = {}
+        for label in ("some", "full"):
+            if label not in data or (source == "cpu" and label == "full"):
+                continue
+            # This compares kernel moving averages; it is NOT a historical
+            # measurement or proof that the pressure will keep rising.
+            change = round(data[label]["avg10_pct"] - data[label]["avg300_pct"], 2)
+            differences[label + "_delta_pp"] = change
+            all_differences.append(change)
+        window_contrast[source] = differences
+    signal = (
+        "MIXED_WINDOWS" if (
+            any(x >= 15 for x in all_differences)
+            and any(x <= -15 for x in all_differences)
+        ) else "SHORT_WINDOW_PRESSURE_HIGHER" if any(
+            x >= 15 for x in all_differences
+        ) else "SHORT_WINDOW_PRESSURE_LOWER" if any(
+            x <= -15 for x in all_differences
+        ) else "NO_LARGE_WINDOW_DIFFERENCE"
+    )
     result.update({
         "status": "OBSERVED",
         "source_complete": True,
         "pressure_hint": severity,
+        "window_contrast": window_contrast,
+        "window_signal": signal,
     })
     return result
 
@@ -127,6 +153,7 @@ def psi_sentence(packet):
     return (
         "PSI (60s kernel-stallpercentages): " +
         "; ".join(source_line(key) for key in SOURCES)
-        + f"; indicator {packet['pressure_hint']}. "
-        "Geen bewijs van GitHub-jobstatus, cgroup-ruimte of herstartrecht."
+        + f"; indicator {packet['pressure_hint']}; "
+        + f"10s versus 300s: {packet.get('window_signal', 'UNKNOWN')}. "
+        "Dit is geen voorspelling of bewijs van GitHub-jobstatus, cgroup-ruimte of herstartrecht."
     )
