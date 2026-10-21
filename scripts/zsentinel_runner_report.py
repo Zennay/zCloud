@@ -814,11 +814,19 @@ def timeline_owner_actions(summary, comparisons):
     """At most three evidence-bound human follow-ups; no execution or dispatch."""
     if not isinstance(summary, dict) or comparisons is None:
         return []
-    failed_history = summary.get("failed_observations") or []
-    failed_latest = summary.get("latest_failed_services") or []
+    failed_history = (
+        [{"scope": "system", **row}
+         for row in (summary.get("failed_observations") or [])]
+        + (summary.get("user_failed_observations") or [])
+    )
+    failed_latest = (
+        [("system", name) for name in (summary.get("latest_failed_services") or [])]
+        + [("user", name) for name in (summary.get("latest_user_failed_services") or [])]
+    )
     stressed_latest = summary.get("latest_pressure_high") is True
     reboot = any(pair.get("host_reboot_observed") is True for pair in comparisons)
-    unknown = (summary.get("incomplete_service_samples", 0) > 0
+    unknown = (summary.get("incomplete_user_service_samples", 0) > 0
+               or summary.get("incomplete_service_samples", 0) > 0
                or summary.get("unknown_capacity_samples", 0) > 0
                or summary.get("latest_pressure_high") is None
                or any(pair.get("same_boot_verified") is not True
@@ -848,7 +856,7 @@ def timeline_owner_actions(summary, comparisons):
         ))
     if failed_latest and stressed_latest:
         oom_recent = any(
-            entry.get("unit") in failed_latest
+            (entry.get("scope"), entry.get("unit")) in failed_latest
             and entry.get("last_systemd_result") == "oom-kill"
             for entry in failed_history
         )
@@ -867,14 +875,15 @@ def timeline_owner_actions(summary, comparisons):
     elif failed_latest:
         tasks.append((
             "P1 · failed-service in laatste bron",
-            "Een of meer runner-services zijn bij de laatste observatie failed. "
-            "Laat de eigenaar de oorzaak en GitHub-toewijzing onafhankelijk vaststellen.",
+            "Een of meer systeem- of gebruikersrunner-services zijn bij de laatste "
+            "observatie failed. Laat de eigenaar per systemd-manager de oorzaak "
+            "en GitHub-toewijzing onafhankelijk vaststellen.",
             "LAATSTE BRON FAILED · GEEN JOBBEWIJS",
         ))
     elif failed_history:
         tasks.append((
             "P1 · historische failed-services opvolgen",
-            "Eerdere bronnen meldden failed, maar de laatste bron toont die "
+            "Eerdere systeem-/gebruikersbronnen meldden failed, maar de laatste bron toont die "
             "status niet. Controleer werkelijke GitHub-toewijzing en eigenaarschap; "
             "een andere systemd-status is geen herstelbewijs.",
             "HISTORISCH FAILED · HUIDIG JOBHERSTEL ONBEKEND",
@@ -889,7 +898,7 @@ def timeline_owner_actions(summary, comparisons):
     if unknown:
         tasks.append((
             "P1 · ontbrekend betrouwbaar bronbereik",
-            "Vraag volledige actuele owner-private bronmomenten en "
+            "Vraag volledige actuele owner-private systeem- en user-bronmomenten en "
             "claim-/jobbewijs; lege records geven geen vrij eigenaarschap.",
             "BRON ONVOLLEDIG",
         ))
