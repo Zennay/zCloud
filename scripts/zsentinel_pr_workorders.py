@@ -200,8 +200,19 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
     # with a stable, separately pinned peer; retain its exact selected/peer paths.
     if head is not None and stable_scope:
         for source in (direct_overlaps or [])[:16]:
-            if type(source) is not dict or not source.get("path_conflict_count_observed"):
+            if type(source) is not dict:
+                paths_limited = True
                 continue
+            conflict_count = source.get("path_conflict_count_observed", 0)
+            examples = source.get("path_conflict_examples", [])
+            if (type(conflict_count) is not int or conflict_count < 0
+                    or type(examples) is not list):
+                paths_limited = True
+                continue
+            if not conflict_count:
+                continue
+            if conflict_count > len(examples):
+                paths_limited = True
             peer_url = _same_repo_url(source.get("other_pr_url"), repository)
             peer_head = source.get("other_pr_head_when_read")
             if peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None:
@@ -238,6 +249,8 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
         key = (row["peer_pr_url"], row["peer_head_sha"], row["selected_path"],
                row["peer_path"], row["relation"])
         deduped_scope[key] = row
+    if len(deduped_scope) > 24:
+        paths_limited = True
     scope_conflicts = [deduped_scope[key] for key in sorted(deduped_scope)[:24]]
     # Every title/body issue mention is an operator search hint, even when
     # no second PR mentions the same issue. Match exact observed PR HEAD to
@@ -1320,7 +1333,7 @@ def render_markdown(bundle):
                     raise ValueError("invalid Markdown file/directory peer receipt")
                 selected_path = edit_path(conflict.get("selected_path"))
                 peer_path = edit_path(conflict.get("peer_path"))
-                lines.append("- [Peer PR] (" + peer_url + ") · HEAD `" + peer_head[:12] +
+                lines.append("- [Peer PR](" + peer_url + ") · HEAD `" + peer_head[:12] +
                              "` · `" + selected_path.replace("`", "\\`") + "` ↔ `" +
                              peer_path.replace("`", "\\`") + "` · " + relation)
             lines.append("Geen eigenaar-, lease- of mergeautorisatie volgt uit deze padrelatie.\n")
