@@ -1278,7 +1278,8 @@ function exportCollisionHandoff(onlyUnresolved,focusIssue=null,onlyOverdue=false
  }
  lines.push('Herlees op GitHub/Notion voor werkovername of merge: huidige claims en PR HEAD, verplichte CI, onafhankelijke reviews, branch protection en exacte scope.','');
  privateDownload(focusIssue?'zsentinel-pr-botsing-issue-'+focusIssue.split('/').pop()+'-prive.md':
-  onlyUnresolved?'zsentinel-pr-botsingen-open-afstemming.md':
+  onlyOverdue?'zsentinel-pr-botsingen-verlopen-prive.md':
+   onlyUnresolved?'zsentinel-pr-botsingen-open-afstemming.md':
   'zsentinel-pr-botsingen-prive-overdracht.md',lines.join('\n')+'\n');
 }
 collisionExport.addEventListener('click',()=>exportCollisionHandoff(false));
