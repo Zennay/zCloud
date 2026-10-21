@@ -262,7 +262,7 @@ def product_queue_snapshot(items, max_visible=8):
     active_missing_worker_slot = 0
     active_missing_claim_start = 0
     active_missing_claim_expiry = 0
-    active_claim_evidence_examples = []
+    active_claim_evidence_by_project = {}
     active_claim_evidence_example_count = 0
     # A repeated claim is *not* a failed task. This read-only index merely
     # gives the original owner concrete evidence to inspect before retrying.
@@ -380,8 +380,11 @@ def product_queue_snapshot(items, max_visible=8):
                 active_claim_evidence_example_count += 1
                 # Only already exposed queue/project identifiers and fixed
                 # evidence-field codes. Never leak worker detail or claim tokens.
-                if len(active_claim_evidence_examples) < max_visible:
-                    active_claim_evidence_examples.append({
+                project_evidence = active_claim_evidence_by_project.setdefault(
+                    project, []
+                )
+                if len(project_evidence) < max_visible:
+                    project_evidence.append({
                         "project_id": project,
                         "queue_id": str(item.get("queue_id") or "")[:160],
                         "status": status,
@@ -569,6 +572,32 @@ def product_queue_snapshot(items, max_visible=8):
             fair_repeated_claim_workorders.append(row)
             if len(fair_repeated_claim_workorders) >= max_visible:
                 break
+    # Previously the first chatty project's owner gaps could consume the
+    # complete sample and hide independent projects. Reserve one real active
+    # source row per project before filling the remaining bounded window.
+    # Keep the original source priority order; never infer or change leases.
+    active_claim_evidence_examples = []
+    first_evidence = [
+        project_rows[0] for project_rows in active_claim_evidence_by_project.values()
+        if project_rows
+    ]
+    first_evidence.sort(key=lambda row: (
+        priorities.get(str(row["priority"]).upper(), 4),
+        row["project_id"], row["queue_id"],
+    ))
+    active_claim_evidence_examples.extend(first_evidence[:max_visible])
+    if len(active_claim_evidence_examples) < max_visible:
+        more_evidence = [
+            row for project_rows in active_claim_evidence_by_project.values()
+            for row in project_rows[1:]
+        ]
+        more_evidence.sort(key=lambda row: (
+            priorities.get(str(row["priority"]).upper(), 4),
+            row["project_id"], row["queue_id"],
+        ))
+        active_claim_evidence_examples.extend(
+            more_evidence[:max_visible - len(active_claim_evidence_examples)]
+        )
     # One bounded operator inbox combines urgent owner evidence, repeated
     # attempts and independent product leads. Round-robin across *kinds*
     # prevents a high-volume blocked source from hiding every free work lead.
@@ -601,6 +630,7 @@ def product_queue_snapshot(items, max_visible=8):
                 "priority": row["priority"],
                 "operator_next_step": row["owner_action"],
                 "claim_attempts_observed": row["claim_attempts_observed"],
+                "claim_attempts_capped": row["claim_attempts_capped"],
                 "attempts_are_not_task_failures": True,
                 "owner_only": True,
                 "not_claimed_or_authorized": True,
