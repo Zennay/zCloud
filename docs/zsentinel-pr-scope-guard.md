@@ -2126,3 +2126,17 @@ Voor brongebonden PR's met beide geldige exact-40-hex-SHA's bevat elke HTML-kaar
 Voorbeelden: gebruik de reeds bestaande `--format html`, `--format markdown` of `--format workorders-csv --output <nieuw privébestand>` van de portfolio-PR-bronflow; de bestaande 0600/O_EXCL privébestandsbeveiliging, 512-KiB-uitvoerlimiet, maximaal vier PRs en de niet-autoriserende booleans blijven ongewijzigd. Geen nieuwe GitHub-verzoeken, QA-/regressiesuite, scheduler-/runneractie, PR-merge of deploy toegevoegd.
 
 Implementatie op bestaande [zCloud PR #1567](https://github.com/Zennay/zCloud/pull/1567), broncommits [7e270af](https://github.com/Zennay/zCloud/commit/7e270af6fe27955a5d2e06b618dc34232775df55) en [dc7f9c1](https://github.com/Zennay/zCloud/commit/dc7f9c1ae162c4d06aab16064e5c1a27bdac8974). Merge en productieacceptatie blijven afhankelijk van verplichte actuele exacte-head CI, onafhankelijke review, branch protection en bevoegde eigenaar.
+
+
+## 21 oktober 2026 — exact geobserveerde peer-HEAD voor botsende product-PRs
+
+De bestaande Merge-first Workorders maken nu **per geselecteerde product-PR** zichtbaar welke andere geopende PR's volgens een **stabiel gelezen GitHub-PR-bronvenster** dezelfde bestanden raken. Het bestaande bestandspadenpanel kon eerder een onstabiele broninventaris als positief collisionbewijs presenteren. Dit is fail-closed hersteld in [f58ddb1](https://github.com/Zennay/zCloud/commit/f58ddb1e3512d4c3bed6626cf02104c4d8e0bcd6): bij afwijkende voor-/nalezing worden gedeelde bestands-/PR-links en niet opnieuw onafhankelijk geverifieerde issuevermeldingen **niet als bevestigde observatie getoond**. De bronwaarschuwing blijft zichtbaar.
+
+Een nieuw begrensd `peer_head_evidence` veld verwerkt uitsluitend waargenomen bronparen die aan de exact opnieuw gelezen geselecteerde HEAD zijn gebonden. Het bewaart per peer: canonieke PR-URL, peer-HEAD-SHA op bronmoment, geobserveerde gedeelde-bestandsteller, maximaal 24 exacte padnamen, preview-onvolledigheid en bronsoort. Maximaal acht peerkaarten; een onstabiele inventaris, ontbrekende SHA, conflicterende peer-SHA/bronpaden of afgekapte selectie leidt tot `peer_head_evidence_partial=true`, niet tot een verzonnen veilige mergevolgorde. Peercommitlinks zijn bronlinks, geen claim- of merge-autorisatie.
+
+Gebruikersfunctionaliteit:
+- **HTML:** per PR directe bronlinks naar botsende peer-commits, gedeelde paden en zichtbare onvolledige-bronmelding. Browser blijft offline/scriptvrij met bestaande CSP.
+- **Markdown:** dezelfde peer-commitlinks en exacte paden als zelfstandig reviewdossier.
+- **CSV:** afzonderlijke `peer_head_collision`, `peer_shared_file` en `coverage_warning` records, geschikt voor lokale filtering en overdracht. De bestaande private 0600/O_EXCL output en formula-inerte CSV-cellen blijven behouden.
+
+Broncode: [19b915b](https://github.com/Zennay/zCloud/commit/19b915bdc941a4ff9c92061d161fb30259b17a7a), [dbe2225](https://github.com/Zennay/zCloud/commit/dbe22256b9a92d5efd55d94a7f819da7e9134647). Dit verandert geen productiequeue, workerclaim, live runtime, GitHub review, CI of deploy. Bestaande verplichte exacte-HEAD checks en menselijke eigenaars-/releasegoedkeuring zijn ongewijzigd. Alleen de nieuwe Python-source is via read-only opgehaalde exacte commit syntactisch geïnspecteerd; geen QA-/regressiesuite geschreven of gedraaid.
