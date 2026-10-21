@@ -50,6 +50,39 @@ writer fix. Durable `retry_not_before`, finite native retry transitions
 remain separately gated by the current control-plane window. Nothing in this
 UI changes the `server.py` queue writer or clears that issue.
 
+## Unified issue-first recovery board — 21 October follow-through
+
+The primary **zSentinel · product delivery board** now includes the separate
+read-only **queue retry owner workorders** for issue #677 alongside sampled
+P0/P1 GitHub issues, their PR references and product-queue admission. Press
+**Read queue recovery** on the primary board to explicitly use the existing
+authenticated `GET /api/queue-retry-incidents` path. The action reuses the
+existing queue observer, access checks, 10-second request boundary, per-project
+scope and in-memory observation; it never runs on a timer, changes a claim or
+dispatches a retry. The board visibly reports authorization errors and source
+unavailability instead of replacing missing evidence with zero rows.
+
+The board presents up to five P0-first incident workorder groups with
+problem, safe next step and operator status. A recent same-scope offline
+comparison also shows a bounded count of project groups with **increased
+observed high-attempt items** and the source before/after times; it never
+equates the difference with confirmed failures or proof of recovery.
+Missing/non-comparable trends explicitly remain UNKNOWN.
+
+The main **Export handoff .md** now composes queue recovery owner cards with
+the existing issue/PR and product admission sections in one file, allowing a
+worker to receive a cohesive *triage brief* instead of manually assembling
+two exports. It includes up to 32 retry project/priority cards and a bounded
+worsening-scope summary when source clocks agree. The file identifies queue
+data as an **independent, read-only** source and never joins a GitHub issue or
+PR mention to a queue group as verified ownership. An observation scoped to a
+different selected project is reported as **NO COVERAGE**, not healthy/empty.
+
+The standalone **zSentinel · queue retry incidents** panel and the dedicated
+JSON/Markdown exports remain available for deeper operator review. No source
+merge or UI observation proves live VPS release, protects a new claim, settles
+the native queue retry writer #677 or waives independent GitHub CI/review.
+
 ## Product delivery queue
 
 Choose **Read admission** to request the existing authenticated `GET /api/portfolio-queue` endpoint. The new `delivery_policy` payload comes from unified backend PR #1549 and reports:
