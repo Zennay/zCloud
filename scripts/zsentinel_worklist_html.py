@@ -698,6 +698,69 @@ function onePrHandoff(){
    lines.join('\n')+'\n');
 }
 focusExport.addEventListener('click',onePrHandoff);
+function exportOutstandingPrHandoff(){
+ const outstanding=prs.filter(p=>p.querySelector('.pr-local-state').value!=='followup');
+ const lines=[
+  '# zSentinel · openstaande bestaande PRs voor menselijke opvolging','',
+  '> Privé offline bronopname: lokale opvolgnotities, geen actuele PR- of eigenaarvrijgave.','',
+  '- Oorspronkelijke PR-bron UTC: '+safeText(document.getElementById('pr-time').textContent),
+  '- Oorspronkelijke issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
+  '- Exact opgeslagen brontoken: '+safeText(document.body.dataset.sourceToken),
+  '- Bestaande PRs in bronvenster: '+prs.length,
+  '- Open menselijke opvolging: '+outstanding.length,
+  '- Met lokale opvolging genoteerd (NIET gemerged): '+(prs.length-outstanding.length),
+  '- Selectie hangt af van lokaal opgeslagen opvolgstatussen; filters/PR-focus wijzigen deze inventaris niet.',
+  '- Externe GitHub/Notion claims, verplichte exacte-head CI, reviews en branchbescherming: NIET opnieuw vastgesteld.',''
+ ];
+ for(const [index,p] of outstanding.entries()){
+  const pr=p.dataset.pr;
+  const head=p.dataset.head||'ONBEKEND';
+  const all=p.dataset.sourceIssues.split(' ').filter(Boolean);
+  const shown=p.dataset.issues.split(' ').filter(Boolean);
+  const status=p.querySelector('.pr-local-state').value;
+  lines.push(
+   '## '+(index+1)+'. [Bestaande PR #'+pr.split('/').pop()+']('+pr+')','',
+   '- Project: '+safeText(p.dataset.project),
+   '- Prioriteit bron: '+safeText(p.dataset.priority),
+   '- Waargenomen HEAD: '+safeText(head),
+   '- Historische gate: '+safeText(gateLabels[p.dataset.gate]||p.dataset.gate)+
+      ' ('+safeText(p.dataset.gate)+')',
+   '- Bronbestandsoverlap: '+safeText(p.dataset.overlap),
+   '- Historische bronbeweging: '+safeText(p.dataset.movement),
+   '- Menselijke gatevervolgstap: '+safeText(p.dataset.next),
+   '- Privé PR-status: '+safeText(prLabels[status]||status),
+   '- Gekoppelde bronissues: '+all.length+
+     '; zichtbaar in deze werkbak: '+shown.length
+  );
+  if(head!=='ONBEKEND')lines.push('- GitHub broncommit: [Bekijk commit]('+
+      pr.split('/pull/')[0]+'/commit/'+head+')');
+  const note=p.querySelector('.pr-note').value.trim();
+  if(note)lines.push('- Privé PR-opvolgnotitie: '+safeText(note));
+  for(const issue of all){
+   lines.push('  - [Bronissue #'+issue.split('/').pop()+']('+issue+')');
+   const t=tickets.find(card=>card.dataset.issue===issue);
+   if(!t){
+    lines.push('    - Buiten de beperkte issuepagina; huidige status ONBEKEND.');
+    continue;
+   }
+   lines.push('    - '+safeText(t.dataset.priority)+' · '+safeText(t.dataset.title));
+   const alternatives=[t.dataset.pr,...t.dataset.prs.split(' ').filter(Boolean)]
+     .filter(url=>url&&url!==pr);
+   if(alternatives.length)lines.push('    - Andere PR-kandidaten (geen fix-/eigenaarsbewijs): '+
+    alternatives.map(url=>'[PR '+url.split('/').pop()+']('+url+')').join(', '));
+   const local=t.querySelector('.local-state').value;
+   lines.push('    - Lokale issueopvolging: '+safeText(labels[local]||local));
+  }
+  lines.push('');
+ }
+ lines.push('**Volgende stap:** eigenaar bepaalt per PR of deze vrij is; lees '
+  +'de actuele PR-HEAD, complete verplichte CI, onafhankelijke review en '
+  +'branch protection op GitHub voor een eventuele bevoegde merge. '
+  +'Dit document schrijft niets naar GitHub, Notion of productie.','');
+ privateDownload('zsentinel-prs-open-prive-eigenaaroverdracht.md',lines.join('\\n')+'\\n');
+}
+document.getElementById('pr-review-export').addEventListener('click',exportOutstandingPrHandoff);
+
 function exportCollisionHandoff(onlyUnresolved,focusIssue=null){
  if(focusIssue!==null&&!collisionRows.some(c=>c.dataset.issue===focusIssue))return;
  const selectedCollisions=collisionRows.filter(c=>(!focusIssue||c.dataset.issue===focusIssue)&&
@@ -1080,6 +1143,7 @@ refresh();
         "<p id='visible' aria-live='polite'></p>"
         "<p id='pr-review-summary' aria-live='polite'></p>"
         "<button id='pr-review-next' type='button'>Volgende PR zonder lokale opvolging</button>"
+        "<button id='pr-review-export' type='button'>Download open PR-eigenaaroverdracht</button>"
         "<p id='collision-visible' aria-live='polite'></p>"
         "<button id='collision-next' type='button'>Volgende open botsingsopvolging</button>"
         "<p id='session-status' aria-live='polite'></p>"
