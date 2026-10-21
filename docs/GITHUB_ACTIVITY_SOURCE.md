@@ -24,9 +24,9 @@ The new receipt records stable per-event `first_observed_at` and `new_since_prev
 
 ## One-click public GitHub evidence in Activity (explicit opt-in)
 
-The Activity screen now has two independent **Read public GitHub** actions, one for PR/CI/main activity and one for existing P0/P1 issue/PR candidates. Pick one project from the existing Activity project dropdown, then click the relevant action. Requests run **in the user's browser** to `https://api.github.com/repos/Zennay/<canonical-repo>/...` using `GET`, `credentials: omit`, no redirects and no browser/server API key. They are not scheduled background polling. There is a two-minute per-project backoff for each action, with bounded 8-second requests and response byte caps. The GitHub origin and canonical `projects.json` repository name are validated before requests. Unavailable/private/rate-limited sources show partial or unavailable coverage, never zero-as-proof.
+The Activity screen has two independent **Read public GitHub** actions, one for PR/CI/main/branch-head activity and one for existing P0/P1 issue/PR candidates. Pick one project from the existing Activity project dropdown, then click the relevant action. Requests run **in the user's browser** to `https://api.github.com/repos/Zennay/<canonical-repo>/...` using `GET`, `credentials: omit`, no redirects and no browser/server API key. They are not scheduled background polling. The PR/CI/branch action uses four bounded requests per page (20 PRs, 20 Actions runs, 15 canonical `main` commits and 100 branch heads), with an eight-batch rolling-hour in-memory browser cap, two-minute per-project backoff, 8-second request timeouts and response byte caps. The cap is a local accidental-burst guard, not a server-side authorization boundary. The GitHub origin and canonical `projects.json` repository name are validated before requests. Unavailable/private/rate-limited sources show partial or unavailable coverage, never zero-as-proof.
 
-- PR/CI/main: a bounded recent PR window, Actions workflow runs, and canonical `main` commits, with reconstructed canonical GitHub links; no false attribution from green CI to merge or deployment. GitHub activity is shown in its own panel separate from unchanged local VPS events.
+- PR/CI/main/branches: a bounded recent PR window, Actions workflow runs, canonical `main` commits and branch-head observations, with reconstructed canonical GitHub links. A branch event records the observed HEAD SHA and the observation time; it does **not** claim branch creation time, last-commit time, branch ownership, merge or deployment. Complete page-1 observations can identify a changed HEAD against the prior page-1 snapshot; older-page navigation is never compared against the newest page as if it were a new change. GitHub activity is shown in its own panel separate from unchanged local VPS events.
 - Product inbox: bounded oldest and most recently updated open GitHub issue windows plus recent open PR references; explicit P0/P1 title/label priority; QA-only issues suppressed per 17 October user policy. PR mentions and closing-keyword references are not active owners or evidence of merged fixes.
 - Selection is **required**. 'All projects' does not issue dozens of anonymous GitHub calls and pretend that the entire portfolio was covered. These browser samples are never uploaded to zCloud, persisted as a queue, used to claim work or used to authorize a deployment. Refreshing the browser discards them.
 - The original manually generated JSON receipt imports remain available for private repositories, larger samples, cross-project operator workflows and stricter source evidence. The one-click public snapshots are always labelled **partial**, even if the bounded GETs succeed. No user authorization/CI/release gate is changed.
@@ -66,7 +66,7 @@ The observer's output is zcloud-github-activity-readonly-v1 JSON containing even
 
 Kinds: pr_created means created, not merged; pr_updated means changed, not accepted; pr_merged means merged_at exists and includes an explicitly **reported** GitHub target branch (reported_main_merge for target main), but by itself is **not** verified reachable on canonical main; an explicit `main_merged=true` is emitted only when GitHub's exact PR merge SHA also appears in the bounded canonical main history **and** the matching `main_commit` event survives the final exported receipt; ci_run provides GitHub Actions status, conclusion and SHA, not deployment or worker resumption; main_commit is the SHA of a commit returned from GitHub's canonical main-history endpoint (main_merged=true), not live deployment. No private commit messages, authors or titles are retained.
 
-Coverage remains partial_sources even on successful GitHub reads because branch-only commits, all pagination, local live runtime and cross-provider deduplication are not fully synchronized. Failed and partial pages become explicit partial_error or unavailable states; never infer there was zero activity. The digest validates a strict receipt and renders a bounded, metadata-only human handoff. No HTTP server is started.
+Coverage remains partial_sources even on successful CLI GitHub reads because branch-only commits, all pagination, local live runtime and cross-provider deduplication are not fully synchronized. The offline CLI receipt still reports `github_branches=not_synchronized`; the separate browser Activity click now includes a bounded public branch-head page. Failed and partial pages become explicit partial_error or unavailable states; never infer there was zero activity. The digest validates a strict receipt and renders a bounded, metadata-only human handoff. No HTTP server is started.
 
 ### Product issues: second existing receipt in the same Activity screen
 
@@ -229,15 +229,17 @@ only client-side display and retention behavior.
 
 ## 21 October — manually page older public Activity observations
 
-The Activity tab's **Read public GitHub for selected project** still fetches only
-three bounded, read-only public GitHub endpoints by explicit operator click.
-For busy projects the first page omits older PRs and Actions. After a complete
-first-page read, **Read older GitHub page (2/5)** becomes available. Each click
-reads exactly one further page of 20 PRs, 20 Actions runs and 15 canonical
-main commits, capped at page five. The existing two-minute per-project cooldown,
-8-second request timeout, response size bounds and credential-free browser GETs
-apply to every page. A failed or partially inaccessible page is marked partial
-and does not advance the page cursor or erase earlier observations.
+The Activity tab's **Read public GitHub for selected project** fetches
+four bounded, read-only public GitHub endpoints by explicit operator click.
+For busy projects the first page omits older PRs, Actions and branches. After a
+readable PR/CI/main page with more bounded data, **Read older GitHub page (2/5)**
+becomes available. Each click reads one further page of 20 PRs, 20 Actions runs,
+15 canonical main commits and 100 branch heads, capped at page five. The existing
+two-minute per-project cooldown, eight-batch rolling-hour browser cap, 8-second
+request timeout, response size bounds and credential-free GETs apply to every
+page. Branch HEAD change comparison uses only a complete newest-page snapshot;
+branch observation time is not the branch's last-commit time. A failed or
+partially inaccessible page is marked partial and does not erase earlier observations.
 
 **Newer loaded page** and **Older loaded page** navigate already-read local
 windows without a network call. Previous windows stay in tab memory within
