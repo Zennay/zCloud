@@ -103,6 +103,9 @@ def owner_review_suggestions(portfolio, maximum=6):
         suggestions.append({
             "project": item["project"], "priority": priority,
             "queued_local": queued, "eligible_hint_local": eligible,
+            "queued_p0": item["queued_p0"], "queued_p1": item["queued_p1"],
+            "eligible_hint_p0": item["eligible_queued_p0"],
+            "eligible_hint_p1": item["eligible_queued_p1"],
             "active_local": item["in_flight_p0"] + item["in_flight_p1"],
             "source": "read_only_local_queue",
             "current_owner_verified": False,
@@ -658,8 +661,8 @@ def text_view(data):
     for item in data["owner_review_shortlist"]:
         out.append(
             f"  {item['priority']} {item['project']}: "
-            f"{item['queued_local']} wacht lokaal, "
-            f"eligible-hint {item['eligible_hint_local']}, "
+            f"P0 wacht {item['queued_p0']} (eligible-hint {item['eligible_hint_p0']}), "
+            f"P1 wacht {item['queued_p1']} (eligible-hint {item['eligible_hint_p1']}), "
             f"{item['active_local']} actief; huidige eigenaar ONBEKEND."
         )
         out.append("  Vervolg: " + item["next_step"])
@@ -907,8 +910,10 @@ def html_view(data):
         "<article><div class='eyebrow'>Lokale owner triage · geen claimvrijgave</div>"
         "<h3>" + html.escape(item["priority"]) + " · "
         + html.escape(item["project"]) + "</h3><p>"
-        + str(item["queued_local"]) + " wacht lokaal; "
-        + str(item["eligible_hint_local"]) + " eligible-hint; "
+        + "P0 wacht " + str(item["queued_p0"]) + " (eligible-hint "
+        + str(item["eligible_hint_p0"]) + "); P1 wacht "
+        + str(item["queued_p1"]) + " (eligible-hint "
+        + str(item["eligible_hint_p1"]) + "); "
         + str(item["active_local"]) + " lokaal actief.</p><p>"
         + html.escape(item["next_step"]) + "</p>"
         + html_inbox_links(item["project"]) + "</article>"
@@ -1071,8 +1076,10 @@ def markdown_view(data):
         lines.extend((
             "",
             "### " + item["priority"] + " · " + name,
-            "- **Wacht lokaal:** " + str(item["queued_local"]),
-            "- **Eligible-hint lokaal:** " + str(item["eligible_hint_local"]),
+            "- **P0 wacht lokaal / eligible-hint:** " + str(item["queued_p0"])
+            + " / " + str(item["eligible_hint_p0"]),
+            "- **P1 wacht lokaal / eligible-hint:** " + str(item["queued_p1"])
+            + " / " + str(item["eligible_hint_p1"]),
             "- **Actief lokaal (niet overnemen):** " + str(item["active_local"]),
             "- **Huidige externe eigenaar:** ONBEKEND.",
             "- **Vervolg:** " + item["next_step"],
@@ -1234,7 +1241,8 @@ def portfolio_owner_book(data):
     for item in data["owner_review_shortlist"]:
         contents.append(
             "- " + item["priority"] + " " + item["project"] +
-            ": " + str(item["queued_local"]) + " wacht in lokale bron; " +
+            ": P0 wacht " + str(item["queued_p0"]) +
+            ", P1 wacht " + str(item["queued_p1"]) + " in lokale bron; " +
             str(item["active_local"]) + " actief; huidige eigenaar ONBEKEND."
         )
     if data["owner_review_shortlist_partial"]:
