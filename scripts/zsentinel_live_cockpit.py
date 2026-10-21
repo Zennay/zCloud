@@ -272,6 +272,8 @@ def main():
                         help="pin existing product PR as PROJECT:NUMBER, up to three")
     parser.add_argument("--pr-project", action="append", default=[],
                         help="discover recent open PRs for selected canonical projects")
+    parser.add_argument("--previous-pr-report", type=Path,
+                        help="private earlier live/refresh JSON for exact observed PR gate changes")
     parser.add_argument("--state", type=Path,
                         help="optional local private incident ledger file")
     parser.add_argument("--format", choices=("text", "json", "html", "ics", "desk"), default="html")
@@ -321,6 +323,20 @@ def main():
             raise ValueError("--pr-project and --existing-pr require --inspect-existing-prs")
         if args.inspect_existing_prs and args.skip_github_issues:
             raise ValueError("--inspect-existing-prs conflicts with --skip-github-issues")
+        if args.previous_pr_report is not None:
+            if not args.inspect_existing_prs or args.previous_pr_report.suffix != ".json":
+                raise ValueError("previous PR report requires --inspect-existing-prs and private .json")
+            # Prior owner evidence is input-only. Never overwrite or alias it
+            # with the current immutable report, private desk, or state ledger.
+            for current_path in (
+                    args.registry, args.database, args.state, args.output,
+                    args.desk_output, args.handoff_output, args.action_output,
+                    args.agenda_output, args.disk_hotspots_output,
+                    args.disk_hotspots_previous, args.worker_events_database,
+                    args.notion_claims_export):
+                if (current_path is not None and
+                        args.previous_pr_report.resolve() == current_path.resolve()):
+                    raise ValueError("previous PR report aliases source/ledger/output")
         if args.inspect_existing_prs and args.format not in ("html", "json", "text", "desk"):
             raise ValueError("existing PR observation requires private html/json/text/desk")
         if args.read_notion_claims and args.notion_claims_export is not None:
@@ -526,12 +542,28 @@ def main():
                     or not 0 <= provenance["existing_prs_gets"] <= 18):
                 raise ValueError("untrusted live GitHub request budget")
             provenance["max_github_gets"] += provenance["existing_prs_gets"]
+        pr_continuity = None
+        if args.previous_pr_report is not None:
+            from zsentinel_portfolio_pr_delta import load_previous_portfolio
+            from zsentinel_pr_hold_continuity import compare
+            previous_report, prior_digest = load_previous_portfolio(
+                args.previous_pr_report)
+            # Allow a saved private JSON produced by either one-shot CLI;
+            # do not treat missing prior PR evidence as an empty backlog.
+            prior_pr_source = previous_report.get("pr_delivery")
+            if type(prior_pr_source) is not dict:
+                raise ValueError("previous private JSON lacks canonical PR delivery evidence")
+            pr_continuity = compare(
+                pr_delivery, prior_pr_source, prior_digest)
+            provenance["pr_gate_comparison"] = "private_saved_exact_pr_source_no_gets"
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
         decision, ledger = plan(bundle, previous)
         decision["live_sources"] = provenance
         if pr_delivery is not None:
             decision["pr_delivery"] = pr_delivery
+        if pr_continuity is not None:
+            decision["pr_gate_continuity"] = pr_continuity
         if args.observe_local_runners:
             from zsentinel_local_runner_processes import observe as observe_local_runners
             from zsentinel_local_runner_processes import _admit as admit_local_runners
