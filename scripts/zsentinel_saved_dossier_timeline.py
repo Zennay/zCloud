@@ -355,6 +355,11 @@ def markdown(report):
             "/" + str(item["total_source_snapshots"]) + " bronmomenten; " +
             str(item["observed_head_changes"]) + " HEAD-wissels, " +
             str(item["observed_gate_changes"]) + " gatewaarnemingswissels; " +
+            str(item["observed_issue_changes"]) + " issuekoppelingswissels (" +
+            str(item["issue_links_added_between_saved_observations"]) +
+            " nieuw waargenomen / " +
+            str(item["issue_links_absent_between_saved_observations"]) +
+            " niet langer waargenomen); " +
             str(item["incomparable_receipt_observation_pairs"]) +
             " niet-vergelijkbare HEAD-receipts.",
             "  - Laatste bron " + str(item["last_seen_snapshot"]) +
@@ -370,6 +375,17 @@ def markdown(report):
                          (observation["observed_head"] or "ONBEKEND") +
                          " · gate " + observation["primary_gate"] +
                          " · bron " + observation["gate_source"])
+            if observation["newly_observed_linked_issue_urls"]:
+                lines.append("      + Issuekoppelingen in deze steekproef: " +
+                             ", ".join(observation["newly_observed_linked_issue_urls"]))
+            if observation["no_longer_observed_linked_issue_urls"]:
+                lines.append("      - Issuekoppelingen niet meer in deze steekproef: " +
+                             ", ".join(observation["no_longer_observed_linked_issue_urls"]))
+            if (observation["issue_link_comparison_spans_unsampled_snapshot"] and
+                    (observation["newly_observed_linked_issue_urls"] or
+                     observation["no_longer_observed_linked_issue_urls"])):
+                lines.append("      ! Er waren tussenliggende bronmomenten zonder deze PR; "
+                             "het exacte moment van wijziging is ONBEKEND.")
     lines.extend(["", "Nieuwe of weggevallen PR-waarnemingen zijn NIET bewezen "
                   "nieuw aangemaakt of gemerged. Eerst actuele GitHub PR-HEAD, "
                   "notionclaims, verplichte CI, onafhankelijke review en "
@@ -384,7 +400,9 @@ def csv_content(report):
         "Project", "Bronprioriteit", "PR URL", "Waarnemingen",
         "Totaal bronmomenten", "Eerste bron", "Laatste bron",
         "Ontbreekt laatste steekproef", "HEAD wijzigingen", "Gate wijzigingen",
-        "Issue wijzigingen", "Zelfde-HEAD ontvangstwaarneming gewijzigd",
+        "Issue wijzigingen", "Nieuw geobserveerde issuekoppelingen",
+        "Niet meer geobserveerde issuekoppelingen",
+        "Zelfde-HEAD ontvangstwaarneming gewijzigd",
         "Niet vergelijkbare HEAD-receipts", "Laatste gateklasse", "Bronlabels",
         "Menselijke vervolgactie", "Actuele CI/review/owner",
         "Main merge bewezen", "Live bewezen", "Bronactualiteit",
@@ -400,6 +418,8 @@ def csv_content(report):
             else "NEE",
             item["observed_head_changes"], item["observed_gate_changes"],
             item["observed_issue_changes"],
+            item["issue_links_added_between_saved_observations"],
+            item["issue_links_absent_between_saved_observations"],
             item["same_exact_head_receipt_changes"],
             item["incomparable_receipt_observation_pairs"],
             item["latest_sample_primary_gate"],
@@ -431,11 +451,26 @@ def html_content(report):
                 '" target="_blank" rel="noopener noreferrer">issue #' +
                 e(url.rsplit("/", 1)[-1]) + "</a>"
                 for url in o["linked_issue_urls"])
+            added = o["newly_observed_linked_issue_urls"]
+            absent = o["no_longer_observed_linked_issue_urls"]
+            issue_delta = ""
+            for label, links in (("Nieuw waargenomen gekoppeld issue", added),
+                                 ("Niet meer in bron gekoppeld issue", absent)):
+                if links:
+                    issue_delta += "<p>" + e(label) + ": " + " · ".join(
+                        '<a href="' + e(url) +
+                        '" target="_blank" rel="noopener noreferrer">' +
+                        e(url.rsplit("/", 1)[-1]) + "</a>" for url in links) + "</p>"
+            if (o["issue_link_comparison_spans_unsampled_snapshot"]
+                    and (added or absent)):
+                issue_delta += ("<p>Er ontbreken tussenliggende PR-bronmomenten; "
+                                "het werkelijke wijzigingsmoment blijft ONBEKEND.</p>")
             observations.append(
                 "<li><strong>Bron " + str(o["snapshot_index"]) +
                 "</strong> · " + e(o["observed_utc"]) + " · HEAD " +
                 e(o["observed_head"] or "ONBEKEND") + " · " +
-                e(o["primary_gate"]) + e(stats) + "<br>" + issues + "</li>")
+                e(o["primary_gate"]) + e(stats) + "<br>" + issues +
+                issue_delta + "</li>")
         cards.append(
             '<article><h2><a target="_blank" rel="noopener noreferrer" href="' +
             e(item["url"]) + '">' + e(item["latest_sample_priority"]) +
@@ -445,6 +480,9 @@ def html_content(report):
             str(item["total_source_snapshots"]) + " · HEAD-wissels: " +
             str(item["observed_head_changes"]) +
             " · Gatewissels: " + str(item["observed_gate_changes"]) +
+            " · Issuekoppelingen nieuw/afwezig: " +
+            str(item["issue_links_added_between_saved_observations"]) + "/" +
+            str(item["issue_links_absent_between_saved_observations"]) +
             " · Niet-vergelijkbare HEAD-receipts: " +
             str(item["incomparable_receipt_observation_pairs"]) +
             "</p><p><strong>" + e(item["human_next_action"]) +
