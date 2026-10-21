@@ -77,3 +77,24 @@ en een expliciet operatorbericht; oude lokale Attention-status wordt
 niet als opgelost gemarkeerd. De backend blijft de werkelijke
 autorisatie- en transactiebeslissing nemen; deze bronwijziging voert
 zelf geen queue-mutatie, workerclaim of automatische resume uit.
+
+
+## Brongebonden levering van de herstelknoppen
+
+Het blokkadepaneel gebruikt wijzigingen in `public/app.js` en
+`public/style.css`. De startpagina op deze PR verwijst daarom naar
+het **exacte** Git-blobfragment van beide assets:
+
+- `app.js`: `afd3b464a8ea` — bevat de strikte
+  `resumed=true` / `status=queued` / exact-`queue_id` afhandeling.
+- `style.css`: `11567f347b38` — bevat de bijbehorende
+  Dependency holds- en Attention-presentatie.
+
+De ongewijzigde `enhancements.js` en `enhancements.css` behoudt de
+reeds bestaande referenties. Deze versies voorkomen dat dezelfde
+HTML-route een oude, elders gecachete dashboard-JS/CSS URL blijft
+gebruiken. Bij een volgende UI-bronwijziging **moet** de versiepin
+opnieuw overeenkomen met de nieuwe blob. Browsercache-headerbeleid,
+exact geleverde productiebytes en daadwerkelijke activering blijven
+onder de bestaande UI-owner en geautoriseerde releasegates; de
+bronverwijzing is niet automatisch bewijs van live deployment.
