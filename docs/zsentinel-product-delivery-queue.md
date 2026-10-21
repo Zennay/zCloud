@@ -1136,3 +1136,23 @@ verplichte exacte-head CI, onafhankelijke review, protected main en
 geautoriseerde release vereist. Geen nieuwe QA-suite geschreven of
 handmatig uitgevoerd; geen active worker, producer, SQLite, PR-head van
 een andere eigenaar of VPS-runner gewijzigd.
+
+
+### 21 oktober · Leesbare Nederlandse eigenaaracties
+
+In zowel de offline HTML als de privé Markdown-overdracht zijn de
+interne, brongebonden `operator_next_step`-codes omgezet naar vaste
+**Nederlandse werkopdrachten**: eerst bestaande claims controleren,
+claimhistorie onderzoeken zonder retry, of bij de bevoegde eigenaar
+Notion/lease/scope/capaciteit controleren vóór toewijzing. De machinecodes
+worden wel strikt op hun originele enum-contract gevalideerd voordat er
+een kaart wordt getoond; onbekende of onverwachte opdrachten worden
+niet dynamisch gerenderd. Diep ongeldige bron-JSON wordt eveneens met
+een vaste foutmelding geweigerd, zonder ruwe invoer, bestandsnaam of
+exception-trace te tonen.
+
+De uitvoer blijft uitsluitend een lokale, private operatorbriefing.
+Actieve eigenaren, taakstatus, scheduler en queue-writers zijn niet
+veranderd. De afgeschermde compacte API is opt-in, oude callers
+blijven de bestaande volledige respons ontvangen. Bron in bestaande
+PR #1536; niet op `main` of live geverifieerd.
