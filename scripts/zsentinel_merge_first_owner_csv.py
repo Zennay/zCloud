@@ -84,8 +84,13 @@ def prepare_rows(view, board_sha, saved):
         archive_refs = {p["pr_url"]: p for p in
                         current["linked_existing_prs"]} if current else {}
         refs = set(card["open_pr_candidates"]) | set(archive_refs)
-        if len(refs) > 15:
-            raise ValueError("more than fifteen source references for one issue")
+        # The issue-first PR source is independently bounded to at most
+        # 600 distinct saved PR identities. An issue can legitimately
+        # reference more than twelve historical PRs: do not silently drop
+        # them or reject a valid P0 owner worklist because of a UI-only
+        # twelve-card display limit. The whole output stays capped below.
+        if len(refs) > 600:
+            raise ValueError("unbounded existing PR references for one issue")
         if not refs:
             unknown.append(card)
         # Board "project" is an internal slug (e.g. cloud), not the
@@ -220,6 +225,8 @@ def prepare_rows(view, board_sha, saved):
                                row["pr_url"] or row["source_issue_urls"]))
     if len(rows) > 900:
         raise ValueError("source-only PR worklist exceeds bounded inventory")
+    # No pagination or truncation in the machine-readable owner handoff:
+    # either preserve all admitted candidates, or refuse before writing.
     return rows
 
 
