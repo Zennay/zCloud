@@ -129,12 +129,16 @@ owner-private directory, symlink-denying `0600` save implementation.
 Previous files must be regular, current-user-owned, private, bounded
 (64 KiB), schema-exact, count-consistent, and strictly **older** than
 the current observation. Each baseline carries an opaque SHA256 key
-derived from the observing machine name and canonical local SQLite
-source path; the original path/hostname are never exported. A different
-machine/database path therefore produces **NOT_COMPARABLE_DIFFERENT_LOCAL_SOURCE**,
-rather than a misleading cross-source count delta. This source identifier
-is only an equality hint, not cryptographic authentication, and the
-user must still ensure the same actual database has not been replaced.
+derived from the observing machine name, canonical local SQLite
+source path and local file device/inode identity; the original file path,
+hostname and inode are never exported. A different machine/database path
+**or a replaced SQLite database at the same path** therefore produces
+**NOT_COMPARABLE_DIFFERENT_LOCAL_SOURCE** rather than a misleading trend.
+A source replacement during the observation is rejected before output.
+This source identifier remains an equality hint, not cryptographic
+authentication; a process with full filesystem control could still
+forge an identity or alter its contents. Normal writes in place do not
+change the underlying device/inode fingerprint.
 Incomplete **portfolio aggregate** coverage, distinct local sources or
 a baseline older than seven days yields an explicit **NOT_COMPARABLE**
 state and no per-project deltas; no falsely precise zeros are emitted. Do not
