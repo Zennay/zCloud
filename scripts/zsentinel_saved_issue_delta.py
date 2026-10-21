@@ -76,6 +76,7 @@ def issue_difference(older, newer, issue_url):
     not_seen = sorted(set(prior) - set(latest))
     changed = []
     stable = 0
+    incomparable_issue_link_provenance = []
     def source_at(ref, sources, field):
         idx = ref[field]
         if type(idx) is not int or not 1 <= idx <= len(sources):
@@ -92,6 +93,22 @@ def issue_difference(older, newer, issue_url):
     for url in sorted(set(prior) & set(latest)):
         p, q = prior[url], latest[url]
         diff = [name for field, name in fields if p.get(field) != q.get(field)]
+        # Newer private ZIPs preserve source identity at the last actual
+        # issue-link observation. Missing fields in older ZIPs are UNKNOWN,
+        # not proof that the historical PR source actually changed.
+        issue_link_fields = (
+            ("head_at_last_issue_link", "HEAD when issue link last observed"),
+            ("gate_at_last_issue_link", "gate when issue link last observed"),
+            ("priority_at_last_issue_link", "priority when issue link last observed"),
+            ("pr_observed_after_link_absent", "PR observed after issue link disappeared"),
+        )
+        missing = [name for field, name in issue_link_fields
+                   if field not in p or field not in q]
+        if missing:
+            incomparable_issue_link_provenance.append((url, missing))
+        else:
+            diff.extend(name for field, name in issue_link_fields
+                        if p[field] != q[field])
         if (source_at(p, old_sources, "issue_ref_last_seen_snapshot") !=
                 source_at(q, new_sources, "issue_ref_last_seen_snapshot")):
             diff.append("last issue-link observation")
@@ -112,6 +129,8 @@ def issue_difference(older, newer, issue_url):
         "issue_not_in_old_sample": before is None,
         "first_seen": first_seen, "no_longer_seen": not_seen,
         "changed": changed, "stable": stable,
+        "incomparable_issue_link_provenance": incomparable_issue_link_provenance,
+        "issue_link_provenance_not_live_authority": True,
     }
 
 
@@ -140,6 +159,9 @@ def human_markdown(change):
         "- PR links with source evidence changes: " +
           str(len(change["changed"])),
         "- PR links without compared source change: " + str(change["stable"]),
+        "- PR links with unavailable old/new issue-link provenance: " +
+          str(len(change["incomparable_issue_link_provenance"])) +
+          " (UNKNOWN, not evidence of unchanged links)",
         "",
     ]
     for heading, key in (
@@ -157,6 +179,13 @@ def human_markdown(change):
             lines.append("- " + url + ": " + ", ".join(reasons))
     else:
         lines.append("- No changes visible within comparable saved sources")
+    lines += ["", "## Not-comparable historical issue-link provenance", ""]
+    if change["incomparable_issue_link_provenance"]:
+        for url, fields in change["incomparable_issue_link_provenance"]:
+            lines.append("- " + url + ": " + ", ".join(fields) +
+                         " (SOURCE UNKNOWN, not closed or merged)")
+    else:
+        lines.append("- Comparable issue-link provenance in both saved sources")
     lines += [
         "", "## Required human release-first action", "",
         "Verify the actual GitHub issue, every relevant existing PR and current "
@@ -182,6 +211,13 @@ def human_html(change):
             '" target="_blank" rel="noopener noreferrer">' +
             e(value) + '</a></li>'
             for value in values)
+    unknown_provenance = "".join(
+        '<li><a href="' + e(url) +
+        '" target="_blank" rel="noopener noreferrer">' + e(url) +
+        '</a> · ' + e(", ".join(fields)) +
+        ' (ONBEKEND, geen geleverd bewijs)</li>'
+        for url, fields in change["incomparable_issue_link_provenance"]
+    ) or "<li>Geen ontbrekende issue-link bronvelden waargenomen.</li>"
     altered = "".join(
         '<li><a href="' + e(url) +
         '" target="_blank" rel="noopener noreferrer">' + e(url) +
@@ -234,6 +270,8 @@ links(change["first_seen"]) + """</ol></section>
 links(change["no_longer_seen"]) + """</ol></section>
 <section><h2>Brongegevens veranderd</h2><ol>""" +
 altered + """</ol></section>
+<section><h2>Issue-link provenance niet vergelijkbaar</h2><ol>""" +
+unknown_provenance + """</ol></section>
 <footer>Geen fetch, workerclaim, CI-dispatch, PR-merge of deploy door dit
 statische dossier. Verplichte toestemming, reviewers en CI blijven gelden.
 </footer></main></body></html>""")
