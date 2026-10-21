@@ -60,10 +60,16 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
 
         if (permissionGranted) {
             val manager = applicationContext.getSystemService(NotificationManager::class.java)
-            // A dedicated user-controllable blocker channel; regular updates stay silent.
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Critical project blockers", NotificationManager.IMPORTANCE_HIGH)
-            )
+            // Notification channels and the channel-bound Builder exist only on API 26+.
+            // Keep the pre-O fallback so the existing minimum-device range does not crash.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        CHANNEL, "Critical project blockers",
+                        NotificationManager.IMPORTANCE_HIGH
+                    )
+                )
+            }
             try {
                 urgent.asSequence()
                 .filter { IncidentSnoozeStore.episodeKey(it) !in delivered }
@@ -91,7 +97,12 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                 // generic incident summary on a very small notification face.
                 val text = alert.action?.takeIf { it.isNotBlank() }
                     ?: alert.message.ifBlank { "Open zCloud voor de oorzaak en vervolgstap." }
-                val notification = Notification.Builder(applicationContext, CHANNEL)
+                val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    Notification.Builder(applicationContext, CHANNEL)
+                } else {
+                    Notification.Builder(applicationContext)
+                }
+                val notification = builder
                     .setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("${alert.project?.uppercase() ?: "zCloud"}: ${alert.title}")
                     .setContentText(text)
