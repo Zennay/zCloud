@@ -33,6 +33,8 @@ def _unknown(reason, count, stamps=None):
         "source_window_coverage": [], "same_queue_origin_verified": False,
         "source_live_verified": False, "total_events_observed": None,
         "visible_events": [], "events_truncated": False,
+        "repeated_hold_candidates": [], "repeated_hold_total": None,
+        "repeated_hold_candidates_truncated": False,
         "task_recovered_verified": False, "owner_claim_verified": False,
         "claim_authorized": False, "dispatch_authorized": False,
         "merge_authorized": False, "deploy_authorized": False,
@@ -117,6 +119,53 @@ def build_history(snapshots, *, now=None, allow_historical=False):
                 "next_owner_action": ACTIONS[kind],
                 "claim_authorized": False, "dispatch_authorized": False,
             })
+    # A repeated source HOLD is operationally relevant, but is not proof
+    # that a worker was continuously blocked between observations. Require
+    # the same task AND exact reason in at least three consecutive snapshots.
+    consecutive = {}
+    for offset, (window, _) in enumerate(windows):
+        observed = set()
+        for key, row in window["rows"].items():
+            if row["state"] == "advisory_suggestion":
+                continue
+            observed.add(key)
+            prior = consecutive.get(key)
+            if (prior is not None and
+                    prior["last_window"] == offset and
+                    prior["hold_reason"] == row["reason"]):
+                prior["count"] += 1
+                prior["last_window"] = offset + 1
+                prior["last_observed_utc"] = stamps[offset]
+                prior["priority"] = row["priority"]
+            else:
+                consecutive[key] = {
+                    "project_id": key[0], "task_id": key[1],
+                    "priority": row["priority"],
+                    "hold_reason": row["reason"], "count": 1,
+                    "first_observed_utc": stamps[offset],
+                    "last_observed_utc": stamps[offset],
+                    "last_window": offset + 1,
+                }
+        # A task missing from this bounded slice cannot have a proven
+        # uninterrupted run. Reset it without calling the issue resolved.
+        for key in list(consecutive):
+            if key not in observed:
+                consecutive.pop(key)
+    persistent = [
+        {
+            "project_id": row["project_id"], "task_id": row["task_id"],
+            "priority": row["priority"], "hold_reason": row["hold_reason"],
+            "consecutive_source_observations": row["count"],
+            "first_observed_utc": row["first_observed_utc"],
+            "last_observed_utc": row["last_observed_utc"],
+            "next_owner_action": "Controleer exacte eigenaar, lease en HOLD-bron; geen retry of claim.",
+            "claim_authorized": False, "dispatch_authorized": False,
+        }
+        for row in consecutive.values() if row["count"] >= 3
+    ]
+    persistent.sort(key=lambda e: (
+        PRIORITY[e["priority"]], -e["consecutive_source_observations"],
+        e["project_id"], e["task_id"]))
     # Strict priority first, then newest verified observation, then
     # changed route/unknown disappearance/reappearance and stable identity.
     events.sort(key=lambda e: (
@@ -133,6 +182,9 @@ def build_history(snapshots, *, now=None, allow_historical=False):
         "total_events_observed": len(events),
         "visible_events": events[:MAX_VISIBLE],
         "events_truncated": len(events) > MAX_VISIBLE,
+        "repeated_hold_candidates": persistent[:12],
+        "repeated_hold_total": len(persistent),
+        "repeated_hold_candidates_truncated": len(persistent) > 12,
         "task_recovered_verified": False, "owner_claim_verified": False,
         "claim_authorized": False, "dispatch_authorized": False,
         "merge_authorized": False, "deploy_authorized": False,
@@ -156,6 +208,21 @@ def _admit(report):
             or type(report.get("visible_events")) is not list
             or len(report["visible_events"]) > MAX_VISIBLE):
         raise ValueError("untrusted routing history owner report")
+    repeated = report.get("repeated_hold_candidates")
+    if (type(repeated) is not list or len(repeated) > 12
+            or type(report.get("repeated_hold_candidates_truncated")) is not bool):
+        raise ValueError("unbounded repeated HOLD source")
+    for row in repeated:
+        if (type(row) is not dict or row.get("priority") not in PRIORITY
+                or type(row.get("project_id")) is not str
+                or not IDENT.fullmatch(row["project_id"])
+                or type(row.get("task_id")) is not str
+                or not IDENT.fullmatch(row["task_id"])
+                or type(row.get("consecutive_source_observations")) is not int
+                or not 3 <= row["consecutive_source_observations"] <= MAX_WINDOWS
+                or row.get("claim_authorized") is not False
+                or row.get("dispatch_authorized") is not False):
+            raise ValueError("invalid repeated owner HOLD evidence")
     for event in report["visible_events"]:
         if (type(event) is not dict
                 or event.get("kind") not in KINDS
@@ -192,6 +259,14 @@ def owner_csv(report):
                          "", "", "Original sources must be rechecked; no action authorized.",
                          "false", "false", "false", "false", "false"])
         return output.getvalue()
+    for row in source["repeated_hold_candidates"]:
+        writer.writerow([
+            source["coverage"], row["last_observed_utc"], "",
+            row["consecutive_source_observations"], row["priority"],
+            row["project_id"], row["task_id"], "REPEATED_HOLD",
+            row["hold_reason"], row["hold_reason"], row["next_owner_action"],
+            "false", "false", "false", "false", "false",
+        ])
     for event in source["visible_events"]:
         writer.writerow([
             source["coverage"], event["source_after_utc"],
@@ -224,6 +299,12 @@ def owner_text(report):
                  " · bronvoorbeelden blijven beperkt.")
     if source["coverage"] == "historical_sampled_series":
         lines.append("HISTORISCHE REPLAY: geen actuele claim/runner/gate bewezen.")
+    for row in source["repeated_hold_candidates"]:
+        lines.append("- HERHAALDE HOLD " + row["priority"] + " " +
+                     row["project_id"] + "/" + row["task_id"] + " · " +
+                     str(row["consecutive_source_observations"]) +
+                     " opeenvolgende bronmomenten · " + row["hold_reason"] +
+                     " · eigenaar beoordeelt exact opnieuw; GEEN retry.")
     if any(not row["routing_inventory_complete"]
            for row in source["source_window_coverage"]):
         lines.append("Een of meer bronvensters zijn incompleet of afgekapt.")
@@ -247,6 +328,16 @@ def owner_html(report):
                 '<p>' + escape(owner_text(source).splitlines()[-1]) +
                 '</p></section>')
     cards = []
+    for held in source["repeated_hold_candidates"]:
+        cards.append(
+            '<article class="panel warn"><span class="tag">HERHAALDE HOLD</span><h3>' +
+            escape(held["priority"]) + ' · ' + escape(held["project_id"]) +
+            '/' + escape(held["task_id"]) + '</h3><p>Probleem: ' +
+            escape(held["hold_reason"]) + ' · ' +
+            str(held["consecutive_source_observations"]) +
+            ' opeenvolgende bronwaarnemingen; geen continu herstelbewijs.</p>'
+            '<p>Actie: ' + escape(held["next_owner_action"]) +
+            '</p><p>Geen claim, automatische retry of vrijgave.</p></article>')
     for e in source["visible_events"]:
         before = e["before_reason"] or "niet in vorig bronvenster"
         after = e["after_reason"] or "niet opnieuw gezien; NIET opgelost"
