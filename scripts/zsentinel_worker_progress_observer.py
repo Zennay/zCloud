@@ -543,7 +543,24 @@ def operator_text(source):
             or source.get("actions_performed") is not False
             or source.get("worker_resumed_verified") is not False):
         raise ValueError("invalid read-only worker source")
-    lines = ["WORKER VOORTGANG · read-only eventbewijs; GEEN bewezen product-/claimhervatting."]
+    observed = source.get("observed_at_utc")
+    coverage = source.get("coverage")
+    projects = source.get("selected_projects")
+    if (type(observed) is not str or len(observed) > 45
+            or coverage not in ("bounded_partial_or_no_events", "selected_project_event_slots_only")
+            or type(projects) is not list or not 1 <= len(projects) <= MAX_PROJECTS
+            or len(set(projects)) != len(projects)
+            or any(type(pid) is not str or not PROJECT.fullmatch(pid) for pid in projects)):
+        raise ValueError("invalid worker source timestamp/coverage")
+    try:
+        moment = datetime.fromisoformat(observed.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("invalid worker source timestamp") from exc
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise ValueError("worker source timestamp must have timezone")
+    lines = ["WORKER VOORTGANG · bronmoment " + observed +
+             " · dekking " + coverage + " · projecten " + ",".join(projects) +
+             " · read-only eventbewijs; GEEN bewezen product-/claimhervatting."]
     for row in source.get("owner_followup_candidates", []):
         lines.append(
             f"  PRIORITEIT eigenaarcontrole · {row['project_id']} worker {row['worker_slot']}"
@@ -608,6 +625,21 @@ def worker_progress_html(source):
             or len(source["entries"]) > MAX_PROJECTS * MAX_SLOTS):
         raise ValueError("untrusted browser worker event evidence")
     from html import escape
+    observed = source.get("observed_at_utc")
+    coverage = source.get("coverage")
+    projects = source.get("selected_projects")
+    if (type(observed) is not str or len(observed) > 45
+            or coverage not in ("bounded_partial_or_no_events", "selected_project_event_slots_only")
+            or type(projects) is not list or not 1 <= len(projects) <= MAX_PROJECTS
+            or len(set(projects)) != len(projects)
+            or any(type(pid) is not str or not PROJECT.fullmatch(pid) for pid in projects)):
+        raise ValueError("invalid worker source timestamp/coverage")
+    try:
+        moment = datetime.fromisoformat(observed.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("invalid worker source timestamp") from exc
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise ValueError("worker source timestamp must have timezone")
     # Archived v1 decisions may predate the additive chronology fields.
     # Preserve their historical cards while clearly marking newer evidence
     # UNKNOWN. Never interpret missing inbox data as zero problems.
@@ -861,6 +893,8 @@ def worker_progress_html(source):
     return (
         '<section aria-label="Read-only browserworker voortgang">'
         '<h2>Browserworkers · werkelijk eventbewijs</h2>'
+        '<p>Bronmoment: ' + escape(observed) + ' · dekking: ' + escape(coverage) +
+        ' · projecten: ' + escape(", ".join(projects)) + '.</p>'
         '<p>Dringende eigenaarcontrole eerst: gepauzeerd met claim, herhaalde'
         ' actuele browserblokkades en ontbreken van voortgang. Iedere worker'
         ' bevat maximaal 12 recente metadata-events en een begrensde'
