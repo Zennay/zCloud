@@ -515,11 +515,16 @@ observed. If the complete recent issue set is already in the inventory,
 extra title searches are skipped.
 
 The JSON, Markdown and HTML report the provider's `total_count`,
-`incomplete_results`, actual source queries/cutoffs, recent coverage
-and older priority-recall coverage separately. Incomplete search,
-truncated display, an inaccessible source or a change between pages
-never proves the absence of P0 incidents or permits duplicate repair
-PR creation.
+`incomplete_results`, actual source queries/cutoffs, recent coverage,
+older P0/P1 recall coverage, and how each issue entered the inbox.
+Repeated issue URLs across source windows are deduplicated. When a
+repeated issue has inconsistent timestamps or priority signals, the
+issue's derived urgency is set to UNKNOWN and a source-drift warning
+is shown; when the repository's reported issue count changes across
+recent pages, overall coverage is also marked partial/UNKNOWN.
+Incomplete search, truncated display, inaccessible source or changing
+issue records never prove the absence of P0 incidents or permit
+duplicate repair PR creation.
 
 Only explicit `P0`–`P3` or `priority:p0`–`priority:p3`
 (and slash variants) GitHub labels establish the **advisory** source
