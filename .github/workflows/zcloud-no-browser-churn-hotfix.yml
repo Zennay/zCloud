@@ -177,8 +177,63 @@ jobs:
           final_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$final_main"
           test "$final_main" = "$GITHUB_SHA"
-          sudo -n install -D -m 0755 scripts/zcloud_worker_watchdog.py "$live"
-          sudo -n cmp scripts/zcloud_worker_watchdog.py "$live"
+          # Stage the approved executable on the target filesystem as root.
+          # Direct `install "$live"` truncates an existing executable before
+          # the write completes. An active watchdog could observe partial code.
+          # The final rename is same-filesystem and therefore atomic.
+          staged=""
+          installed=0
+          was_installed=0
+          if test -f "$live"; then was_installed=1; fi
+          cleanup_watchdog_install() {
+            rc=$?
+            if test "$rc" -ne 0 && test "$installed" -eq 1; then
+              # Do not undo a concurrent owner's change to the installed file.
+              if sudo -n cmp -s -- scripts/zcloud_worker_watchdog.py "$live"; then
+                if test "$was_installed" -eq 1 && test -f "$backup"; then
+                  restore=""
+                  if restore="$(sudo -n mktemp /usr/local/sbin/.zcloud-watchdog.restore.XXXXXXXX)" &&
+                     sudo -n install -m 0755 -- "$backup" "$restore" &&
+                     sudo -n mv -f -- "$restore" "$live"; then
+                    echo "::warning::Previous standalone watchdog restored after failed install."
+                  else
+                    echo "::error::Watchdog rollback failed; retain private backup for owner restoration."
+                  fi
+                  if test -n "$restore"; then sudo -n rm -f -- "$restore" || true; fi
+                elif test "$was_installed" -eq 0; then
+                  sudo -n rm -f -- "$live" || echo "::error::Cannot undo newly created watchdog."
+                fi
+              else
+                echo "::error::Standalone watchdog changed since install; preserving owner work and backup."
+              fi
+            fi
+            if test -n "$staged"; then sudo -n rm -f -- "$staged" || true; fi
+          }
+          trap cleanup_watchdog_install EXIT
+          staged="$(sudo -n mktemp /usr/local/sbin/.zcloud-watchdog.new.XXXXXXXX)"
+          sudo -n install -m 0755 -- scripts/zcloud_worker_watchdog.py "$staged"
+          sudo -n cmp -- scripts/zcloud_worker_watchdog.py "$staged"
+          # Source may advance while a queued live writer prepares a new file.
+          final_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$final_main"
+          test "$final_main" = "$GITHUB_SHA"
+          # A concurrently changing owner path must not be overwritten.
+          if test -L "$live" || test -L "${live%/*}"; then
+            echo "::error::Standalone watchdog target became a symlink."
+            exit 1
+          fi
+          if test "$was_installed" -eq 1; then
+            if ! cmp -s -- "$backup" "$live"; then
+              echo "::error::Standalone watchdog changed while staged; owner bytes preserved."
+              exit 1
+            fi
+          elif test -e "$live" || test -L "$live"; then
+            echo "::error::Standalone watchdog appeared while staged; owner bytes preserved."
+            exit 1
+          fi
+          sudo -n mv -f -- "$staged" "$live"
+          installed=1
+          sudo -n cmp -- scripts/zcloud_worker_watchdog.py "$live"
           echo "LIVE_WATCHDOG_NO_BROWSER_RESTART=1"
           python3 scripts/zsentinel_release_receipt.py --component watchdog --outcome disk-installed
           echo "EXISTING_TABS_AND_FIREFOX_PROCESSES_UNTOUCHED=1"
