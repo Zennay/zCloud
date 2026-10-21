@@ -698,7 +698,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
              if item["coverage"] == "partial"
              else "afgerond binnen bronvenster")
             for item in notion_windows
-        ) + ". GEEN bewijs van actieve lease, claimvrijgave of volledige queue.</p>'
+        ) + ". GEEN bewijs van actieve lease, claimvrijgave of volledige queue.</p>"
     )
     coverage = (
         "Huidige wachtrijmomentopname is volledig binnen de observerlimiet; "
