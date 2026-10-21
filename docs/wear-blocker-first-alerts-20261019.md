@@ -129,3 +129,9 @@ De huidige server schrijft `time` als `datetime.now(timezone.utc).isoformat()` e
 In zowel `AlertWorker` als de Compose-incidentkaarten wordt **eerst** op urgentie en waarnemingstijd gesorteerd en **dan** per canoniek project/incident gededupliceerd. Een vroege oude rij met hetzelfde bron-ID kan daardoor niet langer een later, urgenter actueel incident uit dezelfde feed verbergen. Episodes uit verschillende projecten blijven apart en hun oude ongescopeerde snooze/receipt wordt niet geërfd.
 
 Deze werkzaamheden staan alleen als productbron op de bestaande [PR #1561](https://github.com/Zennay/zCloud/pull/1561); geen nieuwe tests of QA-workflows, geen signing, device-install, serveraanpassing, worker/lease-ingreep, main-merge of live-acceptatie. Alleen de bestaande CI-, review- en releasegates kunnen integratie en uitrol toelaten.
+
+### Snel herstellen van verouderde waarneming op het horloge
+
+De bestaande gele kaart **GEGEVENS VEROUDERD** heeft nu een direct aanraakbare actie **Ververs bron ›**. De actie vraagt uitsluitend een nieuwe reguliere `/api/v1/watch`-snapshot op via de bestaande repository en brengt de gebruiker terug naar de werkelijke huidige incidentstatus; de kaart blijft verouderd zolang de server oude of ongeldige tijdstempels levert. Er is geen tweede achtergrondpoller, nieuwe notificatie, servererkenning, werkerslot, claim, CI-trigger of herstelautoriteit. Dezelfde refresh was eerder alleen bovenaan het lange horlogescherm bereikbaar.
+
+Dit is één productpad met de nieuwe fail-closed tijdcontrole en de laatste-episode-selectie op bestaande [PR #1561](https://github.com/Zennay/zCloud/pull/1561). Broncommits zijn geen main-merge, Android-build, ondertekende release of live device-acceptatie.
