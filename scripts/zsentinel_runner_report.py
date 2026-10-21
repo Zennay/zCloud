@@ -928,6 +928,15 @@ def render_timeline_footprint(summary):
                         item["result"] + " " + str(item["sample_count"]) + "×"
                         for item in entry["failure_results"]
                     )) + " (geen aantal afzonderlijke crashes).</li>")
+    for entry in summary.get("user_failed_observations", [])[:20]:
+        rows.append("<li><strong>user-systemd / " + escape(entry["unit"]) +
+                    "</strong>: " + str(entry["failed_samples"]) + " van " +
+                    str(entry["seen_samples"]) + " waarnemingen met failed; " +
+                    "laatst gezien: " + escape(entry["last_observed_state"]) +
+                    "; systemd-oorzaak: " + escape(", ".join(
+                        item["result"] + " " + str(item["sample_count"]) + "×"
+                        for item in entry["failure_results"]
+                    )) + ". Dit zijn geen afzonderlijke crashes.</li>")
     failed_html = "".join(rows) or (
         "<li>Geen failed-status in waargenomen runnerregels; dit is geen "
         "bewijs dat alle runners gezond zijn.</li>")
@@ -942,7 +951,9 @@ def render_timeline_footprint(summary):
         "<section class='panel'><h2>Aanhoudende blokkades in het bronvenster</h2>"
         "<p><strong>" + str(samples) + " privémetingen</strong> · "
         + str(summary["incomplete_service_samples"]) + " gedeeltelijke "
-        "servicelijsten · " + str(summary["unknown_capacity_samples"])
+        "systeemlijsten · " + str(summary.get("incomplete_user_service_samples", samples))
+        + " gedeeltelijke/onbekende user-lijsten · "
+        + str(summary["unknown_capacity_samples"])
         + " onvolledige capaciteitsmetingen</p>"
         "<p><strong>Druk waargenomen:</strong> hoge swap "
         + str(summary["swap_high_samples"]) + "× · weinig rootruimte "
@@ -951,7 +962,8 @@ def render_timeline_footprint(summary):
         "Dit zijn meetmomenten, geen minuten onder druk.</p>"
         "<p><strong>Laatste bron:</strong> " +
         str(len(summary.get("latest_failed_services", []))) +
-        " failed-service(s) waargenomen; hostdruk " +
+        " system en " + str(len(summary.get("latest_user_failed_services", []))) +
+        " user failed-service(s) waargenomen; hostdruk " +
         ("hoog" if summary.get("latest_pressure_high") is True else
          "niet hoog in waargenomen bronnen" if summary.get("latest_pressure_high") is False
          else "onbekend") + ". Historisch failed is niet automatisch actueel P0.</p>"
