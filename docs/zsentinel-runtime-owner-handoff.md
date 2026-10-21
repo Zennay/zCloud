@@ -578,17 +578,21 @@ afzonderlijke CSV-werkbak maken. Voorbeeld:
 ```sh
 python3 scripts/zsentinel_portfolio_overview.py \
   --database /pad/naar/bestaande-zcloud.sqlite \
-  --show-owner-handoff \
+  --show-owner-handoff --format html \
+  --output /private/zsentinel-portfolio.html \
   --owner-handoff-output /private/zsentinel-owner-actions.csv
 ```
 
-De extra uitvoer bevat maximaal de bestaande begrensde prioritaire kaarten, hun
-bronmoment en brondekking, project/prioriteit, menselijke volgende stap,
-canonieke issue-/PR-links en eventueel de reeds waargenomen exacte GitHub-job
-en commit. De CSV is UTF-8 met BOM, met formuleprefixbeveiliging en zichtbare
-Unicode-controlmarkeringen; kolommen zijn stabiel en standaard CSV-escaping
-blijft actief. Zonder actiekaarten wordt een metadataregel geëxporteerd in
-plaats van een misleidend leeg bestand.
+De extra uitvoer bevat maximaal de bestaande begrensde prioritaire kaarten
+én afzonderlijke historische hercontrolekaarten (niet als actuele incidenten
+gemarkeerd), hun bronmoment en brondekking, project/prioriteit, menselijke
+volgende stap, canonieke issue-/PR-links en eventueel de reeds waargenomen
+exacte GitHub-job en commit. Het schema vermeldt expliciet aantallen,
+afkapping, onvolledige brondekking en historische hercontroles. De CSV is UTF-8
+met BOM, met formuleprefixbeveiliging en zichtbare Unicode-controlmarkeringen;
+kolommen zijn stabiel en standaard CSV-escaping blijft actief. Zonder actuele
+of historische kaarten wordt een metadataregel geëxporteerd in plaats van een
+misleidend leeg bestand.
 
 `--owner-handoff-output` vereist `--show-owner-handoff`, een nieuw `.csv`-pad
 en een andere bestemming dan input-, historie-, cursor-, ledger- en andere
