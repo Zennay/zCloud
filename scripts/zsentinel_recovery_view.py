@@ -968,7 +968,18 @@ def html_view(decision, registry=None):
     if held is not None:
         examples = held.get("examples") if type(held) is dict else None
         coverage = held.get("coverage", "incomplete_or_stale") if type(held) is dict else None
+        allowed_coverage_reasons = {
+            "claim_inventory_not_complete", "task_inventory_not_complete",
+            "claim_observation_missing", "task_observation_missing",
+            "claim_observation_stale_or_future", "task_observation_stale_or_future",
+            "active_claim_scope_unknown",
+        }
+        coverage_reasons = (held.get("coverage_reasons", [])
+                            if type(held) is dict else None)
         if (type(held) is not dict or coverage not in ("complete", "incomplete_or_stale")
+                or type(coverage_reasons) is not list or len(coverage_reasons) > 7
+                or any(reason not in allowed_coverage_reasons for reason in coverage_reasons)
+                or (coverage == "complete" and coverage_reasons)
                 or type(held.get("count")) is not int
                 or not 0 <= held["count"] <= 250
                 or type(examples) is not list or len(examples) > 8
@@ -1022,8 +1033,23 @@ def html_view(decision, registry=None):
                 'Geen afhankelijkheid is automatisch vrijgegeven.</p>'
             )
             empty_holds = "Geen voorbeelden in de onvolledige/verouderde bron; totaal onbekend."
+        reason_labels = {
+            "claim_inventory_not_complete": "Claiminventaris is niet expliciet compleet.",
+            "task_inventory_not_complete": "Taakinventaris is niet expliciet compleet.",
+            "claim_observation_missing": "Waarneming van actieve claims ontbreekt.",
+            "task_observation_missing": "Waarneming van de taakinventaris ontbreekt.",
+            "claim_observation_stale_or_future": "Claimwaarneming is verouderd of heeft een ongeldige toekomsttijd.",
+            "task_observation_stale_or_future": "Taakwaarneming is verouderd of heeft een ongeldige toekomsttijd.",
+            "active_claim_scope_unknown": "Bestandsscope van minstens één actieve claim is onbekend.",
+        }
+        coverage_notes = (
+            '<ul class="muted">' + ''.join(
+                '<li>' + phrase(reason_labels[reason], 180) + '</li>'
+                for reason in coverage_reasons) + '</ul>'
+            if coverage_reasons else ''
+        )
         held_panel = (
-            '<section><h2>' + hold_heading + '</h2>' + hold_status +
+            '<section><h2>' + hold_heading + '</h2>' + hold_status + coverage_notes +
             section(hold_cards, empty_holds) +
             ('<p class="muted">Niet alle HOLD-voorbeelden getoond.</p>'
              if held["samples_truncated"] else '') + '</section>'
