@@ -318,7 +318,10 @@ def suggested_actions(packet):
     }
     def display_rank(item):
         identifier = item["id"]
-        if identifier in protected:
+        if identifier in protected or (
+            identifier == "host-pressure-owner-review"
+            and item["severity"] == "urgent"
+        ):
             return 0
         if item["severity"] == "urgent":
             return 1
