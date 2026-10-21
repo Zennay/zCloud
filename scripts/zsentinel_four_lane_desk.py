@@ -105,13 +105,19 @@ def psi_html_table(psi):
             if type(value) not in (int, float) or not 0 <= value <= 100:
                 return "Onbekend"
             return f"{value:.2f}%"
+        contrasts = (psi.get("window_contrast") or {}).get(key) or {}
+        delta = contrasts.get("some_delta_pp")
+        short_long = (
+            f"{delta:+.2f} procentpunt" if type(delta) in (int, float)
+            and -100 <= delta <= 100 else "Onbekend"
+        )
         rows.append(
             "<tr><th scope='row'>" + label + "</th><td>"
             + cell(some.get("avg10_pct")) + "</td><td>"
             + cell(some.get("avg60_pct")) + "</td><td>"
             + cell(some.get("avg300_pct")) + "</td><td>"
             + (cell(full.get("avg60_pct")) if key != "cpu" else "Niet gebruikt")
-            + "</td></tr>"
+            + "</td><td>" + short_long + "</td></tr>"
         )
     return (
         "<p>Linux PSI: percentage tijd met taakvertraging. CPU-full is "
@@ -119,9 +125,12 @@ def psi_html_table(psi):
         "<div class='scroll'><table><thead><tr><th>Bron</th>"
         "<th>Deels wachtend 10s</th><th>Deels wachtend 60s</th>"
         "<th>Deels wachtend 300s</th><th>Volledig stil 60s</th>"
+        "<th>Verschil 10s - 300s</th>"
         "</tr></thead><tbody>" + "".join(rows)
         + "</tbody></table></div>"
-        "<p>Geen diagnose van een specifieke GitHub-job of proces.</p>"
+        "<p>Het vensterverschil vergelijkt overlappende gemiddelden, "
+        "geen gemeten historische verandering of toekomstige voorspelling. "
+        "Geen diagnose van een specifieke GitHub-job of proces.</p>"
     )
 
 
