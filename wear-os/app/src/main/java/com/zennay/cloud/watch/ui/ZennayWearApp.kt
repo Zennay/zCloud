@@ -230,7 +230,8 @@ private fun HomeScreen(
                           it.severity.equals("high", true) ||
                           it.severity.equals("error", true) ||
                           it.severity.equals("needs_attention", true) }
-                .distinctBy { it.id }
+                // Same source incident ID can legitimately exist in another project.
+                .distinctBy { IncidentSnoozeStore.notificationTag(it) }
                 .sortedWith(compareBy<com.zennay.cloud.watch.data.AlertItem> {
                     if (it.severity.equals("critical", true) ||
                         it.severity.equals("error", true)) 0 else 1
