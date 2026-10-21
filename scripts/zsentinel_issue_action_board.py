@@ -364,6 +364,10 @@ def build(report):
         "distinct_existing_pr_groups_observed": len(pr_groups),
         "multi_issue_existing_pr_groups_observed": sum(
             group["linked_issue_count_observed"] > 1 for group in pr_groups),
+        "pr_groups_with_inconsistent_head_receipts": sum(
+            group["source_head_receipts_consistent"] is not True for group in pr_groups),
+        "pr_groups_with_unknown_head": sum(
+            group["source_head_observed"] is None for group in pr_groups),
         "observed_action_counts": dict(sorted(totals.items())),
         "cards": cards,
         "current_claims_verified": False,
