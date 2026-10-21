@@ -15,7 +15,14 @@ twee beschrijven **alleen de beperkte steekproef**; een taak kan
 onzichtbaar zijn door een ander GitHub-/Notion-/taakvenster en is dus
 niet automatisch nieuw, opgelost, vrijgegeven of overgenomen.
 Overgangen zijn alleen bewezen tussen **opeenvolgende** bronmomenten
-waarin de taak in beide voorkomt. Alle opgeslagen bronmomenten moeten
+waarin de taak in beide voorkomt. Bij drie of meer **opeenvolgende
+waarnemingen** met dezelfde HOLD-reden voegt zSentinel bovenaan een
+`HERHAALDE HOLD`-eigenaaractie toe. Dit signaleert terugkerend vastgelopen
+P0/P1-werk (maximaal twaalf zichtbare kandidaten) zonder te beweren dat
+de taak tussendoor onafgebroken vastzat. Dezelfde herhaalde HOLDs zijn
+beschikbaar in de read-only privé-CSV. Alleen actuele, exacte eigenaar-/
+lease-/gatebronnen kunnen daarna daadwerkelijk werk vrijgeven.
+Alle opgeslagen bronmomenten moeten
 strikt oplopen (maximaal 72 uur tussen buren), dezelfde eerder
 geobserveerde opaque SQLite-queueidentiteit hebben en mogen geen
 toekomstige broninformatie bevatten. Incomplete/oude/verschillende
