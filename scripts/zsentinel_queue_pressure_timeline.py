@@ -59,6 +59,11 @@ def observed_queue(decision, source_time):
             "project_groups_complete": False, "project_groups": [],
             "claim_authorized": False,
         }
+    opaque_identity = queue.get("source_file_identity_sha256_private")
+    if (opaque_identity is not None and
+            (type(opaque_identity) is not str or
+             re.fullmatch(r"[0-9a-f]{64}", opaque_identity) is None)):
+        raise ValueError("queue source identity invalid")
     sampled = _moment(queue.get("observed_at"))
     if sampled > source_time + timedelta(minutes=2):
         raise ValueError("queue source later than its saved router decision")
@@ -114,6 +119,7 @@ def observed_queue(decision, source_time):
         "sampled_at_utc": sampled.isoformat(),
         "totals": clean,
         "sample_is_complete": sample_complete,
+        "source_file_identity_sha256_private": opaque_identity,
         "project_groups_complete": not truncated and coverage == "current",
         "project_groups": clean_groups,
         "source_fresh_when_saved": source_fresh_when_saved,
@@ -133,6 +139,9 @@ def summarize_queue_windows(source_windows):
         left, right = before["queue_pressure"], after["queue_pressure"]
         comparable = (left["coverage"] == "current"
                       and right["coverage"] == "current"
+                      and left.get("source_file_identity_sha256_private") is not None
+                      and left.get("source_file_identity_sha256_private") ==
+                          right.get("source_file_identity_sha256_private")
                       and left.get("source_fresh_when_saved") is True
                       and right.get("source_fresh_when_saved") is True)
         if not comparable:
@@ -199,8 +208,13 @@ def summarize_queue_windows(source_windows):
         if (not all(w["queue_pressure"]["coverage"] == "current"
                     and w["queue_pressure"].get("source_fresh_when_saved") is True
                     and w["queue_pressure"].get("project_groups_complete") is True
-                    and w["queue_pressure"].get("sample_is_complete") is True
+                    # High-churn display samples may be truncated even if
+                    # the authoritative totals and project groups are complete.
+                    # Do not confuse sample visibility with aggregate coverage.
                     for w in (first, middle, last))
+                or first["queue_pressure"].get("source_file_identity_sha256_private") is None
+                or len({w["queue_pressure"].get("source_file_identity_sha256_private")
+                        for w in (first, middle, last)}) != 1
                 or not times[0] < times[1] < times[2]
                 or times[2] - times[0] > timedelta(minutes=45)):
             continue

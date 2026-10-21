@@ -682,6 +682,13 @@ def queue_pressure_summary(source, now):
                 "claim_ownership_verified":False}
     if not isinstance(source, dict) or any(source.get(k) != v for k,v in required.items()):
         raise ValueError("untrusted or authorizing queue pressure source")
+    # Preserve opaque same-database source provenance across saved decisions.
+    # A different SQLite inode/host must never be interpreted as one queue.
+    queue_source_identity = source.get("source_file_identity_sha256_private")
+    if (queue_source_identity is not None and
+            (type(queue_source_identity) is not str or
+             re.fullmatch(r"[0-9a-f]{64}", queue_source_identity) is None)):
+        raise ValueError("invalid opaque queue database source identity")
     observed = timestamp(source.get("observed_at_utc"), "queue_pressure.observed_at_utc")
     if observed > now + timedelta(minutes=2):
         raise ValueError("future queue pressure evidence")
@@ -773,6 +780,7 @@ def queue_pressure_summary(source, now):
                      "Inspect claim churn; attempts are NOT failures or retry permits.")
         })
     return {"coverage":coverage,"observed_at":utc_string(observed),
+            "source_file_identity_sha256_private": queue_source_identity,
             "totals":safe_totals,"samples":safe_samples if coverage=="current" else [],
             "sample_is_complete":source["sample_is_complete"],
             "project_groups":safe_groups[:18] if coverage=="current" else [],

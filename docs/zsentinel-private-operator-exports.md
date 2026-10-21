@@ -230,6 +230,25 @@ of per-projectgroepen en verwarring tussen originele observatietijd en het
 moment van latere rapportexport. De oorspronkelijke bron-UTC en
 niet-autorisatiestatus blijven bij ieder venster zichtbaar.
 
+### 21 oktober · historische bronidentiteit blijft bewaard
+
+De herstelrouter draagt nu de al door de SQLite-observer uitgegeven
+`source_file_identity_sha256_private` mee in de bestaande private queue-
+receipt. De tijdlijn vergelijkt twee of drie momentopnamen uitsluitend
+wanneer de opaak gehashte **host-, databasepad- en inodeidentiteit**
+volledig gelijk is. Verschillende databases en oudere bronnen zonder
+die identiteit blijven ONBEKEND, ook als de totalen toevallig gelijk zijn.
+De hash is niet hetzelfde als een veilige lease- of eigenaarsclaim.
+
+Belangrijk: `sample_is_complete` betekent alleen dat de selectie van
+maximaal twintig *zichtbare probleemrijen* niet is afgekapt; het zegt
+niet dat de SQLite-aggregaten onvolledig zijn. Historische
+projectgroepvergelijkingen gebruiken daarom de originele complete
+queue-inventory en de niet-afgekorte projectgroepen, niet de kleinere
+probleemrijenlijst. Bij ontbrekende projectdekking volgt geen
+persistentiesignaal. Private dashboard/Markdown-resultaten bewaren
+dezelfde bronrestricties, geen retry of claimwrite.
+
 ### 21 oktober · aanhoudende bronwaarnemingen in de queue-werkbak
 
 Bij minimaal drie strikt opeenvolgende, volledige wachtrijmetingen
