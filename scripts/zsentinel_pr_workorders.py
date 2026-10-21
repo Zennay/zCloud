@@ -190,7 +190,11 @@ def collect_workorders(board):
                 or history.get("writes_performed") is not False):
             raise ValueError("invalid private historical gate source")
         if history.get("comparison_status") == "two_bounded_observations":
-            if _timestamp(history.get("current_observed_at_utc")) != observed_at:
+            # The saved two-snapshot comparator is stamped by the initial
+            # portfolio observation. A later live gate re-read has a separate
+            # observed_at_utc. Both are legitimate but not interchangeable.
+            if (_timestamp(history.get("current_observed_at_utc")) !=
+                    _timestamp(board.get("observed_at_utc"))):
                 raise ValueError("historical PR comparison observation drift")
             for source in history["items"]:
                 if (type(source) is not dict or
