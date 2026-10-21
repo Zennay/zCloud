@@ -452,12 +452,14 @@ def classify_backlog_item(project, item):
                 if profile == "portfolio-recovery" else lanes[0])
         if profile == "portfolio-recovery":
             routing_origin = "PRODUCT_REMEDIATION_FALLBACK"
+    state = str(item.get("status") or "").strip().lower()
     if (profile == "portfolio-recovery"
-            and str(item.get("status") or "").strip().lower() in ACTIVE_STATUSES):
-        # An existing active worker owns the *persisted* canonical lane,
-        # even when title/criteria wording changes during execution.
-        # Queued work is still classified normally; a missing/legacy lane
-        # remains subject to the global active-profile HOLD downstream.
+            and (state in ACTIVE_STATUSES
+                 or (state == "queued" and item.get("worker_slot") is not None))):
+        # Existing active workers AND still-queued slot reservations own the
+        # persisted canonical lane. An edited title must not silently move
+        # their reservation while another writer is being admitted.
+        # A missing/legacy lane remains subject to global owner HOLD.
         persisted = _metadata(item).get("execution_lane")
         if isinstance(persisted, dict) and persisted.get("profile") == profile:
             lane_id = persisted.get("lane_id")
@@ -697,6 +699,10 @@ def generate_execution_lanes(project, backlog, claims=()):
         item for item in reserved_queued
         if not any(_recovery_scope_from_item(item).values())
     ]
+    untrusted_reserved_profiles = [
+        item for item in reserved_queued
+        if recovery_active_profile_mismatch(item)
+    ]
     for assigned in reserved_queued:
         lane_id = assigned["lane_id"]
         reserved_queued_lanes.add(lane_id)
@@ -753,7 +759,7 @@ def generate_execution_lanes(project, backlog, claims=()):
         if lane_id in chosen_by_lane:
             continue
         if (unknown_active_scopes or unknown_claim_scopes
-                or unknown_reserved_scopes
+                or unknown_reserved_scopes or untrusted_reserved_profiles
                 or untrusted_active_leases or mismatched_active_profiles):
             # Existing queue writers and externally supplied claims retain
             # their ownership; neither an empty scope nor a malformed scope
@@ -770,6 +776,13 @@ def generate_execution_lanes(project, backlog, claims=()):
                     "kind": "queue",
                     "reason": "active_write_scope_not_declared",
                     "ambiguous_active_count": len(unknown_active_scopes),
+                    "overlap": {"capabilities": [], "files": []},
+                })
+            if untrusted_reserved_profiles:
+                blocked_by_lane[lane_id].append({
+                    "kind": "queue",
+                    "reason": "queued_assigned_lane_provenance_untrusted",
+                    "ambiguous_reserved_count": len(untrusted_reserved_profiles),
                     "overlap": {"capabilities": [], "files": []},
                 })
             if unknown_reserved_scopes:
@@ -878,6 +891,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             "active_profile_mismatch_count": len(mismatched_active_profiles),
             "unknown_claim_scope_count": unknown_claim_scopes,
             "unknown_assigned_scope_count": len(unknown_reserved_scopes),
+            "untrusted_assigned_profile_count": len(untrusted_reserved_profiles),
             "assigned_slot_scope_conflict_count": sum(
                 entry.get("reason") == "queued_worker_slot_scope_conflict"
                 for entry in blocked_by
