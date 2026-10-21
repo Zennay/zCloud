@@ -41,6 +41,26 @@ vier bestanden, één gedeeld bronmoment en expliciete
 van eigen rapportbytes is **controleerbare integriteit binnen dit lokale
 pakket**, géén onafhankelijke hostattestatie of externe toestemming.
 
+De eigenaar kan dezelfde bundel later **volledig offline en read-only**
+controleren met:
+
+```bash
+python3 scripts/zcloud_vps_preflight.py \
+  --verify-bundle /secure/private/preflight-20261021-1
+```
+
+Dit pad leest uitsluitend de private 0700-map en de vijf vooraf bekende
+bestandsnamen met `O_NOFOLLOW`; links, niet-reguliere bestanden,
+te grote of gewijzigde bronnen, dubbele JSON-eigenschappen, afwijkende
+SHA-256/bytegroottes en inconsistente `observed_at` worden geweigerd.
+Bij overeenstemming geeft de opdracht een beperkte JSON-ontvangstbevestiging
+(`local_bundle_bytes_match_unsigned_manifest`). **Die betekent alleen dat
+de huidige lokale bestanden bij het huidige ongetekende manifest passen**:
+een aanvaller met schrijfrecht op de hele map zou ook het manifest kunnen
+aanpassen. De controle haalt géén actuele VPS-meting op, en kan dus nooit
+een release, herstart of sluiting van een blocker toestaan. Zonder
+`--verify-bundle` blijft de preflight zijn normale bronmetingen doen.
+
 Bij mislukte opslag rapporteert de CLI alleen een generieke fout zonder
 private padnamen in logs. De nieuwe opslagopties worden nooit automatisch
 geactiveerd. Een volledig bronrapport blijft uitsluitend een werkdocument
