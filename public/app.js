@@ -1120,8 +1120,10 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,old
   const previousGitHub=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
   const previousCoverage=previousGitHub.coverage.find(row=>row.project===projectId);
   const previousRows=previousGitHub.events.filter(row=>row.project===projectId);
+  // Compare only page-1 to page-1: comparing a prior older-page sample
+  // against today's newest page would falsely label every current row new.
   const comparablePrior=previousCoverage?.status==='partial_sources'
-    &&previousCoverage.staleEvidence!==true;
+    &&previousCoverage.staleEvidence!==true&&previousCoverage.page===1;
   const push=(kind,ts,url,description,branchRef=null,branchSha=null)=>{
     const parsed=Date.parse(ts||'');
     if(!Number.isFinite(parsed)||parsed>Date.now()+120000||parsed<0)return;
