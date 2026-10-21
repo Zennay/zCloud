@@ -3734,3 +3734,44 @@ held by unresolved incident dependencies, overlapping active claims, or a
 recent conflicting branch. The operator must recheck the exact source and the
 authorized gate/capacity owner before reconsidering the task. No queue/claim
 mutation, workflow dispatch, runner restart, or deploy is performed.
+
+
+## Integrated read-only worker continuity in recovery refresh
+
+`scripts/zsentinel_recovery_refresh.py` can now combine its existing exact
+GitHub run/job refresh and optional queue snapshot with indexed worker
+continuity from the existing SQLite history database. Opt in with
+`--worker-events-database <existing-history.db>` and one to three explicit,
+distinct canonical `--worker-project <project-id>` arguments. The selected
+projects must exist in the supplied canonical registry. No project is selected
+implicitly, and worker evidence is not added to ICS or the incident-desk
+format; when this source is requested, use `--format json`, `text` or `html`.
+
+Example (choose the actual existing database and only the projects you intend
+to inspect; keep output private):
+
+```sh
+python scripts/zsentinel_recovery_refresh.py private-observation.json \
+  --registry projects.json \
+  --queue-database /path/to/existing-history.db \
+  --worker-events-database /path/to/existing-history.db \
+  --worker-project cloud --worker-project supa \
+  --format html
+```
+
+The worker observer uses its existing bounded, indexed, `mode=ro`,
+`query_only` read of `runner_events`, `runner_workers`,
+`ai_global_slots` and, when available, `portfolio_queue`. The report
+contains only bounded event metadata and owner-follow-up candidates; it does
+not export prompt text, conversation URLs, queue IDs or claim tokens. The
+offline HTML embeds the existing script-free worker panel; text includes the
+same read-only operator follow-ups; JSON retains the structured observation.
+If the explicitly requested source cannot be read or its schema is incompatible,
+the output says `degraded_unavailable_no_recovery_proof` rather than omitting
+the source failure or implying healthy workers.
+
+This is still evidence, not a claim or lease proof: queue lease validity is
+only what the bounded source moment observed, event history is incomplete, and
+a generation-finished event is not proof of a delivered product. No queue
+status change, claim acquisition/release, retry, worker resume/restart,
+GitHub dispatch, service mutation or deployment is performed.
