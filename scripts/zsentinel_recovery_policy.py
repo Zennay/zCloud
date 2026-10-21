@@ -497,6 +497,9 @@ def evaluate(data, max_age_minutes, *, now=None):
                 ("evidence.owner_authorized",))
 
     elif action == "deploy":
+        require(value("active_claim") == "none",
+                "claim_not_clear", "Do not deploy while any active or unknown worker claim remains.",
+                ("evidence.active_claim",))
         require(value("exact_head") == "verified",
                 "head_not_verified", "Release evidence must be bound to an exact source head.",
                 ("evidence.exact_head",))
@@ -526,6 +529,9 @@ def evaluate(data, max_age_minutes, *, now=None):
                 ("evidence.capacity",))
 
     elif action == "restart_runner":
+        require(value("active_claim") == "none",
+                "claim_not_clear", "Do not restart a runner while any active or unknown work claim remains.",
+                ("evidence.active_claim",))
         require(value("runner_state") == "unavailable",
                 "runner_unavailability_unproven", "Restart consideration requires an observed unavailable runner.",
                 ("evidence.runner_state",))
