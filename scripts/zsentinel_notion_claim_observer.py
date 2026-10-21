@@ -19,7 +19,7 @@ UUID = re.compile(r"^(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}
 MAX_PAGES = 4
 PAGE_SIZE = 100
 MAX_BODY = 600_000
-ACTIVE = frozenset(("Claimed", "Running"))
+ACTIVE = frozenset(("Claimed", "Running", "Verifying"))
 NOTION_PROJECT_URL = re.compile(r"^https://app[.]notion[.]com/p/([0-9a-f]{32})(?:[?].*)?$", re.I)
 
 
@@ -109,12 +109,13 @@ def observe_claims(data_source_id, token, known_projects=None):
     for index in range(MAX_PAGES):
         # Canonical Portfolio Work Queue Status is a Notion SELECT property.
         # Filter at the source so historic Done/Dropped rows cannot bury
-        # current owners beyond the bounded pagination budget.
+        # current work (including review/verifying holds) beyond pagination.
         payload = {
             "page_size": PAGE_SIZE,
             "filter": {"or": [
                 {"property": "Status", "select": {"equals": "Claimed"}},
                 {"property": "Status", "select": {"equals": "Running"}},
+                {"property": "Status", "select": {"equals": "Verifying"}},
             ]},
         }
         if cursor is not None:
@@ -185,7 +186,8 @@ def observe_claims(data_source_id, token, known_projects=None):
         "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "coverage": "incomplete" if incomplete else "current_pages_only",
         "active_count": len(rows),
-        # These are observed statuses, not file-level claims or worker leases.
+        # Claimed/Running/Verifying are possible work-occupancy signals,
+        # not proof of file-level claims or active worker leases.
         # All bounded pages contribute even when only 30 examples are shown.
         "active_project_counts": dict(sorted(counts.items())),
         "items": rows[:30],
