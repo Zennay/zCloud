@@ -65,6 +65,11 @@ OUTCOMES = {
         "An addon install failed and the previous on-disk version could not be restored.",
         "Owner intervention needed; recovery backup was retained. Do not assert active browser state.",
     ),
+    ("watchdog", "rollback-new-file-removed"): (
+        "NEW_INSTALL_REMOVED",
+        "Standalone watchdog promotion failed, and its newly created executable was removed; no prior executable existed.",
+        "Resolve the original failure before considering another owner-approved install.",
+    ),
     ("watchdog", "rollback-restored"): (
         "PREVIOUS_VERSION_RESTORED",
         "A standalone watchdog install failed after its atomic promotion; prior executable restored.",
