@@ -2354,6 +2354,48 @@ function exportZSentinelHandoff(){
     for(const item of rows.slice(0,8))lines.push('- '+clean(item.priority,4)+' '+clean(item.project_id,56)+
       ': candidate, unclaimed; ID withheld from export');
   }else lines.push('Queue admission source unavailable; no capacity or worker ownership inferred.');
+  // The existing local retry observer is a separate, authenticated queue
+  // source. Correlate only by project and priority, never by claim/issue/PR ID.
+  const retrySnapshot=ZSENTINEL_RETRY_SNAPSHOT;
+  const retryCoverage=!!retrySnapshot&&(!filter||
+    retrySnapshot.scope.project==='all'||retrySnapshot.scope.project===filter);
+  lines.push('', '## Queue recovery owner workorders (independent read-only source)', '');
+  if(!retrySnapshot){
+    lines.push('NO QUEUE RETRY SOURCE — explicitly read VPS queue or import a recent snapshot.');
+  }else if(!retryCoverage){
+    lines.push('NO COVERAGE for '+clean(filter,56)+': the last retry snapshot was scoped to '+
+      clean(retrySnapshot.scope.project,56)+'. Do not assume no stalled work.');
+  }else{
+    const orders=retryOwnerWorkorders(retrySnapshot,filter);
+    const retryAge=Date.now()-Date.parse(retrySnapshot.observedAt);
+    lines.push('Source observed: '+clean(retrySnapshot.observedAt,48)+
+      (retryAge>6*3600000?' · STALE >6H':'')+
+      ' · sample '+(retrySnapshot.complete?'COMPLETE':'PARTIAL')+
+      ' · attempts count claims, not confirmed failures.',
+      'Observed project/priority groups: '+orders.length+
+      ' · not evidence of an available unclaimed worker.');
+    for(const row of orders.slice(0,32)){
+      lines.push('Problem: '+clean(row.priority+' '+row.project+' — '+row.problem,210),
+        'Action: '+clean(row.action,210),
+        'Status: '+clean(row.status+'; '+row.coverage+'; live owner unverified.',180),
+        '');
+    }
+    if(orders.length>32)lines.push('TRUNCATED '+(orders.length-32)+
+      ' observed priority/project groups. Filter a project to review remaining groups.');
+    if(!orders.length)lines.push('No high-attempt groups observed in this source scope; historical work unknown.');
+    const rt=ZSENTINEL_RETRY_TREND;
+    if(rt&&retryTrendMatchesSnapshot(rt,retrySnapshot)&&
+        (!filter||rt.scope.project==='all'||rt.scope.project===filter)){
+      lines.push('Observed trend: '+clean(rt.before,48)+' to '+clean(rt.after,48));
+      const worsening=rt.projects.filter(row=>
+        projects.has(row.project)&&(!filter||row.project===filter)&&row.delta>0);
+      lines.push('Worsening high-attempt project counts in matched scope: '+worsening.length);
+      for(const row of worsening.slice(0,8))lines.push('- '+clean(row.project,56)+
+        ' high-attempt items '+row.before+' → '+row.after+
+        '; no failure or completion inferred.');
+    }else lines.push('No comparable, source-bound retry trend observed.');
+  }
+  lines.push('Never join queue aggregates with GitHub issue/PR references as verified ownership.');
   lines.push('', '## GitHub delivery pulse (bounded source events in last 24h)', '');
   const pulse=zSentinelDeliveryPulseSummary(IMPORTED_GITHUB_ACTIVITY,projects,filter);
   lines.push('Canonical sources observed: '+pulse.covered.length+
@@ -2522,6 +2564,17 @@ function zSentinelDeliveryBoard(){
     ids.has(item.project)&&(!focus||item.project===focus));
   const staleProjects=[...new Set([...coveredIssues,...coveredGitHub]
     .filter(row=>row.staleEvidence===true).map(row=>row.project))];
+  // Retry evidence is local, separately observed and advisory; do not
+  // attach it to GitHub issues as an owner/claim assertion.
+  const retry=ZSENTINEL_RETRY_SNAPSHOT;
+  const retryCovered=!!retry&&(!focus||retry.scope.project==='all'||retry.scope.project===focus);
+  const retryOrders=retryOwnerWorkorders(retry,focus);
+  const retryStale=retry&&Date.now()-Date.parse(retry.observedAt)>6*3600000;
+  const retryRows=retryOrders.slice(0,5).map(row=>
+    '<div class="service-row"><div><strong>'+esc(row.priority)+' · '+
+      esc(row.project)+'</strong><br><small>Problem: '+esc(row.problem)+
+      '<br>Action: '+esc(row.action)+
+      '<br>Status: '+esc(row.status)+'</small></div></div>').join('');
   const queueRows=candidates.slice(0,8).map(item=>
     '<div class="service-row"><div><strong>'+esc(item.priority)+' · '+
     esc(item.project_id)+'</strong><br><small>Queue '+esc(item.queue_id)+
@@ -2546,7 +2599,7 @@ function zSentinelDeliveryBoard(){
     (active?'Reading…':'Read product sources')+'</button>'+
     (!focus?'<button type="button" class="runner-action runner-action-secondary" data-zsentinel-all-read '+(active?'disabled aria-busy="true"':'')+'>'+
     (ZSENTINEL_ALL_RUNNING?'Reading portfolio…':'Read next 4 projects')+'</button>':'')+
-    '<button type="button" class="runner-action" data-zsentinel-export '+(!snapshot&&!github&&!IMPORTED_PRLESS_BRANCHES?'disabled':'')+
+    '<button type="button" class="runner-action" data-zsentinel-export '+(!snapshot&&!github&&!IMPORTED_PRLESS_BRANCHES&&!ZSENTINEL_RETRY_SNAPSHOT?'disabled':'')+
     '>Export handoff .md</button></div>'+
     (ZSENTINEL_ALL_MESSAGE&&!focus?'<p class="detail-note" role="status">'+esc(ZSENTINEL_ALL_MESSAGE)+'</p>':'')+
     '<p class="detail-note" role="status">Issue source '+esc(issueTime)+
@@ -2576,6 +2629,18 @@ function zSentinelDeliveryBoard(){
       '<div class="service-row"><div><strong>'+esc(item.priority)+' · '+esc(item.project_id)+
       '</strong><br><small>'+esc(item.reason)+'</small></div><small>Not claimed</small></div>').join('')+
       '</div>':'<p class="detail-note">No review item in bounded snapshot; source may be partial.</p>')+
+    '<h3>Queue recovery workorders · independently observed</h3>'+
+    '<p class="detail-note">Retry observer: '+
+    (retry?(retryCovered?esc(date(retry.observedAt,true))+
+      (retryStale?' · STALE >6H':'')+
+      (retry.complete?' · bounded sample complete':' · PARTIAL sampled rows'):
+      'NO COVERAGE for the selected project'):'NOT OBSERVED')+
+    '. Claim attempts are not failures and do not authorize worker/CI retry.</p>'+
+    (retryRows?'<div class="service-list">'+retryRows+'</div>':
+     '<p class="detail-note">No source-bound workorder for this project. '+
+     'Use Read VPS queue in the separate queue retry panel below; absence is not recovery proof.</p>')+
+    (retryOrders.length>5?'<p class="detail-note">'+(retryOrders.length-5)+
+      ' other bounded groups: choose a project or open queue retry incidents below.</p>':'')+
     '<h3>Queued product candidates ('+(admitted?admitted.queued_product_candidates:'unknown global count')+')</h3>'+
     (queueRows?'<div class="service-list">'+queueRows+'</div>':
      '<p class="detail-note">No candidate shown. Queue access, project coverage or remaining pages may be missing.</p>')+
