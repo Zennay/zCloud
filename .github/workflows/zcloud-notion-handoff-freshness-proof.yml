@@ -1,0 +1,102 @@
+name: zCloud Notion handoff freshness proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_notion_handoff_freshness.py
+      - tests/test_notion_handoff_freshness.py
+      - tests/test_notion_handoff_freshness_workflow.py
+      - docs/notion-handoff-freshness-contract.md
+      - .github/workflows/zcloud-notion-handoff-freshness-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-notion-handoff-freshness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+      - name: Run focused contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_notion_handoff_freshness.py tests/test_notion_handoff_freshness.py tests/test_notion_handoff_freshness_workflow.py
+          python3 -m unittest -v tests.test_notion_handoff_freshness tests.test_notion_handoff_freshness_workflow
+
+  permanent-vps-proof:
+    needs: validate
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact candidate and permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          fi
+      - name: Prove contract on active project registry without live mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          python3 - "$tmp/handoffs.json" <<'PY'
+          import json
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          projects = json.loads(Path("projects.json").read_text(encoding="utf-8"))
+          now = datetime.now(timezone.utc).isoformat()
+          rows = []
+          for item in projects:
+              if str(item.get("status") or "active").lower() == "archived":
+                  continue
+              rows.append({
+                  "project_id": item["id"],
+                  "source_kind": "durable_handoff_event",
+                  "handoff_at": now,
+                  "recorded_at": now,
+              })
+          Path(sys.argv[1]).write_text(
+              json.dumps({
+                  "schema_version": "notion-handoff-source-v1",
+                  "captured_at": now,
+                  "handoffs": rows,
+              }),
+              encoding="utf-8",
+          )
+          PY
+          python3 scripts/zcloud_notion_handoff_freshness.py             --projects projects.json             --source "$tmp/handoffs.json"             --stale-minutes 240             --require-fresh
