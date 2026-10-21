@@ -1361,10 +1361,88 @@ def save_private_incident_bundle(path, data):
     return manifest
 
 
+
+def verify_private_incident_bundle(path):
+    """Read-only receipt consistency check, not an authenticity signature."""
+    import hashlib
+    import hmac
+    import json
+
+    directory = os.open(
+        str(Path(path)),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    try:
+        info = os.fstat(directory)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ValueError("Private owned bundle required")
+        names = {"incident.html", "owner-handoff.md", "owner-inbox.json", "MANIFEST.json"}
+        if set(os.listdir(directory)) != names:
+            raise ValueError("Incomplete or unexpected incident bundle")
+        source = {}
+        for name in sorted(names):
+            fd = os.open(
+                name, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=directory,
+            )
+            try:
+                meta = os.fstat(fd)
+                if (not stat.S_ISREG(meta.st_mode) or
+                        meta.st_uid != os.geteuid() or
+                        stat.S_IMODE(meta.st_mode) & 0o077 or
+                        not 0 < meta.st_size <= 128 * 1024):
+                    raise ValueError("Untrusted incident file")
+                with os.fdopen(fd, "rb", closefd=False) as reader:
+                    data = reader.read(128 * 1024 + 1)
+                if len(data) != meta.st_size:
+                    raise ValueError("Incomplete incident file")
+                source[name] = data
+            finally:
+                os.close(fd)
+    finally:
+        os.close(directory)
+    manifest = json.loads(source["MANIFEST.json"].decode("utf-8"))
+    inbox = json.loads(source["owner-inbox.json"].decode("utf-8"))
+    if (type(manifest) is not dict
+            or manifest.get("schema") != "zsentinel.private-incident-bundle.v1"
+            or type(inbox) is not dict
+            or inbox.get("schema") != "zsentinel.runner-owner-inbox.v1"
+            or manifest.get("source") != inbox.get("source")
+            or manifest.get("observation_window") != inbox.get("window")):
+        raise ValueError("Incident source and manifest disagree")
+    for key in ("claim_authorized", "service_restart_authorized",
+                "github_dispatch_authorized", "merge_authorized",
+                "deploy_authorized"):
+        if manifest.get(key) is not False:
+            raise ValueError("Incident manifest grants unsupported authority")
+    if manifest.get("github_job_recovered") is not None or manifest.get(
+            "production_restored") is not None:
+        raise ValueError("Manifest falsely attests live recovery")
+    artifacts = manifest.get("artifacts")
+    if type(artifacts) is not dict or set(artifacts) != set(source) - {"MANIFEST.json"}:
+        raise ValueError("Incident manifest is incomplete")
+    for name, expected in artifacts.items():
+        if type(expected) is not dict or type(expected.get("bytes")) is not int:
+            raise ValueError("Malformed manifest receipt")
+        actual = source[name]
+        digest = hashlib.sha256(actual).hexdigest()
+        if (expected["bytes"] != len(actual) or
+                not isinstance(expected.get("sha256"), str) or
+                not hmac.compare_digest(expected["sha256"], digest)):
+            raise ValueError("Incident source checksum mismatch")
+    return {"schema": manifest["schema"], "source": manifest["source"],
+            "verified_files": len(source), "content_consistent": True,
+            "cryptographic_origin_attested": False,
+            "github_job_recovered": None, "production_restored": None}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Private one-shot zSentinel runner incident workbench")
     parser.add_argument("--output", help="NEW private 0600 output (never overwritten)")
     parser.add_argument("--bundle", help="NEW owner-private folder for coherent HTML/MD/JSON incident package")
+    parser.add_argument("--verify-bundle", help="Read-only checksum and private-file consistency inspection")
     parser.add_argument("--format", choices=("html", "markdown", "json"), default="html",
                         help="Private HTML, JSON or Markdown owner handoff from current, T0/T1 or offline timeline")
     parser.add_argument("--receipt", help="Replay one previously saved owner-private JSON (no current host read)")
@@ -1374,6 +1452,17 @@ def main():
     parser.add_argument("--timeline", nargs="+", metavar="PRIVATE_JSON",
                         help="Offline historical view of 3–12 ordered private receipts")
     args = parser.parse_args()
+    if args.verify_bundle:
+        if (args.output or args.bundle or args.receipt or args.previous or
+                args.t0 or args.t1 or args.timeline or args.format != "html"):
+            parser.error("--verify-bundle is standalone and read-only")
+        try:
+            summary = verify_private_incident_bundle(args.verify_bundle)
+        except (OSError, ValueError, KeyError, TypeError, UnicodeError):
+            parser.exit(1, "Privé incidentpakket niet verifieerbaar; geen bron aangepast.\\n")
+        import json
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+        return
     if bool(args.output) == bool(args.bundle):
         parser.error("Choose exactly one: --output or --bundle")
     if args.bundle and args.format != "html":
