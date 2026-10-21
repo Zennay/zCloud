@@ -24,6 +24,15 @@ python3 scripts/zsentinel_merge_first_owner_csv.py \
   --format markdown --output ./private-pr-1560-owner-brief.md
 ```
 
+Het triageoverzicht toont nu ook per **geselecteerde, opgeslagen bronset**
+de afzonderlijke aantallen: bestaande PR-kandidaten, issues zonder
+waargenomen PR, PRs zonder issuekoppeling, PR-kandidaten die één issue delen,
+in de laatste historische steekproef ontbrekende PRs en historisch
+wisselende HEADs. Deze aantallen zijn geen live CI-/merge-/claimstatus
+en mogen overlappen. Ze staan bovenin Markdown en HTML en als velden in
+CSV en JSON; `source_record_count` blijft uitdrukkelijk het aantal
+vóór filtering, zodat een nulresultaat niets over de actuele backlog zegt.
+
 Markdown maakt onzichtbare opmaak- en controletekens in menselijke
 brontekst expliciet als Unicode-codepunten en escaped Markdown-tekens.
 Originele issue- en PR-links blijven uitsluitend de toegelaten canonieke
