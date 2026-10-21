@@ -666,6 +666,9 @@ def main():
             else:
                 lines.append("NOTION: not requested.")
             lines.append("WORKER FILE-LEVEL CLAIMS: UNKNOWN. No routing or recovery authorized.")
+            if pr_delivery is not None:
+                from zsentinel_pr_delivery import handoff_markdown
+                lines.append(handoff_markdown(pr_delivery))
             rendered = "\n".join(lines)
         action_content = None
         if args.action_output is not None:
