@@ -3449,3 +3449,25 @@ CI/review/merge/claim proof. Before taking action, a responsible operator
 must refresh live GitHub and Notion/queue facts and respect independent review,
 exact-head required CI, branch protection, owner consent and release gates.
 
+
+
+### Private-by-default portfolio Markdown briefing
+
+The filtered portfolio briefing no longer silently includes locally entered
+contact labels, due dates, follow-up decisions, lifecycle timestamps, carried
+board references, or operator notes. Open **Preview current filtered briefing**
+to review the source-only, default-redacted handoff. Each private field is
+explicitly marked `OMITTED (private)` rather than presented as a fabricated
+default status.
+
+If those details are necessary for the intended recipient, explicitly check
+**Include private operator follow-ups, contact labels and notes** *before*
+previewing and downloading. Changing this setting invalidates a prior reviewed
+export. The full private handoff remains available by consent, while the
+default is safer for passing an issue to a separate project owner.
+
+The historical single-issue Markdown PR receipt is still source-only and
+never exports any local private annotations. Both exports remain advisory
+offline artifacts: no independently verified GitHub/Notion claim, gate, merge,
+or live recovery authority is implied.
+
