@@ -17,7 +17,7 @@
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
   window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
   sessionStorage.setItem("zcloud-v2-worker",id);
-  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.3");
+  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.5");
   document.documentElement?.setAttribute("data-zcloud-v2-owner",id);
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -64,7 +64,7 @@
       target:location.href,targetConversation:conversation(),title:document.title,
       event,at,progressAt:at,generating:generating(),sending,
       assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.3",...extra
+      provider:"chatgpt",runnerVersion:"2.0.5",...extra
     })}catch(_){}
   }
   async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
@@ -155,10 +155,55 @@
       String(t.prompt||"").startsWith("Werk verder aan ")&&
       String(t.prompt||"").includes("Kijk in Notion");
   }
+  // Long policy instructions belong in the first message of a claimed ChatGPT chat.
+  // Repeated prompts in that SAME chat may be short, but never carry over to a
+  // new conversation, different queue claim or another worker's assignment.
+  const initialContextKey="zcloud-v2-full-context:"+id;
+  function fullContextPolicy(full){
+    return full.includes("LEVERBELEID 20-10-2026")?"merge-first-20261020":"legacy";
+  }
+  function fullPromptVisible(full){
+    const prefix=full.slice(0,Math.min(64,full.length));
+    if(!prefix)return false;
+    return [...document.querySelectorAll('[data-message-author-role="user"]')]
+      .some(el=>{
+        const t=String(el.innerText||el.textContent||"");
+        return t.includes(prefix)&&t.includes("Kijk in Notion")&&
+          (fullContextPolicy(full)!=="merge-first-20261020" || t.includes("LEVERBELEID 20-10-2026"));
+      });
+  }
+  function promptForThisTurn(full){
+    const cid=conversation(),queue=String(target?.queue_item?.queue_id||"");
+    if(!cid||!queue)return full;
+    let prior=null;
+    try{prior=JSON.parse(sessionStorage.getItem(initialContextKey)||"null")}catch(_){}
+    if(prior&&prior.queue!==queue)return full; // A new claim needs its own full context.
+    const saved=prior?.queue===queue&&prior?.conversation===cid&&
+      prior?.policy===fullContextPolicy(full);
+    const visibleFull=fullPromptVisible(full);
+    if(!saved&&!visibleFull)return full;
+    if(visibleFull&&!saved){
+      try{sessionStorage.setItem(initialContextKey,JSON.stringify({queue,conversation:cid,policy:fullContextPolicy(full)}))}catch(_){}
+    }
+    const part=/^Werk verder aan ([^.\n]{2,80})\./.exec(full)?.[1]||"";
+    const project=part.startsWith("het herstel van ")?"zSentinel":
+      (part||String(target?.base_project_id||id.split("::w")[0]));
+    return "Ga door met "+project+".";
+  }
+  function noteFullContextSent(full,actual){
+    if(actual!==full)return;
+    try{sessionStorage.setItem(initialContextKey,JSON.stringify({
+      queue:String(target?.queue_item?.queue_id||""),
+      policy:fullContextPolicy(full),
+      conversation:conversation()||"",
+      pending:!conversation()
+    }))}catch(_){}
+  }
   async function send(reason){
     if(sending||awaiting||generating()||!target||!ready(target))return false;
     if(!(await forceAllowed())){await blocked("force-tab-handoff-required");return false}
-    const prompt=String(target.prompt||"").trim();if(!prompt)return false;
+    const fullPrompt=String(target.prompt||"").trim();if(!fullPrompt)return false;
+    const prompt=promptForThisTurn(fullPrompt);
     sending=true;markBusy();
     try{
       if(!(await ensureHigh())){await blocked("high-not-verified");return false}
@@ -175,6 +220,7 @@
       }
       baseline=reply();baselineAssistantCount=assistantCount();button.click();promptAt=Date.now();awaitingAt=promptAt;
       awaiting=true;everGenerating=false;next=false;lastBlock="";
+      noteFullContextSent(fullPrompt,prompt);
       await status("prompt-sent",{reason,thinkingEffort:"high"});
       return true;
     }finally{sending=false;markBusy()}
