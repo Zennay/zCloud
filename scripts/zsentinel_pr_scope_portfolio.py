@@ -19,7 +19,8 @@ import stat
 import sys
 
 from zsentinel_pr_scope_guard import (
-    ROOT, csv_formula_inert, observe_conflict_graph, registry,
+    ROOT, csv_formula_inert, observe_conflict_graph, overlap_relation,
+    overlaps, registry,
 )
 
 from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
@@ -330,7 +331,8 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                         "shared_paths_preview_truncated": len(shared) > 12,
                         "path_conflict_count_observed": len(path_conflicts),
                         "path_conflict_examples": [
-                            {"selected_path": left, "other_path": right}
+                            {"selected_path": left, "other_path": right,
+                             "relation": overlap_relation(left, right)}
                             for left, right in path_conflicts[:12]],
                         "path_conflict_examples_truncated": len(path_conflicts) > 12,
                         "collision_count_observed": len(shared) + len(path_conflicts),
@@ -678,7 +680,8 @@ def current_gate_lines(board, markdown=False):
                     examples = collision.get("path_conflict_examples", [])
                     labels = [
                         left["selected_path"].replace("`", "\\`") + " ↔ " +
-                        right["other_path"].replace("`", "\\`")
+                        right["other_path"].replace("`", "\\`") +
+                        " [" + left["relation"] + "]"
                         for left in examples]
                     lines.append(
                         "  WAARGENOMEN bestand/mapconflicten met " + other + ": " +
@@ -1266,7 +1269,8 @@ def as_html(board):
                     path_conflict_html = ""
                     if other.get("path_conflict_count_observed"):
                         labels = [
-                            row["selected_path"] + " ↔ " + row["other_path"]
+                            row["selected_path"] + " ↔ " + row["other_path"] +
+                            " [" + row["relation"] + "]"
                             for row in other.get("path_conflict_examples", [])]
                         path_conflict_html = (
                             "<br><strong>Bestand/mapconflicten (" +
