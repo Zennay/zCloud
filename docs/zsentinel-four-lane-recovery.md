@@ -74,6 +74,25 @@ PRs, then verify exact-head required CI, reviews and protection before any
 merge. If the canonical project is absent from the aggregate, the brief
 says only **not observed locally**, never `no open work`.
 
+For a private **full-portfolio owner book**, `--format owner-book` creates
+one new Markdown file containing the same thirteen individual project dossiers
+and a bounded P0-first review shortlist, all tied to a *single* local SQLite
+snapshot. Example:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --format owner-book \
+  --output /PRIVATE-OWNER-DIRECTORY/portfolio-owner-book.md
+```
+
+The owner book includes every canonical project even when that project has
+**no observed** urgent rows, rather than presenting absence as completion.
+It explicitly marks truncated or unmapped local sources, separates P0/P1
+waiting from in-flight claims, preserves canonical existing GitHub links,
+and keeps all owner, CI, release and QA-policy checks human-only.
+Both modes use the pre-existing private create-only `.md` writer; no
+additional provider calls or live worker actions occur.
+
 This is intentionally an opt-in `--format owner-brief` output and **requires**
 `--owner-project` plus a new `.md` file inside an owner-private directory.
 The original create-only, symlink-denying, `0600` output policy is reused;
