@@ -1,0 +1,124 @@
+name: Recover zCloud runner for LightUp evidence root
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/lightup-evidence-runner-recovery-20261006.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: lightup-evidence-runner-recovery-20261006
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 6
+    env:
+      ZCLOUD_SERVICE: actions.runner.Zennay-zCloud.zcloud-vps-1.service
+      ZCLOUD_RUNNER_ROOT: /home/ubuntu/actions-runner-zcloud
+      LIGHTUP_RUN_ID: "37385689475"
+      LIGHTUP_EXPECTED_SHA: "04f3f010756e7609707fda467f8ab1809f361ae4"
+    steps:
+      - name: Recover idle or unhealthy zCloud listener without killing active work
+        id: recover
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          worker_pids() {
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$ZCLOUD_RUNNER_ROOT/bin/Runner.Worker"* ]] && echo "$pid"
+            done
+          }
+
+          listener_pids() {
+            for proc in /proc/[0-9]*; do
+              pid="${proc##*/}"
+              cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              [[ "$cmd" == *"$ZCLOUD_RUNNER_ROOT/bin/Runner.Listener"* ]] && echo "$pid"
+            done
+          }
+
+          mapfile -t workers < <(worker_pids)
+          mapfile -t listeners < <(listener_pids)
+          pre_state="$(systemctl is-active "$ZCLOUD_SERVICE" || true)"
+          echo "ZCLOUD_LIGHTUP_RECOVERY_PRE state=$pre_state workers=${workers[*]:-none} listeners=${listeners[*]:-none}"
+
+          action=preserve-active-worker
+          if [[ "${#workers[@]}" -eq 0 ]]; then
+            sudo -n systemctl reset-failed "$ZCLOUD_SERVICE" || true
+            sudo -n systemctl restart "$ZCLOUD_SERVICE"
+            action=restart-idle-or-unhealthy-listener
+          fi
+
+          for _ in $(seq 1 30); do
+            state="$(systemctl is-active "$ZCLOUD_SERVICE" || true)"
+            mapfile -t listeners < <(listener_pids)
+            if [[ "$state" == "active" && "${#listeners[@]}" -eq 1 ]]; then
+              break
+            fi
+            sleep 1
+          done
+
+          test "$state" = "active"
+          test "${#listeners[@]}" -eq 1
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+          echo "listener=${listeners[0]}" >> "$GITHUB_OUTPUT"
+          echo "ZCLOUD_LIGHTUP_RECOVERY_GREEN action=$action listener=${listeners[0]}"
+
+      - name: Observe existing LightUp exact-head proof
+        id: lightup
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+
+          run="$(gh api "repos/Zennay/Lightup/actions/runs/$LIGHTUP_RUN_ID")"
+          test "$(jq -r .head_sha <<<"$run")" = "$LIGHTUP_EXPECTED_SHA"
+          test "$(jq -r .name <<<"$run")" = "LightUp CI"
+
+          state=queued
+          statuses=""
+          for _ in $(seq 1 36); do
+            jobs="$(gh api "repos/Zennay/Lightup/actions/runs/$LIGHTUP_RUN_ID/jobs")"
+            statuses="$(jq -r '[.jobs[] | .status] | join(",")' <<<"$jobs")"
+            echo "LIGHTUP_ROOT_SCHEDULING statuses=$statuses"
+            if jq -e '.jobs | any(.status == "in_progress" or .status == "completed")' <<<"$jobs" >/dev/null; then
+              state=started
+              break
+            fi
+            sleep 5
+          done
+
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          echo "statuses=$statuses" >> "$GITHUB_OUTPUT"
+
+      - name: Publish recovery receipt
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          ACTION: ${{ steps.recover.outputs.action }}
+          LIGHTUP_STATE: ${{ steps.lightup.outputs.state }}
+        run: |
+          set -Eeuo pipefail
+          description="runner=$ACTION lightup=$LIGHTUP_STATE"
+          gh api --method POST "repos/$REPO/statuses/$SHA" \
+            -f state=success \
+            -f context="lightup/evidence-runner-recovery" \
+            -f description="$description" \
+            -f target_url="$SERVER_URL/$REPO/actions/runs/$RUN_ID" >/dev/null
+          echo "LIGHTUP_EVIDENCE_RUNNER_RECOVERY_RECEIPT $description"
