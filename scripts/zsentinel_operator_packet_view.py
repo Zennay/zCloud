@@ -263,7 +263,7 @@ def main():
             except (OSError, ValueError):
                 # Destination paths are private; do not echo them to shared logs.
                 parser.exit(
-                    2, "zSentinel owner packet output refused: private destination unavailable or unsafe.\\n")
+                    2, "zSentinel owner packet output refused: private destination unavailable or unsafe.\n")
             print("Created NEW private offline owner desk (0600); no actions.",
                   file=sys.stderr)
     else:
