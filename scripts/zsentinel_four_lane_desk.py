@@ -1120,6 +1120,96 @@ def markdown_view(data):
     return "\n".join(lines)
 
 
+
+def project_owner_brief(data, project_id):
+    """Human-only, privacy-bounded project handoff from an existing snapshot.
+
+    This does not fetch GitHub/Notion and never infers global ownership from
+    absent local rows. The project ID is a canonical caller-selected key.
+    """
+    if project_id not in PORTFOLIO_PROJECTS:
+        raise ValueError("Unknown canonical portfolio project")
+    name = PORTFOLIO_PROJECTS[project_id]
+    matches = [row for row in data["portfolio_urgent_local"]
+               if row["project"] == name]
+    if len(matches) > 1:
+        raise ValueError("Duplicate observed source project")
+    row = matches[0] if matches else None
+    partial = (not data["source_complete"]
+               or data["portfolio_priority_partial"]
+               or bool(data["portfolio_unknown_project_groups"]))
+    source_note = (
+        "ONVOLLEDIG: het lokale bronvenster mist mogelijk projectrijen."
+        if partial else
+        "De geobserveerde lokale SQL-projectgroepering is volledig; "
+        "externe Notion/GitHub-projectdekking blijft onbekend."
+    )
+    lines = [
+        "# zSentinel · privé projecteigenaaroverdracht",
+        "",
+        "**Project:** " + name,
+        "**Bronmoment (UTC):** " + data["observed_utc"],
+        "**Bron:** alleen lokale, read-only SQLite-wachtrij.",
+        "**Dekking:** " + source_note,
+        "**Actuele eigenaar:** NIET GEVERIFIEERD.",
+        "**Claim-/merge-/deploybevoegdheid:** NEE.",
+        "",
+        "## Lokale P0/P1-observaties",
+        "",
+    ]
+    if row:
+        lines.extend((
+            "| Prioriteit | Wacht lokaal | Eligible-hint lokaal | Actief lokaal |",
+            "| --- | ---: | ---: | ---: |",
+            f"| P0 | {row['queued_p0']} | {row['eligible_queued_p0']} | {row['in_flight_p0']} |",
+            f"| P1 | {row['queued_p1']} | {row['eligible_queued_p1']} | {row['in_flight_p1']} |",
+            "",
+            ("**Eerste menselijke review:** P0-wachtwerk in de lokale bron."
+             if row["queued_p0"] else
+             "**Eerste menselijke review:** P1-wachtwerk in de lokale bron."
+             if row["queued_p1"] else
+             "**Geen wachtende P0/P1-rij geobserveerd; actieve eigenaars behouden hun werk."),
+        ))
+        if row["in_flight_p0"] or row["in_flight_p1"]:
+            lines.append(
+                "**Actieve taken aanwezig:** neem bestaande claims niet over "
+                "en herschik deze niet zonder de huidige eigenaar."
+            )
+        if not row["eligible_queued_p0"] and not row["eligible_queued_p1"]:
+            lines.append("**Geen eligible-hint:** ook lokaal is geen vrije kandidaat bevestigd.")
+    else:
+        lines.extend((
+            "Geen P0/P1-rij voor dit project in het lokale bronvenster. "
+            "Dit is GEEN bewijs dat GitHub geen open issues heeft, "
+            "Notion geen actieve claims heeft of het project klaar is.",
+        ))
+    links = github_inbox_urls(name)
+    lines.extend(("", "## Bestaande productbronnen", ""))
+    if links:
+        lines.extend((
+            "- [Open bestaande GitHub PRs](" + links[0] + ")",
+            "- [Open GitHub issues](" + links[1] + ")",
+        ))
+    else:
+        lines.append("- Canonieke GitHub-repositorymapping ONBEKEND.")
+    lines.extend((
+        "- Controleer vóór elke wijziging actuele Notion-claims, "
+        "andere PR-eigenaren en de concrete productissue.",
+        "- Volg de merge-eerst procedure: bestaand PR, huidige HEAD, "
+        "verplichte exacte-head CI, onafhankelijke review, branch protection.",
+        "- Neem QA-only werk niet op als producttaak; deze lokale "
+        "SQL-aggregatie onderscheidt QA-rijen niet betrouwbaar.",
+        "",
+        "## Niet uitgevoerd / niet bewezen",
+        "",
+        "Geen GitHub/Notion live bronrequest, geen queue- of leasewijziging, "
+        "geen automatische claim, workflow, release of herstelactie. "
+        "GitHub merged=true en productiegedrag zijn NIET geverifieerd.",
+        "",
+    ))
+    return "\n".join(lines)
+
+
 def save_private(path, markup, extension=".html"):
     dest = Path(path)
     if dest.suffix.lower() != extension or dest.name in ("", ".", ".."):
@@ -1160,13 +1250,17 @@ def main():
                         help="Read only local /proc listener presence; no job or online proof")
     parser.add_argument("--host-pressure", action="store_true",
                         help="Read bounded host RAM/swap/load and root disk headroom; never admits workers")
-    parser.add_argument("--format", choices=("text", "json", "html", "markdown"), default="text")
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief"), default="text")
+    parser.add_argument("--owner-project", choices=tuple(sorted(PORTFOLIO_PROJECTS)),
+                        help="Canonical project id for a private single-project owner brief")
     parser.add_argument("--output", help="New owner-private file: .html or .md")
     args = parser.parse_args()
     if not 1 <= args.max_rows <= MAX_ROWS:
         parser.error("--max-rows must be between 1 and 500")
-    if (args.format in ("html", "markdown")) != bool(args.output):
-        parser.error("HTML/Markdown requires --output, other formats cannot write files")
+    if (args.format in ("html", "markdown", "owner-brief")) != bool(args.output):
+        parser.error("Private HTML/Markdown requires --output, other formats cannot write files")
+    if (args.format == "owner-brief") != bool(args.owner_project):
+        parser.error("--format owner-brief requires --owner-project; other modes reject it")
     try:
         packet = collect(args.db, args.max_rows,
                          include_runner_processes=args.runner_processes,
@@ -1178,6 +1272,9 @@ def main():
         elif args.format == "markdown":
             save_private(args.output, markdown_view(packet), ".md")
             print("Privé hersteloverdracht gemaakt (0600); geen systeemactie.")
+        elif args.format == "owner-brief":
+            save_private(args.output, project_owner_brief(packet, args.owner_project), ".md")
+            print("Privé projecteigenaaroverdracht gemaakt (0600); geen externe actie.")
         elif args.format == "json":
             print(json.dumps(packet, ensure_ascii=False, sort_keys=True))
         else:
