@@ -3516,6 +3516,13 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
                       (receipt,ts,queue_id))
         if cur.rowcount!=1:
             return {'resumed':False,'queue_id':queue_id,'reason':'state-changed'}
+        # The operator attested that this exact dependency cleared. Resolve
+        # only its queue-bound Attention record in the same transaction, so
+        # a resumed task cannot retain a stale human-action alert.
+        attention_updated=c.execute("""UPDATE portfolio_attention
+                             SET status='resolved',resolved_at=?,updated_at=?
+                             WHERE attention_id=? AND status='open'""",
+                             (ts,ts,'queue:'+queue_id)).rowcount
         project_runtime.record_receipt(
             c,
             str(row['project_id']),
@@ -3541,6 +3548,7 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor):
         'resumed':True,'queue_id':queue_id,'status':'queued',
         'project_id':str(row['project_id']),'priority':str(row['priority']),
         'resume_basis':'operator_attestation_not_independently_verified',
+        'attention_resolved':bool(attention_updated),
         'note':'Task returned to normal queue selection; no worker or slot was forced.',
     }
 
