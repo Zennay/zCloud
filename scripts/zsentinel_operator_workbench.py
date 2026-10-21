@@ -3026,7 +3026,7 @@ function issueHandoffPayload(issue){
 }
 function issueHandoffText(){
  const payload=issueHandoffPayload(selected);
- return payload?JSON.stringify(payload,null,2)+'\n':null;
+ return payload?JSON.stringify(payload,null,2)+'\\n':null;
 }
 function hasHumanIssueNotes(value){
  return Boolean(value&&(value.decision&&value.decision!=='investigate'||
