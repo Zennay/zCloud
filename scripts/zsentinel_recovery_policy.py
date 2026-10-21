@@ -681,8 +681,9 @@ def workorders_csv(batch):
     writer.writerow([
         "priority", "project", "incident", "decision", "human_next_step",
         "owner_hint_unverified", "issue_url", "candidate_pr_urls_unverified",
-        "problem_codes", "required_evidence", "proposed_actions",
-        "case_export_utc", "issues_observed_utc", "queue_observed_utc",
+        "source_receipts_unverified", "problem_codes", "required_evidence", "proposed_actions",
+        "case_export_utc", "policy_evaluated_utc", "case_project_scope",
+        "issues_observed_utc", "queue_observed_utc",
         "issue_source_stale", "queue_source_stale", "issue_sample_partial",
         "queue_sample_partial", "independently_verified",
         "claim_authorized", "merge_authorized", "deploy_authorized",
@@ -695,10 +696,13 @@ def workorders_csv(batch):
             item["incident_id"], item["decision"], item["next_step"],
             item["owner"] or "UNKNOWN", urls[0] if issue and urls else "",
             "; ".join(urls[1:]) if issue else "",
+            "; ".join(urls),
             "; ".join(item["problem_codes"]),
             "; ".join(item["required_evidence"]),
             "; ".join(item["proposed_actions"]),
             batch.get("source_generated_at_utc") or "",
+            batch["evaluated_at_utc"],
+            batch.get("source_project_scope") or "UNKNOWN",
             batch.get("source_issues_observed_at_utc") or "",
             batch.get("source_queue_observed_at_utc") or "",
             batch.get("source_issues_stale", ""),
@@ -708,6 +712,8 @@ def workorders_csv(batch):
              or batch.get("source_queue_truncated") is True),
             False, False, False, False,
         ])
+    # No row represents authorization or current ownership. The caller applies
+    # the same 128 KiB UTF-8 output ceiling before any bytes are published.
     return out.getvalue()
 
 
