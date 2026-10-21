@@ -517,9 +517,11 @@ def html_view(report):
     ]
     if report["priority_recall_performed"]:
         rows.append(
-            "<section><h2>Older priority-title recall coverage</h2>"
-            "<p>Search results only; P0/P1 text is not verified severity "
-            "and never establishes incident ownership or a repair.</p><ul>"
+            "<section><h2>Older P0/P1 label and title recall</h2>"
+            "<p>Only issue labels verified in the returned issue source "
+            "establish advisory P0/P1 priority. Title-only hits remain "
+            "unverified. Neither establishes worker ownership, approved "
+            "recovery or a deployed repair.</p><ul>"
         )
         for scope in report["priority_recall_sources"]:
             rows.append(
