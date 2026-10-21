@@ -1357,6 +1357,49 @@ def _gate_owner_html_line(report):
     raise ValueError("contradictory routing gate evidence")
 
 
+def _linked_issue_pr_gates(card):
+    """Strict reusable validation for all private owner handoff formats."""
+    gates = card.get("linked_inspected_pr_gates", [])
+    if type(gates) is not list or len(gates) > 3:
+        raise ValueError("unbounded issue linked exact PR gate evidence")
+    if gates and card.get("kind") != "open_product_issue":
+        raise ValueError("PR linkage belongs to an observed open issue")
+    from zsentinel_pr_delivery import NEXT_ACTION_NL
+    origin = (card.get("issue_url", "").split("/issues/", 1)[0] + "/pull/")
+    seen = set()
+    for gate in gates:
+        if type(gate) is not dict:
+            raise ValueError("invalid related PR gate record")
+        url = gate.get("pr_url")
+        source = gate.get("source_coverage")
+        sha = gate.get("observed_head_sha")
+        if (type(url) is not str or not SAFE_PR.fullmatch(url)
+                or not url.startswith(origin) or url in seen
+                or source not in (
+                    "bounded_exact_head_review_and_checks",
+                    "source_incomplete_or_changed",
+                    "not_queried_after_auth_or_rate_limit")
+                or gate.get("next_step") not in NEXT_ACTION_NL
+                or any(gate.get(k) is not False for k in (
+                    "issue_fixed_verified", "current_owner_verified",
+                    "merge_authorized", "deploy_authorized"))):
+            raise ValueError("untrusted linked PR release action")
+        seen.add(url)
+        if ((source != "bounded_exact_head_review_and_checks" and sha is not None)
+                or (sha is not None and (type(sha) is not str
+                                         or not SAFE_SHA.fullmatch(sha)))):
+            raise ValueError("invalid exact source commit on issue PR link")
+    if card.get("kind") == "open_product_issue":
+        not_inspected = card.get("uninspected_related_pr_count")
+        existing = card.get("existing_pr_urls", [])
+        if (type(not_inspected) is not int or not 0 <= not_inspected <= 3
+                or type(existing) is not list or
+                len(set(existing)) != len(gates) + not_inspected
+                or card.get("issue_fixed_verified") is not False):
+            raise ValueError("issue PR coverage cannot prove release")
+    return gates
+
+
 def handoff_html(report):
     """Script-free P0-first owner strip for the existing live cockpit."""
     if (not isinstance(report, dict) or report.get("schema") != SCHEMA
@@ -1384,6 +1427,19 @@ def handoff_html(report):
         pr_links = "".join(' <a href="' + escape(p, quote=True) +
                            '" target="_blank" rel="noopener noreferrer">Bestaande PR</a>'
                            for p in prs)
+        gate_rows = _linked_issue_pr_gates(item)
+        from zsentinel_pr_delivery import NEXT_ACTION_NL
+        linked_labels = "".join(
+            '<div class="muted">Gekoppelde PR <a href="' +
+            escape(gate["pr_url"], quote=True) +
+            '" target="_blank" rel="noopener noreferrer">exacte bron</a>' +
+            ' · HEAD ' + escape(
+                gate["observed_head_sha"][:12]
+                if gate["observed_head_sha"] else "ONBEKEND") +
+            ' · ' + escape(NEXT_ACTION_NL[gate["next_step"]]) +
+            ' · issue NIET als gerepareerd of gemerged bevestigd.</div>'
+            for gate in gate_rows
+        )
         job = item.get("exact_github_job")
         job_url = item.get("exact_github_job_url")
         commit_url = item.get("exact_github_commit_url")
@@ -1441,7 +1497,7 @@ def handoff_html(report):
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
                      escape(_short(item.get("next_step"))) + due_label + pr_label +
-                     link + pr_links + verified_links + '</li>')
+                     link + pr_links + verified_links + linked_labels + '</li>')
     coverage = report.get("coverage", {})
     if not isinstance(coverage, dict) or len(coverage) > 8:
         raise ValueError("invalid handoff source coverage")
