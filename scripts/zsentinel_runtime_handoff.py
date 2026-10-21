@@ -880,6 +880,21 @@ def _notion_review_summary(report):
     unknown = value.get("unregistered_work_status_min")
     if unknown is not None and (type(unknown) is not int or not 0 <= unknown <= 400):
         raise ValueError("invalid unregistered Notion work count")
+    status_windows = value.get("status_windows", [])
+    if type(status_windows) is not list or len(status_windows) > 3:
+        raise ValueError("untrusted handoff Notion query windows")
+    expected = (("Claimed", 1), ("Running", 1), ("Verifying", 2))
+    for idx, source in enumerate(status_windows):
+        state, budget = expected[idx]
+        if (type(source) is not dict or source.get("status") != state
+                or source.get("page_budget") != budget
+                or type(source.get("pages_read")) is not int
+                or not 1 <= source["pages_read"] <= budget
+                or type(source.get("observed_rows")) is not int
+                or not 0 <= source["observed_rows"] <= 100 * source["pages_read"]
+                or source.get("coverage") not in ("partial", "complete_within_source")
+                or source.get("owner_verified") is not False):
+            raise ValueError("untrusted displayed Notion source window")
     seen = set()
     for row in value["projects"]:
         if type(row) is not dict or row.get("project") in seen:
@@ -913,6 +928,15 @@ def _notion_review_html(report):
             (" · ≥" + str(row["observed_verifying_min"]) + " Verifying"
              if row["observed_verifying_min"] else "") +
             " · " + escape(row["next_step"]) + "</li>")
+    source_windows = source["status_windows"]
+    coverage_lines = "".join(
+        "<li>" + escape(win["status"]) + ": ≥" +
+        str(win["observed_rows"]) + " geobserveerd, " +
+        str(win["pages_read"]) + "/" + str(win["page_budget"]) +
+        " bronpagina's · " +
+        ("ONVOLLEDIG" if win["coverage"] == "partial" else
+         "gelezen binnen bronvenster") + "</li>"
+        for win in source_windows)
     return (
         '<section class="panel" aria-label="Notion status eigenaarhercontrole">'
         '<h2>Notion · onafgerond werk, eigenaar hercontroleren</h2>'
@@ -920,6 +944,8 @@ def _notion_review_html(report):
         (" · VEROUDERD/ONBEKEND" if old else " · recent gelezen") +
         '. Observaties zijn GEEN actuele workerlease, bestandsclaim of '
         'toestemming om werk over te nemen.</p>' +
+        ('<details><summary>Brondekking per Notion-status</summary><ul>' +
+         coverage_lines + '</ul></details>' if source_windows else '') +
         ('<ul>' + "".join(lines) + '</ul>' if lines else
          '<p>Geen positieve werkitems in de begrensde bron; overige '
          'projecten blijven ONBEKEND.</p>') +
@@ -1091,6 +1117,13 @@ def markdown(report):
              " · beperkt recent geobserveerd"),
             "Notion-statussen bewijzen geen actuele worker, lease, bestandsscope of vrijgave.",
         ])
+        for win in notion["status_windows"]:
+            lines.append("- Statusbron " + _md(win["status"]) + ": minstens " +
+                         str(win["observed_rows"]) + " rijen, " +
+                         str(win["pages_read"]) + "/" +
+                         str(win["page_budget"]) + " pagina's · " +
+                         ("ONVOLLEDIG" if win["coverage"] == "partial"
+                          else "binnen venster gelezen"))
         for item in notion["projects"]:
             lines.append("- " + _md(item["project"]) +
                          ": minstens " + str(item["observed_unfinished_min"]) +
