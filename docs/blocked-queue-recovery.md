@@ -85,9 +85,9 @@ Het blokkadepaneel gebruikt wijzigingen in `public/app.js` en
 `public/style.css`. De startpagina op deze PR verwijst daarom naar
 het **exacte** Git-blobfragment van beide assets:
 
-- `app.js`: `bfd062371f32` — bevat de strikte
+- `app.js`: `0b6d51db60c` — bevat de strikte
   `resumed=true` / `status=queued` / exact-`queue_id` afhandeling.
-- `style.css`: `8544c850441b` — bevat de bijbehorende
+- `style.css`: `2fd8df1b45ca` — bevat de bijbehorende
   Dependency holds- en Attention-presentatie.
 
 De ongewijzigde `enhancements.js` en `enhancements.css` behoudt de
@@ -169,3 +169,25 @@ met authentieke operator en transactionele statusgate beslist of de
 hervatting plaatsvindt. Er is geen schedulerclaim, automatische
 herstart of toestemming voor externe afhankelijkheden toegevoegd.
 De nieuwe `app.js` is gebonden aan `index.html` met de exacte blobpin.
+
+
+## Projectgericht afhankelijke taken hervatten
+
+Dezelfde Dependency holds-werkbak biedt nu ook een projectkeuzelijst
+voor alle projecten met geblokkeerde taken in de **op dat moment
+geladen** wachtrij. Combineer deze selectie met `Only P0/P1`
+en `Show next 12` om een specifiek project af te handelen zonder
+andere portfolio-taken uit beeld te verwijderen. De teller in de
+sectiekop blijft het **totale** aantal geblokkeerde taken in de
+geladen API-lijst; de werkbalk vermeldt hoeveel er aan de lokale
+filters voldoen. Een verdwijnende bronproject-ID wordt niet
+stilzwijgend als eigenaarstoewijzing behandeld: de selectie valt
+alleen dan terug op 'All projects'.
+
+Filteren of naar een volgende pagina gaan veroorzaakt geen nieuwe
+providerreads, claims, queue-mutaties of automatische hervattingen.
+Vlak vóór een daadwerkelijke `resume_blocked` moet de browser de
+originele taak en afhankelijkheid nog steeds opnieuw live lezen.
+De dropdown en knoppen werken via de bestaande toegankelijke
+focusring, toetsenbordselectie en mobiel 44px-aanraakdoel; actuele
+app.js- en style.css-blobpins zijn bijgewerkt op de startpagina.
