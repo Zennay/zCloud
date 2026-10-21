@@ -721,6 +721,20 @@ def render_csv(bundle):
             add("coverage_warning", card, detail=(
                 "Additional non-green checks not shown: " +
                 str(card["check_links_hidden"])))
+        for peer in card["peer_head_evidence"][:8]:
+            add("peer_head_collision", card,
+                link=_commit_link(card, peer["head_sha_at_observation"]),
+                detail=("Observed shared paths with " + peer["url"] +
+                        " | count=" + str(peer["shared_file_count_observed"]) +
+                        " | partial=" + str(peer["preview_incomplete"]) +
+                        " | source=" + peer["source"] +
+                        "; HEAD may have changed; ownership and merge UNKNOWN"))
+            for path in peer["shared_files_preview"][:MAX_PATHS]:
+                add("peer_shared_file", card,
+                    link=peer["url"], detail=edit_path(path))
+        if card["peer_head_evidence_partial"]:
+            add("coverage_warning", card,
+                detail="Pinned peer HEAD/collision coverage PARTIAL; no clearance")
         for related in card["related_prs"][:8]:
             add("related_pr", card, link=_same_repo_url(related, repo),
                 detail="Observed shared-file hint; Git merge conflict UNKNOWN")
@@ -937,6 +951,29 @@ def render_html(bundle):
                          e(card["check_links_hidden"]) +
                          " niet-groene checkbronnen buiten deze preview; "
                          "dit is geen volledige CI-inventaris.</p>")
+        if card.get("peer_head_evidence"):
+            parts.append("<h3>Gedeelde bestanden met exacte geobserveerde peer-HEAD</h3>"
+                         "<p class=\"meta\">Een snapshot van bronbestanden; "
+                         "geen Git-conflict-, eigenaar- of mergevrijgave.</p><ul>")
+            for peer in card["peer_head_evidence"][:8]:
+                peer_url = _same_repo_url(peer["url"], repo)
+                peer_sha = peer["head_sha_at_observation"]
+                peer_commit = _commit_link(card, peer_sha)
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+                             e(peer_url) + "\">" + e(peer_url) + "</a> · "
+                             "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+                             e(peer_commit) + "\">HEAD " + e(peer_sha[:12]) +
+                             "</a> · waargenomen gedeeld: " +
+                             str(peer["shared_file_count_observed"]) +
+                             (" · padenpreview onvolledig" if peer["preview_incomplete"] else "") +
+                             "<ul>")
+                for path in peer["shared_files_preview"][:MAX_PATHS]:
+                    parts.append("<li><code>" + e(path) + "</code></li>")
+                parts.append("</ul></li>")
+            parts.append("</ul>")
+        if card.get("peer_head_evidence_partial"):
+            parts.append("<p class=\"notice warning\">Peer-HEAD-brondekking "
+                         "ONVOLLEDIG; ontbrekende botsingen niet uitgesloten.</p>")
         if card.get("related_prs"):
             parts.append("<h3>Gerelateerde bron-PRs (geen mergeconflictbewijs)</h3><ul>")
             for related in card["related_prs"]:
@@ -1106,6 +1143,20 @@ def render_markdown(bundle):
         if card["check_links_hidden"]:
             lines.append("Extra checks buiten huidige bronvoorvertoning: " +
                          str(card["check_links_hidden"]) + "\n")
+        if card["peer_head_evidence"]:
+            lines.append("### Geobserveerde botsende PR-commits (geen actuele vrijgave)")
+            for peer in card["peer_head_evidence"][:8]:
+                lines.append("- [" + peer["url"] + "](" + peer["url"] + ")" +
+                             " · [HEAD `" + peer["head_sha_at_observation"][:12] +
+                             "`](" + _commit_link(card, peer["head_sha_at_observation"]) +
+                             ") · " + str(peer["shared_file_count_observed"]) +
+                             " gedeelde bestandspaden in bron" +
+                             (" (preview onvolledig)" if peer["preview_incomplete"] else ""))
+                for path in peer["shared_files_preview"][:MAX_PATHS]:
+                    lines.append("  - `" + path.replace("`", "\\`") + "`")
+            lines.append("")
+        if card["peer_head_evidence_partial"]:
+            lines.append("**ONVOLLEDIGE peer-HEAD bron:** geen conflictvrije conclusie.\n")
         if card["overlap_paths"] or card["related_prs"]:
             lines.append("### Bestandscope-overlap (geen bevestigd Git-conflict)")
             for path in card["overlap_paths"]:
