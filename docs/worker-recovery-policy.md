@@ -327,6 +327,54 @@ threads, branch protection, ownership and active claims. The operator may
 complete that separately verified worksheet, but this tooling itself
 never invokes merge, retry, claim or deploy.
 
+### Current PR observation for one historical issue (read-only)
+
+The existing case-import CLI can now follow a selected issue's **already
+sampled** PR candidates with `--live-candidates`, rather than leaving an
+operator with a stale URL and no current PR HEAD:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json \
+  --view-project cloud --view-issue 1518 --live-candidates \
+  --format markdown > private-live-pr-1518.md
+```
+
+Set an existing `GITHUB_TOKEN` **environment variable**, if needed for
+private repositories; otherwise the adapter uses the unauthenticated public
+GitHub API. Never place a token in command arguments, source export,
+Markdown or CSV. The adapter performs only canonical HTTPS
+`api.github.com` GET requests, refuses redirects, imposes response and
+request bounds, and never starts Actions or calls merge/claim/deploy endpoints.
+
+The observation scope is **one exact project/issue and at most three
+canonical, same-repository PR links** already validated against the
+original Activity case. Each candidate has a bounded current PR GET,
+a sample of at most 30 exact-HEAD check runs, at most 30 reviews, and a
+second PR GET to detect an intervening HEAD/state change: **at most 12 GETs
+across all candidates**. If a request or provider admission fails, that
+candidate remains `UNKNOWN_PROVIDER`, not absent or merged. A PR that
+moves HEAD or changes draft/merge state during collection is not treated
+as a stable, current observation.
+
+JSON and Markdown reveal the actual observed PR HEAD, open/closed,
+draft, reported merge, and the **sampled** check-run states/review
+categories. Required-branch checks, branch protection, independent review
+approval, current worker/Notion owner and merge eligibility stay explicitly
+`UNKNOWN` even when a sample looks green. The report marks
+`action_executed=false`, `merge_authorized=false` and
+`claim_authorized=false`; it cannot fill in or override the normal
+exact-head policy worksheet. GitHub 401/403/429/404, API changes and private
+access denial cannot silently clear a P0/P1 problem.
+
+For example, an operator can inspect the live PR observations first,
+then separately generate a **HOLD-first** review worksheet using
+`--prepare-merge-review` and obtain the current required CI, review,
+protection and ownership evidence from authorized sources. These are
+two deliberately separate steps; the live read is not a new gate and
+does not auto-merge any PR.
+
 ### Project- and priority-focused historical owner views
 
 Use `--view-project <project-id>` and/or `--through-priority P0|P1|P2|P3`
