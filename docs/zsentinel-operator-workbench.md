@@ -3628,3 +3628,27 @@ review, branch-protection status, current Notion/queue worker claims and
 release ownership. This panel performs no API call, queue mutation,
 automatic worker dispatch, GitHub merge or deployment.
 
+
+
+### Explicit owner actions and portable ZIP source custody
+
+The merge-first CSV now carries the **original historical ZIP manifest SHA256s**
+instead of asking a recipient to reconstruct the provenance of the PR
+candidate list from the browser alone. It also includes an explicit
+`archived_gate_batches_missing` marker: an incomplete prior saved batch
+never silently appears as an all-clear or approved CI.
+
+Each PR's source-local next step is based on the strongest *unresolved*
+observation in a deterministic order: (1) inspect alternative existing
+PR candidates and owner claims before duplicate work, (2) refresh current
+exact HEAD and required gates where historical heads differ, (3) refresh
+PR/issue link where a sampled record disappeared, or (4) check the
+original existing PR's current exact-head CI, review and branch protection.
+This is a human operator instruction, not an assignment, claim or
+permission to merge.
+
+The CSV source scope is still the selected bounded product issue cards
+only, and every current authorization flag is false. Saved source changes
+may reflect ordinary PR development; differing historical HEADs are
+**not** evidence of a content conflict or a new code defect.
+
