@@ -573,3 +573,4 @@ The inbox does not promote an issue, alter PR ranking, release a claim, or
 infer that a worker stopped. Unknown project mappings and malformed/missing
 source fields remain UNKNOWN; a stale local lease still requires independent
 Notion/worker/queue inspection and explicit authorization before recovery.
+The issue card's next-action field is explicit: an expired-lease-only signal asks the operator to recheck the live worker, Notion and queue before any claim; active/ambiguous evidence asks the operator to respect existing claims; missing, truncated or contradictory local evidence routes to a fresh trusted-source check. These dispositions affect only the recommended human next step: they do not change issue priority, schedule work, or authorize lease reclamation.
