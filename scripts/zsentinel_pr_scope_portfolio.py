@@ -1634,6 +1634,12 @@ def as_private_csv(board):
                  pr_head_sha=row["head_sha"] or "",
                  pr_base_sha=row["base_sha"] or "",
                  current_gate_blocker=row["blocker"],
+                 pending_review_individuals_observed=(
+                     row["pending_review_requests"]["individuals"] if
+                     row["pending_review_requests"] is not None else ""),
+                 pending_review_teams_observed=(
+                     row["pending_review_requests"]["teams"] if
+                     row["pending_review_requests"] is not None else ""),
                  attention_rank=row["rank"],
                  attention_group=row["attention_group"],
                  historical_gate_change=row["historical_gate_change"] or "",
