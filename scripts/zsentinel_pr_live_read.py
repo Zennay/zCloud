@@ -148,6 +148,14 @@ def _body_issue_reference(payload, full_name, issue_number):
     ), digest
 
 
+def _title_issue_reference(payload, full_name, issue_number):
+    """Bounded title-only link hint; never proof of an issue cross-reference."""
+    title = payload.get("title")
+    if not isinstance(title, str) or len(title) > 300:
+        return "TITLE_UNKNOWN", None
+    return _body_issue_reference({"body": title}, full_name, issue_number)
+
+
 def _pr_summary(payload, full_name, number):
     if not isinstance(payload, dict) or (
         type(payload.get("number")) is not int or payload["number"] != number
@@ -321,10 +329,17 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
                 continue
             seen.add(identity)
             status, _ = _body_issue_reference(row, full_name, int(number))
+            title_status, _ = _title_issue_reference(row, full_name, int(number))
+            matched_in = "body"
             if status not in (
                 "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
             ):
-                continue
+                if title_status not in (
+                    "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
+                ):
+                    continue
+                status = title_status
+                matched_in = "title_only"
             matched_total += 1
             matched_candidates.append({
                 "number": identity,
@@ -334,7 +349,7 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
                     "closing_keyword_only" if status == "CLOSING_KEYWORD_TEXT_OBSERVED"
                     else "text_reference_only"
                 ),
-                "candidate_origin": "sampled_open_pr_bounded_window_text_only",
+                "candidate_origin": "sampled_open_pr_bounded_window_" + matched_in,
                 "source_window_position": scanned_rows - len(payload) + row_offset,
             })
         if last_page_short:
@@ -363,6 +378,10 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
         "candidate_text_matches_in_page": matched_total,
         "candidate_records_returned": len(candidates),
         "candidate_selection_order": "closing_keyword_first_then_source_window_order",
+        "title_only_matches_in_window": sum(
+            item["candidate_origin"].endswith("_title_only")
+            for item in matched_candidates
+        ),
         "closing_keyword_matches_in_window": sum(
             item["relationship_at_source"] == "closing_keyword_only"
             for item in matched_candidates
@@ -497,6 +516,9 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
             before_reference, before_body_digest = _body_issue_reference(
                 before_payload, full_name, int(issue_match[3]),
             )
+            before_title_reference, before_title_digest = _title_issue_reference(
+                before_payload, full_name, int(issue_match[3]),
+            )
             source_gaps = []
             checks = None
             reviews = None
@@ -536,10 +558,15 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
             after_reference, after_body_digest = _body_issue_reference(
                 after_payload, full_name, int(issue_match[3]),
             )
+            after_title_reference, after_title_digest = _title_issue_reference(
+                after_payload, full_name, int(issue_match[3]),
+            )
             if (before_body_digest != after_body_digest
-                    or before_reference != after_reference):
+                    or before_reference != after_reference
+                    or before_title_digest != after_title_digest
+                    or before_title_reference != after_title_reference):
                 raise GitHubReadError(
-                    "PR description changed during live read; text relation UNKNOWN"
+                    "PR title or description changed during live read; text relation UNKNOWN"
                 )
             if (before["exact_head_sha"] != after["exact_head_sha"] or
                     before["observed_state"] != after["observed_state"] or
@@ -551,7 +578,9 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
             base["observed_at_utc"] = utc()
             base["status"] = "LIVE_PARTIAL_READ"
             base["pr_body_issue_text_observation"] = before_reference
+            base["pr_title_issue_text_observation"] = before_title_reference
             base["pr_body_text_does_not_verify_issue_link"] = True
+            base["pr_title_text_does_not_verify_issue_link"] = True
             base["secondary_source_gaps"] = source_gaps
             if checks is not None:
                 base["check_runs"] = checks
@@ -569,7 +598,11 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
             elif before["observed_draft"]:
                 owner_action = "finish_existing_draft_with_authorized_owner"
                 review_rank = 3
-            elif before_reference == "NO_TEXT_REFERENCE_IN_PR_BODY":
+            elif (before_reference not in (
+                    "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
+                    ) and before_title_reference not in (
+                    "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
+                    )):
                 owner_action = "recheck_historical_issue_to_pr_link_before_merge"
                 review_rank = 2
             elif checks is not None and checks["sampled_blocking_checks"]:
@@ -715,6 +748,8 @@ def owner_html(report):
             str(discovery["candidate_text_matches_in_page"]) +
             " · candidates retained: " +
             str(discovery["candidate_records_returned"]) +
+            " · title-only matches: " +
+            str(discovery["title_only_matches_in_window"]) +
             " · explicit closing keyword matches: " +
             str(discovery["closing_keyword_matches_in_window"]) +
             " · closing keyword candidates retained: " +
@@ -900,6 +935,8 @@ def markdown(report):
             str(discovery["candidate_text_matches_in_page"]),
             "- Candidates retained for live inspection: " +
             str(discovery["candidate_records_returned"]),
+            "- Title-only issue references in window: " +
+            str(discovery["title_only_matches_in_window"]),
             "- Closing-keyword matches in window: " +
             str(discovery["closing_keyword_matches_in_window"]),
             "- Closing-keyword candidates selected first: " +
