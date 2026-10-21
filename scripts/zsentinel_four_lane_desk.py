@@ -90,6 +90,41 @@ def html_inbox_links(project):
     )
 
 
+def psi_html_table(psi):
+    """Private, bounded table of direct kernel stalls; UNKNOWN is not zero."""
+    if not isinstance(psi, dict) or psi.get("status") != "OBSERVED":
+        return "<p class='warn'>PSI onvolledig/onbekend: kernelbron niet betrouwbaar.</p>"
+    resources = psi.get("resources") or {}
+    rows = []
+    for key, label in (("cpu", "CPU"), ("memory", "Geheugen"), ("io", "I/O")):
+        detail = resources.get(key) or {}
+        values = detail.get("measurements") or {}
+        some = values.get("some") or {}
+        full = values.get("full") or {}
+        def cell(value):
+            if type(value) not in (int, float) or not 0 <= value <= 100:
+                return "Onbekend"
+            return f"{value:.2f}%"
+        rows.append(
+            "<tr><th scope='row'>" + label + "</th><td>"
+            + cell(some.get("avg10_pct")) + "</td><td>"
+            + cell(some.get("avg60_pct")) + "</td><td>"
+            + cell(some.get("avg300_pct")) + "</td><td>"
+            + (cell(full.get("avg60_pct")) if key != "cpu" else "Niet gebruikt")
+            + "</td></tr>"
+        )
+    return (
+        "<p>Linux PSI: percentage tijd met taakvertraging. CPU-full is "
+        "niet betrouwbaar vergelijkbaar en wordt niet als bewijs gebruikt.</p>"
+        "<div class='scroll'><table><thead><tr><th>Bron</th>"
+        "<th>Deels wachtend 10s</th><th>Deels wachtend 60s</th>"
+        "<th>Deels wachtend 300s</th><th>Volledig stil 60s</th>"
+        "</tr></thead><tbody>" + "".join(rows)
+        + "</tbody></table></div>"
+        "<p>Geen diagnose van een specifieke GitHub-job of proces.</p>"
+    )
+
+
 def _utc(value):
     if not isinstance(value, str):
         return None
@@ -785,7 +820,8 @@ def html_view(data):
         host_section = (
             "<section class='notice'><h2>Hostdruk (adviserend)</h2><p>"
             + html.escape(pressure_sentence(host))
-            + "</p><p>Deze hostmeting bewijst geen vrije cgroup-, "
+            + "</p>" + psi_html_table(host.get("psi"))
+            + "<p>Deze hostmeting bewijst geen vrije cgroup-, "
             "worker-, Notion- of runnercapaciteit; nieuwe workers blijven "
             "achter bestaande resource- en eigenaarspoorten.</p></section>"
         )
