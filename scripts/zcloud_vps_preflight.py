@@ -418,6 +418,73 @@ RECOVERY_FAMILIES = {
         "WORKER_IDLE_NOT_PROVEN"}),
 }
 
+RECOVERY_EVIDENCE = {
+    "BASELINE_SCOPE_REVIEW": [
+        "Fresh UTC timestamp and exact report SHA-256/byte count.",
+        "Matching opaque boot/checkout scope; this fingerprint is not host attestation.",
+        "Original incident owner's evidence for the specific recovery.",
+    ],
+    "CAPACITY_FIRST": [
+        "Current MemTotal/MemAvailable and SwapTotal/SwapFree counters; missing values stay unknown.",
+        "Current filesystem free bytes and the 10 GiB training-reserve gap.",
+        "If contention is reported, same-window CPU/memory/I/O PSI plus the admission-owner assessment.",
+    ],
+    "HOST_CONCURRENCY_OWNER": [
+        "Fresh UTC load-per-CPU and CPU/memory/I/O PSI values.",
+        "Current scheduler/admission budget and accountable concurrency-owner decision.",
+        "Host pressure is not per-worker attribution without separate evidence.",
+    ],
+    "RUNNER_OWNER": [
+        "Current exact-repository GitHub job receipt showing runner_id > 0 and runner_name.",
+        "Verified required labels, runner group, and repository access for that job.",
+        "One dedicated listener and no active Runner.Worker conflict; neither alone proves job assignment.",
+    ],
+    "WORKTREE_RECONCILE": [
+        "Exact checkout branch and HEAD plus tracked/untracked status.",
+        "Acknowledgement and ownership for every changed or untracked file.",
+        "Approved reconciliation plan under the existing serialized release process.",
+    ],
+    "SOURCE_PROVENANCE": [
+        "Fresh independently fetched protected-main commit SHA.",
+        "Exact local checkout HEAD and clean working-tree evidence.",
+        "Exact-head required CI, independent review, and serialized release-owner approval.",
+    ],
+    "ARCHIVE_ROUTE_OWNER": [
+        "Verified encrypted destination identity and owner-approved write permissions.",
+        "Transfer receipt and remote checksum/retention evidence before any source deletion.",
+        "Explicit storage-owner authorization; a mounted or writable filesystem alone is insufficient.",
+    ],
+    "WORKER_SAFE_IDLE_OWNER": [
+        "Fresh queue/claim snapshot and current owner/lease reconciliation.",
+        "Owner-gated drain acknowledgement plus independent evidence that generation actually stopped.",
+        "Exact current GitHub job/runner assignment receipt where runner release depends on it.",
+    ],
+    "EXTERNAL_RELEASE_GATES": [
+        "All required GitHub checks completed on the exact proposed head.",
+        "Independent review and protected-main rules satisfied.",
+        "Serialized writer/release-owner approval and live acceptance after deployment.",
+    ],
+    "UNMAPPED_RECOVERY_UNVERIFIED": [
+        "Map the exact historical finding code to its original issue and accountable owner.",
+        "Repeat only the permitted read-only observation and record its timestamp/source identity.",
+        "Original owner evidence; disappearance from a report alone is not recovery.",
+    ],
+}
+
+
+def required_evidence_for(code: str) -> list[str]:
+    suffix = "_RECOVERY_UNVERIFIED"
+    family = code[:-len(suffix)] if code.endswith(suffix) else code
+    evidence = RECOVERY_EVIDENCE.get(
+        family, RECOVERY_EVIDENCE["UNMAPPED_RECOVERY_UNVERIFIED"])
+    return list(evidence[:4])
+
+
+def action_with_evidence(action: str, code: str) -> str:
+    """Keep every existing renderer actionable while preserving the 3-line brief."""
+    evidence = required_evidence_for(code)
+    return action + " Required evidence: " + "; ".join(evidence)
+
 
 def operator_handoff(report: dict) -> list[dict[str, object]]:
     """Bounded, source-derived problem/action/status cards; always advisory.
@@ -441,9 +508,11 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
             "owner": "VPS resource / serialized release owner",
             "problem": "A prior snapshot cannot establish current recovery when its "
                        "boot/checkout source differs, is unknown, or is too old.",
-            "action": "Obtain a new same-boot read-only source observation with the "
-                      "responsible owner. Preserve prior evidence; do not infer "
-                      "service recovery or authorize a release.",
+            "action": action_with_evidence(
+                "Obtain a new same-boot read-only source observation with the "
+                "responsible owner. Preserve prior evidence; do not infer "
+                "service recovery or authorize a release.", "BASELINE_SCOPE_REVIEW"),
+            "required_evidence": required_evidence_for("BASELINE_SCOPE_REVIEW"),
             "status": "recovery_unverified",
             "trend": comparison.get("snapshot_freshness", "source_unverified"),
             "finding_codes": [],
@@ -471,7 +540,8 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
             "code": recommendation["code"],
             "owner": recommendation["owner"],
             "problem": recommendation["reason"],
-            "action": recommendation["next_action"],
+            "action": action_with_evidence(recommendation["next_action"], recommendation["code"]),
+            "required_evidence": required_evidence_for(recommendation["code"]),
             "status": status,
             "trend": trend,
             "finding_codes": active,
@@ -488,7 +558,10 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
             "code": family_name + "_RECOVERY_UNVERIFIED",
             "owner": "Original incident owner / serialized release owner",
             "problem": "Prior source blocker has not been independently re-observed or resolved.",
-            "action": "Repeat the same permitted read-only source observation and obtain original owner evidence; do not change services, queues or release state.",
+            "action": action_with_evidence(
+                "Repeat the same permitted read-only source observation and obtain original owner evidence; do not change services, queues or release state.",
+                family_name),
+            "required_evidence": required_evidence_for(family_name),
             "status": "recovery_unverified",
             "trend": "source_missing_or_not_authoritative",
             "finding_codes": missing,
@@ -504,7 +577,10 @@ def operator_handoff(report: dict) -> list[dict[str, object]]:
             "code": "UNMAPPED_RECOVERY_UNVERIFIED",
             "owner": "Serialized release owner / original issue owner",
             "problem": "Previously observed source findings lack verified recovery evidence or an existing specialized owner route.",
-            "action": "Inspect the original finding with its accountable owner and reproduce only the permitted read-only observation. Do not infer safe release.",
+            "action": action_with_evidence(
+                "Inspect the original finding with its accountable owner and reproduce only the permitted read-only observation. Do not infer safe release.",
+                "UNMAPPED_RECOVERY_UNVERIFIED"),
+            "required_evidence": required_evidence_for("UNMAPPED_RECOVERY_UNVERIFIED"),
             "status": "recovery_unverified",
             "trend": "source_missing_or_unmapped",
             "finding_codes": unmatched[:64],
