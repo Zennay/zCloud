@@ -2890,6 +2890,35 @@ async function readVpsRetryIncidents(){
   }finally{ZSENTINEL_RETRY_BUSY=false;if(route==='activity')render()}
 }
 
+/* Real #677 operator handoff from grouped observed counts, never claim authority. */
+function retryOwnerWorkorders(snap,selected){
+  if(!snap||(selected&&snap.scope.project!=='all'&&snap.scope.project!==selected))return [];
+  const groups=new Map();
+  for(const item of snap.groups){
+    if(item.high<1||(selected&&item.project!==selected))continue;
+    const key=item.project+'/'+item.priority;
+    if(!groups.has(key))groups.set(key,{
+      project:item.project,priority:item.priority,high:0,queued:0,owned:0,expired:0});
+    const row=groups.get(key);row.high+=item.high;
+    if(item.status==='queued')row.queued+=item.high;else row.owned+=item.high;
+    row.expired+=item.expired;
+  }
+  const stale=Date.now()-Date.parse(snap.observedAt)>6*3600000;
+  return [...groups.values()].sort((a,b)=>
+    ({P0:0,P1:1,P2:2,P3:3}[a.priority]-{P0:0,P1:1,P2:2,P3:3}[b.priority])
+    ||b.high-a.high||a.project.localeCompare(b.project)).map(row=>({
+    ...row,
+    problem:row.high+' high-attempt item(s): '+row.owned+' observed owned, '+
+      row.queued+' queued, '+row.expired+' potentially expired lease rows.',
+    action:row.owned||row.expired?
+      'Check current worker, Notion and queue ownership before intervention.':
+      'Ask runtime owner to classify claim/requeue churn; do not automatically retry.',
+    status:stale?'STALE — REFRESH REQUIRED':
+      !snap.complete?'PARTIAL SAMPLE — OWNER REVIEW':'OWNER REVIEW REQUIRED',
+    coverage:snap.complete?'bounded sample complete':'bounded sample partial',
+  }));
+}
+
 function zSentinelRetryPanel(){
   const snap=ZSENTINEL_RETRY_SNAPSHOT,trend=ZSENTINEL_RETRY_TREND;
   const project=filter,known=retryKnownProjects();
@@ -2904,6 +2933,7 @@ function zSentinelRetryPanel(){
   const scopedCount=groups.reduce((n,g)=>n+g.high,0);
   const projectCovered=!project||(snap&&(snap.scope.project==='all'||snap.scope.project===project));
   const totals=snap?(projectCovered?(project?scopedCount:snap.totals.high_attempt_items):'unknown'):'unknown';
+  const ownerOrders=retryOwnerWorkorders(snap,project);
   return '<section class="panel" id="zSentinelRetryPanel"><div class="panel-header"><div>'+
     '<h2>zSentinel · queue retry incidents</h2><p class="panel-subtitle">'+
     'Import local, read-only queue snapshots and trend evidence; never assign, retry or release from this view.</p></div>'+
@@ -2926,6 +2956,19 @@ function zSentinelRetryPanel(){
     esc(ZSENTINEL_RETRY_MESSAGE||(snap?'Snapshot '+date(snap.observedAt,true)+
       ' · '+snap.rows.length+' sampled incidents · '+(snap.complete?'sample marked complete':'partial sample')+
       (stale?' · STALE (>6h)':''):'No retry data imported.'))+'</p>'+
+    (snap&&projectCovered?'<h3>Recovery owner workorders ('+ownerOrders.length+
+      ' project/priority groups)</h3>'+
+      '<p class="detail-note">Read-only grouped queue evidence; no failure classification, '+
+      'claim takeover, retry or release authorization.</p><div class="service-list">'+
+      (ownerOrders.slice(0,12).map(row=>
+        '<div class="service-row"><div><strong>Problem · '+esc(row.priority)+
+        ' · '+esc(row.project)+'</strong><br><small>'+esc(row.problem)+'</small>'+
+        '<br><strong>Action · </strong><small>'+esc(row.action)+'</small>'+
+        '<br><strong>Status · </strong><small>'+esc(row.status)+
+        ' · '+esc(row.coverage)+'</small></div></div>').join('')||
+        '<p class="detail-note">No high-attempt group in this observed source scope; historical state unknown.</p>')+
+      (ownerOrders.length>12?'<p class="detail-note">First 12 of '+ownerOrders.length+
+        ' groups shown; filter by project for more.</p>':'')+'</div>':'')+
     (snap?'<h3>Observed high-attempt queue items: '+totals+
       (project?' in '+esc(project):' across canonical projects')+'</h3>'+
       '<p class="detail-note">Claims are NOT failures. Source '+esc(date(snap.observedAt,true))+
