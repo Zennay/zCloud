@@ -125,10 +125,36 @@ jobs:
           backup="$HOME/.local/state/zcloud/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
           mkdir -p "$(dirname "$backup")"
           if test -f "$live"; then cp -p "$live" "$backup"; fi
-          if test -d "$root/scripts" && test -w "$root/scripts"; then
-            install -m 0755 scripts/zcloud_worker_watchdog.py "$root/scripts/zcloud_worker_watchdog.py"
+          if test -d "$root/scripts"; then
+            # The shared runtime checkout may carry active owner changes or
+            # untracked scripts. This manual job must never overwrite them.
+            if test -L "$root" || test -L "$root/scripts" || test -L "$root/scripts/zcloud_worker_watchdog.py"; then
+              echo "::error::Runtime watchdog path is symlinked; refusing promotion."
+              exit 1
+            fi
+            if ! runtime_head="$(GIT_OPTIONAL_LOCKS=0 git -C "$root" rev-parse --verify HEAD)"; then
+              echo "::error::Runtime checkout identity unavailable; refusing promotion."
+              exit 1
+            fi
+            if test "$runtime_head" != "$GITHUB_SHA"; then
+              echo "::error::Runtime checkout is not the approved main revision."
+              exit 1
+            fi
+            if ! runtime_status="$(GIT_OPTIONAL_LOCKS=0 git -C "$root" status --porcelain=v1 --untracked-files=all -- scripts/zcloud_worker_watchdog.py)"; then
+              echo "::error::Runtime watchdog ownership cannot be verified."
+              exit 1
+            fi
+            if test -n "$runtime_status"; then
+              echo "::error::Runtime watchdog has modified or untracked owner code; refusing promotion."
+              exit 1
+            fi
+            if test -f "$root/scripts/zcloud_worker_watchdog.py" && ! cmp -s -- scripts/zcloud_worker_watchdog.py "$root/scripts/zcloud_worker_watchdog.py"; then
+              echo "::error::Runtime watchdog differs from approved source; refusing promotion."
+              exit 1
+            fi
+            echo "Shared runtime checkout preserved; only canonical standalone path is eligible."
           else
-            echo "Runtime repository absent/read-only; only canonical standalone path eligible."
+            echo "Runtime repository absent; only canonical standalone path is eligible."
           fi
           # A second bounded proof denies root-owned promotion after a
           # moving-main race during the optional runtime-source update.
