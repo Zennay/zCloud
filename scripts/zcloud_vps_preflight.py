@@ -602,6 +602,21 @@ def compare_snapshot(path: Path, current: dict) -> dict:
         source = optional_sources.get(code)
         if source and current.get(source) is None:
             return False
+        # A failed optional read cannot certify that an earlier live blocker
+        # cleared. Even a quiet browser sample cannot prove worker safe-idle.
+        worker = current.get("worker_safety") or {}
+        if code in {"ACTIVE_WORK_REQUIRES_DRAIN", "WORKER_IDLE_NOT_PROVEN"}:
+            return False  # Only an independently authorized owner can prove idle.
+        if code == "WORKER_EVIDENCE_INCOMPLETE" and worker.get("state") not in {
+                "active_work_observed", "no_active_evidence_unverified"}:
+            return False
+        if code in {"ARCHIVE_COLD_TIER_NOT_READY", "ARCHIVE_WRITE_UNVERIFIED"}:
+            return False  # This tool never verifies a writable encrypted archive.
+        if code == "RUNNER_LISTENER_DUPLICATED" and len(
+                current.get("runner", {}).get("listener_pids", [])) != 1:
+            return False
+        if code == "RUNNER_WORKER_PROCESS_OBSERVED":
+            return False  # Process absence is not a job completion or safe-idle proof.
         resources = current.get("resources") or {}
         if code in ram_codes and resources.get("available_ram_pct") is None:
             return False
