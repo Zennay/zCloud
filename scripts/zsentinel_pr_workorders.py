@@ -87,14 +87,21 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
         related.add(peer_url)
         for path in pair.get("shared_files", [])[:MAX_PATHS]:
             paths.add(edit_path(path))
-    for source in (direct_overlaps or [])[:16]:
-        if type(source) is not dict:
-            raise ValueError("invalid older PR collision observation")
-        related.add(_same_repo_url(source.get("other_pr_url"), repository))
-        paths_limited |= (source.get("shared_paths_preview_truncated") is True or
-                          source.get("other_pr_file_list_incomplete") is True)
-        for path in source.get("shared_paths_preview", [])[:12]:
-            paths.add(edit_path(path))
+    # A focused overlap receipt is only bound to an exact PR head when
+    # the second GitHub read confirmed the same head/base. On a drifted or
+    # missing HEAD, discard *all* positive links rather than letting the
+    # fallback sample impersonate a current collision.
+    if head is None and direct_overlaps:
+        paths_limited = True
+    if head is not None:
+        for source in (direct_overlaps or [])[:16]:
+            if type(source) is not dict:
+                raise ValueError("invalid older PR collision observation")
+            related.add(_same_repo_url(source.get("other_pr_url"), repository))
+            paths_limited |= (source.get("shared_paths_preview_truncated") is True or
+                              source.get("other_pr_file_list_incomplete") is True)
+            for path in source.get("shared_paths_preview", [])[:12]:
+                paths.add(edit_path(path))
     # Every title/body issue mention is an operator search hint, even when
     # no second PR mentions the same issue. Match exact observed PR HEAD to
     # avoid attaching stale issue text from a changed source branch.
@@ -197,8 +204,14 @@ def collect_workorders(board):
         paths, paths_cut, related, hints = _observed_overlap_paths(
             projects[project], url, head if pinned else None, repo,
             live_gate.get("sampled_file_overlaps_observed"))
-        for extra in item.get("observed_file_overlap_prs", [])[:8]:
-            related.append(_same_repo_url(extra, repo))
+        # The summary can include an earlier file-scope sample, not
+        # necessarily the second read's exact HEAD. Never surface those
+        # links as positive overlap when the current HEAD could not be pinned.
+        if pinned:
+            for extra in item.get("observed_file_overlap_prs", [])[:8]:
+                related.append(_same_repo_url(extra, repo))
+        elif item.get("observed_file_overlap_prs"):
+            paths_cut = True
         related = sorted(set(related) - {url})[:8]
         links = []
         for job in item.get("non_green_jobs", [])[:MAX_CHECKS]:
