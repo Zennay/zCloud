@@ -102,3 +102,14 @@ Both standalone v2 engine and its embedded, byte-identical userscript copy
 were updated in source, without changing the userscript version/distribution
 contract. No browser worker was restarted or QA/regression suite created or
 run; deployment and real-device recovery remain **NOT VERIFIED**.
+
+
+## 21 October · Activity operator handoff
+
+The blocked reasons `composer-draft-preserved`,
+`composer-text-not-confirmed`, and `composer-changed-before-send`
+are now recognized by the fixed-safe-hint renderer in existing zCloud Activity
+[PR #1550](https://github.com/Zennay/zCloud/pull/1550). The browser emits
+these codes only on blocked sends and never sends or replaces unknown drafts.
+This is source integration in **two separately open PRs**, not a claim that
+either source has reached main or an operator's installed browser.
