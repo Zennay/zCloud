@@ -28,6 +28,9 @@ def render(report: dict) -> str:
         "",
         f"**Resultaat:** {labels.get(result, 'ONBEKEND')}  ",
         f"**Bronmoment (UTC):** {_md(report.get('observed_at', 'unknown'))}  ",
+        "**Lokale systeemstart/checkout-binding:** " +
+            _md((report.get("source_scope") or {}).get("state", "unknown")) +
+            " (niet onafhankelijk geattesteerd)  ",
         "**Modus:** alleen lezen · **Release toegestaan:** nee",
         "",
         "## Checkout en runner",
@@ -105,6 +108,7 @@ def render(report: dict) -> str:
         lines += ["", "## Verandering sinds vorige bronopname", "",
                   "- Baselineversheid: " + _md(comparison.get("snapshot_freshness", "unknown")),
                   "- Leeftijd baseline (seconden): " + _md(comparison.get("snapshot_age_seconds", "unknown")),
+                  "- Bronbinding vorige/huidige meting: " + _md(comparison.get("source_scope_comparison", "unknown")),
                   "- Bron SHA-256 (exact gelezen vorige JSON): " + _md(comparison.get("baseline_sha256", "unknown")),
                   "- Bron bytes: " + _md(comparison.get("baseline_bytes", "unknown")),
                   "- Bronlees-integriteit: " + _md(comparison.get("baseline_integrity", "unknown")),
