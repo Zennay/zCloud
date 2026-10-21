@@ -51,6 +51,12 @@ def event_link(event: dict, repo: str) -> tuple[str, str]:
         n = event["run_id"]
         state = str(event.get("conclusion") or event.get("status") or "unknown")
         return f"Actions #{n} · {state}", f"https://github.com/{repo}/actions/runs/{n}"
+    if kind == "branch_head":
+        branch_ref = event["branch_ref"]
+        sha = event["sha"]
+        return ("Branch head " + branch_ref + " · " + sha[:12] +
+                " · owner/merge/deploy unverified",
+                f"https://github.com/{repo}/tree/{branch_ref}")
     n = event["pr"]
     suffix = " · head " + event["pr_head_sha"][:12]
     if event.get("draft") is True:
@@ -88,7 +94,7 @@ def html_page(data: dict) -> str:
         })
         labels = (("main_commit", "Main commits"), ("pr_created", "PRs created"),
                   ("pr_merged", "PRs merged"), ("pr_closed", "PRs closed without merge"),
-                  ("ci_run", "Workflow runs"))
+                  ("ci_run", "Workflow runs"), ("branch_head", "Observed branch heads"))
         chips = "".join("<span>" + escape(name) + ": <b>" + str(counts.get(key, 0)) +
                         "</b></span>" for key, name in labels)
 
@@ -103,7 +109,8 @@ def html_page(data: dict) -> str:
                   str(observed_main_merges) + "</b></span>")
         windows = []
         for key, label in (("github_pr", "Pull requests"), ("github_ci", "Actions"),
-                           ("github_main_commits", "Main history")):
+                           ("github_main_commits", "Main history"),
+                           ("github_branches", "Branch heads")):
             windows.append(escape(label) + ": " + escape(coverage[key]))
         states = " · ".join(windows)
         status = coverage["status"]
@@ -113,10 +120,15 @@ def html_page(data: dict) -> str:
             chips += ("<span>Absent from last bounded snapshot: <b>" +
                       str(newly_observed) + "</b></span>")
         branch_scope = coverage.get("github_branches")
-        if branch_scope == "observed_pr_heads_only":
+        if branch_scope in {"bounded_window", "bounded_truncated", "bounded_partial"}:
+            states += " · branch heads " + branch_scope.replace("_", " ")
+            skipped = coverage.get("branch_rows_skipped", 0)
+            if isinstance(skipped, int) and not isinstance(skipped, bool) and skipped > 0:
+                states += " (" + str(skipped) + " rows skipped)"
+        elif branch_scope == "observed_pr_heads_only":
             states += " · PR branch SHAs observed (partial)"
         else:
-            states += " · branches not synchronized"
+            states += " · branches unavailable or not synchronized"
         admission = coverage.get("provider_admission", "none")
         # The strict digest() above already rejects unknown admission values.
         blocker = (
@@ -153,11 +165,11 @@ def html_page(data: dict) -> str:
             "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; connect-src 'none'\">"
             "<title>zCloud — GitHub activity</title><style>" + CSS +
             "</style></head><body><header><p class='meta'>ZCLOUD · READ-ONLY OPERATOR VIEW</p>"
-            "<h1>GitHub activity</h1><p>PRs, Actions and actual canonical-main commit SHAs. "
+            "<h1>GitHub activity</h1><p>PRs, Actions, canonical-main commit SHAs and bounded branch heads. "
             "No credentials, private content, deployment claims or automatic refresh.</p>"
             "<p class='meta'>Observed " + observed + " · UTC</p>"
             "<p class='warning'>This is a bounded GitHub snapshot, not the live zCloud dashboard. "
-            "Branch-only work and runner/deployment status are not synchronized. "
+            "Only one bounded branch-head page is included; full branch history, private branches and runner/deployment status are not synchronized. "
             "Successful CI is not a deploy; a GitHub PR merge may target a different base. "
             "Snapshot comparison marks only absent events from a bounded previous sample, "
             "not necessarily newly created GitHub work.</p>"
