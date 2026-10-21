@@ -2,6 +2,15 @@
 
 ## 21 oktober · open PR-botsingen gericht afhandelen
 
+Bij ieder meervoudig PR-bronissue staat bovendien **Download privéoverdracht
+voor dit issue**. Die knop maakt een lokaal Markdown-dossier van precies het
+gekozen, brongebonden issue, met alle bestaande PR-kandidaten uit diezelfde
+steekproef, hun waargenomen HEAD/gates, lokale afstemmingsstatus en notities.
+De bron-token en de omvang van de totale beperkte inventaris blijven vermeld;
+het dossier bewijst geen huidige eigenaar, fix of mergevrijgave. Dit maakt
+gerichte overdracht aan één project- of PR-eigenaar mogelijk zonder andere
+privénotities onnodig mee te sturen.
+
 De bestaande privé merge-eerst werkbak heeft een complete, **handmatige**
 botsingswerkstroom voor issues met meer dan één opgeslagen PR-vermelding.
 
