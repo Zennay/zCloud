@@ -537,6 +537,8 @@ def summary_lines(view):
             result.append("    " + conflict["left_path"] + " ↔ " +
                           conflict["right_path"] + " [" +
                           conflict["relation"] + "]")
+        if pair.get("path_conflicts_truncated"):
+            result.append("    Extra padparen buiten begrensde voorvertoning.")
     if view.get("path_scope_collision_pairs_truncated"):
         result.append("  Bestand/map-conflictweergave onvolledig; overige paren onbekend.")
     for group in view["shown_duplicate_issue_groups"]:
@@ -1082,6 +1084,8 @@ def as_markdown(board):
                 lines.append("  - `" + conflict["left_path"].replace("`", "\\`") +
                              "` ↔ `" + conflict["right_path"].replace("`", "\\`") +
                              "` [" + conflict["relation"] + "]")
+            if pair.get("path_conflicts_truncated"):
+                lines.append("  - Extra padparen buiten begrensde voorvertoning.")
         if not view.get("shown_path_scope_collision_pairs"):
             lines.append("Geen bestand/map-ancestorparen waargenomen in de steekproef.")
         if view.get("path_scope_collision_pairs_truncated"):
@@ -1132,6 +1136,8 @@ def as_html(board):
                     escape(conflict["right_path"]) + "</code><br><small>" +
                     escape(conflict["relation"]) + "</small>"
                     for conflict in pair["path_conflicts"])
+                if pair.get("path_conflicts_truncated"):
+                    examples += "<br><small>Extra padparen buiten begrensde voorvertoning.</small>"
                 scope_rows.append(
                     "<tr><td><a href='" + escape(left["url"], quote=True) +
                     "' rel='noopener noreferrer'>#" + str(left["number"]) +
