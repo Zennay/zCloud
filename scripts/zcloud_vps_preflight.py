@@ -14,6 +14,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
 from zcloud_vps_host_pressure import host_pressure_snapshot, pressure_findings
+from zcloud_vps_pressure_trend import compare_host_pressure
 
 RUNNER_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
 TRAINING_FREE_RESERVE_BYTES = 10 * 1024 ** 3
@@ -775,6 +776,9 @@ def compare_snapshot(path: Path, current: dict) -> dict:
         ],
         "unchanged": old == new,
         "source": "local_operator_supplied_snapshot",
+        "host_pressure_trend": compare_host_pressure(
+            prior.get("host_pressure"), current.get("host_pressure"),
+            (current_time - previous_time).total_seconds()),
     }
 
 
@@ -848,6 +852,21 @@ def render_html(report: dict) -> str:
             f'{item("Still present", shown(comparison["still_present"]))}'
             f'{item("Severity changed", shown([x["code"] + ": " + x["previous"] + " → " + x["current"] for x in comparison["severity_changes"]]))}</dl>'
             '<p class="muted">An omitted/failed measurement never proves recovery. Previous report is locally supplied, not independent runtime attestation.</p></section>'
+        )
+    trend_html = ""
+    if comparison is not None:
+        trend = comparison["host_pressure_trend"]
+        rows = "".join(
+            item(metric["label"], str(metric["previous"]) + " → " +
+                 str(metric["current"]) + " (Δ " + str(metric["delta"]) + ")")
+            for metric in trend["metrics"]
+        )
+        trend_html = (
+            '<section aria-labelledby="pressure-trend"><h2 id="pressure-trend">Host pressure trend</h2>'
+            + '<dl>' + item("Coverage", trend["status"])
+            + item("Direction", trend["trend"])
+            + item("Seconds between snapshots", trend["elapsed_seconds"])
+            + rows + '</dl><p class="muted">Private operator-supplied readings only; no trusted host identity or recovery clearance. A missing reading does not mean recovered.</p></section>'
         )
     archive = report.get("archive_readiness")
     archive_html = ""
@@ -944,6 +963,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 </dl></section>
 {comparison_html}
 {pressure_html}
+{trend_html}
 {storage_html}
 {archive_html}
 {worker_html}
@@ -1015,6 +1035,8 @@ def main() -> int:
             print(f"New findings: {', '.join(change['new_findings']) or 'none'}")
             print(f"Confirmed resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
             print(f"Recovery unverified: {', '.join(change['recovery_unverified_findings']) or 'none'}")
+            trend = change["host_pressure_trend"]
+            print(f"CPU / PSI trend: {trend['status']} · {trend['trend']} (operator snapshot comparison, not release clearance)")
             print(f"Still present: {', '.join(change['still_present']) or 'none'}")
             for entry in change["severity_changes"]:
                 print(f"Severity changed: {entry['code']} {entry['previous']} -> {entry['current']}")
