@@ -457,5 +457,8 @@ A fresh zero means only that this source moment contained zero rows with
 `status=blocked`; it does not prove there are no product blockers or that a
 task is safe to claim. If the source is stale, project details are suppressed
 and the total is labeled historical. If no database was observed, the count
-remains UNKNOWN rather than zero. The panel is read-only: no status transition,
-retry, claim release, dispatch, worker restart or deployment is performed.
+remains UNKNOWN rather than zero. The historical decision timeline also compares
+adjacent blocked counts only when both observations are fresh and share the same
+SQLite source identity. Source gaps remain UNKNOWN; a lower count is not proof of
+task recovery. The panel is read-only: no status transition, retry, claim release,
+dispatch, worker restart or deployment is performed.
