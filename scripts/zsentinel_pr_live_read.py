@@ -132,8 +132,8 @@ def _body_issue_reference(payload, full_name, issue_number):
     if not local and not full:
         return "NO_TEXT_REFERENCE_IN_PR_BODY", digest
     close = re.search(
-        r"\\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)"
-        r"\\s+(?:" + re.escape(full_name) + r")?#" + number + r"(?![0-9])",
+        r"\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)"
+        r"\s+(?:" + re.escape(full_name) + r")?#" + number + r"(?![0-9])",
         body, flags=re.IGNORECASE,
     )
     return (
