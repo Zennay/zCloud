@@ -8,7 +8,9 @@ runners. Operator-supplied evidence is never treated as independently verified.
 from __future__ import annotations
 
 import argparse
+import csv
 import html
+import io
 import json
 import os
 import re
@@ -672,6 +674,43 @@ def evaluate_batch(data, max_age_minutes):
     }
 
 
+def workorders_csv(batch):
+    """One bounded private CSV row per incident, not an action or dispatch queue."""
+    out = io.StringIO(newline="")
+    writer = csv.writer(out, lineterminator=chr(10))
+    writer.writerow([
+        "priority", "project", "incident", "decision", "human_next_step",
+        "owner_hint_unverified", "issue_url", "candidate_pr_urls_unverified",
+        "problem_codes", "required_evidence", "proposed_actions",
+        "case_export_utc", "issues_observed_utc", "queue_observed_utc",
+        "issue_source_stale", "queue_source_stale", "issue_sample_partial",
+        "queue_sample_partial", "independently_verified",
+        "claim_authorized", "merge_authorized", "deploy_authorized",
+    ])
+    for item in batch["owner_workorders"]:
+        urls = item["source_urls"]
+        issue = "priority" in item and item["incident_id"].startswith("issue-")
+        writer.writerow([
+            item.get("priority", "UNKNOWN"), item["project_id"],
+            item["incident_id"], item["decision"], item["next_step"],
+            item["owner"] or "UNKNOWN", urls[0] if issue and urls else "",
+            "; ".join(urls[1:]) if issue else "",
+            "; ".join(item["problem_codes"]),
+            "; ".join(item["required_evidence"]),
+            "; ".join(item["proposed_actions"]),
+            batch.get("source_generated_at_utc") or "",
+            batch.get("source_issues_observed_at_utc") or "",
+            batch.get("source_queue_observed_at_utc") or "",
+            batch.get("source_issues_stale", ""),
+            batch.get("source_queue_stale", ""),
+            batch.get("source_issues_truncated", ""),
+            (batch.get("source_queue_complete") is False
+             or batch.get("source_queue_truncated") is True),
+            False, False, False, False,
+        ])
+    return out.getvalue()
+
+
 def workorders_html(batch):
     """Static, offline, script-free owner cockpit for a validated batch."""
     esc = lambda value: html.escape(str(value), quote=True)
@@ -1136,7 +1175,7 @@ def main(argv=None):
     parser.add_argument("--incident-id", help="incident slug used by --template")
     parser.add_argument("--source-url", help="canonical HTTPS GitHub/Notion source used by --template")
     parser.add_argument("--owner", help="known owner slug used by --template; omit if unknown")
-    parser.add_argument("--format", choices=("json", "markdown", "workorders", "html"), default="json")
+    parser.add_argument("--format", choices=("json", "markdown", "workorders", "html", "csv"), default="json")
     parser.add_argument("--fail-on-hold", action="store_true", help="return exit code 2 when a valid evaluation contains any HOLD")
     parser.add_argument("--max-age-minutes", type=int, default=60,
                         help="maximum accepted observation age (1..1440; default 60)")
@@ -1173,7 +1212,8 @@ def main(argv=None):
             data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                               parse_constant=_reject_constant)
             report = evaluate_recovery_case(data)
-            output = (workorders_html(report) if args.format == "html" else
+            output = (workorders_csv(report) if args.format == "csv" else
+                      workorders_html(report) if args.format == "html" else
                       "# zSentinel case workorders\n\n" + workorders_text(report)
                       if args.format == "markdown" else
                       workorders_text(report) if args.format == "workorders" else
@@ -1195,7 +1235,8 @@ def main(argv=None):
             data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                               parse_constant=_reject_constant)
             report = evaluate_batch(data, args.max_age_minutes)
-            output = (workorders_html(report) if args.format == "html" else
+            output = (workorders_csv(report) if args.format == "csv" else
+                      workorders_html(report) if args.format == "html" else
                       workorders_text(report) if args.format == "workorders" else
                       markdown_batch(report) if args.format == "markdown" else
                       json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
@@ -1209,8 +1250,8 @@ def main(argv=None):
             return 2
     if not args.input:
         parser.error("either --input, --batch-input, --case-input or --template is required")
-    if args.format in ("workorders", "html"):
-        parser.error("--format workorders/html requires --batch-input or --case-input")
+    if args.format in ("workorders", "html", "csv"):
+        parser.error("--format workorders/html/csv requires --batch-input or --case-input")
     if any((args.project_id, args.incident_id, args.source_url, args.owner)):
         parser.error("template identity options require --template")
     try:
