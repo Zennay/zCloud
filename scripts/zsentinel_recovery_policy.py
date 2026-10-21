@@ -677,6 +677,12 @@ def markdown_batch(batch):
         "- Evidence independently verified: no",
         "- Actions executed: no",
         "",
+        "## Incident-owner workorders (advisory)",
+        "",
+        workorders_text(batch),
+        "",
+        "## Per-proposal evidence",
+        "",
     ]
     for item in batch["results"]:
         report = item["report"]
@@ -752,7 +758,7 @@ def main(argv=None):
     parser.add_argument("--incident-id", help="incident slug used by --template")
     parser.add_argument("--source-url", help="canonical HTTPS GitHub/Notion source used by --template")
     parser.add_argument("--owner", help="known owner slug used by --template; omit if unknown")
-    parser.add_argument("--format", choices=("json", "markdown"), default="json")
+    parser.add_argument("--format", choices=("json", "markdown", "workorders"), default="json")
     parser.add_argument("--fail-on-hold", action="store_true", help="return exit code 2 when a valid evaluation contains any HOLD")
     parser.add_argument("--max-age-minutes", type=int, default=60,
                         help="maximum accepted observation age (1..1440; default 60)")
@@ -789,9 +795,9 @@ def main(argv=None):
             data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                               parse_constant=_reject_constant)
             report = evaluate_batch(data, args.max_age_minutes)
-            output = markdown_batch(report) if args.format == "markdown" else (
-                json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-            )
+            output = (workorders_text(report) if args.format == "workorders" else
+                      markdown_batch(report) if args.format == "markdown" else
+                      json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
             encoded = output.encode("utf-8")
             if len(encoded) > MAX_OUTPUT_BYTES:
                 raise PolicyInputError("output exceeds 128 KiB")
@@ -802,6 +808,8 @@ def main(argv=None):
             return 2
     if not args.input:
         parser.error("either --input, --batch-input or --template is required")
+    if args.format == "workorders":
+        parser.error("--format workorders requires --batch-input")
     if any((args.project_id, args.incident_id, args.source_url, args.owner)):
         parser.error("template identity options require --template")
     try:
