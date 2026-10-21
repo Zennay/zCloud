@@ -64,12 +64,15 @@ def _unit_states(bundle):
                 not RUNNER_UNIT.fullmatch(name) or
                 state not in {"active", "inactive", "failed", "activating",
                               "deactivating", "unknown"} or
-                detail not in {"running", "dead", "failed", "exited", "start",
-                               "stop", "auto-restart", "waiting", "listening",
-                               "unknown"} or
-                reason not in {None, "oom-kill", "exit-code", "signal",
-                               "timeout", "watchdog", "core-dump", "resources",
-                               "success"} or name in states):
+                (not isinstance(detail, str) or
+                 detail not in {"running", "dead", "failed", "exited", "start",
+                                "stop", "auto-restart", "waiting", "listening",
+                                "unknown"}) or
+                (reason is not None and (
+                    not isinstance(reason, str) or
+                    reason not in {"oom-kill", "exit-code", "signal", "timeout",
+                                   "watchdog", "core-dump", "resources",
+                                   "success"})) or name in states):
             raise ValueError("Malformed/duplicate service observation")
         states[name] = {"state": state, "detail": detail, "reason": reason}
     return states
