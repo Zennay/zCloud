@@ -36,6 +36,7 @@ from zsentinel_issue_action_board import (
 from zsentinel_worklist_html import render_html as render_private_worklist_html
 from zsentinel_issue_activity import classify as classify_issue_activity
 from zsentinel_private_report_writer import write_private_report
+from zsentinel_pr_gate_now import GATE_STEPS_NL
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 60
@@ -61,30 +62,6 @@ NEXT_ACTIONS_NL = {
 }
 
 
-GATE_STEPS_NL = {
-    "owner_finish_draft_before_merge_review":
-        "Concept-PR: bevoegde eigenaar rondt product af en zet PR reviewklaar; nog geen merge.",
-    "owner_resolve_current_base_conflicts":
-        "GitHub meldt een mergeconflict op de actuele basis; bevoegde PR-eigenaar lost dit op.",
-    "wait_for_github_mergeability_evaluation":
-        "GitHub heeft samenvoegbaarheid nog niet berekend; wacht op nieuwe actuele bron.",
-    "wait_for_requested_independent_review":
-        "Review is al aangevraagd bij een persoon of team; wacht op onafhankelijke beoordeling.",
-    "inspect_incomplete_current_head_gate_source":
-        "Onvolledige check-, legacy-status- of reviewbron; eerst volledig bronbewijs ophalen.",
-    "inspect_current_head_failed_checks_with_owner":
-        "Huidige HEAD heeft mislukte checks/statussen; herstel via bevoegde PR-eigenaar.",
-    "wait_for_existing_current_head_checks":
-        "Bestaande HEAD-checks lopen nog; niet opnieuw dispatchen of mergen.",
-    "owner_address_exact_head_review_changes":
-        "Wijzigingsverzoek op exacte HEAD; laat bevoegde PR-eigenaar afhandelen.",
-    "verify_missing_current_head_checks_and_rules":
-        "Geen check-ontvangsten gezien; vereiste workflow- en branchregels apart opvragen.",
-    "request_independent_current_head_review":
-        "Vraag onafhankelijke review op de actuele HEAD; geen zelfgoedkeuring.",
-    "verify_required_rules_ownership_and_release_separately":
-        "Waarnemingen aanwezig; controleer vereiste branchregels, eigenaar en release apart.",
-}
 
 
 
