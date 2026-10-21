@@ -81,6 +81,35 @@ def eligible_pr(item):
     return rank + (3 if item["draft"] else 0)
 
 
+def prioritize_observed_work(rows):
+    """Stable portfolio-wide P0-first display, fairly interleaved by repo.
+
+    Issue references are only an observed PR title/body hint, not an issue fix.
+    A gate marked OBSERVED_GATES_ONLY is still *not* a merge authorization.
+    This only changes read-only operator order; no task ownership is inferred.
+    """
+    repo_index, repo_counts = {}, {}
+    ranked = []
+    for row in rows:
+        repo = row["repo"]
+        if repo not in repo_index:
+            repo_index[repo] = len(repo_index)
+        ordinal = repo_counts.get(repo, 0)
+        repo_counts[repo] = ordinal + 1
+        observed = row.get("observed_issue_refs") or []
+        priority = (0 if any(ref.get("priority") == "P0" for ref in observed)
+                    else 1 if any(ref.get("priority") == "P1" for ref in observed)
+                    else 2)
+        # Product drafts and source-unknown candidates stay visible, but not
+        # before equally urgent reviewed/observable existing product work.
+        status = row.get("status")
+        readiness = (0 if status == "OBSERVED_GATES_ONLY"
+                     else 1 if status == "HOLD"
+                     else 2 if status == "DRAFT" else 3)
+        ranked.append(((priority, readiness, ordinal, repo_index[repo]), row))
+    return [row for _, row in sorted(ranked, key=lambda item: item[0])]
+
+
 def collect(projects, registry, budget):
     rows, unmatched, partial = [], [], []
     for project in projects:
@@ -144,7 +173,7 @@ def collect(projects, registry, budget):
             partial.append({"project": project, "reason": "SOURCE_UNAVAILABLE"})
             # One project's source failure must never discard another.
             continue
-    return rows, unmatched[:24], partial
+    return prioritize_observed_work(rows), unmatched[:24], partial
 
 
 def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
