@@ -39,11 +39,13 @@ def build_bundle(*, inbox: Path, output_dir: Path, name: str,
     board_path = output_dir / (name + ".board.json")
     desk_path = output_dir / (name + ".desk.html")
     handoff_path = output_dir / (name + ".owner.md")
+    receipt_path = output_dir / (name + ".receipt.json")
     sources = [p for p in (inbox, retry, branches, claims, prs, *dossiers)
                if p is not None]
     if len({str(p.resolve()) for p in sources}) != len(sources):
         raise ValueError("duplicate source paths are not permitted")
-    destinations = (board_path, desk_path, handoff_path) if owner_handoff else (board_path, desk_path)
+    destinations = ((board_path, desk_path, handoff_path, receipt_path)
+                    if owner_handoff else (board_path, desk_path, receipt_path))
     if any(p.resolve() in {s.resolve() for s in sources} for p in destinations):
         raise ValueError("source files cannot be output destinations")
     if any(p.exists() or p.is_symlink() for p in destinations):
@@ -101,21 +103,58 @@ def build_bundle(*, inbox: Path, output_dir: Path, name: str,
     if any(not 1 <= len(payload.encode("utf-8")) <= MAX_OUTPUT_BYTES
            for payload in (serialized, desk)):
         raise ValueError("one of the generated products exceeds the private report limit")
-    # Both payloads are admitted first, and the shared writer publishes every
-    # file through directory-bound no-follow, create-only 0600 operations.
-    # On an unexpected second publish failure, preserve the first immutable
-    # artifact rather than risk deleting somebody else's newly replaced path.
-    write_create_only(board_path, serialized)
-    write_create_only(desk_path, desk)
+    # The final create-only receipt is a transfer manifest, not current proof.
+    # Its presence tells an operator that all preceding artifacts were created;
+    # an unexpected partial write leaves no misleading "complete" receipt.
+    artifacts = [
+        (board_path, serialized, "product_delivery_board"),
+        (desk_path, desk, "interactive_private_operator_desk"),
+    ]
     if owner_markdown is not None:
-        write_create_only(handoff_path, owner_markdown)
-    return {
-        "board": str(board_path),
-        "desk": str(desk_path),
-        "owner_handoff": str(handoff_path) if owner_markdown is not None else None,
-        "owner_records_in_bounded_sample": owner_count,
-        "board_sha256": board_sha,
+        artifacts.append((handoff_path, owner_markdown, "merge_first_owner_handoff"))
+    receipt = {
+        "schema": "zsentinel-operator-bundle-receipt-v1",
+        "bundle_complete": True,
+        "source_is_live": False,
+        "source_board_observed_at_utc": admitted["observed_at_utc"],
+        "original_source_clocks_utc": admitted["project_source_observed_at_utc"],
+        "original_source_freshness": board["fresh"],
         "cards_in_bounded_sample": len(admitted["cards"]),
+        "owner_records_in_bounded_sample": owner_count,
+        "artifacts": [
+            {
+                "file": artifact_path.name,
+                "role": role,
+                "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                "bytes": len(payload.encode("utf-8")),
+            }
+            for artifact_path, payload, role in artifacts
+        ],
+        "claims_authorized": False,
+        "ci_verified": False,
+        "review_verified": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+    }
+    receipt_data = json.dumps(receipt, ensure_ascii=False, indent=2) + "\n"
+    if len(receipt_data.encode("utf-8")) > MAX_OUTPUT_BYTES:
+        raise ValueError("bundle receipt exceeds private report limit")
+    # All content is admitted before any write. Use existing private 0600,
+    # nofollow, create-only writer, and publish the receipt strictly LAST.
+    # Preserve previously published files if a later write fails; never
+    # delete potentially changed user files on a partial failure.
+    for artifact_path, payload, _ in artifacts:
+        write_create_only(artifact_path, payload)
+    write_create_only(receipt_path, receipt_data)
+    # Do not print private filesystem paths or worker/project source details
+    # into shell, runner or service logs. Names are safe caller-chosen stems.
+    return {
+        "board_file": board_path.name,
+        "desk_file": desk_path.name,
+        "owner_handoff_file": handoff_path.name if owner_markdown is not None else None,
+        "receipt_file": receipt_path.name,
+        "board_sha256": board_sha,
+        "bundle_complete": True,
         "source_is_live": False,
         "claim_authorized": False,
         "merge_authorized": False,
