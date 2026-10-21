@@ -683,9 +683,10 @@ JSON+CSV-export en vereist enkel `--show-owner-handoff`.
 De viewer ondersteunt nu ook `--format html`: een zelfstandige, scriptvrije
 HTML-eigenaarwerkbak met bronhash, bronmoment, P0-eerst-kaarten, issue-/PR-links
 en een aparte historische sectie. HTML bevat geen remote assets, scripts,
-forms of connecties. Redirect de stdout naar een **nieuw** privébestand zoals
-hierboven; kies een nog niet bestaand doelpad en overschrijf geen bestaand
-bronbestand. De viewer schrijft zelf niets en haalt niets op.
+forms of connecties. Met `--output` maakt de viewer zelf een nieuw HTML-bestand met mode
+`0600`, alleen in een bestaande eigenaar-gecontroleerde directory en zonder
+bestaande bestanden te overschrijven. Zonder `--output` schrijft hij naar
+stdout. De viewer haalt zelf niets op.
 
 Een ZIP met intacte hashes betekent **alleen** dat het exportpakket intern
 consistent is met het in de export vastgelegde bronmoment. Bestaande P0,
@@ -711,7 +712,7 @@ python3 scripts/zsentinel_operator_packet_view.py \
 # Print a standalone HTML action desk (still offline; links open only on click):
 python3 scripts/zsentinel_operator_packet_view.py \
   --packet /private/zsentinel/owner-packet-20261021.zip --format html \
-  > /private/zsentinel/owner-desk-20261021.html
+  --output /private/zsentinel/owner-desk-20261021.html
 ```
 
 De lezer weigert symlinks, niet-reguliere/te grote ZIPs, onverwachte entries,
