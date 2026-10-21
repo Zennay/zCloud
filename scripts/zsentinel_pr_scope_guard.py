@@ -23,6 +23,7 @@ import urllib.parse
 import urllib.request
 
 from zsentinel_product_issue_inbox import QA as QA_ONLY_TITLE
+from zsentinel_private_report_writer import write_private_report
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_REGISTRY_BYTES = 512 * 1024
@@ -1601,22 +1602,12 @@ def graph_private_csv(report):
 
 def save_graph_private_csv(report, path):
     """Create a single new private CSV. Never echo its content to stdout."""
-    if not isinstance(path, Path) or not hasattr(os, "O_NOFOLLOW"):
+    if not isinstance(path, Path):
         raise ValueError("private CSV needs an explicit new output pathname")
-    data = graph_private_csv(report).encode("utf-8")
-    if len(data) > MAX_GRAPH_CSV_BYTES:
+    data = graph_private_csv(report)
+    if len(data.encode("utf-8")) > MAX_GRAPH_CSV_BYTES:
         raise ValueError("private CSV exceeds actual UTF-8 byte bound")
-    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
-    try:
-        with os.fdopen(fd, "wb") as destination:
-            if not stat.S_ISREG(os.fstat(destination.fileno()).st_mode):
-                raise ValueError("private CSV destination must be a regular file")
-            destination.write(data)
-            destination.flush()
-            os.fsync(destination.fileno())
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise
+    write_private_report(path, data, max_bytes=MAX_GRAPH_CSV_BYTES)
 
 
 def main(argv=None):
