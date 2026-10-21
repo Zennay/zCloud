@@ -289,7 +289,9 @@ def portfolio_issue_html(selected, integrated, *, project=None):
         prs = info["prs"]
         highest = min(prs, key=lambda pr: rank[pr["priority"]])
         links = []
-        for pr in prs[:4]:
+        for pr in sorted(prs, key=lambda pr: (rank[pr["priority"]],
+                                             list(LABELS).index(pr["primary_gate"]),
+                                             pr["pr_number"])):
             observed_head = pr["head_observed"]
             head_label = (
                 '<a href="https://github.com/' + e(info["repo"]) +
@@ -454,6 +456,60 @@ def portfolio_csv(selected, integrated, *, project=None):
 
 
 
+
+
+
+def portfolio_issue_pr_csv(selected, integrated, *, project=None):
+    """Complete issue-to-PR relationship matrix from one admitted saved source.
+
+    Unlike the bounded HTML preview, every observed issue/PR association is
+    exported. Rows are evidence pointers, never current GitHub inventory,
+    exclusive ownership or permission to merge a PR.
+    """
+    _oldest, latest, _missing = _admit(selected, integrated)
+    projects = project_worklist(selected, integrated, project=project)
+    relations = []
+    seen = set()
+    for group in projects:
+        for candidate in group["candidates"]:
+            for issue_url in candidate["linked_issue_urls"]:
+                identity = (issue_url, candidate["url"])
+                if identity in seen:
+                    raise ValueError("Duplicate issue-to-PR relationship")
+                seen.add(identity)
+                relations.append((group["repository"], issue_url, candidate))
+    relations.sort(key=lambda row: (
+        PRIORITIES.index(row[2]["priority"]), row[0],
+        int(row[1].rsplit("/", 1)[-1]), row[2]["pr_number"]))
+    stream = StringIO(newline="")
+    writer = csv.writer(stream, delimiter=";", quotechar='"',
+                        lineterminator="\r\n")
+    writer.writerow([
+        "Oorspronkelijk manifest SHA256", "Oorspronkelijk board SHA256",
+        "Bron oudste UTC", "Bron nieuwste UTC", "Bronleeftijd bij export",
+        "Repository", "Issue URL", "Bestaande PR URL", "Bronprioriteit",
+        "Bron HEAD (niet actueel bewezen)", "Bronbatch", "Gatebron",
+        "Hoofdblokkade", "Gate bronintegriteit", "Menselijke vervolgactie",
+        "Huidige GitHub status", "Actieve eigenaar", "Verplichte CI en review",
+        "Gemerged op main", "Live herstel",
+    ])
+    for repo, issue_url, candidate in relations:
+        writer.writerow([
+            integrated["original_review_manifest_sha256"],
+            integrated["original_board_sha256"],
+            integrated["earliest_observed_at_utc"],
+            integrated["latest_observed_at_utc"],
+            source_age_warning(latest), repo, issue_url, candidate["url"],
+            candidate["priority"], candidate["head_observed"] or "ONBEKEND",
+            candidate["batch_index"], candidate["gate_source"],
+            LABELS[candidate["primary_gate"]][0],
+            source_gate_detail(candidate), candidate["next_action"],
+            "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND",
+        ])
+    content = "\ufeff" + stream.getvalue()
+    if len(content.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("Private issue-to-PR matrix exceeds one MiB")
+    return content
 
 
 def portfolio_pr_csv(selected, integrated, *, project=None):
