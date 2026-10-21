@@ -110,3 +110,12 @@ Dit is **source-only** in de bestaande [PR #1561](https://github.com/Zennay/zClo
 ### Behoud reeds afgeleverde meldingen bij een gedeeltelijk mislukte poll
 
 De Wear OS-notificatieronde slaat de aflevering van een alert pas **na** een geslaagde `NotificationManager.notify` op. De gehele aflevering van maximaal drie meldingen staat nu in een `try/finally`: als een latere notification-call een fout geeft, blijft het bewijs van eerder in dezelfde poll geslaagd afgeleverde meldingen bewaard. De bestaande WorkManager-retry kan daardoor na een gedeeltelijke fout verder zonder de eerdere meldingen door gebrek aan receipts opnieuw te sturen. De suppressie is nog steeds lokaal en episodegebonden, geen servererkenning, geen incidentoplossing en geen stillegging van workers. Bron in bestaande open PR; geen live horloge-acceptatie of release bewezen.
+
+
+## 21 oktober · projectgebonden incidentepisodes en onafhankelijke Watch-meldingen
+
+De Wear-client gebruikt voor **zichtbare kaarten, notificatie-afleveringsbewijzen en één-uur-dempen** voortaan een identieke canonieke combinatie van project-ID en incident-ID. `IncidentSnoozeStore.episodeKey()` voegt de projectidentiteit ook toe aan het brongebonden episodebewijs (stabiele `episode_id` waar aanwezig, detectietijd-fallback anders). Twee projecten kunnen dus een gelijk incident-ID of dezelfde provider-episode-ID hebben zonder elkaar stil te maken, te snoozen of uit de lijsten te dedupliceren. De `MainActivity`-doorgang eiste al beide identiteiten en blijft fail-closed.
+
+Oude niet-projectgebonden ontvangst- en snoozesleutels worden bewust **niet** opnieuw als geldige projectbewijzen geïnterpreteerd: de vorige sleutel bevatte onvoldoende informatie om te bewijzen welk project eigenaar was. Bij de eerste uitgerolde versie kan daardoor een nog open incident maximaal één nieuwe melding krijgen; dit is veiliger dan een onbekend ander project zwijgend te onderdrukken. De oude één-uur-snooze vervalt bij migratie in plaats van grensoverschrijdend te blijven gelden. Niet-dringende incidenten blijven stil; maximaal drie werkelijk nieuwe urgente, menselijke meldingen per reguliere poll, bestaande Android-permissie en bronwaarheid blijven vereist.
+
+Alle wijzigingen zijn geïntegreerd in de **bestaande** [PR #1561](https://github.com/Zennay/zCloud/pull/1561), zonder aparte QA-PR of workflowstart. Dit is nog geen `main`-merge, signed APK, horloge-installatie, incidentoplossing of live verificatie. Exact-head CI, onafhankelijke review en toestelrelease blijven verantwoordelijk bij de bestaande eigenaren.
