@@ -288,6 +288,13 @@
   }
   async function send(reason){
     if(sending||awaiting||generating()||!target||!ready(target))return false;
+    // A pending browser command-result receipt remains a live upstream
+    // uncertainty. Ordinary automatic next-prompt dispatch must obey it too.
+    if(commandAckStorageInvalid||pendingCommandAcks.size>0){
+      await blocked(commandAckStorageInvalid?"command-ack-ledger-unavailable":
+        "command-ack-pending-no-new-send");
+      return false;
+    }
     const dispatchedQueue=String(target.queue_item.queue_id);
     const dispatchedSlot=Number(target.global_worker_slot);
     if(!sentInThisDocument&&sameQueueWasSentBeforeReload(dispatchedQueue)){
@@ -337,6 +344,13 @@
       const currentEditor=composer();
       if(!visible(currentEditor)||composerText(currentEditor)!==prompt){
         await blocked("composer-changed-before-send");return false;
+      }
+      // Close the gap between the earlier queue preflight and the actual
+      // irreversible click: another owned tab may have sent this queue
+      // during the async Thinking/editor/runner-target round trip.
+      if(!sentInThisDocument&&sameQueueWasSentBeforeReload(dispatchedQueue)){
+        await blocked("previous-queue-send-after-reload-manual-review");
+        return false;
       }
       // Persist a conservative may-have-sent marker BEFORE the irreversible
       // click. If storage fails, do not send; do not erase or auto-ack the
