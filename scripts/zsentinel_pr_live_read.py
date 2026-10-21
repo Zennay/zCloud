@@ -638,12 +638,38 @@ def owner_html(report):
         str(report["get_attempts"]) +
         (" · provider denied, remaining requests stopped"
          if report["provider_admission_paused"] else "") +
-        "</p></header><main><nav aria-label='Owner next steps'>",
+        "</p></header><main>",
+    ]
+    discovery = report["optional_unlinked_discovery"]
+    if discovery["performed"]:
+        rows.append(
+            "<section><h2>Opt-in first-page open-PR discovery</h2><p>"
+            "This is an incomplete text-reference search, NOT evidence "
+            "that no other repair PR exists.</p><p>Open PRs sampled: " +
+            str(discovery["first_page_rows"]) + " / first " +
+            str(discovery["first_page_limit"]) +
+            " · text mentions found: " +
+            str(discovery["candidate_text_matches_in_page"]) +
+            " · candidates retained: " +
+            str(discovery["candidate_records_returned"]) +
+            " · skipped invalid records: " +
+            str(discovery["skipped_or_malformed_first_page_rows"]) +
+            (" · candidate sample truncated" if discovery[
+                "candidate_list_truncated"] else "") + ".</p></section>"
+        )
+    rows.extend([
+        "<nav aria-label='Owner next steps'>",
         "<h2>Existing PRs to inspect first (advisory order)</h2>",
         "<p>Sampled failing check and waiting-job signals are triage hints, "
         "not mandatory-branch check proof. Always verify current claims and "
         "protected-main gates before acting.</p><ol>",
-    ]
+    ])
+    if not report["observations"]:
+        rows.append(
+            "<li>No matching PR in this sampled page. This is NOT proof "
+            "that the issue has no existing repair PR: expand source "
+            "discovery with an authorized owner before creating work.</li>"
+        )
     for candidate in report["suggested_owner_review_order"]:
         rows.append(
             "<li><a href='" + esc(candidate["url"]) +
@@ -666,8 +692,11 @@ def owner_html(report):
             " · reported merged: " + esc(row.get("reported_merged", "UNKNOWN")) +
             " · target: " + esc(row.get("target_branch", "UNKNOWN")) +
             "</dd>",
-            "<dt>Historical link</dt><dd>" + esc(row["source_relationship"]) +
-            " · draft at source: " + esc(row["source_draft"]) + "</dd>",
+            "<dt>Reference origin</dt><dd>" +
+            esc(row["candidate_origin"]) + " · " +
+            esc(row["source_relationship"]) +
+            " · draft in corresponding sample: " + esc(row["source_draft"]) +
+            "</dd>",
             "<dt>Current PR description text</dt><dd>" +
             esc(row.get("pr_body_issue_text_observation", "UNKNOWN")) +
             " · textual signal only, not a verified GitHub issue relationship"
@@ -782,15 +811,40 @@ def markdown(report):
         "- Historical issue sample truncated: " +
         str(report["historical_case_provenance"]["issue_sample_truncated"]),
         "- Current issue PR relationship reverified: NO",
-        "- Source candidates: " + str(report["source_candidate_count"]),
+        "- Historical issue-PR candidates: " +
+        str(report["source_candidate_count"]),
         "- Live partial reads: " + str(report["live_observations"]),
         "- UNKNOWN candidates: " + str(report["unknown_observations"]),
         "- GitHub requests attempted: " + str(report["get_attempts"]),
         "- Provider admission paused: " + str(report["provider_admission_paused"]),
         "",
+    ]
+    discovery = report["optional_unlinked_discovery"]
+    if discovery["performed"]:
+        lines.extend([
+            "## Opt-in bounded existing-PR discovery",
+            "",
+            "- Sampled only first " + str(discovery["first_page_limit"]) +
+            " open-PR records, observed " + str(discovery["first_page_rows"]),
+            "- Candidate text references found: " +
+            str(discovery["candidate_text_matches_in_page"]),
+            "- Candidates retained for live inspection: " +
+            str(discovery["candidate_records_returned"]),
+            "- Skipped malformed rows: " +
+            str(discovery["skipped_or_malformed_first_page_rows"]),
+            "- Historical relation reverified: NO",
+            "- No matching PR in this page proves absence: NO",
+            "",
+        ])
+    lines.extend([
         "## Suggested next existing PR reviews (non-authorizing)",
         "",
-    ]
+    ])
+    if not report["observations"]:
+        lines.append(
+            "- No referenced PR observed in this bounded sample. "
+            "An existing PR may still exist outside the sampled page."
+        )
     for candidate in report["suggested_owner_review_order"]:
         lines.append(
             "- [PR #" + str(candidate["number"]) + "](" +
@@ -807,7 +861,8 @@ def markdown(report):
             "- PR changed files: " + row.get("pr_files_url", "UNKNOWN"),
             "- Observed state: " + row.get("observed_state", "UNKNOWN"),
             "- Observed target branch: " + row.get("target_branch", "UNKNOWN"),
-            "- Historical source link: " + row["source_relationship"],
+            "- Candidate origin: " + row["candidate_origin"],
+            "- Source-observed relationship: " + row["source_relationship"],
             "- Current PR body issue text: " +
             row.get("pr_body_issue_text_observation", "UNKNOWN"),
             "- Text mention proves current PR-issue link: NO",
