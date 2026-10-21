@@ -315,7 +315,8 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
             "changes_host": "no", "authorization_required": "yes",
         })
 
-    if codes & {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE", "SWAP_TELEMETRY_INCOMPLETE"}:
+    if codes & {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE", "SWAP_TELEMETRY_INCOMPLETE",
+                "MEMORY_UNOBSERVABLE", "DISK_UNOBSERVABLE", "STORAGE_TRIAGE_PARTIAL"}:
         recommend("CAPACITY_FIRST", "VPS resource owner",
                   "Insufficient or unverified resource headroom can cause repeat OOM crashes or incomplete releases.",
                   "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
@@ -335,7 +336,8 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
         recommend("ARCHIVE_ROUTE_OWNER", "VPS archive / storage owner",
                   "An external mount is not proof that writes or safe cleanup are possible.",
                   "Verify encrypted archival destination rights and owner authorization separately; never delete source data before remote checksum verification.")
-    if "ACTIVE_WORK_REQUIRES_DRAIN" in codes or "WORKER_EVIDENCE_INCOMPLETE" in codes:
+    if codes & {"ACTIVE_WORK_REQUIRES_DRAIN", "WORKER_EVIDENCE_INCOMPLETE",
+                "WORKER_IDLE_NOT_PROVEN"}:
         recommend("WORKER_SAFE_IDLE_OWNER", "Serialized zCloud worker/release owner (#580/#1089)",
                   "Current queue claims or browser-reported generation may still be active, or monitoring is incomplete.",
                   "Preserve active claims and browser sessions; use existing owner-gated drain and independently confirmed idle evidence before a release. Do not kill workers.")
@@ -352,7 +354,8 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
 RECOVERY_FAMILIES = {
     "CAPACITY_FIRST": frozenset({
         "LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED",
-        "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE", "SWAP_TELEMETRY_INCOMPLETE"}),
+        "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE", "SWAP_TELEMETRY_INCOMPLETE",
+        "MEMORY_UNOBSERVABLE", "DISK_UNOBSERVABLE", "STORAGE_TRIAGE_PARTIAL"}),
     "RUNNER_OWNER": frozenset({
         "ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE",
         "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS",
@@ -366,7 +369,8 @@ RECOVERY_FAMILIES = {
     "ARCHIVE_ROUTE_OWNER": frozenset({
         "ARCHIVE_COLD_TIER_NOT_READY", "ARCHIVE_WRITE_UNVERIFIED"}),
     "WORKER_SAFE_IDLE_OWNER": frozenset({
-        "ACTIVE_WORK_REQUIRES_DRAIN", "WORKER_EVIDENCE_INCOMPLETE"}),
+        "ACTIVE_WORK_REQUIRES_DRAIN", "WORKER_EVIDENCE_INCOMPLETE",
+        "WORKER_IDLE_NOT_PROVEN"}),
 }
 
 
