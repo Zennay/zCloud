@@ -339,6 +339,32 @@ def render_comparison(data, format_name):
     return "\n".join(lines)
 
 
+def save_private_comparison(output, rendered, format_name):
+    """Create a single new 0600 owner-private operator handoff, no overwrite."""
+    expected_suffix = {"text": ".txt", "markdown": ".md", "json": ".json"}[format_name]
+    if (not isinstance(output, Path) or not output.name
+            or output.name in {".", ".."} or output.suffix != expected_suffix):
+        raise ValueError("private comparison extension required")
+    body = (rendered + "\n").encode("utf-8")
+    if not 0 < len(body) <= 64 * 1024:
+        raise ValueError("private comparison too large")
+    parent = output.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise ValueError("private existing output parent required")
+    parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY |
+                        os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+    try:
+        meta = os.fstat(parent_fd)
+        if (not stat.S_ISDIR(meta.st_mode)
+                or meta.st_uid != os.geteuid()
+                or stat.S_IMODE(meta.st_mode) & 0o077):
+            raise ValueError("private output parent must be owner-only")
+        _write_new(parent_fd, output.name, body)
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Private, non-deploying zSentinel operator source bundle"
@@ -354,9 +380,13 @@ def main():
                         help="Another EXISTING private bundle A, only with --verify-dir B")
     parser.add_argument("--compare-format", choices=("text", "markdown", "json"),
                         default="text", help="Offline operator comparison output")
+    parser.add_argument("--compare-output", type=Path,
+                        help="Optional NEW owner-private 0600 .txt/.md/.json comparison file")
     args = parser.parse_args()
     if args.compare_dir is not None and args.verify_dir is None:
         parser.error("--compare-dir requires --verify-dir for the second package")
+    if args.compare_output is not None and args.compare_dir is None:
+        parser.error("--compare-output requires two existing private packages")
     try:
         if args.compare_dir is not None:
             info = compare_packages(args.compare_dir, args.verify_dir)
@@ -367,7 +397,15 @@ def main():
     except (OSError, ValueError, UnicodeError, TypeError, KeyError):
         parser.exit(2, "Privé operatorpakket niet bruikbaar; controleer bron en map.\n")
     if args.compare_dir is not None:
-        print(render_comparison(info, args.compare_format))
+        comparison = render_comparison(info, args.compare_format)
+        if args.compare_output is not None:
+            try:
+                save_private_comparison(args.compare_output, comparison, args.compare_format)
+            except (OSError, ValueError):
+                parser.exit(2, "Privé vergelijking niet opgeslagen; geen overschrijving.\n")
+            print("Nieuwe privé vergelijking aangemaakt (0600); geen bron-, workflow-, release- of VPS-wijziging.")
+        else:
+            print(comparison)
     elif args.verify_dir is not None:
         print("Privé bronpakket herkend: " + str(info["verified_modules"])
               + " modules stemmen overeen met manifest. Geen releaseautorisatie.")
