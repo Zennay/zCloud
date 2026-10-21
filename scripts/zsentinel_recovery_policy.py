@@ -561,8 +561,13 @@ def workorders_text(batch):
         urls = order["source_urls"]
         source_note = (
             " | issue: " + urls[0] +
-            "".join(" | candidate PR (verify): " + url for url in urls[1:])
-            if is_case and urls else ""
+            "".join(
+                " | PR #" + str(pr["number"]) +
+                (" [DRAFT AT SOURCE]" if pr["draft_at_source"]
+                 else " [NON-DRAFT AT SOURCE]") +
+                " (" + pr["relationship_at_source"] + "): " + pr["url"]
+                for pr in order.get("candidate_prs", [])
+            ) if is_case and urls else ""
         )
         lines.extend([
             "Problem [" + (order["priority"] + " " if is_case else "") +
@@ -690,7 +695,9 @@ def workorders_csv(batch):
     writer.writerow([
         "priority", "project", "incident", "decision", "human_next_step",
         "owner_hint_unverified", "issue_url", "candidate_pr_urls_unverified",
-        "source_receipts_unverified", "problem_codes", "required_evidence", "proposed_actions",
+        "source_receipts_unverified", "sampled_pr_triage", "pr_draft_state_at_source",
+        "pr_link_relationships_at_source", "problem_codes", "required_evidence",
+        "proposed_actions",
         "case_export_utc", "policy_evaluated_utc", "case_project_scope",
         "issues_observed_utc", "queue_observed_utc",
         "issue_source_stale", "queue_source_stale", "issue_sample_partial",
@@ -708,6 +715,12 @@ def workorders_csv(batch):
             item["owner"] or "UNKNOWN", urls[0] if issue and urls else "",
             "; ".join(urls[1:]) if issue else "",
             "; ".join(urls),
+            item.get("pr_source_triage", "UNKNOWN"),
+            "; ".join("PR #" + str(pr["number"]) + ": " +
+                      ("draft" if pr["draft_at_source"] else "non-draft")
+                      for pr in item.get("candidate_prs", [])),
+            "; ".join(pr["relationship_at_source"]
+                      for pr in item.get("candidate_prs", [])),
             "; ".join(item["problem_codes"]),
             "; ".join(item["required_evidence"]),
             "; ".join(item["proposed_actions"]),
@@ -766,9 +779,14 @@ def case_markdown(batch):
         urls = row["source_urls"]
         links = (
             "[original issue](" + urls[0] + ")" +
-            "".join(" · [candidate PR " + str(index) + " (unverified)](" +
-                    url + ")" for index, url in enumerate(urls[1:], start=1))
-            if row["incident_id"].startswith("issue-") and urls else
+            "".join(
+                " · [PR #" + str(pr["number"]) +
+                (" · DRAFT at source" if pr["draft_at_source"]
+                 else " · non-draft at source") +
+                " · " + pr["relationship_at_source"] +
+                " · unverified](" + pr["url"] + ")"
+                for pr in row.get("candidate_prs", [])
+            ) if row["incident_id"].startswith("issue-") and urls else
             "No shareable issue/PR source receipt; verify private queue ownership"
         )
         lines.extend([
@@ -850,9 +868,18 @@ def workorders_html(batch):
             "<ul>",
         ])
         for index, url in enumerate(item["source_urls"]):
+            candidate = (
+                item.get("candidate_prs", [])[index - 1]
+                if index and len(item.get("candidate_prs", [])) >= index else None
+            )
             source_label = (
                 "Issue" if index == 0 else
-                "Candidate repair PR — verify current ownership and gates"
+                "PR #" + str(candidate["number"]) +
+                (" · DRAFT at source" if candidate["draft_at_source"]
+                 else " · NON-DRAFT at source") +
+                " · " + candidate["relationship_at_source"] +
+                " — recheck live ownership/CI/reviews"
+                if candidate is not None else "Candidate repair PR — verify live"
             ) if "priority" in item else "Evidence"
             parts.append("<li><strong>" + esc(source_label) + ":</strong> <a href='" + esc(url) +
                          "' target='_blank' rel='noopener noreferrer'>" +
@@ -1180,6 +1207,11 @@ def select_case_view(report, *, project=None, through_priority="P3", issue_numbe
     view["incident_count"] = len(items)
     view["request_count"] = len(items)
     view["decision_counts"] = {"HOLD": len(items), "READY_FOR_HUMAN_REVIEW": 0}
+    view["sampled_existing_pr_triage"] = {
+        status: sum(item.get("pr_source_triage") == status for item in items)
+        for status in ("non_draft_reference", "draft_only_reference",
+                       "no_sampled_pr_reference")
+    }
     view["source_case_view"] = {
         "selected_project": project or "all-in-source",
         "through_priority": through_priority,
