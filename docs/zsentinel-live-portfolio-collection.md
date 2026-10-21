@@ -195,12 +195,18 @@ productissuebord en portfolioweergave) accepteert nu beide concrete
   relationele `Project` als één canonieke URL, als JSON-lijst of
   vooraf geserialiseerde JSON-lijst. Een optionele Notion `?pvs=204`
   verwijdert de projectidentiteit niet meer.
-- Ongewijzigde Notion-API paginarijen met unieke UUID `id` en
-  getypeerde `properties["Work ID"].number`,
-  `properties["Status"].status.name` en
-  `properties["Project"].relation` met exact één UUID die voorkomt in
-  het canonieke projectregister. Een afgekapt/onbekend project wordt
-  weergegeven als **ONBEKEND**, niet als vrije of verifieerbare claim.
+- Notion-API paginarijen met unieke UUID `id`, exact bij de
+  gekozen data source passende `parent.data_source_id`, en getypeerde
+  `properties["Work ID"].number`, `properties["Status"].status.name`
+  en `properties["Project"].relation`. Deze rijen hoeven niet eerst
+  handmatig naar platte connectorvelden te worden omgezet. Een directe
+  Notion-API queryresponse met `object: "list"`, `has_more: false`,
+  `next_cursor: null` en minstens één dergelijke bronrij mag in de
+  bestaande privéwrapper worden geplaatst zónder `data_source_ids`;
+  de herkomstidentiteit moet dan op **iedere** pagina-rij kloppen.
+  Een lege REST-respons zonder expliciete `data_source_ids` wordt
+  geweigerd; afwezigheid mag nooit als vrije scope worden behandeld.
+  Afgekapt/onbekend project blijft **ONBEKEND**, nooit claimvrij.
 
 De operator bewaart de werkelijke bron-`observed_at_utc` en data-source
 in de bestaande wrapper; een oud bestand opnieuw inpakken maakt de bron
