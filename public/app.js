@@ -422,6 +422,18 @@ async function resumeBlockedQueue(queueId,button){
     render();
     await refresh(true);
   }catch(error){
+    // A 409 means the operator's confirmed dependency source changed.
+    // Restore the actual queue, never leave a stale resume button enabled.
+    try{
+      const latest=await api('/api/portfolio-queue');
+      if(!Array.isArray(latest?.items))throw new Error('incomplete queue source');
+      BLOCKED_QUEUE=latest.items.filter(row=>row&&row.status==='blocked');
+      BLOCKED_QUEUE_ERROR='';
+    }catch(_){
+      BLOCKED_QUEUE=null;
+      BLOCKED_QUEUE_ERROR='Could not refresh the parked queue; resume disabled until the source is available.';
+    }
+    render();
     window.alert(error?.message||'Could not safely resume the parked task.');
   }finally{
     blockedResumesPending.delete(queueId);
