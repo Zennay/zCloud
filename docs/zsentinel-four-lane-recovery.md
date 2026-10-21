@@ -69,6 +69,10 @@ The selected-project brief uses the **same** transactional SQLite snapshot as
 the four-lane dashboard: P0/P1 waiting counts, `eligible=1` local hints,
 P0/P1 currently active counts, the UTC source moment, whether that aggregate
 may be truncated/partial, and static canonical existing GitHub PR/issue links.
+The bounded owner review shortlist also retains **both P0 and P1**
+waiting/locally eligible counts when a project has both priorities. A P0
+headline is not permission to hide P1 work or infer a free queue slot.
+
 It guides an authorized owner to inspect current Notion claims and existing
 PRs, then verify exact-head required CI, reviews and protection before any
 merge. If the canonical project is absent from the aggregate, the brief
