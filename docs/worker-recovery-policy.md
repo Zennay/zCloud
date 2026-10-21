@@ -482,7 +482,7 @@ token or private prompt is exported.
 
 When the *validated historical* recovery case has **zero referenced PRs**
 for an issue, the normal `--live-candidates` path fails closed. An operator
-can explicitly request **one bounded open-PR source window** instead:
+can explicitly request a **bounded paginated open-PR source window**:
 
 ```sh
 umask 077
@@ -493,47 +493,38 @@ python3 scripts/zsentinel_recovery_policy.py \
   --format html > private-existing-pr-discovery.html
 ```
 
-This is only for an issue whose imported `candidate_prs` list is empty;
-a case that already knows PR references must use the normal path first.
-No new PR is opened. The route reads one canonical GitHub
-`/repos/Zennay/<repo>/pulls?state=open&per_page=30` page, examines
-the returned PR descriptions **in memory** for the selected same-repo
-issue number, and selects at most three candidate references whose text
-contains that issue number or an ordinary closing keyword. It never
-exports raw PR descriptions or other issues. Other rows are skipped with
-a visible incomplete-source count; all returned candidate PRs still use
-the normal double-read HEAD/description-drift guard, check/review
-source bounds, and unauthorized-action flags.
+This route never creates or merges PRs. It inspects at most **four pages**
+of 30 existing open PRs (120 total) in their source repository. Only the
+selected issue's same-repository number is searched in the PR description
+in memory. At most three candidate PRs are retained and double-read to
+observe their exact HEAD and any concurrent description changes. No raw
+PR descriptions, unrelated issues or authorization tokens are exported.
 
-This opt-in path costs at most **14 canonical GitHub GETs**: one open-PR
-list page, one original issue GET, then at most four GETs per candidate.
-In a direct read-only source inspection of the current zCloud repository
-on 21 October 2026, the first open-PR list page was **1,008,465 bytes**:
-larger than the ordinary 160 KiB API-response bound. The actual
-discovery-only PR-list GET therefore has a separate, fixed **2 MiB**
-ceiling; every individual PR, exact-HEAD check and review GET retains
-the original 160 KiB ceiling. This is one page and not a pagination
-crawler, and an over-limit response still fails closed as UNKNOWN.
-The same current zCloud page contained 30 sampled PRs and three textual
-mentions of existing issue #1518 during direct read-only inspection;
-these are **candidates, not verified issue links or product fixes**.
-The result preserves `source_candidate_count=0` separately from the
-up to three newly observed `candidate_count`, and carries
-`optional_unlinked_discovery` with the scanned page length, matched
-textual references, malformed/skipped rows, truncated candidates,
-source completeness `false`, and `existing_repair_absence_verified=false`.
-HTML and Markdown explain the same limits. An empty first page or zero
-text matches **never prove no existing PR**: GitHub may have older pages,
-private/inaccessible PRs, text-free issue cross-references, different
-branch targets, or missing activity sources. An authorized human must
-still check the real repository PR inbox and active ownership before
-starting or assigning new work.
+A short page stops pagination early; a full fourth page marks
+`pagination_window_full=true`. The JSON source provenance exposes
+`pages_scanned`, `open_pr_rows_scanned`,
+`last_page_short_at_observation`, skipped rows, total textual matches,
+candidate truncation and the unchanged `existing_repair_absence_verified=false`.
+The HTML and Markdown owner views show this coverage clearly. A short
+page is only a momentary API observation; concurrent changes, different
+link syntax, private repositories and unsampled references still prevent
+any statement that no other repair PR exists.
 
-Current open-PR text mention is **not** proof of an approved issue→PR
-relationship, PR ownership, exact-head required CI, independent reviewer
-approval or protected-main merge. It only provides bounded navigation
-toward potentially reusable existing work. GitHub admission/quota errors,
-stale issue sources and partial coverage stay UNKNOWN, never READY.
+The upper read bound is **17 GitHub GETs**: at most four list pages, one
+original issue GET and four GETs for each of three selected PRs. Each
+list response has its own fixed 2 MiB cap (at most 8 MiB across four
+pages); all issue/PR/check/review responses keep the 160 KiB cap.
+Errors fail closed; 401/403/429 never authorize retry, owner reassignment,
+new work, merge or release. The `get_attempts` output records the actual
+attempt count and `read_get_attempt_upper_bound` records the safe
+worst-case ceiling.
+
+If a historical case already references one or more PRs, use the normal
+`--live-candidates` path first; `--discover-unlinked` refuses to
+override those references. Text mentions alone never prove issue→PR
+relationship, required exact-HEAD checks, independent review,
+branch protection or an active claim. The authorized operator must
+still check live sources before proceeding.
 
 ### Project- and priority-focused historical owner views
 
