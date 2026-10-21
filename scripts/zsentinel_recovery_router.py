@@ -1245,7 +1245,7 @@ def operator_text(result):
                 or holds.get("claim_authorized") is not False):
             raise ValueError("untrusted incident dependency hold report")
         if coverage == "complete":
-            lines.append("Tasks HELD by unresolved/unobserved incident dependencies: " +
+            lines.append("Otherwise-eligible queued tasks held by unresolved incident dependencies: " +
                          str(holds["count"]) + " (no claim/dispatch)")
         else:
             lines.append("Incident dependencies: UNKNOWN — task/claim inventory incomplete or stale; " +
