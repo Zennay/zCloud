@@ -13,6 +13,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from zsentinel_saved_gate_portfolio import (
     portfolio_page_html, portfolio_markdown, portfolio_pr_csv, portfolio_json,
+    portfolio_issue_pr_csv,
     portfolio_single_pr_html, portfolio_single_pr_markdown, project_worklist,
     single_pr_related_peers,
 )
@@ -21,7 +22,7 @@ MAX_ENTRY_BYTES = 1024 * 1024
 MAX_ARCHIVE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 4 * MAX_ENTRY_BYTES
 FILENAMES = ("project-dossier.html", "project-actions.md",
-             "project-prs.csv", "source-receipt.json")
+             "project-prs.csv", "source-receipt.json", "issue-pr-matrix.csv")
 
 
 def private_project_package(selected, integrated, *, project=None):
@@ -35,6 +36,7 @@ def private_project_package(selected, integrated, *, project=None):
         portfolio_markdown(selected, integrated, project=project).encode("utf-8"),
         portfolio_pr_csv(selected, integrated, project=project).encode("utf-8"),
         portfolio_json(selected, integrated, project=project).encode("utf-8"),
+        portfolio_issue_pr_csv(selected, integrated, project=project).encode("utf-8"),
     )
     if (any(not data or len(data) > MAX_ENTRY_BYTES for data in rendered)
             or sum(map(len, rendered)) > MAX_TOTAL_BYTES):
@@ -50,6 +52,8 @@ def private_project_package(selected, integrated, *, project=None):
         "earliest_observed_at_utc": integrated["earliest_observed_at_utc"],
         "latest_observed_at_utc": integrated["latest_observed_at_utc"],
         "missing_batch_indexes": sorted(integrated["missing_batch_indexes"]),
+        "issue_pr_matrix_complete_within_saved_sample": True,
+        "current_issue_or_pr_inventory_verified": False,
         "files_sha256": {
             name: hashlib.sha256(data).hexdigest()
             for name, data in filenames.items()
