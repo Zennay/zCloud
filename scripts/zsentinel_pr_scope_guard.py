@@ -876,10 +876,16 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
             "number", "url", "head_sha", "base_sha", "updated_at",
             "file_count_observed", "file_list_complete")}
     scope_pairs = {}
+    scope_pair_counts = {}
     scope_prs = sorted(observed, key=lambda row: row["number"])
     for left_index, left in enumerate(scope_prs):
         for right in scope_prs[left_index + 1:]:
-            conflicts = []
+            # Count every matching pair, but retain only the bounded sorted
+            # prefix needed by the operator report. Two 100-file PRs can
+            # otherwise allocate up to 10,000 conflict dictionaries for one
+            # edge even though the public contract displays at most 24.
+            conflict_count = 0
+            examples = []
             for left_path in left["file_paths_observed"]:
                 for right_path in right["file_paths_observed"]:
                     if left_path == right_path:
@@ -890,21 +896,24 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
                         relation = "right_file_conflicts_with_left_descendant"
                     else:
                         continue
-                    conflicts.append({"left_path": left_path,
-                                      "right_path": right_path,
-                                      "relation": relation})
-            if conflicts:
-                scope_pairs[(left["number"], right["number"])] = sorted(
-                    conflicts, key=lambda row: (row["left_path"],
-                                                row["right_path"],
-                                                row["relation"]))
+                    conflict_count += 1
+                    if len(examples) < MAX_SCOPE_PATH_PAIRS_PER_PAIR:
+                        examples.append({"left_path": left_path,
+                                         "right_path": right_path,
+                                         "relation": relation})
+            if conflict_count:
+                key = (left["number"], right["number"])
+                # changed_paths() returns sorted unique paths, so the retained
+                # examples are deterministic without materializing the full edge.
+                scope_pairs[key] = examples
+                scope_pair_counts[key] = conflict_count
     ordered_scope = sorted(scope_pairs.items(),
-                           key=lambda item: (-len(item[1]), item[0]))
+                           key=lambda item: (-scope_pair_counts[item[0]], item[0]))
     scope_cards = [{
         "left": scope_pr_ref(by_num[left]), "right": scope_pr_ref(by_num[right]),
-        "path_conflict_count_observed": len(conflicts),
-        "path_conflicts": conflicts[:MAX_SCOPE_PATH_PAIRS_PER_PAIR],
-        "path_conflicts_truncated": len(conflicts) > MAX_SCOPE_PATH_PAIRS_PER_PAIR,
+        "path_conflict_count_observed": scope_pair_counts[(left, right)],
+        "path_conflicts": conflicts,
+        "path_conflicts_truncated": scope_pair_counts[(left, right)] > len(conflicts),
         "action": "inspect_existing_prs_and_current_claims_before_edit",
         "merge_conflict_verified": False,
         "same_active_owner_verified": False,
