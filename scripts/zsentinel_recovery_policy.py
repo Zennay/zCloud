@@ -1509,6 +1509,7 @@ def main(argv=None):
                 try:
                     live = observe_candidate_prs(
                         selected, token=os.environ.get("GITHUB_TOKEN") or None,
+                        source_case=report,
                     )
                 except GitHubReadError as exc:
                     raise PolicyInputError("live PR source: " + str(exc)) from exc
