@@ -8,11 +8,16 @@ The issue-first selection routes existing product PRs to observed P0/P1 GitHub
 issues **without inventing ownership or a completed fix**. Alongside same-repo
 issue URLs and `owner/repo#N` references, the parser recognizes explicit
 GitHub action phrases such as `Fixes #12`, `Fixes: #12`,
-`Closes #12, #13 and #14` and `Refs #12 & #13` in a PR description.
+`Closes #12, #13 and #14`, `Refs #12 & #13` and the non-closing
+`Related to #12` / `See also #13` in a PR description.
 All numbers must refer to issues in the already fetched canonical repository
 and source window. A plain `#N` outside an action sequence in a PR body does
 not gain an issue-first priority; unrelated or cross-repository numbers cannot
-establish an issue link. Existing P0/P1 issue classification, draft/QA exclusion,
+establish an issue link. Duplicate PR identities in the same source page are rejected rather than
+quietly overwriting one candidate's issue priority. The terminal worklist also
+links each observed P0/P1 issue directly; the private HTML labels these as
+title-or-body hints rather than incorrectly claiming a body-only reference.
+Existing P0/P1 issue classification, draft/QA exclusion,
 exact HEAD, independent review, CI and mainwriter checks are unchanged.
 These are **candidate links**, never proof a PR actually fixes the issue.
 
