@@ -219,6 +219,23 @@ def filter_issue_page(report, *, priority=None, issue_url=None,
                     issue["links_lost_while_pr_still_sampled"] > 0)
         return issue["sampled_prs_missing_from_final"] > 0
 
+    scope_rows = [issue for issue in all_rows
+                  if project is None or issue["repository"] == project]
+    attention_overview = {
+        "historical_issue_candidates_in_project_scope": len(scope_rows),
+        "multiple_existing_pr_candidates": sum(
+            issue["multiple_candidate_prs_need_owner_review"]
+            for issue in scope_rows),
+        "issue_links_not_observed_in_final_source": sum(
+            issue["link_unobserved_in_final_sample"] or
+            issue["links_lost_while_pr_still_sampled"] > 0
+            for issue in scope_rows),
+        "sampled_prs_missing_from_final_source": sum(
+            issue["sampled_prs_missing_from_final"] > 0
+            for issue in scope_rows),
+        "categories_can_overlap": True,
+        "counts_are_historical_not_current": True,
+    }
     rows = [
         issue for issue in all_rows
         if (priority is None or issue["highest_source_priority"] == priority)
@@ -242,6 +259,7 @@ def filter_issue_page(report, *, priority=None, issue_url=None,
         if issue_url is None and attention is None else []
     )
     display["selection"] = {
+        "historical_attention_overview": attention_overview,
         "priority_filter": priority,
         "project_filter": project,
         "attention_filter": attention,
@@ -343,7 +361,13 @@ str(selection["matched_source_issues"]) + " filtersmatches (" +
 str(selection["total_source_issues"]) + " in bron). Project: " +
 e(selection["project_filter"] or "alle opgeslagen projecten") +
 "; aandachtsfocus: " + e(selection["attention_filter"] or "alle bronissues") +
-". Pagina " +
+". Historische aandacht binnen gekozen project: " +
+str(selection["historical_attention_overview"]["multiple_existing_pr_candidates"]) +
+" issues met meerdere PRs, " +
+str(selection["historical_attention_overview"]["issue_links_not_observed_in_final_source"]) +
+" met verdwenen bronlinks, " +
+str(selection["historical_attention_overview"]["sampled_prs_missing_from_final_source"]) +
+" met verdwenen PR-steekproef (overlap mogelijk, niet live). Pagina " +
 str(selection["page"]) + "/" + str(selection["total_pages"]) +
 ".</p>" + "".join(cards) +
 ('<details><summary>PRs zonder waargenomen bronissue (' +
@@ -368,7 +392,14 @@ def markdown_content(result):
              "; pagina " + str(sel["page"]) + "/" + str(sel["total_pages"]),
              "- Projectfilter: " + (sel["project_filter"] or "alle opgeslagen projecten"),
              "- Aandachtsfocus: " + (sel["attention_filter"] or "alle bronissues") +
-             " (niet getoond betekent niet gesloten of vrij)", "",
+             " (niet getoond betekent niet gesloten of vrij)",
+             "- Historische aandachtsgevallen binnen projectscope: " +
+             str(sel["historical_attention_overview"]["multiple_existing_pr_candidates"]) +
+             " meerdere PRs · " +
+             str(sel["historical_attention_overview"]["issue_links_not_observed_in_final_source"]) +
+             " verdwenen issue-links · " +
+             str(sel["historical_attention_overview"]["sampled_prs_missing_from_final_source"]) +
+             " PRs verdwenen uit eindsteekproef (categorieën overlappen)", "",
              "## Bronherkomst en steekproefdekking", ""]
     for sample in result["source_snapshots"]:
         lines.append(
@@ -523,6 +554,8 @@ def private_issue_package(report):
         "selected_issue_count": report["selection"]["shown_source_issues"],
         "matched_issue_count_in_selected_scope": report["selection"]["matched_source_issues"],
         "source_total_issue_count": report["selection"]["total_source_issues"],
+        "historical_project_attention_counts":
+            report["selection"]["historical_attention_overview"],
         "filtered_out_does_not_mean_closed_or_unowned": True,
         "original_manifest_sha256": [
             item["original_review_manifest_sha256"]
