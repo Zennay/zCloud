@@ -1105,3 +1105,34 @@ melden historische/onbetrouwbare klokvelden en onvolledige brondekking.
 Deze implementatie staat alleen op de bestaande PR-branch. Bestaande
 hosted/self-hosted workflowgates, onafhankelijke review, protected main
 en geautoriseerde VPS-release blijven verplicht.
+
+
+### 21 oktober · Fair-share voor actieve eigenaars en exacte claimaantallen
+
+Ook `active_claim_evidence_examples` is nu project-eerlijk begrensd:
+de selector bewaart maximaal `max_visible` bronvoorbeelden per project,
+toont eerst één brongebonden voorbeeld per project en vult daarna de
+resterende plaatsen in prioriteitsvolgorde. Een groot aantal ontbrekende
+claimvelden bij één project verdringt dus niet automatisch andere projecten.
+`active_claim_evidence_example_count` en de bestaande truncated-flags
+blijven alle werkelijk geobserveerde bronregels tellen; de brondekking is
+nog steeds alleen de zichtbare API-snapshot.
+
+De compacte gezamenlijke operatorinbox behoudt nu ook
+`claim_attempts_capped` van het originele hoge-claim-werkorder.
+Bij waarden hoger dan de vaste presentatiegrens 1.000.000.000 vermeldt
+de HTML/Markdown-uitvoer **minstens** die grens, nooit een foutief exact
+aantal. Onvolledige of tegenstrijdige cap-receipts worden door de
+offline renderer geweigerd in plaats van verondersteld geldig.
+Ook deze verbetering geeft geen retry-, release- of claimrecht.
+
+### Broncontrole en oplevergrens
+
+De eerste offline renderer is op exacte GitHub-bron via verbonden zSSH
+syntactisch geaccepteerd. Een latere herhaalde zSSH-bronfetch liep tegen
+de bestaande tijdslimiet van de zwaar belaste VPS aan; dat is geen
+succesvol build-, CI- of live-integratiebewijs. Voor deze PR blijven
+verplichte exacte-head CI, onafhankelijke review, protected main en
+geautoriseerde release vereist. Geen nieuwe QA-suite geschreven of
+handmatig uitgevoerd; geen active worker, producer, SQLite, PR-head van
+een andere eigenaar of VPS-runner gewijzigd.
