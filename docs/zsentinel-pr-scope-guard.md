@@ -737,6 +737,14 @@ De bestaande exacte-HEAD gatebalie onderscheidt nu expliciet **concept-PR**, **G
 
 Een concept vraagt eerst productafronding en reviewklaar maken door de bevoegde PR-eigenaar. Bij `mergeable=false` moet de eigenaar eerst de actuele basisconflicten oplossen. Bij `mergeable=null` is aanvullend huidig GitHub-bewijs nodig. Succesvolle checks of een waarneembare `mergeable=true` leveren **nooit** zelfstandig review-, branch protection-, claim- of deployautorisatie op. De scanner leest beide PR-identiteiten rondom de gatebronnen, weigert een tussentijds gewijzigde draftstatus en schrijft geen GitHub-/Notion-/queue-/VPS-state. Bestaande exact-head CI, onafhankelijke review en eigenaarstoestemming blijven vereist.
 
+### 21 oktober · Exacte-HEAD reviewverzoeken expliciet als lopend werk
+
+De bounded current-head balie leest nu `requested_reviewers` en `requested_teams` van de bestaande GitHub-PR tegelijk met de exacte HEAD, base, checks en ingediende reviews. **Een reviewverzoek is geen goedkeuring.** De aantallen worden na de bronopvraging opnieuw vergeleken met een tweede huidige PR-lezing; een verschoven verzoekenset wordt niet als stabiele PR waargenomen. De output bevat `pending_individual_review_requests_observed`, `pending_team_review_requests_observed`, `pending_review_request_evidence_sha256` en de bronstabiliteitsvlag zonder logins, team-identiteiten of reviewrechten te publiceren.
+
+Zodra op de exact waargenomen HEAD nog geen onafhankelijke goedkeuring bestaat, maar er **wel** een reviewverzoek openstaat, geeft de menselijke gatebalie nu `wait_for_requested_independent_review` in plaats van onterecht `request_independent_current_head_review`. Bij ontbreken van zowel goedkeuring als verzoek blijft het verzoekadvies bestaan. Conceptstatus, mergeconflicten, incomplete bronnen, CI-fouten, queued checks en expliciete wijzigingsverzoeken worden eerst beoordeeld. Het is één read-only GitHub-transactie per PR (geen extra GETs, geen automatische revieweruitnodiging).
+
+Alle operatoroppervlakken gebruiken dezelfde Nederlandse gatevertaling uit `zsentinel_pr_gate_now.GATE_STEPS_NL`: huidige CLI-text, live issue HTML/tekst/Markdown en opgeslagen batch-HTML/Markdown/tekst. Een historisch opgeslagen verzoek is alleen een bronmoment: oude ontvangsten zonder reviewverzoekkolommen melden **ONBEKEND**, nooit `0` of actuele vrijgave. Private batch-workorders tonen aantallen en herinneren dat verzoeken géén approvals zijn. Bestaande verplichte exact-head CI, onafhankelijke review, protected-main, eigenaarclaim en release blijven onveranderd.
+
 ### Direct Dutch triage without exporting JSON
 
 The same bounded CLI supports `--format text` for an immediately readable
