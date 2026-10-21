@@ -505,7 +505,13 @@ def _prohibited_recovery_qa(item):
     if re.match(
         r"^(?:qa(?:[ :(-]|$)|tests?(?:[ :(-]|$)|regression[ -]tests?(?:[ :(-]|$)|"
         r"quality[ -]validation(?:[ :(-]|$)|validation[ -]suite(?:[ :(-]|$)|"
-        r"regression[ -]suite(?:[ :(-]|$)|run[ -](?:qa|regression)(?:[ :(-]|$))",
+        r"regression[ -]suite(?:[ :(-]|$)|run[ -](?:qa|regression)(?:[ :(-]|$)|"
+        r"regressie[ -]?tests?(?:[ :(-]|$)|kwaliteits[ -]?validatie(?:[ :(-]|$)|"
+        r"kwaliteits[ -]?controle(?:[ :(-]|$)|validatie[ -]?ronde(?:[ :(-]|$)|"
+        r"test[ -]?suite(?:[ :(-]|$)|test[ -]?pakket(?:[ :(-]|$)|"
+        r"testen(?:[ :(-]|$)|schrijf[ -](?:qa[ -])?tests?(?:[ :(-]|$)|"
+        r"draai[ -](?:qa[ -])?tests?(?:[ :(-]|$)|"
+        r"voer[ -]tests?[ -]uit(?:[ :(-]|$))",
         title,
     ):
         return True
@@ -521,7 +527,9 @@ def _prohibited_recovery_qa(item):
     return any(
         str(value or "").strip().lower().replace("_", "-") in {
             "qa", "qa-validation", "quality-validation", "regression-testing",
-            "test-suite", "testing-only",
+            "test-suite", "testing-only", "kwaliteits-validatie",
+            "kwaliteitscontrole", "regressie-tests", "testen-alleen",
+            "testpakket", "validatie-ronde",
         }
         for value in lanes
     )
