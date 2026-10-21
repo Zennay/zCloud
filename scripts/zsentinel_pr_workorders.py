@@ -167,6 +167,10 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
                 paths_limited = True
                 continue
             related.add(peer_url)
+            if pair.get("path_conflicts_truncated") is True or (
+                    type(pair.get("path_conflict_count_observed")) is int and
+                    pair["path_conflict_count_observed"] > len(pair["path_conflicts"])):
+                paths_limited = True
             for conflict in pair["path_conflicts"][:24]:
                 if type(conflict) is not dict:
                     paths_limited = True
@@ -193,6 +197,8 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
                 scope_conflicts.append({
                     "peer_pr_url": peer_url, "peer_head_sha": peer_head,
                     "selected_path": selected_path, "peer_path": peer_path,
+                    "scope_conflict_pairs_observed": pair.get(
+                        "path_conflict_count_observed", len(pair["path_conflicts"])),
                     "relation": normalized_relation,
                     "source": "stable_open_pr_scope_collision_sample",
                 })
@@ -241,6 +247,7 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
                 scope_conflicts.append({
                     "peer_pr_url": peer_url, "peer_head_sha": peer_head,
                     "selected_path": selected_path, "peer_path": peer_path,
+                    "scope_conflict_pairs_observed": conflict_count,
                     "relation": relation,
                     "source": "focused_pr_overlap_with_stable_inventory",
                 })
@@ -744,7 +751,7 @@ def render_csv(bundle):
         "source_sha256", "link", "detail",
         "scope_conflict_peer_pr_url", "scope_conflict_peer_head_sha",
         "scope_conflict_selected_path", "scope_conflict_peer_path",
-        "scope_conflict_relation",
+        "scope_conflict_pairs_observed", "scope_conflict_relation",
         "change_since_previous_observation", "new_evidence_since_previous",
         "repeat_hold_deferred", "historical_next_step",
         "previous_source_observed_at_utc", "historical_comparison_status",
@@ -879,6 +886,7 @@ def render_csv(bundle):
                 scope_conflict_peer_head_sha=peer_head,
                 scope_conflict_selected_path=edit_path(conflict.get("selected_path")),
                 scope_conflict_peer_path=edit_path(conflict.get("peer_path")),
+                scope_conflict_pairs_observed=conflict["scope_conflict_pairs_observed"],
                 scope_conflict_relation=conflict["relation"],
                 detail="File/directory ancestor collision observed; not merge authority")
         for path in card["overlap_paths"][:MAX_PATHS]:
