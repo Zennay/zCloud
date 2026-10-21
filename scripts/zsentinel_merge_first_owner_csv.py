@@ -410,6 +410,45 @@ def main(argv=None):
         }
         rows = prepare_rows(view, sha, saved, exported_at=exported_at)
         if args.format == "csv":
+            if not rows:
+                # A header-only file loses provenance and can be misread as a
+                # clear backlog. Emit one explicitly non-actionable metadata row.
+                rows = [{
+                    "original_board_sha256": sha,
+                    "board_observed_at_utc": view["observed_at_utc"],
+                    "board_age_at_export": board_age,
+                    "archive_age_at_export": archive_age,
+                    "device_clock_authoritative": False,
+                    "priority": "Unspecified",
+                    "source_issue_urls": "",
+                    "source_issue_titles": "Metadata only: no owner rows in bounded saved source",
+                    "project_scope": "",
+                    "pr_reference_state": "metadata_only_no_owner_rows",
+                    "pr_url": "",
+                    "linked_issue_count": 0,
+                    "multiple_issues_share_pr": False,
+                    "issue_has_alternative_prs": False,
+                    "board_heads_observed": "UNKNOWN",
+                    "archive_heads_observed": "UNKNOWN",
+                    "head_variation_is_historical_not_merge_conflict": False,
+                    "historical_gate_labels": "UNKNOWN",
+                    "sampled_board_unknown_gates": "UNKNOWN",
+                    "pr_missing_last_saved_snapshot": False,
+                    "issue_link_missing_in_saved_source": False,
+                    "historical_candidates_truncated": False,
+                    "unlinked_in_saved_archive": False,
+                    "source_archive_manifest_sha256s": " | ".join(archive_manifests),
+                    "saved_archive_batches_missing": missing_archive_batches,
+                    "human_next_step_only": (
+                        "Inspect live issue/PR inventory; empty saved selection is not live backlog clearance"),
+                    "claim_authorized": False,
+                    "dispatch_authorized": False,
+                    "required_ci_verified": False,
+                    "independent_review_verified": False,
+                    "main_merge_verified": False,
+                    "deploy_authorized": False,
+                    "live_state_verified": False,
+                }]
             stream = StringIO()
             writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\r\n")
             writer.writeheader()
