@@ -889,3 +889,78 @@ claim-, opslag- of GitHub-writes. Broncommit
 staat op bestaande PR #1572. Issues als
 [zCloud #1326](https://github.com/Zennay/zCloud/issues/1326)
 worden **niet** automatisch gesloten of als hersteld bestempeld.
+
+
+## 21 oktober · Kernelwachttijden voor een echte, read-only runnerdiagnose
+
+De optionele `--host-pressure` herstelbalie inspecteert nu naast
+RAM/swap/load en root-schijfruimte ook **Linux PSI** (Pressure Stall
+Information) voor CPU, geheugen en I/O. Dit is geen extra
+productie-/CI-/resource-admission gate: het is brongebonden informatie
+voor een mens die runner- en workerblokkades moet onderzoeken.
+
+Een nieuwe standalone module, `scripts/zsentinel_psi_pressure.py`,
+leest uitsluitend de drie **vaste, door de code bepaalde** paden
+`/proc/pressure/cpu`, `/proc/pressure/memory` en
+`/proc/pressure/io`. Iedere read gebruikt `O_NOFOLLOW` en
+`O_NONBLOCK`, maximaal 2 KiB; parser vereist canonieke
+`some` en (waar betekenisvol) `full`-percentages met
+`avg10`, `avg60` en `avg300`. Defecte, ontbrekende of
+onvolledige bronnen leveren **PARTIAL/UNKNOWN** op, geen gefingeerde
+nulwaarden. Onbetrouwbare CPU-`full` wordt niet gebruikt als
+beoordeling.
+
+De centrale hostindicatie gebruikt bestaande RAM-/swap-/CPU-/schijf-
+grenzen en **aanvullend** heuristische PSI-stallgrenzen om bij
+aantoonbare zware kernelwachttijden een menselijke P0-eigenaaractie
+boven algemene queueberichten zichtbaar te houden.
+De offline HTML-herstelbalie heeft een aparte CPU/geheugen/I/O-tabel
+met 10/60/300 seconden voor deels wachtende taken en 60 seconden
+volledig stilstaande geheugen-/I/O-taken. De bestaande tekst-,
+JSON- en private Markdown-overdracht bevatten dezelfde bronfeiten.
+
+Bij volledig ontbrekende RAM/load-bron kan betrouwbare hoge PSI of
+diskdruk **niet meer stilzwijgend verdwijnen**: het packet blijft
+`HOST_PARTIAL`, benoemt expliciet de niet waargenomen bronnen en
+laat de bestaand geautoriseerde eigenaar een `HOLD_CAPACITY_OWNER_REVIEW`
+zien. Anders dan een succesvolle snapshot geeft een gedeeltelijke
+snapshot nooit een gezond-signaal. Binnen de korte eigenaaractie krijgen
+volledige geheugen-/I/O-stilstanden voorrang boven een hoger maar
+minder specifiek `some`-percentage.
+
+**Direct functioneel alleen-lezen op de verbonden VPS:**
+21 oktober observeerde de bron op exact commit
+[b7e8c0e](https://github.com/Zennay/zCloud/commit/b7e8c0e49a819fe07229616dac5c9b28f63d18b0)
+1.825 MiB beschikbare RAM (16,4%), 100% gebruikte swap,
+load/CPU 35,08, 1,80 GiB beschikbare root-schijfruimte
+(98,1% onbeschikbaar) en PSI avg60: CPU-some 84,66%,
+geheugen-some 88,39% / geheugen-full 73,44%,
+I/O-some 78,14% / I/O-full 0,07%.
+Die cijfers zijn een bronmoment, geen historische trend of
+bewijs voor specifieke GitHub-runner-toewijzing. De bevoegde eigenaar
+van het bestaande [P0 #1326](https://github.com/Zennay/zCloud/issues/1326)
+kreeg de waarneming als commentaar, zonder een actieve worker te
+onderbreken.
+
+Samenhangende productbron op **dezelfde al open PR #1572**:
+[7a0698c](https://github.com/Zennay/zCloud/commit/7a0698c2841de7b2e227b9f70a96112b622aa7d9)
+(PSI), [8a67837](https://github.com/Zennay/zCloud/commit/8a678379577826e1f0f62ed78b00361532a5f753)
+(parser),
+[6e1c8ec](https://github.com/Zennay/zCloud/commit/6e1c8ece2365fee1376730f567d80cee554976a2)
+(hostintegratie),
+[32f6b40](https://github.com/Zennay/zCloud/commit/32f6b4022c76cb4c7d5d815835c9187014e3f9f2)
+(eigenaarcontext),
+[b7e8c0e](https://github.com/Zennay/zCloud/commit/b7e8c0e49a819fe07229616dac5c9b28f63d18b0)
+(offline HTML),
+[afb52a5](https://github.com/Zennay/zCloud/commit/afb52a5a45f2865a229c803589dc0e71327c4059)
+(volledige-stall-prioriteit),
+[206b095](https://github.com/Zennay/zCloud/commit/206b095408a2e0bccee51f23b1fae307f825c7b3)
+(fail-closed partial), en
+[2d83435](https://github.com/Zennay/zCloud/commit/2d8343578b5d7a5497e4f2d342d8c1b3a11f58ab)
+(partiële eigenaaralert).
+
+Geen QA-/regressiesuite, workflow-dispatch, bestandssysteemopschoning,
+serviceherstart, workerclaim, daadwerkelijke GitHub-merge of
+ongeautoriseerde deploy. Op `main` en live is niets bewezen tot
+na exacte-head CI, onafhankelijke review, eigenaarsautorisatie
+en afzonderlijke GitHub/deploy-bevestiging.
