@@ -85,7 +85,7 @@ Het blokkadepaneel gebruikt wijzigingen in `public/app.js` en
 `public/style.css`. De startpagina op deze PR verwijst daarom naar
 het **exacte** Git-blobfragment van beide assets:
 
-- `app.js`: `0b6d51db60c` — bevat de strikte
+- `app.js`: `07cfcc746d71` — bevat de strikte
   `resumed=true` / `status=queued` / exact-`queue_id` afhandeling.
 - `style.css`: `2fd8df1b45ca` — bevat de bijbehorende
   Dependency holds- en Attention-presentatie.
@@ -191,3 +191,34 @@ originele taak en afhankelijkheid nog steeds opnieuw live lezen.
 De dropdown en knoppen werken via de bestaande toegankelijke
 focusring, toetsenbordselectie en mobiel 44px-aanraakdoel; actuele
 app.js- en style.css-blobpins zijn bijgewerkt op de startpagina.
+
+
+## Transactionele bronversie bij operator-resume
+
+Een browser kan na zijn verse GET nog een race verliezen tegen een
+andere scheduler-/operatormutatie voordat de hervattings-POST aankomt.
+Daarom stuurt de huidige dashboardclient **naast** een concrete
+resolutienotitie ook `expected_updated_at`, `expected_blocker` en
+`expected_evidence` uit dezelfde nieuw gelezen `blocked`-rij.
+
+De backend vergelijkt deze waarden binnen de bestaande
+`BEGIN IMMEDIATE` SQLite-transactie met de exact geïdentificeerde
+geblokkeerde taak, **vóór** de `blocked → queued`-update en het
+afsluiten van de bijbehorende Attention-kaart. Als één waarde afwijkt,
+retourneert de bestaande 409/no-op response
+`reason=dependency-source-changed-reconfirm`. Er wordt dan geen
+queue-/Attention-update en geen operator-receipt geschreven.
+Na een mislukking of ontbrekende bron probeert de client de huidige
+queue opnieuw read-only op te halen; zonder betrouwbare queuebron
+blijven hervatknoppen uitgeschakeld.
+
+Het succesvolle antwoord vermeldt
+`dependency_source_guarded=true`; de dashboardclient accepteert
+alleen dit antwoord naast de reeds vereiste exacte taakidentiteit
+en `resumed=true`. Bestaande externe operatorclients zonder deze
+optionele guards behouden hun bestaande backendcontract,
+zonder dat zij nieuwe autorisaties krijgen. **De browser en server
+moeten als één geautoriseerde productrelease** worden geleverd:
+een oude server kan de nieuwe guards niet afdwingen.
+Geen onafhankelijke dependency-resolutie wordt beweerd,
+en de operatorbevoegdheden veranderen niet.
