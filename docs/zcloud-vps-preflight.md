@@ -383,19 +383,49 @@ runner minutes. `release_authorized=false` and
 `recovery_performed=false` on every card.
 ## 21 October · one-shot owner handoff without a previous snapshot
 
-is optional and is only needed to compare historical findings. For example:
-is optional and is only needed to compare historical findings. For example:
+A previous snapshot is optional and is only needed to compare historical findings.
+Use the current read-only observation on its own when investigating today's state:
 
 ```bash
 python3 scripts/zcloud_vps_preflight.py --format brief
 ```
 
-previous snapshot, the trend is explicitly `previous_comparison_unavailable`;
-previous snapshot, the trend is explicitly `previous_comparison_unavailable`;
-it does not invent a recovery change or resolved finding. Every card remains
-advisory with `recovery_performed=false` and `release_authorized=false`. This
-route does not call GitHub, change services, mutate claims or grant release
-authority.
+Without a previous snapshot, the trend is explicitly
+`previous_comparison_unavailable`; the report does not invent a recovery
+change or resolved finding. Every card remains advisory with
+`recovery_performed=false` and `release_authorized=false`. This route does
+not call GitHub, change services, mutate claims or grant release authority.
+
+### Owner-specific evidence required for follow-up
+
+Every `owner_handoff` card now carries a machine-readable
+`required_evidence` list alongside its concise `action`. JSON consumers can
+use that field directly; the brief, Markdown and offline HTML renderers show it
+separately so evidence requirements are not hidden inside a long action string.
+
+- **Capacity:** current RAM and swap counters, free filesystem bytes and the
+  training-reserve gap; when pressure is present, same-window CPU/memory/I/O
+  pressure-stall information and the admission owner's assessment.
+- **Host concurrency:** fresh load-per-CPU and pressure measurements plus the
+  accountable scheduler/admission decision. Host pressure alone does not
+  attribute cause to a specific worker.
+- **Runner:** an exact-repository GitHub job receipt with a real runner ID and
+  name, verified labels/group/access, and separate listener/worker evidence.
+  A listener count alone does not prove that a job was assigned.
+- **Checkout and source provenance:** exact branch/HEAD and working-tree
+  evidence, a fresh independently fetched protected-main SHA, ownership of
+  local changes, and the existing exact-head CI/review/release-owner gates.
+- **Archive and worker safety:** an owner-approved encrypted destination and
+  transfer/checksum/retention evidence; for workers, current queue/claim
+  ownership and independently evidenced drain/idle state.
+- **Unknown or unmapped findings:** map the exact source code to its original
+  issue and accountable owner, repeat only the permitted read-only observation,
+  and obtain original-owner evidence.
+
+This list is an investigation checklist, not a new gate or authorization.
+It does not perform recovery, release a claim, interrupt a worker, restart a
+service, transfer an archive, or authorize a merge/deployment.
+
 ## 21 October · stale snapshots cannot prove recovery
 
 `--previous-report` still accepts an older bounded read-only report for historical
