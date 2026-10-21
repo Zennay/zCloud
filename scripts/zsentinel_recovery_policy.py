@@ -696,6 +696,172 @@ def workorders_html(batch):
     return "".join(parts)
 
 
+# This intentionally consumes only the non-authorizing browser export from
+# the existing zCloud Activity product. It never converts a source observation
+# into a claim, owner approval, CI-green assertion, retry or merge entitlement.
+CASE_HOLD_FLAGS = frozenset({
+    "claims_verified", "review_verified", "exact_head_required_ci_verified",
+    "branch_protection_verified", "action_executed",
+    "claim", "retry", "merge", "deploy",
+})
+CASE_PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,55}$")
+CASE_ISSUE_URL = re.compile(
+    r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]*$"
+)
+CASE_PR_URL = re.compile(
+    r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]*$"
+)
+
+
+def evaluate_recovery_case(data):
+    """One bounded, explicitly HOLD-only multi-source operator handoff."""
+    if type(data) is not dict or data.get("schema") != "zsentinel-portfolio-recovery-case-v1":
+        raise PolicyInputError("unsupported recovery case source schema")
+    flags = data.get("authorization")
+    if type(flags) is not dict or not CASE_HOLD_FLAGS <= set(flags) or any(
+        flags[key] is not False for key in CASE_HOLD_FLAGS
+    ):
+        raise PolicyInputError("recovery case must explicitly deny all action authority")
+    project = data.get("selected_project")
+    if type(project) is not str or (project != "all" and not CASE_PROJECT.fullmatch(project)):
+        raise PolicyInputError("invalid recovery case project scope")
+    generated = _timestamp(data.get("generated_at_utc"))
+    issues, recovery = data.get("issues"), data.get("queue_recovery")
+    if (type(issues) is not list or len(issues) > 100 or type(recovery) is not dict
+            or type(recovery.get("workorders")) is not list
+            or len(recovery["workorders"]) > 64):
+        raise PolicyInputError("invalid or unbounded recovery case")
+    seen = set()
+    orders = []
+    for item in issues:
+        if type(item) is not dict:
+            raise PolicyInputError("invalid issue case")
+        pid, number, priority = item.get("project"), item.get("number"), item.get("priority")
+        url = item.get("url")
+        if (type(pid) is not str or not CASE_PROJECT.fullmatch(pid)
+                or project != "all" and pid != project
+                or type(number) is not int or not 1 <= number <= 100000000
+                or priority not in ("P0", "P1")
+                or type(url) is not str or not CASE_ISSUE_URL.fullmatch(url)
+                or not url.endswith("/issues/" + str(number))
+                or item.get("claim_verified") is not False
+                or item.get("ready_for_claim") is not False
+                or item.get("observed_status") not in (
+                    "sampled_open", "historically_open_not_reobserved")
+                or type(item.get("source_uncertain")) is not bool):
+            raise PolicyInputError("invalid or authorizing issue evidence")
+        refs = item.get("referenced_prs")
+        if type(refs) is not list or len(refs) > 3:
+            raise PolicyInputError("invalid issue PR references")
+        urls = [url]
+        for pr in refs:
+            if (type(pr) is not dict or type(pr.get("number")) is not int
+                    or not 1 <= pr["number"] <= 100000000
+                    or type(pr.get("url")) is not str
+                    or not CASE_PR_URL.fullmatch(pr["url"])
+                    or not pr["url"].endswith("/pull/" + str(pr["number"]))
+                    or pr.get("claim_verified") is not False
+                    or pr.get("fix_verified") is not False):
+                raise PolicyInputError("invalid or authorized PR reference")
+            urls.append(pr["url"])
+        identity = (pid, "issue-" + str(number))
+        if identity in seen:
+            raise PolicyInputError("duplicate issue in recovery case")
+        seen.add(identity)
+        historical = item["observed_status"] != "sampled_open"
+        orders.append({
+            "project_id": pid, "incident_id": identity[1],
+            "input_indexes": [], "proposed_actions": ["inspect_existing_prs"],
+            "owner": None, "decision": "HOLD",
+            "problem_codes": ["historical_issue_not_reobserved" if historical else
+                              "source_only_open_issue",
+                              "worker_claim_unverified"],
+            "required_evidence": ["current_notion_worker_queue_ownership",
+                                  "current_github_issue_and_pr_state",
+                                  "exact_head_required_ci_and_review"],
+            "source_urls": urls,
+            "next_step": "refresh_issue_source_first" if historical or item["source_uncertain"]
+                         else "inspect_existing_prs_and_claims",
+            "human_review_required": True,
+            "actions_executed": False,
+            "priority": priority,
+        })
+    cov = data.get("source_coverage")
+    if type(cov) is not dict or type(cov.get("queue_retry")) is not dict:
+        raise PolicyInputError("missing queue recovery coverage")
+    retry_cov = cov["queue_retry"]
+    covered = retry_cov.get("selected_project_covered")
+    if type(covered) is not bool or (not covered and recovery["workorders"]):
+        raise PolicyInputError("contradictory queue recovery source coverage")
+    if type(recovery.get("workorder_count")) is not int or not 0 <= recovery["workorder_count"] <= 500:
+        raise PolicyInputError("invalid recovery workorder count")
+    if type(recovery.get("workorders_truncated")) is not bool:
+        raise PolicyInputError("missing recovery workorder truncation")
+    if recovery["workorder_count"] < len(recovery["workorders"]) or (
+        recovery["workorder_count"] > len(recovery["workorders"])
+        and recovery["workorders_truncated"] is not True
+    ):
+        raise PolicyInputError("inconsistent bounded workorder sample")
+    for item in recovery["workorders"]:
+        if type(item) is not dict:
+            raise PolicyInputError("invalid queue workorder")
+        pid, priority = item.get("project"), item.get("priority")
+        if (type(pid) is not str or not CASE_PROJECT.fullmatch(pid)
+                or project != "all" and pid != project
+                or priority not in ("P0", "P1", "P2", "P3")
+                or item.get("claim_verified") is not False
+                or item.get("action_authorized") is not False):
+            raise PolicyInputError("invalid queue workorder scope or authority")
+        for key in ("observed_high_attempt_items", "observed_queued_high_attempt_items",
+                    "observed_owned_high_attempt_items",
+                    "expired_active_lease_rows_in_group"):
+            if type(item.get(key)) is not int or not 0 <= item[key] <= 100000:
+                raise PolicyInputError("invalid recovery count")
+        if (item["observed_high_attempt_items"] < 1
+                or item["observed_queued_high_attempt_items"] +
+                   item["observed_owned_high_attempt_items"] != item["observed_high_attempt_items"]):
+            raise PolicyInputError("contradictory recovery counts")
+        ident = (pid, "queue-" + priority)
+        if ident in seen:
+            raise PolicyInputError("duplicate project/priority recovery group")
+        seen.add(ident)
+        orders.append({
+            "project_id": pid, "incident_id": ident[1],
+            "input_indexes": [], "proposed_actions": ["inspect_claim_churn"],
+            "owner": None, "decision": "HOLD",
+            "problem_codes": ["high_claim_attempts_observed",
+                              "live_owner_and_failure_cause_unverified"],
+            "required_evidence": ["current_queue_lease_and_worker_owner",
+                                  "failure_classification_and_retry_budget",
+                                  "authorized_runtime_owner"],
+            "source_urls": [],
+            "next_step": "verify_live_owner_before_recovery",
+            "human_review_required": True,
+            "actions_executed": False, "priority": priority,
+        })
+    orders.sort(key=lambda x: (
+        {"P0": 0, "P1": 1, "P2": 2, "P3": 3}[x["priority"]],
+        0 if x["incident_id"].startswith("issue-") else 1,
+        x["project_id"], x["incident_id"],
+    ))
+    return {
+        "schema_version": 1, "policy": "zsentinel-recovery-case-handoff-v1",
+        "evaluated_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "source_generated_at_utc": generated.isoformat().replace("+00:00", "Z"),
+        "source_project_scope": project,
+        "incident_count": len(orders), "request_count": len(orders),
+        "decision_counts": {"HOLD": len(orders), "READY_FOR_HUMAN_REVIEW": 0},
+        "owner_workorders": orders,
+        "advisory_only": True, "evidence_independently_verified": False,
+        "actions_executed": False,
+        "authority": {
+            "claim_acquired": False, "ci_retried": False,
+            "merge_executed": False, "deployment_executed": False,
+            "runner_restarted": False,
+        },
+    }
+
+
 def markdown(report):
     lines = [
         "# zSentinel recovery policy decision",
