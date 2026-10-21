@@ -258,7 +258,12 @@ def main():
         if args.output is None:
             print(rendered, end="")
         else:
-            write_private_output(args.output, rendered, "html")
+            try:
+                write_private_output(args.output, rendered, "html")
+            except (OSError, ValueError):
+                # Destination paths are private; do not echo them to shared logs.
+                parser.exit(
+                    2, "zSentinel owner packet output refused: private destination unavailable or unsafe.\\n")
             print("Created NEW private offline owner desk (0600); no actions.",
                   file=sys.stderr)
     else:
