@@ -745,6 +745,10 @@ Zodra op de exact waargenomen HEAD nog geen onafhankelijke goedkeuring bestaat, 
 
 Alle operatoroppervlakken gebruiken dezelfde Nederlandse gatevertaling uit `zsentinel_pr_gate_now.GATE_STEPS_NL`: huidige CLI-text, live issue HTML/tekst/Markdown en opgeslagen batch-HTML/Markdown/tekst. Een historisch opgeslagen verzoek is alleen een bronmoment: oude ontvangsten zonder reviewverzoekkolommen melden **ONBEKEND**, nooit `0` of actuele vrijgave. Private batch-workorders tonen aantallen en herinneren dat verzoeken géén approvals zijn. Bestaande verplichte exact-head CI, onafhankelijke review, protected-main, eigenaarclaim en release blijven onveranderd.
 
+#### Beslissende reviews gaan vóór losse opmerkingen
+
+Een reviewer kan na `CHANGES_REQUESTED` nog een gewone `COMMENTED`-review indienen. Die reactie is geen nieuwe goedkeuring of intrekking; de actuele reviewerbeslissing wordt daarom uitsluitend uit `APPROVED`, `CHANGES_REQUESTED` of `DISMISSED` afgeleid, op exact dezelfde HEAD en met de nieuwste waargenomen beslissings-ID per onafhankelijke reviewer. Bovendien krijgt een openstaand `CHANGES_REQUESTED` een concrete eigenaaractie ook wanneer andere exacte-HEAD checks nog in de wachtrij staan. Dat voorkomt dat het product uitsluitend 'wacht op CI' zegt terwijl de PR-eigenaar al een wijzigingsverzoek kan afhandelen. Dit blijft een read-only steekproef, niet GitHub's volledige vereiste reviewregelset.
+
 ### Direct Dutch triage without exporting JSON
 
 The same bounded CLI supports `--format text` for an immediately readable
