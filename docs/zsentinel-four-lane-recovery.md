@@ -836,3 +836,34 @@ geen QA-/regressiesuites geschreven of gestart. Deze bronwijzigingen
 zijn **OPEN/UNMERGED/NOT LIVE** op dezelfde PR totdat bestaande
 verplichte exacte-head CI, review, branchbescherming en release-eigenaar
 integratie toestaan.
+
+
+### 21 oktober · Schijfruimte opgenomen in hetzelfde herstelbeeld
+
+De resourcebalie signaleert nu óók hostschijfruimte als potentiële
+blokkade van bestaande CI-/runnerwerkstromen. Nieuwe bronmodule
+`scripts/zsentinel_disk_pressure.py` gebruikt alleen
+`os.statvfs("/")` (geen directoryscan of bestandsinhoud) en retourneert
+afgeronde GiB beschikbaar voor de uitvoerende gebruiker plus het aandeel
+bestandssysteemblokken dat voor **dat proces niet beschikbaar** is.
+Dat percentage is uitdrukkelijk **niet** gelijkgesteld aan bewezen
+gebruik door projecten: gereserveerde blokken kunnen inbegrepen zijn.
+
+Bij minder dan 2 GiB beschikbaar óf minstens 95% niet beschikbaar
+verschijnt `HIGH`; bij minder dan 5 GiB óf vanaf 90% verschijnt
+`ELEVATED`. Onbetrouwbare/missende statvfs-bron wordt `UNKNOWN`,
+niet `0` of `geen druk`. De bestaande optionele
+`--host-pressure` weergave combineert deze lokale metadata met de
+al bestaande begrensde RAM-, swap- en loadmeting. JSON, tekst,
+offline HTML en private Markdown gebruiken automatisch dezelfde bron;
+een ernstige situatie komt bovenaan de herstelbalie en in de
+eigenaaractie-inbox terecht. Geen automatische opslagopschoning,
+archiefmigratie, cgroup-mutatie, runner-restart of extra worker-toelating.
+
+Broncommits: [7e63e1b](https://github.com/Zennay/zCloud/commit/7e63e1b30634b31e5412181f90e396ad3a0d4bce)
+(reguliere bestandssysteemmetadata),
+[956ab62](https://github.com/Zennay/zCloud/commit/956ab62f37087b0f596f6ec29500c983ba5d11b2)
+(gecombineerde resourceclassificatie),
+[1fc311e](https://github.com/Zennay/zCloud/commit/1fc311eafdca16801615b69818c910fdc2cc17db)
+(eigenaaradvies). Dit blijft op bestaande PR #1572; geen
+main- of live-claim voordat GitHub de exacte vereiste gates bevestigt.
