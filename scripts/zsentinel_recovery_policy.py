@@ -284,6 +284,51 @@ def _validate(data):
     return observed, source, evidence
 
 
+def recommended_next_step_code(action, blockers):
+    """Stable machine-readable routing hint, not permission to execute the route."""
+    codes = {item["code"] for item in blockers}
+    if "source_stale" in codes:
+        return "refresh_source"
+    if codes & {"claim_not_clear", "claim_state_unknown"}:
+        return "resolve_claim_with_owner"
+    if "competing_incident_routes" in codes or "competing_incident_actions" in codes:
+        return "choose_one_incident_route"
+    if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
+                "main_state_not_open", "main_merge_unverified",
+                "branch_protection_not_satisfied", "independent_review_missing",
+                "review_threads_open_or_unknown"}:
+        return "refresh_exact_head_gates"
+    if codes & {"capacity_not_healthy", "running_jobs_unknown_or_active",
+                "runner_unavailability_unproven"}:
+        return "wait_for_capacity_and_runtime_evidence"
+    if codes & {"owner_authorization_missing", "runtime_owner_missing",
+                "human_approval_missing", "human_owner_missing", "owner_missing"}:
+        return "request_authorized_owner_approval"
+    if codes & {"retry_budget_exhausted_or_unknown", "backoff_not_elapsed"}:
+        return "confirm_bounded_retry_budget"
+    if codes & {"failure_not_deterministic", "root_cause_unconfirmed", "not_transient"}:
+        return "confirm_failure_classification"
+    if codes & {"dependency_not_reconfirmed", "dependency_not_confirmed_cleared",
+                "blocked_task_not_preserved", "previous_blocker_evidence_missing",
+                "dependency_not_external", "dependency_scope_too_broad"}:
+        return "refresh_exact_dependency_evidence"
+    if codes & {"scope_overlap_unknown", "task_not_ready", "independent_work_not_ready"}:
+        return "verify_disjoint_scope_and_task_readiness"
+    if blockers:
+        return "resolve_policy_hold"
+    return {
+        "retry_ci": "review_bounded_retry",
+        "route_root_fix": "route_root_cause_to_owner",
+        "assign_independent_work": "review_independent_task_admission",
+        "park_blocker": "review_single_task_parking",
+        "resume_blocked": "review_exact_task_resumption",
+        "escalate_human": "escalate_to_named_owner",
+        "merge_pr": "review_exact_head_merge_gates",
+        "deploy": "review_release_gates",
+        "restart_runner": "review_runner_recovery_gates",
+    }[action]
+
+
 def recommended_next_step(action, blockers, required_evidence):
     """Give a deterministic safe handoff; never turn policy output into execution."""
     codes = {item["code"] for item in blockers}
@@ -611,6 +656,7 @@ def evaluate(data, max_age_minutes, *, now=None):
         "blockers": blockers,
         "required_evidence": requirements,
         "recommended_next_step": recommended_next_step(action, blockers, requirements),
+        "recommended_next_step_code": recommended_next_step_code(action, blockers),
         "advisory_only": True,
         "evidence_independently_verified": False,
         "actions_executed": False,
@@ -807,6 +853,9 @@ def evaluate_batch(data, max_age_minutes):
             report["recommended_next_step"] = recommended_next_step(
                 report["action"], report["blockers"], report["required_evidence"]
             )
+            report["recommended_next_step_code"] = recommended_next_step_code(
+                report["action"], report["blockers"]
+            )
 
     workorders = _batch_workorders(results)
     # The incident desk is source-bound to this exact batch. It is a
@@ -917,6 +966,7 @@ def workorders_csv(batch):
                     "action": result["report"]["action"],
                     "decision": result["report"]["decision"],
                     "recommended_next_step": result["report"]["recommended_next_step"],
+                    "recommended_next_step_code": result["report"]["recommended_next_step_code"],
                     "blocker_codes": [blocker["code"] for blocker in result["report"]["blockers"]],
                     "required_evidence": result["report"]["required_evidence"],
                 }
@@ -1101,6 +1151,8 @@ def workorders_html(batch):
                     " · " + esc(proposal["decision"]) + "</h3>" +
                     "<p><strong>Recommended next step:</strong> " +
                     esc(proposal["recommended_next_step"]) + "</p>" +
+                    "<p><strong>Recommendation code:</strong> <code>" +
+                    esc(proposal["recommended_next_step_code"]) + "</code></p>" +
                     "<p><strong>Source:</strong> <a href='" +
                     esc(proposal["source_url"]) +
                     "' target='_blank' rel='noopener noreferrer'>" +
@@ -1474,6 +1526,7 @@ def markdown(report):
         "- Proposed action: " + report["action"],
         "- Decision: **" + report["decision"] + "**",
         "- Recommended next step: " + report["recommended_next_step"],
+        "- Recommendation code: " + report["recommended_next_step_code"],
         "- Source observation: " + report["observed_at_utc"],
         "- Source: <code>" + html.escape(report["source_url"], quote=True) + "</code>",
         "- Evidence independently verified: no",
@@ -1523,6 +1576,7 @@ def policy_html(report):
         "<li>Incident: <strong>" + esc(report["incident_id"]) + "</strong></li>",
         "<li>Proposed action: <strong>" + esc(report["action"]) + "</strong></li>",
         "<li>Recommended next step: " + esc(report["recommended_next_step"]) + "</li>",
+        "<li>Recommendation code: <code>" + esc(report["recommended_next_step_code"]) + "</code></li>",
         "<li>Source observed (UTC): " + esc(report["observed_at_utc"]) + "</li>",
         "<li>Source age at evaluation: " + esc(report["source_age_seconds"]) + " seconds</li>",
         "<li>Source: <a href='" + esc(report["source_url"]) + "'>" + esc(report["source_url"]) + "</a></li>",
@@ -1611,6 +1665,7 @@ def markdown_batch(batch):
             "- Proposed action: **" + report["action"] + "**",
             "- Decision: **" + report["decision"] + "**",
             "- Recommended next step: " + report["recommended_next_step"],
+            "- Recommendation code: " + report["recommended_next_step_code"],
             "- Source observation: " + report["observed_at_utc"],
             "- Source: <code>" + html.escape(report["source_url"], quote=True) + "</code>",
             "- Source age: " + str(report["source_age_seconds"]) + " seconds",
