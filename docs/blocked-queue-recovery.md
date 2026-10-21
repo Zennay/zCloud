@@ -85,7 +85,7 @@ Het blokkadepaneel gebruikt wijzigingen in `public/app.js` en
 `public/style.css`. De startpagina op deze PR verwijst daarom naar
 het **exacte** Git-blobfragment van beide assets:
 
-- `app.js`: `cb8ffd1e8ecd` — bevat de strikte
+- `app.js`: `bfd062371f32` — bevat de strikte
   `resumed=true` / `status=queued` / exact-`queue_id` afhandeling.
 - `style.css`: `8544c850441b` — bevat de bijbehorende
   Dependency holds- en Attention-presentatie.
@@ -141,3 +141,31 @@ en minimaal 44px aanraakhoogte op mobiel. De stylesheetpin in
 `public/index.html` is mee veranderd naar de nieuwe CSS-blob;
 oudere cached styles vormen daardoor niet stilzwijgend de nieuwe
 operatorinterface.
+
+
+## Hercontrole vlak vóór hervatten
+
+De bediener kan bij het lezen van een `blocked`-taak en het bevestigen van
+de benodigde externe actie langere tijd in het bevestigingsvenster zitten.
+Een latere statusupdate of nieuwe dependency-evidence maakt die oude
+operatorbevestiging mogelijk ongeldig. Vóór een `resume_blocked` POST
+verplicht de bestaande dashboardclient nu een **nieuwe read-only**
+`GET /api/portfolio-queue`. Hij vergelijkt de exacte `queue_id`,
+`project_id`, titel, prioriteit, `blocked`-status, `eligible`,
+blocker en evidence met de kaart die de operator aanvankelijk
+bevestigde.
+
+Bij onbereikbare of onvolledige bron, niet-exact-een match of een
+gewijzigd afhankelijkheidscontract wordt de POST **niet verstuurd**,
+wordt de laatst leesbare queue getoond en moet de operator de actuele
+situatie opnieuw bevestigen. Twee knoppen voor dezelfde `queue_id`
+kunnen niet tegelijk een verzoek starten in één browser-tabblad.
+Ook ná de POST wordt nog steeds een exact success-receipt vereist:
+`resumed=true`, `status=queued` en dezelfde queue-identiteit.
+
+Deze lokale hercontrole sluit gelijktijdige wijzigingen **tussen**
+de GET en de POST niet atomair uit: uitsluitend de bestaande backend
+met authentieke operator en transactionele statusgate beslist of de
+hervatting plaatsvindt. Er is geen schedulerclaim, automatische
+herstart of toestemming voor externe afhankelijkheden toegevoegd.
+De nieuwe `app.js` is gebonden aan `index.html` met de exacte blobpin.
