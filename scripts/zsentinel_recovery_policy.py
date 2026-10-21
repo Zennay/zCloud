@@ -22,7 +22,7 @@ MAX_OUTPUT_BYTES = 128 * 1024
 UTC = timezone.utc
 SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 ACTIONS = frozenset({
-    "retry_ci", "route_root_fix", "assign_independent_work",
+    "retry_ci", "route_root_fix", "assign_independent_work", "park_blocker",
     "merge_pr", "deploy", "restart_runner",
 })
 ROOT_FIELDS = frozenset({
@@ -32,7 +32,8 @@ ROOT_FIELDS = frozenset({
 EVIDENCE_FIELDS = frozenset({
     "source_verified", "failure_kind", "attempts", "retry_budget",
     "backoff_elapsed", "active_claim", "independent_task_ready",
-    "scope_disjoint", "capacity", "exact_head", "required_ci",
+    "scope_disjoint", "dependency_kind", "dependency_scope",
+    "dependency_unchanged", "capacity", "exact_head", "required_ci",
     "independent_review", "branch_protection", "owner_authorized",
     "root_cause_confirmed", "unresolved_review_threads", "merged_main",
     "post_merge_health", "release_approval", "runtime_owner_authorized",
@@ -50,11 +51,14 @@ ENUMS = {
     "post_merge_health": {"healthy", "failed", "unknown"},
     "runner_state": {"healthy", "unavailable", "unknown"},
     "running_jobs": {"none", "active", "unknown"},
+    "dependency_kind": {"external", "internal", "unknown"},
+    "dependency_scope": {"single_task", "project_wide", "unknown"},
 }
 BOOL_FIELDS = {
     "source_verified", "backoff_elapsed", "independent_task_ready",
-    "scope_disjoint", "owner_authorized", "root_cause_confirmed",
-    "release_approval", "runtime_owner_authorized", "human_approval",
+    "scope_disjoint", "dependency_unchanged", "owner_authorized",
+    "root_cause_confirmed", "release_approval", "runtime_owner_authorized",
+    "human_approval",
 }
 
 
@@ -269,6 +273,32 @@ def evaluate(data, max_age_minutes):
         require(value("owner_authorized") is True,
                 "owner_authorization_missing", "An authorized owner must approve task admission.",
                 ("evidence.owner_authorized",))
+
+    elif action == "park_blocker":
+        require(value("dependency_kind") == "external",
+                "dependency_not_external", "Only an external dependency may be parked by this action.",
+                ("evidence.dependency_kind",))
+        require(value("dependency_scope") == "single_task",
+                "dependency_scope_too_broad", "Park only the dependent task, never an entire project lane.",
+                ("evidence.dependency_scope",))
+        require(value("dependency_unchanged") is True,
+                "dependency_not_reconfirmed", "The specific external blocker must be confirmed unchanged.",
+                ("evidence.dependency_unchanged",))
+        require(value("active_claim") == "none",
+                "claim_not_clear", "Do not alter an active or unknown work claim.",
+                ("evidence.active_claim",))
+        require(value("owner_authorized") is True,
+                "owner_authorization_missing", "An authorized owner must approve parking the dependent task.",
+                ("evidence.owner_authorized",))
+        require(value("independent_task_ready") is True,
+                "independent_work_not_ready", "Identify unrelated ready work before parking the dependency.",
+                ("evidence.independent_task_ready",))
+        require(value("scope_disjoint") is True,
+                "scope_overlap_unknown", "The continuing work must be positively disjoint from the blocked task.",
+                ("evidence.scope_disjoint",))
+        require(value("capacity") == "healthy",
+                "capacity_not_healthy", "Healthy capacity is required to continue independent work.",
+                ("evidence.capacity",))
 
     elif action == "merge_pr":
         require(value("exact_head") == "verified",
