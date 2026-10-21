@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 import re
+import unicodedata
 
 from zsentinel_pr_scope_guard import csv_formula_inert, edit_path
 from zsentinel_pr_gate_continuity import (
@@ -78,13 +79,20 @@ def _article_anchor(card):
 
 
 def _markdown(value):
-    """Bound opaque provider text; never allow raw Markdown headings/links."""
+    """Render provider text inertly and make invisible Unicode controls visible."""
     if type(value) is not str:
         raise ValueError("operator text must be a string")
-    if len(value) > 500 or any(ord(c) < 32 or ord(c) == 127 for c in value):
+    if len(value) > 500 or any(
+            unicodedata.category(char) in ("Cc", "Cs") for char in value):
         raise ValueError("unsafe operator text")
-    return re.sub(r"([\\\[\]_*\x60<>])", r"\\\1", value)
-
+    visible = "".join(
+        "⟦U+%04X⟧" % ord(char)
+        if (unicodedata.category(char) in ("Cf", "Zl", "Zp")
+            or (char.isspace() and char != " "))
+        else char
+        for char in value
+    )
+    return re.sub(r"([\\\[\]_*`<>])", r"\\\1", visible)
 
 def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None):
     """Return exact shared files and distinct file/directory scope conflicts."""
