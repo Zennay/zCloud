@@ -244,9 +244,20 @@ def render_html(board, max_rows=20):
         if len(source_projects) != 1:
             raise ValueError("PR issue group spans inconsistent local projects")
         group_project = next(iter(source_projects))
+        # Each grouped PR must reference the same saved exact-head identity as
+        # its visible source-linked issues. A forged or stale group receipt
+        # cannot turn an unrelated commit into a credible operator shortcut.
+        for issue_row in cards[:max_rows]:
+            if issue_row["issue_url"] not in shown_links:
+                continue
+            matches = [candidate for candidate in
+                       issue_row["all_existing_pr_candidates_in_sample"]
+                       if candidate["url"] == pr]
+            if len(matches) != 1 or matches[0].get("source_head_observed") != group_head:
+                raise ValueError("grouped PR source HEAD disagrees with issue evidence")
         group_source.append((
             pr, group["highest_priority"], tuple(linked), tuple(primary_urls),
-            observed_gate, human_gate,
+            observed_gate, human_gate, group_head,
             group["any_file_overlap_observed"],
             group["any_historical_movement_observed"]))
         refs = "".join("<li><a rel='noopener noreferrer' target='_blank' href='" +
@@ -490,9 +501,10 @@ refresh();
             (row["issue_url"], row["candidate_existing_pr_url"],
              row.get("candidate_exact_head_gate_state"),
              tuple((candidate["url"], candidate["gate_state"],
+                    candidate.get("source_head_observed"),
                     candidate["file_overlap_observed"],
                     candidate["source_movement_observed"])
-                   for candidate in row.get("other_existing_pr_candidates_in_sample", [])))
+                   for candidate in row.get("all_existing_pr_candidates_in_sample", [])))
             for row in cards[:max_rows]
         ],
     }
@@ -503,7 +515,15 @@ refresh();
     # their exact original issue/PR/gate source token still matches.
     legacy_identity = {
         "issue_time": str(ts_issue), "pr_time": str(ts_pr),
-        "visible_rows": source_identity["visible_rows"],
+        "visible_rows": [
+            (row["issue_url"], row["candidate_existing_pr_url"],
+             row.get("candidate_exact_head_gate_state"),
+             tuple((candidate["url"], candidate["gate_state"],
+                    candidate["file_overlap_observed"],
+                    candidate["source_movement_observed"])
+                   for candidate in row.get("other_existing_pr_candidates_in_sample", [])))
+            for row in cards[:max_rows]
+        ],
     }
     legacy_token = hashlib.sha256(json.dumps(
         legacy_identity, ensure_ascii=True, sort_keys=True,
