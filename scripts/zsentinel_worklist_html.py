@@ -670,12 +670,17 @@ document.getElementById('session-save').addEventListener('click',function(){
   status:p.querySelector('.pr-local-state').value,
   note:p.querySelector('.pr-note').value.slice(0,500)
  };});
+ const collisionEntries=collisionRows.map(c=>({
+  issue:c.dataset.issue,
+  status:c.querySelector('.collision-state').value,
+  note:c.querySelector('.collision-note').value.slice(0,500)
+ }));
  const data=JSON.stringify({
   schema:'zsentinel-local-handoff-v2',
   source_token:document.body.dataset.sourceToken,
   saved_at:new Date().toISOString(),
   focused_pr:focusedPr,
-  entries:rows, pr_entries:prRows,
+  entries:rows, pr_entries:prRows, collision_entries:collisionEntries,
   merge_authorized:false,claim_authorized:false,remote_writes_performed:false
  },null,2);
  const blob=new Blob([data+'\n'],{type:'application/json;charset=utf-8'});
@@ -700,6 +705,10 @@ document.getElementById('session-import').addEventListener('change',async functi
      (currentSession&&(!Array.isArray(restored.pr_entries)||
        restored.pr_entries.length!==prs.length))||
      (oldSession&&Object.prototype.hasOwnProperty.call(restored,'pr_entries'))||
+     (oldSession&&Object.prototype.hasOwnProperty.call(restored,'collision_entries'))||
+     (currentSession&&Object.prototype.hasOwnProperty.call(restored,'collision_entries')&&
+      (!Array.isArray(restored.collision_entries)||
+       restored.collision_entries.length!==collisionRows.length))||
      (currentSession&&Object.prototype.hasOwnProperty.call(restored,'focused_pr')&&
       restored.focused_pr!==null&&!prs.some(p=>p.dataset.pr===restored.focused_pr)))
     throw new Error('Deze sessie hoort niet bij dezelfde bronopname');
@@ -718,6 +727,16 @@ document.getElementById('session-import').addEventListener('change',async functi
         typeof item.note!=='string'||item.note.length>500)
        throw new Error('Sessie bevat ongeldige PR-opvolging');
    }
+   if(Object.prototype.hasOwnProperty.call(restored,'collision_entries')){
+    const collisionAllowed=new Set(Object.keys(collisionLabels));
+    for(let i=0;i<collisionRows.length;i++){
+     const item=restored.collision_entries[i];
+     if(!item||item.issue!==collisionRows[i].dataset.issue||
+        !collisionAllowed.has(item.status)||
+        typeof item.note!=='string'||item.note.length>500)
+       throw new Error('Sessie bevat ongeldige botsingsopvolging');
+    }
+   }
   }
   for(let i=0;i<tickets.length;i++){
     tickets[i].querySelector('.local-state').value=restored.entries[i].status;
@@ -727,6 +746,14 @@ document.getElementById('session-import').addEventListener('change',async functi
    for(let i=0;i<prs.length;i++){
      prs[i].querySelector('.pr-local-state').value=restored.pr_entries[i].status;
      prs[i].querySelector('.pr-note').value=restored.pr_entries[i].note;
+   }
+   if(Object.prototype.hasOwnProperty.call(restored,'collision_entries')){
+    for(let i=0;i<collisionRows.length;i++){
+     collisionRows[i].querySelector('.collision-state').value=
+       restored.collision_entries[i].status;
+     collisionRows[i].querySelector('.collision-note').value=
+       restored.collision_entries[i].note;
+    }
    }
    if(Object.prototype.hasOwnProperty.call(restored,'focused_pr')){
     focusedPr=restored.focused_pr;
@@ -747,7 +774,9 @@ window.addEventListener('beforeunload',function(e){
  if(tickets.some(t=>t.querySelector('textarea').value.trim()||
    t.querySelector('.local-state').value!=='open')||
     prs.some(p=>p.querySelector('.pr-note').value.trim()||
-    p.querySelector('.pr-local-state').value!=='open')){
+    p.querySelector('.pr-local-state').value!=='open')||
+    collisionRows.some(c=>c.querySelector('.collision-note').value.trim()||
+     c.querySelector('.collision-state').value!=='unreviewed')){
   e.preventDefault();e.returnValue='';
  }
 });
