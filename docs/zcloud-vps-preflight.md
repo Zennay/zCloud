@@ -254,3 +254,18 @@ deployment**. A user-facing handoff never grants permissions to stop
 generation, restart a runner, delete training artifacts or spend hosted
 runner minutes. `release_authorized=false` and
 `recovery_performed=false` on every card.
+## 21 October · one-shot owner handoff without a previous snapshot
+
+The `--format brief` route now works on a fresh observation; `--previous-report`
+is optional and is only needed to compare historical findings. For example:
+
+```bash
+python3 scripts/zcloud_vps_preflight.py --format brief
+```
+
+The JSON report also includes `owner_handoff` for a one-shot run. Without a
+previous snapshot, the trend is explicitly `previous_comparison_unavailable`;
+it does not invent a recovery change or resolved finding. Every card remains
+advisory with `recovery_performed=false` and `release_authorized=false`. This
+route does not call GitHub, change services, mutate claims or grant release
+authority.
