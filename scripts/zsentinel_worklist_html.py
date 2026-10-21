@@ -449,6 +449,8 @@ const project=document.getElementById('project'), state=document.getElementById(
 const activity=document.getElementById('activity');
 const visible=document.getElementById('visible'), prState=document.getElementById('pr-state');
 const nextOpenPr=document.getElementById('pr-review-next');
+const nextOpenIssue=document.getElementById('issue-review-next');
+const openIssueSummary=document.getElementById('issue-review-summary');
 const openPrSummary=document.getElementById('pr-review-summary');
 const projectExport=document.getElementById('project-export');
 const projectNext=document.getElementById('project-review-next');
@@ -481,7 +483,7 @@ const gateLabels={
 const collisionExport=document.getElementById('collision-export');
 const collisionOpenExport=document.getElementById('collision-open-export');
 let focusedPr=null,focusIndex=-1;
-let lastPrReview=null,lastProjectReview=null;
+let lastPrReview=null,lastProjectReview=null,lastIssueReview=null;
 // The privacy-preserving baseline describes ONLY this browser's local edits;
 // never persist it automatically or mistake a completed download for a merge.
 let lastSavedState=null;
@@ -529,6 +531,13 @@ function openProjectQueue(){
   c.querySelector('.collision-state').value,c.dataset.priority);
  return [...entries.values()].sort((a,b)=>a.priority-b.priority||
   a.name.localeCompare(b.name,'nl'));
+}
+function openIssueQueue(){
+ const rank={P0:0,P1:1,P2:2,Unspecified:3};
+ // Historical source priority, never an inferred live issue or worker claim.
+ return tickets.filter(t=>t.querySelector('.local-state').value!=='followup')
+  .sort((a,b)=>(rank[a.dataset.priority]??4)-(rank[b.dataset.priority]??4)||
+    tickets.indexOf(a)-tickets.indexOf(b));
 }
 function refresh(){
  const q=search.value.trim().toLocaleLowerCase('nl');
@@ -582,6 +591,11 @@ function refresh(){
    +prs.length+' bron-PRs; '+unreviewed+' nog te beoordelen. '
    +'Lokale opvolging bewijst geen review, merge of fixes.';
  nextOpenPr.disabled=outstanding===0;
+ const issueQueue=openIssueQueue();
+ openIssueSummary.textContent=issueQueue.length+' bronissues zonder genoteerde lokale opvolging uit '+
+  tickets.length+' issuekaarten · '+issueQueue.filter(t=>t.querySelector('.local-state').value==='open').length+
+  ' nog niet bekeken. P0 gaat voor P1; status is geen GitHub-fix of geldige claim.';
+ nextOpenIssue.disabled=issueQueue.length===0;
  const reviewQueue=openProjectQueue();
  const projectsOutstanding=reviewQueue.length;
  const localOpenEntries=reviewQueue.reduce((sum,item)=>sum+item.count,0);
@@ -627,6 +641,19 @@ projectNext.addEventListener('click',()=>{
  refresh();
  project.scrollIntoView({block:'center'});
  project.focus();
+});
+nextOpenIssue.addEventListener('click',()=>{
+ const queue=openIssueQueue();
+ if(!queue.length)return;
+ const last=queue.findIndex(t=>t.dataset.issue===lastIssueReview);
+ const target=queue[(last+1)%queue.length];
+ lastIssueReview=target.dataset.issue;
+ focusedPr=null;focusIndex=-1;collisionIndex=-1;
+ collisionOnly.checked=false;collisionStateFilter.value='';
+ search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';
+ refresh();
+ target.scrollIntoView({block:'start'});
+ target.focus();
 });
 nextOpenPr.addEventListener('click',()=>{
  const start=prs.findIndex(p=>p.dataset.pr===lastPrReview);
@@ -1276,6 +1303,8 @@ refresh();
         "<label>Heropen lokale sessie<input id='session-import' type='file' "
         "accept='.json,application/json'></label></div>"
         "<p id='visible' aria-live='polite'></p>"
+        "<p id='issue-review-summary' aria-live='polite'></p>"
+        "<button id='issue-review-next' type='button'>Volgende open bronissue (P0 eerst)</button>"
         "<p id='pr-review-summary' aria-live='polite'></p>"
         "<button id='pr-review-next' type='button'>Volgende PR zonder lokale opvolging</button>"
         "<button id='pr-review-export' type='button'>Download open PR-eigenaaroverdracht</button>"
