@@ -3038,27 +3038,45 @@ def portfolio_queue_items(include_done=False):
     return [_portfolio_queue_row(row) for row in rows]
 
 def portfolio_queue_operator_window(limit=2048):
-    """Bounded, read-only queue window for the private zSentinel operator.
+    """Read-only, two-lane bounded source window for the private operator.
 
-    This is an observation only: missing tail rows are always UNKNOWN.
-    Prioritize already-active owners before queued work so fresh product
-    admission never conceals a still-claimed worker. Do not alter the
-    normal full queue API or the scheduler's independent SQL admissions.
+    Reserve room for *both* existing active owners and queued product leads.
+    Never let a very large active backlog falsely imply that no independent
+    product work is visible, or let queued work hide a protected active claim.
+    Overflow of EITHER category means the unseen tail is UNKNOWN.
     """
-    if type(limit) is not int or not 1<=limit<=2048:
+    if type(limit) is not int or not 2<=limit<=2048:
         raise ValueError('Ongeldige operator-inbox bronlimiet')
+    active_quota=(limit+1)//2
+    queued_quota=limit-active_quota
+    active_sql="""SELECT * FROM portfolio_queue
+                  WHERE status IN ('claimed','running','verifying')
+                  ORDER BY CASE status WHEN 'running' THEN 0
+                           WHEN 'verifying' THEN 1 ELSE 2 END,
+                           CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                             WHEN 'P2' THEN 2 ELSE 3 END,
+                           created_at,queue_id LIMIT ?"""
+    queued_sql="""SELECT * FROM portfolio_queue WHERE status='queued'
+                  ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                                  WHEN 'P2' THEN 2 ELSE 3 END,
+                           created_at,queue_id LIMIT ?"""
     with connect() as c:
-        rows=c.execute("""SELECT * FROM portfolio_queue
-                          WHERE status IN ('queued','claimed','running','verifying')
-                          ORDER BY CASE status
-                            WHEN 'running' THEN 0 WHEN 'verifying' THEN 1
-                            WHEN 'claimed' THEN 2 ELSE 3 END,
-                            CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
-                              WHEN 'P2' THEN 2 ELSE 3 END,
-                            created_at,queue_id
-                          LIMIT ?""",(limit+1,)).fetchall()
-    truncated=len(rows)>limit
-    return [_portfolio_queue_row(row) for row in rows[:limit]],truncated
+        # +1 preserves an exact overflow signal without full-table reads.
+        active=c.execute(active_sql,(active_quota+1,)).fetchall()
+        queued=c.execute(queued_sql,(queued_quota+1,)).fetchall()
+        if len(active)<=active_quota and len(queued)>queued_quota:
+            # When active owners are scarce, use their unused budget for
+            # queued leads; still leave a trustworthy +1 overflow row.
+            queued_quota=limit-len(active)
+            queued=c.execute(queued_sql,(queued_quota+1,)).fetchall()
+        elif len(queued)<=queued_quota and len(active)>active_quota:
+            # Symmetric treatment when queued leads are scarce.
+            active_quota=limit-len(queued)
+            active=c.execute(active_sql,(active_quota+1,)).fetchall()
+    truncated=(len(active)>active_quota or len(queued)>queued_quota)
+    sampled=active[:active_quota]+queued[:queued_quota]
+    # No lease reassignment, retry or hidden classification happens here.
+    return [_portfolio_queue_row(row) for row in sampled],truncated
 
 def portfolio_queue_current_for_slot(global_slot):
     try: slot=int(global_slot)
