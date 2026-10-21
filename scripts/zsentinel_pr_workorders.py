@@ -179,6 +179,28 @@ def collect_workorders(board):
     source_stale = (
         datetime.now(timezone.utc) -
         datetime.fromisoformat(observed_at)).total_seconds() > SOURCE_FRESHNESS_SECONDS
+    # Reuse the bounded, already-computed before/after gate evidence.
+    # No additional GitHub reads or re-dispatch are necessary.
+    history_by_pr = {}
+    history = board.get("historical_gate_episodes")
+    if history is not None:
+        if (type(history) is not dict or type(history.get("items")) is not list
+                or len(history["items"]) > 2 * MAX_PRS
+                or history.get("merge_authorized") is not False
+                or history.get("writes_performed") is not False):
+            raise ValueError("invalid private historical gate source")
+        if history.get("comparison_status") == "two_bounded_observations":
+            if _timestamp(history.get("current_observed_at_utc")) != observed_at:
+                raise ValueError("historical PR comparison observation drift")
+            for source in history["items"]:
+                if (type(source) is not dict or
+                        type(source.get("url")) is not str or
+                        source["url"] in history_by_pr):
+                    raise ValueError("invalid duplicate historical PR")
+                history_by_pr[source["url"]] = source
+        elif (history.get("comparison_status") !=
+              "one_or_both_gate_observations_absent" or history["items"]):
+            raise ValueError("invalid historical gate coverage")
     cards, seen = [], set()
     for item in desk["items"]:
         if (type(item) is not dict or item.get("merge_authorized") is not False
@@ -300,6 +322,45 @@ def collect_workorders(board):
             notes.append("Historische vergelijking: " +
                          _markdown(history_label) +
                          "; géén bewijs over de tijd tussen de opnames.")
+        historical_changed_checks, historical_changed_categories = [], []
+        historical_changed_checks_hidden = 0
+        historical_source = history_by_pr.get(url)
+        if historical_source is not None:
+            if (historical_source.get("project") != project
+                    or historical_source.get("change") != history_code
+                    or historical_source.get("operator_next_step") != history_step):
+                raise ValueError("historical PR receipt differs from owner action")
+            for category in historical_source.get(
+                    "observed_changed_gate_evidence_categories", [])[:6]:
+                historical_changed_categories.append(_markdown(category))
+            for change in historical_source.get(
+                    "observed_changed_non_green_checks", [])[:16]:
+                if (type(change) is not dict or
+                        type(change.get("kind")) is not str or
+                        type(change.get("label")) is not str or
+                        type(change.get("url")) is not str):
+                    raise ValueError("invalid changed GitHub job receipt")
+                link = change["url"]
+                if (re.fullmatch(re.escape(
+                        "https://github.com/" + repo + "/runs/") +
+                        r"[1-9][0-9]*", link) is None
+                        and not (pinned and link ==
+                                 "https://github.com/" + repo + "/commit/" +
+                                 head + "/checks")):
+                    historical_changed_checks_hidden += 1
+                    continue
+                historical_changed_checks.append({
+                    "kind": _markdown(change["kind"]),
+                    "label": _markdown(change["label"]),
+                    "url": link,
+                })
+            hidden = historical_source.get(
+                "observed_changed_non_green_checks_hidden", 0)
+            if type(hidden) is not int or not 0 <= hidden <= 200:
+                raise ValueError("invalid bounded historical job omission")
+            historical_changed_checks_hidden += hidden
+        elif history_code is not None:
+            raise ValueError("historical comparison missing PR gate row")
         defer_repeat = (history_state == "unchanged_two_snapshots"
                         and item["rank"] == 5)
         if defer_repeat:
@@ -342,6 +403,11 @@ def collect_workorders(board):
             "historical_change_code": history_code,
             "historical_change_label": history_label,
             "historical_next_step": _markdown(step_label) if step_label else None,
+            "historical_changed_gate_evidence_categories":
+                historical_changed_categories,
+            "historical_changed_job_links": historical_changed_checks,
+            "historical_changed_job_links_hidden":
+                historical_changed_checks_hidden,
             "new_evidence_since_previous_sample": history_new,
             "repeat_hold_deferred": defer_repeat,
             "check_links_hidden": int(item.get("non_green_jobs_hidden", 0)),
