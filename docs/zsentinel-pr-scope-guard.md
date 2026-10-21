@@ -2619,3 +2619,33 @@ Per waargenomen PR-paar worden de twee paden en de richting van de ancestorrelat
 De bron blijft begrensd: maximaal 200 zichtbare scope-conflictpaarkaarten en 24 padvoorbeelden per paar. Afgekapt bewijs wordt als onvolledig gemarkeerd. De historische snapshotvergelijker houdt deze padparen nu ook apart bij: alleen twee volledige stabiele snapshots kunnen toevoeging of verdwijnen vaststellen; anders worden verschillen uitsluitend als steekproefwaarneming gemarkeerd. Oudere snapshots zonder deze velden worden als historische scope-dekking onbekend weergegeven. Exacte overlap en ancestor-overlap blijven aparte categorieën, zodat bestaande consumers van `shown_file_collision_pairs` hun oude betekenis behouden.
 
 **Interpretatie:** dit is een bestand/map-scopeconflict-signaal, niet automatisch een Git-mergeconflict, actieve eigenaar, lease of toestemming om een PR te wijzigen of te mergen. Een lege of gedeeltelijke steekproef is nooit vrijgave.
+
+
+## 21 oktober · privé-rapportuitvoer via gepinde directory-inode
+
+De issue-/PR-cockpit schrijft een opgegeven `--output` nu via een expliciete
+directory-FD in plaats van een los pathname-open/unlink-patroon. De outputroute:
+
+- vereist een bestaande directory die eigendom is van de huidige gebruiker en
+  niet door groep/anderen schrijfbaar is;
+- controleert dat de directory-inode tussen de voorcontrole en de open gelijk
+  bleef en gebruikt daarna die gepinde directory-FD;
+- weigert bestaande bestanden, symlinks en niet-reguliere doel-inodes;
+- maakt het rapport exclusief aan met mode `0600`, begrenst de UTF-8-uitvoer
+  tot 6 MiB en synchroniseert bestand en directory;
+- ruimt na een schrijffout uitsluitend de inode op die deze aanroep zelf heeft
+  aangemaakt, nooit een bestand dat intussen dezelfde naam kreeg.
+
+Gebruik een bestaande private directory (de CLI maakt die bewust niet zelf aan):
+
+```sh
+install -d -m 700 "$HOME/.local/state/zsentinel"
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project zCloud --format html \
+  --output "$HOME/.local/state/zsentinel/issue-cockpit-20261021.html"
+```
+
+Het pad moet nog niet bestaan; een gedeelde tijdelijke directory zoals
+`/tmp` wordt terecht geweigerd. Deze wijziging verandert alleen de lokale
+rapportuitvoer: geen queue/claimwijziging, netwerkactie buiten de reeds gekozen
+read-only observatie, workflowdispatch, merge of deployment.
