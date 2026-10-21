@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import re
+from scripts.zsentinel_disk_pressure import observe_root_disk
 
 MAX_SOURCE_BYTES = 4096
 MEM_FIELDS = ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree")
@@ -51,6 +52,7 @@ def observe_host_pressure():
         "scope": "HOST_ONLY_CGROUP_AND_OTHER_WORK_NOT_OBSERVED",
         "new_worker_authorized": False,
         "runtime_recovered": False,
+        "root_disk": observe_root_disk(),
     }
     try:
         rows = {}
@@ -83,17 +85,20 @@ def observe_host_pressure():
         memory_available_pct = 100.0 * available / total
         swap_used_pct = 100.0 * (swap_total - swap_free) / swap_total if swap_total else 0.0
         one_per_cpu = load / cpus
+        root_disk = report["root_disk"]
+        disk_high = root_disk.get("pressure_hint") == "HIGH"
+        disk_elevated = root_disk.get("pressure_hint") == "ELEVATED"
         # Review hints only. No claim, RAM promise or admission decision.
         hint = (
             "HIGH_LOCAL_PRESSURE" if (
                 memory_available_pct < 15 or
                 (swap_total > 0 and swap_used_pct >= 90) or
-                one_per_cpu >= 2
+                one_per_cpu >= 2 or disk_high
             ) else
             "ELEVATED_LOCAL_PRESSURE" if (
                 memory_available_pct < 25 or
                 (swap_total > 0 and swap_used_pct >= 70) or
-                one_per_cpu >= 1.25
+                one_per_cpu >= 1.25 or disk_elevated
             ) else "NO_LOCAL_THRESHOLD_CROSSED"
         )
         report.update({
@@ -114,11 +119,18 @@ def pressure_sentence(report):
     """Concise, private operator-visible resource fact; no admission claim."""
     if report.get("status") != "HOST_SNAPSHOT_OBSERVED":
         return "Hostdruk: niet betrouwbaar waargenomen; worker-toelating ONBEKEND."
+    disk = report.get("root_disk") or {}
+    disk_line = (
+        "root beschikbaar " + str(disk["available_gib"]) + " GiB; "
+        + str(disk["unavailable_percent"]) + "% voor proces onbeschikbaar"
+        if disk.get("status") == "ROOT_STATVFS_OBSERVED"
+        else "root-schijfruimte ONBEKEND"
+    )
     return (
         f"Hostdruk: {report['pressure_hint']}; "
         f"RAM beschikbaar {report['host_memory_available_mib']} MiB "
         f"({report['host_memory_available_percent']}%); "
         f"swap gebruikt {report['swap_used_percent']}%; "
-        f"load/CPU {report['load_one_per_cpu']}. "
+        f"load/CPU {report['load_one_per_cpu']}; {disk_line}. "
         "Alleen hostbron; geen cgroup-, claim- of nieuwe-worker-toelating."
     )
