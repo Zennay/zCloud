@@ -38,6 +38,29 @@ This is routing, not proof of ownership or permission to take a task.
 
 ## Runtime boundaries
 
+### 21 October · actual four-worker cap required in the recovery desk
+
+The read-only local operator desk now compares **both** pieces of the
+proposed local contract: `lane_profile=portfolio-recovery` **and**
+`ai_worker_cap=4`. Previously it reported `MATCH_LOCAL_FILE` for the
+right profile even if the cap was 1, creating a misleading four-worker
+admission hint. A valid profile with a different cap now reports
+`FOUR_WORKER_CAP_MISMATCH` and
+`HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH` in all four lane cards; an
+invalid cap or unreadable/missing contract reports
+`HOLD_LOCAL_CONTRACT_UNVERIFIED`. The JSON packet includes
+`local_contract_reconciliation_required=true`, the observed numeric
+cap, the required cap and the deviation reason. Text and offline HTML
+show the same read-only facts and the recovery action list gives the
+current owner a precise next step.
+
+Active work remains `ACTIVE_OWNER_PROTECTED` even when local contract
+evidence is missing or inconsistent. This change adds **no** runtime
+worker, claim, retry, process control, GitHub dispatch, SQLite write,
+service restart, review override or deployment. Correct local source
+does **not** prove the service loaded the config, that four slots have
+actually started or that independent release/ownership gates passed.
+
 The project contract declares a *maximum* of four AI workers, not a
 guarantee of four simultaneously executing browser workers. Existing
 resource-pool admission, physical RAM/swap/CPU pressure, claim leases and
