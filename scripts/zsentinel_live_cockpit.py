@@ -202,11 +202,15 @@ def assemble(registry, selected, jobs, queue_path, token=None,
     elif include_issues:
         try:
             inbox = collect(registry, selected, token, max_items=40)
-            if effective_pins:
+            if effective_pins and inbox.get("stopped_after_rate_or_auth_denial") is not True:
                 from zsentinel_pinned_issue import read_pinned_issues
                 inbox = read_pinned_issues(inbox, registry, selected,
                                            effective_pins, token)
                 source["pinned_issue_receipts"] = inbox["pinned_issue_receipts"]
+            elif effective_pins:
+                # A confirmed token-wide budget stop keeps pinned issues
+                # unknown rather than trying one more exact API read.
+                source["pinned_issue_source"] = "degraded_skipped_after_provider_denial"
             bundle["issue_inbox"] = inbox
             source["issue_inbox"] = "bounded_readonly"
             source["issue_requests"] = inbox.get("request_count")
@@ -463,7 +467,7 @@ def main():
                     None, "authentication_required", "rate_limit_confirmed"):
                 raise ValueError("invalid upstream GitHub admission source")
             discovered = None
-            if pr_projects and provider_denial is not None:
+            if pr_projects and len(pr_selection) < 3 and provider_denial is not None:
                 discovered = {
                     "coverage": [
                         {"project_id": project,
