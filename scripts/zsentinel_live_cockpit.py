@@ -261,6 +261,8 @@ def main():
                         help="new, create-only private .html output (required only for --format desk)")
     parser.add_argument("--handoff-output", type=Path,
                         help="opt-in private .md/.json P0-first owner handoff; create-only, no dispatch")
+    parser.add_argument("--action-output", type=Path,
+                        help="new create-only 0600 .md source-bound private PR/issue/runner owner briefing")
     parser.add_argument("--show-owner-handoff", action="store_true",
                         help="insert P0-first owner action strip into offline HTML without writing a handoff file")
     args = parser.parse_args()
@@ -366,6 +368,16 @@ def main():
             if any(p is not None and args.handoff_output.resolve() == p.resolve()
                    for p in guarded):
                 raise ValueError("handoff destination overlaps an input or output")
+        if args.action_output is not None:
+            if args.action_output.suffix != ".md":
+                raise ValueError("--action-output must be a new owner-private .md")
+            protected = (args.registry, args.database, args.state, args.output,
+                         args.worker_events_database, args.notion_claims_export,
+                         args.disk_hotspots_output, args.disk_hotspots_previous,
+                         args.agenda_output, args.desk_output, args.handoff_output)
+            if any(p is not None and args.action_output.resolve() == p.resolve()
+                   for p in protected):
+                raise ValueError("action-output overlaps source, ledger or private report")
         if args.state is not None:
             ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
@@ -548,6 +560,10 @@ def main():
                 lines.append("NOTION: not requested.")
             lines.append("WORKER FILE-LEVEL CLAIMS: UNKNOWN. No routing or recovery authorized.")
             rendered = "\n".join(lines)
+        action_content = None
+        if args.action_output is not None:
+            from zsentinel_incident_desk import private_action_output
+            action_content = private_action_output(decision)
         if disk_private_html is not None:
             from zsentinel_private_output import write_private_output
             write_private_output(args.disk_hotspots_output, disk_private_html, "html")
@@ -571,6 +587,9 @@ def main():
             if args.agenda_output is not None:
                 from zsentinel_human_agenda import human_calendar
                 write_private_output(args.agenda_output, human_calendar(decision), "ics")
+        if action_content is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(args.action_output, action_content, "md")
         if args.state:
             write_json_atomic(args.state, ledger)
         if args.format != "desk" and args.output is None:
