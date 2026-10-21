@@ -107,9 +107,24 @@ def main() -> int:
         second = _read_worker_snapshot()
         if first != second:
             raise IdleNotProven("worker allocation changed during idle window")
-    except (IdleNotProven, OSError, TimeoutError, ValueError, KeyError, TypeError) as error:
-        # No owner identifiers, API response, paths or credentials in logs.
-        print("WORKER_ADDON_IDLE_NOT_PROVEN=1")
+    except IdleNotProven as error:
+        # Source-defined reasons only; never print raw API data or worker IDs.
+        busy = {
+            "worker busy or progress unknown",
+            "worker draining",
+            "worker command pending",
+            "recent generation not proven finished",
+        }
+        changing = {"worker allocation changed during idle window", "colliding active worker identities"}
+        reason = str(error)
+        category = "BUSY" if reason in busy else "CHANGED" if reason in changing else "SOURCE_UNVERIFIABLE"
+        print(f"WORKER_ADDON_IDLE_DENIED={category}")
+        return 1
+    except (OSError, TimeoutError):
+        print("WORKER_ADDON_IDLE_DENIED=SOURCE_UNAVAILABLE")
+        return 1
+    except (ValueError, KeyError, TypeError):
+        print("WORKER_ADDON_IDLE_DENIED=MALFORMED_SOURCE")
         return 1
     print("WORKER_ADDON_IDLE_PROVEN=1")
     print(f"OBSERVED_ACTIVE_WORKER_COUNT={len(second)}")
