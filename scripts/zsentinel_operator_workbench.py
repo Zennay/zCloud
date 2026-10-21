@@ -2336,6 +2336,7 @@ function drawDetail(){
  const policyAction=elem('select');policyAction.id='recoveryPolicyAction';
  [['route_root_fix','Route a confirmed root fix'],
   ['assign_independent_work','Assign independent work'],
+  ['park_blocker','Park only the dependent task'],
   ['retry_ci','Consider a bounded CI retry'],
   ['merge_pr','Review a PR merge'],
   ['deploy','Review a deployment'],
@@ -2364,6 +2365,7 @@ function drawDetail(){
    const evidenceFields=[
     'source_verified','failure_kind','attempts','retry_budget',
     'backoff_elapsed','active_claim','independent_task_ready','scope_disjoint',
+    'dependency_kind','dependency_scope','dependency_unchanged',
     'capacity','exact_head','required_ci','independent_review',
     'branch_protection','owner_authorized','root_cause_confirmed',
     'unresolved_review_threads','merged_main','post_merge_health',
