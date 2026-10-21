@@ -390,6 +390,19 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
         "live herstel geverifieerd.",
         "",
     ]
+    activity_counts = Counter(item["activity_signal"] for item in board["cards"])
+    lines.append("Activiteitssignalen: stil >7d / dekking compleet=" +
+                 str(activity_counts.get("quiet_over_7_days_observed_claims_unknown", 0)) +
+                 "; stil >7d / dekking onvolledig=" +
+                 str(activity_counts.get("quiet_over_7_days_partial_pr_coverage", 0)) +
+                 "; recente issue-update=" +
+                 str(activity_counts.get("recent_issue_activity_observed", 0)) +
+                 "; recente gekoppelde PR-update=" +
+                 str(activity_counts.get("recent_linked_pr_activity_observed", 0)) +
+                 "; onbekend/incoherent=" +
+                 str(activity_counts.get("activity_timestamp_unknown", 0) +
+                     activity_counts.get("source_clock_incoherent", 0)) +
+                 ". Stilte is geen bewijs van vrije claim of stilstaand project.")
     visible_urls = {item["issue_url"] for item in board["cards"][:max_rows]}
     if board.get("pr_groups"):
         lines.extend([

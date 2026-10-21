@@ -41,6 +41,25 @@ def render_html(board, max_rows=20):
             or type(max_rows) is not int or not 1 <= max_rows <= MAX_CARDS):
         raise ValueError("untrusted or unbounded private operator inbox")
     cards = board["cards"]
+    signals = (
+        "quiet_over_7_days_observed_claims_unknown",
+        "quiet_over_7_days_partial_pr_coverage",
+        "recent_issue_activity_observed",
+        "recent_linked_pr_activity_observed",
+        "activity_timestamp_unknown",
+        "source_clock_incoherent",
+    )
+    activity_counts = {signal: sum(row.get("activity_signal") == signal for row in cards)
+                       for signal in signals}
+    activity_summary = (
+        "Activiteitssignalen — stil >7d, PR-dekking compleet: " +
+        str(activity_counts[signals[0]]) + " · stil >7d, dekking onvolledig: " +
+        str(activity_counts[signals[1]]) + " · recente issue-update: " +
+        str(activity_counts[signals[2]]) + " · recente gekoppelde PR-update: " +
+        str(activity_counts[signals[3]]) + " · onbekend/incoherent: " +
+        str(activity_counts[signals[4]] + activity_counts[signals[5]]) +
+        ". Dit bewijst geen stilstand of vrije claim."
+    )
     output = []
     for pos, row in enumerate(cards[:max_rows], 1):
         if (type(row) is not dict or row.get("priority") not in ORDER
@@ -907,6 +926,7 @@ refresh();
         "Notities en statussen blijven lokaal; bewaar een privé-sessiebestand om later precies dezelfde bron te hervatten.</p>"
         "<p>Bron issue UTC <span id='issue-time'>" + issue_stamp +
         "</span> · PR UTC <span id='pr-time'>" + pr_stamp + "</span></p>"
+        "<p class='activity-summary'>" + escape(activity_summary) + "</p>"
         "<div class='filters'><label>Zoeken<input id='q' type='search'></label>"
         "<label>Prioriteit<select id='priority'><option value=''>Alles</option>"
         "<option>P0</option><option>P1</option><option>P2</option>"

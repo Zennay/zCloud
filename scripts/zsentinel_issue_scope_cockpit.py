@@ -752,6 +752,27 @@ def output_html(report):
     work_panel = ""
     if report.get("human_work_inbox"):
         inbox = report["human_work_inbox"]
+        signals = (
+            "quiet_over_7_days_observed_claims_unknown",
+            "quiet_over_7_days_partial_pr_coverage",
+            "recent_issue_activity_observed",
+            "recent_linked_pr_activity_observed",
+            "activity_timestamp_unknown",
+            "source_clock_incoherent",
+        )
+        activity_counts = {
+            signal: sum(item.get("activity_signal") == signal for item in inbox["cards"])
+            for signal in signals
+        }
+        activity_summary = (
+            "Activiteit: stil >7d/compleet " + str(activity_counts[signals[0]]) +
+            " · stil >7d/onvolledig " + str(activity_counts[signals[1]]) +
+            " · recent issue " + str(activity_counts[signals[2]]) +
+            " · recent PR " + str(activity_counts[signals[3]]) +
+            " · onbekend/incoherent " +
+            str(activity_counts[signals[4]] + activity_counts[signals[5]]) +
+            ". Geen bewijs van stilstand of vrije claim."
+        )
         work_rows = []
         for item in inbox["cards"]:
             issue_url = escape(item["issue_url"], quote=True)
@@ -821,6 +842,7 @@ def output_html(report):
             " is een bestaande PR-link in de bron gezien. "
             "Bronsteekproeven zijn niet volledig en huidige claims/branchregels "
             "zijn NIET geverifieerd. Geen automatisch werk, merge of deploy.</p>"
+            "<p>" + escape(activity_summary) + "</p>"
             "<div class='scroll'><table><thead><tr><th>Urgentie</th>"
             "<th>Open issue</th><th>PR eerst</th><th>Menselijke actie</th>"
             "</tr></thead><tbody>" + "".join(work_rows) +
