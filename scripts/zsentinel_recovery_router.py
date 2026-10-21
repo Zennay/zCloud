@@ -612,24 +612,45 @@ def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None)
             "status": "suggested_only_no_claim",
             "action": "Offer to an available owner; recheck live claims immediately before any write."
         })
-    recommendations.sort(key=lambda item: (PRIORITY[item["priority"]], item["project_id"], item["id"]))
-    # Do not offer two mutually overlapping next tasks just because neither
-    # collides with a CURRENT active claim. Higher-priority work owns the
-    # proposal slot until an authorized controller chooses and rechecks it.
+    # P0 first, then P1 etc.; within a priority class, give every
+    # project a turn before accepting a second task from the same project.
+    fair_order = []
+    for tier in PRIORITY:
+        groups = {}
+        for candidate in sorted(recommendations, key=lambda item: (
+                item["project_id"], item["id"])):
+            if candidate["priority"] == tier:
+                groups.setdefault(candidate["project_id"], []).append(candidate)
+        while any(groups.values()):
+            for project_id in sorted(groups):
+                if groups[project_id]:
+                    fair_order.append(groups[project_id].pop(0))
+    # Advisory suggestions must not overlap. Expose invisible, otherwise
+    # safe candidates as bounded private owner holds without file paths.
     disjoint = []
-    for candidate in recommendations:
-        if any(candidate["project_id"] == existing["project_id"] and
-               any(paths_overlap(path, held) for path in candidate["paths"]
-                   for held in existing["paths"])
-               for existing in disjoint):
+    selection_holds = []
+    for candidate in fair_order:
+        conflict = any(
+            candidate["project_id"] == existing["project_id"] and
+            any(paths_overlap(path, held) for path in candidate["paths"]
+                for held in existing["paths"])
+            for existing in disjoint
+        )
+        if conflict or len(disjoint) == MAX_RECOMMENDATIONS:
+            selection_holds.append({
+                "id": candidate["id"], "project_id": candidate["project_id"],
+                "priority": candidate["priority"],
+                "reason": ("overlapping_suggested_scope" if conflict
+                           else "shortlist_limit_reached"),
+                "claim_authorized": False, "dispatch_authorized": False,
+            })
             continue
         disjoint.append(candidate)
-        if len(disjoint) == MAX_RECOMMENDATIONS:
-            break
     gate_holds.sort(key=lambda item: (
         PRIORITY[item["priority"]], item["project_id"], item["id"], item["reason"]))
     return (disjoint, complete, branch_ownership, branch_suppressed,
-            dependency_holds, gate_holds, sorted(coverage_reasons))
+            dependency_holds, gate_holds, selection_holds,
+            sorted(coverage_reasons))
 
 
 def triage_issue_inbox(inbox, now):
@@ -1110,7 +1131,8 @@ def plan(bundle, previous=None, now=None):
         if entry["status"] == "exact_job_completed_source_reconciled"
     }
     (routes, routing_inventory_complete, branches, branch_suppressed,
-     dependency_holds, gate_holds, routing_coverage_reasons) = eligible_tasks(
+     dependency_holds, gate_holds, selection_holds,
+     routing_coverage_reasons) = eligible_tasks(
         bundle, blocked, now, capacity, exact_reconciled_dependencies)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
     queue_triage = queue_pressure_summary(bundle.get("queue_pressure"), now)
@@ -1206,6 +1228,17 @@ def plan(bundle, previous=None, now=None):
             "examples": gate_holds[:8],
             "samples_truncated": len(gate_holds) > 8,
             "exact_gate_recheck_required": True,
+            "claim_authorized": False,
+            "dispatch_authorized": False,
+        },
+        "routing_selection_holds": {
+            # Otherwise-safe tasks not shown due to five-slot limit or an
+            # overlapping proposal. A suggestion never acquires a claim.
+            "coverage": "complete" if routing_inventory_complete else "incomplete_or_stale",
+            "coverage_reasons": routing_coverage_reasons,
+            "count": len(selection_holds),
+            "examples": selection_holds[:8],
+            "samples_truncated": len(selection_holds) > 8,
             "claim_authorized": False,
             "dispatch_authorized": False,
         },
