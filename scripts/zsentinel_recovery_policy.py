@@ -562,6 +562,44 @@ def evaluate_batch(data, max_age_minutes):
             report["decision"] = "HOLD"
 
     workorders = _batch_workorders(results)
+    # The incident desk is source-bound to this exact batch. It is a
+    # human worklist, not a live queue and not permission to claim work.
+    incident_triage = []
+    for (project_id, incident_id), proposals in by_incident.items():
+        reports = [item["report"] for item in proposals]
+        owners = {report["owner"] for report in reports}
+        shared_owner = next(iter(owners)) if len(owners) == 1 else None
+        holds = sorted({blocker["code"] for report in reports
+                        for blocker in report["blockers"]})
+        requested = sorted({field for report in reports
+                            for field in report["required_evidence"]})
+        if len(reports) > 1:
+            next_step = "choose_one_incident_route_with_authorized_owner"
+        elif holds:
+            next_step = "resolve_observed_holds_and_refresh_source"
+        else:
+            next_step = "independent_owner_gate_review_required"
+        incident_triage.append({
+            "project_id": project_id,
+            "incident_id": incident_id,
+            "proposed_actions": sorted(report["action"] for report in reports),
+            "request_indices": sorted(item["index"] for item in proposals),
+            "decision": "HOLD" if holds else "READY_FOR_HUMAN_REVIEW",
+            "blocker_codes": holds,
+            "required_evidence": requested,
+            "operator_owner_hint": shared_owner,
+            "owner_hint_independently_verified": False,
+            "owner_hints_conflict": len(owners) > 1,
+            "source_urls": sorted({report["source_url"] for report in reports}),
+            "next_step": next_step,
+            "claim_authorized": False,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+        })
+    incident_triage.sort(key=lambda row: (
+        row["decision"] != "HOLD", row["project_id"], row["incident_id"]
+    ))
+
     decisions = [item["report"]["decision"] for item in results]
     return {
         "schema_version": 1,
@@ -575,6 +613,8 @@ def evaluate_batch(data, max_age_minutes):
             "READY_FOR_HUMAN_REVIEW": decisions.count("READY_FOR_HUMAN_REVIEW"),
         },
         "results": results,
+        "incident_count": len(incident_triage),
+        "incident_triage": incident_triage,
         "advisory_only": True,
         "evidence_independently_verified": False,
         "actions_executed": False,
