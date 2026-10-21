@@ -46,19 +46,34 @@ Vanaf deze map:
   python3 zsentinel_runner_report.py --format json --receipt T0.json --output inbox-opgenomen.json
   python3 zsentinel_runner_report.py --format json --t0 T0.json --t1 T1.json --output inbox-vergelijking.json
   python3 zsentinel_runner_report.py --format json --timeline T0.json T1.json T2.json --output inbox-historie.json
-  # Buiten dit pakket, vanuit een checkout met scripts/zsentinel_operator_export.py:\n  python3 scripts/zsentinel_operator_export.py --verify-dir PAKKET-B --compare-dir PAKKET-A --compare-format markdown\n  python3 scripts/zsentinel_operator_export.py --verify-dir PAKKET-B --compare-dir PAKKET-A --compare-format markdown --compare-output NIEUWE-PRIVATE-MAP/OVERDRACHT.md
+  # Buiten dit pakket, vanuit een checkout met scripts/zsentinel_operator_export.py:
+  python3 scripts/zsentinel_operator_export.py --verify-dir PAKKET-B --compare-dir PAKKET-A --compare-format markdown
+  python3 scripts/zsentinel_operator_export.py --verify-dir PAKKET-B --compare-dir PAKKET-A --compare-format markdown --compare-output NIEUWE-PRIVATE-MAP/OVERDRACHT.md
+  # Vergelijk opgeslagen pakket met actuele (niet-Git-bevestigde) lokale bron:
+  python3 scripts/zsentinel_operator_export.py --verify-dir PAKKET-A --compare-source-dir scripts --compare-format html --compare-output NIEUWE-PRIVATE-MAP/BRONVERSCHIL.html
 
-Rapporten en de nieuwe gestructureerde JSON-eigenaarinbox worden create-only (0600)\ngemaakt in bestaande veilige doelmappen. JSON noemt bronmoment,\nbeperkte capaciteit/servicetellingen en maximaal drie handmatige acties.\nDe JSON-inbox activeert GEEN herstel of workflow. Ook Markdown kan direct\nvanuit de eenmalige live bron of twee historische bonnetjes worden gemaakt;\nook één opgeslagen privébon kan offline opnieuw als rapport worden getoond.\nHistorische bronmomenten blijven uitdrukkelijk niet actueel.
+Rapporten en de nieuwe gestructureerde JSON-eigenaarinbox worden create-only (0600)
+gemaakt in bestaande veilige doelmappen. JSON noemt bronmoment,
+beperkte capaciteit/servicetellingen en maximaal drie handmatige acties.
+De JSON-inbox activeert GEEN herstel of workflow. Ook Markdown kan direct
+vanuit de eenmalige live bron of twee historische bonnetjes worden gemaakt;
+ook één opgeslagen privébon kan offline opnieuw als rapport worden getoond.
+Historische bronmomenten blijven uitdrukkelijk niet actueel.
 Bij --previous is alleen de nieuwe meting actueel gelezen: de T0-bron blijft
-expliciet historisch, ook in JSON, Markdown en het GitHub-issueconcept.\n
-Het nieuwe --bundle maakt een verse 0700 map met incident.html,\nowner-handoff.md, owner-inbox.json, github-owner-issue-draft.md en\nMANIFEST.json; ieder bestand is 0600.
+expliciet historisch, ook in JSON, Markdown en het GitHub-issueconcept.
+
+Het nieuwe --bundle maakt een verse 0700 map met incident.html,
+owner-handoff.md, owner-inbox.json, github-owner-issue-draft.md en
+MANIFEST.json; ieder bestand is 0600.
 De drie rapporten delen dezelfde bronobservatie.
 Het incident.html start met lokale navigatie naar de eigenaaroverdracht,
 het geredigeerde GitHub-issueconcept en de JSON-inbox; geen webformulier,
 upload of externe verbinding. HTML en Markdown tonen dezelfde incidentreferentie.
 Bij ontbrekende/ongeldige CPU-capaciteitscijfers blijft de P0-actiestatus
 ONBEKEND/BEHEERDER NODIG; de rapportage gaat niet stuk door typefouten. --verify-bundle leest alleen,
-controleert bronvenster en SHA256-consistentie, GEEN cryptografische handtekening.\nDe GitHub-issueconcepttekst heeft bewuste handmatige overdracht,\nbevoegdheidsvragen en geen privé-runnernamen, host of ruwe capaciteit.
+controleert bronvenster en SHA256-consistentie, GEEN cryptografische handtekening.
+De GitHub-issueconcepttekst heeft bewuste handmatige overdracht,
+bevoegdheidsvragen en geen privé-runnernamen, host of ruwe capaciteit.
 Plaats de bundel onder een bestaande eigenaar-private (0700) doelmap.
 
 Gebruik nooit bestaande rapport-/bronbestandsnamen als nieuw doel. Het huidige --preview toont de werkelijke effectieve CPU-toewijzing
@@ -69,7 +84,15 @@ statuswijzigingen zijn geen bewijs van GitHub CI, werkclaim of productieherstel.
 De modules kunnen bij onjuist gebruik ook live CPU-properties aanpassen: voer
 de background_priority-module alleen met --preview uit totdat alle vereiste
 code-review, exact-head CI, branch protection en runtime release-autorisatie
-formeel zijn afgerond. Een vergelijking kan optioneel uitsluitend in een NIEUW .txt/.md/.json bestand\nonder een bestaande eigen 0700-map worden opgeslagen (--compare-output).\nHet bestand wordt create-only met 0600 gemaakt; bestaande uitvoer wordt nooit vervangen.\nDe operatorbundel is geen production deploy approval.
+formeel zijn afgerond. Een vergelijking kan optioneel uitsluitend in een NIEUW .txt/.md/.json/.html bestand
+onder een bestaande eigen 0700-map worden opgeslagen (--compare-output).
+Het bestand wordt create-only met 0600 gemaakt; bestaande uitvoer wordt nooit vervangen.
+Een broncheckout wordt tijdens de opname tweemaal gelezen via dezelfde veilig
+geopende bronmap; bronwijzigingen worden geweigerd. Dit garandeert geen
+atomische Git-commit-identiteit of actuele live-installatie.
+De HTML-weergave is volledig offline zonder scripts, netwerkverzoeken
+of knop voor uitvoerende recovery.
+De operatorbundel is geen production deploy approval.
 """
 
 
