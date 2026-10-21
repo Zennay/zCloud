@@ -635,6 +635,40 @@ def portfolio_json(selected, integrated, *, project=None):
     return content
 
 
+def single_pr_related_peers(selected, integrated, *, pr_url):
+    """Cross-reference OTHER observed PRs touching the same saved issue refs.
+
+    Complete original saved-source admission precedes all selection. This is
+    bounded issue-link overlap in the sampled source, NOT proof of file
+    collisions, current ownership, live open state or equivalent fixes.
+    """
+    if type(pr_url) is not str or PR.fullmatch(pr_url) is None:
+        raise ValueError("Expected canonical GitHub pull-request URL")
+    groups = project_worklist(selected, integrated)
+    hits = [(group, item) for group in groups
+            for item in group["candidates"] if item["url"] == pr_url]
+    if len(hits) != 1:
+        raise ValueError("Selected PR is not unique in admitted saved source")
+    owner, target = hits[0]
+    peers = {}
+    for issue in target["linked_issue_urls"]:
+        related = []
+        for item in owner["candidates"]:
+            if item["url"] == pr_url or issue not in item["linked_issue_urls"]:
+                continue
+            related.append({
+                "url": item["url"],
+                "head_observed": item["head_observed"],
+                "priority": item["priority"],
+                "gate_source": item["gate_source"],
+                "primary_gate": item["primary_gate"],
+                "review_and_merge_authorized": False,
+            })
+        related.sort(key=lambda row: int(row["url"].rsplit("/", 1)[-1]))
+        peers[issue] = related
+    return peers
+
+
 def portfolio_single_pr_markdown(selected, integrated, *, pr_url, project=None):
     """One saved-source PR owner handoff, never a live approval or merge ticket.
 
