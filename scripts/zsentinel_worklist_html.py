@@ -1206,6 +1206,7 @@ function exportProjectHandoff(){
     ' (geen aangetoonde bestandsbotsing)');
    const note=collision.querySelector('.collision-note').value.trim();
    if(note)parts.push('- Privé botsingsnotitie: '+safeText(note));
+   if(dueHandoff(collision))parts.push('- '+dueHandoff(collision));
   }
   parts.push('');
  }
