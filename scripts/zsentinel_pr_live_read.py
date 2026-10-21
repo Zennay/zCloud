@@ -56,7 +56,7 @@ def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES):
                     "/pulls?state=open&per_page=" in path or
                     "/timeline?per_page=" in path
                 ))):
-        raise GitHubReadError("oversized read requires the sole bounded PR page")
+        raise GitHubReadError("oversized read requires a bounded PR-list or issue-timeline page")
     if not path.startswith("/repos/Zennay/") or (
         any(char in path for char in ("#", "\\", "\n", "\r", "\t"))
     ):
