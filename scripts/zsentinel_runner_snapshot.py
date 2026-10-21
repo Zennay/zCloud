@@ -59,13 +59,19 @@ def _unit_states(bundle):
         name = row.get("unit")
         state = row.get("state")
         detail = row.get("detail")
+        reason = row.get("reason")
         if (not isinstance(name, str) or len(name) > 160 or
                 not RUNNER_UNIT.fullmatch(name) or
-                state not in {"active", "inactive", "failed", "activating", "deactivating", "unknown"} or
-                not isinstance(detail, str) or len(detail) > 30 or name in states):
+                state not in {"active", "inactive", "failed", "activating",
+                              "deactivating", "unknown"} or
+                detail not in {"running", "dead", "failed", "exited", "start",
+                               "stop", "auto-restart", "waiting", "listening",
+                               "unknown"} or
+                reason not in {None, "oom-kill", "exit-code", "signal",
+                               "timeout", "watchdog", "core-dump", "resources",
+                               "success"} or name in states):
             raise ValueError("Malformed/duplicate service observation")
-        states[name] = {"state": state, "detail": detail,
-                        "reason": row.get("reason")}
+        states[name] = {"state": state, "detail": detail, "reason": reason}
     return states
 
 
