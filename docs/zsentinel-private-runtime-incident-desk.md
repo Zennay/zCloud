@@ -238,3 +238,65 @@ De herstelroute geeft op basis van deze observaties nooit zelfstandig claims,
 GitHub-reruns, runner-restarts, Notion-acties, betaalde capaciteit, merges of
 deploys vrij. Bevoegde eigenaren en exacte-head CI/review blijven de enige
 operationele poorten.
+
+
+## 21 oktober · bestaande PR’s direct in herstel- en eigenaarsoverzicht
+
+Dezelfde `scripts/zsentinel_recovery_refresh.py` heeft nu één expliciete
+**merge-first** ingang die de reeds aanwezige read-only GitHub
+`discover_open_prs`- en `observe_prs`-collectors hergebruikt.
+Er wordt geen nieuw PR gemaakt, geen GitHub-workflow gestart en geen eigenaarschap
+overgenomen. De operator kiest maximaal drie bestaande product-PR’s; bij
+projectdiscovery wordt maximaal één venster van twintig meest recent gewijzigde
+open PR’s per geselecteerd project bekeken. QA-only PR’s worden door de
+bestaande productfilter uitgesloten. De source van maximaal drie exacte PR’s
+wordt vervolgens gecontroleerd op HEAD, gesamplede checks, klassieke statussen,
+reviews, draft en bekende platformweigeringen. Deze momentopname bewijst
+**nooit** dat alle verplichte branch protection-gates of huidige actieve claims
+voldaan zijn.
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_refresh.py /secure/bronpakket.json \
+  --registry projects.json \
+  --read-existing-prs \
+  --existing-pr cloud:1563 \
+  --pr-project cloud \
+  --read-product-issues --issue-project cloud \
+  --format desk \
+  --desk-output /secure/operator-only/herstel-en-pr-werkbank.html \
+  --owner-handoff-output /secure/operator-only/pr-herstel-handoff.md
+```
+
+De `--existing-pr PROJECT:NUMBER`-optie pinnt een bekende PR als eerste;
+`--pr-project PROJECT` gebruikt **alleen resterende capaciteit** voor
+begrensde open-PR-discovery. Beide opties vereisen `--read-existing-prs`.
+Zonder expliciete PR/projectkeuze gebruikt deze modus de eerste maximaal drie
+canonieke projecten uit hetzelfde al ingelezen bronpakket als de router.
+Dat blijft een *steekproef*: ontbrekende PR’s, updates buiten het venster en
+actieve fileclaims zijn ONBEKEND. Geen gegenereerd advies verleent een merge.
+
+Naast de offline `desk`-HTML bevat de reguliere `--format html`-cockpit nu
+hetzelfde exacte PR-paneel. Bij `--format text` wordt een brongebonden PR
+vervolgactie toegevoegd; `--format json` bewaart het volledige
+`pr_delivery`-object. `--owner-handoff-output` maakt een afzonderlijk
+**nieuwe** privé-`.md`, `.json` of `.csv` aan op basis van diezelfde
+router en PR-bron, zonder extra GET. De eigenaarsexport bevat P0/P1
+incidenten, onafhankelijke werkblokkades, open PR-gates en menselijke
+vervolgacties in dezelfde prioritering. Een eigenaar kan de export bekijken
+en bevoegd handmatig opvolgen; deze wordt niet automatisch als queue of
+workerinput gebruikt.
+
+Voor `--read-existing-prs` is `--output` verplicht bij
+`html`/`text`/`json`; bij `--format desk` is de private
+`--desk-output` verplicht. Anders wordt de opdracht geweigerd voordat
+PR-titels, reviews of exacte commitinformatie naar stdout kunnen gaan.
+Alle uitvoerbestanden gebruiken bestaande 0600 create-only veilige opslag,
+met cross-output/source/ledger-aliaschecks; eerdere handoffbestanden worden
+niet overschreven. Incomplete PR-discovery of providerweigering blijft
+expliciet onvolledig; nul geselecteerde PR’s bewijst geen leeg backlog.
+
+Een integratie- of live-release mag pas na **exact-head verplichte CI,
+afzonderlijke review, beschermde branch en bevoegde owner/releaseactie**.
+`merge_authorized=false`, `deploy_authorized=false` en onvolledige claimdekking
+blijven behouden.
