@@ -353,8 +353,19 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
         examples = dep.get("examples") if type(dep) is dict else None
         raw_dependency_coverage = (dep.get("coverage", "incomplete_or_stale")
                                    if type(dep) is dict else None)
+        allowed_dependency_reasons = {
+            "claim_inventory_not_complete", "task_inventory_not_complete",
+            "claim_observation_missing", "task_observation_missing",
+            "claim_observation_stale_or_future", "task_observation_stale_or_future",
+            "active_claim_scope_unknown",
+        }
+        dependency_reasons = (dep.get("coverage_reasons", [])
+                              if type(dep) is dict else None)
         if (type(dep) is not dict
                 or raw_dependency_coverage not in ("complete", "incomplete_or_stale")
+                or type(dependency_reasons) is not list or len(dependency_reasons) > 7
+                or any(reason not in allowed_dependency_reasons for reason in dependency_reasons)
+                or (raw_dependency_coverage == "complete" and dependency_reasons)
                 or type(dep.get("count")) is not int
                 or not 0 <= dep["count"] <= 250
                 or type(examples) is not list or len(examples) > 8
@@ -763,6 +774,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
         "incident_dependency_owner_summary": {
             "coverage": dependency_coverage,
             "held_count": dependency_count,
+            "coverage_reasons": (dependency_reasons if dep is not None else []),
             "claim_authorized": False,
             "runtime_recovered_verified": False,
         },
