@@ -451,12 +451,13 @@
         }else if(Date.now()-awaitingAt<120000){return}
         else if(Date.now()-awaitingAt<300000){await blocked("generation-unconfirmed-no-duplicate");return}
         else{
-          const box=composer(),draft=String(box?.value||box?.innerText||box?.textContent||"").trim();
-          if(!visible(box)||(draft&&draft!==String(target.prompt||"").trim())){
-            await blocked("stalled-send-preserved-draft");return;
-          }
-          awaiting=false;everGenerating=false;
-          await newChat("generation-never-started-five-minutes");
+          // Five minutes without DOM-confirmed generation is still an
+          // UNKNOWN execution outcome: the server may have accepted Send
+          // before the browser lost its reply surface. Do not start New
+          // chat or resubmit the same queued prompt on elapsed time alone.
+          // Keep awaiting so a late reply can still be observed and the
+          // operator can adjudicate the original dispatch.
+          await blocked("generation-unconfirmed-manual-review-no-retry");
           return;
         }
       }else if(everGenerating){
