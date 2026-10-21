@@ -216,25 +216,57 @@ def suggested_actions(packet):
                 "Behoud bestaande jobs en inspecteer hun voortgang zonder serviceherstart of queue-drain.",
                 "ACTIVE_RUNNER_WORK_PROTECTED",
             ))
-    # Source-limited P0 discovery stays advisory. Eligible is NOT the same as
-    # ownership-free and never licenses a dispatch, CI run or merge.
-    portfolio = packet.get("portfolio_urgent_local", [])
-    priority = [
-        item for item in portfolio[:13]
-        if _number(item.get("queued_p0")) > 0
+    # Source-limited P0/P1 discovery is an operator inbox, never admission.
+    # Previously the desk omitted ALL P1 projects even when no P0 project
+    # was waiting. Preserve P0 precedence while always showing a P1 fallback
+    # from a *different* project when the bounded source contains one.
+    portfolio = [
+        item for item in packet.get("portfolio_urgent_local", [])[:13]
+        if isinstance(item, dict) and isinstance(item.get("project"), str)
+        and 0 < len(item["project"]) <= 32
     ]
-    priority.sort(key=lambda i: (-_number(i.get("queued_p0")), str(i.get("project", ""))))
-    for item in priority[:2]:
-        # Build eligible P0 cards before the final bounded, safety-aware
-        # selection; otherwise earlier advisory cards can starve open issues.
-        name = str(item.get("project", ""))[:32]
-        count = _number(item.get("queued_p0"))
-        eligible = _number(item.get("eligible_queued_p0"))
+    def ordered_band(band):
+        key = "queued_" + band
+        eligible_key = "eligible_queued_" + band
+        return sorted(
+            (item for item in portfolio if _number(item.get(key)) > 0),
+            key=lambda item: (
+                -_number(item.get(key)),
+                -_number(item.get(eligible_key)),
+                item["project"].casefold(),
+            ),
+        )
+
+    p0 = ordered_band("p0")
+    p1 = ordered_band("p1")
+    # The first two P0s retain priority; a distinct P1 may occupy the third
+    # slot. When there are no P0s, show up to three highest-impact P1s.
+    chosen = [(item, "p0") for item in p0[:2]]
+    seen_names = {item["project"].casefold() for item, _ in chosen}
+    for item in p1:
+        if len(chosen) >= 3:
+            break
+        if item["project"].casefold() not in seen_names:
+            chosen.append((item, "p1"))
+            seen_names.add(item["project"].casefold())
+    if not p1 and len(chosen) < 3:
+        for item in p0[2:]:
+            if len(chosen) >= 3:
+                break
+            chosen.append((item, "p0"))
+    for item, band in chosen:
+        name = item["project"]
+        count = _number(item.get("queued_" + band))
+        eligible = min(count, _number(item.get("eligible_queued_" + band)))
+        active = _number(item.get("in_flight_" + band))
+        label = band.upper()
         result.append(action(
-            "p0-project-" + name.lower(),
+            f"{band}-project-" + name.casefold(),
             "review",
-            f"{name}: {count} lokale P0-taak/taken wachten, {eligible} lokaal eligible.",
-            "Controleer eerst de actuele open issues, bestaande product-PRs en externe claimhouder.",
+            f"{name}: {count} lokale {label}-taak/taken wachten, "
+            f"{eligible} lokaal eligible; {active} reeds in behandeling.",
+            "Open bestaande product-PRs en P0/P1 issues; controleer actuele "
+            "Notion-/GitHub-claims en bestandsoverlap vóór een eigen reparatie.",
             "PR_AND_OWNER_GATE_REQUIRED",
         ))
     # Show one safe independent continuation when release/owner waits.
