@@ -3580,3 +3580,51 @@ observations into one asserted current PR state or treat their absence as
 permission to create a competing repair PR. The existing JSON handoff schema
 remains unchanged; this is a human-visible source-custody integration.
 
+
+
+## Merge-first existing PR reconciliation inside the operator workbench
+
+The offline operator page now includes **Merge-first existing-PR reconciliation
+· saved evidence**. Rather than showing the same PR as disconnected issue
+cards, it unifies *only the already admitted saved source references* from
+the original product issue board and optional historical PR ZIPs. The
+source-filtered worklist groups by canonical PR URL and prioritizes the
+highest-priority linked issue, P0 first.
+
+Each PR row identifies:
+
+- all linked original product issue URLs, and whether one PR was observed
+  against several issues (one candidate for reuse, not proof those issues
+  are all fixed);
+- whether any one of the linked issues has several existing PR candidates,
+  before anyone opens a competing new fix;
+- all separately observed board and historical ZIP commit HEADs, with a
+  conspicuous **different saved HEAD** warning if source observations vary
+  (which can be ordinary history, **not** proof of a code conflict);
+- historical PR/issue-reference disappearance, partial ZIP source coverage
+  and sampled, non-authoritative gate labels.
+
+A first view shows up to 80 bounded PR rows for operator navigation;
+the full reviewed, source-only **PR owner CSV** preserves all PR references
+associated with the selected original issue cards rather than silently
+dropping less urgent entries. The page also states explicitly how many
+saved issues had no PR candidate, how many had alternative PR candidates,
+and how many references were omitted from the visible slice.
+
+The worklist intentionally applies **only source filters** from the page,
+not locally entered human dispositions, private due dates, follow-up
+status, notes or contact labels. No private annotations enter the owner CSV.
+The CSV escapes control characters and spreadsheet formula prefixes using
+the existing CSV cell encoder. Its per-PR authorization flags explicitly
+deny claim, dispatch, CI/review approval, merge and deploy authority.
+If source filters or references change after preview, the download is
+refused until reviewed again.
+
+A saved PR link or an observed sampled HEAD is **never** evidence that a
+PR is currently open, claim-free, approved, merged, released or deployed.
+A missing PR in a historical sample is **UNKNOWN**, not resolved. The
+actual operator must inspect current GitHub exact-head checks, independent
+review, branch-protection status, current Notion/queue worker claims and
+release ownership. This panel performs no API call, queue mutation,
+automatic worker dispatch, GitHub merge or deployment.
+
