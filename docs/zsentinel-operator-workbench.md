@@ -3872,5 +3872,7 @@ report now displays the original board SHA-256 and observation UTC, saved
 archive-manifest SHA-256 list, missing-batch flag and advisory age labels in a
 top-level source-custody section. This metadata is still shown when a valid
 bounded board produces **zero owner rows**; the report no longer substitutes
-"unknown" provenance simply because no issue/PR card was selected. Empty output
-is not proof of an empty live backlog, a closed issue, or merge clearance.
+"unknown" provenance simply because no issue/PR card was selected. The CSV route also emits one explicitly non-actionable
+`metadata_only_no_owner_rows` row when the bounded selection is empty, rather
+than a header-only export with no custody evidence. Empty output is not proof of
+an empty live backlog, a closed issue, or merge clearance.
