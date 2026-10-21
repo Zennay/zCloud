@@ -409,6 +409,10 @@ def html_view(decision, registry=None):
     if decision.get("pr_delivery") is not None:
         from zsentinel_pr_delivery import pr_delivery_html
         pr_panel = pr_delivery_html(decision["pr_delivery"])
+    pr_continuity_panel = ""
+    if decision.get("pr_gate_continuity") is not None:
+        from zsentinel_pr_hold_continuity import html_panel
+        pr_continuity_panel = html_panel(decision["pr_gate_continuity"])
     claims = decision.get("claim_inventory_complete") is True
     source_issues = phrase(triage.get("coverage"), 40)
     live = decision.get("live_sources")
@@ -1422,6 +1426,7 @@ def html_view(decision, registry=None):
             + '</section>'
             + github_access_panel
             + pr_panel
+            + pr_continuity_panel
             + discovery_panel
             + runner_route_panel
             + f'<section><h2>Open productissues · P0/P1 eerst, daarna P2 en zonder label ({len(triage["issues"])})</h2>'
