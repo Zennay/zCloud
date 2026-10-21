@@ -11,7 +11,7 @@ import stat
 from pathlib import Path
 
 MAX_OUTPUT = 6 * 1024 * 1024
-EXTENSIONS = frozenset((".html", ".json", ".md", ".ics", ".txt"))
+EXTENSIONS = frozenset((".html", ".json", ".md", ".ics", ".txt", ".csv"))
 
 
 def write_private_output(destination: Path, content: str, fmt: str) -> int:
