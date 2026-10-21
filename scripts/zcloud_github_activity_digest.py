@@ -7,6 +7,7 @@ unavailable provider as no work. Safe for local stdin pipeline use.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import re
 import sys
@@ -66,6 +67,35 @@ def safe_receipt(raw: bytes) -> dict:
     return payload
 
 
+MAX_SNAPSHOT_AGE_SECONDS = 6 * 60 * 60
+MAX_FUTURE_SKEW_SECONDS = 120
+
+
+def snapshot_freshness(value: object, now: dt.datetime | None = None) -> dict:
+    """Classify snapshot age without treating an invalid clock as current."""
+    unknown = {"state": "unknown", "observed_at": None, "age_seconds": None}
+    if not isinstance(value, str) or len(value) > 40:
+        return unknown
+    try:
+        observed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return unknown
+    if observed.tzinfo is None or observed.utcoffset() is None:
+        return unknown
+    observed = observed.astimezone(dt.timezone.utc)
+    current = now or dt.datetime.now(dt.timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        return unknown
+    age = int((current.astimezone(dt.timezone.utc) - observed).total_seconds())
+    normalized = observed.isoformat(timespec="seconds").replace("+00:00", "Z")
+    if age < -MAX_FUTURE_SKEW_SECONDS:
+        return {"state": "future_clock_skew", "observed_at": normalized,
+                "age_seconds": None}
+    age = max(0, age)
+    return {"state": "stale" if age > MAX_SNAPSHOT_AGE_SECONDS else "recent",
+            "observed_at": normalized, "age_seconds": age}
+
+
 def digest(payload: dict) -> str:
     lines = [
         "# zCloud · GitHub activity receipt",
@@ -74,6 +104,24 @@ def digest(payload: dict) -> str:
         "not full branch history; no production deployment, worker resumption or project-complete claim.",
         "",
     ]
+    freshness = snapshot_freshness(payload.get("observed_at"))
+    if freshness["state"] == "recent":
+        lines.append("**Snapshot freshness:** recent source observation " +
+                     freshness["observed_at"] + " · age " +
+                     str(freshness["age_seconds"] // 60) +
+                     " minutes (six-hour freshness limit).")
+    elif freshness["state"] == "stale":
+        lines.append("**STALE SNAPSHOT:** source observation " +
+                     freshness["observed_at"] + " is " +
+                     str(freshness["age_seconds"] // 3600) +
+                     " hours old. Refresh the read-only source before drawing current Activity conclusions.")
+    elif freshness["state"] == "future_clock_skew":
+        lines.append("**UNKNOWN SNAPSHOT FRESHNESS:** source timestamp " +
+                     freshness["observed_at"] +
+                     " is more than two minutes in the future; inspect clock/source integrity.")
+    else:
+        lines.append("**UNKNOWN SNAPSHOT FRESHNESS:** missing or invalid source timestamp; this is not a current observation.")
+    lines.append("")
     known: set[str] = set()
     for item in payload["coverage"]:
         if not isinstance(item, dict):
