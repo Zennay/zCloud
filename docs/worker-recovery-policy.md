@@ -636,3 +636,17 @@ python3 scripts/zsentinel_recovery_policy.py \
 Use --format markdown with a .md output path, or keep --format json for the policy request alone. The human handoff links the original issue and sampled PR, preserves the issue-source observation timestamp, and provides an explicit checklist for current exact-head CI, independent review, branch protection, unresolved review threads, merge state, owner approval and claim clearance. It is script-free offline HTML with no external resources.
 
 **Merge safety:** the policy evaluator now requires evidence.active_claim = "none" for merge_pr. An active or unknown claim is a HOLD, even when the other fields appear ready. Every request field is left null in the generated template; the saved draft/non-draft label is historical only. The packet does not run checks, acquire claims, merge, deploy or restart a runner.
+
+
+## Single-request HTML decision card
+
+The single-request policy mode now supports a standalone HTML decision card in addition to JSON and Markdown. It keeps the exact source link and observation time visible, lists every HOLD reason and missing evidence field, and clearly separates a local policy result from independently verified release authorization. The page has no scripts, remote resources, forms or embedded content.
+
+```sh
+install -d -m 700 "$HOME/.local/state/zsentinel"
+python3 scripts/zsentinel_recovery_policy.py \
+  --input private-policy-request.json --format html \
+  --output "$HOME/.local/state/zsentinel/policy-decision.html"
+```
+
+Use a new output filename in an existing owner-controlled private directory. The existing output cap and create-only mode-0600 contract still apply. This is a presentation route only: it does not check live providers, acquire claims, retry CI, merge, deploy or restart runners.
