@@ -444,6 +444,10 @@ def main():
         enriched, source = refresh(bundle, registry, token)
         if selected_historical is not None:
             source["historical_recheck"] = selected_historical
+        provider_denial = source.get("provider_admission_denial")
+        if provider_denial not in (
+                None, "authentication_required", "rate_limit_confirmed"):
+            raise ValueError("unknown upstream GitHub admission source")
         if args.issue_project and not args.read_product_issues:
             raise ValueError("--issue-project requires --read-product-issues")
         if args.read_product_issues:
@@ -458,10 +462,18 @@ def main():
             # Existing collector spends at most three public GETs per project
             # (oldest, newest, linked PR window). It never claims ownership.
             try:
-                enriched["issue_inbox"] = collect(registry, requested, token, max_items=40)
-                source["issue_source"] = "github_readonly_selected_projects"
-                source["issue_projects"] = requested
-                source["issue_requests_attempted"] = enriched["issue_inbox"]["request_count"]
+                if provider_denial is not None:
+                    # One confirmed token-wide refusal halts sibling issue
+                    # reads. Missing issues remain UNKNOWN, never zero.
+                    source["issue_source"] = "degraded_skipped_after_provider_denial"
+                    source["issue_source_reason"] = provider_denial
+                    source["issue_projects"] = requested
+                    source["issue_requests_attempted"] = 0
+                else:
+                    enriched["issue_inbox"] = collect(registry, requested, token, max_items=40)
+                    source["issue_source"] = "github_readonly_selected_projects"
+                    source["issue_projects"] = requested
+                    source["issue_requests_attempted"] = enriched["issue_inbox"]["request_count"]
             except (ValueError, OSError) as exc:
                 enriched.pop("issue_inbox", None)
                 source["issue_source"] = "degraded_not_fetched"
@@ -470,7 +482,20 @@ def main():
         if args.read_existing_prs:
             from zsentinel_pr_delivery import discover_open_prs, observe_prs
             discovered = None
-            if pr_discovery_projects and len(pr_selections) < 3:
+            if provider_denial is not None and pr_discovery_projects:
+                discovered = {
+                    "coverage": [{
+                        "project_id": project,
+                        "status": "not_queried_after_auth_or_rate_limit",
+                        "provider_admission": provider_denial,
+                    } for project in pr_discovery_projects],
+                    "calls": 0, "selection": [],
+                    "all_open_prs_observed": False,
+                    "merge_authorized": False, "writes_performed": False,
+                    "owner_verified": False,
+                }
+                source["pr_discovery"] = "degraded_skipped_after_provider_denial"
+            elif pr_discovery_projects and len(pr_selections) < 3:
                 try:
                     discovered = discover_open_prs(
                         registry, pr_discovery_projects, token=token,
@@ -488,12 +513,16 @@ def main():
                         "merge_authorized": False,
                         "writes_performed": False, "owner_verified": False,
                     }
-            pr_delivery = observe_prs(registry, pr_selections, token=token)
+            pr_delivery = observe_prs(
+                registry, pr_selections, token=token,
+                skip_provider_denial=provider_denial)
             pr_delivery["open_pr_discovery"] = discovered if discovered is not None else {
                 "coverage": "not_requested",
                 "all_open_prs_observed": False, "merge_authorized": False,
             }
-            source["pr_source"] = "github_bounded_existing_prs_readonly"
+            source["pr_source"] = ("degraded_skipped_after_provider_denial"
+                                   if provider_denial is not None else
+                                   "github_bounded_existing_prs_readonly")
             source["pr_requests_attempted"] = pr_delivery["request_count"] + (
                 discovered["calls"] if discovered is not None else 0)
             source["pr_selected"] = len(pr_selections)
