@@ -317,3 +317,14 @@ Een GitHub-403 zonder bewezen globale limiet wordt niet portfolio-breed
 geblokkeerd: andere repositorybronnen kunnen wel onafhankelijk beschikbaar
 zijn. Deze logica wijzigt geen GitHub-ratelimits, kosten, claimleases,
 worker-, scheduler- of deploygedrag.
+
+
+Wanneer de **issuecollector zelf** pas een bevestigde globale rate-limit
+tegenkomt, geeft deze dezelfde stop door aan de latere PR-observer.
+Ook de open-PR-discovery mag een bevestigd rate-limit-signaal doorgeven,
+waarna de maximaal drie exacte PR-GET-routes worden overgeslagen.
+HTTP-401/403 die de issuecollector aan één repository toewijst blijft
+bewust **projectgebonden**, zodat bereikbare andere projecten niet
+stilvallen. Een wegens tokenweigering geheel overgeslagen PR-waarneming
+heeft geen nieuw `observed_at_utc`-GitHub-bronmoment: de bewaarde
+PR-link is slechts een menselijke navigatieaanwijzing.
