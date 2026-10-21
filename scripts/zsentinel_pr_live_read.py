@@ -68,7 +68,10 @@ def _timeline_last_page(link_header, requested_path):
         if (parsed.scheme != "https" or parsed.netloc != "api.github.com"
                 or parsed.path != expected_path or parsed.fragment):
             continue
-        query = parse_qs(parsed.query, strict_parsing=True)
+        try:
+            query = parse_qs(parsed.query, strict_parsing=True)
+        except ValueError:
+            continue
         if set(query) != {"per_page", "page"} or query["per_page"] != [str(MAX_LIST_PAGE)]:
             continue
         page = query["page"][0] if len(query["page"]) == 1 else ""
@@ -466,11 +469,11 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
 
 
 def _discover_issue_timeline_prs(issue_url, *, token=None):
-    """Bounded official GitHub cross-reference observations for one issue.
+    """Read early and newest GitHub issue cross-references with finite GETs.
 
-    A cross-reference is a provider-observed link, not proof that the PR
-    repairs the bug, passed checks, merged to main, or owns work. Timeline
-    pages are chronological and may omit newer links after the hard cap.
+    A GitHub timeline cross-reference establishes only a provider-recorded
+    link. It does not establish a repair, an active owner, required CI, or
+    delivery on main. The page window may deliberately omit middle history.
     """
     issue_match = ISSUE_URL.fullmatch(issue_url)
     if issue_match is None:
@@ -479,31 +482,44 @@ def _discover_issue_timeline_prs(issue_url, *, token=None):
     full_name = owner + "/" + repo
     path = "/repos/" + quote(owner, safe="") + "/" + quote(repo, safe="")
     candidates, seen = [], set()
-    pages_scanned = 0
+    sampled_pages = []
+    pages_to_read = [1]
+    linked_last_page = None
     gets_attempted = 0
     events_scanned = 0
     last_page_short = False
     skipped = 0
     source_error = None
-    for page_number in range(1, MAX_TIMELINE_PAGES + 1):
+    while pages_to_read and gets_attempted < MAX_TIMELINE_PAGES:
+        page_number = pages_to_read.pop(0)
         try:
             gets_attempted += 1
-            events = _limited_json(
+            events, reported_last_page = _limited_json(
                 path + "/issues/" + issue_number + "/timeline?per_page=" +
                 str(MAX_LIST_PAGE) + "&page=" + str(page_number),
                 token=token, max_body_bytes=MAX_DISCOVERY_BODY_BYTES,
+                include_timeline_last_page=True,
             )
         except GitHubReadError as exc:
-            # Other independently read GitHub sources remain usable as
-            # advisory hints. This provider gap must remain visible.
             source_error = str(exc)
             break
         if not isinstance(events, list) or len(events) > MAX_LIST_PAGE:
             source_error = "GitHub timeline response has invalid shape"
             break
-        pages_scanned += 1
+        sampled_pages.append(page_number)
         events_scanned += len(events)
         last_page_short = len(events) < MAX_LIST_PAGE
+        if page_number == 1:
+            linked_last_page = reported_last_page
+            if linked_last_page is not None and linked_last_page > 1:
+                # Read the latest page(s), not just old chronological history.
+                # GitHub-provided links are NOT followed; only numeric page
+                # indices are used on the same canonical endpoint.
+                pages_to_read = sorted(set((
+                    max(2, linked_last_page - 1), linked_last_page
+                )))
+            elif linked_last_page is None and not last_page_short:
+                pages_to_read = [2, 3]
         for event in events:
             if not isinstance(event, dict):
                 skipped += 1
@@ -532,11 +548,32 @@ def _discover_issue_timeline_prs(issue_url, *, token=None):
                 "candidate_origin": "github_issue_timeline_cross_reference",
                 "timeline_created_at": event.get("created_at")
                     if isinstance(event.get("created_at"), str) else None,
+                "timeline_source_page": page_number,
             })
-        if last_page_short:
-            break
+        if last_page_short and linked_last_page is None:
+            pages_to_read = []
+
+    # GitHub lists events chronologically. Most recent references should be
+    # considered before older hints, without treating either as permission.
+    candidates.reverse()
+    if linked_last_page is not None:
+        complete = (
+            set(sampled_pages) == set(range(1, linked_last_page + 1))
+            and source_error is None
+        )
+    else:
+        complete = (
+            last_page_short and source_error is None
+            and sampled_pages == list(range(1, len(sampled_pages) + 1))
+        )
     return candidates[:MAX_DISCOVERY_HINTS], {
-        "performed": True, "pages_scanned": pages_scanned,
+        "performed": True, "pages_scanned": len(sampled_pages),
+        "sampled_page_numbers": sampled_pages,
+        "linked_last_page": linked_last_page,
+        "recent_tail_sampled": (
+            linked_last_page is not None
+            and linked_last_page in sampled_pages
+        ),
         "get_attempts": gets_attempted,
         "max_pages": MAX_TIMELINE_PAGES,
         "events_scanned": events_scanned,
@@ -544,8 +581,8 @@ def _discover_issue_timeline_prs(issue_url, *, token=None):
         "candidate_count_retained": min(len(candidates), MAX_DISCOVERY_HINTS),
         "candidate_hints_truncated": len(candidates) > MAX_DISCOVERY_HINTS,
         "skipped_cross_references": skipped,
-        "pagination_window_full": not last_page_short and source_error is None,
-        "partial_or_unknown": bool(source_error) or not last_page_short,
+        "pagination_window_full": not complete and source_error is None,
+        "partial_or_unknown": not complete,
         "source_error": source_error,
         "issue_pr_link_is_fix_proof": False,
         "merge_or_owner_authorized": False,
