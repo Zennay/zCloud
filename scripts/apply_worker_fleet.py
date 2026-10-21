@@ -88,13 +88,17 @@ def main() -> int:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute("UPDATE runner_targets SET active=0")
             conn.execute("UPDATE runner_workers SET desired_state='paused'")
+            providers_by_worker = {
+                (pid, local): ("chatgpt" if global_slot <= plan["providers"]["chatgpt"] else "claude")
+                for pid, local, global_slot in slots
+            }
             for project_id, desired in plan["projects"].items():
                 conn.execute("UPDATE runner_targets SET active=1, worker_count=? WHERE project_id=?",
                              (desired, project_id))
                 primary = conn.execute("SELECT conversation_id FROM runner_targets WHERE project_id=?",
                                        (project_id,)).fetchone()["conversation_id"]
                 for worker_slot in range(1, desired + 1):
-                    provider = "chatgpt" if worker_slot <= plan["providers"]["chatgpt"] else "claude"
+                    provider = providers_by_worker[(project_id, worker_slot)]
                     conn.execute(
                         "INSERT OR IGNORE INTO runner_workers("
                         "project_id,worker_slot,conversation_id,desired_state,provider)"
