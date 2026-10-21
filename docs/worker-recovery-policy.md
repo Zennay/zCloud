@@ -170,11 +170,13 @@ A case is accepted only with its expected schema, explicit false authority
 flags, bounded P0/P1 issue IDs/URLs, up to three canonical PR reference URLs
 per issue, internally consistent project scope, bounded queue group totals,
 and explicit source coverage. Malformed, contradictory, duplicate or
-authorizing inputs are rejected rather than partially emitted. For cases with
-no issue/queue rows, an empty advisory result is **not** evidence that no
-production blockers exist. Every actual issue/queue workorder is an
-unconditional `HOLD`; no locally imported evidence can make it
-`READY_FOR_HUMAN_REVIEW` or acquire an owner.
+authorizing inputs are rejected rather than partially emitted. A case with
+**no issue/queue workorders is rejected**, even if an incomplete source happened
+to report no sampled problems: such a case cannot prove a clear production
+backlog. Sources older than six hours are called out; a stale queue source
+requires refresh *before* owner verification. Every actual issue/queue
+workorder is an unconditional `HOLD`; no locally imported evidence can make
+it `READY_FOR_HUMAN_REVIEW` or acquire an owner.
 
 The conversion ranks P0 before P1–P3, puts issue/PR examination first within
 a priority, and requires checking real GitHub source/required CI plus current
