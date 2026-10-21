@@ -8,6 +8,7 @@ a missing PR, available owner or green required CI.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import os
@@ -105,6 +106,40 @@ def _issue_summary(payload, full_name, number):
         "issue_work_cleared": False,
         "observed_at_utc": utc(),
     }
+
+
+def _body_issue_reference(payload, full_name, issue_number):
+    """Inspect only the already-fetched PR body; never expose its contents.
+
+    Textual GitHub references are hints, not current issue cross-reference
+    graph proof, owner admission, closing automation or merged-main proof.
+    """
+    body = payload.get("body")
+    if body is None:
+        return "BODY_UNKNOWN", None
+    if type(body) is not str:
+        raise GitHubReadError("PR body is not canonical text")
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    if len(body) > 32768:
+        return "BODY_TOO_LARGE_UNKNOWN", digest
+    number = str(issue_number)
+    local = re.search(r"(?<![A-Za-z0-9_])#" + number + r"(?![0-9])", body)
+    full = re.search(
+        r"https://github[.]com/" + re.escape(full_name) +
+        r"/issues/" + number + r"(?![0-9])",
+        body, flags=re.IGNORECASE,
+    )
+    if not local and not full:
+        return "NO_TEXT_REFERENCE_IN_PR_BODY", digest
+    close = re.search(
+        r"\\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)"
+        r"\\s+(?:" + re.escape(full_name) + r")?#" + number + r"(?![0-9])",
+        body, flags=re.IGNORECASE,
+    )
+    return (
+        "CLOSING_KEYWORD_TEXT_OBSERVED" if close
+        else "ISSUE_TEXT_MENTION_OBSERVED"
+    ), digest
 
 
 def _pr_summary(payload, full_name, number):
@@ -306,9 +341,13 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
             continue
         try:
             total_gets_attempted += 1
-            before = _pr_summary(_limited_json(
+            before_payload = _limited_json(
                 api + "/pulls/" + str(number), token=token,
-            ), full_name, number)
+            )
+            before = _pr_summary(before_payload, full_name, number)
+            before_reference, before_body_digest = _body_issue_reference(
+                before_payload, full_name, int(issue_match[3]),
+            )
             source_gaps = []
             checks = None
             reviews = None
@@ -341,9 +380,18 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
                     "provider admission denied before PR HEAD could be rechecked"
                 )
             total_gets_attempted += 1
-            after = _pr_summary(_limited_json(
+            after_payload = _limited_json(
                 api + "/pulls/" + str(number), token=token
-            ), full_name, number)
+            )
+            after = _pr_summary(after_payload, full_name, number)
+            after_reference, after_body_digest = _body_issue_reference(
+                after_payload, full_name, int(issue_match[3]),
+            )
+            if (before_body_digest != after_body_digest
+                    or before_reference != after_reference):
+                raise GitHubReadError(
+                    "PR description changed during live read; text relation UNKNOWN"
+                )
             if (before["exact_head_sha"] != after["exact_head_sha"] or
                     before["observed_state"] != after["observed_state"] or
                     before["reported_merged"] != after["reported_merged"] or
@@ -353,6 +401,8 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
             base.update(before)
             base["observed_at_utc"] = utc()
             base["status"] = "LIVE_PARTIAL_READ"
+            base["pr_body_issue_text_observation"] = before_reference
+            base["pr_body_text_does_not_verify_issue_link"] = True
             base["secondary_source_gaps"] = source_gaps
             if checks is not None:
                 base["check_runs"] = checks
@@ -370,6 +420,9 @@ def observe_candidate_prs(issue, *, token=None, source_case=None):
             elif before["observed_draft"]:
                 owner_action = "finish_existing_draft_with_authorized_owner"
                 review_rank = 3
+            elif before_reference == "NO_TEXT_REFERENCE_IN_PR_BODY":
+                owner_action = "recheck_historical_issue_to_pr_link_before_merge"
+                review_rank = 2
             elif checks is not None and checks["sampled_blocking_checks"]:
                 owner_action = "inspect_sampled_failed_head_checks_before_merge"
                 review_rank = 0
