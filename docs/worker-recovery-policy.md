@@ -668,3 +668,7 @@ The batch HTML workorder now retains the incident-level summary and adds a discl
 ## Per-route recovery guidance in CSV exports
 
 The incident-level CSV keeps its stable owner-workorder row and adds `proposal_recommendations_json`. For ordinary policy batches this bounded JSON array carries each route's action, decision, recommended next step, blocker codes and required evidence. A historical case export without per-action batch results emits an empty array and retains its explicit incident-level next step; it does not invent route evidence. The column is informational only and does not authorize claims, retries, merges or deploys.
+
+## Stable recommendation codes for integrations
+
+Every single-action report now includes `recommended_next_step_code` alongside the human-readable recommendation. Codes are stable routing hints such as `refresh_source`, `resolve_claim_with_owner`, `refresh_exact_head_gates`, `wait_for_capacity_and_runtime_evidence`, and `choose_one_incident_route`. JSON exposes the field directly; Markdown/HTML show it next to the instruction; the CSV per-route JSON carries both. Competing routes update both fields after the batch HOLD is added. Codes never grant action authority.
