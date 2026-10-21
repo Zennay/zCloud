@@ -119,3 +119,25 @@ python3 scripts/zsentinel_recovery_policy.py --batch-input incidents.json --form
 
 This local policy gate complements the runtime incident router in PR #1563,
 but does not claim it was merged or connected to a live scheduler.
+
+### Offline incident cockpit (no JavaScript)
+
+The same owner handoff also renders as a responsive, **offline static HTML page**,
+without loading scripts or third-party assets:
+
+```bash
+umask 077
+python3 scripts/zsentinel_recovery_policy.py --batch-input incidents.json --format html > private-zsentinel-workorders.html
+```
+
+The cards display per-incident **problem / next action / HOLD-or-local-ready
+status**, with a collapsed list of sanitized source receipts. Each card always
+states that observations were supplied locally and have not been independently
+verified. CSP forbids scripts, network assets and forms; the page has no buttons
+to execute recovery actions. Keep operator exports private (`umask 077`);
+do not publish source receipts or owner names to public dashboards.
+
+`--format html` is batch-only. The normal output cap of 128 KiB remains in
+force, even when many incident cards are selected. Actual P0/P1 urgency,
+self-hosted headroom, lease authority and GitHub merge gates must still be
+checked in the live authoritative systems.
