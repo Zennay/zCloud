@@ -226,3 +226,29 @@ entries are labelled historical instead of being promoted to fresh
 evidence. The server endpoint and token boundary are unchanged; this is
 only client-side display and retention behavior.
 
+
+## 21 October — manually page older public Activity observations
+
+The Activity tab's **Read public GitHub for selected project** still fetches only
+three bounded, read-only public GitHub endpoints by explicit operator click.
+For busy projects the first page omits older PRs and Actions. After a complete
+first-page read, **Read older GitHub page (2/5)** becomes available. Each click
+reads exactly one further page of 20 PRs, 20 Actions runs and 15 canonical
+main commits, capped at page five. The existing two-minute per-project cooldown,
+8-second request timeout, response size bounds and credential-free browser GETs
+apply to every page. A failed or partially inaccessible page is marked partial
+and does not advance the page cursor or erase earlier observations.
+
+**Newer loaded page** and **Older loaded page** navigate already-read local
+windows without a network call. Previous windows stay in tab memory within
+the existing conservative 200-event/portfolio presentation cap; an older event
+that falls outside that bound is not proof of inactivity. Page-specific
+views intentionally do not call a later observation `new GitHub work` merely
+because it was absent from the earlier page. Re-reading the newest page
+replaces the older-page sample for that project; **Clear snapshot** clears the
+in-memory page cursor as well. These controls work only with one selected
+canonical project; the unfiltered all-project Activity still never launches
+an unbounded API crawl. Snapshot timestamps and source coverage remain partial.
+
+This feature adds no scheduled fetch, GitHub write, background sync, secrets,
+workflow retry, claim action, merge authority or production deploy.
