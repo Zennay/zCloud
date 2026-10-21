@@ -1632,7 +1632,9 @@ const SAFE_WORKER_COMPOSER_HINTS=Object.freeze({
   'generation-unconfirmed-manual-review-no-retry':'After five minutes the browser still cannot confirm generation. A remote execution is possible; review the original task before any new dispatch.',
   'dispatch-ledger-unavailable':'The tab could not save its conservative sent-queue marker. No Send click was allowed; inspect browser storage or use a newly authorized assignment.',
   'new-chat-transition-operator-action-required':'One in-tab New chat attempt did not produce a usable composer. No further retry or prompt dispatch was authorized.',
-  'command-ack-backlog-manual-review':'A worker cannot safely acknowledge a prior browser command. No further command dispatch is allowed until the original command is reconciled.'
+  'command-ack-backlog-manual-review':'A worker cannot safely acknowledge a prior browser command. No further command dispatch is allowed until the original command is reconciled.',
+  'command-ack-ledger-unavailable':'Private pending command acknowledgements could not be read or durably saved. Worker dispatch is paused; review existing command results and private storage before recovery.',
+  'command-ack-pending-no-new-send':'The browser has already performed a command but zCloud has not confirmed its result. Only the original acknowledgement is being retried; new automatic sends remain paused.'
 });
 function composerHint(row){
   if(row?.kind==='composer-restored')return 'Composer visible again; claim and generation still unverified.';
