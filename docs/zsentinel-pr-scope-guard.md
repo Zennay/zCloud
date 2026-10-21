@@ -1,5 +1,45 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 21 oktober · één PR uit een brongebonden interactieve werkbak overdragen
+
+De bestaande offline HTML-werkbak ondersteunt nu een samenhangend traject
+bij issues met **meerdere bestaande PR-kandidaten**:
+
+1. Bij iedere alternatieve PR in **Andere bestaande PRs** staat
+   **Bekijk alle issues bij deze PR**. Daarmee opent dezelfde
+   PR-focus als vanuit het PR-groepspaneel. Filters die anders gekoppelde
+   issues verbergen worden bij focus gewist; geen netwerkrequests of
+   eigenaarsclaims.
+2. Binnen de focus op één bestaande PR toont de werkbak
+   **Download overdracht voor deze PR**. Dit schrijft alleen lokaal, via
+   een browserdownload, een afzonderlijk Markdown-dossier met canonieke
+   PR-link, opgeslagen bron-HEAD of expliciet **ONBEKEND**, de
+   immutable commitlink waar beschikbaar, gatebron, oorspronkelijk
+   menselijk vervolgadvies, bestandsoverlap/bronbeweging, bronklokken
+   en de bestaande privé `source_token`.
+3. **Alle gekoppelde bronissue-URLs** uit de vooraf gevalideerde
+   beperkte bron worden genoemd; voor issuekaarten binnen de huidige
+   `--worklist-limit` export staan ook de eigen lokale status,
+   privé-notitie en bron-next-action erbij. Bronissues buiten het
+   beperkte venster worden nadrukkelijk **ONBEKEND** gelabeld,
+   niet genegeerd of als opgelost geteld. De afzonderlijke PR-notitie
+   en PR-status gaan mee.
+4. De bestaande **volledige Markdown-overdracht** bevat nu ook de
+   waargenomen PR-HEAD en commitlink per PR, plus het bron-token.
+   De volledige export blijft ondanks zoekfilter, PR-focus of lokaal
+   handmatige status **het complete geselecteerde bronvenster** bevatten.
+5. Een expliciet geselecteerde PR wordt nu mee bewaard in de bestaande
+   **privé JSON-sessie**. Bij import blijft de bron-token verplicht
+   exact gelijk en wordt de opgegeven PR eerst tegen de zichtbare
+   groepsinventaris gevalideerd. Oude v1- en v2-notities zonder deze
+   optionele selectie blijven bruikbaar; geen nieuwe autosave,
+   serverpersistence of sessie-vrijgave.
+
+Dezelfde minimale rechten blijven gelden: bronobservaties zijn **geen**
+huidige HEAD-, CI-, review-, branch-protection-, lease-, fix-, merge-
+of productiebewijzen. Een Markdown-export of heropende JSON-sessie
+verandert geen GitHub issue/PR, Notion-claim, CI-workflow, queue of VPS.
+
 ## 21 oktober · vanuit bestaande PR alle gekoppelde issues afhandelen
 
 De privé, offline **merge-eerst werkbak** maakt een volledige lokale
