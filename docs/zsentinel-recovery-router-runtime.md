@@ -1,4 +1,30 @@
 
+### 21 oktober · eerlijke P0-eerst onafhankelijke werkselectie
+
+De bestaande runtime-router selecteerde maximaal vijf veilige queue-kandidaten op
+`(prioriteit, projectnaam, taak-ID)`. Eén druk P0-project kon zo alle vijf
+plekken innemen en andere P0-projecten onzichtbaar maken. De brongebonden selectie
+geeft nu **binnen elke prioriteitsklasse** ieder project één beurt voordat
+een tweede kandidaat van hetzelfde project aan bod komt. Alle P0-kandidaten
+blijven vóór P1/P2/P3; deze verdeling is geen opdrachttoewijzing.
+
+Overlappende voorgestelde bestandsscope en kandidaten buiten de vijf
+shortlistplekken verdwijnen niet langer stil: `routing_selection_holds` biedt
+een begrensd privé-overzicht met `overlapping_suggested_scope` of
+`shortlist_limit_reached`, totaaltelling en maximaal acht voorbeelden.
+De bestaande CLI-tekst en offline HTML-cockpit tonen de reden, veilige
+volgende operatoractie en HOLD-status. Geen bestandsnamen of claimtokens
+worden in deze HOLD-kaarten gezet. Onvolledige/verouderde taak- of
+claiminventaris geeft expliciet `incomplete_or_stale`, nooit een bewezen
+lege werkvoorraad.
+
+Deze verbetering geldt alleen voor kandidaten die de **bestaande** claim-,
+dependency-, branch-, gate- en capaciteitsadmission al passeerden. Er is
+geen claim/dispatch/retry/merge/deploy, automatische eigenaarovername,
+nieuwe QA-suite of releasegate-uitzondering toegevoegd. Op main en live
+alleen na de onafhankelijke PR-review, exacte-head verplichte CI en
+bevoegde release door de huidige eigenaren.
+
 ### 21 oktober · inodezichtbaarheid in bestaande privé schijfwerkbank
 
 De bestaande read-only workspace-hotspotscanner neemt nu bij hetzelfde
