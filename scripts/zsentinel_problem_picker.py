@@ -88,22 +88,42 @@ def next_problems(summary, decision, selected):
                 continue
             row = mapping[pid]
             owned, notion = row.get("owned"), row.get("notion_active_status_min")
+            verifying = row.get("notion_verifying_status_min")
             if owned is not None and (type(owned) is not int or owned < 0):
                 raise ValueError("invalid local ownership count")
             if notion is not None and (type(notion) is not int or notion < 0):
                 raise ValueError("invalid Notion ownership count")
+            if verifying is not None and (type(verifying) is not int
+                                          or verifying <= 0 or notion is None
+                                          or verifying > notion):
+                raise ValueError("invalid Notion Verifying work lower bound")
             if links:
                 route = "review_existing_pr_first"
                 action = "Controleer eerst de bestaande PR, actuele eigenaar, CI en review; geen dubbel werk starten."
-            elif owned or notion:
+            elif owned:
                 route = "verify_active_owner_and_file_scope"
-                action = "Er is actief projectwerk: controleer de actuele claim, bestanden en PR's vóór een nieuwe branch."
+                action = "Er is actief queuewerk: controleer claim, bestanden en PR's vóór een nieuwe branch."
+            elif verifying:
+                route = "verify_review_owner_before_new_scope"
+                action = "Notion meldt Verifying: werk is niet afgerond; bevestig eigenaar/review vóór een nieuwe branch."
+            elif notion:
+                route = "verify_active_owner_and_file_scope"
+                action = "Notion meldt bezet werk: bevestig eigenaar en bestandsscope vóór een nieuwe branch."
             else:
                 route = "scope_and_owner_verification_required"
                 action = "Controleer actuele claim/PR/bestandspaden; maak daarna alleen bij vrije scope een productfix."
             if row.get("github_observation") not in ("partial_both_sources", "issue_sample_only"):
-                route = "source_incomplete_owner_review"
-                action = "GitHub-dekking onvolledig: verifieer het issue, open PR's en de huidige eigenaar."
+                if links:
+                    route = "source_incomplete_existing_pr_first"
+                    action = ("GitHub-dekking onvolledig: verifieer eerst de bestaande "
+                              "PR, exacte HEAD, reviewer en eigenaar; geen parallel werk.")
+                elif verifying:
+                    route = "source_incomplete_verifying_owner_hold"
+                    action = ("GitHub-dekking onvolledig EN Notion Verifying: "
+                              "eerst huidige eigenaar/review verifiëren; niet overnemen.")
+                else:
+                    route = "source_incomplete_owner_review"
+                    action = "GitHub-dekking onvolledig: verifieer issue, open PR's en huidige eigenaar."
             if tier == "Unspecified":
                 action = "PRIORITEIT ONBEKEND: eerst ernst verifiëren. " + action
             collected[pid].append({
