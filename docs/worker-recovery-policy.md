@@ -478,60 +478,62 @@ closing keywords and their absence **never prove or disprove** GitHub
 cross-reference links or authorized ownership; no title/body, issue text,
 token or private prompt is exported.
 
-### Discover existing PRs before creating new work (explicit opt-in)
+### Reconcile historical repair PRs with current open PRs (explicit opt-in)
 
-When the *validated historical* recovery case has **zero referenced PRs**
-for an issue, the normal `--live-candidates` path fails closed. An operator
-can explicitly request a **bounded paginated open-PR source window**:
+A saved zSentinel recovery case is a point-in-time observation. It may
+reference no PRs, one old PR, or up to three historical repair PRs, while
+new fixes are opened later. The normal `--live-candidates` path reviews
+only the saved candidates. The **additive** `--discover-existing` path
+also scans recent GitHub open PRs for this same repository and issue:
 
 ```sh
 umask 077
 python3 scripts/zsentinel_recovery_policy.py \
   --case-input private-recovery-case.json \
   --view-project cloud --view-issue 1518 \
-  --live-candidates --discover-unlinked \
+  --live-candidates --discover-existing \
   --format html > private-existing-pr-discovery.html
 ```
 
-This route never creates or merges PRs. It inspects at most **four pages**
-of 30 existing open PRs (120 total) in their source repository. Only the
-selected issue's same-repository number is searched in both the PR
-description and title in memory. Explicit issue-closing keyword references
-are selected before ordinary issue-number text mentions across both sources;
-ties keep the GitHub source-window order. This improves which existing repair gets reviewed first but does
-**not** verify the relationship, merge readiness or the issue's status.
-At most three candidate PRs are retained and double-read to observe
-their exact HEAD and any concurrent title/description changes. A PR title
-alone is only a textual hint, never a verified GitHub issue association.
-No raw PR titles/descriptions, unrelated issues or authorization tokens
-are exported.
+`--discover-unlinked` is retained as a backwards-compatible alias for
+`--discover-existing`. The option is now useful **with or without
+historical candidates**. It never changes the saved case, any claim or the
+GitHub repository. If historical PRs exist, those references retain their
+original order and priority in the live-read slots; newly discovered
+references are deduplicated against them and fill unused slots up to
+**three** live double-reads. When all three slots are occupied, additional
+discovered PRs are still offered as **navigation-only links with live status
+UNKNOWN**; they are not silently discarded or treated as reviewed.
 
-A short page stops pagination early; a full fourth page marks
-`pagination_window_full=true`. The JSON source provenance exposes
-`pages_scanned`, `open_pr_rows_scanned`,
-`last_page_short_at_observation`, skipped rows, total textual matches,
-candidate truncation, title-only matches, closing-keyword prioritization and
-the unchanged `existing_repair_absence_verified=false`.
-The HTML and Markdown owner views show this coverage clearly. A short
-page is only a momentary API observation; concurrent changes, different
-link syntax, private repositories and unsampled references still prevent
-any statement that no other repair PR exists.
+The discovery window is strictly limited to **four pages of 30 GitHub
+open PRs** (120 rows), with at most **12 unique textual hints** retained
+for navigation. It examines the original issue number only in bounded PR
+titles and descriptions, without emitting raw titles or descriptions.
+Closing-keyword references precede ordinary text mentions; equal ranking
+preserves original GitHub source order. A short page stops pagination,
+while a full fourth page explicitly marks incomplete pagination.
+Text-only references may be false positives or omit genuine GitHub
+cross-references; they are **not verified issue→PR associations**.
+
+Each live-read PR is fetched twice and compared for immutable observed
+HEAD, state, draft flag, target and both description/title digests;
+a change yields UNKNOWN. Other source snippets (check runs and submitted
+reviews) remain non-authorizing. JSON plus printable, script-free HTML
+and Markdown show actual pages/rows scanned, historical count, overlaps
+deduplicated, live newly discovered count, navigation-only hint links and
+incomplete-source warnings. A missing text match never implies no open
+repair PR, available owner, closed incident or merge clearance.
 
 The upper read bound is **17 GitHub GETs**: at most four list pages, one
-original issue GET and four GETs for each of three selected PRs. Each
-list response has its own fixed 2 MiB cap (at most 8 MiB across four
-pages); all issue/PR/check/review responses keep the 160 KiB cap.
-Errors fail closed; 401/403/429 never authorize retry, owner reassignment,
-new work, merge or release. The `get_attempts` output records the actual
-attempt count and `read_get_attempt_upper_bound` records the safe
-worst-case ceiling.
-
-If a historical case already references one or more PRs, use the normal
-`--live-candidates` path first; `--discover-unlinked` refuses to
-override those references. Text mentions alone never prove issue→PR
-relationship, required exact-HEAD checks, independent review,
-branch protection or an active claim. The authorized operator must
-still check live sources before proceeding.
+original issue GET and four GETs for each of three live-read candidates.
+Each list response has its own fixed 2 MiB cap; issue/PR/check/review
+reads use the existing 160 KiB cap. 401/403/429 stops further live-read
+requests; a source error never grants retry, owner reassignment, merge or
+release authority. The receipt reports the actual `get_attempts` and
+conservative `read_get_attempt_upper_bound`. A live PR reference is
+always only an owner-navigation hint until exact-head required CI,
+independent review, active claim and protected-main rules have been
+separately verified by an authorized operator.
 
 ### Project- and priority-focused historical owner views
 
