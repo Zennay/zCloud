@@ -83,6 +83,7 @@ def issue_worklist(report):
                 "issue_ref_observed_in_snapshots": sorted(issue_snapshots),
                 "head_at_last_issue_link": linked_at["observed_head"],
                 "gate_at_last_issue_link": linked_at["primary_gate"],
+                "priority_at_last_issue_link": linked_at["priority"],
                 "time_at_last_issue_link": linked_at["observed_utc"],
                 "pr_observed_after_link_absent": (
                     candidate["last_seen_snapshot"] >
@@ -236,6 +237,8 @@ def html_content(result):
                 ' · issue-link HEAD ' +
                 e(p["head_at_last_issue_link"] or "ONBEKEND") +
                 ' · gate bij issue-link ' + e(p["gate_at_last_issue_link"]) +
+                ' · issue-link prioriteit toen ' +
+                e(p["priority_at_last_issue_link"]) +
                 (' · PR later zonder deze issuelink bemonsterd (NIET dezelfde fix)'
                  if p["pr_observed_after_link_absent"] else '') +
                 ' · issue-link bronmoment(en) ' +
@@ -359,6 +362,8 @@ def markdown_content(result):
                          " · HEAD op laatste echte issue-link " +
                          (p["head_at_last_issue_link"] or "ONBEKEND") +
                          " · gate op issue-link " + p["gate_at_last_issue_link"] +
+                         " · issue-link prioriteit toen " +
+                         p["priority_at_last_issue_link"] +
                          (" · PR later zonder dit issue bemonsterd, relatie ONBEKEND"
                           if p["pr_observed_after_link_absent"] else "") +
                          " · issue-link laatst gezien in bron " +
@@ -396,6 +401,7 @@ def csv_content(result):
         "Laatste bronmanifest SHA256",
         "HEAD op laatste issue-link", "Gate op laatste issue-link",
         "PR later zonder gekoppeld issue bemonsterd",
+        "Prioriteit tijdens laatste echte issue-link",
     ])
     first_manifest = result["source_snapshots"][0]["original_review_manifest_sha256"]
     last_manifest = result["source_snapshots"][-1]["original_review_manifest_sha256"]
@@ -419,6 +425,7 @@ def csv_content(result):
                 p["head_at_last_issue_link"] or "ONBEKEND",
                 p["gate_at_last_issue_link"],
                 "JA, VERBAND ONBEKEND" if p["pr_observed_after_link_absent"] else "NEE",
+                p["priority_at_last_issue_link"],
             ])
     for p in result["unlinked_prs"]:
         writer.writerow([
@@ -430,7 +437,7 @@ def csv_content(result):
             "Geen betrouwbaar bronissue; inspecteer actuele PR.", "ONBEKEND",
             "ONBEKEND", "ONBEKEND", "ONBEKEND",
             first_manifest, last_manifest,
-            "ONBEKEND", "ONBEKEND", "ONBEKEND",
+            "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND",
         ])
     return "\ufeff" + source.getvalue()
 
