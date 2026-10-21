@@ -308,6 +308,58 @@ def select_page(report, *, priority=None, tag=None, issue_url=None,
             issue_url in observed["linked_issue_urls"]
             for observed in item["observations"]))
     ]
+    # Issue-focused operators need a coherent entire filtered sample, not
+    # counts accidentally derived from the current display page.
+    issue_focus = None
+    if issue_url is not None:
+        last_snapshot = len(report["source_snapshots"])
+        appearance = [0] * last_snapshot
+        latest_pr_with_link = 0
+        latest_source_with_link = 0
+        vanished_from_last_sample = 0
+        last_seen_linked_source = None
+        for item in matched:
+            observations = item["observations"]
+            last_observed = observations[-1]
+            for row in observations:
+                if issue_url in row["linked_issue_urls"]:
+                    index = row["snapshot_index"]
+                    if type(index) is not int or not 1 <= index <= last_snapshot:
+                        raise ValueError("Issue link refers to an invalid saved source")
+                    appearance[index - 1] += 1
+                    last_seen_linked_source = max(last_seen_linked_source or 0, index)
+            if issue_url in last_observed["linked_issue_urls"]:
+                latest_pr_with_link += 1
+                if last_observed["snapshot_index"] == last_snapshot:
+                    latest_source_with_link += 1
+            if item["missing_from_final_snapshot"]:
+                vanished_from_last_sample += 1
+        issue_focus = {
+            "schema": "zsentinel-issue-source-followup-v1",
+            "issue_url": issue_url,
+            "matched_saved_prs": len(matched),
+            "linked_in_last_observed_pr_sample": latest_pr_with_link,
+            "linked_in_final_source_snapshot": latest_source_with_link,
+            "prs_absent_from_final_source_snapshot": vanished_from_last_sample,
+            "last_source_with_issue_link_index": last_seen_linked_source,
+            "per_source_observed_linked_pr_counts": [
+                {"source_index": index + 1, "observed_linked_prs": count,
+                 "original_batches_missing": bool(
+                     report["source_snapshots"][index]["missing_batch_indexes"])}
+                for index, count in enumerate(appearance)
+            ],
+            "sample_absence_does_not_prove_closed_or_fixed": True,
+            "live_issue_state_verified": False,
+            "current_owner_claim_verified": False,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+        }
+        priority_rank = {label: i for i, label in enumerate(PRIORITIES)}
+        matched.sort(key=lambda item: (
+            priority_rank[item["latest_sample_priority"]],
+            0 if item["last_seen_snapshot"] == last_snapshot
+                 and issue_url in item["observations"][-1]["linked_issue_urls"] else 1,
+            -item["last_seen_snapshot"], item["repository"], item["number"]))
     first = (page - 1) * page_size
     if first >= len(matched) and (page != 1 or matched):
         raise ValueError("Page outside selected saved source worklist")
@@ -337,6 +389,7 @@ def select_page(report, *, priority=None, tag=None, issue_url=None,
         }
         visible.append(entry)
     result["entries"] = visible
+    result["issue_focus_summary"] = issue_focus
     result["display"] = {
         "source_pr_candidates_total": report["distinct_pr_candidates"],
         "matched_source_pr_candidates": len(matched),
