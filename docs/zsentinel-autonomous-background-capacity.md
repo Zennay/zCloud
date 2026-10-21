@@ -437,7 +437,10 @@ python3 scripts/zsentinel_operator_export.py \
 Beide bronpakketten worden **afzonderlijk** eigenaar-privé en byte-voor-byte
 tegen hun eigen SHA-256-manifest gecontroleerd. De operator krijgt per vaste
 module de vergelijking **GEWIJZIGD/identiek**, byteomvang en beide SHA-256
-vingerafdrukken, met een totale gewijzigde-moduleteller. JSON bevat ook
+vingerafdrukken, met een totale gewijzigde-moduleteller. Ook het meegeleverde
+`LEESMIJ.txt` wordt als eigen regel met SHA-256 en byteomvang vergeleken:
+identieke Pythonmodules met veranderde operatorinstructies worden dus
+**niet** als volledig ongewijzigd gepresenteerd. JSON bevat ook
 expliciet `source_order_proven=false`, `external_source_verified=false`,
 `release_authorized=false` en `installed_or_live_verified=false`.
 
