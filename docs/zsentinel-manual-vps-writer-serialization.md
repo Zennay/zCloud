@@ -38,7 +38,7 @@ production writer from cancelling an in-flight deployment.
    A killed process may leave the already verified approved version installed
    but cannot leave a half-copied background file. These are operator-denied
    installs, not permission to overwrite active-owner work. The new shared
-   read-only `scripts/zsentinel_addon_idle_gate.py` checks the authenticated
+   read-only `scripts/zsentinel_addon_idle_gate.py` checks the loopback-only
    local runner state twice across a 12-second window **before staging the
    live install**, repeats the check immediately before the atomic rename,
    and rechecks again immediately before reload. Busy/draining/pending,
