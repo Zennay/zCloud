@@ -14,7 +14,7 @@ import io
 import json
 import re
 
-from zsentinel_pr_scope_guard import edit_path
+from zsentinel_pr_scope_guard import csv_formula_inert, edit_path
 from zsentinel_pr_gate_continuity import (
     LABELS as HISTORICAL_CHANGE_LABELS, NEXT_STEP_LABELS,
 )
@@ -632,10 +632,9 @@ def render_csv(bundle):
             raise ValueError("invalid private CSV cell")
         if len(value) > 2000:
             raise ValueError("oversized private CSV cell")
-        # Quotes are not sufficient to prevent spreadsheet formula execution.
-        if value.lstrip(" \t\r\n\ufeff").startswith(("=", "+", "-", "@")):
-            return "'" + value
-        return value
+        # Detect formulas after Unicode whitespace and invisible format marks,
+        # not only ASCII spaces/tabs. CSV quoting alone is not formula safety.
+        return csv_formula_inert(value)
 
     stream = io.StringIO(newline="")
     writer = csv.writer(stream, lineterminator="\n", quoting=csv.QUOTE_ALL)
