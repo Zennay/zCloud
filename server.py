@@ -29,8 +29,8 @@ AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait
 # Compatibility: this remains the TOTAL number of dynamic browser workers.
 # Provider-specific counts live in DYNAMIC_CHATGPT_WORKERS / DYNAMIC_CLAUDE_WORKERS.
 GLOBAL_CHATGPT_WORKER_LIMIT = 3
-MAX_CHATGPT_WORKERS = 8
-MAX_DYNAMIC_WORKERS_PER_PROVIDER = 8
+MAX_CHATGPT_WORKERS = 20
+MAX_DYNAMIC_WORKERS_PER_PROVIDER = 20
 DYNAMIC_CHATGPT_WORKERS = 2
 DYNAMIC_CLAUDE_WORKERS = 1
 DYNAMIC_CHATGPT_COOLDOWN_SECONDS = 120
@@ -942,7 +942,7 @@ def dynamic_worker_settings():
     return {
         'count':int(total),
         'enabled':bool(total > 0),
-        'max_workers':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER*2),
+        'max_workers':int(MAX_CHATGPT_WORKERS),
         'max_workers_per_provider':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER),
         'cooldown_seconds':int(DYNAMIC_CHATGPT_COOLDOWN_SECONDS),
         'chatgpt_count':counts['chatgpt'],
@@ -977,6 +977,8 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
         0 if legacy_only else payload.get('claude_count',DYNAMIC_CLAUDE_WORKERS),
         'Claude workers',0,MAX_DYNAMIC_WORKERS_PER_PROVIDER
     )
+    if chatgpt_count + claude_count > MAX_CHATGPT_WORKERS:
+        raise ValueError(f'Maximum {MAX_CHATGPT_WORKERS} totale workers')
     chatgpt_cooldown=_dynamic_int(payload.get('chatgpt_cooldown_seconds',DYNAMIC_CHATGPT_COOLDOWN_SECONDS),'ChatGPT cooldown',5,86400)
     claude_cooldown=_dynamic_int(payload.get('claude_cooldown_seconds',DYNAMIC_CLAUDE_COOLDOWN_SECONDS),'Claude cooldown',5,86400)
     check_ms=_dynamic_int(payload.get('check_interval_ms',DYNAMIC_WORKER_CHECK_INTERVAL_MS),'Check interval',1000,60000)
@@ -1168,6 +1170,7 @@ def init_db():
             except Exception: return default
         DYNAMIC_CHATGPT_WORKERS=setting_int('chatgpt_count',DYNAMIC_CHATGPT_WORKERS,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
         DYNAMIC_CLAUDE_WORKERS=setting_int('claude_count',DYNAMIC_CLAUDE_WORKERS,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
+        DYNAMIC_CLAUDE_WORKERS=min(DYNAMIC_CLAUDE_WORKERS,MAX_CHATGPT_WORKERS-DYNAMIC_CHATGPT_WORKERS)
         DYNAMIC_CHATGPT_COOLDOWN_SECONDS=setting_int('chatgpt_cooldown_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS,5,86400)
         DYNAMIC_CLAUDE_COOLDOWN_SECONDS=setting_int('claude_cooldown_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS,5,86400)
         DYNAMIC_WORKER_CHECK_INTERVAL_MS=setting_int('check_interval_ms',5000,1000,60000)
