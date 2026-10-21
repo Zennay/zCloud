@@ -91,7 +91,9 @@ def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES,
     # passing arbitrary external provider URLs or unbounded search queries.
     issue_search = isinstance(path, str) and re.fullmatch(
         r"/search/issues\?q=repo%3AZennay%2F[A-Za-z0-9_.-]{1,100}"
-        r"\+is%3Aissue\+is%3Aopen(?:\+P[01]\+in%3Atitle)?"
+        r"\+is%3Aissue\+is%3Aopen(?:\+P[01]\+in%3Atitle"
+        r"|\+label%3AP0%2Cpriority%3AP0%2Cpriority%2FP0"
+        r"|\+label%3AP1%2Cpriority%3AP1%2Cpriority%2FP1)?"
         r"&sort=updated&order=desc"
         r"&per_page=30&page=[123]",
         path,
