@@ -174,6 +174,13 @@
       resetComposerRepair();return false;
     }
     if(composerRepairQueueId!==queueId)resetComposerRepair(queueId);
+    // A full reload erased the in-page generation history. Do not even
+    // click New chat during a missing-composer episode when this tab has
+    // already submitted the same queue; preserve the original evidence.
+    if(!sentInThisDocument&&sameQueueWasSentBeforeReload(queueId)){
+      await blocked("previous-queue-send-after-reload-manual-review");
+      return true;
+    }
     if(visible(composer())){
       if(missingComposerSince>0){
         lastBlock="";
