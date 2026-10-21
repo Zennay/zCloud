@@ -57,6 +57,9 @@
   }
   let resetRoute=null;
   let promptAt=0,awaitingAt=0,baseline="",baselineAssistantCount=0,next=false,lastBlock="",lastCommand=0;
+  // Preserve the last real generation-progress time across ordinary status
+  // events in this document; never turn a heartbeat into fake progress.
+  let lastProgressAt=null,lastProgressQueueId="",lastProgressConversation="";
   // The normal in-page reply loop may continue a queue, but a full reload
   // loses all reply/ack evidence. Retain only the previously dispatched queue
   // identity in this tab, never the private prompt or its answer.
@@ -113,15 +116,23 @@
   async function status(event,extra={}){
     if(!target)return false;
     const at=new Date().toISOString();
+    const queueId=String(target?.queue_item?.queue_id||"");
+    const conversationId=conversation();
+    if(queueId!==lastProgressQueueId||conversationId!==lastProgressConversation){
+      lastProgressAt=null;
+      lastProgressQueueId=queueId;
+      lastProgressConversation=conversationId;
+    }
+    if(event==="generation-progress"||event==="generation-finished")lastProgressAt=at;
     try{
       await api("/runner-status","POST",{
         projectId:id,baseProjectId:target.base_project_id||id.split("::w")[0],
         workerSlot:target.worker_slot||1,globalWorkerSlot:target.global_worker_slot||1,
         queueItem:target.queue_item?.queue_id||"",projectName:target.name||id,
-        target:location.href,targetConversation:conversation(),title:document.title,
-        event,at,progressAt:at,generating:generating(),sending,
+        target:location.href,targetConversation:conversationId,title:document.title,
+        event,at,generating:generating(),sending,
         assistantCharacters:reply().length,runner:"violentmonkey",
-        provider:"chatgpt",runnerVersion:"2.0.5",...extra
+        provider:"chatgpt",runnerVersion:"2.0.5",...extra,progressAt:lastProgressAt
       });
       return true;
     }catch(_){return false}
