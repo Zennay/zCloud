@@ -583,7 +583,9 @@ def main():
         if args.output is not None or args.agenda_output is not None:
             from zsentinel_private_output import write_private_output
             if args.output is not None:
-                write_private_output(args.output, rendered, args.format)
+                write_private_output(
+                    args.output, rendered,
+                    "txt" if args.format == "text" else args.format)
             if args.agenda_output is not None:
                 from zsentinel_human_agenda import human_calendar
                 write_private_output(args.agenda_output, human_calendar(decision), "ics")
