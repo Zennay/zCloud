@@ -297,6 +297,12 @@ def main():
                         help="read up to three selected project P0/P1 GitHub issue inboxes")
     parser.add_argument("--issue-project", action="append",
                         help="canonical issue-source project ID (up to 3, repeatable)")
+    parser.add_argument("--read-existing-prs", action="store_true",
+                        help="inspect exact-head CI/review of up to three existing product PRs")
+    parser.add_argument("--pr-project", action="append", default=[],
+                        help="discover one bounded current open-PR window for a canonical project")
+    parser.add_argument("--existing-pr", action="append", default=[],
+                        help="prioritize explicit existing PR as PROJECT:NUMBER, up to three")
     parser.add_argument("--format", choices=("json", "text", "html", "ics", "desk"), default="text")
     parser.add_argument("--output", type=Path,
                         help="optional create-only owner-private 0600 report; avoids printing private source details")
@@ -323,6 +329,10 @@ def main():
             if any(item is not None and args.output.resolve() == Path(item).resolve()
                    for item in protected):
                 raise ValueError("--output overlaps a source, ledger or other private report")
+        if (args.pr_project or args.existing_pr) and not args.read_existing_prs:
+            raise ValueError("--pr-project/--existing-pr requires --read-existing-prs")
+        if args.read_existing_prs and args.format not in ("json", "text", "html", "desk"):
+            raise ValueError("PR source supports JSON, text, HTML or private desk output")
         if args.worker_project and args.worker_events_database is None:
             raise ValueError("--worker-project requires --worker-events-database")
         if args.worker_events_database is not None:
@@ -337,7 +347,7 @@ def main():
             if args.format not in ("json", "text", "html", "desk"):
                 raise ValueError("Notion status observation supports json, text, html or private desk output")
         if ((args.worker_events_database is not None or args.read_notion_claims
-             or args.notion_claims_export is not None)
+             or args.notion_claims_export is not None or args.read_existing_prs)
              and args.output is None
              and (args.format != "desk" or args.desk_output is None)):
             # --desk-output is a private sink only when the selected output
@@ -369,6 +379,34 @@ def main():
         if args.state is not None:
             ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
+        pr_selections = []
+        pr_discovery_projects = []
+        if args.read_existing_prs:
+            for value in args.existing_pr:
+                match = re.fullmatch(r"([a-z][a-z0-9_-]{0,39}):([1-9][0-9]{0,8})", value)
+                if match is None or match.group(1) not in registry:
+                    raise ValueError("existing PR requires canonical PROJECT:NUMBER")
+                pr_selections.append({"project_id": match.group(1),
+                                      "pr_number": int(match.group(2))})
+            if (len(pr_selections) > 3
+                    or len({(row["project_id"], row["pr_number"])
+                            for row in pr_selections}) != len(pr_selections)):
+                raise ValueError("at most three distinct existing PRs")
+            if args.pr_project:
+                pr_discovery_projects = list(args.pr_project)
+            elif not pr_selections:
+                # Same bounded existing-evidence selection as the issue inbox.
+                # A missing project is UNKNOWN, never proof of no open PR.
+                pr_discovery_projects = [
+                    row["id"] for row in (read_json(
+                        args.bundle, MAX_INPUT_BYTES, "bundle")["evidence"]["projects"])
+                    if isinstance(row, dict) and row.get("id") in registry
+                ][:3]
+            if (len(pr_discovery_projects) > 3
+                    or len(set(pr_discovery_projects)) != len(pr_discovery_projects)
+                    or any(pid not in registry for pid in pr_discovery_projects)
+                    or not (pr_selections or pr_discovery_projects)):
+                raise ValueError("existing PR source requires one to three distinct canonical projects")
         if args.worker_events_database is not None and (
                 not 1 <= len(args.worker_project) <= 3
                 or len(set(args.worker_project)) != len(args.worker_project)
@@ -409,6 +447,30 @@ def main():
                 enriched.pop("issue_inbox", None)
                 source["issue_source"] = "degraded_not_fetched"
                 source["issue_source_reason"] = str(exc)[:80]
+        pr_delivery = None
+        if args.read_existing_prs:
+            from zsentinel_pr_delivery import discover_open_prs, observe_prs
+            discovered = None
+            if pr_discovery_projects and len(pr_selections) < 3:
+                try:
+                    discovered = discover_open_prs(
+                        registry, pr_discovery_projects, token=token,
+                        limit=3 - len(pr_selections), exclude=pr_selections)
+                    pr_selections.extend(discovered["selection"])
+                except (OSError, ValueError, TypeError, KeyError):
+                    # Preserve explicit pins; missing discovery NEVER
+                    # advertises a complete portfolio or an empty backlog.
+                    source["pr_discovery"] = "degraded_unavailable_no_owner_proof"
+            pr_delivery = observe_prs(registry, pr_selections, token=token)
+            pr_delivery["open_pr_discovery"] = discovered if discovered is not None else {
+                "coverage": "not_requested_or_unavailable",
+                "all_open_prs_observed": False, "merge_authorized": False,
+            }
+            source["pr_source"] = "github_bounded_existing_prs_readonly"
+            source["pr_requests_attempted"] = pr_delivery["request_count"] + (
+                discovered["calls"] if discovered is not None else 0)
+            source["pr_selected"] = len(pr_selections)
+            source["pr_coverage"] = "sample_only_never_owner_or_merge_authority"
         if args.queue_database is not None:
             from zsentinel_queue_observer import observe
             try:
@@ -451,6 +513,8 @@ def main():
                 source["notion_claims_reason"] = "notion_source_unavailable_or_incomplete"
         source["notion_claims"] = notion_status
         routed, updated = plan(enriched, old)
+        if pr_delivery is not None:
+            routed["pr_delivery"] = pr_delivery
         routed["live_github_read"] = source
         routed["live_sources"] = {
             "notion": notion_status,
