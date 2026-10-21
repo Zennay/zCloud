@@ -857,6 +857,28 @@ def owner_html(report):
          if report["provider_admission_paused"] else "") +
         "</p></header><main>",
     ]
+    if report["focused_pr_number"] is not None:
+        rows.append(
+            "<section class='observed'><h2>Focused live PR review</h2>"
+            "<p>Selected source-linked PR #" +
+            esc(report["focused_pr_number"]) +
+            " from " + esc(report["focused_source"]) +
+            ". All other references remain UNREVIEWED here; this "
+            "selection grants no review, ownership, merge or deploy authority."
+            "</p></section>"
+        )
+        if report["other_source_candidates_not_live_read"]:
+            rows.append(
+                "<section><h2>Other known repair candidates · live UNKNOWN</h2><ul>"
+            )
+            for hint in report["other_source_candidates_not_live_read"]:
+                rows.append(
+                    "<li><a rel='noopener noreferrer' href='" +
+                    esc(hint["url"]) + "'>PR #" + esc(hint["number"]) +
+                    "</a> · " + esc(hint["source"]) +
+                    " · live HEAD/checks/reviews UNKNOWN</li>"
+                )
+            rows.append("</ul></section>")
     discovery = report["optional_unlinked_discovery"]
     if discovery["performed"]:
         rows.append(
@@ -1067,12 +1089,31 @@ def markdown(report):
         "- Current issue PR relationship reverified: NO",
         "- Historical issue-PR candidates: " +
         str(report["source_candidate_count"]),
+        "- Focused PR: " + (
+            str(report["focused_pr_number"]) +
+            " (" + report["focused_source"] + ")"
+            if report["focused_pr_number"] is not None else "none"
+        ),
+        "- Other source-linked PRs not live-read: " +
+        str(len(report["other_source_candidates_not_live_read"])),
         "- Live partial reads: " + str(report["live_observations"]),
         "- UNKNOWN candidates: " + str(report["unknown_observations"]),
         "- GitHub requests attempted: " + str(report["get_attempts"]),
         "- Provider admission paused: " + str(report["provider_admission_paused"]),
         "",
     ]
+    if report["focused_pr_number"] is not None and (
+            report["other_source_candidates_not_live_read"]):
+        lines.extend([
+            "### Other source-linked PRs (live status UNKNOWN)",
+            "",
+        ])
+        for hint in report["other_source_candidates_not_live_read"]:
+            lines.append(
+                "- [PR #" + str(hint["number"]) + "](" + hint["url"] +
+                ") · " + hint["source"] + " · no live-read attempted"
+            )
+        lines.append("")
     discovery = report["optional_unlinked_discovery"]
     if discovery["performed"]:
         lines.extend([
