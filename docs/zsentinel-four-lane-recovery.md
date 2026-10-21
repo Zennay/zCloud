@@ -54,6 +54,26 @@ to make these labels turn green.
 
 ## Private four-lane operator desk
 
+### 21 October · prioritized, bounded human owner review queue
+
+The four-lane operator desk now turns the **existing same-transaction local
+P0/P1 queue census** into up to six explicit human review suggestions.
+They are selected P0-first, then P1, with canonical project name, local
+queued amount, locally `eligible=1` hint, currently active local tasks
+and a fixed next-step instruction to check current Notion claims and GitHub
+PRs/issues before any work takeover. More than six eligible project groups
+are marked **partial**, not discarded as a complete global inventory.
+
+This read-only owner shortlist appears in the console text, private HTML
+cards (with static GitHub issue/PR links), private Markdown handoff and
+machine-readable JSON, all from the same SQLite snapshot. The underlying
+full urgency table remains available. Missing local waiting rows do not
+prove absence of GitHub issues. An `eligible` queue flag is not a verified
+free worker, GitHub reviewer or release owner. Every suggestion explicitly
+reports `current_owner_verified=false`, `claim_authorized=false` and
+`merge_authorized=false`. No extra API read, queue write, claim reassignment,
+runner/CI dispatch, QA suite, merge or production release is included.
+
 The concrete read-only product is `scripts/zsentinel_four_lane_desk.py`.
 Use the zCloud SQLite source and the **current branch's matching**
 `lane_generator.py` when working from a checkout of this PR:
