@@ -355,7 +355,24 @@
       return true;
     }finally{sending=false;markBusy()}
   }
+  // A command-result POST can fail AFTER Send was accepted by ChatGPT.
+  // Never re-execute the same pending command merely to retry its receipt.
+  const pendingCommandAcks=new Map(),MAX_PENDING_COMMAND_ACKS=16;
+  async function flushCommandAcks(){
+    for(const [commandId,receipt] of pendingCommandAcks){
+      try{
+        await api("/runner-command-result","POST",{
+          command_id:commandId,status:receipt.status,result:receipt.result
+        });
+        pendingCommandAcks.delete(commandId);
+      }catch(_){return false}
+    }
+    return true;
+  }
   async function commands(){
+    // Retry only the existing command-result writer on normal heartbeat.
+    // An unavailable acknowledgement never authorizes another Send click.
+    if(!(await flushCommandAcks()))return;
     let result;try{result=await api("/runner-commands")}catch(_){return}
     const incoming=(result.commands||[]).filter(c=>c&&Number(c.id||0)>lastCommand&&
       (c.project_id===id||(c.project_id===target?.base_project_id&&
@@ -367,20 +384,30 @@
       if(!["start","force_start","push","new_chat"].includes(action))continue;
       if(command.force===true && String(command.id)!==forceTicket)continue;
       if(awaiting||generating()||sending)continue;
+      if(pendingCommandAcks.size>=MAX_PENDING_COMMAND_ACKS){
+        await blocked("command-ack-backlog-manual-review");return;
+      }
+      const commandId=Number(command.id);
+      if(!Number.isSafeInteger(commandId)||commandId<=lastCommand)continue;
       // Legacy watchdogs queue new_chat after a stale heartbeat, which used
-      // to steal a tab straight after Send. In v2, ONLY a visible load error
-      // or the 1-hour idle policy may reset the conversation.
+      // to steal a tab straight after Send. Never reset for these commands.
       if(action==="new_chat"){
-        try{await api("/runner-command-result","POST",{
-          command_id:command.id,status:"failed",
+        lastCommand=commandId;
+        pendingCommandAcks.set(commandId,{
+          status:"failed",
           result:"v2 preserved tab; in-tab rotation limited to error or one-hour idle"
-        });lastCommand=Number(command.id)}catch(_){}
+        });
+        if(!(await flushCommandAcks()))return;
         continue;
       }
       if(!(await send("database-"+action)))continue;
-      try{await api("/runner-command-result","POST",{
-        command_id:command.id,status:"completed",result:"single-tab worker v2 action"
-      });lastCommand=Number(command.id)}catch(_){}
+      // Mark the command handled BEFORE the acknowledgement POST. Otherwise
+      // a lost API reply can replay it when browser awaiting becomes false.
+      lastCommand=commandId;
+      pendingCommandAcks.set(commandId,{
+        status:"completed",result:"single-tab worker v2 action"
+      });
+      if(!(await flushCommandAcks()))return;
     }
   }
   async function poll(){
