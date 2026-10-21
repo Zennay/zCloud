@@ -12,6 +12,7 @@ from html import escape
 import json
 import os
 from pathlib import Path
+from zsentinel_private_report_writer import write_private_report
 import re
 import stat
 import sys
@@ -396,12 +397,7 @@ def main(argv=None):
         if args.output is None:
             sys.stdout.write(output)
         else:
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(args.output, flags, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(output)
-                stream.flush()
-                os.fsync(stream.fileno())
+            write_private_report(args.output, output)
             print("Private saved receipt overview created (0600). No live authority.",
                   file=sys.stderr)
         return 3 if (report["missing_batches"] or report["unavailable_or_drifted_prs"]
