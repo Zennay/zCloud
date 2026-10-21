@@ -2,6 +2,13 @@
 
 ## 21 oktober · open PR-botsingen gericht afhandelen
 
+**Bron-gates in mensentaal:** de werkbak noemt opgeslagen gatecodes niet
+meer alsof zij de actuele CI/reviewstatus zijn. Labels maken onderscheid
+tussen mislukte checks, wachtende checks, onvolledige bronvensters,
+verouderde issuebron en tegenstrijdige bronklokken. Individuele PR-
+overzichten en privé Markdown houden de originele broncode herkenbaar,
+maar geen van deze labels staat voor actuele exact-head mergevrijgave.
+
 Bij ieder meervoudig PR-bronissue staat bovendien **Download privéoverdracht
 voor dit issue**. Die knop maakt een lokaal Markdown-dossier van precies het
 gekozen, brongebonden issue, met alle bestaande PR-kandidaten uit diezelfde
