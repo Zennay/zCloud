@@ -6,7 +6,9 @@ import argparse
 from html import escape
 from contextlib import closing
 import json
+import hashlib
 import os
+import stat
 import re
 import sqlite3
 from pathlib import Path
@@ -684,9 +686,45 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
 def compare_snapshot(path: Path, current: dict) -> dict:
     """Compare code sets only; never trust free-text content from an older report."""
     try:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 131072:
+        # Pin the baseline inode for the entire read. Separate is_symlink()
+        # and read_text() calls allow a path replacement between the checks.
+        # This private receipt is data, never a source of release authority.
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode) or before.st_size > 131072:
             raise ValueError("invalid snapshot")
-        prior = json.loads(path.read_text(encoding="utf-8"))
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise ValueError("secure no-follow read unavailable")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            opened = os.fstat(fd)
+            if (not stat.S_ISREG(opened.st_mode)
+                    or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+                    or opened.st_size > 131072):
+                raise ValueError("snapshot source identity changed")
+            with os.fdopen(os.dup(fd), "rb") as input_stream:
+                raw_baseline = input_stream.read(131073)
+            after = os.fstat(fd)
+            if (len(raw_baseline) > 131072 or
+                    opened.st_size != after.st_size or
+                    opened.st_mtime_ns != after.st_mtime_ns):
+                raise ValueError("snapshot changed while being read")
+        finally:
+            os.close(fd)
+
+        def unique_json_object(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate snapshot JSON property")
+                result[key] = value
+            return result
+
+        def reject_json_constant(_value):
+            raise ValueError("non-standard snapshot numeric constant")
+
+        prior = json.loads(raw_baseline.decode("utf-8"),
+                           object_pairs_hook=unique_json_object,
+                           parse_constant=reject_json_constant)
         if (not isinstance(prior, dict) or prior.get("schema") != 1
                 or prior.get("mode") != "read_only"
                 or prior.get("release_authorized") is not False):
