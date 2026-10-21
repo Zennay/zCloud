@@ -171,6 +171,8 @@ def observe_candidate_prs(issue, *, token=None):
     source_url = issue["source_urls"][0]
     expected_repo = source_url.rsplit("/issues/", 1)[0]
     observations = []
+    provider_paused = False
+    total_gets_attempted = 0
     for candidate in candidates:
         url = candidate["url"]
         match = REPO_URL.fullmatch(url)
@@ -190,17 +192,30 @@ def observe_candidate_prs(issue, *, token=None):
             "independent_review_verdict": "UNKNOWN",
             "branch_protection_verdict": "UNKNOWN",
         }
+        if provider_paused:
+            base["reason"] = (
+                "Skipped: GitHub provider admission unavailable earlier in this "
+                "same bounded observation; no new request attempted"
+            )
+            base["status"] = "UNKNOWN_PROVIDER"
+            base["next_human_step"] = "recheck_source_with_authorized_owner"
+            observations.append(base)
+            continue
         try:
+            total_gets_attempted += 1
             before = _pr_summary(_limited_json(api + "/pulls/" + str(number), token=token),
                                  full_name, number)
+            total_gets_attempted += 1
             checks = _checks_summary(_limited_json(
                 api + "/commits/" + before["exact_head_sha"] +
                 "/check-runs?per_page=" + str(MAX_LIST_PAGE), token=token
             ), before["exact_head_sha"])
+            total_gets_attempted += 1
             reviews = _review_summary(_limited_json(
                 api + "/pulls/" + str(number) +
                 "/reviews?per_page=" + str(MAX_LIST_PAGE), token=token
             ))
+            total_gets_attempted += 1
             after = _pr_summary(_limited_json(
                 api + "/pulls/" + str(number), token=token
             ), full_name, number)
@@ -223,6 +238,8 @@ def observe_candidate_prs(issue, *, token=None):
         except GitHubReadError as exc:
             base["status"] = "UNKNOWN_PROVIDER"
             base["reason"] = str(exc)
+            if "authentication, quota or provider admission" in str(exc):
+                provider_paused = True
             base["next_human_step"] = "recheck_source_with_authorized_owner"
         observations.append(base)
     return {
@@ -233,6 +250,13 @@ def observe_candidate_prs(issue, *, token=None):
         "candidate_count": len(candidates),
         "source_candidate_count": issue["candidate_count"],
         "observations": observations, "sample_scope_only": True,
+        "provider_admission_paused": provider_paused,
+        "read_get_attempt_upper_bound": 4 * len(candidates),
+        "get_attempts": total_gets_attempted,
+        "live_observations": sum(row["status"] == "LIVE_PARTIAL_READ"
+                                 for row in observations),
+        "unknown_observations": sum(row["status"] != "LIVE_PARTIAL_READ"
+                                    for row in observations),
         "issue_ownership_verified": False, "required_ci_verified": False,
         "branch_protection_verified": False, "independent_review_verified": False,
         "merge_authorized": False, "claim_authorized": False,
@@ -250,6 +274,10 @@ def markdown(report):
         "- Issue: " + report["original_issue_url"],
         "- Observed: " + report["observed_at_utc"],
         "- Source candidates: " + str(report["source_candidate_count"]),
+        "- Live partial reads: " + str(report["live_observations"]),
+        "- UNKNOWN candidates: " + str(report["unknown_observations"]),
+        "- GitHub requests attempted: " + str(report["get_attempts"]),
+        "- Provider admission paused: " + str(report["provider_admission_paused"]),
         "",
     ]
     for row in report["observations"]:
