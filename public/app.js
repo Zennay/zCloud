@@ -1542,7 +1542,7 @@ async function readVpsProductIssues(){
   VPS_PRODUCT_ISSUES_ERROR='Reading bounded P0/P1 GitHub issue evidence through VPS…';
   if(route==='activity')render();
   try{
-    let receipt=null;
+    let receipt=null,staleSample=false,staleAge=0,staleReason='';
     for(let attempt=0;attempt<6;attempt++){
       const response=await fetch('/api/product-issues-live?project='+encodeURIComponent(project),
         {method:'GET',credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(7000)});
@@ -1553,9 +1553,19 @@ async function readVpsProductIssues(){
           data.project!==project||data.feed_complete!==false||
           data.authorizes_repair!==false||data.authorizes_merge!==false||
           data.authorizes_deploy!==false||
-          !['refreshing','partial','unavailable','capacity_wait','rate_budget_wait'].includes(data.state))
+          !['refreshing','partial','stale','unavailable','capacity_wait','rate_budget_wait'].includes(data.state))
         throw Error('Unexpected issue source envelope');
       if(data.state==='partial'){receipt=data.receipt;break}
+      if(data.state==='stale'){
+        if(!Number.isSafeInteger(data.cached_age_s)||data.cached_age_s<300||
+           data.cached_age_s>3600||
+           !['refreshing','provider_unavailable','invalid_provider_receipt',
+             'capacity_wait','rate_budget_wait'].includes(data.refresh_status)){
+          throw Error('Invalid stale issue source metadata');
+        }
+        staleSample=true;staleAge=data.cached_age_s;staleReason=data.refresh_status;
+        receipt=data.receipt;break;
+      }
       if(data.state!=='refreshing')
         throw Error(data.state==='rate_budget_wait'?'Anonymous GitHub hourly request budget reached; retry later':
           data.state==='capacity_wait'?'Source capacity busy':'Issue source unavailable');
@@ -1568,13 +1578,29 @@ async function readVpsProductIssues(){
       throw Error('Issue source project mismatch');
     if(routeVersion!==version||filter!==project)return;
     const old=IMPORTED_PRODUCT_ISSUES||{issues:[],coverage:[]};
-    const coverage=[...old.coverage.filter(row=>row.project!==project),...parsed.coverage].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
-    const allowed=new Set(coverage.map(row=>row.project));
-    const rows=fairProductIssueHistory([
-      ...old.issues.filter(row=>row.project!==project&&allowed.has(row.project)),
-      ...parsed.issues],coverage);
-    IMPORTED_PRODUCT_ISSUES={observedAt:new Date().toISOString(),partial:true,coverage,issues:rows};
-    VPS_PRODUCT_ISSUES_ERROR='VPS issue source loaded for '+project+
+    const previousTime=old.coverage.find(row=>row.project===project)?.observedAt||'';
+    const olderThanLoaded=staleSample&&previousTime&&
+      Date.parse(parsed.coverage[0].observedAt)<Date.parse(previousTime);
+    if(!olderThanLoaded){
+      const originalCoverage=staleSample?parsed.coverage.map(row=>({...row,
+        staleEvidence:true,lastAttemptAt:new Date().toISOString()})):parsed.coverage;
+      const observedIssues=staleSample?parsed.issues.map(row=>({...row,
+        staleUnverified:true})):parsed.issues;
+      const coverage=[...old.coverage.filter(row=>row.project!==project),...originalCoverage]
+        .slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+      const allowed=new Set(coverage.map(row=>row.project));
+      const rows=fairProductIssueHistory([
+        ...old.issues.filter(row=>row.project!==project&&allowed.has(row.project)),
+        ...observedIssues],coverage);
+      IMPORTED_PRODUCT_ISSUES={
+        observedAt:new Date().toISOString(),partial:true,coverage,issues:rows};
+    }
+    VPS_PRODUCT_ISSUES_ERROR=staleSample?
+      'STALE issue cache for '+project+' ('+staleAge+'s old; '+staleReason+'). '+
+      (olderThanLoaded?'Kept newer issue evidence. ':
+       'Previously observed issue status is NOT reverified. ')+
+      'Current ownership and open/closed issue status UNKNOWN.':
+      'VPS issue source loaded for '+project+
       '. Partial open P0/P1 source only; ownership and deployment unverified.';
   }catch(error){
     if(routeVersion===version&&filter===project)
