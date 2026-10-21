@@ -33,6 +33,13 @@ scopes remain reserved. Queued work is classified from its current product
 description and is not allowed to spoof an active lane to get preferred
 placement.
 
+The same routing decision is now shown in the existing operator desk's
+text, JSON (`lanes[].routing_origin`) and script-free offline HTML:
+`PERSISTED_ACTIVE_LANE`, `KEYWORD_CLASSIFICATION`,
+`PRODUCT_REMEDIATION_FALLBACK` or `NO_LOCAL_TASK`. These are finite,
+human-readable provenance labels, not inferred claims, hidden process
+identities or permission to dispatch new work.
+
 A missing/legacy/unknown active lane identifier is now an explicit
 `active_legacy_profile_unreconciled` HOLD for **new** parallel writers
 rather than a silently trusted matching profile name. Do not migrate or
