@@ -120,17 +120,24 @@ def http_json_ready(
     overall readiness deadline. Persistent failures still raise and therefore
     keep the promotion fail-closed.
     """
-    deadline = monotonic_fn() + max(0.0, float(readiness_seconds))
+    readiness_budget = max(0.0, float(readiness_seconds))
+    deadline = monotonic_fn() + readiness_budget
+    request_timeout = max(0.001, min(float(timeout), max(0.001, readiness_budget)))
     last_error = None
     while True:
         try:
-            return http_json(url, timeout=timeout)
+            return http_json(url, timeout=request_timeout)
         except Exception as exc:
             last_error = exc
             remaining = deadline - monotonic_fn()
             if remaining <= 0:
                 raise last_error
-            sleep_fn(min(max(0.05, float(retry_interval)), remaining))
+            sleep_for = min(max(0.05, float(retry_interval)), remaining)
+            sleep_fn(sleep_for)
+            remaining = deadline - monotonic_fn()
+            if remaining <= 0:
+                raise last_error
+            request_timeout = max(0.001, min(float(timeout), remaining))
 
 
 def http_ok(url: str, timeout: float = 8.0) -> bool:

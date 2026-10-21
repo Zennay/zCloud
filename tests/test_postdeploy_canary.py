@@ -60,7 +60,7 @@ class PostdeployCanaryTests(unittest.TestCase):
             RuntimeError("HTTP 503: warming up"),
             {"errors": [], "dynamic_workers": {"count": 5}},
         ]
-        ticks = iter([0.0, 0.1])
+        ticks = iter([0.0, 0.1, 0.2])
         with mock.patch.object(canary, "http_json", side_effect=attempts) as fetch:
             result = canary.http_json_ready(
                 "http://127.0.0.1:8765/api/status",
@@ -77,7 +77,7 @@ class PostdeployCanaryTests(unittest.TestCase):
             RuntimeError("timed out during sampler warmup"),
             {"errors": [], "dynamic_workers": {"count": 5}},
         ]
-        ticks = iter([0.0, 31.0])
+        ticks = iter([0.0, 31.0, 31.5])
         with mock.patch.object(canary, "http_json", side_effect=attempts) as fetch:
             result = canary.http_json_ready(
                 "http://127.0.0.1:8765/api/status",
@@ -88,6 +88,60 @@ class PostdeployCanaryTests(unittest.TestCase):
         self.assertEqual([], result["errors"])
         self.assertEqual(2, fetch.call_count)
         self.assertEqual(40.0, fetch.call_args_list[0].kwargs["timeout"])
+
+    def test_status_readiness_caps_first_request_to_overall_budget(self):
+        with mock.patch.object(
+            canary,
+            "http_json",
+            return_value={"errors": [], "dynamic_workers": {"count": 5}},
+        ) as fetch:
+            result = canary.http_json_ready(
+                "http://127.0.0.1:8765/api/status",
+                timeout=40,
+                readiness_seconds=7,
+                retry_interval=0.5,
+                sleep_fn=lambda _: None,
+                monotonic_fn=lambda: 100.0,
+            )
+        self.assertEqual([], result["errors"])
+        self.assertEqual(7.0, fetch.call_args.kwargs["timeout"])
+
+    def test_status_readiness_caps_retry_to_remaining_budget(self):
+        attempts = [
+            RuntimeError("HTTP 503: warming up"),
+            {"errors": [], "dynamic_workers": {"count": 5}},
+        ]
+        ticks = iter([100.0, 104.0, 104.5])
+        with mock.patch.object(canary, "http_json", side_effect=attempts) as fetch:
+            result = canary.http_json_ready(
+                "http://127.0.0.1:8765/api/status",
+                timeout=40,
+                readiness_seconds=10,
+                retry_interval=0.5,
+                sleep_fn=lambda _: None,
+                monotonic_fn=lambda: next(ticks),
+            )
+        self.assertEqual([], result["errors"])
+        self.assertEqual(10.0, fetch.call_args_list[0].kwargs["timeout"])
+        self.assertEqual(5.5, fetch.call_args_list[1].kwargs["timeout"])
+
+    def test_status_readiness_rechecks_budget_after_retry_sleep(self):
+        ticks = iter([100.0, 109.7, 110.2])
+        with mock.patch.object(
+            canary,
+            "http_json",
+            side_effect=RuntimeError("HTTP 503: warming up"),
+        ) as fetch:
+            with self.assertRaisesRegex(RuntimeError, "warming up"):
+                canary.http_json_ready(
+                    "http://127.0.0.1:8765/api/status",
+                    timeout=40,
+                    readiness_seconds=10,
+                    retry_interval=0.5,
+                    sleep_fn=lambda _: None,
+                    monotonic_fn=lambda: next(ticks),
+                )
+        self.assertEqual(1, fetch.call_count)
 
     def test_status_readiness_persistent_failure_stays_fail_closed(self):
         ticks = iter([0.0, 31.0])
