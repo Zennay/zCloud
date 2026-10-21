@@ -86,19 +86,28 @@ def _timeline_last_page(link_header, requested_path):
 def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES,
                   include_timeline_last_page=False):
     """One fixed-host HTTPS GitHub GET, no redirects, strict byte cap."""
+    # Canonical search route is the only non-/repos source admitted.
+    # Exact shape, owner, issue-only filter, fixed sort and page cap prevent
+    # passing arbitrary external provider URLs or unbounded search queries.
+    issue_search = isinstance(path, str) and re.fullmatch(
+        r"/search/issues\\?q=repo%3AZennay%2F[A-Za-z0-9_.-]{1,100}"
+        r"\\+is%3Aissue\\+is%3Aopen&sort=updated&order=desc"
+        r"&per_page=30&page=[123]",
+        path,
+    ) is not None
     if (max_body_bytes not in (MAX_BODY_BYTES, MAX_DISCOVERY_BODY_BYTES)
             or (max_body_bytes == MAX_DISCOVERY_BODY_BYTES
                 and not (
                     "/pulls?state=open&per_page=" in path or
-                    "/timeline?per_page=" in path or
-                    "/issues?state=open&per_page=" in path
+                    "/timeline?per_page=" in path or issue_search
                 ))):
-        raise GitHubReadError("oversized read requires a bounded PR-list or issue-timeline page")
+        raise GitHubReadError(
+            "oversized read requires bounded PR, timeline or issue-only search"
+        )
     if include_timeline_last_page and "/timeline?per_page=" not in path:
         raise GitHubReadError("timeline pagination metadata requires timeline path")
-    if not path.startswith("/repos/Zennay/") or (
-        any(char in path for char in ("#", "\\", "\n", "\r", "\t"))
-    ):
+    if (not (path.startswith("/repos/Zennay/") or issue_search) or
+            any(char in path for char in ("#", "\\", "\n", "\r", "\t"))):
         raise GitHubReadError("invalid bounded GitHub API path")
     headers = {
         "Accept": "application/vnd.github+json",
