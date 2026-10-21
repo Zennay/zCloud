@@ -1995,3 +1995,40 @@ een canonieke eigen-repository `/issues/N`-link met expliciete waarschuwing dat
 het doel een PR, ontbrekend nummer of niet-relevant issue kan zijn.
 De operator controleert de echte identiteit/status zelf alvorens iets als
 opgelost te behandelen. Geen extra GitHub-aanroepen of automatische statusacties.
+
+## 21 oktober · private CSV eigenaarwerkopdrachten voor echte integratiebesluiten
+
+De bestaande merge-first eigenaarwerkbak ondersteunt nu ook `--format
+workorders-csv` naast Markdown, JSON en de scriptvrije privé-HTML. De CSV
+is een **brongebonden uitvoerbaar operatoroverzicht**, geen automatische
+merge- of dispatchlijst. Voor maximaal vier geselecteerde bestaande product-PRs
+krijgt een operator één `pr`-regel met rang, bron-HEAD, opnamemoment, blocker
+en concrete menselijke actie, gevolgd door gelinkte `check`-, `related_pr`-,
+`overlap_path`-, `issue_hint_unverified`- en `source_warning`-regels.
+Verstopte niet-groene checks en onvolledige bestandsdekking worden expliciet
+`coverage_warning`; een oude HEAD of een onvolledig venster wordt nooit
+als vrijgeefbaar geïnterpreteerd.
+
+Gebruik vanuit de repository root:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format workorders-csv \
+  --output /private/path/zsentinel-werkopdrachten.csv
+```
+
+De bron wordt slechts één keer begrensd geobserveerd. Net als de bestaande
+workorders-formats vereist CSV `--inspect-current-pr-gates` en een nieuwe,
+uitsluitend door de eigenaar leesbare outputlocatie: `O_EXCL`, `0600`,
+`O_NOFOLLOW` waar ondersteund, maximaal 512 KiB en geen stdout-dump.
+CSV heeft UTF-8-BOM en gequote kolommen; potentieel gevaarlijke
+spreadsheetformuleprefixen worden onschadelijk gemaakt. De `source_sha256`
+beschrijft de opgeslagen inhoud, niet een authentieke goedkeuring.
+
+Voor iedere regel gelden dezelfde grenzen: geen bewezen actuele claims,
+geen volledige verplichte CI-/review- of branch-protectiondekking, geen
+github write, Notion write, runnerrestart, queue claim, deploy of merge.
+De GitHub `/issues/N`-links zijn uitsluitend **onbevestigde PR-tekstvermeldingen**:
+ook een PR of niet-bestaand nummer kan achter zo'n link zitten.
