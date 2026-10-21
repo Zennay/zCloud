@@ -725,6 +725,9 @@ def main():
             if pr_delivery is not None:
                 from zsentinel_pr_delivery import handoff_markdown
                 lines.append(handoff_markdown(pr_delivery))
+            if pr_continuity is not None:
+                from zsentinel_pr_hold_continuity import text_summary
+                lines.append(text_summary(pr_continuity))
             rendered = "\n".join(lines)
         action_content = None
         if args.action_output is not None:
