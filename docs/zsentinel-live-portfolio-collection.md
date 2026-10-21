@@ -312,3 +312,36 @@ wordt ongewijzigd berekend over **alle** bronrijen, niet alleen de
 voorbeeldlijst. De voorbeeldreeks geeft nooit bewijs van volledigheid,
 workeridentiteit, lease of werkeigendom; handmatig opgeslagen exports
 blijven van ongeverifieerde herkomst.
+
+## 21 oktober · historisch werkbord en centrale eigenaaroverdracht
+
+**Historische werkbordimport:** bij het samenvoegen van één tot zes
+opgeslagen GitHub-/Notion-bronvensters wordt de oorspronkelijke
+issue→PR-actie voortaan teruggezet uit de canonieke route. Oude
+brongebonden Notion-voorvoegsels op `action` en de beide velden
+`notion_active_work_min` en `notion_verifying_work_min` worden niet
+als nieuwe, actuele eigenaarswaarneming doorgegeven. De parser accepteert
+alleen herkenbare oude voorvoegsels die eindigen op de canonieke
+bronactie; een vreemde of tegenstrijdige bron wordt geweigerd. In
+HTML, Markdown en JSON staat het aantal geneutraliseerde
+historische waarschuwingen. **Dit geeft geen bewijs dat die eigenaar
+nu vrij is**: recheck de actuele lease, Notion-status, PR en bestanden.
+
+**Centrale operator/eigenaaroverdracht:** de bestaande `--show-owner-handoff`
+en `--handoff-output .md/.json`-route toont nu de reeds waargenomen
+Notion-statusbron, zonder een tweede netwerkrequest. Per canoniek project
+is zichtbaar hoeveel onafgeronde statussen er minimaal zijn gezien
+en hoeveel daarvan in `Verifying` staan. Statusbrondekking, gelezen
+pagina's en afgekapt venster zijn ook in HTML, Markdown en JSON
+beschikbaar. Een project zonder bron of onbekende projectrelatie krijgt
+geen verzonnen live lease/eigendom; ongekoppelde statusregels blijven
+een geaggregeerd onbekend aantal. De statusoverdracht is **apart
+van de P0-incidentlijst** en verandert de volgorde, limieten of
+toestemmingsvlaggen daarvan niet.
+
+De broncontext vermeldt of gegevens live gedeeltelijk, incompleet,
+ouder dan tien minuten of door de gebruiker opgeslagen/onbevestigd zijn.
+Geen workerclaim, file lock, queue-RW, Notion-mutatie, provider-CI-rerun,
+automatische recovery, merge of deploy. De oplevering blijft gebonden
+aan de oorspronkelijke exact-head CI, onafhankelijke review en
+beschermde default-branch.
