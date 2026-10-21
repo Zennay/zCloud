@@ -54,6 +54,9 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "open_pr_snapshot_stable": False,
                 "sampled_open_pr_heads": [],
                 "shown_collision_pairs": [],
+                "shown_path_scope_collision_pairs": [],
+                "observed_path_scope_collision_pairs": None,
+                "path_scope_collision_pairs_truncated": False,
                 "linked_pr_collision_clusters": [],
                 "observed_connected_pr_collision_clusters": None,
                 "shown_duplicate_issue_groups": [],
@@ -66,6 +69,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "issue_reference_sample_complete": False,
                 "observed_issue_to_pr_mentions_unverified": [],
                 "observed_collision_pairs": None,
+                "observed_path_scope_collision_pairs": None,
                 "inspected_open_prs": None,
                 "observed_open_prs": None,
                 "source_observed_at_utc": None,
@@ -73,8 +77,11 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             })
             continue
         pairs = source["shown_file_collision_pairs"][:MAX_VISIBLE_PAIRS]
+        scope_pairs = source["shown_path_scope_collision_pairs"][:MAX_VISIBLE_PAIRS]
         display_truncated = (source["collision_cards_truncated"] or
-                             len(source["shown_file_collision_pairs"]) > MAX_VISIBLE_PAIRS)
+                             len(source["shown_file_collision_pairs"]) > MAX_VISIBLE_PAIRS or
+                             source["path_scope_collision_pairs_truncated"] or
+                             len(source["shown_path_scope_collision_pairs"]) > MAX_VISIBLE_PAIRS)
         complete = source["pr_file_scope_sample_complete"] and not display_truncated
         items.append({
             "project": project,
@@ -86,6 +93,11 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "sampled_open_pr_heads": source["inspected_pr_heads"],
             "source_sample_complete": source["pr_file_scope_sample_complete"],
             "shown_collision_pairs": pairs,
+            "shown_path_scope_collision_pairs": scope_pairs,
+            "observed_path_scope_collision_pairs": source["observed_path_scope_collision_pairs"],
+            "path_scope_collision_pairs_truncated": (
+                source["path_scope_collision_pairs_truncated"] or
+                len(source["shown_path_scope_collision_pairs"]) > MAX_VISIBLE_PAIRS),
             "linked_pr_collision_clusters": source["linked_pr_collision_clusters"],
             "observed_connected_pr_collision_clusters":
                 source["observed_connected_pr_collision_clusters"],
@@ -109,6 +121,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 source["open_pr_issue_references_unverified"]
                 if source["open_pr_snapshot_stable"] else []),
             "observed_collision_pairs": source["observed_file_collision_pairs"],
+            "observed_path_scope_collision_pairs": source["observed_path_scope_collision_pairs"],
             "inspected_open_prs": source["inspected_prs"],
             "observed_open_prs": source["observed_open_prs"],
             "source_observed_at_utc": source["observed_at_utc"],
@@ -128,6 +141,9 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
         "source_coverage_complete": all(i["sample_complete"] for i in items),
         "any_file_overlaps_observed": any(
             bool(i["observed_collision_pairs"]) for i in items),
+        "any_path_scope_collisions_observed": any(
+            bool(i.get("observed_path_scope_collision_pairs"))
+            for i in items),
         "any_multiple_pr_issue_mentions_observed": any(
             bool(i["observed_duplicate_issue_groups"]) for i in items),
         "notion_claims_verified": False,
@@ -481,6 +497,8 @@ def summary_lines(view):
         " / waargenomen " + str(view["observed_open_prs"]),
         "Waargenomen gedeelde-bestandsparen: " +
         str(view["observed_collision_pairs"]),
+        "Waargenomen bestand/map-ancestorparen: " +
+        str(view.get("observed_path_scope_collision_pairs", "ONBEKEND")),
         "Samenhangende PR-bestandsgroepen: " +
         str(view["observed_connected_pr_collision_clusters"]),
         "Open PR-teksten met hetzelfde issue (GEEN fix- of eigenaarsbewijs): " +
@@ -505,6 +523,17 @@ def summary_lines(view):
             " | " + str(pair["shared_file_count_observed"]) +
             " bestanden | " + pair["left"]["url"] +
             " | " + pair["right"]["url"])
+    for pair in view.get("shown_path_scope_collision_pairs", []):
+        result.append(
+            "  BESTAND/MAP PR #" + str(pair["left"]["number"]) +
+            " ↔ PR #" + str(pair["right"]["number"]) + " | " +
+            str(pair["path_conflict_count_observed"]) + " padparen")
+        for conflict in pair["path_conflicts"]:
+            result.append("    " + conflict["left_path"] + " ↔ " +
+                          conflict["right_path"] + " [" +
+                          conflict["relation"] + "]")
+    if view.get("path_scope_collision_pairs_truncated"):
+        result.append("  Bestand/map-conflictweergave onvolledig; overige paren onbekend.")
     for group in view["shown_duplicate_issue_groups"]:
         result.append("  ISSUE #" + str(group["issue_number"]) +
                       " · vermeld door " + str(group["open_pr_mentions_observed"]) +
@@ -775,6 +804,12 @@ def merge_first_attention(board):
         if current:
             gate_head = gate["head_sha_observed"]
             for pair in view.get("shown_collision_pairs", [])[:80]:
+                left, right = pair["left"], pair["right"]
+                if left["url"] == url and left.get("head_sha") == gate_head:
+                    overlaps.append(right["url"])
+                elif right["url"] == url and right.get("head_sha") == gate_head:
+                    overlaps.append(left["url"])
+            for pair in view.get("shown_path_scope_collision_pairs", [])[:MAX_VISIBLE_PAIRS]:
                 left, right = pair["left"], pair["right"]
                 if left["url"] == url and left.get("head_sha") == gate_head:
                     overlaps.append(right["url"])
