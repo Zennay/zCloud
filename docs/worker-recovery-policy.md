@@ -678,3 +678,7 @@ Missing ownership is not treated as an approval request to an already-known pers
 
 
 If the claim is active/unknown and its owner is also missing, the route is `identify_claim_owner` first; it must not assume that an identifiable current owner exists.
+
+## Specific next steps for dependency, escalation and release holds
+
+The recommendation map now gives explicit routes for unverified source receipts, missing blocked-task IDs, unknown dependency type, missing operator attestation, escalation-basis gaps, and post-merge health gaps. Release approval is separated from technical gate readiness. Unknown/missing owner and active-claim combinations remain owner-identification HOLDs; none of these recommendation codes performs a queue or runtime action.
