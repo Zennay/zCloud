@@ -10,15 +10,16 @@ from __future__ import annotations
 import argparse
 import csv
 from datetime import datetime, timezone
+import hashlib
 from html import escape
-from io import StringIO
+from io import BytesIO, StringIO
 import json
 import os
 from pathlib import Path
 import secrets
 import stat
 import sys
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile, ZipInfo
 
 from zsentinel_saved_issue_archive import read_issue_dossier
 from zsentinel_saved_issue_delta import (
@@ -34,6 +35,7 @@ RANK = {p: i for i, p in enumerate(PRIORITIES)}
 MAX_ISSUES = 200
 MAX_DISPLAY = 60
 MAX_BYTES = 48 * 1024
+MAX_PACKAGE_BYTES = 256 * 1024
 
 
 def portfolio_delta(previous, current, *, stale_after_hours=6, evaluated_at=None):
@@ -276,14 +278,15 @@ def _csv_cell(value):
     return text
 
 
-def _save_private_structured(destination: Path, content: str, suffix: str) -> None:
-    """Atomically publish a new owner-only CSV/JSON file without replacing existing output."""
-    if (suffix not in (".csv", ".json") or destination.suffix.lower() != suffix
+def _save_private_export(destination: Path, content, suffix: str) -> None:
+    """Atomically publish a new owner-only CSV/JSON/ZIP file without replacing output."""
+    if (suffix not in (".csv", ".json", ".zip") or destination.suffix.lower() != suffix
             or destination.name in (".", "..")):
-        raise ValueError("Structured output extension does not match its format")
-    data = content.encode("utf-8")
-    if not 1 <= len(data) <= MAX_BYTES:
-        raise ValueError("Private structured output exceeds size budget")
+        raise ValueError("Private export extension does not match its format")
+    data = content if isinstance(content, bytes) else content.encode("utf-8")
+    limit = MAX_PACKAGE_BYTES if suffix == ".zip" else MAX_BYTES
+    if not 1 <= len(data) <= limit:
+        raise ValueError("Private export exceeds its size budget")
     parentfd = _open_private_extract_parent(destination.parent)
     stage = ".zsentinel-issue-portfolio-" + secrets.token_hex(12) + ".tmp"
     stagefd = None
@@ -295,19 +298,19 @@ def _save_private_structured(destination: Path, content: str, suffix: str) -> No
         identity = (opened.st_dev, opened.st_ino)
         if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.geteuid()
                 or stat.S_IMODE(opened.st_mode) & 0o077):
-            raise ValueError("Unable to create private structured output")
+            raise ValueError("Unable to create private export")
         pending = memoryview(data)
         while pending:
             written = os.write(stagefd, pending)
             if written <= 0:
-                raise OSError("Private structured output did not progress")
+                raise OSError("Private export did not progress")
             pending = pending[written:]
         os.fsync(stagefd)
         current = os.stat(stage, dir_fd=parentfd, follow_symlinks=False)
         if (not stat.S_ISREG(current.st_mode)
                 or (current.st_dev, current.st_ino) != identity):
-            raise ValueError("Private structured staging identity changed")
-        # A hard link publishes complete content and refuses to overwrite a destination.
+            raise ValueError("Private staging identity changed")
+        # Hard-link publication is atomic and refuses to replace an existing file.
         os.link(stage, destination.name, src_dir_fd=parentfd,
                 dst_dir_fd=parentfd, follow_symlinks=False)
         os.fsync(parentfd)
@@ -538,6 +541,57 @@ Geen API-calls, schedulerwijzigingen of mutaties van andere systemen.
     return content
 
 
+def render_zip(report):
+    """Package all four private views with a source-bound checksum manifest."""
+    members = [
+        ("issue-delta.html", render_html(report).encode("utf-8")),
+        ("issue-delta.md", render_markdown(report).encode("utf-8")),
+        ("issue-delta.csv", render_csv(report).encode("utf-8")),
+        ("issue-delta.json", render_json(report).encode("utf-8")),
+    ]
+    manifest = {
+        "schema": "zsentinel-private-historical-issue-portfolio-delta-bundle-v1",
+        "source": report["source"],
+        "source_scope": report.get("source_scope"),
+        "old_manifest_sha256": report["old_manifest_sha256"],
+        "new_manifest_sha256": report["new_manifest_sha256"],
+        "old_latest_observed_utc": report["old_latest_observed_utc"],
+        "new_latest_observed_utc": report["new_latest_observed_utc"],
+        "old_source_freshness": report["old_source_freshness"],
+        "new_source_freshness": report["new_source_freshness"],
+        "selection": report["display"],
+        "counts": report["counts"],
+        "members": [
+            {"name": name, "sha256": hashlib.sha256(data).hexdigest(),
+             "size_bytes": len(data)}
+            for name, data in members
+        ],
+        "sample_absence_is_not_resolution": True,
+        "current_issue_open_status_verified": False,
+        "worker_claim_authorized": False,
+        "required_ci_review_verified": False,
+        "merged_on_main_verified": False,
+        "live_verified": False,
+        "writes_performed_to_external_systems": False,
+    }
+    manifest_data = (json.dumps(
+        manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\\n").encode("utf-8")
+    if not manifest_data or len(manifest_data) > MAX_BYTES:
+        raise ValueError("Private delta bundle manifest exceeds size budget")
+    output = BytesIO()
+    with ZipFile(output, "w", compression=ZIP_DEFLATED, compresslevel=6) as archive:
+        for name, data in members + [("manifest.json", manifest_data)]:
+            info = ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.create_system = 3
+            info.compress_type = ZIP_DEFLATED
+            info.external_attr = (stat.S_IFREG | 0o600) << 16
+            archive.writestr(info, data)
+    value = output.getvalue()
+    if not value or len(value) > MAX_PACKAGE_BYTES:
+        raise ValueError("Private delta ZIP exceeds size budget")
+    return value
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--previous", type=Path, required=True)
@@ -549,7 +603,7 @@ def main(argv=None):
     parser.add_argument("--changed-only", action="store_true")
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--page-size", type=int, default=30)
-    parser.add_argument("--format", choices=("html", "markdown", "csv", "json"), default="html")
+    parser.add_argument("--format", choices=("html", "markdown", "csv", "json", "zip"), default="html")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
@@ -565,14 +619,18 @@ def main(argv=None):
             raise ValueError("CSV output must use .csv extension")
         if args.format == "json" and args.output.suffix.lower() != ".json":
             raise ValueError("JSON output must use .json extension")
+        if args.format == "zip" and args.output.suffix.lower() != ".zip":
+            raise ValueError("ZIP output must use .zip extension")
         if args.format == "html":
             save_private_html(args.output, render_html(chosen))
         elif args.format == "markdown":
             _save_private_handoff(args.output, render_markdown(chosen))
         elif args.format == "csv":
-            _save_private_structured(args.output, render_csv(chosen), ".csv")
+            _save_private_export(args.output, render_csv(chosen), ".csv")
+        elif args.format == "json":
+            _save_private_export(args.output, render_json(chosen), ".json")
         else:
-            _save_private_structured(args.output, render_json(chosen), ".json")
+            _save_private_export(args.output, render_zip(chosen), ".zip")
         print("Private historical issue-to-PR portfolio page created: " +
               str(chosen["display"]["shown"]) + " shown of " +
               str(chosen["display"]["total"]) + " issues")
