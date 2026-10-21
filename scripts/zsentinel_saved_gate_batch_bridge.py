@@ -634,12 +634,14 @@ def main(argv=None):
     parser.add_argument("--receipt", type=Path, action="append", required=True)
     parser.add_argument("--allow-partial", action="store_true",
                         help="Import only supplied, source-bound batches; label missing batches UNKNOWN")
-    parser.add_argument("--format", choices=("json", "markdown", "html", "csv", "portfolio-csv", "portfolio-json", "portfolio-markdown", "portfolio-html", "portfolio-pr-csv", "portfolio-issue-pr-csv", "portfolio-pr-markdown", "portfolio-pr-html", "portfolio-pr-zip", "portfolio-zip"), default="json",
+    parser.add_argument("--format", choices=("json", "markdown", "html", "csv", "portfolio-csv", "portfolio-json", "portfolio-markdown", "portfolio-html", "portfolio-pr-csv", "portfolio-issue-pr-csv", "portfolio-issue-csv", "portfolio-issue-markdown", "portfolio-issue-html", "portfolio-issue-zip", "portfolio-pr-markdown", "portfolio-pr-html", "portfolio-pr-zip", "portfolio-zip"), default="json",
                         help="Private browser import, full Markdown, offline HTML, PR/project CSV, project-only Markdown or owner-neutral portfolio JSON")
     parser.add_argument("--project",
                         help="Exact source-observed repository (e.g. Zennay/zCloud); only --format portfolio-*")
     parser.add_argument("--pr-url",
                         help="Canonical existing GitHub PR URL for portfolio-pr-markdown, portfolio-pr-html or portfolio-pr-zip")
+    parser.add_argument("--issue-url",
+                        help="One canonical saved-source issue URL for portfolio-issue-csv/markdown/html/zip")
     parser.add_argument("--previous", type=Path,
                         help="Prior private JSON bridge for same-manifest PR change view (HTML or Markdown)")
     parser.add_argument("--output", type=Path, required=True)
@@ -654,7 +656,34 @@ def main(argv=None):
             raise ValueError("Project scope is supported only by portfolio output formats")
         if (args.pr_url is None) != (args.format not in ("portfolio-pr-markdown", "portfolio-pr-html", "portfolio-pr-zip")):
             raise ValueError("One canonical --pr-url is required only for one-PR portfolio output")
-        if args.format == "portfolio-pr-zip":
+        if (args.issue_url is None) != (args.format not in (
+                "portfolio-issue-csv", "portfolio-issue-markdown",
+                "portfolio-issue-html", "portfolio-issue-zip")):
+            raise ValueError("Canonical --issue-url is required only by one-issue output")
+        if args.format == "portfolio-issue-zip":
+            from zsentinel_saved_gate_package import private_single_issue_package
+            selected, _ = canonical_manifest(review, raw)
+            rendered = private_single_issue_package(
+                selected, result, issue_url=args.issue_url, project=args.project)
+        elif args.format == "portfolio-issue-html":
+            from zsentinel_saved_gate_portfolio import portfolio_single_issue_html
+            selected, _ = canonical_manifest(review, raw)
+            rendered = portfolio_single_issue_html(
+                selected, result, issue_url=args.issue_url,
+                project=args.project).encode("utf-8")
+        elif args.format == "portfolio-issue-markdown":
+            from zsentinel_saved_gate_portfolio import portfolio_single_issue_markdown
+            selected, _ = canonical_manifest(review, raw)
+            rendered = portfolio_single_issue_markdown(
+                selected, result, issue_url=args.issue_url,
+                project=args.project).encode("utf-8")
+        elif args.format == "portfolio-issue-csv":
+            from zsentinel_saved_gate_portfolio import portfolio_issue_pr_csv
+            selected, _ = canonical_manifest(review, raw)
+            rendered = portfolio_issue_pr_csv(
+                selected, result, issue_url=args.issue_url,
+                project=args.project).encode("utf-8")
+        elif args.format == "portfolio-pr-zip":
             from zsentinel_saved_gate_package import private_single_pr_package
             selected, _ = canonical_manifest(review, raw)
             rendered = private_single_pr_package(
