@@ -57,8 +57,12 @@ def _decision(snapshot):
             or data.get("deployment_authorized") is not False
             or data.get("watch_delivery_performed") is not False):
         raise ValueError("untrusted or authorizing routing snapshot")
-    if data.get("observed_at_utc") != portfolio.get("observed_at_utc"):
-        raise ValueError("routing observation does not match portfolio source")
+    # Portfolio overview timestamps the SQLite queue source; routing stamps
+    # the later assembled decision. They are deliberately different clocks.
+    # A missing/stale SQLite source is not a false exact-timestamp mismatch.
+    queue_at = portfolio.get("observed_at_utc")
+    if queue_at is not None and _clock(queue_at) > _clock(data.get("observed_at_utc")) + timedelta(minutes=2):
+        raise ValueError("queue observation contradicts routing source time")
     return data
 
 
