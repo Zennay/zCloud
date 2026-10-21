@@ -279,11 +279,20 @@ def render_issue_inbox(inbox):
              if pr["gate_actions"] else "; volgende gate: broncontrole nodig") +
             ")" for pr in prs)
             if prs else "Geen gekoppelde PR binnen deze selectie bevestigd")
+        outstanding = issue["uninspected_candidate_pr_numbers"]
+        candidate_links = (" · ".join(
+            "<a href='https://github.com/" + esc(issue["repo"]) +
+            "/pull/" + esc(number) + "'>PR #" + esc(number) + "</a>"
+            for number in outstanding[:10])
+            if outstanding else "geen binnen deze bronselectie")
         cards.append(
             "<li><strong>" + esc(issue["priority"]) + "</strong> · "
             "<a href='" + esc(issue["url"]) + "'>" + esc(issue["repo"]) + "#" +
             esc(issue["number"]) + " · " + esc(issue["title"]) + "</a>"
-            "<br>Geselecteerde bestaande PRs: " + links +
+            "<br>Actueel geïnspecteerde kandidaat-PRs: " + links +
+            "<br>Andere PRs uit bronlijst (nog niet opnieuw geverifieerd): " +
+            candidate_links + " · extra kandidaten buiten venster: " +
+            esc(issue["candidate_prs_omitted"]) +
             "<br>Volgende stap: " + esc(issue["operator_action"]) +
             ("<br>Lees bestaande PRs: <code>" +
              esc(issue["read_only_issue_command"]) + "</code>"
@@ -295,6 +304,8 @@ def render_issue_inbox(inbox):
             "issue-inbox · bestaande PR eerst</h2><p>Waargenomen issues: " +
             esc(inbox["total_observed_issues"]) + "; gekoppeld binnen "
             "de geselecteerde PRs: " + esc(inbox["linked_observed_issues"]) +
+            "; niet opnieuw geïnspecteerde PR-kandidaten: " +
+            esc(inbox["uninspected_pr_candidate_issues"]) +
             "; zonder waargenomen PR-link: " + esc(inbox["unlinked_in_sample"]) +
             "; niet getoond: " + esc(inbox["omitted"]) + ".</p><p>"
             "Dit is een begrensde bronselectie, geen compleet issue-overzicht "
@@ -1220,6 +1231,8 @@ def main():
                 print("P0_P1_ISSUE_INBOX observed=" +
                       str(issue_inbox["total_observed_issues"]) +
                       " linked=" + str(issue_inbox["linked_observed_issues"]) +
+                      " uninspected_candidates=" +
+                      str(issue_inbox["uninspected_pr_candidate_issues"]) +
                       " unlinked_within_sample=" + str(issue_inbox["unlinked_in_sample"]) +
                       " coverage=" + issue_inbox["coverage"])
                 for issue in issue_inbox["items"]:
@@ -1229,8 +1242,11 @@ def main():
                         str(pr["checks"]) + ";workflows=" +
                         str(pr["workflows"]) + ")"
                         for pr in issue["linked_prs"]) or "UNKNOWN"
+                    hinted = ",".join(str(n) for n in
+                                      issue["uninspected_candidate_pr_numbers"]) or "UNKNOWN"
                     print("ISSUE_ACTION " + issue["priority"] + " " +
-                          issue["url"] + " existing_prs=" + prs +
+                          issue["url"] + " inspected_prs=" + prs +
+                          " uninspected_pr_candidates=" + hinted +
                           " next=" + issue["operator_action"] +
                           " readonly_command=" +
                           (issue["read_only_issue_command"] or "UNAVAILABLE"))
