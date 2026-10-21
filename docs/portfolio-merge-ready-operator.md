@@ -31,7 +31,9 @@ selectie geen PR-koppeling is gevonden. Iedere kaart toont:
 
 - de canonieke GitHub-issuelink, prioriteit en oorspronkelijke titel;
 - directe links naar geselecteerde bestaande kandidaat-PRs met hun
-  waargenomen status; de kaart noemt die links nooit een bewezen fix;
+  waargenomen status, afzonderlijke exacte-HEAD review-, CI- en
+  workflowstatus; geen enkele kaart noemt deze observaties een bewezen
+  fix of mergebevoegdheid;
 - één duidelijke volgende stap, met read-only CLI-opdracht om bij een
   bekende open issue ook **oudere** bestaande PRs te zoeken;
 - **eigenaarschap onbekend**, **main niet bewezen**, **live niet geverifieerd**.
