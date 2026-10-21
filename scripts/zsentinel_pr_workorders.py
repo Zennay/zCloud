@@ -201,6 +201,16 @@ def collect_workorders(board):
         elif (history.get("comparison_status") !=
               "one_or_both_gate_observations_absent" or history["items"]):
             raise ValueError("invalid historical gate coverage")
+    if history is None:
+        history_status, previous_observed, history_interval = (
+            "not_requested", None, None)
+    else:
+        history_status = history["comparison_status"]
+        previous_observed = _timestamp(history["previous_observed_at_utc"])
+        history_interval = history["elapsed_seconds"]
+        if (type(history_interval) is not int or
+                not 0 <= history_interval <= 7 * 86400):
+            raise ValueError("invalid bounded historical time interval")
     cards, seen = [], set()
     for item in desk["items"]:
         if (type(item) is not dict or item.get("merge_authorized") is not False
@@ -424,6 +434,9 @@ def collect_workorders(board):
         "project_set": list(project_ids), "items": cards,
         "source_observation_stale": source_stale,
         "source_freshness_budget_seconds": SOURCE_FRESHNESS_SECONDS,
+        "historical_comparison_status": history_status,
+        "previous_source_observed_at_utc": previous_observed,
+        "historical_observation_interval_seconds": history_interval,
         "selection_is_not_full_open_pr_backlog":
             desk["source_not_a_complete_pr_inventory"],
         "source": "bounded_read_only_github_pr_and_gate_observations",
