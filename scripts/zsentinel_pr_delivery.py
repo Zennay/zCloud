@@ -16,7 +16,8 @@ from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
-from zsentinel_product_issue_inbox import ROOT, bounded_get, canonical_projects, GithubAdmissionError
+from zsentinel_product_issue_inbox import (ROOT, bounded_get, canonical_projects,
+                                           GithubAdmissionError, explicit_qa_only_pr)
 
 SHA = re.compile(r"^[a-f0-9]{40}$")
 OWNER_REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
@@ -107,23 +108,10 @@ def discover_open_prs(registry, selected_projects, token=None, limit=MAX_PRS,
                 seen.add(number)
                 if pr.get("state") != "open" or (pid, number) in blocked:
                     continue
-                # A flying product fixer must not route explicit QA-only work
-                # ahead of implementation. The branch prefix, title prefix
-                # and structured labels are evidence; a generic "CI" title
-                # alone is NOT proof of QA-only work (release CI may be P0).
-                labels = pr.get("labels")
-                qa_labels = (isinstance(labels, list) and any(
-                    isinstance(label, dict) and label.get("name") in (
-                        "quality-validation", "qa-validation", "qa-only")
-                    for label in labels[:30]))
-                head = pr.get("head")
-                qa_branch = (isinstance(head, dict)
-                             and isinstance(head.get("ref"), str)
-                             and head["ref"].lower().startswith(("qa/", "test/", "tests/")))
-                qa_title = bool(re.match(
-                    r"^(?:test|tests|qa|quality[-_ ]validation)(?:\b|\s*\()",
-                    title.strip(), flags=re.IGNORECASE))
-                if qa_labels or qa_branch or qa_title:
+                # Use the exact same product-delivery eligibility rule as
+                # the live issue inbox. A QA-labeled branch must not re-enter
+                # the merge-first desk merely via another PR discovery view.
+                if explicit_qa_only_pr(pr):
                     excluded_qa_only += 1
                     continue
                 # Only explicit title labels affect ranking. No invented P0.
