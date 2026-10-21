@@ -542,9 +542,11 @@ def render_html(bundle):
                      "meer open PRs en bestandsbotsingen mogelijk.</p>")
     if bundle["items"]:
         change_labels = {
-            "changed_two_snapshots": "Wijziging in twee bronopnames",
+            "changed_gate_receipt": "Gatebewijs gewijzigd bij dezelfde HEAD",
+            "changed_or_uncertain_head": "HEAD veranderd of bron onzeker",
+            "incomplete_gate_source": "Vergelijking onvolledig",
+            "newly_selected_not_new_pr": "Nieuw in selectie, niet bewezen nieuwe PR",
             "unchanged_two_snapshots": "Zelfde HEAD/gates in twee opnames",
-            "source_gap": "Vergelijkingsbron ontbreekt",
             "not_compared": "Geen historische vergelijking",
         }
         counts = {key: 0 for key in change_labels}
@@ -587,12 +589,7 @@ def render_html(bundle):
              else "HEAD vastgepind bij recente bronopname") +
             "</span> · rang " + e(card["rank"]) + "</p>",
             "<p><strong>Vergelijking:</strong> " +
-            e({
-                "changed_two_snapshots": "Nieuwe afwijking sinds vorige bronopname",
-                "unchanged_two_snapshots": "Geen HEAD/gate-wijziging tussen twee opnames",
-                "source_gap": "Vorige of huidige vergelijkingsbron ontbreekt",
-                "not_compared": "Nog geen bronvergelijking",
-            }[card["change_since_previous_observation"]]) +
+            e(card["historical_change_label"]) +
             (" · <strong>Ongewijzigde HOLD: laat liggen tot nieuw bewijs</strong>"
              if card["repeat_hold_deferred"] else "") +
             "</p>",
@@ -715,8 +712,9 @@ def render_markdown(bundle):
     if bundle["selection_is_not_full_open_pr_backlog"]:
         lines.append("**ONVOLLEDIGE SELECTIE:** overige open PRs/botsingen onbekend.\n")
     change_counts = {
-        "changed_two_snapshots": 0, "unchanged_two_snapshots": 0,
-        "source_gap": 0, "not_compared": 0,
+        "changed_gate_receipt": 0, "changed_or_uncertain_head": 0,
+        "incomplete_gate_source": 0, "newly_selected_not_new_pr": 0,
+        "unchanged_two_snapshots": 0, "not_compared": 0,
     }
     for card in bundle["items"]:
         state = card["change_since_previous_observation"]
@@ -725,10 +723,12 @@ def render_markdown(bundle):
         change_counts[state] += 1
     lines += [
         "## Veranderingen sinds voorgaande PR-opname",
-        "Bronverandering: " + str(change_counts["changed_two_snapshots"]) +
-        " · zelfde HEAD/gates: " +
+        "Gatebewijs gewijzigd: " + str(change_counts["changed_gate_receipt"]) +
+        " · HEAD onzeker: " + str(change_counts["changed_or_uncertain_head"]) +
+        " · onvolledige gatebron: " + str(change_counts["incomplete_gate_source"]) +
+        " · nieuw geselecteerd: " + str(change_counts["newly_selected_not_new_pr"]) +
+        " · ongewijzigd in twee opnames: " +
         str(change_counts["unchanged_two_snapshots"]) +
-        " · bron ontbreekt: " + str(change_counts["source_gap"]) +
         " · niet vergeleken: " + str(change_counts["not_compared"]),
         "Twee momentopnames, geen doorlopend toezicht of CI-/reviewvrijgave.", "",
     ]
@@ -741,11 +741,13 @@ def render_markdown(bundle):
             "**Eerstvolgende menselijke actie:** " + card["human_next_step"],
             "**Categorie:** " + card["category"],
             "**Wijziging sinds vorige opname:** " +
-            card["change_since_previous_observation"] +
+            card["historical_change_label"] +
             (" · HOLD pas herbeoordelen bij nieuw bewijs"
              if card["repeat_hold_deferred"] else "") +
-            (" · NIEUW BRONBEWIJS"
-             if card["new_evidence_since_previous_sample"] else ""),
+            (" · herbeoordelen; geen bewezen wijziging"
+             if card["change_since_previous_observation"] in (
+                 "changed_or_uncertain_head", "incomplete_gate_source",
+                 "newly_selected_not_new_pr") else ""),
             "**Exact PR HEAD:** `" + (card["head_sha"] or "ONBEKEND") + "`",
             "**Exact doelbranchbasis:** `" + (card["base_sha"] or "ONBEKEND") + "`",
             "**Bestandsdiff:** " + card["files_url"],
