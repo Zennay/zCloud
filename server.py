@@ -3046,7 +3046,10 @@ def _portfolio_operator_project_fair_locked(c, rows, quota, where_sql, order_sql
     list. No queue status, priority, lease or claim is changed.
     """
     selected=list(rows[:quota])
-    if not selected:
+    # The SQL LIMIT quota+1 is already an exact full observation when it
+    # returns <=quota rows. No project has been omitted in that category,
+    # so extra DISTINCT/per-project SQL scans add no operator information.
+    if len(rows)<=quota:
         return selected
     first_by_project={}
     for row in selected:
