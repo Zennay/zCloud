@@ -216,6 +216,7 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
             # refuse extra GETs or invented exact-head/review evidence.
             item["coverage"] = "not_queried_after_auth_or_rate_limit"
             item["provider_admission"] = skip_provider_denial
+            item["source_gap"] = "upstream_github_provider_denied"
             item["next_step"] = "verify_pr_source_with_owner"
             items.append(item)
             continue
