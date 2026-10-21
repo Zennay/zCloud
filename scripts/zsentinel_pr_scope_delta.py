@@ -106,6 +106,55 @@ def _pairs(view, repo):
     return pairs
 
 
+def _scope_path(value):
+    if (type(value) is not str or not 1 <= len(value) <= 180
+            or value.startswith("/") or "\\\\" in value or "//" in value
+            or any(part in ("", ".", "..") for part in value.split("/"))
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+        raise ValueError("scope conflict path invalid")
+    return value
+
+
+def _scope_pairs(view, repo):
+    """Return optional path-pair identities; None means a pre-feature snapshot."""
+    rows = view.get("shown_path_scope_collision_pairs")
+    if rows is None:
+        return None
+    if type(rows) is not list or len(rows) > 80:
+        raise ValueError("scope collision source invalid")
+    result = set()
+    allowed = {"left_file_conflicts_with_right_descendant",
+               "right_file_conflicts_with_left_descendant"}
+    for row in rows:
+        if type(row) is not dict:
+            raise ValueError("scope collision row invalid")
+        left, right = row.get("left"), row.get("right")
+        if type(left) is not dict or type(right) is not dict:
+            raise ValueError("scope collision PR invalid")
+        a, b = left.get("number"), right.get("number")
+        if (type(a) is not int or type(b) is not int or not 0 < a < b < 100000000
+                or left.get("url") != f"https://github.com/{repo}/pull/{a}"
+                or right.get("url") != f"https://github.com/{repo}/pull/{b}"):
+            raise ValueError("scope collision source URL mismatch")
+        conflicts = row.get("path_conflicts")
+        count = row.get("path_conflict_count_observed")
+        if (type(conflicts) is not list or len(conflicts) > 24
+                or type(count) is not int or count < len(conflicts)
+                or row.get("path_conflicts_truncated") not in (True, False)):
+            raise ValueError("scope collision count or preview invalid")
+        if row["path_conflicts_truncated"] != (count > len(conflicts)):
+            raise ValueError("scope collision preview completeness mismatch")
+        for item in conflicts:
+            if type(item) is not dict or item.get("relation") not in allowed:
+                raise ValueError("scope collision relation invalid")
+            key = (a, b, _scope_path(item.get("left_path")),
+                   _scope_path(item.get("right_path")), item["relation"])
+            if key in result:
+                raise ValueError("duplicate scope collision path pair")
+            result.add(key)
+    return result
+
+
 def _connected_pr_sets(pairs):
     """Compute complete observed pair components, not claim/merge rights."""
     adjacency = {}
@@ -184,6 +233,12 @@ def compare(previous, current):
         new_seen_pairs = _pairs(new, repo) if new_stable else set()
         old_pairs = old_seen_pairs if both_complete else set()
         new_pairs = new_seen_pairs if both_complete else set()
+        old_seen_scope = _scope_pairs(old, repo) if old_stable else None
+        new_seen_scope = _scope_pairs(new, repo) if new_stable else None
+        scope_comparable = (both_complete and old_seen_scope is not None
+                            and new_seen_scope is not None)
+        old_scope_pairs = old_seen_scope if scope_comparable else set()
+        new_scope_pairs = new_seen_scope if scope_comparable else set()
         old_clusters = set(_connected_pr_sets(old_pairs))
         new_clusters = set(_connected_pr_sets(new_pairs))
         def linked_groups(groups):
@@ -197,6 +252,18 @@ def compare(previous, current):
             return [{"left": f"https://github.com/{repo}/pull/{a}",
                      "right": f"https://github.com/{repo}/pull/{b}"}
                     for a, b in sorted(pairs)[:40]]
+        def describe_scope(pairs):
+            return [{"left": f"https://github.com/{repo}/pull/{a}",
+                     "right": f"https://github.com/{repo}/pull/{b}",
+                     "left_path": left_path, "right_path": right_path,
+                     "relation": relation}
+                    for a, b, left_path, right_path, relation in sorted(pairs)[:40]]
+        current_scope_delta = (new_seen_scope - old_seen_scope
+                               if stable and old_seen_scope is not None
+                               and new_seen_scope is not None else set())
+        previous_scope_delta = (old_seen_scope - new_seen_scope
+                                if stable and old_seen_scope is not None
+                                and new_seen_scope is not None else set())
         result.append({
             "project": project, "repository": repo,
             "both_snapshots_stable": stable,
@@ -210,6 +277,18 @@ def compare(previous, current):
                  for n in sorted(old_pins.keys() - new_pins.keys())] if stable else []),
             "added_collision_pairs_if_complete": describe(new_pairs - old_pairs),
             "disappeared_collision_pairs_if_complete": describe(old_pairs - new_pairs),
+            "scope_conflicts_comparable_if_complete": scope_comparable,
+            "added_scope_conflicts_if_complete": describe_scope(new_scope_pairs - old_scope_pairs),
+            "disappeared_scope_conflicts_if_complete": describe_scope(old_scope_pairs - new_scope_pairs),
+            "scope_conflicts_only_in_current_sample_not_proven_new": (
+                describe_scope(current_scope_delta) if stable and not scope_comparable else []),
+            "scope_conflicts_only_in_previous_sample_not_proven_resolved": (
+                describe_scope(previous_scope_delta) if stable and not scope_comparable else []),
+            "scope_conflict_sample_preview_truncated": (
+                stable and not scope_comparable and
+                (len(current_scope_delta) > 40 or len(previous_scope_delta) > 40)),
+            "scope_conflict_comparison_unavailable": (
+                old_seen_scope is None or new_seen_scope is None),
             "connected_cluster_comparison_complete": both_complete,
             "current_connected_clusters_if_complete": (
                 linked_groups(new_clusters) if both_complete else []),
@@ -276,6 +355,22 @@ def render_delta(delta, format="text"):
                                  " (NIET bewezen opgelost)</li>")
                 if row["overlap_sample_pair_preview_truncated"]:
                     links.append("<li>Meer historische overlapparen buiten zichtbare limiet.</li>")
+                for conflict in row.get("scope_conflicts_only_in_current_sample_not_proven_new", []):
+                    links.append("<li>Alleen huidige bestand/map-steekproef: " +
+                                 link(conflict["left"]) + " · <code>" + escape(conflict["left_path"]) +
+                                 "</code> ↔ " + link(conflict["right"]) + " · <code>" +
+                                 escape(conflict["right_path"]) + "</code> [" +
+                                 escape(conflict["relation"]) + "] (niet bewezen nieuw)</li>")
+                for conflict in row.get("scope_conflicts_only_in_previous_sample_not_proven_resolved", []):
+                    links.append("<li>Alleen eerdere bestand/map-steekproef: " +
+                                 link(conflict["left"]) + " · <code>" + escape(conflict["left_path"]) +
+                                 "</code> ↔ " + link(conflict["right"]) + " · <code>" +
+                                 escape(conflict["right_path"]) + "</code> [" +
+                                 escape(conflict["relation"]) + "] (niet bewezen opgelost)</li>")
+                if row.get("scope_conflict_sample_preview_truncated"):
+                    links.append("<li>Meer bestand/map-ancestorparen buiten zichtbare limiet.</li>")
+                if row.get("scope_conflict_comparison_unavailable"):
+                    links.append("<li>Bestand/map-historie onbekend: minstens één snapshot dateert van vóór deze bronvelden.</li>")
             if row["complete_open_pr_inventory_comparable"]:
                 for pair in row["added_collision_pairs_if_complete"]:
                     links.append("<li>Nieuwe waargenomen bestandsoverlap: " +
@@ -284,6 +379,18 @@ def render_delta(delta, format="text"):
                     links.append("<li>Niet meer waargenomen overlap: " +
                                  link(pair["left"]) + " ↔ " + link(pair["right"]) +
                                  " (geen bewijs van geslaagde merge of release)</li>")
+                for conflict in row.get("added_scope_conflicts_if_complete", []):
+                    links.append("<li>Nieuwe bestand/map-ancestorrelatie: " +
+                                 link(conflict["left"]) + " · <code>" + escape(conflict["left_path"]) +
+                                 "</code> ↔ " + link(conflict["right"]) + " · <code>" +
+                                 escape(conflict["right_path"]) + "</code> [" +
+                                 escape(conflict["relation"]) + "]</li>")
+                for conflict in row.get("disappeared_scope_conflicts_if_complete", []):
+                    links.append("<li>Niet meer waargenomen bestand/map-ancestorrelatie: " +
+                                 link(conflict["left"]) + " · <code>" + escape(conflict["left_path"]) +
+                                 "</code> ↔ " + link(conflict["right"]) + " · <code>" +
+                                 escape(conflict["right_path"]) + "</code> [" +
+                                 escape(conflict["relation"]) + "] (geen mergebewijs)</li>")
             if row["connected_cluster_comparison_complete"]:
                 for group in row["connected_clusters_only_in_current_full_inventory"]:
                     member_links = " · ".join(link(url) for url in group["pr_urls"])
@@ -324,6 +431,10 @@ def render_delta(delta, format="text"):
                      str(len(row["seen_only_in_previous_sample_not_proven_closed"])) +
                      ", nieuwe overlapparen " +
                      str(len(row["added_collision_pairs_if_complete"])) +
+                     ", nieuwe bestand/map-relaties " +
+                     str(len(row.get("added_scope_conflicts_if_complete", []))) +
+                     ", niet-meer-waargenomen bestand/map-relaties " +
+                     str(len(row.get("disappeared_scope_conflicts_if_complete", []))) +
                      ", niet-meer-geobserveerde overlapparen " +
                      str(len(row["disappeared_collision_pairs_if_complete"])) +
                      ", steekproef-only huidige overlapparen " +
@@ -366,6 +477,15 @@ def render_delta(delta, format="text"):
             for pair in row["disappeared_collision_pairs_if_complete"]:
                 lines.append("  Niet meer waargenomen overlap, GEEN merge-bewijs: " +
                              pair["left"] + " ↔ " + pair["right"])
+            for conflict in row.get("added_scope_conflicts_if_complete", []):
+                lines.append("  Nieuwe bestand/map-relatie: " + conflict["left"] +
+                             " " + conflict["left_path"] + " ↔ " + conflict["right"] +
+                             " " + conflict["right_path"] + " [" + conflict["relation"] + "]")
+            for conflict in row.get("disappeared_scope_conflicts_if_complete", []):
+                lines.append("  Niet meer waargenomen bestand/map-relatie (geen mergebewijs): " +
+                             conflict["left"] + " " + conflict["left_path"] + " ↔ " +
+                             conflict["right"] + " " + conflict["right_path"] +
+                             " [" + conflict["relation"] + "]")
     if format == "markdown":
         return "\n".join(["## " + lines[0], ""] + ["- " + line for line in lines[1:]]) + "\n"
     return "\n".join(lines)
