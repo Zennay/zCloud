@@ -1272,6 +1272,41 @@ def private_action_briefing(decision, source):
                          "Eerdere aantallen zijn geen huidige taakbezetting.")
     else:
         lines.append("- Queue-/leasebron ONBEKEND. Geen vrije scope afleiden.")
+    blocked = q.get("blocked_queue") if type(q) is dict else None
+    lines += ["", "## 6. Apart status=blocked · P0 eerst"]
+    if type(blocked) is dict and blocked.get("coverage") in ("complete", "partial", "stale"):
+        blocked_at = _stamp(blocked["observed_at"])
+        observed_count = blocked["total_items_observed"]
+        if type(observed_count) is not int or not 0 <= observed_count <= 10**9:
+            raise ValueError("invalid blocked queue count for private operator")
+        fresh_blocked = (blocked["coverage"] in ("complete", "partial") and
+                         blocked.get("source_coverage") == "current" and
+                         (datetime.now(timezone.utc) -
+                          datetime.fromisoformat(blocked_at)) <= timedelta(minutes=5))
+        lines.append("- " + ("BEGRENZDE ACTUELE BRON" if fresh_blocked else
+                             "HISTORISCHE OF ONVOLLEDIGE BRON · EIGENAAR HERCONTROLEERT") +
+                     " · " + str(observed_count) +
+                     " eerder waargenomen geblokkeerde werkregels" +
+                     " · bronmoment " + blocked_at +
+                     " · dekking " + md(blocked["coverage"], 20))
+        if fresh_blocked:
+            groups = sorted(blocked["project_groups"], key=lambda row: (
+                ("P0", "P1", "P2", "P3").index(row["priority"]),
+                -row["items"], row["project_id"]))
+            for row in groups[:20]:
+                lines.append("  - " + md(row["priority"], 5) + " · " +
+                             md(row["project_id"], 80) + ": " + str(row["items"]) +
+                             " status=blocked; eigenaar inspecteert huidige blocker.")
+            if len(groups) > 20 or blocked["coverage"] == "partial":
+                lines.append("  - BRON ONVOLLEDIG/AFGEKAPT: overige blockers onbekend.")
+        else:
+            lines.append("  - EIGENAARACTIE: ververs geblokkeerde wachtrijbron; "
+                         "oude aggregaten bewijzen geen actuele P0-taak.")
+        lines.append("- Status=blocked is geen bewezen technische fout, "
+                     "leasevrijgave of toestemming tot workflowretry.")
+    else:
+        lines.append("- Blocked-queuebron ONBEKEND; afwezigheid bewijst geen oplossing.")
+    lines += ["", "## 7. Huidige bronincidenten"]
     for item in source["incidents"][:30]:
         lines.append("- " + md(item["priority"], 5) + " · " +
                      md(item["project"], 80) + " · " +
