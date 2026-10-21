@@ -433,7 +433,10 @@ timestamp and the six-hour freshness limit in JSON, text/Markdown and HTML.
 When the newer snapshot is older than six hours, the report remains useful as
 **historical trend evidence**, but the text and HTML explicitly warn that it is
 not a current queue observation and instruct the operator to refresh the
-read-only source before making operational conclusions. The stale flag does not
+read-only source before making operational conclusions. The machine-readable
+`stage` becomes `stale_current_snapshot_requires_refresh`; the original event
+classification is retained separately as `observed_stage` so a historical
+increase cannot be mistaken for a current incident. The stale flag does not
 prove a retry, failed job, released lease or available worker. The live
 portfolio overview still compares its fresh read-only queue observation against
 the prior saved snapshot. No retry, queue/claim write, lease release, restart,
