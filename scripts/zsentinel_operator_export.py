@@ -72,27 +72,61 @@ formeel zijn afgerond. Een vergelijking kan optioneel uitsluitend in een NIEUW .
 """
 
 
-def _read_source(source_dir, name):
-    path = source_dir / name
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    if not hasattr(os, "O_NOFOLLOW"):
-        raise ValueError("safe nofollow source access is required")
-    fd = os.open(path, flags)
+def _stable_file_identity(meta):
+    return (meta.st_dev, meta.st_ino, meta.st_mode, meta.st_size,
+            meta.st_mtime_ns, meta.st_ctime_ns)
+
+
+def _read_source(source_dir_fd, name):
+    """Read through one pinned source directory, reject changed/replaced files."""
+    if name not in SOURCES:
+        raise ValueError("unexpected source module")
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW |
+                 getattr(os, "O_CLOEXEC", 0), dir_fd=source_dir_fd)
     try:
-        meta = os.fstat(fd)
-        if (not stat.S_ISREG(meta.st_mode) or
-                meta.st_size <= 0 or meta.st_size > MAX_SOURCE_BYTES):
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or
+                before.st_size <= 0 or before.st_size > MAX_SOURCE_BYTES):
             raise ValueError("bounded regular Python source required")
         with os.fdopen(fd, "rb", closefd=False) as src:
             data = src.read(MAX_SOURCE_BYTES + 1)
-        if not data or len(data) > MAX_SOURCE_BYTES:
-            raise ValueError("source size not allowed")
-        # Source is UTF-8 Python, not arbitrary executable bytes.
+        after = os.fstat(fd)
+        named = os.stat(name, dir_fd=source_dir_fd, follow_symlinks=False)
+        if (_stable_file_identity(before) != _stable_file_identity(after)
+                or _stable_file_identity(after) != _stable_file_identity(named)
+                or not data or len(data) != before.st_size):
+            raise ValueError("source module changed while creating operator snapshot")
         data.decode("utf-8")
         return data
     finally:
         os.close(fd)
 
+
+def read_local_source(source_dir):
+    """A bounded checkout observation, NOT a Git/CI/installed-source receipt."""
+    if not isinstance(source_dir, Path):
+        raise ValueError("expected source directory")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("safe nofollow source access is required")
+    directory = os.open(source_dir, os.O_RDONLY | os.O_DIRECTORY |
+                        os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+    try:
+        before = os.fstat(directory)
+        if (not stat.S_ISDIR(before.st_mode)
+                or before.st_uid != os.geteuid()
+                or stat.S_IMODE(before.st_mode) & 0o022):
+            raise ValueError("source folder must be owner-controlled")
+        initial = {name: _read_source(directory, name) for name in SOURCES}
+        # Re-read the entire set before constructing an owner handoff. This
+        # is bounded verification of a stable local observation, NOT an
+        # atomic Git checkout snapshot or signed repository provenance.
+        again = {name: _read_source(directory, name) for name in SOURCES}
+        named = os.stat(source_dir, follow_symlinks=False)
+        if initial != again or _stable_file_identity(before) != _stable_file_identity(named):
+            raise ValueError("source directory or modules changed during observation")
+        return initial
+    finally:
+        os.close(directory)
 
 def _write_new(dir_fd, name, content):
     if "/" in name or "\\" in name or name in ("", ".", ".."):
@@ -116,9 +150,7 @@ def export(source_dir, output_dir):
     """Materialize a new private folder containing one coherent source set."""
     if not isinstance(source_dir, Path) or not isinstance(output_dir, Path):
         raise ValueError("expected source and target directory")
-    if not source_dir.is_dir() or source_dir.is_symlink():
-        raise ValueError("source must be an existing non-symlink folder")
-    files = {name: _read_source(source_dir, name) for name in SOURCES}
+    files = read_local_source(source_dir)
     manifest = {
         "schema": MANIFEST_SCHEMA,
         "files": {name: {
