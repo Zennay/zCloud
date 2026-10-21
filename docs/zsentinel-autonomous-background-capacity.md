@@ -1,3 +1,46 @@
+## 21 oktober · systeem- én gebruikersmanager GitHub runnerherstel
+
+De herstelwerkbank las eerder alleen `systemctl list-units` zonder `--user`.
+Een runner die als user-service draait kon daardoor onzichtbaar zijn, zelfs
+als het P0-probleem juist de niet-werkende GitHub listener in die scope is.
+
+**Nieuw op dezelfde product-PR:** de read-only `runner_inventory()` vraagt
+twee onafhankelijke bronnen op: `systemctl ... list-units` (system) en
+`systemctl --user ... list-units` (user). Ook het bekende foutmarkersymbool
+voor failed-services wordt vóór naamvalidatie weggehaald; de servicefout
+blijft zichtbaar. Er is geen daemon-reload, restart, queue-writer, API-call
+of GitHub-workflowdispatch. Per scope maximaal twintig services en
+maximaal 20 KB tekst, met een korte (max. 8 s) bron-timeout.
+
+De bestaande `runner_units`-velden bewaren hun historische system-scope
+betekenis. Drie nieuwe velden (`user_runner_units_observed`,
+`user_runner_units`, `user_runner_units_truncated`) bewaren de onafhankelijke
+gebruikersbron. Eenzelfde servicenummer/naam in beide scopes is **niet**
+dezelfde service. Oude privébonnen zonder user-velden zijn **ONBEKEND**,
+niet nul of hersteld. Per-scope bronlimieten en ontbrekende managerverbinding
+blijven zichtbaar.
+
+De privé-T0/T1 runnerbon levert nu ook afzonderlijke `user_transitions`
+en `complete_user_service_coverage`, met scoped, gebonden incidentreferenties
+die niet met system-incidenten kunnen botsen. Historische HTML, huidige
+offline herstelwerkbank, JSON-eigenaarinbox en de handmatige Markdown-overdracht
+tonen gebruikersscope afzonderlijk. P1-advies telt gefaalde/geïnactiveerde
+system- en user-services apart; bronverlies wordt niet als gezondheid gezien.
+
+**Gebruik (alleen lezen):**
+
+```bash
+python3 scripts/zsentinel_background_priority.py --preview --runners --human
+python3 scripts/zsentinel_runner_report.py --format json --output /EIGEN-PRIVATE-MAP/NIEUW.json
+python3 scripts/zsentinel_runner_report.py --format html --output /EIGEN-PRIVATE-MAP/NIEUW.html
+```
+
+De uitvoer is een momentopname van lokale Linux-servicebronnen.
+`active` bewijst niet dat GitHub jobs aanneemt; `failed→active` bewijst
+niet dat CI draait, main gemerged is of productie hersteld is. Voor
+serviceherstart, schedulerinstellingen, claims en productie zijn altijd
+bevoegde runtime-eigenaar, onafhankelijke review en exacte-head CI vereist.
+
 # zSentinel autonomous background capacity (20 Oct 2026)
 
 This source extends the existing Ubuntu user-sidecar without launching new workers. An
