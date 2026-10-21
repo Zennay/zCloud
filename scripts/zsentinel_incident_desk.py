@@ -1102,7 +1102,8 @@ def private_action_briefing(decision, source):
         lines.append("- Niet opgevraagd; P0/P1 issues en eigenaars ONBEKEND.")
     lines += ["", "## 3. GitHub run-/runnerroute · nooit autonoom herstarten"]
     live = decision.get("live_sources")
-    exact = live.get("github_jobs") if type(live) is dict else decision.get("live_github_read")
+    exact = (live["github_jobs"] if type(live) is dict and "github_jobs" in live
+             else decision.get("live_github_read"))
     jobs = exact.get("refreshed_projects", []) if type(exact) is dict else []
     if jobs:
         for row in jobs[:8]:
