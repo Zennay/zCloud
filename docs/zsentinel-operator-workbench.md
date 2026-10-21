@@ -3174,3 +3174,28 @@ De geobserveerde bronkaarten creëren geen review, actiebevoegdheid of
 claim. Vóór een daadwerkelijke PR-merge of herstelactie zijn nog steeds
 verse originele GitHub-/Notion-/queue-receipts en de bestaande
 verplichte gates vereist.
+
+
+### Oorspronkelijke bronintegriteit en ontbrekende archiefbatches
+
+De issuegerichte PR-historie toont nu ook in de gewone offline HTML het
+originele **reviewmanifest-SHA256** en **board-SHA256** per bronmoment, de
+vroegste/laatste opgenomen UTC-bronklok, de geselecteerde PR-kandidaten
+en alle door de archiefbron gemelde ontbrekende batchindexen. Deze gegevens
+zijn ingeklapt maar direct bereikbaar in het interactieve, scriptvrije
+`Herkomst van de originele bronbestanden`-gedeelte.
+
+Wanneer minstens één bron een ontbrekende batch noemt, waarschuwt het
+historieoverzicht daar expliciet voor. De JSON heeft
+`source_batches_missing_in_any_snapshot`; Markdown vermeldt de
+bronintegriteit per invoer en CSV draagt ook de originele manifest-hashes
+en ontbrekende-batchindexen. **Geen ontbrekende batch gemeld** betekent
+uitsluitend dat de opgeslagen dossiers dit niet melden; het is geen
+bewijs van complete of recente GitHub/Notion/CI-dekking.
+
+Hierdoor kunnen menselijke reviewers een uitgefilterde issue/PR-kaart
+terugvoeren op zijn originele privébron zonder verloren linkgegevens of
+onzichtbare steekproefgaten als afgeronde issues te presenteren. De
+bronbestanden worden niet gewijzigd. Deze functie is uitsluitend lokale,
+handmatige leesweergave en verleent geen claim, merge, deploy of
+runnerherstelfunctie.
