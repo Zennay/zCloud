@@ -15,6 +15,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 OUTCOMES = {
+    ("addon", "already-current"): (
+        "ALREADY_CURRENT_ON_DISK",
+        "Installed addon file already equals approved reviewed bytes; disk replacement was skipped.",
+        "An owner-approved safe reload can still be needed to activate those bytes in the running Firefox addon.",
+    ),
+    ("watchdog", "already-current"): (
+        "ALREADY_CURRENT_ON_DISK",
+        "Root-owned standalone watchdog already equals the approved executable bytes and mode; no install write was made.",
+        "No further write required. Runtime recovery is NOT independently verified by this observation.",
+    ),
     ("addon", "disk-installed"): (
         "INSTALLED_ON_DISK",
         "Approved add-on bytes atomically installed; running browser has NOT been verified or reloaded.",
