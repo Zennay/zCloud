@@ -291,6 +291,8 @@ def recommended_next_step(action, blockers, required_evidence):
         return "Refresh the original source observation and reevaluate; stale evidence cannot clear a HOLD."
     if codes & {"claim_not_clear", "claim_state_unknown"}:
         return "Ask the current owner to confirm or release the exact claim; do not preempt, reassign, or mutate the queue."
+    if "competing_incident_routes" in codes:
+        return "Ask the authorized owner to choose one recovery route for this incident before reviewing route-specific gates."
     if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
                 "main_state_not_open", "main_merge_unverified",
                 "branch_protection_not_satisfied", "independent_review_missing",
@@ -802,6 +804,9 @@ def evaluate_batch(data, max_age_minutes):
             if "incident_route_selection" not in report["required_evidence"]:
                 report["required_evidence"].append("incident_route_selection")
             report["decision"] = "HOLD"
+            report["recommended_next_step"] = recommended_next_step(
+                report["action"], report["blockers"], report["required_evidence"]
+            )
 
     workorders = _batch_workorders(results)
     # The incident desk is source-bound to this exact batch. It is a
@@ -1554,6 +1559,7 @@ def markdown_batch(batch):
             "",
             "- Proposed action: **" + report["action"] + "**",
             "- Decision: **" + report["decision"] + "**",
+            "- Recommended next step: " + report["recommended_next_step"],
             "- Source observation: " + report["observed_at_utc"],
             "- Source: <code>" + html.escape(report["source_url"], quote=True) + "</code>",
             "- Source age: " + str(report["source_age_seconds"]) + " seconds",
