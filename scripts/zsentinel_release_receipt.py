@@ -82,9 +82,9 @@ def main() -> int:
     lines = [
         "### zSentinel · manual release observation",
         "",
-        f"- **Component:** \`{args.component}\`",
-        f"- **Outcome:** \`{status}\`",
-        f"- **Exact workflow source:** \`{sha}\`",
+        f"- **Component:** `{args.component}`",
+        f"- **Outcome:** `{status}`",
+        f"- **Exact workflow source:** `{sha}`",
         f"- **GitHub run:** https://github.com/Zennay/zCloud/actions/runs/{run_id}",
         f"- **Observed at:** {timestamp}",
         f"- **Result:** {description}",
