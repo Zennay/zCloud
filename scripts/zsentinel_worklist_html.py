@@ -81,6 +81,7 @@ def render_html(board, max_rows=20):
                 or re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", row["project"]) is None
                 or type(row.get("title")) is not str
                 or not 1 <= len(row["title"]) <= 180
+                or type(row.get("category")) is not str
                 or row.get("category") not in LABELS
                 or LABELS[row["category"]] != row.get("category_nl")
                 or type(row.get("category_nl")) is not str
