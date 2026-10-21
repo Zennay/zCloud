@@ -248,6 +248,8 @@ def main():
                         help="optional create-only owner-private 0600 report; avoids printing private source details")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
+    parser.add_argument("--action-output", type=Path,
+                        help="create-only 0600 private .md merge-first owner briefing from same read-only decision")
     args = parser.parse_args()
     ledger_lock = None
     try:
@@ -262,6 +264,7 @@ def main():
             protected = (
                 Path(args.bundle), args.registry, args.state, args.queue_database,
                 args.worker_events_database, args.notion_claims_export, args.desk_output,
+                args.action_output,
             )
             if any(item is not None and args.output.resolve() == Path(item).resolve()
                    for item in protected):
@@ -295,10 +298,20 @@ def main():
             private_inputs = [
                 Path(args.bundle), args.registry, args.state, args.queue_database,
                 args.worker_events_database, args.notion_claims_export, args.output,
+                args.action_output,
             ]
             if any(item is not None and args.desk_output.resolve() == Path(item).resolve()
                    for item in private_inputs):
                 raise ValueError("desk-output must differ from every source, ledger and report path")
+        if args.action_output is not None:
+            if args.action_output.suffix != ".md":
+                raise ValueError("--action-output requires a new private .md path")
+            inputs = (Path(args.bundle), args.registry, args.state, args.queue_database,
+                      args.worker_events_database, args.notion_claims_export,
+                      args.output, args.desk_output)
+            if any(p is not None and args.action_output.resolve() == Path(p).resolve()
+                   for p in inputs):
+                raise ValueError("action-output cannot alias a source, ledger or report")
         if args.state is not None:
             ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
@@ -409,6 +422,10 @@ def main():
             rendered = (json.dumps(routed, sort_keys=True, indent=2)
                         if args.format == "json" else
                         operator_text(routed) + "\\nGitHub coverage: " + source["github_coverage"])
+        action_content = None
+        if args.action_output is not None:
+            from zsentinel_incident_desk import private_action_output
+            action_content = private_action_output(routed)
         if args.desk_output is not None:
             from zsentinel_incident_desk import write_private_html, review_html
             private_desk = rendered if args.format == "desk" else review_html(routed)
@@ -417,6 +434,9 @@ def main():
             from zsentinel_private_output import write_private_output
             output_format = "txt" if args.format == "text" else args.format
             write_private_output(args.output, rendered, output_format)
+        if action_content is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(args.action_output, action_content, "md")
         # A broken HTML/source cannot silently acknowledge incident history.
         if args.state:
             write_json_atomic(args.state, updated)
