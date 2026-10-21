@@ -3532,9 +3532,12 @@ page. This is independent of the existing reviewed JSON and Markdown
 single-issue exports. No local notes, contact labels, other issue cards or
 credentials are carried over.
 
-**Portfolio issue worklist:** keep the normal saved board filters for project,
-priority, search, historical PR relationship and manual status, then select
-**Preview source-only printable worklist**. The separate owner-oriented page
+**Portfolio issue worklist:** use the saved board's **source-only**
+filters for project, priority, search, historical PR relationship and original
+source comparison, then select **Preview source-only printable worklist**.
+Local disposition and follow-up-status filters are deliberately ignored for
+this export, preventing the mere inclusion or omission of an issue from
+revealing private operator actions to the recipient. The separate owner-oriented page
 lists *only* matching saved issues, ordered P0 first, shows original issue and
 existing-PR URLs, original archive SHA256s and missing-batch warnings, observed
 PR HEAD and gate labels, and the required live approval checks. It reports
