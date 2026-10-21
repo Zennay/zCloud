@@ -1295,3 +1295,21 @@ daarom expliciet adviserend, niet autoriserend.
 
 Dit staat op de bestaande PR #1536; het is geen gevalideerde
 VPS-runtimewijziging en geen productie-merge.
+
+
+### 21 oktober · Bronbereik apart van getoonde operatorwerkorders
+
+De privé HTML- en Markdown-export onderscheiden nu expliciet
+`source_rows_visible` (de SQL-bron, hoogstens 2048 records),
+`active_claimed_running_verifying_visible`,
+`queued_rows_visible` en de **kleinere** geselecteerde
+`operator_workorder_inbox`. Daarmee staat een kaartentelling van
+bijvoorbeeld acht werkorders niet meer voor "slechts acht taken in
+de hele wachtrij". Als het ouderwetse, volledige API-formaat
+geen compacte brongegevens bevat, of de broncijfers intern
+tegenstrijdig zijn, meldt de uitvoer de brondekking als
+**onbekend** in plaats van een totaal te raden.
+
+Deze weergave verandert geen brontellingen, taskstatus of autorisatie.
+De snapshot-vergelijking blijft slechts een handoff van
+bronwaarnemingen, zonder live herstelbewijs.
