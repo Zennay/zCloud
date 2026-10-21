@@ -2942,6 +2942,8 @@ function zSentinelRetryPanel(){
     (ZSENTINEL_RETRY_BUSY?'Reading VPS…':'Read VPS queue')+'</button>'+
     '<button type="button" class="runner-action runner-action-secondary" data-retry-handoff '+
     (!snap&&!trend?'disabled':'')+'>Export retry handoff .md</button>'+
+    '<button type="button" class="runner-action runner-action-secondary" data-retry-workorders-json '+
+    (!snap?'disabled':'')+'>Export owner workorders .json</button>'+
     '<button type="button" class="runner-action runner-action-secondary" data-retry-trend-json '+
     (!trend?'disabled':'')+'>Export offline trend .json</button>'+
     '<button type="button" class="runner-action runner-action-secondary" data-retry-snapshot-json '+
@@ -3108,6 +3110,44 @@ function exportRetryTrendJson(){
   document.body.appendChild(link);link.click();link.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
+function exportRetryWorkordersJson(){
+  // Bounded human handoff of already-validated groups; no raw queue identifiers.
+  const snap=ZSENTINEL_RETRY_SNAPSHOT;
+  if(!snap)return;
+  const selected=filter||null, covered=!selected||snap.scope.project==='all'
+    ||snap.scope.project===selected;
+  const rows=retryOwnerWorkorders(snap,selected);
+  const report={
+    schema:'zsentinel-queue-owner-workorders-v1',
+    generated_at_utc:new Date().toISOString(),observed_at_utc:snap.observedAt,
+    source_scope:{...snap.scope},selected_project:selected||'all',
+    source_covers_selection:covered,source_sample_complete:snap.complete,
+    source_stale:Date.now()-Date.parse(snap.observedAt)>6*3600000,
+    workorder_count:rows.length,workorders_truncated:rows.length>64,
+    workorders:rows.slice(0,64).map(row=>({
+      project:row.project,priority:row.priority,
+      observed_high_attempt_items:row.high,
+      observed_owned_high_attempt_items:row.owned,
+      observed_queued_high_attempt_items:row.queued,
+      expired_active_lease_rows_in_group:row.expired,
+      problem:row.problem,action:row.action,status:row.status,
+      coverage:row.coverage,manual_review_required:true,
+      owner_identity_verified:false,
+    })),
+    claim_attempts_are_not_failures:true,active_claims_independently_verified:false,
+    current_github_notion_ownership_verified:false,
+    authorizes_retry:false,authorizes_claim:false,authorizes_merge:false,
+    authorizes_deploy:false,actions_executed:false,
+  };
+  const blob=new Blob([JSON.stringify(report,null,2)+'\n'],
+    {type:'application/json;charset=utf-8'});
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download='zsentinel-owner-workorders-'+
+    (selected||'portfolio')+'-'+snap.observedAt.slice(0,10)+'.json';
+  document.body.appendChild(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
 function exportRetryHandoff(){
   if(!ZSENTINEL_RETRY_SNAPSHOT&&!ZSENTINEL_RETRY_TREND)return;
   const snap=ZSENTINEL_RETRY_SNAPSHOT,trend=ZSENTINEL_RETRY_TREND,known=retryKnownProjects();
@@ -3536,7 +3576,7 @@ document.addEventListener('drop',async e=>{const target=e.target.closest('[data-
 document.addEventListener('dragend',()=>{document.querySelectorAll('.dragging,.drag-over').forEach(el=>el.classList.remove('dragging','drag-over'));draggedProject=null});
 document.addEventListener('click',async e=>{const timelineRead=e.target.closest('[data-activity-timeline-source-read]');if(timelineRead){e.preventDefault();if(filter)void readZSentinelSources();else void readZSentinelAllProjects();return}const activitySource=e.target.closest('[data-activity-source]');if(activitySource){e.preventDefault();const next=activitySource.dataset.activitySource;if(['all','local','github'].includes(next)){COMBINED_ACTIVITY_SOURCE=next;render();}return}const activityTimelineExport=e.target.closest('[data-activity-timeline-export]');if(activityTimelineExport){e.preventDefault();exportCombinedActivityTimeline();return}const expandItems=e.target.closest('[data-retry-items-expand]');if(expandItems){e.preventDefault();ZSENTINEL_RETRY_EXPANDED_ITEMS=!ZSENTINEL_RETRY_EXPANDED_ITEMS;render();return}
 const expandMovement=e.target.closest('[data-retry-movement-expand]');if(expandMovement){e.preventDefault();ZSENTINEL_RETRY_EXPANDED_MOVEMENT=!ZSENTINEL_RETRY_EXPANDED_MOVEMENT;render();return}
-const retryVps=e.target.closest('[data-retry-vps-read]');if(retryVps){e.preventDefault();void readVpsRetryIncidents();return}const retryClear=e.target.closest('[data-retry-clear]');if(retryClear){e.preventDefault();ZSENTINEL_RETRY_SNAPSHOT=null;ZSENTINEL_RETRY_TREND=null;ZSENTINEL_RETRY_MESSAGE='';ZSENTINEL_RETRY_EXPANDED_ITEMS=false;ZSENTINEL_RETRY_EXPANDED_MOVEMENT=false;render();return}const retryExport=e.target.closest('[data-retry-handoff]');if(retryExport){e.preventDefault();exportRetryHandoff();return}const retryTrendJson=e.target.closest('[data-retry-trend-json]');if(retryTrendJson){e.preventDefault();exportRetryTrendJson();return}const retrySnapshotJson=e.target.closest('[data-retry-snapshot-json]');if(retrySnapshotJson){e.preventDefault();exportRetrySnapshotJson();return}const vpsIssuesRead=e.target.closest('[data-vps-issues-read]');if(vpsIssuesRead){e.preventDefault();void readVpsProductIssues();return}const vpsGithubRead=e.target.closest('[data-vps-github-refresh]');if(vpsGithubRead){e.preventDefault();void readVpsGitHubActivity();return}const branchImport=e.target.closest('[data-zsentinel-branch-open]');if(branchImport){e.preventDefault();document.getElementById('zSentinelBranchFile')?.click();return}const branchClear=e.target.closest('[data-zsentinel-branch-clear]');if(branchClear){e.preventDefault();IMPORTED_PRLESS_BRANCHES=null;IMPORTED_PRLESS_ERROR='';render();return}const triageFilter=e.target.closest('[data-zsentinel-triage]');if(triageFilter){e.preventDefault();
+const retryVps=e.target.closest('[data-retry-vps-read]');if(retryVps){e.preventDefault();void readVpsRetryIncidents();return}const retryClear=e.target.closest('[data-retry-clear]');if(retryClear){e.preventDefault();ZSENTINEL_RETRY_SNAPSHOT=null;ZSENTINEL_RETRY_TREND=null;ZSENTINEL_RETRY_MESSAGE='';ZSENTINEL_RETRY_EXPANDED_ITEMS=false;ZSENTINEL_RETRY_EXPANDED_MOVEMENT=false;render();return}const retryExport=e.target.closest('[data-retry-handoff]');if(retryExport){e.preventDefault();exportRetryHandoff();return}const retryOwnerJson=e.target.closest('[data-retry-workorders-json]');if(retryOwnerJson){e.preventDefault();exportRetryWorkordersJson();return}const retryTrendJson=e.target.closest('[data-retry-trend-json]');if(retryTrendJson){e.preventDefault();exportRetryTrendJson();return}const retrySnapshotJson=e.target.closest('[data-retry-snapshot-json]');if(retrySnapshotJson){e.preventDefault();exportRetrySnapshotJson();return}const vpsIssuesRead=e.target.closest('[data-vps-issues-read]');if(vpsIssuesRead){e.preventDefault();void readVpsProductIssues();return}const vpsGithubRead=e.target.closest('[data-vps-github-refresh]');if(vpsGithubRead){e.preventDefault();void readVpsGitHubActivity();return}const branchImport=e.target.closest('[data-zsentinel-branch-open]');if(branchImport){e.preventDefault();document.getElementById('zSentinelBranchFile')?.click();return}const branchClear=e.target.closest('[data-zsentinel-branch-clear]');if(branchClear){e.preventDefault();IMPORTED_PRLESS_BRANCHES=null;IMPORTED_PRLESS_ERROR='';render();return}const triageFilter=e.target.closest('[data-zsentinel-triage]');if(triageFilter){e.preventDefault();
   const key=triageFilter.dataset.zsentinelTriage;
   if(ZSENTINEL_TRIAGE_OPTIONS.some(row=>row[0]===key)){
     ZSENTINEL_TRIAGE_VIEW=key;ZSENTINEL_TRIAGE_EXPANDED=false;render();
