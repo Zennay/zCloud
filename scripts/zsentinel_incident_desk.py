@@ -410,7 +410,9 @@ def github_exact_gate_panel(decision):
                        or not label.isascii() or any(ord(c) < 32 for c in label)
                        for label in labels)):
             raise ValueError("untrusted GitHub exact job receipt")
-        _stamp(observed)
+        normalized_at = _stamp(observed)
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(normalized_at)
+        stale = age > timedelta(minutes=10)
         complete = item.get("assignment_source_complete")
         if (type(complete) is not bool
                 or (stage == "runner_assignment_missing_from_source") == complete
@@ -442,6 +444,13 @@ def github_exact_gate_panel(decision):
         commit_href = "https://github.com/" + repository + "/commit/" + sha
         advice = (action_labels[stage] if route == "self_hosted" else
                   "Niet als VPS-storing presenteren; runnerlabel-/providerbron controleren.")
+        if job_status in ("waiting", "pending"):
+            advice = ("GitHub job wacht mogelijk op approval, omgeving of scheduler; "
+                      "vraag de bevoegde eigenaar de exacte GitHub-gate te bekijken. "
+                      "GEEN bewijs voor ontbrekende self-hosted runner.")
+        if stale:
+            advice = ("VEROUDERDE BRON: deze toewijzing of jobstatus is niet actueel. "
+                      "Lees de exacte GitHub-job opnieuw voordat je de eigenaar adviseert.")
         details.append((rank[stage], '<li><strong>' + escape(pid) +
                         '</strong> · <a target="_blank" rel="noopener noreferrer" href="' +
                         escape(href, quote=True) + '">exacte job</a>' +
@@ -449,11 +458,14 @@ def github_exact_gate_panel(decision):
                         escape(commit_href, quote=True) + '">HEAD ' +
                         escape(sha[:12]) + '</a>' +
                         '<p class="meta">Status: ' + escape(job_status) +
-                        ' · route: ' + escape(route) + ' · bronmoment: ' +
-                        escape(_stamp(observed)) +
+                        ' · route: ' + escape(route) +
+                        (' · VEROUDERD (>10 min)' if stale else ' · RECENT BRONMOMENT') +
+                        ' · bronmoment: ' + escape(normalized_at) +
                         ' · jobstart: ' + escape(start) +
                         ' · geobserveerde runner toegewezen: ' +
                         ("JA" if item["runner_assigned"] else "NEE") +
+                        ' · labels: ' +
+                        (escape(', '.join(labels)) if labels else 'ONBEKEND') +
                         '</p><p>' + escape(advice) +
                         ' Geen CI-vrijgave of automatisch herstel.</p></li>'))
     discovery_html = ""
