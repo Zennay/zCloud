@@ -1,5 +1,42 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 21 oktober · P0/P1 issuegerichte eigenaarsoverdracht zonder remote acties
+
+De bestaande [merge-eerst PR #1567](https://github.com/Zennay/zCloud/pull/1567)
+biedt nu een complete issue-first route voor de vliegende keep, naast
+de bestaande PR- en projectwerkstromen:
+
+1. **Volgende open bronissue (P0 eerst)** loopt langs alle opgeslagen
+   issues met een lokale status anders dan `Opvolging genoteerd`, gesorteerd
+   op historisch waargenomen P0 → P1 → P2 → niet-geclassificeerd.
+   Een klik wist filters en PR-focus die het issue anders zouden verbergen,
+   maakt de issuekaart zichtbaar, scrollt erheen en zet toetsenbordfocus.
+   De teller gebruikt dezelfde queue; een lokaal afgehandeld item is
+   nadrukkelijk **niet** gelijk aan een opgelost GitHub-issue.
+2. **Download privé eigenaarsdossier voor dit issue** werkt op *iedere*
+   issuekaart, ook wanneer geen of slechts één bestaande PR in de
+   beperkte steekproef voorkomt. Dit brongebonden Markdown-dossier bevat
+   de originele bronissue-link, project/prioriteit, bronklokken,
+   activiteitssignaal, dekkingsgrenzen, menselijke vervolgstap,
+   lokale privé-opvolging, alle bekende PR-kandidaten, hun geobserveerde
+   HEAD/commitlink en historische gate, andere bij dezelfde PR genoemde
+   issues en afzonderlijke PR-/botsingsnotities. Ontbrekende PR-groepen
+   en onvolledige bronvermeldingen blijven **ONBEKEND**.
+3. **Download open P0/P1 issue-overdracht** maakt een gebundelde,
+   P0-eerst gerangschikte overdracht van alle in deze bronpagina lokaal
+   nog open P0/P1-issues. De export negeert bewust schermfilters,
+   projectselectie en PR-focus, toont bronvenster en exact brontoken,
+   en behoudt per issue alle waargenomen kandidaat-PRs plus lokale
+   status-/afstemmingsnotities. Een lege selectie is geen bewijs van
+   een lege echte GitHub-backlog.
+
+De bestaande create-only, browser-lokale `Blob`-downloads worden
+hergebruikt. Geen API-fetch, claim, remote notitiesynchronisatie,
+runneropdracht, automatische retry, merge of deploy. Lokale opvolging
+is niet hetzelfde als onafhankelijke review. Controleer actuele
+claim-eigenaars, PR-HEAD, exact-head verplichte CI, review en
+branch protection opnieuw voor een echte merge.
+
 ## 21 oktober · P0-eerst langs open projectopvolging navigeren
 
 De bestaande projectfilter heeft nu ook **Volgende project met open lokale
