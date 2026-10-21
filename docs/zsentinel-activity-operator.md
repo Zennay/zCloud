@@ -660,3 +660,14 @@ bron=geen activiteit blijft intact.
 - Incident: [#1326](https://github.com/Zennay/zCloud/issues/1326) — self-hosted zCloud listener needs independent authorized repair.
 
 These PRs are **not production** until exact-head required GitHub checks succeed, independent review is complete, protected-main merge is permitted and the serialized VPS release is independently verified. Do not enable GitHub-hosted billing, bypass a reviewer, restart an unauthorized service or displace a worker to demonstrate the preview.
+
+
+## 21 October · Exact worker send/reload operator stop reasons
+
+The existing on-demand **Activity → Worker progress** panel reads only the authenticated, bounded, local `/api/worker-progress-history` source. It now preserves six additional **fixed, static** browser-provided reason codes in the Python read model, and renders their corresponding human explanations in the Activity UI; no raw prompt, URL, arbitrary error string, claim secret or browser-provided prose is returned. The `public/index.html` app.js URL remains pinned to the exact updated Git blob, avoiding an old cached UI that would silently hide the new explanations.
+
+The operator can distinguish three important *unverified* outcomes: (1) the assignment changed while composing and no Send click was authorized, (2) an existing conversation could not load even though a queue prompt may already have been accepted, and (3) the page was reloaded or five-minute response observation expired after a possible Send. The last two explicitly require reconciliation against the original queue and conversation, never an automatic duplicate send. Unavailable per-tab dispatch evidence and a stalled single New chat transition also have separate owner hints. The card caption is **Worker · operator attention**, not merely `Composer`, because these are lease/dispatch continuity problems rather than only a missing DOM editor.
+
+Sources are complementary **open** product PRs: producer [#1552](https://github.com/Zennay/zCloud/pull/1552) (real browser engine and userscript), current Activity integration [#1550](https://github.com/Zennay/zCloud/pull/1550), and the earlier read-model source [#1549](https://github.com/Zennay/zCloud/pull/1549). Their presence in GitHub branches does not imply that any is installed, deployed or merged. The Activity panel never authorizes a lease reset, workflow retry, claim, merge, browser restart or deployment, and never treats browser-reported events as independent proof of generated output.
+
+This documentation accompanies product source only. No new QA/regression suite was authored or run, no CI workflow was manually dispatched, and no live VPS/runner/queue/security or production state was changed. Existing exact-head CI, independent security/review and protected-main release requirements remain binding.
