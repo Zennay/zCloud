@@ -20,6 +20,7 @@ import sys
 from zsentinel_pr_gate_now import (
     MAX_PRS, REVIEW_MAX_PRS, REVIEW_SCHEMA,
     SCHEMA as GATE_SCHEMA, read_review_manifest,
+    GATE_STEPS_NL as HUMAN_GATE_LABELS_NL,
 )
 
 SCHEMA = "zsentinel-pr-gate-batch-reconciliation-v1"
@@ -30,30 +31,6 @@ OBSERVED = "observed_current_head_partial_gate_evidence"
 UNKNOWN = "github_source_unavailable_or_head_changed"
 # Only the canonical live gate collector may supply a saved human action.
 # Never render arbitrary instructions embedded in a local receipt as advice.
-HUMAN_GATE_LABELS_NL = {
-    "owner_finish_draft_before_merge_review":
-        "Concept-PR: bevoegde eigenaar maakt reviewklaar.",
-    "owner_resolve_current_base_conflicts":
-        "Mergeconflict op de huidige basis: bevoegde PR-eigenaar herstelt de branch.",
-    "wait_for_github_mergeability_evaluation":
-        "GitHub heeft mergeability nog niet bepaald: nieuwe bron nodig.",
-    "wait_for_requested_independent_review":
-        "Onafhankelijke review is al aangevraagd; wacht op beslissing.",
-    "inspect_incomplete_current_head_gate_source":
-        "Onvolledige GitHub gatebron: volledig bewijs opnieuw ophalen.",
-    "inspect_current_head_failed_checks_with_owner":
-        "Mislukte huidige checks: met bevoegde PR-eigenaar herstellen.",
-    "wait_for_existing_current_head_checks":
-        "Bestaande huidige checks zijn nog niet afgerond.",
-    "owner_address_exact_head_review_changes":
-        "Onafhankelijke reviewer vraagt wijzigingen; eigenaar handelt af.",
-    "verify_missing_current_head_checks_and_rules":
-        "Geen huidige checks waargenomen: CI/branchregels apart controleren.",
-    "request_independent_current_head_review":
-        "Onafhankelijke review op de actuele HEAD nodig.",
-    "verify_required_rules_ownership_and_release_separately":
-        "Vereiste branchregels, eigenaar en release apart verifiëren.",
-}
 HUMAN_GATE_STEPS = frozenset(HUMAN_GATE_LABELS_NL)
 
 
