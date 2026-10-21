@@ -485,34 +485,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-    parser = argparse.ArgumentParser(
-        description="Explain whether a proposed recovery action is ready for human review; never execute it."
-    )
-    parser.add_argument("--input", required=True, help="bounded JSON file path, or - for stdin")
-    parser.add_argument("--format", choices=("json", "markdown"), default="json")
-    parser.add_argument("--max-age-minutes", type=int, default=60,
-                        help="maximum accepted observation age (1..1440; default 60)")
-    args = parser.parse_args(argv)
-    if not 1 <= args.max_age_minutes <= 1440:
-        parser.error("--max-age-minutes must be between 1 and 1440")
-    try:
-        raw = _read_input(args.input)
-        data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
-                          parse_constant=_reject_constant)
-        report = evaluate(data, args.max_age_minutes)
-        output = markdown(report) if args.format == "markdown" else (
-            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        )
-        encoded = output.encode("utf-8")
-        if len(encoded) > MAX_OUTPUT_BYTES:
-            raise PolicyInputError("output exceeds 128 KiB")
-        sys.stdout.write(output)
-        return 0
-    except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
-        print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
-        return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
