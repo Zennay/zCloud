@@ -94,6 +94,24 @@ def refresh(bundle, registry, token=None):
                 raise ValueError("github_head_sha_invalid")
             if gh.get("head_sha") and gh["head_sha"] != sha:
                 raise ValueError("pinned_head_sha_mismatch")
+            # The run id alone does not license a mismatched job receipt.
+            # When GitHub exposes its job SHA/attempt, both must agree with
+            # the requested immutable run before the operator sees a link.
+            if "head_sha" in job and job["head_sha"] != sha:
+                raise ValueError("github_job_head_sha_mismatch")
+            run_attempt = run.get("run_attempt")
+            job_attempt = job.get("run_attempt")
+            if (run_attempt is not None and
+                    (type(run_attempt) is not int or
+                     not 1 <= run_attempt <= 10**6)):
+                raise ValueError("invalid_workflow_run_attempt")
+            if (job_attempt is not None and
+                    (type(job_attempt) is not int or
+                     not 1 <= job_attempt <= 10**6)):
+                raise ValueError("invalid_workflow_job_attempt")
+            if (run_attempt is not None and job_attempt is not None
+                    and job_attempt != run_attempt):
+                raise ValueError("github_run_job_attempt_mismatch")
             status = job.get("status")
             if status not in STATUS:
                 raise ValueError("github_job_status_unknown")
