@@ -129,3 +129,49 @@ For reliable human comparisons, run the same optional observation flags on both 
 
 
 A comparison cannot certify recovery of an **active worker**, independently of a later quiet browser snapshot, and it cannot certify encrypted archive write admission. If either previous warning disappears but the current report has no independent authority to prove its resolution, it stays under `recovery_unverified_findings`. The operator UI labels the same items **Recovery unverified**, distinct from **Confirmed resolved**. This is intentionally conservative; the existing serialized worker and archive owners must supply proof before any state-changing action.
+
+
+## 21 October · zSentinel three-line owner handoffs (existing PR #1540)
+
+The preflight now derives a bounded, **read-only** `owner_handoff` from its existing
+finding codes, owner recovery priorities and (if provided) a validated previous
+snapshot. These cards are *not* an automated recovery API and are never proof
+that a claimed worker, runner, archive or release was safely recovered.
+
+```sh
+# The operator supplies a previously independently fetched main SHA.
+python3 scripts/zcloud_vps_preflight.py \
+  --expected-main-sha "$VERIFIED_MAIN_SHA" --worker-safety \
+  --format brief
+
+# Optional previous private JSON report; no previous report is modified.
+python3 scripts/zcloud_vps_preflight.py \
+  --expected-main-sha "$VERIFIED_MAIN_SHA" --worker-safety \
+  --previous-report /private/previous-zcloud-preflight.json --format brief
+```
+
+Each owner card contains exactly three user-facing lines:
+
+- **Problem** identifies an observed capacity, runner, checkout, source,
+  archive or worker issue, grouped by immutable incident-code family.
+- **Action** identifies the responsible existing human owner and a safe
+  next step. There is no shell command, server restart, claim release,
+  queue write, GitHub workflow dispatch or automated source promotion.
+- **Status** distinguishes `active_blocker`, `active_warning`,
+  `owner_release_gate` and `recovery_unverified`. With a previous report,
+  it also distinguishes new, still-observed and escalated incidents.
+
+This same `owner_handoff` array is included in the JSON response and
+rendered inside the standalone responsive HTML report. Rendering escapes
+all displayed strings. Raw worker identities, arguments, queue payloads,
+browser events and old snapshot prose are never copied into the cards.
+Historic incident codes which can no longer be observed remain explicitly
+marked `recovery_unverified`, including future codes without a known owner
+family; absence from the current probe is never auto-classified as fixed.
+
+The source remains pending the **existing exact-head mandatory CI,
+independent approval, protected-main merge and authorized serialized
+deployment**. A user-facing handoff never grants permissions to stop
+generation, restart a runner, delete training artifacts or spend hosted
+runner minutes. `release_authorized=false` and
+`recovery_performed=false` on every card.
