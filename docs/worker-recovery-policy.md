@@ -485,9 +485,11 @@ repository's live GitHub issues, without a historical Notion/JSON file:
 
 ```sh
 umask 077
+mkdir -p -m 700 "$HOME/.local/share/zsentinel"
 python3 scripts/zsentinel_recovery_policy.py \
   --live-inbox-repo Zennay/zCloud \
-  --format html --output /private/zsentinel-live-inbox.html
+  --format html \
+  --output "$HOME/.local/share/zsentinel/inbox-$(date -u +%Y%m%dT%H%M%S)-$.html"
 ```
 
 Also available as `--format markdown` or `--format json` for
