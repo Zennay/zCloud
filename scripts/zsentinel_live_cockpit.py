@@ -187,7 +187,19 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         source["github_jobs"] = github
     else:
         source["github_jobs"] = "no_selected_jobs_not_a_zero_incident_claim"
-    if include_issues:
+    job_admission = (
+        source["github_jobs"].get("provider_admission_denial")
+        if isinstance(source["github_jobs"], dict) else None)
+    if job_admission not in (
+            None, "authentication_required", "rate_limit_confirmed"):
+        raise ValueError("untrusted GitHub refresh admission category")
+    if include_issues and job_admission is not None:
+        # GitHub already denied this token globally. No duplicate issue
+        # reads, pinned GETs or fabricated zero-issue/current receipts.
+        source["issue_inbox"] = "degraded_skipped_after_provider_denial"
+        source["issue_requests"] = 0
+        source["issue_provider_admission"] = job_admission
+    elif include_issues:
         try:
             inbox = collect(registry, selected, token, max_items=40)
             if effective_pins:
