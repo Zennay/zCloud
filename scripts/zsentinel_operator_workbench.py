@@ -2943,6 +2943,17 @@ function drawDetail(){
         '` · original board SHA256 `'+s.board_sha256+
         '` · missing batches: '+(s.missing_batch_indexes.join(', ')||'none reported'));
     }
+    lines.push('','## Original board PR candidates (separate saved source)');
+    if(!card.open_pr_candidates.length)
+      lines.push('No PR in original bounded issue board: UNKNOWN. Check GitHub live.');
+    for(const u of card.open_pr_candidates){
+      const gate=card.pr_gate_observations.find(p=>p.url===u);
+      lines.push('- ['+u+']('+u+') · original board '+(gate?
+        'HEAD `'+gate.head_sha+'` observed '+gate.source_observed_at_utc+
+        ' · approvals observed '+gate.observed_approvals+
+        ' · unresolved sampled gate labels '+(gate.blocking_unknowns.join(', ')||'none recorded'):
+        'no validated exact-head gate receipt; current status UNKNOWN'));
+    }
     lines.push('','## Previously linked PRs (not proof of active ownership)');
     if(!match)lines.push('No link in these historical samples: **UNKNOWN**, not proof that there is no PR.');
     else{
@@ -3042,6 +3053,20 @@ function drawDetail(){
       el(article,'small','Original board SHA256: '+s.board_sha256);
       el(article,'p','Unobserved original gate batches: '+(s.missing_batch_indexes.join(', ')||'none reported')+
         ' · bounded sampled PRs: '+s.selected_pr_candidates);
+    });
+    el(root,'h2','Original issue-board existing PR references · separate source');
+    if(!card.open_pr_candidates.length)el(root,'p','No PR candidate in original bounded issue board. Current GitHub owner/PR inventory UNKNOWN.');
+    card.open_pr_candidates.forEach(url=>{
+      const article=el(root,'article','');
+      githubLink(article,'Board candidate PR: '+url,url);
+      const gate=card.pr_gate_observations.find(p=>p.url===url);
+      if(gate){
+        el(article,'small','Original board HEAD: '+gate.head_sha+
+          ' · gate source UTC: '+gate.source_observed_at_utc+
+          ' · sampled approvals: '+gate.observed_approvals);
+        el(article,'small','Sampled unresolved gate labels: '+(gate.blocking_unknowns.join(', ')||'none recorded')+
+          '. Not exact-head required CI/review authorization.');
+      }else el(article,'small','Board had no admitted exact-HEAD gate receipt. Source completeness UNKNOWN.');
     });
     el(root,'h2','Previously linked existing PRs');
     if(!match)el(root,'p','No issue-PR relationship in supplied saved sources: UNKNOWN. Do not open a competing PR without fresh GitHub/Notion checks.');
