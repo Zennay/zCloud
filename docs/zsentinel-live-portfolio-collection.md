@@ -12,6 +12,30 @@ Voorheen moest een operator voor elk venster eerst zelf een JSON-bronbestand
 genereren en daarna 1–6 afzonderlijke bestanden combineren. Dat blijft als
 volledig offline route beschikbaar; live is een **opt-in** extra bronroute.
 
+## Brongebonden project- en claimidentiteit
+
+De projectregistratie `projects.json` bepaalt welke bestaande GitHub-
+repositories zSentinel überhaupt mag observeren. Het productbord leest die
+registratie nu via de gedeelde begrensde JSON-inode-reader: geen symlink,
+onbegrensde inhoud, FIFO-substitutie of stilzwijgend overgeslagen ongeldige
+projectregel. De parser weigert ook dubbele sleutels, dubbele repositories,
+niet-canonieke GitHub-origins en ontbrekende/ambigue projectidentiteiten.
+Een onvolledig projectregister levert een fout, **geen** kunstmatig lege
+P0/P1-werkvoorraad.
+
+Bij optionele live Notion-claimobservatie moet elke projectrelatie exact
+bij de **zelfde** canonieke GitHub-projectset passen. Het register wordt voor
+deze relatiekaart eenmaal no-follow en begrensd geopend; ontbrekende of
+dubbele Notion-projectlinks en botsende repo-relaties worden geweigerd.
+Ook de Notion JSON-respons weigert dubbele sleutels en niet-standaard
+numerieke constanten, zodat een bronbotsing geen actieve Claimed/Running/
+Verifying-status kan verbergen. Dit verifieert geen lease, claim-eigenaar of
+vrijgave: alleen een begrensde, leesbare bronkoppeling.
+
+De aparte merge-eerst-PR-reader hergebruikt nu exact de QA-only-selectieregel
+van de issue-inbox, inclusief alle bekende QA-only branchprefixen en labels.
+Geen enkele bronverzameling geeft merge-, worker-, queue- of deploybevoegdheid.
+
 ## Operatorgebruik
 
 ```sh
