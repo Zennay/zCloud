@@ -53,6 +53,41 @@ PORTFOLIO_PROJECTS = {
 }
 PORTFOLIO_GROUP_LIMIT = 128
 
+# Verified GitHub repository names. Only this static allowlist can produce
+# outgoing navigation; never interpolate a queue title/URL or guessed repo.
+GITHUB_INBOX_REPOS = {
+    "zCloud": "zCloud", "zSSH": "zSSH", "FTMO": "Ftmo",
+    "HaxLab": "Haxlab", "Supa": "Supa", "RaiseAI": "RaiseAI",
+    "uLab": "uLab", "LightUp": "Lightup", "zGuard": "zGuard",
+    "TradeEngine": "tradengine", "MixLab": "Mixlab",
+    "Fuckball": "fuckball", "Tuddy": "Tuddy",
+}
+
+
+def github_inbox_urls(project):
+    """Static click-throughs, NOT an observation of GitHub issues or claims."""
+    slug = GITHUB_INBOX_REPOS.get(project)
+    if slug is None:
+        return None
+    root = "https://github.com/Zennay/" + slug
+    return (
+        root + "/pulls?q=is%3Apr+is%3Aopen",
+        root + "/issues?q=is%3Aissue+is%3Aopen",
+    )
+
+
+def html_inbox_links(project):
+    links = github_inbox_urls(project)
+    if links is None:
+        return ""
+    return (
+        "<small class='inbox'> "
+        "<a target='_blank' rel='noopener noreferrer' href='" + links[0]
+        + "'>Open PRs</a> · "
+        "<a target='_blank' rel='noopener noreferrer' href='" + links[1]
+        + "'>Open issues</a></small>"
+    )
+
 
 def _utc(value):
     if not isinstance(value, str):
@@ -767,7 +802,8 @@ def html_view(data):
             + incomplete + "</section>"
         )
     portfolio_rows = "".join(
-        "<tr><th scope='row'>" + html.escape(item["project"]) + "</th>"
+        "<tr><th scope='row'>" + html.escape(item["project"])
+        + html_inbox_links(item["project"]) + "</th>"
         + "<td>" + str(item["queued_p0"]) + " <small>(eligible "
         + str(item["eligible_queued_p0"]) + ")</small></td><td>"
         + str(item["queued_p1"]) + " <small>(eligible "
@@ -816,6 +852,8 @@ def html_view(data):
         "table{border-collapse:collapse;width:100%;text-align:right}"
         "th,td{padding:10px 8px;border-bottom:1px solid #30415c}"
         "th:first-child{text-align:left}table{font-size:.9rem}"
+        ".inbox{display:block;font-size:.78rem;margin-top:5px}"
+        "a{color:#b9d0ff}a:focus-visible{outline:2px solid #ffca83}"
         ".scroll{overflow:auto}li{margin:8px 0}h3{font-size:1rem;line-height:1.4}"
         "footer{color:#a8b7d4;margin-top:28px}"
         "</style></head><body><main><header><div class='eyebrow'>"
@@ -891,8 +929,12 @@ def markdown_view(data):
                   "| Project | P0 wacht | P1 wacht | P0 actief | P1 actief |",
                   "| --- | ---: | ---: | ---: | ---: |"))
     for item in data["portfolio_urgent_local"]:
+        inbox = github_inbox_urls(item["project"])
+        project_cell = item["project"]
+        if inbox:
+            project_cell += f" ([PRs]({inbox[0]}) · [issues]({inbox[1]}))"
         lines.append(
-            f"| {item['project']} | {item['queued_p0']} "
+            f"| {project_cell} | {item['queued_p0']} "
             f"(eligible {item['eligible_queued_p0']}) | {item['queued_p1']} "
             f"(eligible {item['eligible_queued_p1']}) | "
             f"{item['in_flight_p0']} | {item['in_flight_p1']} |"
