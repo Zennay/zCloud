@@ -132,8 +132,21 @@ def build(report):
                 "observed_partial_no_release_permission" if has_live_gate else
                 "not_observed"
             )
+            # A source HEAD is a bounded navigation receipt, NOT proof that
+            # the PR still has that HEAD or may be merged. Stale/incoherent
+            # issue clocks cannot endorse a linked PR's commit identity.
+            observed_head = None
+            if has_live_gate and (
+                    issue.get("issue_evidence_stale") is not True and
+                    report.get("source_clocks_within_10_minutes") is True and
+                    live.get("exact_head_stable_on_second_read") is True):
+                value = live.get("head_sha_observed")
+                if type(value) is not str or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+                    raise ValueError("invalid source-bound PR HEAD")
+                observed_head = value
             linked_candidates.append({
                 "url": url, "gate_state": candidate_state,
+                "source_head_observed": observed_head,
                 "file_overlap_observed": overlap,
                 "source_movement_observed": moved,
                 "merge_authorized": False,
@@ -236,12 +249,17 @@ def build(report):
                 "primary_issue_urls_in_source": [],
                 "issue_categories_observed": [],
                 "gate_states_observed_in_source": [],
+                "source_head_observed": linked["source_head_observed"],
                 "any_file_overlap_observed": False,
                 "any_historical_movement_observed": False,
                 "fixes_all_linked_issues_verified": False,
                 "current_owner_verified": False,
                 "merge_authorized": False,
             })
+            if group["source_head_observed"] != linked["source_head_observed"]:
+                # Conflicting saved HEAD receipts for the same PR across
+                # issues must never collapse into one apparently safe card.
+                raise ValueError("conflicting source HEADs for one existing PR")
             if ORDER[card["priority"]] < ORDER[group["highest_priority"]]:
                 group["highest_priority"] = card["priority"]
             group["linked_issue_urls_in_source"].append(card["issue_url"])
