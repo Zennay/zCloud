@@ -1076,15 +1076,52 @@ def private_action_briefing(decision, source):
             link = row["url"]
             next_step = row.get("next_step")
             head = row.get("head_sha")
+            from zsentinel_pr_delivery import NEXT_ACTION_NL
+            owner_guidance = NEXT_ACTION_NL.get(next_step) if type(next_step) is str else None
             lines += [
                 "- " + md(pid, 80) + " · [PR #" + str(number) + "](" + link + ")",
                 "  - HEAD: " + head if type(head) is str and
                     re.fullmatch(r"[a-f0-9]{40}", head) else
                     "  - HEAD: ONBEKEND; geen merge.",
-                "  - Owner/gates: " + md(next_step, 90)
-                    if type(next_step) is str else
-                    "  - Owner/gates: ONBEKEND, handmatige GitHub-inspectie.",
+                "  - Eigenaaractie: " + md(owner_guidance, 350)
+                    if type(owner_guidance) is str else
+                    "  - Eigenaaractie: ONBEKEND, handmatige GitHub-inspectie.",
             ]
+            if row.get("coverage") != "bounded_exact_head_review_and_checks":
+                lines.append("  - BRON ONVOLLEDIG; geen mergevrijgave op dit HEAD.")
+            ci = row.get("ci")
+            reviews = row.get("reviews")
+            legacy = row.get("legacy_status_contexts")
+            if type(ci) is dict:
+                for kind, field in (("mislukte checks", "failed"),
+                                    ("lopende/wachtende checks", "pending"),
+                                    ("onbesliste checks", "inconclusive")):
+                    names = ci.get(field, [])
+                    if type(names) is not list or len(names) > 100:
+                        raise ValueError("untrusted exact-head CI source in owner briefing")
+                    lines.append("  - " + kind + " in getoond venster: ≥" + str(len(names)))
+                    for name in names[:5]:
+                        lines.append("    - " + md(name, 120))
+                lines.append("  - Alle verplichte checks succesvol: NIET BEWEZEN.")
+            else:
+                lines.append("  - Exact-head CI: ONBEKEND / bron niet compleet.")
+            if type(legacy) is dict:
+                for kind in ("failed", "pending"):
+                    names = legacy.get(kind, [])
+                    if type(names) is not list or len(names) > 100:
+                        raise ValueError("invalid classic GitHub context source")
+                    for name in names[:3]:
+                        lines.append("  - Klassieke status " + kind + ": " + md(name, 180))
+            if type(reviews) is dict:
+                seen = reviews.get("same_head_approvals_seen")
+                if type(seen) is not int or not 0 <= seen <= 100:
+                    raise ValueError("invalid same-head review evidence")
+                lines.append("  - Onafhankelijke reviews op deze HEAD gezien: " +
+                             str(seen) + " (branch protection NIET bewezen)." +
+                             (" Changes requested." if
+                              reviews.get("same_head_changes_requested") is True else ""))
+            else:
+                lines.append("  - Onafhankelijke HEAD-review: ONBEKEND.")
     else:
         lines.append("- PR-bron niet gekozen; geen nul-PR- of mergevrijgavebewijs.")
     lines += ["", "## 2. Open productissues · hoogste prioriteit"]
