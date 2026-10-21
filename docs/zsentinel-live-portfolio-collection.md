@@ -345,3 +345,12 @@ Geen workerclaim, file lock, queue-RW, Notion-mutatie, provider-CI-rerun,
 automatische recovery, merge of deploy. De oplevering blijft gebonden
 aan de oorspronkelijke exact-head CI, onafhankelijke review en
 beschermde default-branch.
+
+### Geen Notion-paneel zonder bron
+
+De standaard eigenaaroverdracht laat de optionele Notion-sectie geheel
+weg als Notion niet is opgevraagd. Was de bron wel gevraagd maar is de
+read-only raadpleging mislukt, dan verschijnt uitdrukkelijk **Notion
+bron ONBEKEND**, niet "geen actieve werkitems". Alleen een daadwerkelijk
+geobserveerde bron mag positieve per-project statusondergrenzen tonen;
+zelfs dan is dit geen huidig worker-, lease- of bestandsclaimbewijs.
