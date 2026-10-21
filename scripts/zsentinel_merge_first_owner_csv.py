@@ -349,7 +349,10 @@ def render_private_html(rows, source_metadata=None):
         'margin:20px auto;padding:0 16px;color:#14243b;background:#fff}'
         'a{color:#075b91}article{border:1px solid #afc0d0;border-radius:8px;'
         'margin:12px 0;padding:14px;break-inside:avoid}p,small{overflow-wrap:'
-        'anywhere}small{display:block;color:#42556c}@media print{body{margin:0}}'
+        'anywhere}small{display:block;color:#42556c}nav{border:1px solid #afc0d0;' 
+        'border-radius:8px;padding:12px;margin:16px 0}nav a{display:inline-block;'
+        'margin:4px 12px 4px 0}article:target{outline:2px solid #075b91}'
+        '@media print{body{margin:0}nav{display:none}}'
         '</style></head><body><h1>zSentinel · P0-first existing PR review</h1>',
         '<p>SAVED source only. Active owner, required exact-head CI, independent '
         'review, main merge and production release: NOT VERIFIED.</p>',
@@ -402,10 +405,33 @@ def render_private_html(rows, source_metadata=None):
         '. Device time is advisory; this is not live GitHub or worker validation.</p>'
         '</section>'
     )
-    for row in rows:
+    # Script-free, direct navigation into potentially hundreds of P0/P1 PRs.
+    # Index keys are derived only from admitted canonical GitHub URL identities.
+    groups = {}
+    for idx, row in enumerate(rows, 1):
+        source_url = row["pr_url"] or row["source_issue_urls"].split(" | ", 1)[0]
+        repo_url = source_url.split("/pull/", 1)[0].split("/issues/", 1)[0]
+        if not re.fullmatch(
+            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}", repo_url
+        ):
+            raise ValueError("noncanonical source repository in owner index")
+        key = (row["priority"], repo_url.removeprefix("https://github.com/"))
+        if key not in groups:
+            groups[key] = [idx, 0]
+        groups[key][1] += 1
+    if groups:
+        parts.append('<nav aria-label="Jump to saved owner group">'
+                     '<strong>Go to source-priority / repository group</strong><p>')
+        for (priority, repo), (first, count) in sorted(
+            groups.items(), key=lambda item: (RANK[item[0][0]], item[0][1])
+        ):
+            label = escape(priority + " · " + repo + " (" + str(count) + ")")
+            parts.append('<a href="#owner-' + str(first) + '">' + label + '</a>')
+        parts.append('</p></nav>')
+    for index, row in enumerate(rows, 1):
         priority = escape(str(row["priority"]))
         has_pr = bool(row["pr_url"])
-        parts.append('<article><h2>' + priority + ' · ' +
+        parts.append('<article id="owner-' + str(index) + '"><h2>' + priority + ' · ' +
                      ('Existing saved PR candidate' if has_pr else
                       'PR relationship UNKNOWN') + '</h2>')
         parts.append('<p><strong>' + escape(str(row["source_issue_titles"])) +
