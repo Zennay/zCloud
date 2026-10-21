@@ -2795,16 +2795,33 @@ def portfolio_attention_resolve(attention_id):
     return {'resolved':bool(cur.rowcount),'attention_id':attention_id}
 
 def _blocker_needs_human(evidence):
+    """Classify concrete permission/human gates without alerting on normal watchdogs.
+
+    A blocked task stays parked regardless of classification. This only
+    determines whether a human Attention card must accompany the hold.
+    """
     text=str(evidence or '').lower()
     markers=(
-        'human','user action','manual approval','physical','watch','participant','maintainer',
-        'credential','api key','secret','oauth approval','review submission','external gate',
-        'independent review','required review','branch protection','owner consent',
-        'billing owner','billing','spending limit','payment failed','account payments',
-        'permission required','permission denied','runner listener requires owner',
-        'needs_human','wait_human'
+        'user action','manual approval','physical','participant','maintainer',
+        'credential','api key','secret','oauth approval','review submission',
+        'external gate','independent review','required review','branch protection',
+        'owner consent','billing owner','billing','spending limit','payment failed',
+        'account payments','permission required','permission denied',
+        'runner listener requires owner','needs_human','wait_human',
+        'paired device','on-device approval'
     )
-    return any(marker in text for marker in markers)
+    if any(marker in text for marker in markers):
+        return True
+    # Plain "watch" matches watchdog telemetry and "human" matches
+    # human-readable handoffs or non-human jobs. A human intervention is
+    # indicated by an explicit action/approval or dependency phrase.
+    if re.search(r'\bwatch\b',text):
+        return True
+    return bool(re.search(
+        r'\bhuman[\s-]+(?:action|approval|review|input|intervention|consent|gate|gated|signoff|sign-off)\b'
+        r'|\b(?:needs?|requires?|awaits?|awaiting|waiting\s+for|blocked\s+on)\s+(?:an?\s+)?human\b',
+        text,
+    ))
 
 def _attention_action_for_blocker(project_id,title,evidence):
     text=(str(title or '')+' '+str(evidence or '')).lower()
