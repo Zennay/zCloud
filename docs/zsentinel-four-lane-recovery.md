@@ -964,3 +964,34 @@ serviceherstart, workerclaim, daadwerkelijke GitHub-merge of
 ongeautoriseerde deploy. Op `main` en live is niets bewezen tot
 na exacte-head CI, onafhankelijke review, eigenaarsautorisatie
 en afzonderlijke GitHub/deploy-bevestiging.
+
+
+### 21 oktober · Korte versus lange kernel-stallvensters zichtbaar
+
+Dezelfde optionele, read-only PSI-bron levert nu **per resource**
+het precieze verschil in procentpunten tussen `avg10` en
+`avg300` voor gedeeltelijk wachtende taken. De HTML-tabel bevat
+hiervoor een extra kolom; tekst, Markdown en JSON behouden de
+brongetrouwe cijfers en een expliciet
+`window_signal` in het PSI-packet.
+Na een zichtbaar verschil van minstens 15 procentpunten presenteert
+het operatorbericht `SHORT_WINDOW_PRESSURE_HIGHER`,
+`SHORT_WINDOW_PRESSURE_LOWER` of `MIXED_WINDOWS`; bij kleinere
+verschillen staat `NO_LARGE_WINDOW_DIFFERENCE`. Dat zijn alleen
+**overlappende voortschrijdende kerneltijdvensters**, geen
+persistent tijdreeksbewijs, prognose, foutclassificatie van een
+specifieke GitHub-job of permission om werknemers te stoppen.
+
+De bestaande menselijke herstelkaart vermeldt bij kortdurend
+aanzienlijk hogere druk expliciet de vergelijking, met behoud van
+de bronbeperkingen. Geen historische snapshots geschreven,
+geen claim, service, scheduler, worker, queue, CI-retry, deploy of
+schoonmaak gewijzigd.
+
+Broncommits:
+[f8d122a](https://github.com/Zennay/zCloud/commit/f8d122af0d0c5ea3e8351ee1dfc9fd7086093a5f),
+[39c4580](https://github.com/Zennay/zCloud/commit/39c4580dfd5487277e8f8f165a52e065a3d3a159),
+[ba9447d](https://github.com/Zennay/zCloud/commit/ba9447dd3386dd37f76b5e31ce419b7c67583ab1).
+Dit blijft werk op bestaande PR #1572; exacte-head verplichte CI,
+onafhankelijke review en geautoriseerde main-/live-integratie
+blijven afzonderlijk verplicht.
