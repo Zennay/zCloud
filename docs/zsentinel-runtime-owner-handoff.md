@@ -413,3 +413,28 @@ De herstelrouter leverde al een brongevalideerde `vps_resource_admission` op bas
 De bestaande eigenaarhand-off maakt van **uitsluitend** een bronvastgestelde `state=overloaded` nu één extra **P1 cloud / vps_capacity_owner_review**-kaart. Die heeft een directe link naar bestaand [P0-runnerincident #1326](https://github.com/Zennay/zCloud/issues/1326), vermeldt disk- en swaprisico vooraan, bevat alle bekende reden-codes als begrensde JSON-velden en eindigt bij de geautoriseerde host-/runner-eigenaar. De centrale `coverage.vps_capacity` onderscheidt voortaan `overloaded`, `stale`, `unavailable` en `advisory_headroom`; oude/ontbrekende metingen worden **nooit** tot groen resultaat of afgerond herstel verheven. De kaart wordt via dezelfde bronbeslissing vanzelf weergegeven in bestaande HTML-, Markdown-, tekst- en JSON-handoffs. Er is geen extra `statvfs`, SQL-leesactie of netwerkoproep nodig.
 
 Ongewijzigde veiligheid: `claim_authorized=false`, `retry_authorized=false`, `merge_authorized=false`, `deploy_authorized=false`. **Geen automatische opruiming, swapclear, service-restart, workerstop, opslagmigratie of capaciteitswijziging.** Een gesignaleerde bottleneck bewijst ook niet welke GitHub-job onassigned is. De release blijft bij exacte CI-HEAD, review en de bestaande productie-eigenaar; bron op de bestaande open [PR #1563](https://github.com/Zennay/zCloud/pull/1563), niet live of `main`.
+
+## 21 oktober · onverzoende incidentafhankelijkheden zichtbaar in eigenaaroverdracht
+
+Een incidenteel uit de begrensde bron verdwenen job is **niet** bewezen
+opgelost. De herstelrouter stelt een taak met `depends_on_incidents`
+voortaan alleen als onafhankelijk werk voor wanneer **elke** expliciete,
+canonieke incident-ID op basis van diezelfde originele run/job/HEAD
+in het privéledger als `exact_job_completed_source_reconciled` staat.
+Een ontbrekend, nog geblokkeerd of slechts heringedeeld runnerincident
+blijft een HOLD; onbekende IDs worden nooit als vrij beschouwd.
+
+De bestaande centrale `--show-owner-handoff` en de aparte
+`--handoff-output` tonen deze status in dezelfde bronbeslissing zonder
+extra GitHub-, Notion- of SQLite-verzoeken: `incident_dependency_owner_summary`
+bevat brondekking en exact het aantal vastgehouden kandidaat-taken. De
+HTML-kop en Markdown geven ook bij ontbrekende bron **ONBEKEND** weer, nooit
+nul. Tot acht P0-eerst `incident_dependency_owner_hold`-kaarten laten de
+betrokken taak/projectcombinatie zien en vragen uitsluitend de oorspronkelijke
+eigenaar om bron-/claimreconciliatie. Raw incident-IDs worden niet naar het
+HTML-paneel gekopieerd. Geen workerclaim, autoretry, vrijgave of merge.
+
+De router en werkbak wijzigen geen operationele taak-/queue-toestand; dit
+zijn leesbare veiligheids-HOLDs op bestaande productvoorstellen. Het werk
+staat op de reeds open PR #1563; onafhankelijke review, exacte-head CI en
+beschermde main zijn nog verplicht vóór integratie. Geen nieuwe QA-tests.
