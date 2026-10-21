@@ -422,9 +422,25 @@ def classify_backlog_item(project, item):
     ).lower()
     scored = [(_lane_score(text, lane, profile), index, lane) for index, lane in enumerate(lanes)]
     score, _, lane = max(scored, key=lambda value: (value[0], -value[1]))
-    # No keyword match: keep the first lane as the deterministic primary work lane.
+    # Unknown product work belongs to product remediation, not the PR
+    # release lane. A title without "PR"/"merge" evidence must never
+    # masquerade as an unfinished product PR.
     if score <= 0:
-        lane = lanes[0]
+        lane = (next(l for l in lanes if l["id"] == "product-remediation")
+                if profile == "portfolio-recovery" else lanes[0])
+    if (profile == "portfolio-recovery"
+            and str(item.get("status") or "").strip().lower() in ACTIVE_STATUSES):
+        # An existing active worker owns the *persisted* canonical lane,
+        # even when title/criteria wording changes during execution.
+        # Queued work is still classified normally; a missing/legacy lane
+        # remains subject to the global active-profile HOLD downstream.
+        persisted = _metadata(item).get("execution_lane")
+        if isinstance(persisted, dict) and persisted.get("profile") == profile:
+            lane_id = persisted.get("lane_id")
+            if isinstance(lane_id, str):
+                pinned = next((l for l in lanes if l["id"] == lane_id), None)
+                if pinned is not None:
+                    lane = pinned
     project_id = str(project.get("id") or item.get("project_id") or "").strip().lower()
     return {
         "lane_id": lane["id"],
