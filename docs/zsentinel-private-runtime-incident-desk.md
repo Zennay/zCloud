@@ -94,10 +94,50 @@ operator controleert alle exacte PR-HEAD-gates, eigenaarclaims, tijdvensters
 en relevante P0 veiligheidsbeslissingen opnieuw voordat die handmatig
 een herstelactie zou autoriseren.
 
+## Privé actieoverdracht zonder browser
+
+Alledrie de bestaande read-only CLI's accepteren nu optioneel
+`--action-output /bestaande/prive-map/NIEUW.md`. Deze schrijft **naast**
+het gekozen operatorformaat exact één create-only, 0600 Markdown-actiebriefing
+uit **hetzelfde** in-memory bronmoment, zonder extra GitHub-/Notion-/SQLite-GET,
+queuewrite, eigendomsovername of notificatie.
+
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /secure/existing-zcloud.sqlite3 --window 0 \
+  --inspect-pr cloud:1563 --discover-open-prs \
+  --format desk --desk-output /secure/operator-only/desk-new.html \
+  --action-output /secure/operator-only/actions-new.md
+
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /secure/existing-zcloud.sqlite3 --project cloud \
+  --format desk --desk-output /secure/operator-only/live-desk-new.html \
+  --action-output /secure/operator-only/live-actions-new.md
+
+python3 scripts/zsentinel_recovery_refresh.py /secure/bronpakket.json \
+  --registry projects.json \
+  --format desk --desk-output /secure/operator-only/refresh-desk-new.html \
+  --action-output /secure/operator-only/refresh-actions-new.md
+```
+
+Het nieuwe .md-doel mag nooit gelijk zijn aan bron- of state/ledgerbestanden,
+het HTML-resultaat, eerdere privébestanden of een ander outputpad. De bestaande
+private-output writer weigert een bestaand bestand, symlink of onveilige map.
+Bij optionele Notion- of workerdata blijft een expliciete privé `--output` of
+`--format desk --desk-output` verplicht; `--action-output` alleen
+onderdrukt de normale HTML/JSON/text stdout **niet**. De uitvoer bevat
+alleen handmatige adviezen met onzekere lease, owner en CI-gates expliciet
+onbewezen.
+
 ## Wat de werkbank laat zien
 
 - **Huidige incidentkaarten:** prioriteit, bronstatus, menselijke vervolgstap en lokaal bewaarde notities tot een expliciete privé-export.
-- **Bestaande PR's:** éénmalig gelezen exacte PR-HEAD met niet-groene CI, review- en merge/HOLD-richtlijn; bronbeperkingen en geen automatische integratie.\n- **Open productissues:** P0/P1-eerst shortlist uit maximaal acht canonieke GitHub-issuekaarten, met bestaande open PR-kandidaten uit hetzelfde repository, actieve eigenaar expliciet ONBEKEND, en complete bronouderdom/degradatie. Geen QA-only werk of nieuwe claims.\n- **Exacte GitHub-jobroute:** immutable run/job/HEAD-links, vereiste runnerlabels, queued versus waiting/pending, per-job bronmoment en >10-minuten-stale waarschuwing; nooit een automatische CI-, merge- of runnerdiagnose. De aanvullende discovery toont alleen de expliciet begrensde workflowvensters.\n- **Geblokkeerde werkregels:** apart P0-eerst status=blocked-overzicht uit dezelfde observatie, maximaal veertig getoonde project-/prioriteitcombinaties, onderscheid tussen complete/partiële/verouderde/ontbrekende bron. Een geblokkeerde status is geen bewezen workflowfout of retrytoestemming.\n- **Wachtrijdruk:** toont uit één bestaande SQLite-observatie aantallen wachtend/bezet, herhaalde claimpogingen (≥3 en ≥10), verlopen leases, onbekende leaseklokken en inconsistente claimvensters. Tot 18 project/prioriteitgroepen worden risicogericht gerangschikt. Verouderde/onvolledige bron verbergt projectdetails en wordt nooit als actuele vrijgave voorgesteld; geen extra SQLite-transactie.\n- **Workerpaneel:** index-gedragen recente eventtijdlijn en veilige eigenaaropvolging voor maximaal drie gekozen projecten. `generation-progress` is browsersignaal, geen onafhankelijke bewijsvoering dat het werk werkelijk doorgaat.
+- **Bestaande PR's:** éénmalig gelezen exacte PR-HEAD met niet-groene CI, review- en merge/HOLD-richtlijn; bronbeperkingen en geen automatische integratie.
+- **Open productissues:** P0/P1-eerst shortlist uit maximaal acht canonieke GitHub-issuekaarten, met bestaande open PR-kandidaten uit hetzelfde repository, actieve eigenaar expliciet ONBEKEND, en complete bronouderdom/degradatie. Geen QA-only werk of nieuwe claims.
+- **Exacte GitHub-jobroute:** immutable run/job/HEAD-links, vereiste runnerlabels, queued versus waiting/pending, per-job bronmoment en >10-minuten-stale waarschuwing; nooit een automatische CI-, merge- of runnerdiagnose. De aanvullende discovery toont alleen de expliciet begrensde workflowvensters.
+- **Geblokkeerde werkregels:** apart P0-eerst status=blocked-overzicht uit dezelfde observatie, maximaal veertig getoonde project-/prioriteitcombinaties, onderscheid tussen complete/partiële/verouderde/ontbrekende bron. Een geblokkeerde status is geen bewezen workflowfout of retrytoestemming.
+- **Wachtrijdruk:** toont uit één bestaande SQLite-observatie aantallen wachtend/bezet, herhaalde claimpogingen (≥3 en ≥10), verlopen leases, onbekende leaseklokken en inconsistente claimvensters. Tot 18 project/prioriteitgroepen worden risicogericht gerangschikt. Verouderde/onvolledige bron verbergt projectdetails en wordt nooit als actuele vrijgave voorgesteld; geen extra SQLite-transactie.
+- **Workerpaneel:** index-gedragen recente eventtijdlijn en veilige eigenaaropvolging voor maximaal drie gekozen projecten. `generation-progress` is browsersignaal, geen onafhankelijke bewijsvoering dat het werk werkelijk doorgaat.
 - **Notionpaneel:** maximaal dertig gesamplede `Claimed`, `Running` en `Verifying`-werkregels met originele bronstatus en afkappingswaarschuwing; labels zijn geen bewijs van actuele queue- of file-scope-eigendom.
 
 De privé-overdracht is nu **op de volledige geselecteerde operationele broncontext gebonden**: de SHA-256 van de bestaande GitHub-, queue-, worker- en Notion-gegevens wordt bij de incidentfingerprint meegenomen. Nieuwe gegevens met dezelfde incident-ID's kunnen daardoor een oud exact-source-notitiebestand niet ongemerkt als actuele opvolging importeren. De operator kan oude notities alleen via de reeds bestaande expliciete **Herbruik oude notities**-route dragen, die nieuwe bronbeoordeling vereist. Bij invalidatie van bronautoriteit, discrepante status of misvormde brongegevens weigert de renderer de werkbank vóór het bijwerken van het optionele incidenteledger.
