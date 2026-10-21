@@ -715,6 +715,13 @@ Each new folder is 0700 and has exactly four mode-0600 files:
 `incident.html`, `owner-handoff.md`, `owner-inbox.json` and
 `MANIFEST.json`. The manifest records SHA-256 of each rendition,
 its bounded length, source type, and **the exact shared observation window**.
+It also provides a deterministic 24-character `incident_ref` from the
+owner-inbox rendition. A saved receipt exported twice with identical source
+and owner decision gets the same reference across folders; another read of
+current host state may result in a different reference. The read-only verifier
+recomputes the reference, which can be quoted in a project issue without
+pasting private service-state data. This hash is **not** a secret token,
+claim lease, digital signature or release authorization.
 It grants no job claim, GitHub dispatch, service restart, merge or deploy,
 and leaves real job/production recovery unknown.
 
