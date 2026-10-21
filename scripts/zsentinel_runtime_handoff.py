@@ -1045,6 +1045,29 @@ def markdown(report):
         if queue_known else "geen bronvergelijking; leaseconflicten ONBEKEND."))
     if queue_partial:
         lines.append("Queuebron niet volledig; verborgen leaseconflicten ONBEKEND.")
+    notion = _notion_review_summary(report)
+    if notion is not None:
+        age = notion["source_age_seconds"]
+        lines.extend([
+            "", "## Notion · onafgerond werk (GEEN claimautorisatie)",
+            "Bron: " + _md(notion["coverage"], 50) +
+            (" · verouderd of onbekend" if age is None or age > 600 else
+             " · beperkt recent geobserveerd"),
+            "Notion-statussen bewijzen geen actuele worker, lease, bestandsscope of vrijgave.",
+        ])
+        for item in notion["projects"]:
+            lines.append("- " + _md(item["project"]) +
+                         ": minstens " + str(item["observed_unfinished_min"]) +
+                         " onafgerond" +
+                         (", Verifying minstens " + str(item["observed_verifying_min"])
+                          if item["observed_verifying_min"] else "") +
+                         " · " + _md(item["next_step"], 160))
+        if notion["items_truncated"]:
+            lines.append("Projectvoorbeeld afgekapt; andere projecten ONBEKEND.")
+        if notion["unregistered_work_status_min"]:
+            lines.append("Niet aan project toe te wijzen: minstens " +
+                         str(notion["unregistered_work_status_min"]) +
+                         " statuswaarnemingen.")
     lines.append("")
     lines.append("## Prioritaire opvolging")
     for n, card in enumerate(report["priority_items"], 1):
