@@ -394,25 +394,29 @@ def main():
                 raise ValueError("at most three distinct existing PRs")
             if args.pr_project:
                 pr_discovery_projects = list(args.pr_project)
-            elif not pr_selections:
-                # Same bounded existing-evidence selection as the issue inbox.
-                # A missing project is UNKNOWN, never proof of no open PR.
-                pr_discovery_projects = [
-                    row["id"] for row in (read_json(
-                        args.bundle, MAX_INPUT_BYTES, "bundle")["evidence"]["projects"])
-                    if isinstance(row, dict) and row.get("id") in registry
-                ][:3]
             if (len(pr_discovery_projects) > 3
                     or len(set(pr_discovery_projects)) != len(pr_discovery_projects)
-                    or any(pid not in registry for pid in pr_discovery_projects)
-                    or not (pr_selections or pr_discovery_projects)):
-                raise ValueError("existing PR source requires one to three distinct canonical projects")
+                    or any(pid not in registry for pid in pr_discovery_projects)):
+                raise ValueError("existing PR source requires up to three distinct canonical projects")
         if args.worker_events_database is not None and (
                 not 1 <= len(args.worker_project) <= 3
                 or len(set(args.worker_project)) != len(args.worker_project)
                 or any(name not in registry for name in args.worker_project)):
             raise ValueError("worker source requires one to three distinct canonical --worker-project IDs")
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
+        if args.read_existing_prs:
+            if not pr_selections and not pr_discovery_projects:
+                # One validated read for discovery and routing: never
+                # attribute PR evidence to a different bundle inode/epoch.
+                projects = bundle.get("evidence", {}).get("projects")
+                if type(projects) is not list:
+                    raise ValueError("existing PR source requires bounded evidence projects")
+                pr_discovery_projects = [
+                    row["id"] for row in projects
+                    if type(row) is dict and row.get("id") in registry
+                ][:3]
+            if not (pr_selections or pr_discovery_projects):
+                raise ValueError("existing PR source requires canonical projects")
         old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
         selected_historical = None
         if args.recheck_historical_jobs:
