@@ -199,7 +199,8 @@ def project_runner_prompt(project_id, name):
             'Markeer BLOCKED alleen met concrete dependency-evidence: de oorspronkelijke queue-taak blijft geparkeerd en is niet hetzelfde als DROPPED. '
             'Een hervatting vereist een geauthenticeerde operatornotitie; hervat nooit automatisch op basis van een oude heartbeat of historische status. '
             'Geen nieuwe QA-, regressie- of testsuites schrijven, uitbreiden of draaien; hooguit een build, bestaande CI-status of directe functionele inspectie. Raak verplichte gates niet aan. '
-            'Als een onderdeel wacht op CI, review of VPS, kies meteen ander vrij uitvoerbaar herstelwerk in een ander project. '
+            'Als een onderdeel wacht op CI, review of VPS, markeer uitsluitend de afhankelijke queue-taak BLOCKED met concrete oorzaak en hervatvoorwaarde; deze blijft bewaard en wordt niet gedropt. '
+            'Kies daarna direct ander vrij uitvoerbaar herstelwerk in een ander project. Hervat een geparkeerde taak pas na expliciete geautoriseerde operatorbevestiging dat de afhankelijkheid is opgelost. '
             'Voer meerdere concrete fixes na elkaar uit en stop niet bij een statuscheck, nieuwe taak, enkele commit of een groene heartbeat. '
             'Herstel bij voorkeur één volledige cross-project kritieke route in plaats van een reeks symptoomfixes; bewijs daarna werkelijk hervatte taakuitvoering. '
             'Rapporteer steeds het echte doelproject, de productfix, actuele PR/commit, bronmerged ja/nee, live verificatie en resterende blockers; geen testaantallen. '
@@ -2934,7 +2935,8 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
             'zSentinel QA tasks or zSentinel feature PRs. Do not steal existing ownership or skip gates. '
             'MERGE FIRST: finish a free existing product PR before opening a new branch; merge only when exact-head '
             'required CI, independent review, branch protection and owner authorization permit it. '
-            'If a dependency waits, park only that PR and continue safe independent product work. '
+            'If a dependency waits, return BLOCKED with concrete cause and resume condition; preserve that exact queue item as parked, not dropped, while continuing independent product work. '
+            'Resume only after a trusted operator records that the dependency is resolved. '
             'PRIORITY 2: move to another safe unowned open issue, broken workflow or unfinished feature '
             'in a real project; implement multiple material fixes across projects without waiting on a blocked task.',
             project.get('notion_url') or '',
