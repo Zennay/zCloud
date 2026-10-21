@@ -165,8 +165,53 @@ def verify_bundle(data: bytes) -> dict:
         if sha256(payload).hexdigest() != receipt["sha256"]:
             raise ValueError("member SHA256 receipt mismatch: " + name)
 
-    if manifest.get("sample_absence_is_not_resolution") is not True:
-        raise ValueError("bundle manifest lost its non-resolution warning")
+    # Bind the manifest to the JSON payload too: a self-consistent checksum list
+    # must not conceal disagreement between duplicated source/provenance metadata.
+    try:
+        report = json.loads(
+            payloads["issue-delta.json"].decode("utf-8"),
+            object_pairs_hook=_unique_object,
+        )
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("issue-delta.json is not valid UTF-8 JSON") from exc
+    if not isinstance(report, dict):
+        raise ValueError("issue-delta.json must contain an object")
+    matching_fields = (
+        ("source", "source"),
+        ("source_scope", "source_scope"),
+        ("old_manifest_sha256", "old_manifest_sha256"),
+        ("new_manifest_sha256", "new_manifest_sha256"),
+        ("old_latest_observed_utc", "old_latest_observed_utc"),
+        ("new_latest_observed_utc", "new_latest_observed_utc"),
+        ("old_source_freshness", "old_source_freshness"),
+        ("new_source_freshness", "new_source_freshness"),
+        ("counts", "counts"),
+    )
+    for manifest_key, report_key in matching_fields:
+        if manifest.get(manifest_key) != report.get(report_key):
+            raise ValueError("bundle source metadata disagrees with JSON payload")
+    if manifest.get("selection") != report.get("display"):
+        raise ValueError("bundle selection metadata disagrees with JSON payload")
+    if report.get("sample_absence_is_not_resolution") is not True:
+        raise ValueError("JSON payload lost its non-resolution warning")
+    for key in ("worker_claim_authorized", "required_ci_review_verified",
+                "merged_on_main_verified", "live_verified"):
+        if report.get(key) is not False or manifest.get(key) is not False:
+            raise ValueError("bundle payload has unsafe authority flag: " + key)
+    if manifest.get("current_issue_open_status_verified") is not False:
+        raise ValueError("bundle manifest must not claim current issue status")
+    rows = report.get("issues")
+    if (not isinstance(rows, list) or len(rows) > 60
+            or not isinstance(report.get("display"), dict)
+            or report["display"].get("shown") != len(rows)):
+        raise ValueError("bundle JSON payload has inconsistent bounded selection")
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("bundle JSON payload has an invalid issue row")
+        for key in ("current_issue_open_status_verified", "claim_verified",
+                    "merge_verified", "deploy_verified"):
+            if row.get(key) is not False:
+                raise ValueError("issue row has unsafe authority flag: " + key)
     for key in NON_AUTHORITY_FLAGS:
         if manifest.get(key) is not False:
             raise ValueError("bundle manifest has unsafe authority flag: " + key)
