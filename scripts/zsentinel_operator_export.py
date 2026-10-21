@@ -48,7 +48,12 @@ Vanaf deze map:
 
 Rapporten en de nieuwe gestructureerde JSON-eigenaarinbox worden create-only (0600)\ngemaakt in bestaande veilige doelmappen. JSON noemt bronmoment,\nbeperkte capaciteit/servicetellingen en maximaal drie handmatige acties.\nDe JSON-inbox activeert GEEN herstel of workflow. Ook Markdown kan direct\nvanuit de eenmalige live bron of twee historische bonnetjes worden gemaakt;\nook één opgeslagen privébon kan offline opnieuw als rapport worden getoond.\nHistorische bronmomenten blijven uitdrukkelijk niet actueel.\n
 Het nieuwe --bundle maakt een verse 0700 map met incident.html,\nowner-handoff.md, owner-inbox.json, github-owner-issue-draft.md en\nMANIFEST.json; ieder bestand is 0600.
-De drie rapporten delen dezelfde bronobservatie. --verify-bundle leest alleen,
+De drie rapporten delen dezelfde bronobservatie.
+Het incident.html start met lokale navigatie naar de eigenaaroverdracht,
+het geredigeerde GitHub-issueconcept en de JSON-inbox; geen webformulier,
+upload of externe verbinding. HTML en Markdown tonen dezelfde incidentreferentie.
+Bij ontbrekende/ongeldige CPU-capaciteitscijfers blijft de P0-actiestatus
+ONBEKEND/BEHEERDER NODIG; de rapportage gaat niet stuk door typefouten. --verify-bundle leest alleen,
 controleert bronvenster en SHA256-consistentie, GEEN cryptografische handtekening.\nDe GitHub-issueconcepttekst heeft bewuste handmatige overdracht,\nbevoegdheidsvragen en geen privé-runnernamen, host of ruwe capaciteit.
 Plaats de bundel onder een bestaande eigenaar-private (0700) doelmap.
 
