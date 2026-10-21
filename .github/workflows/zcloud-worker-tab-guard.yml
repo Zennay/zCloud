@@ -181,13 +181,18 @@ jobs:
             if test "$rc" -ne 0 && test "$swapped" -eq 1; then
               # An owner might change the live add-on even after our atomic
               # swap. Never roll back over those newer bytes.
-              if ! cmp -s -- firefox-extension/background.js "$live/background.js"; then
+              if test -L "$live" || test -L "$live/background.js" \
+                 || ! cmp -s -- firefox-extension/background.js "$live/background.js"; then
                 echo "::error::Installed addon changed after our swap; preserve owner bytes and recovery backup."
+                python3 scripts/zsentinel_release_receipt.py --component addon --outcome rollback-owner-preserved || true
                 backup=""
               elif ! mv -f -- "$backup" "$live/background.js"; then
                 echo "::error::Failed to restore previous live add-on; backup retained for operator recovery."
+                python3 scripts/zsentinel_release_receipt.py --component addon --outcome rollback-failed || true
                 # Do not delete the only remaining recoverable copy.
                 backup=""
+              else
+                python3 scripts/zsentinel_release_receipt.py --component addon --outcome rollback-restored || true
               fi
             fi
             if test -n "$staged"; then rm -f -- "$staged"; fi
