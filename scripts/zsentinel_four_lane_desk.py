@@ -997,7 +997,10 @@ def html_view(data):
         + str(item["eligible_hint_p1"]) + "); "
         + str(item["active_local"]) + " lokaal actief.</p><p>"
         + html.escape(item["next_step"]) + "</p>"
-        + html_inbox_links(item["project"]) + "</article>"
+        + html_inbox_links(item["project"]) + "<p><a href='#project-"
+        + next(project_id for project_id, project_name in PORTFOLIO_PROJECTS.items()
+               if project_name == item["project"])
+        + "'>Open lokaal projectdossier ↓</a></p></article>"
         for item in data["owner_review_shortlist"]
     )
     owner_panel = (
@@ -1014,7 +1017,10 @@ def html_view(data):
         + "</section>"
     )
     portfolio_rows = "".join(
-        "<tr><th scope='row'>" + html.escape(item["project"])
+        "<tr><th scope='row'><a href='#project-"
+        + next(project_id for project_id, project_name in PORTFOLIO_PROJECTS.items()
+               if project_name == item["project"])
+        + "'>" + html.escape(item["project"]) + "</a>"
         + html_inbox_links(item["project"]) + "</th>"
         + "<td>" + str(item["queued_p0"]) + " <small>(eligible "
         + str(item["eligible_queued_p0"]) + ")</small></td><td>"
@@ -1074,6 +1080,9 @@ def html_view(data):
         ".inbox{display:block;font-size:.78rem;margin-top:5px}"
         "a{color:#b9d0ff}a:focus-visible{outline:2px solid #ffca83}"
         ".scroll{overflow:auto}li{margin:8px 0}h3{font-size:1rem;line-height:1.4}"
+         "details{border-top:1px solid #30415c;padding:14px 4px;scroll-margin-top:18px}"
+         "details:target{outline:2px solid #ffca83;outline-offset:4px}"
+         "summary{cursor:pointer;font-weight:650;padding:5px}details p{margin:9px 0}"
         "footer{color:#a8b7d4;margin-top:28px}"
         "</style></head><body><main><header><div class='eyebrow'>"
         "Portfolio recovery · operatorweergave</div><h1>Vier herstelbanen</h1>"
@@ -1089,7 +1098,8 @@ def html_view(data):
         "<th scope='col'>P0 wacht</th><th scope='col'>P1 wacht</th>"
         "<th scope='col'>P0 actief</th><th scope='col'>P1 actief</th>"
         "</tr></thead><tbody>" + portfolio_rows + "</tbody></table></div>"
-        + portfolio_note + "</section>" + host_section + runner_section
+        + portfolio_note + "</section>" + project_cards_html(data)
+        + host_section + runner_section
         + "<section class='notice'><h2>Grenzen en "
         "vervolgactie</h2><ul>" + details + "</ul></section>"
         "<footer>Alleen lokale read-only bron. Geen claim, CI-start, merge, "
