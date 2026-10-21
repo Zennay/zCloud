@@ -284,18 +284,31 @@ def _render(payload, rows, truncated):
 
 
 def _private_create(path: Path, document: str):
-    parent = path.parent
-    info = parent.stat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or (info.st_mode & 0o077):
-        raise ValueError("uitvoermap moet eigen private 0700-map zijn")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(str(path), flags, 0o600)
+    # Bind the final file creation to one held directory descriptor. Checking
+    # parent.stat() and opening by an absolute string permits directory-swap
+    # races if another local process changes the parent between those steps.
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    directory = os.open(str(path.parent), dir_flags)
+    created = False
     try:
-        with os.fdopen(fd, "wb") as target:
-            target.write(document.encode("utf-8"))
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
+        info = os.fstat(directory)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                or (info.st_mode & 0o077)):
+            raise ValueError("uitvoermap moet eigen private 0700-map zijn")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path.name, flags, 0o600, dir_fd=directory)
+        created = True
+        try:
+            with os.fdopen(fd, "wb") as target:
+                target.write(document.encode("utf-8"))
+        except Exception:
+            # Remove ONLY a file created by this invocation, and only inside
+            # the directory whose descriptor remains held.
+            if created:
+                os.unlink(path.name, dir_fd=directory)
+            raise
+    finally:
+        os.close(directory)
 
 
 def main(argv=None):
