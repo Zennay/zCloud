@@ -127,6 +127,12 @@ python3 scripts/zsentinel_operator_workbench.py \
 3. Open the HTML locally, on mobile or desktop. Search and filter the *already observed* real issues by project or priority. Each card links to the original GitHub issue, its bounded existing PR references, known evidence gaps and the owner's recommended next investigation. Choose a **human-only disposition**: investigate, inspect/integrate existing PR, coordinate owner, park external blocker, or candidate for new product implementation (requiring independent fresh claim verification).
 4. Add a private note for an issue. **Download private human handoff** to create a source-bound `zsentinel-human-handoff.json` in your browser. If you close the page, **Reopen own handoff** restores precisely that file only if the SHA-256 of the original board, observation timestamp, entire known issue inventory and read-only authorization flags match. Wrong, malformed, overlong or foreign handoffs leave the current notes alone. There is no automatic persistence, autosave, external API call or output to Notion.
 
+### Per issue overdragen zonder de rest van het portfolio te delen
+
+De geselecteerde issue kan als afzonderlijke `zsentinel-private-single-issue-handoff` JSON worden geëxporteerd. Deze bevat uitsluitend de gevalideerde bronvelden voor die ene issue, de bijbehorende waargenomen PR/gate-verwijzingen en de lokale menselijke opvolging. Andere issuekaarten, projectbrede wachtrijsignalen en notities blijven buiten het bestand. Bekijk de preview vóór download.
+
+Import accepteert alleen een bestand van exact dezelfde board-SHA en waarnemingstijd en vergelijkt de volledige issuebron opnieuw. Bevestigen wijzigt uitsluitend de menselijke opvolging van die ene issue in het huidige browsertabblad. Bestaande afwijkende notities worden niet overschreven; gebruik voor een oudere board de bestaande expliciete carry-forward-flow. De import voert geen GitHub-/Notion-call uit en geeft geen claim-, CI-, merge- of deploybevoegdheid.
+
 ## 21 oktober · kruisverwijzingen naar andere PRs bij dezelfde bronissues
 
 Bij `portfolio-pr-markdown`, `portfolio-pr-html` en

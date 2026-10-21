@@ -734,6 +734,16 @@ No personal notes, no credentials, no permission to claim, merge or deploy.</p>
 <label>Reopen own handoff<input id="restore" type="file" accept=".json,application/json"></label>
 <button id="print" type="button">Print selected issue</button>
 </div>
+<section class="brief" aria-label="Single-issue private handoff">
+<h2>Selected issue · private handoff</h2>
+<p>Export or import exactly one issue's saved evidence and its local human follow-up. Other issues, project-level queue notes and other private annotations are excluded. Preview first; this is not a live status or permission to act.</p>
+<button type="button" id="previewIssueHandoff">Preview selected issue JSON</button>
+<div id="issueHandoffPanel" hidden><pre id="issueHandoffContent"></pre>
+<button type="button" id="downloadIssueHandoff" disabled>Download selected issue only (.json)</button></div>
+<label>Import an issue-only handoff from this exact board<input id="issueHandoffFile" type="file" accept=".json,application/json"></label>
+<div id="issueImportPanel" hidden><p id="issueImportSummary" role="status"></p><pre id="issueImportContent"></pre>
+<button type="button" id="applyIssueImport" disabled>Confirm import into this issue only</button></div>
+</section>
 <section class="brief" aria-label="Private project handoff brief">
 <h2>Source-bound, human-only project briefing</h2>
 <p>Review all visible cards, owner gaps and your human dispositions before exporting
@@ -852,7 +862,7 @@ window.addEventListener('beforeunload',event=>{
  if(!unsavedLocal)return;
  event.preventDefault();event.returnValue='';
 });
-let viewedBrief=null,viewedCsv=null,viewedDeltaCsv=null,viewedPrDesk=null,viewedPrManifest=null;
+let viewedBrief=null,viewedCsv=null,viewedDeltaCsv=null,viewedPrDesk=null,viewedPrManifest=null,viewedIssueHandoff=null,issueImportPreview=null;
 let viewedCalendar=null,viewedCalendarStamp=null;
 function invalidateBrief(){
  viewedPrManifest=null;
@@ -879,6 +889,15 @@ function invalidateBrief(){
  document.getElementById('briefPanel').hidden=true;
  document.getElementById('briefContent').textContent='';
  document.getElementById('downloadBrief').disabled=true;
+ viewedIssueHandoff=null;
+ document.getElementById('issueHandoffPanel').hidden=true;
+ document.getElementById('issueHandoffContent').textContent='';
+ document.getElementById('downloadIssueHandoff').disabled=true;
+ issueImportPreview=null;
+ document.getElementById('issueImportPanel').hidden=true;
+ document.getElementById('issueImportSummary').textContent='';
+ document.getElementById('issueImportContent').textContent='';
+ document.getElementById('applyIssueImport').disabled=true;
 }
 function elem(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e}
 function link(text,url){const a=elem('a',text);a.href=url;a.rel='noopener noreferrer';a.target='_blank';return a}
@@ -2909,6 +2928,187 @@ document.getElementById('downloadPrDesk').onclick=()=>{
  status.textContent='Reviewed snapshot PR handoff downloaded; no GitHub claim or merge made.';
  invalidateBrief();
 };
+
+function sameJsonValue(a,b){
+ if(a===b)return true;
+ if(a===null||b===null||typeof a!=='object'||typeof b!=='object')return false;
+ if(Array.isArray(a)!==Array.isArray(b))return false;
+ const ak=Object.keys(a).sort(),bk=Object.keys(b).sort();
+ return ak.length===bk.length&&ak.every((key,index)=>
+  key===bk[index]&&sameJsonValue(a[key],b[key]));
+}
+function hasExactKeys(value,keys){
+ return Boolean(value&&!Array.isArray(value)&&typeof value==='object'&&
+  sameJsonValue(Object.keys(value).sort(),keys.slice().sort()));
+}
+function issueHandoffSource(card){
+ return {
+  issue:card.issue,project:card.project,priority:card.priority,url:card.url,
+  title:card.title,issue_coverage:card.issue_coverage,
+  project_coverage:board.coverage.projects[card.project]||'unavailable',
+  inbox_source_observed_at_utc:board.project_source_observed_at_utc?.inbox||'unavailable',
+  open_pr_candidates:card.open_pr_candidates,
+  pr_gate_observations:card.pr_gate_observations,
+  evidence_gaps:card.evidence_gaps,
+  recommended_next_step:card.recommended_next_step,
+  claim_context:card.claim_context
+ };
+}
+function issueHandoffPayload(issue){
+ const card=entries.get(issue);
+ if(!card)return null;
+ const human=handoffs.get(issue)||{};
+ return {
+  schema_version:1,kind:'zsentinel-private-single-issue-handoff',
+  source_board_sha256:boardSha,source_observed_at_utc:board.observed_at_utc,
+  authorizes_claim:false,authorizes_merge:false,authorizes_deploy:false,
+  issue:issueHandoffSource(card),
+  human_followup:{
+   decision:human.decision||'investigate',note:human.note||'',
+   owner:human.owner||'',due:human.due||'',
+   carried_from:human.carried_from||'',
+   followup_status:human.followup_status||'open',
+   followup_changed_at_utc:human.followup_changed_at_utc||''
+  }
+ };
+}
+function issueHandoffText(){
+ const payload=issueHandoffPayload(selected);
+ return payload?JSON.stringify(payload,null,2)+'\n':null;
+}
+function hasHumanIssueNotes(value){
+ return Boolean(value&&(value.decision&&value.decision!=='investigate'||
+  value.note||value.owner||value.due||value.carried_from||
+  value.followup_status==='local-complete'||value.followup_changed_at_utc));
+}
+function validateIssueHandoff(data){
+ const topKeys=['schema_version','kind','source_board_sha256',
+  'source_observed_at_utc','authorizes_claim','authorizes_merge',
+  'authorizes_deploy','issue','human_followup'];
+ if(!hasExactKeys(data,topKeys)||data.schema_version!==1||
+  data.kind!=='zsentinel-private-single-issue-handoff'||
+  data.source_board_sha256!==boardSha||
+  data.source_observed_at_utc!==board.observed_at_utc||
+  data.authorizes_claim!==false||data.authorizes_merge!==false||
+  data.authorizes_deploy!==false)
+  throw Error('source identity');
+ const issueId=data.issue?.issue,card=entries.get(issueId);
+ if(!card||!sameJsonValue(data.issue,issueHandoffSource(card)))
+  throw Error('issue source');
+ const h=data.human_followup;
+ const humanKeys=['decision','note','owner','due','carried_from',
+  'followup_status','followup_changed_at_utc'];
+ if(!hasExactKeys(h,humanKeys)||!permitted.has(h.decision)||
+  typeof h.note!=='string'||h.note.length>1000||
+  new TextEncoder().encode(h.note).length>4000||
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(h.note)||
+  typeof h.owner!=='string'||h.owner.length>80||contactLabel(h.owner)!==h.owner||
+  typeof h.due!=='string'||(h.due!==''&&!validFollowupDate(h.due))||
+  typeof h.carried_from!=='string'||
+  (h.carried_from!==''&&!/^[a-f0-9]{64}$/.test(h.carried_from))||
+  !['open','local-complete'].includes(h.followup_status)||
+  (h.followup_status==='local-complete'&&!manualGateDecisions.has(h.decision))||
+  typeof h.followup_changed_at_utc!=='string'||
+  (h.followup_changed_at_utc!==''&&!validLocalChangeTime(h.followup_changed_at_utc)))
+  throw Error('human follow-up');
+ const value={
+  decision:h.decision,note:h.note,owner:h.owner,due:h.due,
+  carried_from:h.carried_from,followup_status:h.followup_status,
+  followup_changed_at_utc:h.followup_changed_at_utc
+ };
+ if(!hasHumanIssueNotes(value))throw Error('empty follow-up');
+ return {issue:issueId,source:issueHandoffSource(card),value:value};
+}
+document.getElementById('previewIssueHandoff').onclick=()=>{
+ saveSelection();
+ viewedIssueHandoff=issueHandoffText();
+ const panel=document.getElementById('issueHandoffPanel');
+ panel.hidden=!viewedIssueHandoff;
+ document.getElementById('issueHandoffContent').textContent=viewedIssueHandoff||'';
+ document.getElementById('downloadIssueHandoff').disabled=!viewedIssueHandoff;
+ status.textContent=viewedIssueHandoff?
+  'Review this exact one-issue source and its private notes. Other issues and project-level notes are excluded.':
+  'No selected issue is available for export.';
+};
+document.getElementById('downloadIssueHandoff').onclick=()=>{
+ if(!viewedIssueHandoff)return;
+ saveSelection();
+ if(issueHandoffText()!==viewedIssueHandoff){
+  invalidateBrief();
+  status.textContent='Issue evidence or private notes changed. Preview the one-issue handoff again.';
+  return;
+ }
+ const payload=JSON.parse(viewedIssueHandoff);
+ const project=payload.issue.project.replace(/[^a-z0-9-]/gi,'-').slice(0,50);
+ const number=payload.issue.issue.split('#').pop();
+ const uri=URL.createObjectURL(new Blob([viewedIssueHandoff],
+  {type:'application/json;charset=utf-8'}));
+ const a=elem('a');a.href=uri;
+ a.download='zsentinel-issue-handoff-'+(project||'project')+'-'+number+'.json';a.click();
+ setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ invalidateBrief();
+ status.textContent='Single-issue private handoff downloaded. It contains no other issue or project notes and authorizes no external action.';
+};
+document.getElementById('issueHandoffFile').addEventListener('change',async event=>{
+ const file=event.currentTarget.files?.[0];
+ if(!file)return;
+ invalidateBrief();
+ try{
+  if(file.size<4||file.size>65536||!globalThis.crypto?.subtle)
+   throw Error('bounds');
+  const bytes=await file.arrayBuffer();
+  const data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+  const accepted=validateIssueHandoff(data);
+  const current=handoffs.get(accepted.issue);
+  if(hasHumanIssueNotes(current)&&!sameJsonValue(current,accepted.value))
+   throw Error('existing local note');
+  issueImportPreview=accepted;
+  document.getElementById('issueImportSummary').textContent=
+   'One issue only: '+accepted.issue+' · '+accepted.value.decision+
+   ' · source board '+boardSha.slice(0,12)+
+   '… · current annotations will be preserved unless they are empty or identical.';
+  document.getElementById('issueImportContent').textContent=JSON.stringify({
+   issue:accepted.source.issue,project:accepted.source.project,
+   priority:accepted.source.priority,title:accepted.source.title,
+   human_followup:accepted.value,
+   authorizes_claim:false,authorizes_merge:false,authorizes_deploy:false
+  },null,2);
+  document.getElementById('issueImportPanel').hidden=false;
+  document.getElementById('applyIssueImport').disabled=false;
+  status.textContent='Issue-only handoff source and local annotation are valid for this exact saved board. Confirm to import one issue only.';
+ }catch{
+  issueImportPreview=null;
+  document.getElementById('issueImportPanel').hidden=true;
+  document.getElementById('issueImportContent').textContent='';
+  document.getElementById('applyIssueImport').disabled=true;
+  status.textContent='Issue-only handoff refused: wrong board, changed source, malformed annotation, or conflicting local notes.';
+ }finally{event.currentTarget.value='';}
+});
+document.getElementById('applyIssueImport').onclick=()=>{
+ const accepted=issueImportPreview;
+ if(!accepted)return;
+ saveSelection();
+ const card=entries.get(accepted.issue),current=handoffs.get(accepted.issue);
+ if(!card||!sameJsonValue(accepted.source,issueHandoffSource(card))||
+  hasHumanIssueNotes(current)&&!sameJsonValue(current,accepted.value)){
+  invalidateBrief();
+  status.textContent='Import refused: source changed or different local notes already exist. No annotations were overwritten.';
+  return;
+ }
+ handoffs.set(accepted.issue,{...accepted.value});
+ selected=accepted.issue;
+ document.getElementById('search').value='';
+ document.getElementById('priority').value='';
+ document.getElementById('project').value=card.project;
+ document.getElementById('disposition').value='';
+ document.getElementById('change').value='';
+ document.getElementById('followupStatus').value='';
+ setUnsaved(true);
+ invalidateBrief();
+ drawList();drawDetail();
+ status.textContent='Imported exactly one private human follow-up into this browser tab. Other issue notes and all external claims, statuses and permissions remain unchanged.';
+};
+
 document.getElementById('previewBrief').onclick=()=>{
  saveSelection();
  viewedBrief=currentBrief();
