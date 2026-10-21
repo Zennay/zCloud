@@ -825,6 +825,8 @@ def main():
                         help="optional separate new private .csv owner-action export; requires --show-owner-handoff")
     parser.add_argument("--owner-handoff-json-output", type=Path,
                         help="matching .json owner handoff from the same source as optional .csv")
+    parser.add_argument("--owner-packet-output", type=Path,
+                        help="single new private .zip: JSON, CSV, Markdown, HTML and SHA manifest")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
     parser.add_argument("--output", type=Path,
@@ -884,6 +886,11 @@ def main():
                 raise ValueError("--owner-handoff-json-output requires --show-owner-handoff")
             if args.owner_handoff_json_output.suffix != ".json":
                 raise ValueError("--owner-handoff-json-output must be a new .json file")
+        if args.owner_packet_output is not None:
+            if not args.show_owner_handoff:
+                raise ValueError("--owner-packet-output requires --show-owner-handoff")
+            if args.owner_packet_output.suffix != ".zip":
+                raise ValueError("--owner-packet-output must be a new .zip file")
         if args.output is not None and args.format not in ("html", "json", "text", "handoff"):
             raise ValueError("--output supports only html, json, text or human handoff")
         if args.compare_with is not None and args.format not in ("html", "json", "text", "handoff"):
@@ -894,11 +901,13 @@ def main():
         sources = [args.state, args.window_state, args.database,
                    args.worker_events_database, args.desk_output,
                    args.disk_hotspots_output, args.disk_hotspots_previous,
-                   args.owner_handoff_output, args.owner_handoff_json_output]
+                   args.owner_handoff_output, args.owner_handoff_json_output,
+                   args.owner_packet_output]
         if any(p.resolve() == q.resolve() for p in history_files
                for q in sources if q is not None):
             raise ValueError('compare sources must differ from live state')
-        owner_outputs = [args.owner_handoff_output, args.owner_handoff_json_output]
+        owner_outputs = [args.owner_handoff_output, args.owner_handoff_json_output,
+                         args.owner_packet_output]
         for candidate in owner_outputs:
             if candidate is not None and any(
                     candidate.resolve() == p.resolve()
@@ -921,7 +930,7 @@ def main():
                 args.disk_hotspots_output.resolve() == p.resolve()
                 for p in [args.state, args.window_state, args.database,
                           args.worker_events_database, args.desk_output,
-                          args.output, args.owner_handoff_output, *history_files] if p is not None):
+                          args.output, *owner_outputs, *history_files] if p is not None):
             raise ValueError("disk report path overlaps private state or input")
         if args.output is not None and any(
                 args.output.resolve() == v.resolve()
@@ -1495,6 +1504,9 @@ def main():
                 write_private_output(
                     args.owner_handoff_output,
                     serialize_owner_handoff(owner_handoff, ".csv"), "csv")
+        if args.owner_packet_output is not None:
+            from zsentinel_operator_packet import write_packet
+            write_packet(args.owner_packet_output, owner_handoff)
         if args.desk_output is not None:
             from zsentinel_incident_desk import write_private_html, review_html
             private_desk = rendered if args.format == "desk" else review_html(decision)
