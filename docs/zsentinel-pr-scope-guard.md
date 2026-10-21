@@ -2551,3 +2551,10 @@ PR-groepen blijven beschikbaar; de menselijke vervolgstap is de actuele issue-
 en PR-bron opnieuw te lezen. De offline cockpit toont nu per gedeelde PR ook
 de waargenomen gatebron en die vervolgstap. Een opgeslagen SHA blijft een
 bronmomentopname, nooit actuele HEAD-, eigenaars- of mergevrijgave.
+
+
+De compacte Markdown-/tekstoverdracht en de HTML-cockpit tellen deze gevallen
+ook apart: PR-groepen met onbekende HEAD en groepen met conflicterende
+HEAD-waarnemingen. Als de tellerbron ontbreekt, toont de overdracht
+**ONBEKEND** in plaats van nul. Deze aantallen zijn observaties van de huidige
+beperkte issue-/PR-bron, geen volledige backlog- of mergevrijgave.
