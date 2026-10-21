@@ -25,20 +25,27 @@ production writer from cancelling an in-flight deployment.
    executable shell step runs the canonical permanent-VPS identity guard,
    immediately after a credentials-disabled checkout at the workflow event SHA.
    Later owner gates still verify exact checkout, remote main and VPS identity.
-4. The worker-tab workflow now checks remote main **again** before copying
-   the browser background file and before attempting an in-place addon reload.
-   It refuses a runtime checkout whose HEAD differs from the approved main,
-   dirty/untracked runtime background changes, symlinked worker addon files
-   or a missing installed background. These are operator-denied installs, not
-   permission to overwrite active-owner work. Existing idle checks decide
-   whether activation is safe; neither worker sessions nor tabs are forcibly
-   restarted.
+4. The worker-tab workflow checks remote main **again** before the live
+   add-on write and before the in-place reload. It refuses a runtime checkout
+   whose HEAD differs from approved main, dirty/untracked runtime background
+   changes, or runtime bytes that do not exactly equal the approved Actions
+   source. The **tracked VPS source file is never overwritten** by the install.
+   Symlinked add-on paths and a missing installed background also deny apply.
+   For the installed copy only, the job stages the approved bytes in the same
+   directory, saves the previous file there, and atomically renames the staged
+   file into place; it verifies the installed result, restores the previous
+   version on failure, and retains its recovery copy if restoration is denied.
+   A killed process may leave the already verified approved version installed
+   but cannot leave a half-copied background file. These are operator-denied
+   installs, not permission to overwrite active-owner work. Existing idle
+   checks decide whether activation is safe; worker sessions and tabs are not
+   forcibly restarted.
 5. All three VPS checkout steps rely on the canonical GitHub workflow-event
    SHA selected by the pinned `actions/checkout`. Explicit `ref` expression
    overrides in these privileged jobs were removed because they were rejected
    by the mandatory permanent-runner source gate. The separate manual
    owner/triggering-actor/first-attempt/exact-main checks remain required.
-5. A changed main, unknown runner, missing permission, non-idle worker or
+6. A changed main, unknown runner, missing permission, non-idle worker or
    failed step leaves activation denied or deferred according to the existing
    fail-closed behavior.
 
