@@ -2494,3 +2494,10 @@ immutable source. It does not query Notion, GitHub or the live VPS, start CI,
 mutate queues/claims, assign a worker, merge a PR or deploy anything. Existing
 independent review and exact-head mandatory CI remain required before any
 main-branch integration. No new QA suite or manual test run was introduced.
+
+
+### Queue source clocks and ranked human follow-ups (21 October follow-up)
+
+The project recovery desk now sorts already-admitted **human investigation leads** as follows: potentially expired leases (owner reconciliation required), P0 product blockers, recurring claim cycles, P1 product blockers, and routine source rechecks. The priority is a *visual review order*, never a recovery or dispatch order. Each visible queue-pressure figure is accompanied by its **original queue source timestamp in UTC**, even if the later board and HTML report were generated at another time. Queue items without an accepted fresh retry-source timestamp are rejected rather than silently presented as valid current evidence. The private Markdown handoff includes the original timestamp and the same non-authorizing warning, including for projects with zero issue cards.
+
+Original source clock and freshness flags must match exactly, with no unknown source families, future capture or missing retry provenance for admitted queue pressure. Empty or outdated queue sources remain **UNKNOWN**, not healthy. The page still never asserts active ownership, true failure counts, permission to reclaim expired leases, or any successful merge/deploy. All existing branch CI, review and real production gates stay unchanged; nothing was dispatched or executed as a QA suite.
