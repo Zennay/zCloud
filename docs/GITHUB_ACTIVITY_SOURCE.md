@@ -252,3 +252,23 @@ an unbounded API crawl. Snapshot timestamps and source coverage remain partial.
 
 This feature adds no scheduled fetch, GitHub write, background sync, secrets,
 workflow retry, claim action, merge authority or production deploy.
+
+### 21 October continuation — per-source visibility and independent source windows
+
+The manual public GitHub page control now shows separate metadata-only status
+for **PR, Actions and main** on the requested page: unreadable, bounded full
+page, or bounded window ended, with observed row counts. A successful response
+with fewer than 20 PRs, fewer than 20 runs and fewer than 15 commits stops the
+**Read older page** control rather than offering empty pages; a full page
+allows the operator to request another bounded page, but does not imply any
+additional content must exist. Failed/partial requests do not move the cursor.
+No hidden reads, provider body or token is shown. Source status is not a
+statement about the completeness of GitHub history, private data or branches.
+
+A separate **Read VPS GitHub** or manually imported JSON receipt now resets
+any public per-project page/view cursor for the affected scope. Earlier
+independent sources may still be preserved by the safe receipt merger, but
+cannot be hidden accidentally merely because the browser's last public page
+selector pointed at page 2 or 3. This is display isolation, not a provider
+merge, claim handoff or live-recovery proof. All source windows remain
+bounded and never authorize repair, merge, deploy or operator impersonation.
