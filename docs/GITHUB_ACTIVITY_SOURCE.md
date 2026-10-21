@@ -384,3 +384,14 @@ No GitHub workflow dispatched, no QA or regression suite written or run,
 no VPS/SQLite/worker/lease mutation, no forced merge and no production
 deployment. A source branch, even one with complete API handlers, is
 **not** evidence of a live worker recovery or merged release.
+
+
+## 21 October · Stale GitHub observations remain visible during outage
+
+**Product impact in Activity → Read VPS GitHub:** after the normal five-minute cache freshness window, a singleflight GitHub refresh can remain queued, time out, hit the shared anonymous request budget or return an unavailable source. Previously the read model discarded its last valid receipt as soon as a refresh began, making the operator see `unavailable` with no historical evidence.
+
+The existing authenticated, on-demand `GET /api/github-activity-live?project=<canonical>` now retains its last **valid read-only** Activity or product-issue receipt in the same bounded in-memory cache for at most **one hour from the original successful provider observation**. During a fetch/403/429/capacity outage, it returns `state:"stale"` plus the **original** receipt and independently bounded `cached_age_s` and allowlisted `refresh_status`. A stale response never changes the receipt's own GitHub source/first-observed timestamps, the mandatory `feed_complete:false`, or the hard-false repair/merge/deploy flags. Nothing is stored to SQLite, disk, Notion or the worker queue; request concurrency and anonymous GitHub budget remain unchanged. Expired or invalid receipts still fail closed to `unavailable`.
+
+The mobile Activity UI accepts **only this narrowly validated stale state**, prominently says `STALE GitHub cache ... no current PR, CI or deployment coverage verified`, and never describes it as synchronized. When a newer source receipt is already displayed, the stale result **does not replace** that newer evidence or reset its GitHub page cursors. An ordinary current `partial` receipt continues to follow the existing source merge and per-project fairness behavior.
+
+This is not a new auto-poller, fresh GitHub assertion, review or release authority. It remains source code on the existing [Activity PR #1550](https://github.com/Zennay/zCloud/pull/1550) until independent exact-head CI, review and authorized integration are satisfied. No manual QA or regression suite is created or executed.
