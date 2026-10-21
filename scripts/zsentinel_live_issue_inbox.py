@@ -376,6 +376,10 @@ def markdown(report):
         ),
         "- GitHub search incomplete results: " +
         str(report["provider_incomplete_results"]),
+        "- Recent source total-count changed during pagination: " +
+        str(report["recent_provider_count_drift"]),
+        "- Issues with conflicting source-window observations: " +
+        str(report["issue_rows_with_cross_window_drift"]),
         "- P0/P1 title matches are navigation-only, not verified priority",
         "- Issues visible: " + str(report["total_issues_seen"]),
         "- Issues displayed: " + str(report["displayed_issues"]),
@@ -418,6 +422,8 @@ def markdown(report):
             str(row["no_github_issue_update_for_72h"]) +
             " · inbox sources: " +
             ",".join(row["inbox_source_windows"]) +
+            " · conflicting source snapshots: " +
+            str(row["source_window_identity_drift"]) +
             " · owner/repair/merge UNKNOWN"
         )
         lines.append(
@@ -482,6 +488,10 @@ def html_view(report):
         esc(report["priority_recall_performed"]) +
         " · bounded GET attempts: " + esc(report["get_attempts"]) +
         "/" + esc(report["read_get_attempt_upper_bound"]) + "</p>",
+        "<p>Recent source count drift: " +
+        esc(report["recent_provider_count_drift"]) +
+        " · issues with conflicting snapshots: " +
+        esc(report["issue_rows_with_cross_window_drift"]) + "</p>",
         "<p>Source coverage partial/UNKNOWN: " +
         esc(report["source_partial_or_unknown"]) +
         " · output truncated: " + esc(report["display_truncated"]) +
@@ -517,6 +527,8 @@ def html_view(report):
             esc(item["no_github_issue_update_for_72h"]) +
             " · discovered in: " +
             esc(", ".join(item["inbox_source_windows"])) +
+            " · source changed during read: " +
+            esc(item["source_window_identity_drift"]) +
             "<br><small>GitHub issue inactivity does NOT prove worker stall. "
             "Worker ownership, actual fix, required CI, "
             "protected-main merge and production: UNKNOWN.</small>"
