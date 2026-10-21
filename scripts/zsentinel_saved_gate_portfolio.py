@@ -734,3 +734,108 @@ def portfolio_single_pr_markdown(selected, integrated, *, pr_url, project=None):
         raise ValueError("Single PR private source dossier exceeds one MiB")
     return rendered
 
+
+
+def portfolio_single_pr_html(selected, integrated, *, pr_url, project=None):
+    """Readable one-PR mobile owner card from EXACT saved, no-network evidence."""
+    # Reuse the same whole-source admission and PR-only filter as Markdown.
+    portfolio_single_pr_markdown(
+        selected, integrated, pr_url=pr_url, project=project)
+    groups = project_worklist(selected, integrated)
+    group, candidate = next(
+        (group, item) for group in groups
+        for item in group["candidates"] if item["url"] == pr_url)
+    e = lambda value: escape(str(value), quote=True)
+    head = candidate["head_observed"]
+    observed_head = (
+        '<a href="https://github.com/' + e(group["repository"]) +
+        '/commit/' + head + '" target="_blank" rel="noopener noreferrer">' +
+        '<code>' + head + '</code></a>'
+        if head else '<strong>BRON HEAD ONBEKEND</strong>')
+    issues = "".join(
+        '<li><a href="' + e(url) +
+        '" target="_blank" rel="noopener noreferrer">' +
+        e(url) + '</a> — bronvermelding; geen fixbewijs</li>'
+        for url in candidate["linked_issue_urls"]
+    ) or "<li>Geen issue gevonden in deze steekproef; actuele issues onbekend.</li>"
+    counts = candidate["gate_observations"]
+    if counts is None:
+        evidence = "Geen verifieerbare opgeslagen HEAD-gateobservatie"
+    else:
+        evidence = (
+            "Checks waargenomen: " + str(counts["checks_completed"]) +
+            " afgerond, " + str(counts["checks_pending"]) +
+            " lopend, " + str(counts["checks_not_successful"]) +
+            " niet succesvol. Onafhankelijke approvals waargenomen: " +
+            str(counts["independent_approvals_observed"]))
+    head_age = source_age_warning(_admit(selected, integrated)[1])
+    missing = integrated["missing_batch_indexes"]
+    body = (
+        '<!doctype html><html lang="nl"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta name="referrer" content="no-referrer">'
+        '<meta http-equiv="Content-Security-Policy" content="default-src '
+        "\'none\'; style-src \'unsafe-inline\'; script-src \'none\'; "
+        "connect-src \'none\'; img-src \'none\'; object-src \'none\'; "
+        "form-action \'none\'; base-uri \'none\'\">"
+        '<title>zSentinel — bestaand PR-brondossier</title>'
+        '<style>:root{color-scheme:dark;font-family:system-ui}'
+        'body{margin:0;background:#111e30;color:#f2f8ff;line-height:1.55}'
+        'main{max-width:880px;margin:auto;padding:clamp(16px,4vw,38px)}'
+        'article,aside{border:1px solid #72889e;background:#1b3149;'
+        'padding:18px;border-radius:12px;margin:16px 0}'
+        'aside{border-color:#eab45a}a{color:#9ddaff;overflow-wrap:anywhere}'
+        'a:focus-visible{outline:3px solid #eab45a}'
+        'code{overflow-wrap:anywhere}li{margin:10px 0}'
+        'h1{font-size:clamp(1.4rem,4vw,2.2rem)}'
+        '@media print{body{background:white;color:black}article,aside{background:white;'
+        'color:black;border-color:#333}a{color:#034a74}}</style></head><body><main>'
+        '<h1>zSentinel · één bestaande product-PR</h1>'
+        '<aside><strong>PRIVÉ OPGESLAGEN BRON · NIET LIVE.</strong> '
+        'Deze pagina bewijst geen actuele HEAD, eigenaarschap, verplichte CI, '
+        'review, main-merge, live status of vrijgave. Andere PRs/claims zijn '
+        'onbekend en niet opgelost.</aside>'
+        '<article><h2><a href="' + e(pr_url) +
+        '" target="_blank" rel="noopener noreferrer">PR #' +
+        str(candidate["pr_number"]) + '</a></h2>'
+        '<p><strong>' + e(candidate["priority"]) + '</strong> · ' +
+        e(group["repository"]) + ' · bronbatch ' +
+        str(candidate["batch_index"]) + '</p>'
+        '<p><strong>Waargenomen broncommit:</strong> ' + observed_head + '</p>'
+        '<p><strong>Gatebron:</strong> ' + e(candidate["gate_source"]) + '</p>'
+        '<p><strong>Hoofdblokkade:</strong> ' +
+        e(LABELS[candidate["primary_gate"]][0]) + '</p>'
+        '<p><strong>Gelijktijdige blokkades:</strong> ' +
+        e(", ".join(LABELS[key][0] for key in
+                    candidate["concurrent_gates"])) + '</p>'
+        '<p><strong>Bronintegriteit:</strong> ' +
+        e(source_gate_detail(candidate)) + '</p>'
+        '<p>' + e(evidence) + '</p></article>'
+        '<article><h2>Gekoppelde bronissues</h2><ul>' + issues + '</ul></article>'
+        '<article><h2>Herkomst</h2><p><strong>' + e(head_age) + '</strong></p>'
+        '<p>Observatie UTC: ' + e(integrated["earliest_observed_at_utc"]) +
+        ' — ' + e(integrated["latest_observed_at_utc"]) + '</p>'
+        '<p>Waargenomen batches: ' +
+        str(integrated["observed_batch_count"]) + '/' +
+        str(integrated["expected_batch_count"]) +
+        ' · Ontbrekende batches: ' +
+        e(", ".join(map(str, sorted(missing))) or "geen") + '</p>'
+        '<p>Reviewmanifest SHA256: <code>' +
+        e(integrated["original_review_manifest_sha256"]) + '</code></p>'
+        '<p>Board SHA256: <code>' +
+        e(integrated["original_board_sha256"]) + '</code></p>'
+        '<p>Oorspronkelijke PR-steekproef: ' + str(len(selected)) +
+        ' kandidaat-PRs, niet volledig portfolio.</p></article>'
+        '<article><h2>Vervolg voor bevoegde eigenaar</h2><p>' +
+        e(candidate["next_action"]) + '</p><p>Controleer GitHub/Notion '
+        'op huidige HEAD, actieve claims, volledige verplichte CI, onafhankelijke '
+        'review, protected-main en releasebevoegdheid. '
+        '<strong>Geen actie automatisch geautoriseerd.</strong></p></article>'
+        '<footer>Volledig offline en scriptvrij; alleen vrijwillig openen van '
+        'de originele GitHub-links navigeert extern.</footer>'
+        '</main></body></html>'
+    )
+    if len(body.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("Single PR offline HTML dossier exceeds one MiB")
+    return body
+
