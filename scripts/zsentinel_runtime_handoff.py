@@ -566,6 +566,43 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     }
 
 
+def _pr_gate_brief(card):
+    """Display sampled exact-head gate evidence without granting permission."""
+    observed = card.get("pr_observed_gate_counts")
+    if observed is None:
+        return ""
+    if (type(observed) is not dict
+            or observed.get("required_checks_and_reviews_verified") is not False
+            or type(observed.get("check_run_window_complete")) is not bool
+            or type(observed.get("review_window_truncated")) is not bool):
+        raise ValueError("untrusted exact-head PR gate counts")
+    numbers = {}
+    for key in ("check_runs_sampled", "check_runs_reported",
+                "checks_failed_seen_min", "checks_pending_seen_min",
+                "checks_inconclusive_seen_min",
+                "same_head_independent_approvals_seen"):
+        value = observed.get(key)
+        if type(value) is not int or not 0 <= value <= 1000000:
+            raise ValueError("invalid bounded PR count")
+        numbers[key] = value
+    if (numbers["check_runs_sampled"] > 30
+            or numbers["check_runs_reported"] < numbers["check_runs_sampled"]
+            or any(numbers[key] > numbers["check_runs_sampled"] for key in (
+                "checks_failed_seen_min", "checks_pending_seen_min",
+                "checks_inconclusive_seen_min"))
+            or numbers["same_head_independent_approvals_seen"] > 30):
+        raise ValueError("inconsistent PR gate sample")
+    return ("zichtbare checks " + str(numbers["check_runs_sampled"]) + "/" +
+            str(numbers["check_runs_reported"]) +
+            ", falend minstens " + str(numbers["checks_failed_seen_min"]) +
+            ", wachtend minstens " + str(numbers["checks_pending_seen_min"]) +
+            ", onbeslist minstens " + str(numbers["checks_inconclusive_seen_min"]) +
+            ", onafhankelijke same-head approvals gezien " +
+            str(numbers["same_head_independent_approvals_seen"]) +
+            (" (reviewvenster afgekapt)" if observed["review_window_truncated"] else "") +
+            "; verplichte checks/reviews NIET geverifieerd")
+
+
 def _md(value, limit=MAX_TEXT):
     """Neutralize untrusted GitHub/worker text inside Markdown handoffs."""
     value = _short(value, limit)
@@ -755,6 +792,9 @@ def handoff_html(report):
                         (" · geobserveerde HEAD " + escape(head[:12]) if head else
                          " · actuele HEAD ONBEKEND") +
                         " · vereiste CI/review niet bewezen")
+            brief = _pr_gate_brief(item)
+            if brief:
+                pr_label += " · " + escape(brief)
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
                      escape(_short(item.get("next_step"))) + due_label + pr_label +
@@ -856,6 +896,9 @@ def markdown(report):
             lines.append("   PR-bron: " + _md(coverage, 50) +
                          " · geobserveerde HEAD " + (head if head else "ONBEKEND") +
                          " · vereiste CI/review, eigenaar en merge NIET bevestigd.")
+            brief = _pr_gate_brief(card)
+            if brief:
+                lines.append("   Gate-steekproef: " + _md(brief, 450))
     if not report["priority_items"]:
         lines.append("Geen actie in de beperkte steekproef; brongebrek is geen groen licht.")
     if report["items_truncated"]:
