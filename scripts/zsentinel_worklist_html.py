@@ -120,7 +120,8 @@ def render_html(board, max_rows=20):
                 (" · bestandsoverlap" if data["file_overlap_observed"] else "") +
                 (" · bronbeweging" if data["source_movement_observed"] else "") +
                 "<br>" + source_head_link(url, data.get("source_head_observed")) +
-                "</li>"
+                " <button class='focus-alternative' type='button' data-focus-pr='" +
+                h(url) + "'>Bekijk alle issues bij deze PR</button></li>"
                 for url, state, data in alt_items
             )
             alt_html = ("<details class='other-prs'><summary>Andere bestaande PRs (" +
@@ -271,7 +272,12 @@ def render_html(board, max_rows=20):
             "' data-project='" + escape(group_project, quote=True) +
             "' data-priority='" + escape(group["highest_priority"], quote=True) +
             "' data-issues='" + escape(" ".join(shown_links), quote=True) +
+            "' data-source-issues='" + escape(" ".join(linked), quote=True) +
+            "' data-head='" + escape(group_head or "", quote=True) +
             "' data-gate='" + escape(observed_gate, quote=True) +
+            "' data-next='" + escape(human_gate, quote=True) +
+            "' data-overlap='" + ("yes" if group["any_file_overlap_observed"] else "no") +
+            "' data-movement='" + ("yes" if group["any_historical_movement_observed"] else "no") +
             "'><strong>" + escape(group["highest_priority"]) + "</strong> · "
             "<a rel='noopener noreferrer' target='_blank' href='" +
             escape(pr, quote=True) + "'>PR " +
@@ -385,6 +391,9 @@ function focusOnPr(url){
  focusClear.focus();
 }
 for(const p of prs)p.querySelector('.focus-pr').addEventListener('click',()=>focusOnPr(p.dataset.pr));
+for(const button of document.querySelectorAll('.focus-alternative[data-focus-pr]')){
+ button.addEventListener('click',()=>focusOnPr(button.dataset.focusPr));
+}
 for(const t of tickets){
  const button=t.querySelector('.focus-from-issue');
  if(button)button.addEventListener('click',()=>focusOnPr(t.dataset.pr));
@@ -601,6 +610,7 @@ refresh();
         "margin:18px 0;background:#172338}.pr-panel ol{padding-left:24px}"
         ".pr-work{padding:12px;border-bottom:1px solid #526a83}"
         ".pr-work[hidden],.focus-bar[hidden]{display:none}"
+        ".focus-alternative{padding:5px 9px;margin:4px 0}"
         ".pr-controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
         "gap:14px;margin:12px 0}.pr-note{width:100%;box-sizing:border-box}"
         ".controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
