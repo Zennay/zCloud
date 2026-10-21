@@ -16,6 +16,16 @@ zCloud, not a separate product or permission boundary.
 The classifier treats generic ticket words (`issue`, `fix`, `bug`,
 `product`) as weak signals in this profile. Specific terms such as
 `runner`, `queue` and `merge` determine the lane when present.
+On 21 October, the same four routing lanes also gained Dutch vocabulary
+to support actual Dutch zCloud work orders without silently defaulting
+to the release lane: `mergen`/`samenvoegen`/`integreer`
+(release), `bouw`/`repareer`/`gebruikersflow` (product),
+`wachtrij`/`taakclaim`/`browserworker` (worker), and
+`uitrollen`/`deployment`/`pijplijn` (CI/deploy).
+Dutch product-delivery verbs now receive the same equal-priority
+package preference as their English equivalents. Higher queue
+priority, existing ownership, declared file scopes and mandatory
+release gates continue to take precedence.
 This is routing, not proof of ownership or permission to take a task.
 
 ## 21 October · preserve current active recovery lanes
