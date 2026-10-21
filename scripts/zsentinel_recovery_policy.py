@@ -23,7 +23,7 @@ UTC = timezone.utc
 SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 ACTIONS = frozenset({
     "retry_ci", "route_root_fix", "assign_independent_work", "park_blocker",
-    "merge_pr", "deploy", "restart_runner",
+    "escalate_human", "merge_pr", "deploy", "restart_runner",
 })
 ROOT_FIELDS = frozenset({
     "schema_version", "action", "project_id", "incident_id",
@@ -33,8 +33,9 @@ EVIDENCE_FIELDS = frozenset({
     "source_verified", "failure_kind", "attempts", "retry_budget",
     "backoff_elapsed", "active_claim", "independent_task_ready",
     "scope_disjoint", "dependency_kind", "dependency_scope",
-    "dependency_unchanged", "capacity", "exact_head", "required_ci",
-    "independent_review", "branch_protection", "owner_authorized",
+    "dependency_unchanged", "escalation_reason", "permission_required",
+    "irreversible_risk", "safe_routes_exhausted", "capacity", "exact_head",
+    "required_ci", "independent_review", "branch_protection", "owner_authorized",
     "root_cause_confirmed", "unresolved_review_threads", "merged_main",
     "post_merge_health", "release_approval", "runtime_owner_authorized",
     "runner_state", "running_jobs", "human_approval",
@@ -53,10 +54,12 @@ ENUMS = {
     "running_jobs": {"none", "active", "unknown"},
     "dependency_kind": {"external", "internal", "unknown"},
     "dependency_scope": {"single_task", "project_wide", "unknown"},
+    "escalation_reason": {"permission_required", "irreversible_risk", "safe_routes_exhausted", "unknown"},
 }
 BOOL_FIELDS = {
     "source_verified", "backoff_elapsed", "independent_task_ready",
-    "scope_disjoint", "dependency_unchanged", "owner_authorized",
+    "scope_disjoint", "dependency_unchanged", "permission_required",
+    "irreversible_risk", "safe_routes_exhausted", "owner_authorized",
     "root_cause_confirmed", "release_approval", "runtime_owner_authorized",
     "human_approval",
 }
@@ -299,6 +302,31 @@ def evaluate(data, max_age_minutes):
         require(value("capacity") == "healthy",
                 "capacity_not_healthy", "Healthy capacity is required to continue independent work.",
                 ("evidence.capacity",))
+
+    elif action == "escalate_human":
+        reason = value("escalation_reason")
+        require(reason in {"permission_required", "irreversible_risk", "safe_routes_exhausted"},
+                "escalation_reason_missing",
+                "Escalation is limited to a permission gate, irreversible/high-risk decision, or exhausted safe routes.",
+                ("evidence.escalation_reason",))
+        if reason == "permission_required":
+            require(value("permission_required") is True,
+                    "permission_gate_unconfirmed", "The specific required permission must be identified.",
+                    ("evidence.permission_required",))
+        elif reason == "irreversible_risk":
+            require(value("irreversible_risk") is True,
+                    "irreversible_risk_unconfirmed", "The irreversible or high-risk decision must be explicit.",
+                    ("evidence.irreversible_risk",))
+        elif reason == "safe_routes_exhausted":
+            require(value("safe_routes_exhausted") is True,
+                    "safe_routes_not_exhausted", "Escalate only after safe recovery routes are exhausted.",
+                    ("evidence.safe_routes_exhausted",))
+        require(data["owner"] is not None,
+                "human_owner_missing", "Name the authorized human or owner for escalation.",
+                ("owner",))
+        require(value("active_claim") in {"none", "active"},
+                "claim_state_unknown", "Resolve claim state before routing escalation; do not take over unknown work.",
+                ("evidence.active_claim",))
 
     elif action == "merge_pr":
         require(value("exact_head") == "verified",
