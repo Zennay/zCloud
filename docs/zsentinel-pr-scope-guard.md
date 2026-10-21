@@ -2260,8 +2260,10 @@ Unicode-opmaaktekens (waaronder bidi-/zero-width-markeringen), Unicode-regel- en
 alineascheidingstekens en niet-ASCII-witruimte als zichtbare `⟦U+XXXX⟧`-markeringen
 getoond. C0/C1-controltekens en surrogate-codepunten worden geweigerd. Zo kunnen
 bronlabels of checknamen in tekst, Markdown, HTML en CSV niet stilzwijgend de
-visuele volgorde of leesbaarheid van de eigenaarsoverdracht veranderen. Dit
-wijzigt geen bron-URL, gate-status, prioriteit of autorisatie.
+visuele volgorde of leesbaarheid van de eigenaarsoverdracht veranderen.
+Markdown-pipes en strikethrough-markeringen worden bovendien letterlijk
+ge-escaped, zodat bronlabels geen tabelkolommen of doorgestreepte statuslabels
+kunnen injecteren. Dit wijzigt geen bron-URL, gate-status, prioriteit of autorisatie.
 
 ## 20 oktober · Betrouwbare en tijdgebonden eigenaarwerkopdrachten
 
