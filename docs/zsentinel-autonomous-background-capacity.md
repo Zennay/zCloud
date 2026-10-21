@@ -737,3 +737,37 @@ written fresh bundle if any write fails.
 
 This branch is source-only until the existing protected-main review, exact
 commit CI and authorized deployment gates all complete.
+
+
+## Actionable redacted GitHub owner issue draft
+
+Runner incidents can now leave the private operator folder as a
+**human-reviewable GitHub issue draft**, without publishing any stored
+systemd runner names, host names, PIDs, shell commands, raw capacity values,
+private source paths or original JSON. This addresses the handoff gap when
+the responsible GitHub job, claim owner or runner owner cannot yet be proven.
+
+```bash
+# New owner-private 0600 Markdown file; prints nothing from private input.
+python3 scripts/zsentinel_runner_report.py \
+  --format issue --output "$HOME/private-recovery/github-owner-issue.md"
+
+# Can equally be constructed from one historical saved receipt, offline.
+python3 scripts/zsentinel_runner_report.py \
+  --receipt "$HOME/private-recovery/T0.json" --format issue \
+  --output "$HOME/private-recovery/github-owner-issue-from-T0.md"
+
+# --bundle automatically adds github-owner-issue-draft.md as its fifth file.
+# Previously produced four-file bundles remain supported by --verify-bundle.
+```
+
+The draft uses the exact admitted decision of `owner-inbox.json` and
+includes a deterministic **incident reference**, up to three **manual**
+operator actions, source/provenance caveats, and checkboxes for genuine
+GitHub assignment, independent evidence and authorization. It **does not**
+submit an issue, post a comment, request a review, restart any systemd unit,
+change a claim, run a workflow or deploy a release. The operator must inspect,
+edit and deliberately post any message to the correct real project. The
+read-only manifest verifier checks the optional fifth artifact's digest too
+and continues to support older four-file incident bundles. GitHub job
+recovery and production state remain **UNKNOWN** until separately proven.
