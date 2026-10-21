@@ -178,6 +178,18 @@ def _validate(payload: dict):
         raise ValueError("onvolledig of onbevoegd operator-receipt")
     if type(policy.get("operator_workorder_inbox_truncated")) is not bool:
         raise ValueError("bron mist verplichte truncatie-indicator")
+    source_truncated = payload.get("source_rows_truncated")
+    if source_truncated is not None and type(source_truncated) is not bool:
+        raise ValueError("ongeldige bronlimietstatus")
+    if "operator_inbox_snapshot" in payload:
+        if payload["operator_inbox_snapshot"] is not True:
+            raise ValueError("onjuist compact bronreceipt")
+        source_limit = payload.get("source_rows_limit")
+        source_count = payload.get("source_rows_visible")
+        if (source_limit != 2048 or type(source_limit) is not int
+                or not _safe_int(source_count, maximum=source_limit)
+                or type(source_truncated) is not bool):
+            raise ValueError("onvolledig compact bronvenster")
     rows = policy.get("operator_workorder_inbox")
     if not isinstance(rows, list) or len(rows) > MAX_ROWS:
         raise ValueError("ongeldige of onbeperkte operator-inbox")
@@ -231,7 +243,10 @@ def _validate(payload: dict):
             "kind": kind, "project": project, "queue": queue,
             "priority": priority, "step": step, "detail": detail,
         })
-    return clean, policy["operator_workorder_inbox_truncated"]
+    return clean, (
+        policy["operator_workorder_inbox_truncated"]
+        or source_truncated is True
+    )
 
 
 def _render(payload, rows, truncated):
@@ -278,8 +293,8 @@ def _render(payload, rows, truncated):
         '</strong><p>Gedeeltelijke wachtrijbron. Geen live-autorisatie, '
         'geen claimovername, geen automatische retry en geen bewijs dat '
         'een PR op main is gemerged.</p></div>' +
-        ('<div class="notice critical"><strong>INBOX AFGEKAPT</strong>'
-         '<p>Er zijn meer mogelijke herstelstappen dan deze private selectie toont.</p>'
+        ('<div class="notice critical"><strong>BRON OF INBOX AFGEKAPT</strong>'
+         '<p>Niet alle mogelijke herstelstappen of bronrijen zijn bekeken.</p>'
          '</div>' if truncated else
          '<div class="notice">Inboxselectie niet afgekapt; de onderliggende '
          'queuebron blijft gedeeltelijk.</div>') +
@@ -327,7 +342,7 @@ def _render_markdown(payload, rows, truncated):
     ]
     if truncated:
         lines.extend([
-            "**AFGEKAPT: er zijn meer mogelijke werkorders dan hier getoond.**",
+            "**AFGEKAPT: bronrijen of werkorders ontbreken in dit zichtvenster.**",
             "",
         ])
     if not rows:
