@@ -263,3 +263,38 @@ wordt de inconsistentie niet omgezet in uitvoerautorisatie: dubbele
 pagina-identiteiten worden geweigerd en afwijkende statussen markeren de
 bron als incompleet. Geen extra vraagbudget, tokens in output, claimwrite,
 runnerherstart of automatische worker-toewijzing.
+
+## 21 oktober · Statusdekking in de bestaande operatorinterfaces
+
+De centrale read-only Notion-lezer levert nu expliciete bronreceipts
+`status_source_windows`: `Claimed` (max. één pagina), `Running`
+(max. één pagina) en `Verifying` (max. twee pagina's). Per status blijven
+de toegelaten paginabegroting, gelezen pagina's, waargenomen ondergrens
+en de aanduiding `complete_within_source` of `partial` behouden.
+De totale read-budget blijft maximaal vier Notion-query-aanvragen.
+**Complete binnen bronvenster** betekent nooit dat worker/lease of
+bestandscope compleet, actueel of overdraagbaar zijn.
+
+Deze gegevens worden nu werkelijk getoond in de bestaande:
+- **Live-cockpit** (`zsentinel_live_cockpit.py`): Nederlandse HTML
+  onder Notion-werkstatus, en in het tekstoverzicht per status een
+  eigen bronbegrenzing. `Verifying`-regels worden zonder parserfout
+  weergegeven, met de opdracht eigenaar/review opnieuw te controleren.
+- **Portfolio-CLI** (`zsentinel_portfolio_overview.py`): brongebonden
+  dekking in HTML en tekst; JSON bevat dezelfde valide brontabel
+  onder `notion_status_source_windows`.
+- **Productissue-werkbord** (`zsentinel_issue_delivery.py`): positieve
+  `Verifying`-statussen krijgen een aparte eigenaar-HOLD in de
+  vervolgstap, met zichtbare HTML- en Markdown-melding. Bestaande PR's
+  blijven voorgaan op een nieuwe implementatie.
+
+Een optionele, door een gebruiker opgeslagen privé-Notion-export kan
+dezelfde positieve werkstatus tonen, maar heeft **geen live
+per-status-bronbewijs**. De UI toont daarom 'ONBEKEND' in plaats van
+zelfverzekerde paginadekking. Bronvalidatie controleert voor een live
+bron exact de drie statussen, individuele pagina- en rijbudgetten, en
+de som met `active_count`; tegenstrijdige receipts worden geweigerd.
+
+Er zijn geen nieuwe provider-GET-budgetten, tokenlogs, leasevrijgaves,
+productie-SQLite-/Notion-writes, GitHub-workflow-reruns, automatische
+taakovername, merges, deploys of QA-/regressiesuites bijgekomen.
