@@ -1260,6 +1260,26 @@ def render_private_json_handoff(data):
         pressure[key] = (value if type(value) in (int, float)
                          and math.isfinite(value) and 0 <= value < 1e10
                          else None)
+    # Kernel OOM counters apply to ALL host processes, not any named runner.
+    # A missing/newer-source signal remains null, not a healthy zero.
+    psi_available = host.get("memory_psi_observed") is True
+    for key in ("memory_psi_full_avg10_percent",
+                "memory_psi_some_avg10_percent"):
+        value = host.get(key)
+        pressure[key] = (value if psi_available
+                         and type(value) in (int, float)
+                         and math.isfinite(value) and 0 <= value <= 100
+                         else None)
+    kills = host.get("kernel_oom_kills_since_boot")
+    pressure["kernel_oom_kills_since_boot"] = (
+        kills if host.get("kernel_oom_counter_observed") is True
+        and type(kills) is int and 0 <= kills < 2 ** 63 else None)
+    pressure["memory_psi_observed"] = all(
+        pressure[key] is not None
+        for key in ("memory_psi_full_avg10_percent",
+                    "memory_psi_some_avg10_percent"))
+    pressure["kernel_oom_counter_observed"] = (
+        pressure["kernel_oom_kills_since_boot"] is not None)
     # An offline T0/T1 or multi-snapshot inbox must include the observed
     # service *changes*, not just the last inventory. Keep all window
     # summaries and at most 40 canonical transitions, favouring newest
@@ -1280,6 +1300,19 @@ def render_private_json_handoff(data):
             "same_boot_verified": pair.get("same_boot_verified") is True,
             "source_complete": pair.get("complete_service_coverage") is True,
             "observed_transition_count": len(changes),
+            "host_oom_counter_comparable": (
+                pair.get("memory_oom_comparison", {}).get(
+                    "oom_counter_same_boot_comparable") is True
+                if isinstance(pair.get("memory_oom_comparison"), dict) else False),
+            "host_kernel_oom_kills_delta": (
+                pair["memory_oom_comparison"].get("kernel_oom_kills_delta")
+                if isinstance(pair.get("memory_oom_comparison"), dict)
+                and pair["memory_oom_comparison"].get(
+                    "oom_counter_same_boot_comparable") is True
+                and type(pair["memory_oom_comparison"].get(
+                    "kernel_oom_kills_delta")) is int
+                and 0 <= pair["memory_oom_comparison"]["kernel_oom_kills_delta"] < 2 ** 63
+                else None),
         })
     from zsentinel_runner_snapshot import RUNNER_UNIT
     selected = []
@@ -1351,6 +1384,8 @@ def render_private_json_handoff(data):
             "user_runner_service_counts": user_counts,
             "user_runner_services": user_services,
             "capacity": pressure,
+            "host_oom_events_attributed_to_runner": False,
+            "runner_restart_authorized": False,
             "coach_quota_recommended_percent": data.get("quota")
                 if type(data.get("quota")) is int and data["quota"] in (60, 100, 175) else None,
             "coach_weight_recommended": data.get("weight")
