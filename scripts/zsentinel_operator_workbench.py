@@ -2985,6 +2985,116 @@ function drawDetail(){
   };
   markdownPanel.append(markdownOutput,markdownDownload);
   historical.append(markdownPreview,markdownPanel);
+  // Source-only printable HTML travels independently of the workbench.
+  // DOM text nodes prevent saved public issue titles or source labels from
+  // becoming active HTML. The export contains no JS, notes or private state.
+  const standaloneIssuePage=()=>{
+    const doc=document.implementation.createHTMLDocument('zSentinel · Issue PR handoff');
+    doc.documentElement.lang='en';
+    const meta=doc.createElement('meta');
+    meta.setAttribute('http-equiv','Content-Security-Policy');
+    meta.content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; form-action 'none'; frame-src 'none'; base-uri 'none'; object-src 'none'";
+    doc.head.append(meta);
+    const ref=doc.createElement('meta');ref.name='referrer';ref.content='no-referrer';doc.head.append(ref);
+    const viewport=doc.createElement('meta');viewport.name='viewport';
+    viewport.content='width=device-width,initial-scale=1';doc.head.append(viewport);
+    const style=doc.createElement('style');
+    style.textContent='body{max-width:860px;margin:24px auto;padding:0 20px;font:16px/1.6 system-ui,sans-serif;color:#152136;background:white}h1{line-height:1.2}h2{margin-top:30px;border-bottom:1px solid #abb8c6;padding-bottom:6px}article{border:1px solid #b5c5d4;border-radius:10px;padding:15px;margin:14px 0;break-inside:avoid}small{display:block;color:#44576b;overflow-wrap:anywhere}p,li{overflow-wrap:anywhere}a{color:#15558a}strong{font-weight:700}@media print{body{margin:0;padding:0}article{break-inside:avoid}}';
+    doc.head.append(style);
+    const root=doc.body;
+    const el=(parent,tag,value)=>{
+      const node=doc.createElement(tag);node.textContent=String(value);parent.append(node);return node;
+    };
+    const githubLink=(parent,label,url)=>{
+      const node=doc.createElement('a');
+      node.href=url;node.target='_blank';node.rel='noopener noreferrer';
+      node.textContent=label;parent.append(node);return node;
+    };
+    el(root,'h1','zSentinel · Selected product issue handoff');
+    el(root,'p','SAVED HISTORICAL PR EVIDENCE ONLY. No current claim, required CI, independent review, main merge, or live deploy verified.');
+    githubLink(root,card.issue+' · '+card.title,card.url);
+    el(root,'p','Project: '+card.project+' · sampled priority: '+card.priority+
+      ' · original board observation UTC: '+board.observed_at_utc);
+    el(root,'small','Original board SHA256: '+boardSha);
+    const age=archivedPrFreshnessNow();
+    el(root,'p','Saved PR source age at preview (local, untrusted clock): '+age.status+' · '+age.age);
+    el(root,'p','Original board source coverage: '+card.issue_coverage+
+      ' · historic relationship: '+(match?'observed in bounded ZIP data':'UNKNOWN / not observed'));
+    el(root,'h2','Historical PR sources');
+    savedPrHistory.original_archive_sources.forEach(s=>{
+      const article=el(root,'article','');
+      el(article,'strong','Saved ZIP #'+s.source_index);
+      el(article,'p','Observation UTC: '+s.earliest_observed_utc+' to '+s.latest_observed_utc);
+      el(article,'small','Original review manifest SHA256: '+s.review_manifest_sha256);
+      el(article,'small','Original board SHA256: '+s.board_sha256);
+      el(article,'p','Unobserved original gate batches: '+(s.missing_batch_indexes.join(', ')||'none reported')+
+        ' · bounded sampled PRs: '+s.selected_pr_candidates);
+    });
+    el(root,'h2','Previously linked existing PRs');
+    if(!match)el(root,'p','No issue-PR relationship in supplied saved sources: UNKNOWN. Do not open a competing PR without fresh GitHub/Notion checks.');
+    else{
+      el(root,'p','Saved investigation focus: '+match.triage_focus);
+      el(root,'p','Historical issue links lost while PR sampled: '+
+        match.issue_links_lost_while_pr_sampled+
+        ' · PRs absent from final saved source: '+match.prs_missing_last_saved_snapshot);
+      match.prs.forEach(pr=>{
+        const article=el(root,'article','');
+        githubLink(article,'Previously linked PR #'+pr.number,pr.url);
+        el(article,'small','Last observed commit HEAD: '+(pr.latest_observed_head||'UNKNOWN'));
+        el(article,'small','HEAD at last issue link: '+(pr.head_at_last_issue_link||'UNKNOWN'));
+        el(article,'p','Saved gate label: '+pr.source_gate+
+          ' · observed HEAD changes: '+pr.head_changes);
+        el(article,'p','PR absent from latest saved source: '+(pr.pr_missing_last_source?'YES':'NO in bounded sample')+
+          ' · issue link missing latest source: '+(pr.issue_link_missing_last_source?'YES':'NO in bounded sample')+
+          ' · sampled PR after issue-link loss: '+(pr.pr_observed_after_issue_link_absent?'YES':'NO'));
+        el(article,'small','Historical gate label is NOT required-check or review approval. Disappearance never proves merge or fix.');
+      });
+      if(match.not_shown_count)
+        el(root,'p',match.not_shown_count+' further historical PR candidates omitted by the bounded source view: UNKNOWN.');
+    }
+    el(root,'h2','Required human owner action');
+    const steps=doc.createElement('ol');root.append(steps);
+    el(steps,'li','Open the original GitHub issue and linked PRs. Verify actual open status, exact current HEAD and any competing PRs.');
+    el(steps,'li','Check active Notion and queue claims, required exact-head GitHub checks, independent review, unresolved threads and protected-main gates.');
+    el(steps,'li','Integrate only with real owner approval. Verify the new main commit and any separate authorized production deployment.');
+    el(root,'p','Claim / CI retry / merge / deploy / worker dispatch: NOT AUTHORIZED by this handoff.');
+    el(root,'small','Created from private, previously admitted board and historical ZIP snapshots in a local browser. No private operator notes, contact details, other issues or live tokens included.');
+    return '<!doctype html>\\n'+doc.documentElement.outerHTML+'\\n';
+  };
+  const htmlReview=elem('button','Preview printable single-issue PR dossier (HTML)');
+  htmlReview.type='button';
+  const htmlDownload=elem('button','Download reviewed printable HTML');
+  htmlDownload.type='button';htmlDownload.disabled=true;
+  const htmlPanel=elem('div');htmlPanel.hidden=true;
+  const htmlPreview=elem('div');htmlPreview.className='portfolio';
+  let htmlReviewed=null;
+  htmlReview.onclick=()=>{
+    if(selected!==card.issue){htmlDownload.disabled=true;htmlPanel.hidden=true;return;}
+    htmlReviewed=standaloneIssuePage();
+    // Render the same sanitized, source-only body that is exported, using
+    // DOMParser but no scripts, network calls, or untrusted innerHTML.
+    const parsed=new DOMParser().parseFromString(htmlReviewed,'text/html');
+    htmlPreview.replaceChildren(...Array.from(parsed.body.childNodes).map(x=>document.importNode(x,true)));
+    htmlPanel.hidden=false;htmlDownload.disabled=false;
+    status.textContent='Review the printable source-only PR dossier. No external data was queried or modified.';
+  };
+  htmlDownload.onclick=()=>{
+    if(selected!==card.issue||htmlReviewed===null){
+      htmlDownload.disabled=true;htmlPanel.hidden=true;return;
+    }
+    // The selected issue's admitted provenance is fixed to this immutable
+    // board. No live-refresh authority is implied by a reviewed export.
+    const uri=URL.createObjectURL(new Blob([htmlReviewed],{type:'text/html;charset=utf-8'}));
+    const a=elem('a');a.href=uri;
+    a.download='zsentinel-private-pr-issue-'+card.project.replace(/[^a-z0-9-]/gi,'-').slice(0,50)+
+      '-'+card.issue.split('#').pop()+'.html';
+    a.click();setTimeout(()=>URL.revokeObjectURL(uri),1000);
+    status.textContent='Printable historical issue/PR dossier saved locally; no live claim or release action taken.';
+    htmlReviewed=null;htmlDownload.disabled=true;
+  };
+  htmlPanel.append(htmlPreview,htmlDownload);
+  historical.append(htmlReview,htmlPanel);
+
   previewPanel.append(output,download);
   historical.append(preview,previewPanel);
   detail.append(historical);
