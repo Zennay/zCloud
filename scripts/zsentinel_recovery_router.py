@@ -1220,7 +1220,8 @@ def operator_text(result):
             "claim_observation_stale_or_future", "task_observation_stale_or_future",
             "active_claim_scope_unknown",
         }
-        coverage_reasons = holds.get("coverage_reasons", [])
+        coverage_reasons = (holds.get("coverage_reasons", [])
+                            if type(holds) is dict else None)
         if (type(holds) is not dict or coverage not in ("complete", "incomplete_or_stale")
                 or type(coverage_reasons) is not list or len(coverage_reasons) > 7
                 or any(reason not in allowed_coverage_reasons for reason in coverage_reasons)
@@ -1241,8 +1242,17 @@ def operator_text(result):
         else:
             lines.append("Incident dependencies: UNKNOWN — task/claim inventory incomplete or stale; " +
                          "the observed count is not an all-clear and no dependency is cleared.")
+            reason_labels = {
+                "claim_inventory_not_complete": "Claiminventaris is niet expliciet compleet.",
+                "task_inventory_not_complete": "Taakinventaris is niet expliciet compleet.",
+                "claim_observation_missing": "Waarneming van actieve claims ontbreekt.",
+                "task_observation_missing": "Waarneming van de taakinventaris ontbreekt.",
+                "claim_observation_stale_or_future": "Claimwaarneming is ouder dan vijf minuten of heeft een ongeldige toekomsttijd.",
+                "task_observation_stale_or_future": "Taakwaarneming is ouder dan vijf minuten of heeft een ongeldige toekomsttijd.",
+                "active_claim_scope_unknown": "Bestandsscope van minstens één actieve claim is onbekend.",
+            }
             for reason in coverage_reasons:
-                lines.append("- Routing coverage gap: " + reason)
+                lines.append("- Bronprobleem: " + reason_labels[reason])
         for hold in holds["examples"]:
             lines.append("- HOLD " + hold["priority"] + " " + hold["project_id"] +
                          "/" + hold["id"] + " · " +
