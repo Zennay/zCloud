@@ -275,7 +275,7 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
     owner, repo, number = match.groups()
     full_name = owner + "/" + repo
     path = "/repos/" + quote(owner, safe="") + "/" + quote(repo, safe="")
-    candidates, seen, matched_total, skipped_rows = [], set(), 0, 0
+    matched_candidates, seen, matched_total, skipped_rows = [], set(), 0, 0
     scanned_rows = 0
     pages_scanned = 0
     first_page_rows = None
@@ -296,7 +296,7 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
         if first_page_rows is None:
             first_page_rows = len(payload)
         last_page_short = len(payload) < MAX_LIST_PAGE
-        for row in payload:
+        for row_offset, row in enumerate(payload):
             if not isinstance(row, dict):
                 skipped_rows += 1
                 if page_number == 1:
@@ -326,19 +326,31 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
             ):
                 continue
             matched_total += 1
-            if len(candidates) < MAX_CANDIDATES:
-                candidates.append({
-                    "number": identity,
-                    "url": "https://github.com/" + full_name + "/pull/" + str(identity),
-                    "draft_at_source": row["draft"],
-                    "relationship_at_source": (
-                        "closing_keyword_only" if status == "CLOSING_KEYWORD_TEXT_OBSERVED"
-                        else "text_reference_only"
-                    ),
-                    "candidate_origin": "sampled_open_pr_bounded_window_text_only",
-                })
+            matched_candidates.append({
+                "number": identity,
+                "url": "https://github.com/" + full_name + "/pull/" + str(identity),
+                "draft_at_source": row["draft"],
+                "relationship_at_source": (
+                    "closing_keyword_only" if status == "CLOSING_KEYWORD_TEXT_OBSERVED"
+                    else "text_reference_only"
+                ),
+                "candidate_origin": "sampled_open_pr_bounded_window_text_only",
+                "source_window_position": scanned_rows - len(payload) + row_offset,
+            })
         if last_page_short:
             break
+    # A strong closing-keyword textual hint takes priority over a casual
+    # issue-number mention. Both remain unverified issue relationships.
+    matched_candidates.sort(
+        key=lambda item: (
+            0 if item["relationship_at_source"] == "closing_keyword_only" else 1,
+            item["source_window_position"],
+        )
+    )
+    candidates = [
+        {key: val for key, val in item.items() if key != "source_window_position"}
+        for item in matched_candidates[:MAX_CANDIDATES]
+    ]
     return candidates, {
         "performed": True,
         "first_page_rows": first_page_rows,
@@ -350,6 +362,15 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
         "pagination_window_full": not last_page_short,
         "candidate_text_matches_in_page": matched_total,
         "candidate_records_returned": len(candidates),
+        "candidate_selection_order": "closing_keyword_first_then_source_window_order",
+        "closing_keyword_matches_in_window": sum(
+            item["relationship_at_source"] == "closing_keyword_only"
+            for item in matched_candidates
+        ),
+        "closing_keyword_candidates_retained": sum(
+            item["relationship_at_source"] == "closing_keyword_only"
+            for item in candidates
+        ),
         "skipped_or_malformed_first_page_rows": first_page_skipped_rows,
         "skipped_or_malformed_rows_in_window": skipped_rows,
         "candidate_list_truncated": matched_total > len(candidates),
@@ -694,6 +715,10 @@ def owner_html(report):
             str(discovery["candidate_text_matches_in_page"]) +
             " · candidates retained: " +
             str(discovery["candidate_records_returned"]) +
+            " · explicit closing keyword matches: " +
+            str(discovery["closing_keyword_matches_in_window"]) +
+            " · closing keyword candidates retained: " +
+            str(discovery["closing_keyword_candidates_retained"]) +
             " · skipped invalid records: " +
             str(discovery["skipped_or_malformed_rows_in_window"]) +
             (" · candidate sample truncated" if discovery[
@@ -875,6 +900,10 @@ def markdown(report):
             str(discovery["candidate_text_matches_in_page"]),
             "- Candidates retained for live inspection: " +
             str(discovery["candidate_records_returned"]),
+            "- Closing-keyword matches in window: " +
+            str(discovery["closing_keyword_matches_in_window"]),
+            "- Closing-keyword candidates selected first: " +
+            str(discovery["closing_keyword_candidates_retained"]),
             "- Skipped malformed rows: " +
             str(discovery["skipped_or_malformed_rows_in_window"]),
             "- Historical relation reverified: NO",
