@@ -29,6 +29,9 @@ SAFE_REASON_CODES = frozenset({
     "composer-missing-operator-action-required",
     "composer-missing-before-first-send",
     "new-chat-button-missing",
+    "composer-draft-preserved",
+    "composer-text-not-confirmed",
+    "composer-changed-before-send",
 })
 MAX_ROWS = 40
 
