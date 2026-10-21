@@ -214,6 +214,10 @@ def render_html(board, max_rows=20):
         )
         collisions.append(
             "<li class='collision' data-project='" + escape(card["project"], quote=True) +
+            "' data-issue='" + escape(card["issue_url"], quote=True) +
+            "' data-title='" + escape(card["title"], quote=True) +
+            "' data-priority='" + escape(card["priority"], quote=True) +
+            "' data-prs='" + escape(" ".join(c["url"] for c in candidates), quote=True) +
             "'><strong>" + escape(card["priority"]) + "</strong> · " +
             "<a target='_blank' rel='noopener noreferrer' href='" +
             escape(card["issue_url"], quote=True) + "'>" +
@@ -383,6 +387,9 @@ const focusBar=document.getElementById('focus-bar'),focusTitle=document.getEleme
 const focusClear=document.getElementById('focus-clear');
 const focusNext=document.getElementById('focus-next');
 const focusExport=document.getElementById('focus-export');
+const collisionOnly=document.getElementById('collision-only');
+const collisionRows=Array.from(document.querySelectorAll('li.collision[data-issue]'));
+const collisionVisible=document.getElementById('collision-visible');
 let focusedPr=null,focusIndex=-1;
 function linkedToFocus(t){
  return Boolean(focusedPr)&&
@@ -400,6 +407,7 @@ function refresh(){
   const text=[t.dataset.title,t.dataset.issue,t.dataset.pr,t.dataset.prs,
    t.dataset.project,t.dataset.category,t.dataset.next].join(' ').toLocaleLowerCase('nl');
   const show=(!focusedPr||linkedToFocus(t))&&
+   (!collisionOnly.checked||t.dataset.collision==='yes')&&
    (!q||text.includes(q))&&(!priority.value||priority.value===t.dataset.priority)&&
    (!project.value||project.value===t.dataset.project)&&
    (!state.value||state.value===t.querySelector('.local-state').value);
@@ -409,12 +417,25 @@ function refresh(){
  for(const p of prs){
   const content=[p.dataset.pr,p.dataset.issues,p.dataset.project,
     p.dataset.gate].join(' ').toLocaleLowerCase('nl');
-  const show=(!focusedPr||p.dataset.pr===focusedPr)&&(!q||content.includes(q))&&
+  const show=(!focusedPr||p.dataset.pr===focusedPr)&&
+    (!collisionOnly.checked||p.dataset.collision==='yes')&&(!q||content.includes(q))&&
     (!priority.value||priority.value===p.dataset.priority)&&
     (!project.value||project.value===p.dataset.project)&&
     (!prState.value||prState.value===p.querySelector('.pr-local-state').value);
   p.hidden=!show;if(show)prCount++;
  }
+ let collisionsShown=0;
+ for(const c of collisionRows){
+  const source=[c.dataset.issue,c.dataset.title,c.dataset.prs,c.dataset.project]
+    .join(' ').toLocaleLowerCase('nl');
+  const show=(!focusedPr||c.dataset.prs.split(' ').includes(focusedPr))&&
+    (!q||source.includes(q))&&
+    (!priority.value||priority.value===c.dataset.priority)&&
+    (!project.value||project.value===c.dataset.project);
+  c.hidden=!show;if(show)collisionsShown++;
+ }
+ collisionVisible.textContent=collisionsShown+' van '+collisionRows.length+
+  ' issues met meerdere PRs in de beperkte bron zichtbaar';
  visible.textContent=count+' van '+tickets.length+' issuekaarten en '+
    prCount+' van '+prs.length+' bestaande PR-groepen zichtbaar';
  focusBar.hidden=!focusedPr;
@@ -455,11 +476,11 @@ focusNext.addEventListener('click',()=>{
  open[focusIndex].scrollIntoView({block:'start'});
  open[focusIndex].focus();
 });
-for(const c of [search,priority,project,state,prState])c.addEventListener('input',refresh);
+for(const c of [search,priority,project,state,prState,collisionOnly])c.addEventListener('input',refresh);
 for(const t of tickets)t.querySelector('.local-state').addEventListener('change',refresh);
 for(const p of prs)p.querySelector('.pr-local-state').addEventListener('change',refresh);
 document.getElementById('reset').addEventListener('click',function(){
- focusedPr=null;focusIndex=-1;search.value='';priority.value='';project.value='';state.value='';prState.value='';refresh();
+ focusedPr=null;focusIndex=-1;collisionOnly.checked=false;search.value='';priority.value='';project.value='';state.value='';prState.value='';refresh();
 });
 function safeText(value){
  return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#\x60~])/g,'\\$1').slice(0,720);
@@ -729,7 +750,9 @@ refresh();
         ".pr-panel{border:1px solid #70879f;border-radius:10px;padding:16px;"
         "margin:18px 0;background:#172338}.pr-panel ol{padding-left:24px}"
         ".pr-work{padding:12px;border-bottom:1px solid #526a83}"
-        ".pr-work[hidden],.focus-bar[hidden]{display:none}"
+        ".pr-work[hidden],.focus-bar[hidden],.collision[hidden]{display:none}"
+        ".collision{border-bottom:1px solid #526a83;padding:14px 4px}"
+        ".collision ul{padding-left:26px}.collision li{margin:9px 0}"
         ".focus-alternative{padding:5px 9px;margin:4px 0}"
         ".pr-controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
         "gap:14px;margin:12px 0}.pr-note{width:100%;box-sizing:border-box}"
@@ -759,6 +782,8 @@ refresh();
         "<option value='owner'>Wacht op eigenaar</option>"
         "<option value='coordination'>Afstemming nodig</option>"
         "<option value='followup'>Opvolging genoteerd</option></select></label>"
+        "<label><input type='checkbox' id='collision-only'>Alleen issues/PRs met "
+        "meerdere PR-kandidaten</label>"
         "<label>PR-opvolging<select id='pr-state'>"
         "<option value=''>Alle PR-statussen</option>"
         "<option value='open'>Nog te beoordelen</option>"
@@ -772,6 +797,7 @@ refresh();
         "<label>Heropen lokale sessie<input id='session-import' type='file' "
         "accept='.json,application/json'></label></div>"
         "<p id='visible' aria-live='polite'></p>"
+        "<p id='collision-visible' aria-live='polite'></p>"
         "<p id='session-status' aria-live='polite'></p>"
         "<div id='focus-bar' class='focus-bar' role='status' hidden>"
         "<strong id='focus-title'></strong>"
