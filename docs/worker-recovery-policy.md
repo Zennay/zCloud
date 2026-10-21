@@ -664,3 +664,7 @@ The recommendation is advisory and is recomputed after batch conflict detection 
 ## Per-route guidance in the offline HTML workorder
 
 The batch HTML workorder now retains the incident-level summary and adds a disclosure for each proposed action. It shows that route's decision, deterministic recommended next step, original source link, HOLD reasons and required evidence. This is especially useful when one incident has competing recovery routes: the report keeps them on HOLD and asks an authorized owner to choose one instead of implying both can proceed. The disclosure is rendered only from already validated batch input and performs no live reads or side effects.
+
+## Per-route recovery guidance in CSV exports
+
+The incident-level CSV keeps its stable owner-workorder row and adds `proposal_recommendations_json`. For ordinary policy batches this bounded JSON array carries each route's action, decision, recommended next step, blocker codes and required evidence. A historical case export without per-action batch results emits an empty array and retains its explicit incident-level next step; it does not invent route evidence. The column is informational only and does not authorize claims, retries, merges or deploys.
