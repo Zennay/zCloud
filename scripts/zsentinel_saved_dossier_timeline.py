@@ -15,6 +15,7 @@ from io import StringIO
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from zipfile import BadZipFile
 
@@ -25,6 +26,7 @@ MIN_SNAPSHOTS = 2
 MAX_SNAPSHOTS = 12
 MAX_PR_IDS = 600
 MAX_OUTPUT = 1024 * 1024
+ISSUE_FILTER = re.compile(r"https://github\\.com/Zennay/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}\\Z")
 TAGS = ("changed_head", "changed_gate", "changed_issues",
         "reappeared_in_sample", "missing_between_samples", "last_sample_missing")
 
@@ -279,7 +281,8 @@ def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
 
 
 
-def select_page(report, *, priority=None, tag=None, page=1, page_size=40):
+def select_page(report, *, priority=None, tag=None, issue_url=None,
+                page=1, page_size=40):
     """Filter the *fully admitted* PR set, retaining honest source totals.
 
     Pages are human display slices only, not evidence of other PRs being
@@ -289,6 +292,9 @@ def select_page(report, *, priority=None, tag=None, page=1, page_size=40):
         raise ValueError("Unknown source priority filter")
     if tag is not None and tag not in TAGS:
         raise ValueError("Unknown observed source-change label")
+    if issue_url is not None and (
+            type(issue_url) is not str or not ISSUE_FILTER.fullmatch(issue_url)):
+        raise ValueError("Issue filter must be a canonical GitHub issue URL")
     if (type(page) is not int or not 1 <= page <= 100
             or type(page_size) is not int or not 1 <= page_size <= 100):
         raise ValueError("Invalid bounded page selection")
@@ -296,6 +302,9 @@ def select_page(report, *, priority=None, tag=None, page=1, page_size=40):
         item for item in report["entries"]
         if (priority is None or item["latest_sample_priority"] == priority)
         and (tag is None or tag in item["tags"])
+        and (issue_url is None or any(
+            issue_url in observed["linked_issue_urls"]
+            for observed in item["observations"]))
     ]
     first = (page - 1) * page_size
     if first >= len(matched) and (page != 1 or matched):
@@ -310,6 +319,8 @@ def select_page(report, *, priority=None, tag=None, page=1, page_size=40):
         "last_match_position": first + len(result["entries"]),
         "priority_filter": priority,
         "observed_change_filter": tag,
+        "linked_issue_ever_observed_filter": issue_url,
+        "linked_issue_filter_is_not_fix_proof": True,
         "page": page,
         "page_size": page_size,
         "total_pages": max(1, (len(matched) + page_size - 1) // page_size),
@@ -325,6 +336,9 @@ def markdown(report):
         "CI, review, main-merge of deploy bewezen.",
         "",
         "- Projectscope: " + (report["scope"] or "oorspronkelijke portfolio-samples"),
+        "- Geselecteerd historisch issue: " +
+          (report["display"]["linked_issue_ever_observed_filter"] or "alle issues") +
+          " (ooit in een opgeslagen PR-koppeling; GEEN actuele eigenaarschap/fix)",
         "- Bronmomenten: " + str(len(report["source_snapshots"])),
         "- Bronactualiteit: " + report["source_freshness"]["status"].upper() +
           " · leeftijd " + (str(report["source_freshness"]["age_hours"]) + " uur"
@@ -493,6 +507,14 @@ def html_content(report):
         for s in report["source_snapshots"])
     paging = report["display"]
     freshness = report["source_freshness"]
+    issue_filter = paging["linked_issue_ever_observed_filter"]
+    issue_filter_html = (
+        '<p><strong>Historische issue-selectie:</strong> <a target="_blank" '
+        'rel="noopener noreferrer" href="' + e(issue_filter) + '">' +
+        e(issue_filter) + '</a>. Ooit geobserveerde link, '
+        'geen live issuefix of eigenaarschap.</p>'
+        if issue_filter else ""
+    )
     freshness_age = (str(freshness["age_hours"]) + " uur"
                      if freshness["age_hours"] is not None else "ONBEKEND")
     freshness_notice = (
@@ -523,7 +545,7 @@ str(paging["page"]) + "/" + str(paging["total_pages"]) + """</strong> · """ +
 str(paging["shown_source_pr_candidates"]) + " getoond van " +
 str(paging["matched_source_pr_candidates"]) + " filtersmatches; " +
 str(paging["source_pr_candidates_total"]) + """ PRs in de bron.
-Niet-getoond is niet opgelost.</p>""" + "".join(cards) + """
+Niet-getoond is niet opgelost.</p>""" + issue_filter_html + "".join(cards) + """
 <footer>Controleer de actuele GitHub HEAD, CI, reviews, Notion-eigenaar,
 protected-main en de echte merge-commit voordat een release mag plaatsvinden.
 Geen API-calls, geen automatische claims of dispatch.</footer>
@@ -556,6 +578,8 @@ def main(argv=None):
                         help="Filter saved PRs by priority after full source admission")
     parser.add_argument("--change", choices=TAGS,
                         help="Only show selected observed historical change type")
+    parser.add_argument("--issue",
+                        help="Filter PRs ever observed linked to exact canonical issue URL; never implies a fix")
     parser.add_argument("--page", type=int, default=1,
                         help="Display page, 1..100, default 1")
     parser.add_argument("--page-size", type=int, default=40,
@@ -569,7 +593,8 @@ def main(argv=None):
         report["source_freshness"] = source_freshness(
             report["source_snapshots"], stale_after_hours=args.stale_after_hours)
         selected = select_page(report, priority=args.priority, tag=args.change,
-                               page=args.page, page_size=args.page_size)
+                               issue_url=args.issue, page=args.page,
+                               page_size=args.page_size)
         data = render(selected, args.format)
         if not hasattr(os, "O_NOFOLLOW"):
             raise ValueError("Required safe output flags unavailable")
