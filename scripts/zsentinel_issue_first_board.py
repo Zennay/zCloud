@@ -705,7 +705,7 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
             " #" + esc(item["number"]) + "</a>" for item in refs)
         cards.append("<p><a href='" + esc(url) + "'>" + esc(row["repo"]) + "#" +
                      esc(row["number"]) + "</a> → " + links +
-                     " (alleen PR-bodyverwijzing, niet opgelost)</p>")
+                     " (alleen geobserveerde PR-titel/bodyverwijzing, niet opgelost)</p>")
     related = ("<section><h2>Geobserveerde P0/P1-referenties</h2>" +
                "".join(cards) + "</section>") if cards else ""
     target_section = ""
@@ -964,8 +964,10 @@ def main():
                       f"writers={claim['active_local_writers_observed']}; "
                       "Notion/other ownership remains UNKNOWN")
             for item in rows:
-                refs = ", ".join(str(issue["priority"]) + "#" + str(issue["number"])
-                                 for issue in item["observed_issue_refs"]) or "none observed"
+                refs = ", ".join(
+                    str(issue["priority"]) + "#" + str(issue["number"]) +
+                    " (" + issue["url"] + ")"
+                    for issue in item["observed_issue_refs"]) or "none observed"
                 print(f"{item['repo']}#{item['number']}: {item['status']}; "
                       f"issue refs={refs}; review={item['review']}; CI={item['checks']}; "
                       f"workflows={item.get('workflows', 'UNKNOWN')}; "
@@ -983,7 +985,8 @@ def main():
                             print("  CI_HOLD_MORE additional observations outside bounded display")
             for issue in unmatched:
                 print(f"OPEN_UNLINKED_OBSERVED {issue['priority']} "
-                      f"{issue['repo']}#{issue['number']} (ownership unknown)")
+                      f"{issue['repo']}#{issue['number']} "
+                      f"{issue['url']} (ownership unknown)")
             if partial:
                 print("PARTIAL: " + ", ".join(item["project"] + " " + item["reason"]
                                              for item in partial))
