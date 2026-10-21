@@ -684,3 +684,34 @@ consistent is met het in de export vastgelegde bronmoment. Bestaande P0,
 exact-head CI, onafhankelijke PR-review, bronclaim, branch protection en
 release-eigenaar blijven altijd aparte actuele controles. Een ZIP mag nooit
 als taak-/dispatchinvoer of als live runnerherstelbewijs worden behandeld.
+
+
+### Pakket direct openen als eigenaarwerkbak
+
+Een bestaand pakket kan nu zonder uitpakken, netwerktoegang of productmutaties
+worden geopend in dezelfde vaste P0-eerst operatorvolgorde. Dat biedt één
+concrete werkroute als de oorspronkelijke CLI-host niet meer bereikbaar is:
+
+```sh
+python3 scripts/zsentinel_operator_packet_view.py \
+  --packet /private/zsentinel/owner-packet-20261021.zip --format text
+
+# Voor een lokale, begrensde machineleesbare eigenaarweergave:
+python3 scripts/zsentinel_operator_packet_view.py \
+  --packet /private/zsentinel/owner-packet-20261021.zip --format json
+```
+
+De lezer weigert symlinks, niet-reguliere/te grote ZIPs, onverwachte entries,
+afwijkende ledenvolgorde, compressie, niet-canonieke JSON-bronhash en elk
+archief waarvan de **volledige bytes** niet overeenkomen met een heropbouw
+via de bestaande serializer. Hij toont per brongebonden kaart prioriteit,
+project, probleem, menselijke vervolgstap en de canonieke bestaande issue-/PR-
+links, plus een aparte historische teller. Privénotities of ongevalideerde
+provider-output worden niet in een claim/actie omgezet. De waarschuwing
+`partial_source=true` en alle autorisatievlaggen `false` blijven zichtbaar;
+het bestand kan niet bewijzen dat de oorspronkelijke PR nog open is,
+een andere worker niet al werkt, of dat een runner inmiddels hersteld is.
+
+De parser is een **offline operatorweergave**, geen QA-suite, scheduler,
+trigger of GitHub-/Notion-connectorkoppeling. Controleer actuele reviews,
+exacte HEAD, gates en eigenaar opnieuw alvorens elders actie te ondernemen.
