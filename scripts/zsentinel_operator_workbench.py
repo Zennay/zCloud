@@ -761,6 +761,8 @@ Cells are quoted and formula-prefixed values are escaped. Verify your destinatio
 <section class="brief" aria-label="Manual calendar handoff">
 <h2>Optional private calendar follow-up export</h2>
 <p>Only human-marked issues with a contact label and UTC review date qualify.
+Issue-independent project recovery leads also qualify when a manual contact label and UTC review date are entered.
+At most 60 total saved follow-up events are exported (issues before projects).
 Preview first, then optionally download a local .ics file for manual calendar import.
 All-day dates contain no alarm. Importing is your decision; external calendar defaults may add notifications.
 No calendar, watch or external service is contacted here.</p>
@@ -2178,7 +2180,14 @@ function calendarSource(stamp){
   const da=handoffs.get(a.issue).due,db=handoffs.get(b.issue).due;
   return da.localeCompare(db)||a.issue.localeCompare(b.issue);
  }).slice(0,60);
- if(!rows.length)return null;
+ const projectRows=board.project_operations.filter(row=>{
+  const info=recoveryHandoffs.get(row.project);
+  return Boolean(info?.owner?.trim()&&info?.due&&validFollowupDate(info.due));
+ }).sort((a,b)=>{
+  const da=recoveryHandoffs.get(a.project).due,db=recoveryHandoffs.get(b.project).due;
+  return da.localeCompare(db)||a.project.localeCompare(b.project);
+ }).slice(0,Math.max(0,60-rows.length));
+ if(!rows.length&&!projectRows.length)return null;
  const lines=['BEGIN:VCALENDAR','VERSION:2.0',
   'PRODID:-//zSentinel//Private Manual Followup//EN',
   'CALSCALE:GREGORIAN','METHOD:PUBLISH'];
@@ -2197,6 +2206,23 @@ function calendarSource(stamp){
    'DTSTAMP:'+stamp,'DTSTART;VALUE=DATE:'+info.due.replace(/-/g,''),
    'SUMMARY:'+calendarEscape('Review '+card.issue+' · '+card.title),
    'DESCRIPTION:'+calendarEscape(desc),'URL:'+card.url,'END:VEVENT');
+ }
+ for(const row of projectRows){
+  const info=recoveryHandoffs.get(row.project);
+  const uid='zsentinel-project-'+boardSha.slice(0,24)+'-'+
+   row.project.replace(/[^A-Za-z0-9]/g,'-')+'@local.invalid';
+  const desc='Manual human review of saved project recovery context only. '+
+   'Original board source observed '+board.observed_at_utc+
+   '; queue source '+(row.queue_source_observed_at_utc||'UNKNOWN')+
+   '. Decision: '+info.decision+
+   (includePrivateContacts?'. Private manually entered contact label: '+info.owner:
+    '. Private contact label intentionally omitted')+
+   '. No original queue task identities, operator private notes or assignee. '+
+   'Verify live claims, current owners, source and PR/release gates.';
+  lines.push('BEGIN:VEVENT','UID:'+uid,
+   'DTSTAMP:'+stamp,'DTSTART;VALUE=DATE:'+info.due.replace(/-/g,''),
+   'SUMMARY:'+calendarEscape('Review project recovery · '+row.project),
+   'DESCRIPTION:'+calendarEscape(desc),'END:VEVENT');
  }
  lines.push('END:VCALENDAR');
  return lines.flatMap(foldCalendarLine).join('\\r\\n')+'\\r\\n';
