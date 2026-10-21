@@ -727,6 +727,7 @@ def evaluate_recovery_case(data):
         raise PolicyInputError("invalid recovery case project scope")
     generated = _timestamp(data.get("generated_at_utc"))
     issues, recovery = data.get("issues"), data.get("queue_recovery")
+    case_old = datetime.now(UTC) - generated > timedelta(hours=6)
     if (type(issues) is not list or len(issues) > 100 or type(recovery) is not dict
             or type(recovery.get("workorders")) is not list
             or len(recovery["workorders"]) > 64):
@@ -773,9 +774,10 @@ def evaluate_recovery_case(data):
             "project_id": pid, "incident_id": identity[1],
             "input_indexes": [], "proposed_actions": ["inspect_existing_prs"],
             "owner": None, "decision": "HOLD",
-            "problem_codes": ["historical_issue_not_reobserved" if historical else
-                              "source_only_open_issue",
-                              "worker_claim_unverified"],
+            "problem_codes": (["historical_issue_not_reobserved" if historical else
+                               "source_only_open_issue",
+                               "worker_claim_unverified"] +
+                              (["case_source_over_six_hours_old"] if case_old else [])),
             "required_evidence": ["current_notion_worker_queue_ownership",
                                   "current_github_issue_and_pr_state",
                                   "exact_head_required_ci_and_review"],
@@ -791,6 +793,14 @@ def evaluate_recovery_case(data):
         raise PolicyInputError("missing queue recovery coverage")
     retry_cov = cov["queue_retry"]
     covered = retry_cov.get("selected_project_covered")
+    retry_stale = retry_cov.get("source_stale")
+    if type(retry_stale) is not bool:
+        raise PolicyInputError("queue source freshness status missing")
+    if covered is True:
+        try:
+            _timestamp(retry_cov.get("observed_at"))
+        except PolicyInputError as exc:
+            raise PolicyInputError("covered queue source has no valid observation") from exc
     if type(covered) is not bool or (not covered and recovery["workorders"]):
         raise PolicyInputError("contradictory queue recovery source coverage")
     if type(recovery.get("workorder_count")) is not int or not 0 <= recovery["workorder_count"] <= 500:
@@ -829,16 +839,21 @@ def evaluate_recovery_case(data):
             "project_id": pid, "incident_id": ident[1],
             "input_indexes": [], "proposed_actions": ["inspect_claim_churn"],
             "owner": None, "decision": "HOLD",
-            "problem_codes": ["high_claim_attempts_observed",
-                              "live_owner_and_failure_cause_unverified"],
+            "problem_codes": (["high_claim_attempts_observed",
+                               "live_owner_and_failure_cause_unverified"] +
+                              (["queue_snapshot_stale"] if retry_stale else [])),
             "required_evidence": ["current_queue_lease_and_worker_owner",
                                   "failure_classification_and_retry_budget",
                                   "authorized_runtime_owner"],
             "source_urls": [],
-            "next_step": "verify_live_owner_before_recovery",
+            "next_step": ("refresh_queue_source_then_verify_owner" if retry_stale
+                          else "verify_live_owner_before_recovery"),
             "human_review_required": True,
             "actions_executed": False, "priority": priority,
         })
+    if not orders:
+        raise PolicyInputError("case contains no issue or queue workorders; "
+                               "missing bounded sources cannot clear backlog")
     orders.sort(key=lambda x: (
         {"P0": 0, "P1": 1, "P2": 2, "P3": 3}[x["priority"]],
         0 if x["incident_id"].startswith("issue-") else 1,
