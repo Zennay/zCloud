@@ -820,7 +820,7 @@ def main():
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
     parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk", "handoff"), default="html")
     parser.add_argument("--show-owner-handoff", action="store_true",
-                        help="opt-in P0-first incident/worker/issue strip inside existing portfolio HTML")
+                        help="opt-in P0-first owner strip; optionally pair with --owner-handoff-output")
     parser.add_argument("--owner-handoff-output", type=Path,
                         help="optional separate new private .csv owner-action export; requires --show-owner-handoff")
     parser.add_argument("--desk-output", type=Path,
