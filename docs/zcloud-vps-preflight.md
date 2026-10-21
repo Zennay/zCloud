@@ -117,3 +117,12 @@ Swap visibility no longer interprets a missing `SwapFree` field as **100% usage*
 ### Guard an in-flight dedicated Actions worker
 
 The same local preflight now inspects only the **dedicated zCloud** `Runner.Worker` executable identity in `/proc`, without displaying process arguments or reading their environment. It reports an aggregate `runner.worker_process_count` in the private JSON/text/HTML report. A detected worker process triggers hard finding `RUNNER_WORKER_PROCESS_OBSERVED`, marks `runner_identity=blocked`, and surfaces the existing #1326 owner's recovery route. This is conservative **process presence**, not independent proof of a GitHub job's state or an instruction to terminate the process. An unmatched/hidden process is **not proof** that the runner is idle; check authenticated GitHub job assignment and serialized worker owner gates separately. No process receives a signal and no job or service is restarted.
+
+
+## 20 October · Do not label omitted runtime probes as recovered
+
+The existing `--previous-report` incident comparison had a misleading delivery failure: when an earlier report used `--worker-safety`, `--archive-readiness` or `--disk-hotspots` but the next report omitted that optional flag, the old finding disappeared from the current findings array and could be labelled **resolved**. A missed observation is not a fix. The same ambiguity existed when a previously bad RAM/disk/runner state was hidden by an unavailable current source.
+
+Current private JSON, text and offline HTML now distinguish `resolved_findings` (**current comparable evidence confirms the old finding absent**) from `not_reobserved_findings` (**source not inspected or no longer sufficiently readable**). This is a *bounded read-only comparison*, not a live recovery attestation or service permission. No old snapshot is silently rewritten; existing schema-1 input and other report fields stay readable.
+
+For reliable human comparisons, run the same optional observation flags on both snapshots and inspect the `not_reobserved_findings` list before deciding whether a prior issue actually cleared. A healthy-looking count never permits an automatic worker interruption, queue rewrite, service restart, provider upload, main merge or deploy. Existing #1326 and #580/#1089 release ownership still applies.
