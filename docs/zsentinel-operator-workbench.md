@@ -37,6 +37,14 @@ met een aandachtspunt. Een gefilterd projectdossier laat geen
 ongekoppelde PRs van andere projecten zien; bij focus worden
 ongekoppelde PRs helemaal weggelaten, nooit als 'afgehandeld' gemarkeerd.
 
+In de HTML en Markdown staat bovendien **vóór de gekozen focus** een
+historische aandachtsteller voor de volledige geselecteerde projectscope:
+meerdere PR-kandidaten, verloren issueverbindingen en uit de laatste
+steekproef verdwenen PRs. Deze aantallen mogen overlappen en zijn nooit
+een actuele CI-/merge-/claimstatus. Bij projectselectie tonen ongekoppelde
+PRs uitsluitend die projectscope; het oorspronkelijke totaal blijft apart
+zichtbaar, zodat filtering geen vals nulresultaat suggereert.
+
 De selectie is in de HTML en Markdown zichtbaar en wordt in JSON/CSV
 opgenomen; bij ZIP staan exact die geselecteerde HTML/Markdown/CSV/
 bronreceipts plus SHA256-checksums in het bestaande private archief.
