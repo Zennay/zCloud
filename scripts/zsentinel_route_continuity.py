@@ -146,7 +146,10 @@ def _index(data):
                     for field in ("incident_dependency_holds",
                                   "routing_gate_holds", "routing_selection_holds"))
     return {"observed": observed, "rows": rows, "counts": counts,
-            "complete": complete, "sample_truncated": truncated}
+            # Inventory coverage and *display-sample* coverage are separate:
+            # a complete underlying task snapshot can still hide examples.
+            "complete": complete and not truncated,
+            "sample_truncated": truncated}
 
 
 def _insert(index, row, category):
@@ -307,10 +310,19 @@ def as_text(report):
                  " · niet meer in steekproef: " + str(report["not_reobserved_count"]))
     if not report["prior_coverage_complete"] or not report["current_coverage_complete"]:
         lines.append("Bron ONVOLLEDIG; aantallen zijn geen volledig werkoverzicht.")
+    for row in report["newly_observed"]:
+        lines.append("- NIEUW IN BRON " + row["priority"] + " " +
+                     row["project_id"] + "/" + row["id"] + " · " +
+                     row["reason"] + " · eigenaar controleert actuele claim en PR vóór werk.")
     for row in report["state_transitions"]:
-        lines.append("- " + row["priority"] + " " + row["project_id"] + "/" +
-                     row["id"] + " · " + row["before_reason"] + " → " +
-                     row["after_reason"] + " · eigenaar verifieert huidige bron; geen claim.")
+        lines.append("- ROUTE GEWIJZIGD " + row["priority"] + " " +
+                     row["project_id"] + "/" + row["id"] + " · " +
+                     row["before_reason"] + " → " + row["after_reason"] +
+                     " · eigenaar controleert originele taak, lease en gate; geen claim.")
+    for row in report["unchanged_observed"]:
+        lines.append("- ONGEWIJZIGD " + row["priority"] + " " +
+                     row["project_id"] + "/" + row["id"] + " · " +
+                     row["reason"] + " · zonder nieuwe bron geen herhaalde actie.")
     for row in report["not_reobserved_not_resolved"]:
         lines.append("- NIET MEER WAARGENOMEN " + row["priority"] + " " +
                      row["project_id"] + "/" + row["id"] +
@@ -321,13 +333,57 @@ def as_text(report):
 
 
 def as_html(report):
+    """Operator cards using the same bounded transition decision as text/JSON."""
     visible = as_text(report)
-    lines = visible.splitlines()
-    return ('<section class="panel read"><h2>Routeringsveranderingen · brongebonden</h2>'
-            '<p class="muted">Afwezig in een volgende steekproef betekent nooit opgelost '
-            'of vrijgegeven. Er zijn geen queue-, worker- of releaseacties uitgevoerd.</p>'
-            '<ul>' + "".join('<li>' + escape(line) + '</li>' for line in lines[1:]) +
-            '</ul></section>')
+    if report["coverage"] not in ("bounded_source_comparison",
+                                  "historical_bounded_source_comparison"):
+        return ('<section class="panel warn"><h2>Routeringsveranderingen · ONBEKEND</h2>'
+                '<p>' + escape(visible.splitlines()[-1]) +
+                '</p><p>Geen claim, vrijgave of herstelauthorisatie.</p></section>')
+    historic = report["coverage"] == "historical_bounded_source_comparison"
+    def cards(rows, title, action, *, changes=False):
+        result = []
+        for row in rows:
+            scope = escape(row["project_id"]) + " / " + escape(row["id"])
+            before = (row["before_reason"] + " → " + row["after_reason"]
+                      if changes else row["reason"])
+            result.append(
+                '<article class="panel"><h4>' + escape(row["priority"]) +
+                ' · ' + scope + '</h4><p>Probleem: ' + escape(before) +
+                '</p><p>Actie: ' + escape(action) +
+                '</p><p>Status: ' + escape(title) +
+                ' · geen claim, CI-retry, merge of deploy.</p></article>')
+        return "".join(result)
+    sections = [
+        ('Gewijzigde routering', report["state_transitions"],
+         "Controleer huidige eigenaar, bestaande PR, lease en uitvoeringsgate.", True),
+        ('Nieuw waargenomen', report["newly_observed"],
+         "Controleer actuele claim en bestandsscope voordat werk start.", False),
+        ('Niet opnieuw waargenomen · NIET opgelost', report["not_reobserved_not_resolved"],
+         "Vergelijk de originele bron opnieuw; afwezigheid is geen herstelbewijs.", False),
+        ('Ongewijzigd', report["unchanged_observed"],
+         "Geen herhaalde herstelactie zonder nieuwe informatie.", False),
+    ]
+    panels = "".join(
+        '<details' + (' open' if label != "Ongewijzigd" else '') +
+        '><summary>' + escape(label) + ' (' + str(len(rows)) +
+        ' zichtbaar)</summary>' + cards(rows, label, step, changes=changes) +
+        '</details>' for label, rows, step, changes in sections if rows)
+    note = ('HISTORISCHE REPLAY: geen actuele claim- of leasebron. '
+            if historic else 'Vers assembleert tijdvenster; nog altijd slechts bronadvies. ')
+    if (not report["prior_coverage_complete"]
+            or not report["current_coverage_complete"]):
+        note += "Broninventaris ONVOLLEDIG of steekproef afgekapt. "
+    note += ("Verdwenen taken zijn niet vrijgegeven; bronidentiteit is "
+             "alleen voor vergelijking geverifieerd. Geen automatische herstelactie.")
+    return ('<section class="panel read" aria-label="Routeringsveranderingen">'
+            '<h2>Routeringsveranderingen · P0-eerst</h2><p class="muted">' +
+            escape(note) + '</p><p>Bronmomenten: ' +
+            escape(report["previous_observed_at_utc"]) + ' → ' +
+            escape(report["observed_at_utc"]) + '</p>' +
+            (panels if panels else
+             '<p>Geen zichtbare overgang in dit beperkte bronvenster; '
+             'geen bewijs dat alle taken vrij zijn.</p>') + '</section>')
 
 
 def main(argv=None):
