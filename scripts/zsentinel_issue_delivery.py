@@ -375,11 +375,23 @@ def attach_notion_work_visibility(board, observed):
         for project, amount in counts.items()
     ):
         raise ValueError("untrusted Notion project active counters")
-    found = {}
+    verifying = observed.get("verifying_project_counts")
+    if verifying is not None:
+        if (type(verifying) is not dict or len(verifying) > 50
+                or type(observed.get("verifying_count")) is not int
+                or sum(verifying.values()) != observed["verifying_count"]):
+            raise ValueError("untrusted Notion verification counters")
+        for project, amount in verifying.items():
+            if (type(project) is not str or type(amount) is not int
+                    or not 0 < amount <= counts.get(project, -1)):
+                raise ValueError("Notion verification count exceeds active-source bound")
+    found, review_holds = {}, {}
     for project in board["projects"]:
         amount = counts.get(project)
+        review = verifying.get(project) if verifying is not None else None
         # Zero Notion status hits is NOT a complete file-level claim read.
         found[project] = amount if amount is not None and amount > 0 else None
+        review_holds[project] = review if review is not None and review > 0 else None
     board["notion_active_work_observation"] = {
         "source": ("notion_saved_connector_query_unverified"
                    if observed["source"] ==
@@ -388,17 +400,27 @@ def attach_notion_work_visibility(board, observed):
         "observed_at_utc": stamp.isoformat(),
         "coverage": observed["coverage"],
         "active_project_min": found,
+        "verifying_project_min": review_holds,
         "file_scope_verified": False,
         "lease_owner_verified": False,
         "can_dispatch": False, "writes_performed": False,
     }
     for item in board["items"]:
         seen = found[item["project_id"]]
+        review = review_holds[item["project_id"]]
         item["notion_active_work_min"] = seen
-        if seen is not None:
+        item["notion_verifying_work_min"] = review
+        if review is not None:
+            item["action"] = (
+                "Notion toont minstens " + str(review) +
+                " werkpakket(ten) in Verifying: eerst eigenaar/review en "
+                "bestaande product-PR controleren; GEEN overname. " +
+                item["action"]
+            )
+        elif seen is not None:
             item["action"] = (
                 "Notion toont minstens " + str(seen) +
-                " actief werkpakket(ten) in dit project. Controleer actuele "
+                " onafgeronde werkpakketten. Controleer actuele "
                 "worker/file-claim en bestaande PR vóór productwerk. " +
                 item["action"]
             )
