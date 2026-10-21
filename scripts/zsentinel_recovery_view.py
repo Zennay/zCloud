@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from html import escape
 from urllib.parse import urlsplit
+from zsentinel_selection_holds import html_panel as selection_hold_panel
 
 MAX_INCIDENTS = 200
 MAX_ISSUES = 8
@@ -1240,6 +1241,7 @@ def html_view(decision, registry=None):
             + branch_panel
             + held_panel
             + gate_hold_panel
+            + selection_hold_panel(decision.get("routing_selection_holds"))
             + f'<section><h2>Onafhankelijke werkvoorstellen ({len(tasks)})</h2>'
             + section([task_card(row) for row in tasks],
                       "Geen claim- en gate-veilig onafhankelijk werk aangetoond.")
