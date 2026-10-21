@@ -56,6 +56,29 @@ steekproefscope** expliciet. Alle bestandscreatie blijft alleen op een
 nieuwe privé bestemming (O_EXCL, O_NOFOLLOW, 0600, groottebudget).
 Geen live API, Notion-/lease-/queuewrite, merge, deploy of CI-retry.
 
+### Actualiteit van opgeslagen issue-bronnen
+
+De issue-eerst CLI beoordeelt de leeftijd van de **laatste opgeslagen waarneming**
+en neemt die beoordeling mee in HTML, Markdown, CSV, JSON en de private ZIP
+receipt. De standaard stale-drempel is zes uur; kies desgewenst een begrensde
+drempel van 1–168 uur:
+
+```sh
+python3 scripts/zsentinel_saved_issue_timeline.py \
+  --source ./saved-older.zip --source ./saved-newer.zip \
+  --project Zennay/zCloud --attention multiple-prs \
+  --stale-after-hours 6 --format html --output ./private-multiple-prs.html
+```
+
+De status is `recent-snapshot`, `stale`, `clock-skew` of `unknown`.
+Een recente snapshot blijft historische brondata, geen actuele GitHub-status.
+Een verouderde, ontbrekende of meer dan vijf minuten in de toekomst liggende
+bronwaarneming vraagt expliciet om nieuwe broninspectie vóór een beslissing.
+Het evaluatiemoment UTC, de laatste waargenomen UTC-tijd en de drempel worden
+vastgelegd; de oorspronkelijke bronmanifest-hashes blijven ongewijzigd.
+Geen filter, versheidslabel of ZIP-receipt bewijst eigenaar, claimvrijgave,
+issue-sluiting, verplichte CI, review, merge of live herstel.
+
 ## Operator flow
 
 1. Generate a private **JSON** board using existing merged CLI and the issue inbox once its exact-head PR is integrated. You may omit optional retry/branch/claim/PR source files, but missing evidence remains unknown.
