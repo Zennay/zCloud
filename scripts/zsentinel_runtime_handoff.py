@@ -10,6 +10,7 @@ import json
 import re
 from html import escape
 from datetime import datetime, timezone
+from zsentinel_selection_holds import admit as admit_selection_holds
 
 SAFE_SHA = re.compile(r"^[a-f0-9]{40}$")
 SAFE_REPOSITORY = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
@@ -502,6 +503,29 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             card["blocked_required_gates"] = row["blocked_required_gates"][:]
             card["capacity_state"] = row["capacity_state"]
             cards.append(card)
+    # Tasks omitted from the fair five-slot shortlist remain owner-visible,
+    # never assigned or treated as resolved by a prior proposal.
+    selection_source = decision.get("routing_selection_holds")
+    selection = admit_selection_holds(selection_source)
+    selection_coverage = selection["coverage"] if selection_source is not None else "not_supplied"
+    selection_count = selection["count"] if selection_coverage == "complete" else None
+    for row in selection["examples"]:
+        reason = row["reason"]
+        action = (
+            "Voorgestelde bestandsscope overlapt; kies eerst één bron en "
+            "hercontroleer actuele claims."
+            if reason == "overlapping_suggested_scope" else
+            "P0-eerst project-gebalanceerde shortlist vol; hercontroleer "
+            "prioriteit en bron bij de volgende ronde."
+        )
+        priority = row["priority"] if row["priority"] in ("P0", "P1") else "P2"
+        card = _card(priority, _project(row["project_id"]),
+                     "routing_selection_owner_hold",
+                     "Taak " + row["id"] + " HOLD: " + action +
+                     " GEEN claim/dispatch.", source="bounded_router_selection_hold")
+        card["source_priority"] = row["priority"]
+        card["selection_hold_reason"] = reason
+        cards.append(card)
     notion_owner_status = _notion_owner_status_summary(
         decision.get("notion_claims_observation"), sources.get("notion"), registry)
     pr_cards, pr_coverage = _observed_pr_owner_cards(pr_desk, registry)
@@ -850,6 +874,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                   "queue_lease_window_review": 3,
                   "incident_dependency_owner_hold": 4,
                   "routing_gate_owner_hold": 4,
+                  "routing_selection_owner_hold": 8,
                   "vps_capacity_owner_review": 5,
                   "vps_capacity_source_incomplete": 6,
                   "open_pr_owner_review": 7, "open_product_issue": 8}
@@ -876,6 +901,12 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             "claim_authorized": False,
             "dispatch_authorized": False,
             "exact_gate_recheck_required": True,
+        },
+        "routing_selection_owner_summary": {
+            "coverage": selection_coverage,
+            "held_count": selection_count,
+            "sample_truncated": selection["samples_truncated"],
+            "claim_authorized": False, "dispatch_authorized": False,
         },
         "incident_dependency_owner_summary": {
             "coverage": dependency_coverage,
