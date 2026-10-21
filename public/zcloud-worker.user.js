@@ -63,7 +63,7 @@
   const SENT_QUEUE_KEY="zcloud-v2-last-dispatched-queue";
   const PERSISTENT_SENT_QUEUE_KEY="zcloud-v2-last-dispatched-queue:"+id;
   let sentInThisDocument=false;
-  function sentQueueFromReceipt(raw){
+  function sentQueueFromReceipt(raw,workerBound=false){
     if(raw===null||raw===undefined)return null;
     if(typeof raw!=="string"||raw.length>320)return false;
     try{
@@ -71,7 +71,10 @@
       if(!seen||typeof seen!=="object"||Array.isArray(seen)||
          typeof seen.worker!=="string"||typeof seen.queue!=="string"||
          !seen.worker||!seen.queue)return false;
-      return seen.worker===id?seen.queue:false;
+      // sessionStorage is tab-scoped, and can legitimately retain an older
+      // project's marker when a controller reassigns the tab. The GM key is
+      // per worker: a mismatched identity there is corrupt, never clearance.
+      return seen.worker===id?seen.queue:(workerBound?false:null);
     }catch(_){return false}
   }
   function sameQueueWasSentBeforeReload(queueId){
@@ -82,7 +85,7 @@
       if(typeof GM_getValue!=="function"||typeof GM_setValue!=="function")
         return true;
       const local=sentQueueFromReceipt(sessionStorage.getItem(SENT_QUEUE_KEY));
-      const persistent=sentQueueFromReceipt(GM_getValue(PERSISTENT_SENT_QUEUE_KEY,null));
+      const persistent=sentQueueFromReceipt(GM_getValue(PERSISTENT_SENT_QUEUE_KEY,null),true);
       return local===false||persistent===false||
         local===queueId||persistent===queueId;
     }catch(_){return true}
