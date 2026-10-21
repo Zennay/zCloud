@@ -65,6 +65,42 @@ reassign existing workers based on an inferred lane; ask the active owner
 to reconcile the persisted source. Neither rule changes queue records,
 leases, scheduler admissions, reviews or releases.
 
+## 21 October · assigned queued work reserves cross-lane write scopes
+
+The main zCloud dispatcher allows new work only when `worker_slot IS
+NULL`. The four-lane recovery classifier already excluded slot-assigned
+queued entries as new candidates, but their **write scopes were not
+reserved across other lanes**. This could make a second, independently
+classified recovery work item look locally non-conflicting even though
+it would touch the same files as a still-queued assigned task.
+
+The existing `portfolio-recovery` lane generator now treats every
+`queued` item with a non-null `worker_slot` as an existing protected
+reservation:
+
+- Its **persisted** canonical `execution_lane` stays pinned even when
+  title/criteria change, exactly like a running worker. A missing,
+  legacy, or unknown lane provenance prevents **all new parallel writer
+  suggestions** until the original owner reconciles it.
+- With a declared valid file scope the reservation occupies its lane
+  and file coverage before any new queued candidate is evaluated.
+  Other lanes with overlapping scopes get
+  `queued_worker_slot_scope_conflict`; the reserved lane stays
+  blocked, never returned by `eligible_queue_lane_map`.
+- Without valid file scope, `queued_assigned_write_scope_not_declared`
+  prevents new parallel writer admission regardless of other candidate
+  scopes. There is no inferred free workspace or automatic recovery.
+- Source diagnostics now distinguish held slot assignments, overlapping
+  reserved-slot file scopes, unknown reserved file scopes and untrusted
+  assigned-lane provenance, including bounded owner follow-ups in text,
+  private offline HTML, Markdown and JSON. **No worker IDs, queue IDs,
+  slot numbers or raw file paths** are exported by the operator desk.
+
+This remains a pure derivation/read-only operator feature. No live
+task is claimed, released, migrated, retried, restarted or deployed.
+The canonical service still owns actual queue admission and all
+Notion/GitHub/security/review/resource gates.
+
 ## 21 October · queue eligibility parity with the actual runtime
 
 The real `server.py` selects **eligible=1**, `status=queued` and
