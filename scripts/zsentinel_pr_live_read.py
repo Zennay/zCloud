@@ -27,6 +27,7 @@ ISSUE_URL = re.compile(
     "^https://github[.]com/(Zennay)/([A-Za-z0-9_.-]{1,100})/issues/([1-9][0-9]*)$"
 )
 MAX_BODY_BYTES = 160 * 1024
+MAX_DISCOVERY_BODY_BYTES = 2 * 1024 * 1024
 MAX_CANDIDATES = 3
 MAX_LIST_PAGE = 30
 
@@ -44,8 +45,12 @@ def utc():
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _limited_json(path, *, token=None):
+def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES):
     """One fixed-host HTTPS GitHub GET, no redirects, strict byte cap."""
+    if (max_body_bytes not in (MAX_BODY_BYTES, MAX_DISCOVERY_BODY_BYTES)
+            or (max_body_bytes == MAX_DISCOVERY_BODY_BYTES
+                and "/pulls?state=open&per_page=" not in path)):
+        raise GitHubReadError("oversized read requires the sole bounded PR page")
     if not path.startswith("/repos/Zennay/") or (
         any(char in path for char in ("#", "\\", "\n", "\r", "\t"))
     ):
@@ -62,8 +67,8 @@ def _limited_json(path, *, token=None):
         with build_opener(NoRedirect).open(req, timeout=7) as response:
             if response.status != 200:
                 raise GitHubReadError("GitHub API returned non-200 status")
-            data = response.read(MAX_BODY_BYTES + 1)
-            if len(data) > MAX_BODY_BYTES:
+            data = response.read(max_body_bytes + 1)
+            if len(data) > max_body_bytes:
                 raise GitHubReadError("bounded GitHub response size exceeded")
             return json.loads(data.decode("utf-8"))
     except HTTPError as exc:
@@ -270,7 +275,8 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
     full_name = owner + "/" + repo
     path = "/repos/" + quote(owner, safe="") + "/" + quote(repo, safe="")
     payload = _limited_json(
-        path + "/pulls?state=open&per_page=" + str(MAX_LIST_PAGE), token=token
+        path + "/pulls?state=open&per_page=" + str(MAX_LIST_PAGE),
+        token=token, max_body_bytes=MAX_DISCOVERY_BODY_BYTES,
     )
     if not isinstance(payload, list) or len(payload) > MAX_LIST_PAGE:
         raise GitHubReadError("bounded GitHub open-PR page has invalid shape")
