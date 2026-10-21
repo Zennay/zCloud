@@ -24,6 +24,8 @@ MAX_BYTES = 1024 * 1024
 MAX_ISSUES = 600
 RANK = {name: index for index, name in enumerate(PRIORITIES)}
 ISSUE = re.compile(r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}\Z")
+REPO = re.compile(r"Zennay/[A-Za-z0-9_.-]{1,100}\Z")
+ATTENTION = ("multiple-prs", "lost-issue-link", "missing-final-pr")
 
 
 def issue_worklist(report):
@@ -182,21 +184,48 @@ def issue_worklist(report):
 
 
 def filter_issue_page(report, *, priority=None, issue_url=None,
-                      page=1, page_size=30):
+                      project=None, attention=None, page=1, page_size=30):
+    """Select a bounded *historical* owner worklist, never a live claim.
+
+    Project/attention are display scopes, not evidence that omitted work
+    is completed, unowned or safe for parallel implementation.
+    """
     if priority is not None and priority not in RANK:
         raise ValueError("Invalid source-PR priority")
+    if project is not None and (
+        type(project) is not str or REPO.fullmatch(project) is None
+    ):
+        raise ValueError("Invalid canonical saved project")
+    if attention is not None and attention not in ATTENTION:
+        raise ValueError("Unknown historical attention category")
     if issue_url is not None and (
         type(issue_url) is not str or ISSUE.fullmatch(issue_url) is None
-        or priority is not None or page != 1
+        or priority is not None or attention is not None or page != 1
+        or (project is not None and
+            not issue_url.startswith("https://github.com/" + project + "/issues/"))
     ):
         raise ValueError("Invalid exact historical issue selection")
     if (type(page) is not int or not 1 <= page <= 100
             or type(page_size) is not int or not 1 <= page_size <= 100):
         raise ValueError("Invalid issue source page")
     all_rows = report["issues"]
-    rows = [g for g in all_rows
-            if (priority is None or g["highest_source_priority"] == priority)
-            and (issue_url is None or g["issue_url"] == issue_url)]
+    def needs_attention(issue):
+        if attention is None:
+            return True
+        if attention == "multiple-prs":
+            return issue["multiple_candidate_prs_need_owner_review"]
+        if attention == "lost-issue-link":
+            return (issue["link_unobserved_in_final_sample"] or
+                    issue["links_lost_while_pr_still_sampled"] > 0)
+        return issue["sampled_prs_missing_from_final"] > 0
+
+    rows = [
+        issue for issue in all_rows
+        if (priority is None or issue["highest_source_priority"] == priority)
+        and (project is None or issue["repository"] == project)
+        and (issue_url is None or issue["issue_url"] == issue_url)
+        and needs_attention(issue)
+    ]
     if issue_url is not None and len(rows) != 1:
         raise ValueError("Issue not linked to any PR in these saved sources")
     first = (page - 1) * page_size
@@ -204,11 +233,18 @@ def filter_issue_page(report, *, priority=None, issue_url=None,
         raise ValueError("Issue page not present in source sample")
     display = dict(report)
     display["issues"] = rows[first:first + page_size]
-    if issue_url is not None:
-        # A targeted owner packet must not leak unrelated unsourced PR data.
-        display["unlinked_prs"] = []
+    # Never show another project's unlinked PRs in a project-scoped handoff.
+    # Focused issue lists suppress unrelated PRs lacking any issue identity.
+    display["unlinked_prs"] = (
+        [pr for pr in report["unlinked_prs"]
+         if project is None or pr["url"].startswith(
+             "https://github.com/" + project + "/pull/")]
+        if issue_url is None and attention is None else []
+    )
     display["selection"] = {
         "priority_filter": priority,
+        "project_filter": project,
+        "attention_filter": attention,
         "exact_source_issue_filter": issue_url,
         "total_source_issues": len(all_rows),
         "matched_source_issues": len(rows),
@@ -217,6 +253,7 @@ def filter_issue_page(report, *, priority=None, issue_url=None,
         "page_size": page_size,
         "total_pages": max(1, (len(rows) + page_size - 1) // page_size),
         "missing_issue_or_pr_is_never_closed": True,
+        "filters_are_not_current_owner_or_merge_proof": True,
     }
     return display
 
@@ -303,14 +340,17 @@ Ontbrekende issuekoppelingen mogen geen vrije werkclaim suggereren.</aside>
 manifesten, niet de huidige GitHub-status.</p></details><p>
 """ + str(selection["shown_source_issues"]) + " issues getoond van " +
 str(selection["matched_source_issues"]) + " filtersmatches (" +
-str(selection["total_source_issues"]) + " in bron). Pagina " +
+str(selection["total_source_issues"]) + " in bron). Project: " +
+e(selection["project_filter"] or "alle opgeslagen projecten") +
+"; aandachtsfocus: " + e(selection["attention_filter"] or "alle bronissues") +
+". Pagina " +
 str(selection["page"]) + "/" + str(selection["total_pages"]) +
 ".</p>" + "".join(cards) +
 ('<details><summary>PRs zonder waargenomen bronissue (' +
 str(result["pr_without_source_issue_count"]) +
 ')</summary><ol>' + loose +
 '</ol><p>Dit kan een onvolledige GitHub-zoekscope zijn, geen bewijs van vrij werk.</p></details>'
- if selection["exact_source_issue_filter"] is None
+ if selection["exact_source_issue_filter"] is None and selection["attention_filter"] is None
  else '<p>Andere, ongekoppelde PRs niet opgenomen in dit gerichte issue-dossier.</p>') +
 """<footer>Controleer live issue, actuele PR HEAD en actieve ownerclaims
 voordat je een bestaand product-PR afrondt of een nieuwe claim start.
@@ -325,7 +365,10 @@ def markdown_content(result):
              "- Bronissues: " + str(sel["total_source_issues"]) +
              ", getoond: " + str(sel["shown_source_issues"]) +
              " / " + str(sel["matched_source_issues"]) +
-             "; pagina " + str(sel["page"]) + "/" + str(sel["total_pages"]), "",
+             "; pagina " + str(sel["page"]) + "/" + str(sel["total_pages"]),
+             "- Projectfilter: " + (sel["project_filter"] or "alle opgeslagen projecten"),
+             "- Aandachtsfocus: " + (sel["attention_filter"] or "alle bronissues") +
+             " (niet getoond betekent niet gesloten of vrij)", "",
              "## Bronherkomst en steekproefdekking", ""]
     for sample in result["source_snapshots"]:
         lines.append(
@@ -405,6 +448,7 @@ def csv_content(result):
         "PR later zonder gekoppeld issue bemonsterd",
         "Prioriteit tijdens laatste echte issue-link",
         "Originele bron-UTC bij laatste issue-link",
+        "Projectfilter", "Aandachtsfocus",
     ])
     first_manifest = result["source_snapshots"][0]["original_review_manifest_sha256"]
     last_manifest = result["source_snapshots"][-1]["original_review_manifest_sha256"]
@@ -430,6 +474,8 @@ def csv_content(result):
                 "JA, VERBAND ONBEKEND" if p["pr_observed_after_link_absent"] else "NEE",
                 p["priority_at_last_issue_link"],
                 p["time_at_last_issue_link"],
+                result["selection"]["project_filter"] or "ALLE",
+                result["selection"]["attention_filter"] or "ALLE",
             ])
     for p in result["unlinked_prs"]:
         writer.writerow([
@@ -442,6 +488,8 @@ def csv_content(result):
             "ONBEKEND", "ONBEKEND", "ONBEKEND",
             first_manifest, last_manifest,
             "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND",
+            result["selection"]["project_filter"] or "ALLE",
+            result["selection"]["attention_filter"] or "ALLE",
         ])
     return "\ufeff" + source.getvalue()
 
@@ -527,6 +575,9 @@ def main(argv=None):
     parser.add_argument("--source", type=Path, action="append", required=True,
                         help="Chronological private ZIP, 1..12 times")
     parser.add_argument("--priority", choices=PRIORITIES)
+    parser.add_argument("--project", help="Canonical saved repository, e.g. Zennay/zCloud")
+    parser.add_argument("--attention", choices=ATTENTION,
+                        help="Focus on observed PR overlap, lost issue links or vanished sampled PRs")
     parser.add_argument("--inspect-issue",
                         help="Exact canonical GitHub issue URL from saved sources; not live")
     parser.add_argument("--page", type=int, default=1)
@@ -540,6 +591,7 @@ def main(argv=None):
         issue_report = issue_worklist(source)
         filtered = filter_issue_page(
             issue_report, priority=args.priority, issue_url=args.inspect_issue,
+            project=args.project, attention=args.attention,
             page=args.page, page_size=args.page_size)
         if args.format == "zip" and args.output.suffix.lower() != ".zip":
             raise ValueError("Private ZIP output must use .zip extension")
@@ -560,7 +612,7 @@ def main(argv=None):
               str(filtered["selection"]["shown_source_issues"]) + " issue(s) shown, " +
               str(issue_report["linked_issue_count"]) + " source-linked, " +
               str(issue_report["pr_without_source_issue_count"]) +
-              " original PRs without an issue reference. No claim or merge implied.")
+              " original PRs without an issue reference. Filters never imply closure, owner availability or merge.")
         return 0
     except (OSError, ValueError, TypeError, KeyError, UnicodeError,
             BadZipFile, OverflowError) as exc:
