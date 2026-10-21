@@ -149,6 +149,19 @@ def recovery_priorities(data):
                         "geobserveerd. Start geen extra workers of OOM-gefaalde "
                         "runner-services zolang de bevoegde beheerder niet "
                         "onafhankelijk heeft vastgesteld dat er voldoende ruimte is."))
+    oom_system = sum(1 for row in system_rows.values()
+                     if row["state"] == "failed" and row.get("reason") == "oom-kill")
+    oom_user = sum(1 for row in user_rows.values()
+                   if row["state"] == "failed" and row.get("reason") == "oom-kill")
+    if oom_system or oom_user:
+        actions.append((
+            "P0 · OOM-kill bij GitHub-runner-service",
+            str(oom_system) + " systeemrunner(s) en " + str(oom_user) +
+            " gebruikersrunner(s) melden systemd oom-kill. De bevoegde "
+            "runtime-eigenaar onderzoekt MemAvailable, swap, geheugen-PSI "
+            "en kernel-OOM-bron vóór elke herstart. Linux OOM-tellers "
+            "bewijzen op zichzelf niet welke runner werd beëindigd."
+        ))
     if failed:
         actions.append(("P1 · gefaalde runner-services",
                         f"{len(failed)} service(s) hebben een systemd-fout "
@@ -504,6 +517,15 @@ def render(data):
         box("Load / CPU", f'{_value(host["host_load"])} / {_value(host["cores"])} cores'),
         box("MemAvailable", _value(host["memory_available_gib"], " GiB")),
         box("Swap gebruikt", _value(host["swap_used_percent"], "%")),
+        box("Geheugen-PSI some avg10 (host)", _value(
+            host.get("memory_psi_some_avg10_percent")
+            if host.get("memory_psi_observed") is True else None, "%")),
+        box("Geheugen-PSI full avg10 (host)", _value(
+            host.get("memory_psi_full_avg10_percent")
+            if host.get("memory_psi_observed") is True else None, "%")),
+        box("Kernel-OOM sinds huidige boot (alle processen)", _value(
+            host.get("kernel_oom_kills_since_boot")
+            if host.get("kernel_oom_counter_observed") is True else None)),
         box("Root niet beschikbaar", _value(host["disk_unavailable_percent"], "%")),
         box("Root beschikbaar", _value(host.get("root_available_gib"), " GiB")),
         box("Root-inodes beschikbaar", _value(host.get("root_inode_available_percent"), "%")),
@@ -517,6 +539,9 @@ def render(data):
 <p>Privé momentopname · {escape(data["time"])} · alleen observatie</p>
 <p class="muted">Geen services, runners, modeltraining of wachtrij gewijzigd. {("Historische privébron, niet opnieuw geobserveerd." if data.get("offline_replay") else "Niet live gesynchroniseerd.")}</p></header>
 <main><h2>Hostcapaciteit</h2><div class="grid">{metrics}</div>
+<p class="muted">Geheugen-PSI toont hostbrede wachttijd gedurende een venster
+van 10 seconden. De OOM-teller bevat alle processen sinds de huidige boot,
+niet alleen GitHub-runners. Onbekende bronnen worden nooit als nul gezien.</p>
 <section class="panel"><h2>Vrijblijvend CPU-advies voor Fuckball-training</h2>
 <p><strong>Advies:</strong> CPUQuota {_value(data["quota"], "%")}, CPUWeight {_value(data["weight"])}</p>
 <p><strong>Oorzaken:</strong> {escape(reasons)}</p>
