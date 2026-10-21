@@ -78,24 +78,32 @@ def canonical_projects(path):
     if not isinstance(rows, list):
         raise ValueError("invalid_registry_schema")
     result = {}
+    repositories = set()
     for row in rows:
+        # A silently skipped row could hide an actively owned P0 project from
+        # every downstream workboard. Abort the whole registry instead.
         if not isinstance(row, dict):
-            continue
+            raise ValueError("invalid_registry_row")
         key, url = row.get("id"), row.get("repo_url")
         if not isinstance(key, str) or not PROJECT.fullmatch(key) or not isinstance(url, str):
-            continue
+            raise ValueError("invalid_registry_project")
         try:
             p = urllib.parse.urlsplit(url)
-            if p.scheme != "https" or p.hostname != "github.com" or p.username or p.password or p.port not in (None, 443):
-                continue
+            if (p.scheme != "https" or p.netloc != "github.com"
+                    or p.username or p.password or p.port is not None):
+                raise ValueError("invalid_registry_origin")
         except ValueError:
-            continue
+            raise ValueError("invalid_registry_origin") from None
         names = p.path.strip("/").split("/")
-        if p.query or p.fragment or len(names) != 2 or names[0] != CANONICAL_OWNER or not REPO.fullmatch(names[1]):
-            continue
-        if key in result:
-            raise ValueError("duplicate_project")
-        result[key] = names[0] + "/" + names[1]
+        if (p.query or p.fragment or len(names) != 2
+                or names[0] != CANONICAL_OWNER or not REPO.fullmatch(names[1])
+                or p.path != "/" + "/".join(names)):
+            raise ValueError("invalid_registry_repository")
+        repository = names[0] + "/" + names[1]
+        if key in result or repository in repositories:
+            raise ValueError("duplicate_project_or_repository")
+        result[key] = repository
+        repositories.add(repository)
     if not result or len(result) > MAX_REPOS:
         raise ValueError("invalid_canonical_repositories")
     return result
