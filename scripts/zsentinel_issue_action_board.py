@@ -13,6 +13,14 @@ PR = re.compile(r"^https://github\.com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,
 ISSUE = re.compile(r"^https://github\.com/Zennay/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
 MAX_CARDS = 60
 ORDER = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
+ACTIVITY_ORDER = {
+    "quiet_over_7_days_observed_claims_unknown": 0,
+    "quiet_over_7_days_partial_pr_coverage": 1,
+    "activity_timestamp_unknown": 2,
+    "source_clock_incoherent": 3,
+    "recent_linked_pr_activity_observed": 4,
+    "recent_issue_activity_observed": 5,
+}
 LABELS = {
     "human_infrastructure": "Bevoegde infrastructuureigenaar nodig",
     "missing_current_source": "Ververs onvolledige actuele bron",
@@ -264,10 +272,14 @@ def build(report):
             "dispatch_authorized": False, "release_authorized": False,
         }
         cards.append(card)
+    # Preserve P0/P1 and existing-PR-first semantics. Within the same
+    # priority/gate tier, quiet issues surface before recent activity so the
+    # operator sees stagnation candidates without treating them as owner-free.
     cards.sort(key=lambda row: (
         ORDER[row["priority"]],
         0 if row["candidate_existing_pr_url"] else 1,
         0 if row["category"] == "existing_pr_failed_gates" else 1,
+        ACTIVITY_ORDER[row["activity_signal"]],
         row["project"], row["issue_url"]))
     # One existing PR can be referenced by several different product issues.
     # Surface that single review opportunity once, while keeping the original

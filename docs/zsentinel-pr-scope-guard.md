@@ -2328,3 +2328,10 @@ dat actieve claims, PR-loze branches en stilstand niet zijn geverifieerd.
 Dezelfde signaalvelden verschijnen in JSON, tekst/Markdown, de volledige
 offline HTML en de compacte privé HTML-werkbak. Er is geen queue-/Notion-write,
 claim, retry, CI-dispatch, merge, deploy of workeractie toegevoegd.
+
+De sortering gebruikt het activiteitssignaal alleen als tie-breaker ná de
+bestaande P0/P1-prioriteit, bestaande PR-first-regel en waargenomen falende
+PR-gates. Een stil issue kan dus nooit een P0/P1- of falende bestaande PR
+wegdrukken; binnen dezelfde tier worden issues zonder recente activiteit
+eerder zichtbaar voor menselijke triage. Het signaal wijst geen eigenaar aan
+en geeft geen toestemming om werk te claimen of een worker te onderbreken.
