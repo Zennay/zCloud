@@ -426,6 +426,55 @@ evidence distinct, with active claims and release permission still false
 or UNKNOWN. The optional ordered `suggested_owner_review_order` is a
 small, non-executable review shortlist, **not** a task queue or dispatcher.
 
+### Source-bound P0 repair prioritization from actual read-only GitHub observations
+
+The live owner desk now creates a `suggested_owner_review_order` over the
+**same maximum three already-linked PRs**, rather than simply repeating
+the original historical link order. It distinguishes:
+
+- An open main-target non-draft PR with a **sampled terminal failing** or
+  timed-out check on its observed exact HEAD: investigate the linked
+  **sampled check run** and fix the actual product failure before any merge.
+- An open main-target non-draft PR with sampled queued/in-progress checks:
+  inspect the linked waiting job and the existing runner/provider-admission
+  incident before retrying or assuming CI is green.
+- Missing check-read permission, an existing draft, an unexpected target
+  branch, a closed unmerged PR, or a PR reported merged: distinct
+  owner-facing next actions, with actual `main` merge evidence still
+  independent and mandatory.
+
+Every check URL is built from a bounded numeric ID in the already admitted
+repository. The first-page check-run observations (up to 30) retain no
+more than six failing and six pending links in the UI. Check-run
+`status=completed` with a neutral/skipped conclusion is **not**
+misrepresented as terminal failure. All per-check requiredness,
+`required_ci_verdict`, `branch_protection_verdict`, review
+independence and merge authority remain UNKNOWN/false. The original
+historical candidate order is preserved in `observations`; the separate
+owner list is only an advisory priority projection, never a new worker
+queue. PR `target_branch` now participates in the double-read drift
+guard, so a branch retargeted during inspection is UNKNOWN.
+
+A single **live issue GET** is made first for the original canonical issue,
+then at most four PR GETs per sampled candidate: 13 GET requests total.
+A GitHub 401/403/429 response stops this bounded collection. A currently
+closed issue prompts a human to review the closure and repair before
+restarting work, but neither closure nor a PR's `merged=true` implies
+that any specific protected-main commit is deployed or that a worker
+lease may be released. The observed issue status and import-era source
+coverage are separate JSON fields.
+
+As another source-only hint, the already-fetched live PR description is
+inspected without publishing its body: the operator sees whether the
+description still *mentions* the original issue number, contains a closing
+keyword, has no sampled textual issue mention, or has an unknown/oversized
+body. A changing PR description during the two PR GETs results in UNKNOWN.
+A missing textual reference prompts rechecking the issue→PR relationship
+before using that historical PR candidate as a repair. Text mentions,
+closing keywords and their absence **never prove or disprove** GitHub
+cross-reference links or authorized ownership; no title/body, issue text,
+token or private prompt is exported.
+
 ### Project- and priority-focused historical owner views
 
 Use `--view-project <project-id>` and/or `--through-priority P0|P1|P2|P3`
