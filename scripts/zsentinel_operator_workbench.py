@@ -723,7 +723,7 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <option value="lost-link">PR issue-link disappeared in saved samples</option>
 <option value="missing-pr">PR absent from last saved snapshot</option>
 <option value="source-unknown">No saved PR link · UNKNOWN</option>
-</select></label>
+</select><small id="historicalPrFilterCoverage">Historical PR ZIP source: not provided or not loaded.</small></label>
 <label>Follow-up status<select id="followupStatus">
 <option value="">All manual states</option>
 <option value="overdue">Past manual review date</option>
@@ -971,6 +971,16 @@ Downloaded notes belong to the operator and are not authorization to act on queu
 const board = """ + records + """;
 const boardSha = """ + json.dumps(board_sha) + """;
 const savedPrHistory = """ + issue_history_json + """;
+const historicalPrSelector=document.getElementById('historicalPrFilter');
+if(!savedPrHistory.sources_provided){
+ historicalPrSelector.disabled=true;
+ document.getElementById('historicalPrFilterCoverage').textContent=
+  'No saved PR ZIP sources supplied; filter disabled. Absence is never PR-free.';
+}else{
+ document.getElementById('historicalPrFilterCoverage').textContent=
+  savedPrHistory.original_archive_sources.length+
+  ' admitted historical PR source(s). No current GitHub/owner/CI status verified.';
+}
 const baselineSchema = 'zsentinel-product-delivery-triage-v1';
 const issuePattern = /^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$/;
 let baseline=null,carryPreview=null,prGateImport=null,prGatePrevious=null;
