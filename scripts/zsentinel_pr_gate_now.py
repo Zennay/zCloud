@@ -242,7 +242,10 @@ def _one(repo, number, token):
         if reviewer == author["login"]:
             continue
         review_state = row.get("state")
-        if review_state not in ("APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"):
+        # COMMENTED is not a review decision. A later ordinary comment must
+        # never silently replace an earlier exact-HEAD CHANGES_REQUESTED or
+        # APPROVED decision by the same independent reviewer.
+        if review_state not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
             continue
         current = most_recent.get(reviewer)
         if current is None or row["id"] > current[0]:
