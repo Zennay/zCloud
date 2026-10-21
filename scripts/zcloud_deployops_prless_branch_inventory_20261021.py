@@ -18,7 +18,7 @@ from scripts.zcloud_deployops_pr_owner_snapshot_20261015 import (
     REPO, _main_sha, github_reader,
 )
 
-MAX_BRANCH_PAGES = 50
+MAX_BRANCH_PAGES = 51
 MAX_BRANCHES = 5000
 MAX_PR_PAGES = 10
 MAX_OUTPUT_BYTES = 1_800_000
