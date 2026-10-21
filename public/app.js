@@ -2328,6 +2328,19 @@ function buildZSentinelRecoveryCase(){
     allowed.has(row.project_id)&&(!filter||row.project_id===filter)).slice(0,8)
     .map(row=>({project:row.project_id,priority:row.priority,
       reason:sanitize(row.reason,40),requires_owner_review:true}));
+  const zcloudBranchProject=(DATA?.projects||[]).find(item=>
+    ['https://github.com/Zennay/zCloud','https://github.com/Zennay/zCloud/']
+      .includes(item.repo_url||''));
+  const branchEvidence=IMPORTED_PRLESS_BRANCHES&&
+    (!filter||(zcloudBranchProject&&filter===zcloudBranchProject.id))?
+    IMPORTED_PRLESS_BRANCHES:null;
+  const branches=(branchEvidence?.branches||[]).slice(0,40).map(row=>({
+    branch:sanitize(row.ref,180),
+    classification:sanitize(row.classification,40),
+    observed_commit_sha:sanitize(row.lastCommit,40),
+    overlapping_paths_in_sample:row.overlapCount,
+    current_claim_verified:false,merge_authorized:false,
+  }));
   const ghCoverage=(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).filter(row=>
     allowed.has(row.project)&&(!filter||row.project===filter))
     .slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
@@ -2356,6 +2369,13 @@ function buildZSentinelRecoveryCase(){
         }))},
       queue_admission:{observed_at:DELIVERY_QUEUE_OBSERVED||null,
         source_available:!!queue},
+      unmerged_branches:{observed_at:branchEvidence?.observedAt||null,
+        source_main_sha:branchEvidence?.main||null,
+        source_available:!!branchEvidence,
+        globally_complete_at_observation:branchEvidence?.coverageComplete===true,
+        sampled_branches:branchEvidence?.scanned??null,
+        reported_prless_branches:branchEvidence?.prlessTotal??null,
+        slices:branchEvidence?.slices??null},
       queue_retry:{observed_at:recovery?.observedAt||null,
         source_project:recovery?.scope.project||null,
         selected_project_covered:covered,
@@ -2378,6 +2398,9 @@ function buildZSentinelRecoveryCase(){
       global_owner_review_count:queue?.queued_requires_owner_review??null,
       selected_candidates:queueCandidates,selected_review_items:queueOwnerReview},
     recent_reported_merges:recentMerges,
+    unmerged_branch_sample:{branches,shown:branches.length,
+      truncated:!!branchEvidence&&branchEvidence.branches.length>branches.length,
+      owner_claims_unverified:true},
     authorization:{claims_verified:false,review_verified:false,
       exact_head_required_ci_verified:false,branch_protection_verified:false,
       action_executed:false,claim:false,retry:false,merge:false,deploy:false},
