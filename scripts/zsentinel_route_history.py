@@ -241,6 +241,23 @@ def _admit(report):
     return report
 
 
+
+def _ordered_owner_rows(report):
+    """Interleave repeated HOLDs and source changes in one strict P0-first feed."""
+    rows = (
+        [("REPEATED_HOLD", item) for item in report["repeated_hold_candidates"]] +
+        [("SOURCE_MOVEMENT", item) for item in report["visible_events"]]
+    )
+    rows.sort(key=lambda pair: (
+        PRIORITY[pair[1]["priority"]],
+        0 if pair[0] == "REPEATED_HOLD" else 1,
+        -pair[1].get("window_after", report["window_count"]),
+        pair[1]["project_id"],
+        pair[1].get("task_id", ""),
+    ))
+    return rows
+
+
 def owner_csv(report):
     """Portable, historical-only owner triage across all inspected windows."""
     source = _admit(report)
@@ -259,23 +276,25 @@ def owner_csv(report):
                          "", "", "Original sources must be rechecked; no action authorized.",
                          "false", "false", "false", "false", "false"])
         return output.getvalue()
-    for row in source["repeated_hold_candidates"]:
-        writer.writerow([
-            source["coverage"], row["last_observed_utc"], "",
-            row["consecutive_source_observations"], row["priority"],
-            row["project_id"], row["task_id"], "REPEATED_HOLD",
-            row["hold_reason"], row["hold_reason"], row["next_owner_action"],
-            "false", "false", "false", "false", "false",
-        ])
-    for event in source["visible_events"]:
-        writer.writerow([
-            source["coverage"], event["source_after_utc"],
-            event["window_before"], event["window_after"],
-            event["priority"], event["project_id"], event["task_id"],
-            event["kind"], event["before_reason"] or "",
-            event["after_reason"] or "", event["next_owner_action"],
-            "false", "false", "false", "false", "false",
-        ])
+    for kind, item in _ordered_owner_rows(source):
+        if kind == "REPEATED_HOLD":
+            writer.writerow([
+                source["coverage"], item["last_observed_utc"], "",
+                item["consecutive_source_observations"], item["priority"],
+                item["project_id"], item["task_id"], kind,
+                item["hold_reason"], item["hold_reason"],
+                item["next_owner_action"], "false", "false",
+                "false", "false", "false",
+            ])
+        else:
+            writer.writerow([
+                source["coverage"], item["source_after_utc"],
+                item["window_before"], item["window_after"],
+                item["priority"], item["project_id"], item["task_id"],
+                item["kind"], item["before_reason"] or "",
+                item["after_reason"] or "", item["next_owner_action"],
+                "false", "false", "false", "false", "false",
+            ])
     if source["events_truncated"]:
         writer.writerow([source["coverage"], "", "", "", "", "", "",
                          "SAMPLE_TRUNCATED_UNKNOWN", "", "",
@@ -299,22 +318,24 @@ def owner_text(report):
                  " · bronvoorbeelden blijven beperkt.")
     if source["coverage"] == "historical_sampled_series":
         lines.append("HISTORISCHE REPLAY: geen actuele claim/runner/gate bewezen.")
-    for row in source["repeated_hold_candidates"]:
-        lines.append("- HERHAALDE HOLD " + row["priority"] + " " +
-                     row["project_id"] + "/" + row["task_id"] + " · " +
-                     str(row["consecutive_source_observations"]) +
-                     " opeenvolgende bronmomenten · " + row["hold_reason"] +
-                     " · eigenaar beoordeelt exact opnieuw; GEEN retry.")
     if any(not row["routing_inventory_complete"]
            for row in source["source_window_coverage"]):
         lines.append("Een of meer bronvensters zijn incompleet of afgekapt.")
-    for e in source["visible_events"]:
-        prior = e["before_reason"] or "niet eerder in steekproef"
-        after = e["after_reason"] or "NIET HERWAARGENOMEN, NIET OPGELOST"
-        lines.append("- " + e["priority"] + " " + e["project_id"] + "/" +
-                     e["task_id"] + " · " + str(e["window_before"]) + "→" +
-                     str(e["window_after"]) + " · " + prior + " → " + after +
-                     " · " + e["next_owner_action"])
+    for kind, row in _ordered_owner_rows(source):
+        if kind == "REPEATED_HOLD":
+            lines.append("- HERHAALDE HOLD " + row["priority"] + " " +
+                         row["project_id"] + "/" + row["task_id"] + " · " +
+                         str(row["consecutive_source_observations"]) +
+                         " opeenvolgende bronmomenten · " + row["hold_reason"] +
+                         " · eigenaar beoordeelt exact opnieuw; GEEN retry.")
+        else:
+            prior = row["before_reason"] or "niet eerder in steekproef"
+            after = row["after_reason"] or "NIET HERWAARGENOMEN, NIET OPGELOST"
+            lines.append("- " + row["priority"] + " " + row["project_id"] + "/" +
+                         row["task_id"] + " · " +
+                         str(row["window_before"]) + "→" +
+                         str(row["window_after"]) + " · " + prior + " → " +
+                         after + " · " + row["next_owner_action"])
     if source["events_truncated"]:
         lines.append("Extra bronovergangen verborgen; totaal behouden, geen volledig werkoverzicht.")
     return "\n".join(lines)
@@ -328,29 +349,31 @@ def owner_html(report):
                 '<p>' + escape(owner_text(source).splitlines()[-1]) +
                 '</p></section>')
     cards = []
-    for held in source["repeated_hold_candidates"]:
-        cards.append(
-            '<article class="panel warn"><span class="tag">HERHAALDE HOLD</span><h3>' +
-            escape(held["priority"]) + ' · ' + escape(held["project_id"]) +
-            '/' + escape(held["task_id"]) + '</h3><p>Probleem: ' +
-            escape(held["hold_reason"]) + ' · ' +
-            str(held["consecutive_source_observations"]) +
-            ' opeenvolgende bronwaarnemingen; geen continu herstelbewijs.</p>'
-            '<p>Actie: ' + escape(held["next_owner_action"]) +
-            '</p><p>Geen claim, automatische retry of vrijgave.</p></article>')
-    for e in source["visible_events"]:
-        before = e["before_reason"] or "niet in vorig bronvenster"
-        after = e["after_reason"] or "niet opnieuw gezien; NIET opgelost"
-        cards.append(
-            '<article class="panel read"><span class="tag">' +
-            escape(e["kind"]) + '</span><h3>' + escape(e["priority"]) +
-            " · " + escape(e["project_id"]) + "/" + escape(e["task_id"]) +
-            '</h3><p>Bron ' + str(e["window_before"]) + " → " +
-            str(e["window_after"]) + " · " + escape(e["source_after_utc"]) +
-            '</p><p>Probleem: ' + escape(before) + " → " + escape(after) +
-            '</p><p>Actie: ' + escape(e["next_owner_action"]) +
-            '</p><p class="muted">HOLD: geen claim, retry, merge of deploy.</p></article>'
-        )
+    for kind, row in _ordered_owner_rows(source):
+        if kind == "REPEATED_HOLD":
+            cards.append(
+                '<article class="panel warn"><span class="tag">HERHAALDE HOLD</span><h3>' +
+                escape(row["priority"]) + ' · ' + escape(row["project_id"]) +
+                '/' + escape(row["task_id"]) + '</h3><p>Probleem: ' +
+                escape(row["hold_reason"]) + ' · ' +
+                str(row["consecutive_source_observations"]) +
+                ' opeenvolgende bronwaarnemingen; geen continu herstelbewijs.</p>'
+                '<p>Actie: ' + escape(row["next_owner_action"]) +
+                '</p><p>Geen claim, automatische retry of vrijgave.</p></article>')
+        else:
+            before = row["before_reason"] or "niet in vorig bronvenster"
+            after = row["after_reason"] or "niet opnieuw gezien; NIET opgelost"
+            cards.append(
+                '<article class="panel read"><span class="tag">' +
+                escape(row["kind"]) + '</span><h3>' + escape(row["priority"]) +
+                " · " + escape(row["project_id"]) + "/" + escape(row["task_id"]) +
+                '</h3><p>Bron ' + str(row["window_before"]) + " → " +
+                str(row["window_after"]) + " · " +
+                escape(row["source_after_utc"]) +
+                '</p><p>Probleem: ' + escape(before) + " → " + escape(after) +
+                '</p><p>Actie: ' + escape(row["next_owner_action"]) +
+                '</p><p class="muted">HOLD: geen claim, retry, merge of deploy.</p></article>'
+            )
     notes = ("HISTORISCHE REPLAY. " if
              source["coverage"] == "historical_sampled_series" else "")
     if any(not r["routing_inventory_complete"] for r in
