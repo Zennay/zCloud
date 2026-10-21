@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import re
 import sys
+import unicodedata
 
 from zsentinel_operator_workbench import read_source_and_sha, validated_view
 from zsentinel_product_delivery_board import write_create_only
@@ -43,15 +44,31 @@ FIELDS = (
 
 
 def _cell(value):
-    """Keep local CSV viewers from evaluating source strings as formulas."""
+    """Keep spreadsheet formulas inert, including Unicode-obfuscated prefixes.
+
+    CSV quoting does not prevent spreadsheet formula execution. Preserve the
+    original evidence except for control characters, and inspect past Unicode
+    whitespace, separators, zero-width and bidirectional format marks before
+    deciding whether to prefix the whole cell with an apostrophe.
+    """
     if isinstance(value, bool):
         return str(value).lower()
     if value is None:
         return ""
-    result = "".join(" " if ord(ch) < 32 or ord(ch) == 127 else ch
-                     for ch in str(value)).strip()
-    if result.startswith(("=", "+", "-", "@")):
-        result = "'" + result
+    result = "".join(
+        " " if unicodedata.category(char) == "Cc" else char
+        for char in str(value)
+    )
+    index = 0
+    while index < len(result):
+        char = result[index]
+        category = unicodedata.category(char)
+        if char.isspace() or category in ("Cf", "Zs", "Zl", "Zp"):
+            index += 1
+            continue
+        break
+    if result[index:].startswith(("=", "+", "-", "@")):
+        return "'" + result
     return result
 
 
