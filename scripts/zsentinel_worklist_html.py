@@ -159,6 +159,7 @@ def render_html(board, max_rows=20):
             "<article class='ticket' tabindex='-1' data-project='" + h(row["project"]) +
             "' data-priority='" + h(row["priority"]) +
             "' data-issue='" + h(row["issue_url"]) +
+            "' data-collision='" + ("yes" if len(full) > 1 else "no") +
             "' data-pr='" + h(pr or "") +
             "' data-prs='" + h(" ".join(item[0] for item in alt_items)) +
             "' data-title='" + h(row["title"]) +
@@ -188,6 +189,38 @@ def render_html(board, max_rows=20):
             "</select></label><label>Privé werknotitie (alleen dit browservenster)"
             "<textarea maxlength='700' rows='2' placeholder='Handmatige afspraak, geen automatische claim'></textarea>"
             "</label></div></article>"
+        )
+    # Multiple saved PR mentions for one issue are actionable OWNER TRIAGE,
+    # not evidence of file collision, a shared owner, or two complete fixes.
+    collisions = []
+    collision_issues = set()
+    for card in cards[:max_rows]:
+        candidates = card["all_existing_pr_candidates_in_sample"]
+        if len(candidates) < 2:
+            continue
+        collision_issues.add(card["issue_url"])
+        peer_links = "".join(
+            "<li><a target='_blank' rel='noopener noreferrer' href='" +
+            escape(candidate["url"], quote=True) + "'>PR #" +
+            escape(candidate["url"].rsplit("/", 1)[-1]) + "</a> · " +
+            source_head_link(candidate["url"], candidate.get("source_head_observed")) +
+            " · gate " + escape(candidate["gate_state"]) +
+            (" · bestandsoverlap gezien" if candidate["file_overlap_observed"] else "") +
+            (" · historische beweging gezien" if candidate["source_movement_observed"] else "") +
+            " <button type='button' class='focus-alternative' data-focus-pr='" +
+            escape(candidate["url"], quote=True) +
+            "'>Open PR-werkbak</button></li>"
+            for candidate in candidates
+        )
+        collisions.append(
+            "<li class='collision' data-project='" + escape(card["project"], quote=True) +
+            "'><strong>" + escape(card["priority"]) + "</strong> · " +
+            "<a target='_blank' rel='noopener noreferrer' href='" +
+            escape(card["issue_url"], quote=True) + "'>" +
+            escape(card["title"]) + "</a><p>" +
+            str(len(candidates)) + " PR-kandidaten in opgeslagen bron. " +
+            "Controleer eigenaren en exacte HEADs los van elkaar.</p><ul>" +
+            peer_links + "</ul></li>"
         )
     visible_issues = {card["issue_url"] for card in cards[:max_rows]}
     visible_project = {card["issue_url"]: card["project"]
@@ -270,6 +303,7 @@ def render_html(board, max_rows=20):
         grouped.append(
             "<li class='pr-work' data-pr='" + escape(pr, quote=True) +
             "' data-project='" + escape(group_project, quote=True) +
+            "' data-collision='" + ("yes" if any(url in collision_issues for url in shown_links) else "no") +
             "' data-priority='" + escape(group["highest_priority"], quote=True) +
             "' data-issues='" + escape(" ".join(shown_links), quote=True) +
             "' data-source-issues='" + escape(" ".join(linked), quote=True) +
@@ -308,6 +342,17 @@ def render_html(board, max_rows=20):
             " placeholder='Menselijke opvolging; geen merge- of eigenaarvrijgave'></textarea>"
             "</label></div></li>"
         )
+    collisions_panel = (
+        "<section class='pr-panel' id='collisions'><h2>Issues met meerdere bestaande PRs</h2>"
+        "<p>Deze bronissues hebben twee of meer opgeslagen PR-kandidaten. "
+        "Dit bewijst geen gedeelde bestandswijziging, eigenaarschap, fix of actuele status. "
+        "Controleer elke PR apart bij de bevoegde eigenaar.</p>"
+        "<ol>" + "".join(collisions) + "</ol></section>"
+        if collisions else
+        "<section class='pr-panel' id='collisions'><h2>Issues met meerdere bestaande PRs</h2>"
+        "<p>Geen meervoudige PR-vermelding binnen deze beperkte zichtbare bronsteekproef. "
+        "Daarbuiten blijft overlap ONBEKEND.</p></section>"
+    )
     groups_panel = (
         "<section class='pr-panel'><h2>Bestaande PR's als één werkgroep</h2>"
         "<p>Iedere bestaande PR-kandidaat staat hier, ook als een andere PR "
@@ -734,5 +779,5 @@ refresh();
         "<button id='focus-export' type='button'>Download overdracht voor deze PR</button>"
         "<button id='focus-clear' type='button'>Terug naar alle bronissues</button></div>"
         "<p>Filters en PR-focus veranderen de privé-export niet: deze bevat alle bronkaarten.</p>" + hidden +
-        "<main>" + groups_panel + "".join(output) + "</main>" + script + "</body></html>"
+        "<main>" + collisions_panel + groups_panel + "".join(output) + "</main>" + script + "</body></html>"
     )
