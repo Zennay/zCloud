@@ -179,7 +179,12 @@ jobs:
           cleanup_live_install() {
             rc=$?
             if test "$rc" -ne 0 && test "$swapped" -eq 1; then
-              if ! mv -f -- "$backup" "$live/background.js"; then
+              # An owner might change the live add-on even after our atomic
+              # swap. Never roll back over those newer bytes.
+              if ! cmp -s -- firefox-extension/background.js "$live/background.js"; then
+                echo "::error::Installed addon changed after our swap; preserve owner bytes and recovery backup."
+                backup=""
+              elif ! mv -f -- "$backup" "$live/background.js"; then
                 echo "::error::Failed to restore previous live add-on; backup retained for operator recovery."
                 # Do not delete the only remaining recoverable copy.
                 backup=""
@@ -218,8 +223,8 @@ jobs:
           swapped=1
           cmp -- firefox-extension/background.js "$live/background.js"
           echo "WORKER_TAB_GUARD_INSTALLED=1"
-          python3 scripts/zsentinel_release_receipt.py --component addon --outcome disk-installed
           echo "Worker extension source installed; no active tabs touched during install."
+          python3 scripts/zsentinel_release_receipt.py --component addon --outcome disk-installed
 
       - name: Activate patch only when worker browser has a safe idle window
         shell: bash
