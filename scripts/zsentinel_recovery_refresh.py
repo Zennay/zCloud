@@ -257,8 +257,12 @@ def main():
                 raise ValueError("Notion status observation supports json, text, html or private desk output")
         if ((args.worker_events_database is not None or args.read_notion_claims
              or args.notion_claims_export is not None)
-             and args.output is None and args.desk_output is None):
-            raise ValueError("private Notion/worker observations require a create-only private output; do not print them to stdout")
+             and args.output is None
+             and (args.format != "desk" or args.desk_output is None)):
+            # --desk-output is a private sink only when the selected output
+            # format itself is desk. HTML/text still prints to stdout unless
+            # --output is supplied; refuse that possible private-data leak.
+            raise ValueError("private Notion/worker observations require --output or --format desk with --desk-output")
         if args.desk_output is not None and args.format not in ("desk", "html"):
             raise ValueError("--desk-output accepts only desk or html operator formats")
         if args.desk_output is not None:
