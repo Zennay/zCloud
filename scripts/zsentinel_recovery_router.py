@@ -719,6 +719,7 @@ def queue_pressure_summary(source, now):
                 safe_totals["owned_items"]):
         raise ValueError("queue pressure totals incoherent")
     safe_groups=[]
+    group_identities=set()
     for group in groups:
         if not isinstance(group,dict):
             raise ValueError("invalid queue project group")
@@ -726,6 +727,10 @@ def queue_pressure_summary(source, now):
         if (not isinstance(project,str) or not SLUG.fullmatch(project)
                 or priority not in PRIORITY):
             raise ValueError("invalid queue group scope")
+        key=(project,priority)
+        if key in group_identities:
+            raise ValueError("duplicate project/priority queue aggregate")
+        group_identities.add(key)
         counts={}
         for name in ("queued","claimed","running","verifying",
                      "high_claim_attempts","ten_plus_claim_attempts",
@@ -744,7 +749,28 @@ def queue_pressure_summary(source, now):
                  active-counts["queued"]):
             raise ValueError("incoherent queue group count")
         safe_groups.append({"project_id":project, "priority":priority, **counts})
+    # Full groups precede the intentional 18-row display limit. Verify
+    # their aggregated counts against the original trusted queue totals;
+    # otherwise the operator could see a misleading project attribution.
+    group_to_total={
+        "queued_items": "queued", "high_claim_attempt_items": "high_claim_attempts",
+        "ten_plus_claim_attempt_items": "ten_plus_claim_attempts",
+        "expired_owner_lease_rows": "expired_owner_lease_rows",
+        "unverifiable_owner_lease_rows": "unverifiable_owner_lease_rows",
+        "inconsistent_owner_lease_window_rows": "inconsistent_owner_lease_window_rows",
+    }
+    for total_field, group_field in group_to_total.items():
+        if sum(g[group_field] for g in safe_groups) != safe_totals[total_field]:
+            raise ValueError("queue project aggregate disagrees with total: "+total_field)
+    if (sum(g["claimed"]+g["running"]+g["verifying"] for g in safe_groups)
+            != safe_totals["owned_items"]
+            or sum(g["queued"]+g["claimed"]+g["running"]+g["verifying"]
+                   for g in safe_groups) != safe_totals["active_items"]
+            or max((g["max_claim_attempts"] for g in safe_groups),default=0)
+               != safe_totals["max_claim_attempts"]):
+        raise ValueError("queue inventory totals and project groups disagree")
     safe_samples=[]
+    sample_identities=set()
     for row in samples:
         if not isinstance(row,dict):
             raise ValueError("queue sample not an object")
@@ -763,6 +789,9 @@ def queue_pressure_summary(source, now):
                         row["owner_lease_unverifiable_observed"],
                         row["owner_lease_window_inconsistent_observed"])) > 1):
             raise ValueError("invalid queue sample")
+        if ref in sample_identities:
+            raise ValueError("duplicate private queue sample reference")
+        sample_identities.add(ref)
         safe_samples.append({
             "queue_ref":ref, "project_id":pid, "title":title,
             "priority":row["priority"], "status":row["status"],

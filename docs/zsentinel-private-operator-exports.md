@@ -230,6 +230,18 @@ of per-projectgroepen en verwarring tussen originele observatietijd en het
 moment van latere rapportexport. De oorspronkelijke bron-UTC en
 niet-autorisatiestatus blijven bij ieder venster zichtbaar.
 
+### 21 oktober · projectgroepconsistentie vóór operatoroverdracht
+
+De live read-only router weigert nu dubbele
+`(project_id,priority)`-groepen, dubbele privacy-queue-referenties,
+en groepssommen die niet overeenkomen met de originele SQLite-tellingen.
+Ook het per-project maximum aan claimpogingen moet overeenkomen met het
+al geobserveerde globale maximum. Deze vergelijking gebeurt **vóór**
+de bestaande afkapping tot 18 zichtbare groepen en 20 probleemrijen.
+Een inconsistent bronpakket wordt nooit als veilige hersteloverdracht
+gepubliceerd. Er zijn geen nieuwe databasequeries, testsuites,
+queue-acties of retry-jobs geïntroduceerd.
+
 ### 21 oktober · concrete positieve claimpogingsverschillen per rij
 
 Twee adjacent, actuele, identieke SQLite-databasebronnen vergelijken
