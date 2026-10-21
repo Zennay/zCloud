@@ -1161,6 +1161,25 @@ def _notion_review_html(report):
     )
 
 
+def _gate_owner_html_line(report):
+    """One source-bound summary reused by the existing offline cockpit."""
+    gate = report.get("routing_gate_owner_summary")
+    if (type(gate) is not dict or gate.get("claim_authorized") is not False
+            or gate.get("dispatch_authorized") is not False
+            or gate.get("exact_gate_recheck_required") is not True
+            or type(gate.get("sample_truncated")) is not bool):
+        raise ValueError("untrusted offline routing gate summary")
+    coverage = gate.get("coverage")
+    total = gate.get("held_count")
+    if coverage in ("not_supplied", "incomplete_or_stale") and total is None:
+        return "Uitvoergates ONBEKEND of onvolledig; geen dispatch of vrijgave."
+    if coverage == "complete" and type(total) is int and 0 <= total <= 250:
+        return (str(total) + " uitvoergate-HOLDs; eigenaar bevestigt exacte "
+                "GitHub-/capaciteits-/bestemmingsbron vóór enig werk." +
+                (" Bronvoorbeelden afgekapt." if gate["sample_truncated"] else ""))
+    raise ValueError("contradictory routing gate evidence")
+
+
 def handoff_html(report):
     """Script-free P0-first owner strip for the existing live cockpit."""
     if (not isinstance(report, dict) or report.get("schema") != SCHEMA
@@ -1320,6 +1339,8 @@ def handoff_html(report):
             escape(current_queue_line) + '</p>' +
             '<p class="small muted">Queue #677: ' + escape(queue_line) + '</p>' +
             '<p class="small muted">Afhankelijke taken: ' + escape(dep_line) + '</p>' +
+            '<p class="small muted">Uitvoergates: ' +
+            escape(_gate_owner_html_line(report)) + '</p>' +
             ('<ol>' + ''.join(cards) + '</ol>' if cards else
              '<p>Geen actie in het onderzochte venster; geen compleet herstelbewijs.</p>') +
             ('<p>Werkbak afgekapt; extra items blijven buiten dit venster.</p>'
