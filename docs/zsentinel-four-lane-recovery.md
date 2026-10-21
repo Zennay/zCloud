@@ -582,6 +582,10 @@ local listener process is not that proof. The account billing/spending
 platform gate described in zCloud issue #1523 and the separately tracked
 runner-route issue #1326 remain distinct and cannot be bypassed here.
 
+### Procfs-dekking: onleesbare niet-runnerprocessen
+
+Wanneer het lezen van `/proc/<pid>/exe` wordt geweigerd, leest de observer eerst de kernelnaam `comm`. Een proces waarvan `comm` niet exact `Runner.Listener` of `Runner.Worker` is, valt buiten deze runnerbron en verlaagt de dekking niet. Alleen een kandidaat-runner waarvan `comm` of `cmdline` niet betrouwbaar leesbaar is, veroorzaakt een bronwaarschuwing; onvolledige `/proc`-traversal blijft eveneens `UNKNOWN`. Dit voorkomt dat gewone, afgeschermde processen ieder afwezigheidssignaal onbruikbaar maken, zonder afwezigheid van een runner te verzinnen.
+
 ### Worker-only waarneming · 20 oktober
 
 Een Runner.Worker kan in dezelfde lokale processnapshot zichtbaar zijn

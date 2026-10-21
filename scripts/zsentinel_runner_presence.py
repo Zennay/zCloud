@@ -92,7 +92,8 @@ def observe_local_runners(proc_root="/proc"):
                         with (process_dir / "comm").open("r", encoding="utf-8") as fh:
                             name = fh.read(32).strip()
                         if name not in ("Runner.Listener", "Runner.Worker"):
-                            denied += 1
+                            # Unreadable executable links for unrelated processes
+                            # do not make this runner-only source incomplete.
                             continue
                         with (process_dir / "cmdline").open("rb") as fh:
                             prefix = fh.read(512)
