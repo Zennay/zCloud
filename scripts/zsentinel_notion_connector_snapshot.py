@@ -91,12 +91,19 @@ def _native_row(row, known, data_source_id):
     work_prop = properties.get("Work ID")
     status_prop = properties.get("Status")
     project_prop = properties.get("Project")
-    if (type(work_prop) is not dict or work_prop.get("type") != "number"
-            or type(status_prop) is not dict or status_prop.get("type") != "status"
-            or type(status_prop.get("status")) is not dict):
+    if (type(work_prop) is not dict or work_prop.get("type") not in ("number", "unique_id")
+            or type(status_prop) is not dict
+            or status_prop.get("type") not in ("select", "status")
+            or type(status_prop.get(status_prop["type"])) is not dict):
         raise ValueError("native Notion row missing typed work/status properties")
-    work = _work_number(work_prop.get("number"))
-    status = status_prop["status"].get("name")
+    if work_prop["type"] == "unique_id":
+        unique = work_prop.get("unique_id")
+        if (type(unique) is not dict or unique.get("prefix") != "PWQ"):
+            raise ValueError("unexpected native Notion Work ID prefix")
+        work = _work_number(unique.get("number"))
+    else:
+        work = _work_number(work_prop.get("number"))
+    status = status_prop[status_prop["type"]].get("name")
     if (type(project_prop) is not dict or project_prop.get("type") != "relation"
             or project_prop.get("has_more") is True):
         # Never infer a project from titles or a truncated relation.
