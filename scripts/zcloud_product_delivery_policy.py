@@ -71,6 +71,16 @@ EXPLICIT_QA_ONLY_TITLE = re.compile(
     re.IGNORECASE,
 )
 
+# A *labelled QA workstream* remains QA-only even if its description
+# says "fix" or "merge". Those words cannot override the declared lane.
+EXPLICIT_QA_WORKSTREAM_TITLE = re.compile(
+    r"^(?:(?:p[0-3])\s*[:.·/-]\s*)?"
+    r"(?:qa|quality[ -]?validation|regression[ -]?validation|"
+    r"kwaliteits[ -]?validatie|regressie[ -]?validatie)"
+    r"\s*[:.·/-]\s*",
+    re.IGNORECASE,
+)
+
 def _positive_delivery(text):
     return bool(DELIVERY_VERBS.search(NEGATED_DELIVERY.sub(" ", text)))
 
@@ -159,7 +169,7 @@ def product_delivery_classification(item):
     if not isinstance(criteria, str) or len(criteria) > 32768:
         return "invalid", "invalid_completion_criteria"
     title = title.strip()
-    if EXPLICIT_QA_ONLY_TITLE.match(title):
+    if EXPLICIT_QA_ONLY_TITLE.match(title) or EXPLICIT_QA_WORKSTREAM_TITLE.match(title):
         return "qa_only", "explicit_qa_title"
     if QA_RUN_ONLY_TITLE.match(title):
         return "qa_only", "qa_execution_only_title"
