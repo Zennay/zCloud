@@ -763,6 +763,16 @@ De geprioriteerde operator-actielijst toont nu expliciet hoeveel reviewverzoeken
 
 De bestaande `csv_formula_inert`, bounded-uitvoer, create-only privé bestandsrechten en nul-autorisatievelden blijven ongewijzigd. Er worden geen GitHub reviewverzoeken aangemaakt en geen CI/jobs geretriggerd. Geobserveerde reviewer- of CI-verandering wordt nooit zonder benodigde exacte-HEAD checks, onafhankelijke review en protected-main/releasebevoegdheid tot merge-promotie verheven.
 
+### 21 oktober · Complete privé-PR-werkopdrachten met reviewactie en overzicht
+
+De bestaande `--format workorders`, `workorders-html`, `workorders-json` en `workorders-csv` routes in `zsentinel_pr_scope_portfolio.py` gebruiken nu dezelfde brongebonden reviewaanvragen als de actuele portfolio PR-gate en de merge-first prioriteiten. De implementatie zit in de **bestaande** `scripts/zsentinel_pr_workorders.py`, zonder extra GitHub-verzoeken of nieuwe PR.
+
+Elke geselecteerde huidige, dubbel gelezen exacte-HEAD PR-werkkaart bevat een optioneel `pending_review_requests` object met aantallen individuele/teamverzoeken en een SHA-256 bronvingerafdruk, uitsluitend wanneer de PR-gate- en aandachtbron dezelfde HEAD, base en verzoekstatus tonen. Ontbreekt de stabiele exact-HEAD bron, dan is de toestand **onbekend** en worden geen schijnbare nullen getoond. Een uitstaand reviewverzoek is een operatorwijzing, nooit een ingediende onafhankelijke goedkeuring.
+
+De privé HTML-werkkaart biedt directe, uitsluitend navigerende links naar **PR/reviews**, de bestaande **PR/checks**-pagina en **bestandswijzigingen**. Markdown bevat dezelfde relevante URLs en reviewaantallen. CSV bevat open reviewaantallen en een SHA-256-bronvingerafdruk op de PR-actie, plus gescheiden read-only rijen voor GitHub-checks en review. De JSON-werkkaart is brongebonden en bevat het `review_request_worklist_summary` met drie categorieën: al aangevraagd, geen open verzoek waargenomen, en onbekende bron. Hetzelfde overzicht verschijnt in HTML, Markdown en CSV.
+
+De HTML blijft één lokaal scriptvrij bestand met strikte CSP; CSV-cellen blijven formuleveilig en bounded, de offline bron wordt exclusief/private 0600 aangemaakt via de bestaande writer. **Geen** automatische reviewverzoeken, CI-reruns, claims, merge, productieacties of extra gates. Voor een merge blijven exacte huidige GitHub-required checks, onafhankelijke ingediende reviews, branch protection, huidige eigenaar en releaseautorisatie noodzakelijk.
+
 ### Direct Dutch triage without exporting JSON
 
 The same bounded CLI supports `--format text` for an immediately readable
