@@ -754,6 +754,10 @@ def evaluate_recovery_case(data):
         refs = item.get("referenced_prs")
         if type(refs) is not list or len(refs) > 3:
             raise PolicyInputError("invalid issue PR references")
+        # A PR reference is only meaningful within the same canonical repo as
+        # the issue. A valid-looking foreign repo URL must never be offered as
+        # the existing repair for this issue.
+        issue_repo = url.rsplit("/issues/", 1)[0]
         urls = [url]
         for pr in refs:
             if (type(pr) is not dict or type(pr.get("number")) is not int
@@ -761,6 +765,8 @@ def evaluate_recovery_case(data):
                     or type(pr.get("url")) is not str
                     or not CASE_PR_URL.fullmatch(pr["url"])
                     or not pr["url"].endswith("/pull/" + str(pr["number"]))
+                    or pr["url"].rsplit("/pull/", 1)[0] != issue_repo
+                    or pr["url"] in urls
                     or pr.get("claim_verified") is not False
                     or pr.get("fix_verified") is not False):
                 raise PolicyInputError("invalid or authorized PR reference")
@@ -798,9 +804,18 @@ def evaluate_recovery_case(data):
         raise PolicyInputError("queue source freshness status missing")
     if covered is True:
         try:
-            _timestamp(retry_cov.get("observed_at"))
+            queue_observed = _timestamp(retry_cov.get("observed_at"))
         except PolicyInputError as exc:
             raise PolicyInputError("covered queue source has no valid observation") from exc
+        # The export cannot contain a queue observation from after its own
+        # generation clock. The source's stale hint can only increase caution:
+        # its snapshot timestamp independently determines actual age.
+        if queue_observed > generated + timedelta(minutes=2):
+            raise PolicyInputError("queue observation postdates recovery case")
+        retry_stale = (
+            retry_stale or case_old
+            or datetime.now(UTC) - queue_observed > timedelta(hours=6)
+        )
     if type(covered) is not bool or (not covered and recovery["workorders"]):
         raise PolicyInputError("contradictory queue recovery source coverage")
     if type(recovery.get("workorder_count")) is not int or not 0 <= recovery["workorder_count"] <= 500:
