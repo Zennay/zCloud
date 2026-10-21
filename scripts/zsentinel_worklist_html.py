@@ -451,6 +451,8 @@ const visible=document.getElementById('visible'), prState=document.getElementByI
 const nextOpenPr=document.getElementById('pr-review-next');
 const openPrSummary=document.getElementById('pr-review-summary');
 const projectExport=document.getElementById('project-export');
+const projectNext=document.getElementById('project-review-next');
+const projectReviewSummary=document.getElementById('project-review-summary');
 const focusBar=document.getElementById('focus-bar'),focusTitle=document.getElementById('focus-title');
 const focusClear=document.getElementById('focus-clear');
 const focusNext=document.getElementById('focus-next');
@@ -479,7 +481,7 @@ const gateLabels={
 const collisionExport=document.getElementById('collision-export');
 const collisionOpenExport=document.getElementById('collision-open-export');
 let focusedPr=null,focusIndex=-1;
-let lastPrReview=null;
+let lastPrReview=null,lastProjectReview=null;
 // The privacy-preserving baseline describes ONLY this browser's local edits;
 // never persist it automatically or mistake a completed download for a merge.
 let lastSavedState=null;
@@ -561,6 +563,38 @@ function refresh(){
    +prs.length+' bron-PRs; '+unreviewed+' nog te beoordelen. '
    +'Lokale opvolging bewijst geen review, merge of fixes.';
  nextOpenPr.disabled=outstanding===0;
+ const perProject=new Map();
+ for(const p of prs){
+  const key=p.dataset.project;
+  if(!perProject.has(key))perProject.set(key,{open:0,highest:4});
+  const item=perProject.get(key);
+  if(p.querySelector('.pr-local-state').value!=='followup'){
+   item.open++;
+   item.highest=Math.min(item.highest,{P0:0,P1:1,P2:2,Unspecified:3}[p.dataset.priority]??4);
+  }
+ }
+ for(const t of tickets){
+  const key=t.dataset.project;
+  if(!perProject.has(key))perProject.set(key,{open:0,highest:4});
+  const item=perProject.get(key);
+  if(t.querySelector('.local-state').value!=='followup'){
+   item.open++;
+   item.highest=Math.min(item.highest,{P0:0,P1:1,P2:2,Unspecified:3}[t.dataset.priority]??4);
+  }
+ }
+ for(const c of collisionRows){
+  const key=c.dataset.project;
+  if(!perProject.has(key))perProject.set(key,{open:0,highest:4});
+  const item=perProject.get(key);
+  if(c.querySelector('.collision-state').value!=='followup'){
+   item.open++;
+   item.highest=Math.min(item.highest,{P0:0,P1:1,P2:2,Unspecified:3}[c.dataset.priority]??4);
+  }
+ }
+ const projectsOutstanding=Array.from(perProject.values()).filter(x=>x.open>0).length;
+ projectReviewSummary.textContent=projectsOutstanding+' projecten met nog open lokale opvolging in de beperkte bron; '
+   +'P0 eerst, daarna P1. Lokale opvolging is geen bewijs van voltooide fixes.';
+ projectNext.disabled=projectsOutstanding===0;
  projectExport.disabled=!project.value;
  projectExport.textContent=project.value?
   'Download privéoverdracht voor project '+project.value:
@@ -587,6 +621,33 @@ function focusOnPr(url){
  focusClear.focus();
 }
 for(const p of prs)p.querySelector('.focus-pr').addEventListener('click',()=>focusOnPr(p.dataset.pr));
+projectNext.addEventListener('click',()=>{
+ const items=new Map();
+ function mark(key,status,priority){
+  if(status==='followup')return;
+  if(!items.has(key))items.set(key,4);
+  items.set(key,Math.min(items.get(key),
+    {P0:0,P1:1,P2:2,Unspecified:3}[priority]??4));
+ }
+ for(const p of prs)mark(p.dataset.project,
+  p.querySelector('.pr-local-state').value,p.dataset.priority);
+ for(const t of tickets)mark(t.dataset.project,
+  t.querySelector('.local-state').value,t.dataset.priority);
+ for(const c of collisionRows)mark(c.dataset.project,
+  c.querySelector('.collision-state').value,c.dataset.priority);
+ const candidates=[...items.entries()].sort((a,b)=>a[1]-b[1]||
+  a[0].localeCompare(b[0],'nl')).map(row=>row[0]);
+ if(!candidates.length)return;
+ const last=candidates.indexOf(lastProjectReview);
+ lastProjectReview=candidates[(last+1)%candidates.length];
+ focusedPr=null;focusIndex=-1;collisionIndex=-1;
+ collisionOnly.checked=false;collisionStateFilter.value='';
+ search.value='';priority.value='';activity.value='';state.value='';prState.value='';
+ project.value=lastProjectReview;
+ refresh();
+ project.scrollIntoView({block:'center'});
+ project.focus();
+});
 nextOpenPr.addEventListener('click',()=>{
  const start=prs.findIndex(p=>p.dataset.pr===lastPrReview);
  const order=[...prs.slice(start+1),...prs.slice(0,start+1)];
@@ -1239,6 +1300,8 @@ refresh();
         "<button id='pr-review-next' type='button'>Volgende PR zonder lokale opvolging</button>"
         "<button id='pr-review-export' type='button'>Download open PR-eigenaaroverdracht</button>"
         "<button id='project-export' type='button' disabled>Kies eerst een project voor privéoverdracht</button>"
+        "<p id='project-review-summary' aria-live='polite'></p>"
+        "<button id='project-review-next' type='button'>Volgende project met open lokale opvolging</button>"
         "<p id='collision-visible' aria-live='polite'></p>"
         "<button id='collision-next' type='button'>Volgende open botsingsopvolging</button>"
         "<p id='session-status' aria-live='polite'></p>"
