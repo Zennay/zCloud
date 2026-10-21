@@ -427,10 +427,25 @@ def html_view(decision, registry=None):
             if not isinstance(row, dict) or row.get("status") not in ("refreshed", "degraded"):
                 raise ValueError("invalid route evidence")
             if row["status"] == "degraded":
+                category = row.get("admission_category")
+                if category not in (None, "authentication_required",
+                                    "rate_limit_confirmed",
+                                    "forbidden_or_rate_limit_unknown"):
+                    raise ValueError("untrusted GitHub admission category")
+                next_step = {
+                    "authentication_required":
+                        "GitHub-token of aanmeldrechten: bevoegde eigenaar herstelt toegang.",
+                    "rate_limit_confirmed":
+                        "GitHub API-budget uitgeput: later met een nieuw bronmoment herbeoordelen.",
+                    "forbidden_or_rate_limit_unknown":
+                        "Repositorytoegang of providerlimiet ONBEKEND: eigenaar bekijkt "
+                        "GitHub-toegang, geen betaalde capaciteit veronderstellen.",
+                }.get(category, "Bron onbereikbaar: exacte job opnieuw door eigenaar laten lezen.")
                 runner_route_cards.append(
                     '<article class="panel warn"><h3>' + phrase(row.get("project_id"), 80) +
-                    ' · bron onbereikbaar</h3><p>De exacte joblabels en runnerroute zijn '
-                    'ONBEKEND; geen diagnose of runnerherstart toegestaan.</p></article>'
+                    ' · bron onbereikbaar</h3><p>' + phrase(next_step, 220) +
+                    ' Exacte joblabels en runnerroute zijn ONBEKEND. '
+                    'Geen diagnose, CI-rerun of runnerherstart toegestaan.</p></article>'
                 )
                 continue
             if (row.get("source") != "github_exact_run_job"
