@@ -2595,3 +2595,35 @@ the present PR HEAD, consent, source merge or a live deployment. The
 operator must independently refresh all of those current facts from GitHub
 before any privileged action. No new API call, QA suite, runner dispatch,
 claim, merge or deploy is introduced.
+
+### Manual UTC project follow-ups and source-bound v5 handoff
+
+The issue-independent Project recovery desk now supports a **manual contact
+label** (80 characters, never an actual Notion/GitHub assignee), a **UTC review
+date** (ISO calendar day), a human-only triage decision and a short private
+operator note. Empty contact/date values do not imply that a worker is free.
+
+For each visible project, the desk displays whether a local follow-up is
+overdue, due today, planned for later, awaiting contact information, or
+unscheduled. Its overview aggregates **overdue / due-today / missing-contact**
+counts for the current project selection. The counts only describe private
+local notes; they are not scheduler state, a timed notification, a live owner
+probe, or a gate to claim or retry work. The reviewed Markdown project handoff
+contains the human contact label, UTC review date and the same explicit
+non-authorizing status.
+
+The source-bound private JSON format advances to `schema_version: 5` to keep
+project `owner` and `due` alongside the existing decision/note and issue
+annotations. Import of earlier v1–v4 files is still supported: v4 project
+decisions and notes restore with empty manual contact/date; v1–v3 restore
+their original issue annotations. For v5, imported project IDs must belong to
+the **same exact board SHA**, be unique and bounded, have a known decision,
+plain operator note, normalized contact label and valid UTC review day.
+All records are validated before either the project or issue maps are
+replaced. Invalid/foreign files cannot partially clobber local work.
+Project notes never carry automatically across newly generated board
+snapshots: live claim, incident and lease evidence must be reviewed again.
+
+No new tests, test dispatch, bot/worker assignment, CI bypass, persistent
+storage, network request, automated reminder, service restart, queue write,
+GitHub merge or production deployment is introduced.
