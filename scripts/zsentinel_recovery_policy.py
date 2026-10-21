@@ -537,6 +537,13 @@ def workorders_text(batch):
         _observation_disclosure(batch) +
         " | Incident groups: " + str(batch["incident_count"]) +
         " | No independent source verification or execution.",
+        ("Focused source-only view: " +
+         batch["source_case_view"]["selected_project"] +
+         " through " + batch["source_case_view"]["through_priority"] +
+         " | hidden historic entries: " +
+         str(batch["source_case_view"]["hidden_by_view"]) +
+         " | never a live backlog-clear verdict"
+         if "source_case_view" in batch else ""),
         "",
     ]
     for order in batch["owner_workorders"]:
@@ -687,6 +694,8 @@ def workorders_csv(batch):
         "issue_source_stale", "queue_source_stale", "issue_sample_partial",
         "queue_sample_partial", "independently_verified",
         "claim_authorized", "merge_authorized", "deploy_authorized",
+        "focused_view_project", "focused_view_through_priority",
+        "hidden_historical_incidents",
     ])
     for item in batch["owner_workorders"]:
         urls = item["source_urls"]
@@ -711,6 +720,9 @@ def workorders_csv(batch):
             (batch.get("source_queue_complete") is False
              or batch.get("source_queue_truncated") is True),
             False, False, False, False,
+            batch.get("source_case_view", {}).get("selected_project", ""),
+            batch.get("source_case_view", {}).get("through_priority", ""),
+            batch.get("source_case_view", {}).get("hidden_by_view", ""),
         ])
     # No row represents authorization or current ownership. The caller applies
     # the same 128 KiB UTF-8 output ceiling before any bytes are published.
@@ -735,6 +747,12 @@ def case_markdown(batch):
         (batch["source_queue_observed_at_utc"] or "UNKNOWN"),
         "- Policy evaluated (UTC): " + batch["evaluated_at_utc"],
         "- Source scope: " + batch["source_project_scope"],
+        "- Focused historical view: " +
+        batch["source_case_view"]["selected_project"] + " through " +
+        batch["source_case_view"]["through_priority"] +
+        " (hidden source entries: " +
+        str(batch["source_case_view"]["hidden_by_view"]) +
+        "; does NOT clear a live backlog)",
         "",
     ]
     for row in batch["owner_workorders"]:
@@ -793,6 +811,13 @@ def workorders_html(batch):
         " · policy-ready proposals: " + str(counts["READY_FOR_HUMAN_REVIEW"]) +
         "</p></header><main>",
     ]
+    if "source_case_view" in batch:
+        view = batch["source_case_view"]
+        parts.append("<p><strong>Historical slice only:</strong> " +
+                     esc(view["selected_project"]) + " through " +
+                     esc(view["through_priority"]) + " · hidden entries: " +
+                     str(view["hidden_by_view"]) +
+                     " · not a verified empty backlog.</p>")
     for item in batch["owner_workorders"]:
         held = item["decision"] == "HOLD"
         codes = ", ".join(item["problem_codes"]) if item["problem_codes"] else (
@@ -1064,6 +1089,45 @@ def evaluate_recovery_case(data):
     }
 
 
+def select_case_view(report, *, project=None, through_priority="P3"):
+    """Bounded display-only projection, never a claim or backlog-clear verdict."""
+    if project is not None and (
+        type(project) is not str or not CASE_PROJECT.fullmatch(project)
+    ):
+        raise PolicyInputError("view project must be a canonical project slug")
+    priorities = ("P0", "P1", "P2", "P3")
+    if through_priority not in priorities:
+        raise PolicyInputError("view priority must be P0, P1, P2 or P3")
+    source_scope = report["source_project_scope"]
+    if project is not None and source_scope != "all" and project != source_scope:
+        raise PolicyInputError("project outside original case source scope")
+    rank = priorities.index(through_priority)
+    items = [item for item in report["owner_workorders"]
+             if (project is None or item["project_id"] == project)
+             and priorities.index(item["priority"]) <= rank]
+    if not items:
+        raise PolicyInputError(
+            "no workorders in selected historical slice; absence cannot clear live backlog"
+        )
+    # Make a projection only. The original source coverage is never rewritten
+    # as a full new scan, even when the view happens to retain every row.
+    view = dict(report)
+    view["owner_workorders"] = items
+    view["incident_count"] = len(items)
+    view["request_count"] = len(items)
+    view["decision_counts"] = {"HOLD": len(items), "READY_FOR_HUMAN_REVIEW": 0}
+    view["source_case_view"] = {
+        "selected_project": project or "all-in-source",
+        "through_priority": through_priority,
+        "source_total_incidents": report["incident_count"],
+        "hidden_by_view": report["incident_count"] - len(items),
+        "projection_only": True,
+        "backlog_clear_verified": False,
+        "independent_source_verification": False,
+    }
+    return view
+
+
 def markdown(report):
     lines = [
         "# zSentinel recovery policy decision",
@@ -1225,11 +1289,16 @@ def main(argv=None):
     parser.add_argument("--incident-id", help="incident slug used by --template")
     parser.add_argument("--source-url", help="canonical HTTPS GitHub/Notion source used by --template")
     parser.add_argument("--owner", help="known owner slug used by --template; omit if unknown")
+    parser.add_argument("--view-project", help="select one source-bound project for --case-input only")
+    parser.add_argument("--through-priority", choices=("P0", "P1", "P2", "P3"),
+                        help="show up to this severity in --case-input (default P3)")
     parser.add_argument("--format", choices=("json", "markdown", "workorders", "html", "csv"), default="json")
     parser.add_argument("--fail-on-hold", action="store_true", help="return exit code 2 when a valid evaluation contains any HOLD")
     parser.add_argument("--max-age-minutes", type=int, default=60,
                         help="maximum accepted observation age (1..1440; default 60)")
     args = parser.parse_args(argv)
+    if not args.case_input and (args.view_project or args.through_priority):
+        parser.error("--view-project/--through-priority require --case-input")
     if not 1 <= args.max_age_minutes <= 1440:
         parser.error("--max-age-minutes must be between 1 and 1440")
     if args.template:
@@ -1262,6 +1331,11 @@ def main(argv=None):
             data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                               parse_constant=_reject_constant)
             report = evaluate_recovery_case(data)
+            if args.view_project or args.through_priority:
+                report = select_case_view(
+                    report, project=args.view_project,
+                    through_priority=args.through_priority or "P3",
+                )
             output = (workorders_csv(report) if args.format == "csv" else
                       workorders_html(report) if args.format == "html" else
                       case_markdown(report) if args.format == "markdown" else
