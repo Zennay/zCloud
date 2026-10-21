@@ -564,6 +564,7 @@ def html_document(view: dict, board_sha: str, saved_pr_context=None) -> str:
         "origin_board_sha256": board_sha,
         "original_archive_sources": [],
         "source_coverage_not_proven_complete": True,
+        "unlinked_prs": [],
         "authorizes_claim": False,
         "authorizes_merge": False,
         "authorizes_deploy": False,
@@ -591,6 +592,29 @@ def html_document(view: dict, board_sha: str, saved_pr_context=None) -> str:
             "missing_batch_indexes": row["missing_batch_indexes"],
             "selected_pr_candidates": row["selected_pr_candidates"],
         } for row in original_sources]
+        # Preserve only archived PRs from the repositories represented
+        # by the selected original issue cards. An offline ZIP may cover
+        # unrelated repositories; never silently broaden the operator
+        # handoff to another project or reveal its private PR inventory.
+        selected_repositories = {
+            card["url"].split("/issues/", 1)[0] for card in view["cards"]
+        }
+        for pr in saved_pr_context["unlinked_prs"]:
+            pr_url = pr["url"]
+            if pr_url.split("/pull/", 1)[0] not in selected_repositories:
+                continue
+            if pr.get("owner_claim_verified") is not False or (
+                    pr.get("merge_verified") is not False):
+                raise ValueError("Unlinked PR archive cannot authorize work")
+            saved_issue_details["unlinked_prs"].append({
+                "url": pr_url,
+                "priority": pr["priority"],
+                "last_seen_source_index": pr["last_seen_snapshot"],
+                "missing_from_final_sample": pr["missing_from_final_sample"],
+                "linked_issue_not_observed": True,
+                "claim_verified": False,
+                "merge_verified": False,
+            })
         for card in view["cards"]:
             item = historical.get(card["url"])
             if item is None:
