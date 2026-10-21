@@ -825,3 +825,35 @@ Het brede inventarisverzoek van andere open GitHub-product-PRs kreeg
 een externe HTTP 504; er is geen merge, branch-protection-bypass,
 retrigger of aanname over review-gereedheid uitgevoerd op basis van
 dat incomplete resultaat.
+
+
+### 21 oktober · Onvolledige actieve claimbewijzen zichtbaar vóór nieuw werk
+
+De bestaande geautoriseerde `GET /api/portfolio-queue` geeft in
+`delivery_policy` nu brongebonden tellingen voor **actieve**
+`claimed/running/verifying` taken waar de zichtbare rij geen
+`worker_slot`, `claimed_at` of `claim_expires` bevat. Deze drie
+tellingen zijn onafhankelijk (één taak kan meerdere onvolledige velden
+hebben). De velden zijn `active_missing_worker_slot_visible`,
+`active_missing_claim_start_visible` en
+`active_missing_claim_expiry_visible`. `project_activity` bevat
+dezelfde teller per project; `active_claim_evidence_gap_projects_observed`
+telt de afzonderlijke getroffen projecten.
+
+In het begrensde operatoroverzicht verschijnen projecten met zulke
+ontbrekende actieve claimbewijzen **vóór** projecten met gewone
+nieuwe-productwerkdruk. Hun `operator_next_step` is
+`owner_reconcile_active_claim_evidence_before_any_new_work`.
+Een ontbrekend veld is **geen bewezen verlopen lease**, geen bewijs van
+stilstand, en nooit autorisatie om een taak over te nemen, te herstarten,
+vrij te geven of een worker toe te wijzen. De bestaande limiet van
+twintig zichtbare projecten en de bronwaarschuwing
+`visible_api_rows_only_not_full_queue` blijven behouden: nul
+waarnemingen in een deelvenster bewijst niets over de hele queue.
+
+Deze wijzigingen betreffen uitsluitend read-only presentatie in de
+**bestaande PR #1536**. De runtime allocator en actieve/queued
+database-rijen blijven ongemoeid. Productiegedrag vereist nog steeds
+exact-head verplichte CI, onafhankelijke review, protected-main merge
+en de reeds bestaande geautoriseerde deployroute. Geen QA-suites of
+losse tests geschreven of gestart.
