@@ -267,24 +267,27 @@ def owner_csv(report):
         "source_status", "observed_after_utc", "window_before", "window_after",
         "priority", "project_id", "task_id", "observation",
         "previous_route", "next_route", "owner_next_step",
-        "owner_claim_verified", "claim_authorized", "dispatch_authorized",
+        "consecutive_source_observations", "owner_claim_verified",
+        "claim_authorized", "dispatch_authorized",
         "merge_authorized", "task_recovered_verified",
     ])
     if source["coverage"] not in ("historical_sampled_series",
                                   "current_sampled_series"):
         writer.writerow([source["coverage"], "", "", "", "", "", "", "UNKNOWN",
                          "", "", "Original sources must be rechecked; no action authorized.",
-                         "false", "false", "false", "false", "false"])
+                         "", "false", "false", "false", "false", "false"])
         return output.getvalue()
     for kind, item in _ordered_owner_rows(source):
         if kind == "REPEATED_HOLD":
             writer.writerow([
-                source["coverage"], item["last_observed_utc"], "",
-                item["consecutive_source_observations"], item["priority"],
+                source["coverage"], item["last_observed_utc"],
+                source["window_count"] - item["consecutive_source_observations"] + 1,
+                source["window_count"], item["priority"],
                 item["project_id"], item["task_id"], kind,
                 item["hold_reason"], item["hold_reason"],
-                item["next_owner_action"], "false", "false",
-                "false", "false", "false",
+                item["next_owner_action"],
+                item["consecutive_source_observations"],
+                "false", "false", "false", "false", "false",
             ])
         else:
             writer.writerow([
@@ -293,13 +296,13 @@ def owner_csv(report):
                 item["priority"], item["project_id"], item["task_id"],
                 item["kind"], item["before_reason"] or "",
                 item["after_reason"] or "", item["next_owner_action"],
-                "false", "false", "false", "false", "false",
+                "", "false", "false", "false", "false", "false",
             ])
     if source["events_truncated"]:
         writer.writerow([source["coverage"], "", "", "", "", "", "",
                          "SAMPLE_TRUNCATED_UNKNOWN", "", "",
                          "More events omitted; no source or queue all-clear.",
-                         "false", "false", "false", "false", "false"])
+                         "", "false", "false", "false", "false", "false"])
     return output.getvalue()
 
 
