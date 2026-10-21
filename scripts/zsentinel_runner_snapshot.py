@@ -69,6 +69,33 @@ def _unit_states(bundle):
     return states
 
 
+
+def _user_unit_states(bundle):
+    """Validate a separate user-systemd source without conflating same unit names.
+
+    Historical receipts without this source remain UNKNOWN, not an observed
+    empty user-manager inventory.
+    """
+    obs = bundle.get("units")
+    if not isinstance(obs, dict):
+        raise ValueError("No valid user runner observations")
+    if "user_runner_units_observed" not in obs:
+        return {}
+    observed = obs["user_runner_units_observed"]
+    if type(observed) is not bool:
+        raise ValueError("Invalid user runner source status")
+    rows = obs.get("user_runner_units")
+    if not isinstance(rows, list) or len(rows) > 20:
+        raise ValueError("Out-of-bounds user runner observations")
+    if not observed and rows:
+        raise ValueError("Unobserved user source cannot contain trusted services")
+    truncated = obs.get("user_runner_units_truncated")
+    if truncated is not None and type(truncated) is not bool:
+        raise ValueError("Invalid user runner source completeness")
+    return _unit_states({"units": {"runner_units": rows}})
+
+
+
 def packet(report_data):
     """Construct a bounded evidence packet, never carrying raw process arguments."""
     bundle = {
@@ -134,6 +161,7 @@ def packet(report_data):
         ],
     }
     _unit_states(bundle)
+    _user_unit_states(bundle)
     if len(json.dumps(bundle, ensure_ascii=False).encode("utf-8")) > MAX_BYTES:
         raise ValueError("Observation exceeds allowed private receipt size")
     return bundle
@@ -316,6 +344,36 @@ def changes(previous, current):
             "action_authorized": False,
             "same_boot_verified": same_boot,
         })
+    # User-manager services use a separate namespace and independent coverage.
+    # This prevents a same-named system service from impersonating user recovery.
+    user_a, user_b = _user_unit_states(previous), _user_unit_states(current)
+    ua = (previous["units"].get("user_runner_units_observed") is True and
+          previous["units"].get("user_runner_units_truncated") is False)
+    ub = (current["units"].get("user_runner_units_observed") is True and
+          current["units"].get("user_runner_units_truncated") is False)
+    user_transitions = []
+    for name in sorted(set(user_a) | set(user_b)):
+        before, after = user_a.get(name), user_b.get(name)
+        if before is None:
+            tag = "newly_observed" if ua else "previous_source_gap"
+        elif after is None:
+            tag = "no_longer_observed" if ub else "current_source_gap"
+        elif before != after:
+            tag = "service_state_changed"
+        else:
+            continue
+        evidence = json.dumps(
+            [host_a, "user", boot_a if valid_boot(boot_a) else None,
+             boot_b if valid_boot(boot_b) else None, name, tag, before, after],
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        user_transitions.append({
+            "incident_key": hashlib.sha256(evidence).hexdigest()[:24],
+            "scope": "user", "unit": name, "change": tag,
+            "previous": before, "current": after,
+            "github_job_recovered": None, "production_restored": None,
+            "action_authorized": False, "same_boot_verified": same_boot,
+        })
     return {
         "previous_utc": previous["observation_utc"],
         "current_utc": current["observation_utc"],
@@ -327,6 +385,8 @@ def changes(previous, current):
         "capacity_comparison": capacity_changes(previous, current),
         "coach_comparison": coach_changes(previous, current, same_boot),
         "transitions": result,
+        "user_transitions": user_transitions,
+        "complete_user_service_coverage": ua and ub,
         "interpretation": (
             "Only bounded systemd observations. A boot change or unknown boot "
             "identity prevents treating transitions as same-boot continuity; "
