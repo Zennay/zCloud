@@ -2106,3 +2106,23 @@ Dit voorkomt een onterechte foutmelding zodra een live scan daadwerkelijk
 langer duurt dan de eerste bronopname. De CSV/HTML/Markdown tonen beide
 contexten waar beschikbaar, zonder te claimen dat de tussenperiode continu
 is gecontroleerd. Geen nieuwe polling, QA-suite of vrijgavepad.
+
+
+## 21 oktober 2026 — repo-unieke PR-navigatie en brongebonden eigenaaractie
+
+De bestaande lokale, privé **Merge-first PR Workorders** blijven een read-only operatorwerkbak. De HTML-navigatie gebruikt voortaan de **canonieke repository + PR-identiteit** in de fragment-ankernaam (bijvoorbeeld `#pr-Zennay-zCloud-pull-1567`), niet alleen `#pr-1567`. Daardoor verwijst een PR #1 uit het ene project niet ten onrechte naar PR #1 van een ander project wanneer beide in dezelfde 1–3-projectenoverdracht voorkomen. De labels en artikelankers gebruiken dezelfde gevalideerde GitHub-bron.
+
+In de HTML-voorvertoning verschijnt een compacte **werkvolgorde op basis van de bronopname** met vier strikt niet-autoriserende toestanden:
+
+- **Herlees bron en huidige HEAD** bij een historisch (>6 uur), ontbrekend of onvolledig exact-HEAD-bewijs of onzekere bronvergelijking.
+- **HOLD ongewijzigd: ander werk oppakken** uitsluitend voor een eerder geselecteerde onveranderde HOLD in de begrensde, twee-opnamenvergelijking.
+- **Nieuw gatebewijs: eigenaar laten beoordelen** wanneer dezelfde gepinde PR-HEAD daadwerkelijk een gewijzigde gate-receipt heeft.
+- **Wacht op verplichte gates en onafhankelijke review** wanneer de andere bijzondere gevallen niet gelden. Dit is nooit een bewijs dat CI of review reeds voldaan is.
+
+Deze operatorstatus wordt **eenmaal uit hetzelfde gevalideerde bord** afgeleid en consequent getoond per HTML-kaart, in Markdown en als afzonderlijke `attention_status` en `attention_label` kolommen in privé CSV. De status is geen claim/lease, kent geen automatische taakverdeling en controleert geen GitHub-branchregels, actuele reviews of runnergezondheid.
+
+Voor brongebonden PR's met beide geldige exact-40-hex-SHA's bevat elke HTML-kaart nu directe links naar de **geobserveerde HEAD-commit en doelbranchbasis**. Markdown gebruikt dezelfde gepinde commitlinks en CSV heeft aparte `observed_head_commit` en `observed_base_commit` records. Onbekende of onstabiele HEADs krijgen géén verzonnen commitlink. Deze links maken menselijke vergelijking en onafhankelijke review sneller, maar zijn expliciet **historisch bronbewijs**, niet de actuele gatebeslissing.
+
+Voorbeelden: gebruik de reeds bestaande `--format html`, `--format markdown` of `--format workorders-csv --output <nieuw privébestand>` van de portfolio-PR-bronflow; de bestaande 0600/O_EXCL privébestandsbeveiliging, 512-KiB-uitvoerlimiet, maximaal vier PRs en de niet-autoriserende booleans blijven ongewijzigd. Geen nieuwe GitHub-verzoeken, QA-/regressiesuite, scheduler-/runneractie, PR-merge of deploy toegevoegd.
+
+Implementatie op bestaande [zCloud PR #1567](https://github.com/Zennay/zCloud/pull/1567), broncommits [7e270af](https://github.com/Zennay/zCloud/commit/7e270af6fe27955a5d2e06b618dc34232775df55) en [dc7f9c1](https://github.com/Zennay/zCloud/commit/dc7f9c1ae162c4d06aab16064e5c1a27bdac8974). Merge en productieacceptatie blijven afhankelijk van verplichte actuele exacte-head CI, onafhankelijke review, branch protection en bevoegde eigenaar.
