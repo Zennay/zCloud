@@ -2271,6 +2271,120 @@ function zSentinelTriageMatches(issue,coverage){
   const triage=zSentinelIssueTriage(issue,coverage);
   return ZSENTINEL_TRIAGE_VIEW==='uncertain'?triage.uncertain:triage.label===ZSENTINEL_TRIAGE_VIEW;
 }
+/* One operator-initiated, privacy-limited cross-source recovery case.
+ * Source relationships are advisory. No claim, issue, PR or runtime mutations. */
+function buildZSentinelRecoveryCase(){
+  const allowed=new Set((DATA?.projects||[]).map(project=>project.id));
+  const scope=filter||'all';
+  const sanitize=(value,n=180)=>String(value??'')
+    .replace(/[\x00-\x1f\x7f]/g,' ').slice(0,n);
+  const activeIssueCoverage=(IMPORTED_PRODUCT_ISSUES?.coverage||[])
+    .filter(row=>allowed.has(row.project)&&(!filter||row.project===filter))
+    .slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+  const evidenceMap=new Map(activeIssueCoverage.map(row=>[row.project,row]));
+  const eligible=(IMPORTED_PRODUCT_ISSUES?.issues||[]).filter(issue=>
+    allowed.has(issue.project)&&(!filter||issue.project===filter)
+    &&['P0','P1'].includes(issue.priority)
+    &&zSentinelTriageMatches(issue,evidenceMap));
+  const issues=fairProductIssueHistory(eligible,activeIssueCoverage,100)
+    .filter(row=>/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/issues\/[1-9][0-9]*$/.test(row.url))
+    .map(row=>{
+      const triage=zSentinelIssueTriage(row,evidenceMap);
+      return {
+        project:row.project,priority:row.priority,number:row.number,
+        title:sanitize(row.title,200),url:row.url,
+        observed_status:row.staleUnverified===true?
+          'historically_open_not_reobserved':'sampled_open',
+        link_status:triage.label,source_uncertain:triage.uncertain,
+        referenced_prs:(row.prs||[]).slice(0,3)
+          .filter(pr=>/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/pull\/[1-9][0-9]*$/.test(pr.url))
+          .map(pr=>({number:pr.number,url:pr.url,draft:pr.draft===true,
+            relationship:sanitize(pr.relationship,40),claim_verified:false,
+            fix_verified:false})),
+        claim_verified:false,ready_for_claim:false,
+      };
+    });
+  const recovery=ZSENTINEL_RETRY_SNAPSHOT;
+  const covered=!!recovery&&(!filter||recovery.scope.project==='all'||
+    recovery.scope.project===filter);
+  const orders=retryOwnerWorkorders(recovery,filter).slice(0,64).map(row=>({
+    project:row.project,priority:row.priority,
+    observed_high_attempt_items:row.high,
+    observed_queued_high_attempt_items:row.queued,
+    observed_owned_high_attempt_items:row.owned,
+    expired_active_lease_rows_in_group:row.expired,
+    problem:row.problem,action:row.action,status:row.status,
+    coverage:row.coverage,claim_verified:false,action_authorized:false,
+  }));
+  const trend=ZSENTINEL_RETRY_TREND;
+  const comparable=!!(recovery&&trend&&retryTrendMatchesSnapshot(trend,recovery)
+    &&(!filter||trend.scope.project==='all'||trend.scope.project===filter));
+  const queue=DELIVERY_QUEUE_DATA;
+  const queueCandidates=(queue?.candidates||[]).filter(row=>
+    allowed.has(row.project_id)&&(!filter||row.project_id===filter)).slice(0,8)
+    .map(row=>({project:row.project_id,priority:row.priority,
+      candidate_only:true,claim_verified:false}));
+  const queueOwnerReview=(queue?.review_items||[]).filter(row=>
+    allowed.has(row.project_id)&&(!filter||row.project_id===filter)).slice(0,8)
+    .map(row=>({project:row.project_id,priority:row.priority,
+      reason:sanitize(row.reason,40),requires_owner_review:true}));
+  const ghCoverage=(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).filter(row=>
+    allowed.has(row.project)&&(!filter||row.project===filter))
+    .slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+  const recentMerges=zSentinelDeliveryPulseSummary(IMPORTED_GITHUB_ACTIVITY,allowed,filter)
+    .reportedMerges.filter(row=>isCanonicalGitHubActivityURL(row.url)).slice(0,5)
+    .map(row=>({project:row.project,observed_at:row.ts,url:row.url,
+      merged_reported_by_source:true,main_commit_verified:false,
+      deployed:false}));
+  return {
+    schema:'zsentinel-portfolio-recovery-case-v1',
+    generated_at_utc:new Date().toISOString(),selected_project:scope,
+    source_coverage:{
+      issues:{observed_at:IMPORTED_PRODUCT_ISSUES?.observedAt||null,
+        selected_issue_count:issues.length,
+        sample_truncated:eligible.length>issues.length,
+        projects:activeIssueCoverage.map(row=>({
+          project:row.project,status:sanitize(row.status,35),
+          observed_at:row.observedAt||null,
+          stale:row.staleEvidence===true,
+        }))},
+      github:{observed_at:IMPORTED_GITHUB_ACTIVITY?.observedAt||null,
+        projects:ghCoverage.map(row=>({
+          project:row.project,status:sanitize(row.status,35),
+          observed_at:row.observedAt||null,
+          stale:row.staleEvidence===true,
+        }))},
+      queue_admission:{observed_at:DELIVERY_QUEUE_OBSERVED||null,
+        source_available:!!queue},
+      queue_retry:{observed_at:recovery?.observedAt||null,
+        source_project:recovery?.scope.project||null,
+        selected_project_covered:covered,
+        sample_complete:recovery?.complete===true,
+        source_stale:!recovery||Date.now()-Date.parse(recovery.observedAt)>6*3600000,
+        trend_comparable:comparable},
+    },
+    issues,
+    queue_recovery:{
+      workorder_count:covered?retryOwnerWorkorders(recovery,filter).length:0,
+      workorders_truncated:covered&&retryOwnerWorkorders(recovery,filter).length>64,
+      workorders:orders,
+      worsening_projects:comparable?trend.projects.filter(row=>
+        allowed.has(row.project)&&(!filter||row.project===filter)&&row.delta>0)
+        .slice(0,8).map(row=>({
+          project:row.project,before:row.before,after:row.after,delta:row.delta,
+        })):[],
+    },
+    queue_admission:{global_product_candidates:queue?.queued_product_candidates??null,
+      global_owner_review_count:queue?.queued_requires_owner_review??null,
+      selected_candidates:queueCandidates,selected_review_items:queueOwnerReview},
+    recent_reported_merges:recentMerges,
+    authorization:{claims_verified:false,review_verified:false,
+      exact_head_required_ci_verified:false,branch_protection_verified:false,
+      action_executed:false,claim:false,retry:false,merge:false,deploy:false},
+    operator_next_step:'Verify exact live GitHub checks, Notion and worker ownership and release gates before any action. Source observations do not authorize a claim.',
+  };
+}
+
 function exportZSentinelHandoff(){
   const projects=new Set((DATA?.projects||[]).map(item=>item.id));
   const scope=filter||'all-projects';
