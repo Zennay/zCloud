@@ -1195,3 +1195,71 @@ retry- of mergeactie.
 Broncodes zitten in bestaande PR #1536; release alleen via verplichte
 exact-head CI, onafhankelijke review, protected main en expliciet
 geautoriseerde productie-integratie.
+
+
+## 21 oktober · Herstelvoortgang vergelijken zonder schijnzekerheid
+
+De offline operator-tool ondersteunt nu een **tweede, eerder privé
+bronmoment**. Beide JSON-bestanden komen uit de bestaande bevoegde
+\`GET /api/portfolio-queue?operator_inbox=1\`-route en blijven lokaal.
+De nieuwe bron moet een controleerbare UTC-klok ná de eerdere bron hebben;
+anders wordt de vergelijking geweigerd. Er wordt niet automatisch
+ingelogd, geen API opgevraagd en geen historische queue gewijzigd.
+
+\`\`\`sh
+# Bestand 1: eerder geautoriseerde 0600 operator-JSON, privé bewaard.
+# Bestand 2: nieuwere geautoriseerde 0600 operator-JSON.
+python3 scripts/zcloud_product_delivery_inbox.py \
+  --previous "$HOME/.local/share/zcloud/private/portfolio-queue-previous.json" \
+  --input "$HOME/.local/share/zcloud/private/portfolio-queue-current.json" \
+  --output "$HOME/.local/share/zcloud/private/zsentinel-two-snapshots.html"
+
+# Dezelfde beperkte observaties kunnen ook naar privé Markdown:
+python3 scripts/zcloud_product_delivery_inbox.py \
+  --previous "$HOME/.local/share/zcloud/private/portfolio-queue-previous.json" \
+  --input "$HOME/.local/share/zcloud/private/portfolio-queue-current.json" \
+  --output "$HOME/.local/share/zcloud/private/zsentinel-two-snapshots.md" \
+  --format markdown
+\`\`\`
+
+Het nieuwe **zichtbare productgedrag** vergelijkt brongebonden
+\`(project_id, queue_id)\`-identiteiten, niet de toevallige rijpositie,
+en toont vier afzonderlijke observaties:
+
+- **Nog zichtbaar**: identiteit en getoonde broncontext komen overeen.
+- **Context gewijzigd**: taakidentiteit is nog zichtbaar, maar het
+  type, de prioriteit, de voorgeschreven eigenaaractie of details verschillen.
+- **Nieuw zichtbaar**: taak verschijnt pas in het nieuwste beperkte venster.
+- **Niet meer zichtbaar, herstel onbevestigd**: taak ontbreekt in
+  het nieuwste *selectievenster*, maar kan door prioritering of truncatie
+  simpelweg buiten beeld zijn.
+
+**Nooit** wordt een afwezige taak automatisch als opgelost, vrijgegeven,
+verplaatst naar DONE, of opnieuw gestart geclassificeerd. Beide bronnen
+zijn gedeeltelijke selecties; een volledige lokale geschiedenis, echte
+workerprogress, PR-mergebewijs en actuele claims blijven afzonderlijke
+autoritatieve bronnen. De vergelijking toont vaste Nederlandse teksten
+in de HTML en Markdown, naast de bestaande interactieve huidige inbox.
+De ingevoerde JSON blijft aan de strenge bron- en privérechten gebonden;
+geen nieuwe tokens, uploads, wachtrijmutaties, QA-suite of release-actie.
+
+## 21 oktober · Eerlijke compacte operator-source sampling
+
+De compacte \`portfolio_queue_operator_window\` reserveert nu minimaal
+de helft van de bronruimte voor **actieve bestaande eigenaren** en
+de andere helft voor **queued kandidaten**. Bij een tekort in een
+van beide categorieën gaat de ongebruikte ruimte naar de andere.
+Iedere categorie bewaart haar eigen bronprioriteit; SQL leest maximaal
+het venster plus één overflowrij en retourneert nooit meer dan de
+afgesproken 2048 geobserveerde taken. De ene categorie kan de andere
+niet meer volledig uit de operatorselectie drukken.
+
+Dit is **niet** een nieuwe fair worker allocator en verandert geen
+P0-scheduler, lease, status, prioriteit, Notion-claim of worker-capaciteit.
+Binnen een categorie kunnen lange backlogs van één project nog
+voorrang krijgen; beide selecties blijven expliciet onvolledig bij
+overflow. Werkelijke productieprestatie is niet gemeten.
+
+**Levergrens:** deze veranderingen staan alleen op de bestaande
+product-PR #1536; onafhankelijke review, exacte-head CI,
+protected-main merge en geautoriseerde release blijven verplicht.
