@@ -1,4 +1,34 @@
 
+### 21 oktober · veilige routeringsovergangen tussen operatorvensters
+
+Bestaande `scripts/zsentinel_portfolio_overview.py --compare-with <privé-vorige-portfolio.json>`
+vergelijkt nu, naast bestaande blockercontinuïteit, de feitelijke brongebonden
+routeringsstatus van dezelfde queue-taken. Nieuwe module
+`scripts/zsentinel_route_continuity.py` hergebruikt de al veilig geopende
+privé-JSON zonder extra GitHub-, Notion- of SQLite-aanroepen. Het
+`routing_transition`-veld in portfolio JSON en dezelfde sectie in HTML/tekst
+laten zien: nieuw waargenomen kandidaten, onveranderde kandidaten,
+overgangen tussen `incident_dependency_hold`, `gate_hold`,
+`shortlist_hold` en `advisory_suggestion`, plus kandidaten die niet opnieuw
+voorkomen. De vorige snapshot moet chronologisch vóór de huidige liggen
+en maximaal 72 uur oud zijn; anders blijft de vorige bron ONBEKEND.
+
+De vergelijking houdt de verschillende bronklokken van de lokale
+SQLite-waarneming en de later samengestelde routerbeslissing uit elkaar.
+Oude exports zonder routerbron blijven bruikbaar met expliciet ONBEKEND.
+Totaalvelden en maximaal twaalf voorbeeldrijen worden begrensd en
+source-/taakidentiteit, veldovergangen en permissievlaggen gecontroleerd.
+Een verschijning als `advisory_suggestion` is **geen** nieuwe claim.
+Verdwenen items kunnen door een ander GitHub-projectvenster, verouderde
+bron of bounded voorbeeldlimiet ontbreken: de status heet uitdrukkelijk
+`not_reobserved_not_resolved`; er wordt nooit automatische herstel- of
+vrijgaveclaim aan ontleend.
+
+De nieuwe bronovergangen zijn passieve operatorinformatie. Er is geen
+nieuwe poll, test-/QA-run, queueclaim, retry, owner-/workflow-/CI-mutation
+of release/deploy toegevoegd. De gebruikelijke exacte-head CI, onafhankelijke
+review en huidige eigenaars- en mergegates blijven vereist.
+
 ### 21 oktober · eerlijke P0-eerst onafhankelijke werkselectie
 
 De bestaande runtime-router selecteerde maximaal vijf veilige queue-kandidaten op
