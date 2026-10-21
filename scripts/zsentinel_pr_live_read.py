@@ -64,7 +64,10 @@ def _timeline_last_page(link_header, requested_path):
         )
         if not match:
             continue
-        parsed = urlsplit(match.group(1))
+        try:
+            parsed = urlsplit(match.group(1))
+        except ValueError:
+            continue
         if (parsed.scheme != "https" or parsed.netloc != "api.github.com"
                 or parsed.path != expected_path or parsed.fragment):
             continue
@@ -1084,6 +1087,12 @@ def owner_html(report):
             " · sampled events: " + esc(timeline["events_scanned"]) +
             " · pages: " + esc(timeline["pages_scanned"]) +
             "/" + esc(timeline["max_pages"]) +
+            " · sampled page numbers: " +
+            esc(", ".join(str(n) for n in timeline["sampled_page_numbers"])) +
+            " · newest reported page: " +
+            esc(timeline["linked_last_page"] or "UNKNOWN") +
+            " · recent tail observed: " +
+            esc(timeline["recent_tail_sampled"]) +
             " · partial/unknown: " + esc(timeline["partial_or_unknown"]) +
             (" · source unavailable: " + esc(timeline["source_error"])
              if timeline["source_error"] else "") +
@@ -1340,6 +1349,12 @@ def markdown(report):
             str(timeline["candidate_count_in_window"]),
             "- Pages scanned: " + str(timeline["pages_scanned"]) +
             "/" + str(timeline["max_pages"]),
+            "- Sampled timeline page numbers: " +
+            ", ".join(str(n) for n in timeline["sampled_page_numbers"]),
+            "- Reported newest timeline page: " +
+            str(timeline["linked_last_page"] or "UNKNOWN"),
+            "- Recent timeline tail observed: " +
+            str(timeline["recent_tail_sampled"]),
             "- Source partial/unknown: " + str(timeline["partial_or_unknown"]),
             "- Source error: " + (timeline["source_error"] or "none"),
             "- Reference implies fix, merge or owner permission: NO",
