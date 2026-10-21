@@ -125,16 +125,24 @@ def suggested_actions(packet):
             "HOLD_SOURCE_INCOMPLETE",
         ))
     contract = packet.get("local_contract_evidence")
-    if isinstance(contract, dict) and (
-        contract.get("matches_proposed_profile") == "MISMATCH_LOCAL_FILE"
-    ):
-        result.append(action(
-            "local-contract-profile-owner-review", "urgent",
-            "Het read-only lokale projectcontract gebruikt een ander herstelbaanprofiel.",
-            "Laat de runtime-eigenaar het actuele contract, de werkelijk geladen service "
-            "en bestaande claims vergelijken; geen automatische opschaling of overname.",
-            "HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH",
-        ))
+    if isinstance(contract, dict):
+        if contract.get("matches_proposed_profile") == "MISMATCH_LOCAL_FILE":
+            result.append(action(
+                "local-contract-profile-owner-review", "urgent",
+                "Het lokale vierbaanprofiel of de cap van precies vier herstelworkers wijkt af.",
+                "Laat de runtime-eigenaar het actuele portfolio-recovery profiel, "
+                "ai_worker_cap=4 en de werkelijk geladen service vergelijken. "
+                "Behoud bestaande claims; geen automatische opschaling of overname.",
+                "HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH",
+            ))
+        elif contract.get("status") != "OBSERVED_LOCAL_FILE":
+            result.append(action(
+                "local-contract-unverified-owner-review", "urgent",
+                "Het lokale vier-workercontract is niet betrouwbaar geobserveerd.",
+                "Laat de runtime-eigenaar het bronbestand en de werkelijk geladen "
+                "serviceconfiguratie vaststellen; houd nieuwe schrijvers tegen.",
+                "HOLD_LOCAL_CONTRACT_UNVERIFIED",
+            ))
     migrated = _number(packet.get("active_legacy_profile_claims_observed"))
     if migrated:
         result.append(action(
