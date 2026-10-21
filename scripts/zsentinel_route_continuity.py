@@ -477,9 +477,16 @@ def main(argv=None):
         paths = [args.previous.resolve(), args.current.resolve(), args.output.resolve()]
         if len(set(paths)) != 3:
             raise ValueError("private source and output files must be distinct")
-        from zsentinel_blocker_continuity import _read
+        from zsentinel_recovery_router import read_json
         from zsentinel_private_output import write_private_output
-        before, after = _read(args.previous), _read(args.current)
+        # The standalone operator path handles PRIVATE owner dossiers, not
+        # public JSON fixtures. Verify the opened inodes and 0600-equivalent
+        # permissions, not merely the filename or a pre-open pathname stat.
+        bound = 6 * 1024 * 1024
+        before = read_json(args.previous, bound, "previous private portfolio",
+                           private_owner_only=True)
+        after = read_json(args.current, bound, "current private portfolio",
+                          private_owner_only=True)
         # Historical-only is an explicit request in this OFFLINE command.
         # Never present an archived comparison as current admission.
         result = compare(before, after, allow_historical=True)
