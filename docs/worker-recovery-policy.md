@@ -103,6 +103,9 @@ python3 scripts/zsentinel_recovery_policy.py --batch-input incidents.json --form
   workorder says `select_one_authorized_action`. This prevents two separately
   policy-eligible routes being presented as concurrent permission. A repeated
   identical `(project_id, incident_id, action)` still rejects the whole batch.
+- Workorder `required_evidence` aggregates the **exact missing evidence fields**
+  from all incident proposals; compact text surfaces the first four fields and
+  the offline cockpit shows the full list in its details section.
 - Workorder `next_step` is `resolve_evidence_holds` for ordinary HOLDs or
   `verify_live_gates_and_obtain_owner_approval` for locally ready proposals.
   The owner is UNKNOWN unless the input identifies one consistent owner.
