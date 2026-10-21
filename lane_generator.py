@@ -317,7 +317,10 @@ def recovery_active_profile_mismatch(item):
         return True  # Missing provenance does not prove a safe migration.
     if record.get("profile") != "portfolio-recovery":
         return True
-    return record.get("lane_id") not in {
+    lane_id = record.get("lane_id")
+    if not isinstance(lane_id, str):
+        return True
+    return lane_id not in {
         lane["id"] for lane in PROFILE_LANES["portfolio-recovery"]
     }
 
