@@ -138,16 +138,64 @@ def validated_view(source: dict) -> dict:
     rows = source.get("project_operations")
     if type(rows) is not list or len(rows) > 60:
         raise ValueError("Source board contains invalid project operations")
-    projects = []
+    project_operations = []
+    projects = set()
+    valid_coverages = ("partial", "degraded", "unavailable")
     for row in rows:
-        if type(row) is not dict or type(row.get("project")) is not str or (
-            not PROJECT.fullmatch(row["project"])) or row.get("action_authorized") is not False:
-            raise ValueError("Source project operation is not read-only")
-        projects.append(row["project"])
+        if (type(row) is not dict or type(row.get("project")) is not str
+                or not PROJECT.fullmatch(row["project"])
+                or row["project"] in projects
+                or row.get("action_authorized") is not False
+                or row.get("is_complete_inventory") is not False
+                or row.get("issue_coverage") not in valid_coverages):
+            raise ValueError("Ambiguous or authoritative project operation")
+        pid = row["project"]
+        projects.add(pid)
+        action = row.get("recommended_next_step")
+        if type(action) is not str or not action.strip() or len(action) > 650:
+            raise ValueError("Invalid project next action")
+        counts = row.get("issue_counts_in_sample")
+        if (type(counts) is not dict
+                or set(counts) != PRIORITIES
+                or any(type(n) is not int or n < 0 or n > 100000000
+                       for n in counts.values())):
+            raise ValueError("Invalid project issue sample")
+        queue = row.get("queue_observation")
+        if queue is not None:
+            if (type(queue) is not dict
+                    or not {"active_items", "high_claim_attempts",
+                            "expired_active_leases"}.issubset(queue)
+                    or any(type(queue[k]) is not int or not 0 <= queue[k] <= 100000000
+                           for k in ("active_items", "high_claim_attempts",
+                                     "expired_active_leases"))
+                    or queue["high_claim_attempts"] > queue["active_items"]
+                    or queue["expired_active_leases"] > queue["active_items"]):
+                raise ValueError("Invalid bounded queue observation")
+        claims = row.get("observed_claim_ids")
+        if claims is not None and (type(claims) is not list or len(claims) > 150):
+            raise ValueError("Invalid claim observation")
+        project_operations.append({
+            "project": pid,
+            "issue_coverage": row["issue_coverage"],
+            "issue_counts_in_sample": {k: counts[k] for k in
+                                       ("P0", "P1", "P2", "Unspecified")},
+            "queue_observation": (
+                {k: queue[k] for k in ("active_items", "high_claim_attempts",
+                                       "expired_active_leases")}
+                if queue is not None else None),
+            "claim_context": ("reported_observation_only" if claims
+                              else "not_verified"),
+            "recommended_next_step": action,
+        })
+    if any(card["project"] not in safe_coverage["projects"] or
+           card["issue_coverage"] != safe_coverage["projects"][card["project"]]
+           for card in chosen):
+        raise ValueError("Issue card no longer matches the admitted project coverage")
     return {"observed_at_utc": source["observed_at_utc"],
             "cards": chosen,
             "coverage": safe_coverage,
-            "projects": sorted(set(projects) | {r["project"] for r in chosen}),
+            "project_operations": project_operations,
+            "projects": sorted(projects | {r["project"] for r in chosen}),
             "global_gate": "live claims, exact-head CI, review and release authority unverified"}
 
 
@@ -248,6 +296,48 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
         '</details></section>'
     )
 
+def project_operations_html(view: dict) -> str:
+    """Show source-only queue pressure and recovery routes even with zero issues.
+
+    Deliberately never embed opaque claim identifiers or runtime task titles.
+    """
+    sections = []
+    for row in view["project_operations"]:
+        counts = row["issue_counts_in_sample"]
+        queue = row["queue_observation"]
+        queue_text = (
+            "Queue source absent (UNKNOWN)"
+            if queue is None else
+            "Queue sampled: {} entries, {} high claim cycles, {} expired leases"
+            .format(queue["active_items"], queue["high_claim_attempts"],
+                    queue["expired_active_leases"])
+        )
+        sections.append(
+            '<li><strong>' + escape(row["project"]) + '</strong> · ' +
+            'P0 ' + str(counts["P0"]) + ' / P1 ' + str(counts["P1"]) +
+            ' (observed sample) · GitHub coverage: ' +
+            escape(row["issue_coverage"]) +
+            '<br>' + escape(queue_text) +
+            ' · Current owner: UNKNOWN (' +
+            escape(row["claim_context"]) + ')' +
+            '<br>Suggested human investigation: ' +
+            escape(row["recommended_next_step"]) + '</li>'
+        )
+    return (
+        '<section class="portfolio" id="projectRecoveryDesk">'
+        '<h2>Project recovery · issue-independent source observations</h2>'
+        '<p>The saved issue sample may contain zero issues for a project '
+        'while a bounded queue observation still shows claim pressure. '
+        'These are historical human investigation leads, never worker '
+        'availability, confirmed failures or permission to retry.</p>'
+        '<details><summary>Inspect ' + str(len(sections)) +
+        ' project-level recovery leads (offline)</summary>'
+        '<ol>' + ''.join(sections) + '</ol></details>'
+        '<p>All source windows are incomplete; no claim, CI, merge or '
+        'production state was verified live.</p></section>'
+    )
+
+
 def html_document(view: dict, board_sha: str, saved_pr_context=None) -> str:
     records = json.dumps(view, ensure_ascii=True, separators=(",", ":"))
     # The JSON is embedded into an inline script. Escape HTML syntax even if
@@ -258,6 +348,7 @@ def html_document(view: dict, board_sha: str, saved_pr_context=None) -> str:
         for p in view["projects"]
     )
     source_pr_section = issue_pr_connections_html(view, saved_pr_context)
+    project_recovery_section = project_operations_html(view)
     return """<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
@@ -327,7 +418,7 @@ An apparently free issue is never proof that its ownership is clear. Check live
 Notion/queue claims and the exact-head GitHub gates separately before acting.</p>
 <p id="info" aria-live="polite"></p>
 <p id="unsavedStatus" role="status" aria-live="polite">No locally edited handoffs to export.</p></header>
-""" + source_pr_section + """
+""" + source_pr_section + project_recovery_section + """
 <div class="filters">
 <label>Search product issues<input id="search" type="search" placeholder="Issue, project or next step"></label>
 <label>Priority<select id="priority"><option value="">All priorities</option>
