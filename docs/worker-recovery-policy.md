@@ -144,3 +144,44 @@ do not publish source receipts or owner names to public dashboards.
 force, even when many incident cards are selected. Actual P0/P1 urgency,
 self-hosted headroom, lease authority and GitHub merge gates must still be
 checked in the live authoritative systems.
+
+### Consume the unified zSentinel Activity recovery case (private)
+
+The existing Activity product PR #1550 can export a bounded
+`zsentinel-portfolio-recovery-case-v1` JSON file with P0/P1 issue references,
+queue retry workorders and incomplete source coverage. This advisory policy CLI
+now accepts that file directly:
+
+```bash
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \
+  --case-input private-recovery-case.json --format html > private-case-handoff.html
+```
+
+`--format workorders` renders three-line problem/action/status cards,
+`--format markdown` generates a short text handoff, and `--format json`
+emits bounded structured `zsentinel-recovery-case-handoff-v1` output.
+`--fail-on-hold` returns exit code 2 when observed issues or queue incidents
+require owner attention; it **does not trigger** automatic recovery. The tool
+remains entirely offline and applies its existing private, non-symlink,
+256 KiB input and 128 KiB output boundaries.
+
+A case is accepted only with its expected schema, explicit false authority
+flags, bounded P0/P1 issue IDs/URLs, up to three canonical PR reference URLs
+per issue, internally consistent project scope, bounded queue group totals,
+and explicit source coverage. Malformed, contradictory, duplicate or
+authorizing inputs are rejected rather than partially emitted. For cases with
+no issue/queue rows, an empty advisory result is **not** evidence that no
+production blockers exist. Every actual issue/queue workorder is an
+unconditional `HOLD`; no locally imported evidence can make it
+`READY_FOR_HUMAN_REVIEW` or acquire an owner.
+
+The conversion ranks P0 before P1–P3, puts issue/PR examination first within
+a priority, and requires checking real GitHub source/required CI plus current
+Notion/worker/queue ownership. Grouped high queue claim attempts are not proof
+of deterministic/transient failures or permission to retry. Output contains no
+raw task IDs, prompt content, tokens or active-claim keys. This is an operator
+handoff from #1550's *source branch*: it does not assert that either PR
+has reached main, that the exporter or importer has been deployed, or that
+the current protected-main gate permits any merge.
+
