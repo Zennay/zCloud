@@ -815,8 +815,8 @@ document.getElementById('reset').addEventListener('click',function(){
 function safeText(value){
  return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#\x60~])/g,'\\$1').slice(0,720);
 }
-function privateDownload(filename,source){
- const blob=new Blob([source],{type:'text/markdown;charset=utf-8'});
+function privateDownload(filename,source,mime='text/markdown;charset=utf-8'){
+ const blob=new Blob([source],{type:mime});
  const url=URL.createObjectURL(blob),a=document.createElement('a');
  a.href=url;a.download=filename;a.click();
  window.setTimeout(()=>URL.revokeObjectURL(url),3000);
@@ -1217,6 +1217,56 @@ function exportProjectHandoff(){
 projectExport.addEventListener('click',exportProjectHandoff);
 
 
+function icsEscape(value){
+ return String(value||'').replace(/\\/g,'\\\\').replace(/\\r\\n|\\r|\\n/g,'\\n')
+  .replace(/;/g,'\\;').replace(/,/g,'\\,');
+}
+function foldIcsLine(line){
+ const chunks=[];let current='',bytes=0;
+ for(const ch of String(line)){
+  const width=new TextEncoder().encode(ch).length;
+  if(bytes+width>73){chunks.push(current);current=' '+ch;bytes=1+width;}
+  else{current+=ch;bytes+=width;}
+ }
+ chunks.push(current);return chunks.join('\\r\\n');
+}
+function exportCollisionCalendar(){
+ const dated=collisionRows.filter(c=>{
+  const due=followupDate(c),issue=c.dataset.issue||'';
+  return Boolean(due&&validFollowupDate(due)&&
+   c.querySelector('.collision-state').value!=='followup'&&
+   /^https:\\/\\/github\\.com\\/[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+\\/issues\\/[0-9]+$/.test(issue));
+ });
+ const status=document.getElementById('collision-calendar-status');
+ if(!dated.length){
+  status.textContent='Geen open PR-afstemming met een geldige lokale opvolgdatum om te exporteren.';
+  return;
+ }
+ const stamp=new Date().toISOString().replace(/[-:]/g,'').replace(/\\.\\d{3}Z$/,'Z');
+ const lines=['BEGIN:VCALENDAR','VERSION:2.0',
+  'PRODID:-//zSentinel//Private PR Follow-up Calendar//NL','CALSCALE:GREGORIAN',
+  'METHOD:PUBLISH','X-WR-CALNAME:zSentinel PR-afstemming (privé)'];
+ for(const c of dated){
+  const due=followupDate(c),start=due.replace(/-/g,'');
+  const next=new Date(due+'T00:00:00Z');next.setUTCDate(next.getUTCDate()+1);
+  const end=next.toISOString().slice(0,10).replace(/-/g,'');
+  const issue=c.dataset.issue,number=issue.split('/').pop();
+  const uid='zsentinel-'+issue.replace(/^https:\\/\\/github\\.com\\//,'')
+   .replace(/[^A-Za-z0-9-]/g,'-')+'@zsentinel.local';
+  const state=collisionLabels[c.querySelector('.collision-state').value]||
+   c.querySelector('.collision-state').value;
+  lines.push('BEGIN:VEVENT','UID:'+uid,'DTSTAMP:'+stamp,
+   'DTSTART;VALUE=DATE:'+start,'DTEND;VALUE=DATE:'+end,
+   'SUMMARY:'+icsEscape('zSentinel · '+(c.dataset.project||'project')+' · issue #'+number+' · '+c.dataset.title),
+   'DESCRIPTION:'+icsEscape('Lokale PR-afstemmingsopvolging; geen GitHub-deadline of SLA. Status: '+state+
+    '. Privé notities zijn bewust niet opgenomen. '+(dueHandoff(c)||'')),
+   'URL:'+issue,'TRANSP:TRANSPARENT','STATUS:CONFIRMED','END:VEVENT');
+ }
+ lines.push('END:VCALENDAR');
+ privateDownload('zsentinel-pr-followups.ics',lines.map(foldIcsLine).join('\\r\\n')+'\\r\\n',
+  'text/calendar;charset=utf-8');
+ status.textContent=dated.length+' open PR-afstemmingen geëxporteerd als privé agenda-items; notities niet opgenomen.';
+}
 function exportCollisionHandoff(onlyUnresolved,focusIssue=null,onlyOverdue=false){
  if(focusIssue!==null&&!collisionRows.some(c=>c.dataset.issue===focusIssue))return;
  const selectedCollisions=collisionRows.filter(c=>(!focusIssue||c.dataset.issue===focusIssue)&&
@@ -1285,6 +1335,7 @@ function exportCollisionHandoff(onlyUnresolved,focusIssue=null,onlyOverdue=false
 collisionExport.addEventListener('click',()=>exportCollisionHandoff(false));
 collisionOpenExport.addEventListener('click',()=>exportCollisionHandoff(true));
 collisionOverdueExport.addEventListener('click',()=>exportCollisionHandoff(true,null,true));
+document.getElementById('collision-calendar-export').addEventListener('click',exportCollisionCalendar);
 for(const c of collisionRows)c.querySelector('.collision-export-one').addEventListener('click',
  ()=>exportCollisionHandoff(false,c.dataset.issue));
 document.getElementById('export').addEventListener('click',function(){
@@ -1609,7 +1660,9 @@ refresh();
         "<button id='reset' type='button'>Wis filters</button>"
         "<button id='collision-export' type='button'>Download PR-botsingsdossier (Markdown)</button>"
         "<button id='collision-open-export' type='button'>Download open afstemming (Markdown)</button>"+
-         "<button id='collision-overdue-export' type='button'>Download verlopen privé opvolgdatums (Markdown)</button>"
+         "<button id='collision-overdue-export' type='button'>Download verlopen privé opvolgdatums (Markdown)</button>"+
+         "<button id='collision-calendar-export' type='button'>Download opvolging als agenda (.ics)</button>"+
+         "<p id='collision-calendar-status' aria-live='polite'></p>"
         "<button id='export' type='button'>Download privéoverdracht (Markdown)</button>"
         "<button id='session-save' type='button'>Bewaar lokale sessie (JSON)</button>"
         "<label>Heropen lokale sessie<input id='session-import' type='file' "
