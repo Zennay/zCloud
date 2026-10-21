@@ -658,3 +658,29 @@ GitHub job is assigned, that a worker resumed, or that a PR/release passed.
 This source addition is **not deployed** by committing it to the PR branch.
 Exact-head required CI, independent review and authorized integration remain
 necessary before release.
+
+## Offline one-receipt replay without requiring a second reading
+
+Previously the operator report could only be reopened offline with **two**
+historical receipts (T0/T1), or three or more for the full timeline. The new
+`--receipt` mode loads **exactly one** previously saved, 0600 owner-private
+`zsentinel.runner-observation.v1` receipt and exports it as private Markdown,
+JSON, or HTML without contacting current systemd, /proc or GitHub:
+
+```bash
+python3 scripts/zsentinel_runner_report.py --receipt "$HOME/private-recovery/T0.json" \
+  --format markdown --output "$HOME/private-recovery/incident-from-T0.md"
+python3 scripts/zsentinel_runner_report.py --receipt "$HOME/private-recovery/T0.json" \
+  --format json --output "$HOME/private-recovery/inbox-from-T0.json"
+python3 scripts/zsentinel_runner_report.py --receipt "$HOME/private-recovery/T0.json" \
+  --format html --output "$HOME/private-recovery/incident-from-T0.html"
+```
+
+Before rendering, the existing owner-private loader and strict single-receipt
+admission validate schema, UTC timestamp, nonblank host, canonical unit names
+and bounded service count, known CPU bands and allowed source reason codes.
+The same admitted representation now underlies T0/T1 and single-receipt
+reporting. A saved receipt is labelled **historical**, not fresh or fully
+covered, and never implies current job assignment, recovery or authorization.
+The output file must not exist already and is created with mode 0600. No
+in-place modification of the input source, worker state, service or cgroup.
