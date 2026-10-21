@@ -641,6 +641,8 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
         capacity_status = "blocked"
     elif "SWAP_TELEMETRY_INCOMPLETE" in findings or "HOST_PRESSURE_INCOMPLETE" in findings or None in (resources["available_ram_pct"], resources["disk_free_pct"]):
         capacity_status = "unknown"
+    elif "HOST_CPU_BUSY" in findings:
+        capacity_status = "contention_observed"
     else:
         capacity_status = "locally_observed_only"
     add("host_capacity", capacity_status, "VPS resource owner",
@@ -709,6 +711,11 @@ def compare_snapshot(path: Path, current: dict) -> dict:
         "ACTIVE_WORK_REQUIRES_DRAIN": "worker_safety",
         "WORKER_EVIDENCE_INCOMPLETE": "worker_safety",
         "WORKER_IDLE_NOT_PROVEN": "worker_safety",
+        "HOST_CPU_SATURATED": "host_pressure",
+        "HOST_CPU_BUSY": "host_pressure",
+        "HOST_MEMORY_STALL": "host_pressure",
+        "HOST_IO_STALL": "host_pressure",
+        "HOST_PRESSURE_INCOMPLETE": "host_pressure",
     }
     ram_codes = {"LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE"}
     disk_codes = {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW"}
@@ -732,6 +739,15 @@ def compare_snapshot(path: Path, current: dict) -> dict:
             return False
         if code == "RUNNER_WORKER_PROCESS_OBSERVED":
             return False  # Process absence is not a job completion or safe-idle proof.
+        pressure = current.get("host_pressure") or {}
+        if code in {"HOST_CPU_SATURATED", "HOST_CPU_BUSY"} and pressure.get("load_per_cpu") is None:
+            return False
+        if code == "HOST_MEMORY_STALL" and pressure.get("memory_full_avg10_pct") is None:
+            return False
+        if code == "HOST_IO_STALL" and pressure.get("io_full_avg10_pct") is None:
+            return False
+        if code == "HOST_PRESSURE_INCOMPLETE" and pressure.get("state") != "observed":
+            return False
         resources = current.get("resources") or {}
         if code in ram_codes and resources.get("available_ram_pct") is None:
             return False
