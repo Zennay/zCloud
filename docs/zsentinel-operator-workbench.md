@@ -2673,7 +2673,7 @@ python3 scripts/zsentinel_verify_issue_delta_bundle.py \
 
 ### Ontvangen ZIP controleren
 
-De verifier leest het archief in het geheugen en pakt nooit bestanden uit. Hij accepteert uitsluitend de vijf verwachte leden, weigert dubbele/onverwachte paden, symlinks, encryptie en afwijkende interne permissies, begrenst de bestandsgrootte en decompressie en vergelijkt voor elk payloadbestand de SHA256 en grootte met `manifest.json`. Het manifest moet ook expliciet melden dat actuele issue-status, eigenaar, verplichte CI/review, merge en live deployment niet zijn geverifieerd of geautoriseerd.
+De verifier leest het archief in het geheugen en pakt nooit bestanden uit. Hij accepteert uitsluitend de vijf verwachte leden, weigert dubbele/onverwachte paden, symlinks, encryptie en afwijkende interne permissies, begrenst de bestandsgrootte en decompressie en vergelijkt voor elk payloadbestand de SHA256 en grootte met `manifest.json`. Ook moeten de bronreceipts, actualiteitsmetadata, selectie en tellingen in het JSON-payload exact overeenkomen met het manifest; tegenstrijdige duplicaten of statusvelden die ten onrechte autoriteit claimen worden geweigerd. Het manifest moet expliciet melden dat actuele issue-status, eigenaar, verplichte CI/review, merge en live deployment niet zijn geverifieerd of geautoriseerd.
 
 Een geslaagde verificatie bewijst **interne integriteit van de bundel**, geen identiteit van de afzender, authenticiteit van de bronmanifesten, actualiteit van brondata of toestemming voor release. Controleer die afzonderlijk aan de gezaghebbende bron voordat je handelt.
 
