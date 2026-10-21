@@ -86,6 +86,43 @@ def validated_view(source: dict) -> dict:
         admitted_clocks[name] = stamp
     if set(source_fresh) != set(admitted_clocks):
         raise ValueError("Freshness flags and original source clocks disagree")
+    # The producer already stores exact-head PR gate observations, but the
+    # workbench previously dropped them. Admit only canonical read-only facts.
+    saved_prs = source.get("pr_delivery_observations")
+    if type(saved_prs) is not list or len(saved_prs) > 5:
+        raise ValueError("Unbounded or missing exact-head PR source")
+    if saved_prs and (source_fresh.get("prs") is not True or "prs" not in admitted_clocks):
+        raise ValueError("PR observations have no admitted source clock")
+    observed_prs = {}
+    for row in saved_prs:
+        if type(row) is not dict:
+            raise ValueError("Malformed observed PR")
+        url, sha = row.get("url"), row.get("head_sha")
+        blockers = row.get("blocking_unknowns")
+        legacy = row.get("legacy_context_success")
+        approvals = row.get("observed_approvals")
+        if (type(url) is not str or not URL.fullmatch(url) or "/pull/" not in url
+                or url in observed_prs or type(sha) is not str
+                or not re.fullmatch(r"[0-9a-f]{40}", sha)
+                or row.get("merge_authorized") is not False
+                or type(row.get("observed_check_success")) is not bool
+                or type(row.get("mergeable_observed")) is not bool
+                or legacy is not None and type(legacy) is not bool
+                or type(approvals) is not int or not 0 <= approvals <= 100
+                or type(blockers) is not list or len(blockers) > 20
+                or any(type(x) is not str or not re.fullmatch(
+                    r"[a-z][a-z0-9_]{0,70}", x) for x in blockers)):
+            raise ValueError("PR observation is not a bounded non-authorizing source")
+        observed_prs[url] = {
+            "url": url, "head_sha": sha,
+            "observed_check_success": row["observed_check_success"],
+            "legacy_context_success": legacy,
+            "observed_approvals": approvals,
+            "mergeable_observed": row["mergeable_observed"],
+            "blocking_unknowns": blockers,
+            "source_observed_at_utc": admitted_clocks["prs"],
+            "merge_authorized": False,
+        }
     cards = source.get("cards")
     if type(cards) is not list or len(cards) > MAX_CARDS:
         raise ValueError("Source board has unbounded cards")
@@ -119,6 +156,12 @@ def validated_view(source: dict) -> dict:
         if (type(gaps) is not list or len(gaps) > MAX_GAPS or
             any(type(g) is not str or len(g) > 300 for g in gaps)):
             raise ValueError("Untrusted or unbounded evidence gaps")
+        linked_gates = card.get("pr_delivery_candidates")
+        expected = [observed_prs[url] for url in refs if url in observed_prs]
+        if (type(linked_gates) is not list or len(linked_gates) > MAX_REFERENCES
+                or [{k: v for k, v in item.items() if k != "source_observed_at_utc"}
+                    for item in expected] != linked_gates):
+            raise ValueError("Issue-linked PR observations disagree with source inventory")
         title = card.get("title")
         if type(title) is not str or not title.strip() or len(title) > 180:
             raise ValueError("Invalid bounded original issue title")
@@ -132,7 +175,8 @@ def validated_view(source: dict) -> dict:
             "issue": issue, "project": project, "priority": priority,
             "title": title,
             "url": "https://github.com/" + repo + "/issues/" + number,
-            "open_pr_candidates": refs, "evidence_gaps": gaps,
+            "open_pr_candidates": refs, "pr_gate_observations": expected,
+            "evidence_gaps": gaps,
             "recommended_next_step": next_step,
             "issue_coverage": card.get("project_issue_coverage", "unknown"),
             "claim_context": ("reported_observation_only" if
