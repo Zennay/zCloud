@@ -451,6 +451,26 @@ const collisionLabels={
 };
 const collisionExport=document.getElementById('collision-export');
 let focusedPr=null,focusIndex=-1;
+// The privacy-preserving baseline describes ONLY this browser's local edits;
+// never persist it automatically or mistake a completed download for a merge.
+let lastSavedState=null;
+function localSnapshot(){
+ return JSON.stringify({
+  focused_pr:focusedPr,
+  issues:tickets.map(t=>[t.dataset.issue,t.querySelector('.local-state').value,
+    t.querySelector('textarea').value]),
+  prs:prs.map(p=>[p.dataset.pr,p.querySelector('.pr-local-state').value,
+    p.querySelector('.pr-note').value]),
+  collisions:collisionRows.map(c=>[c.dataset.issue,
+    c.querySelector('.collision-state').value,c.querySelector('.collision-note').value])
+ });
+}
+function sessionDirty(){return localSnapshot()!==lastSavedState;}
+function updateSessionIndicator(){
+ document.getElementById('unsaved').textContent=sessionDirty()?
+  'Niet-opgeslagen lokale wijzigingen — bewaar opnieuw de privésessie (JSON).':
+  'Geen niet-opgeslagen lokale wijzigingen sinds openen, import of laatste JSON-export.';
+}
 function linkedToFocus(t){
  return Boolean(focusedPr)&&
    [t.dataset.pr,...t.dataset.prs.trim().split(' ').filter(Boolean)].includes(focusedPr);
@@ -501,6 +521,7 @@ function refresh(){
  visible.textContent=count+' van '+tickets.length+' issuekaarten en '+
    prCount+' van '+prs.length+' bestaande PR-groepen zichtbaar';
  focusBar.hidden=!focusedPr;
+ updateSessionIndicator();
  if(focusedPr){
    const open=tickets.filter(t=>linkedToFocus(t)&&
      t.querySelector('.local-state').value==='open');
@@ -745,6 +766,10 @@ document.getElementById('session-save').addEventListener('click',function(){
  const url=URL.createObjectURL(blob);const a=document.createElement('a');
  a.href=url;a.download='zsentinel-prive-sessie.json';a.click();
  window.setTimeout(function(){URL.revokeObjectURL(url);},3000);
+ lastSavedState=localSnapshot();
+ updateSessionIndicator();
+ document.getElementById('session-status').textContent=
+   'JSON-export gestart; bewaar dit lokale bestand veilig. Extern is niets opgeslagen.';
 });
 document.getElementById('session-import').addEventListener('change',async function(event){
  const input=event.currentTarget, file=input.files&&input.files[0];
@@ -819,6 +844,7 @@ document.getElementById('session-import').addEventListener('change',async functi
     search.value='';priority.value='';project.value='';activity.value='';state.value='';prState.value='';
    }
   }
+  lastSavedState=localSnapshot();
   refresh();
   document.getElementById('session-status').textContent=oldSession?
    'Oude issuenotities exact op bron hersteld; PR-groepsnotities blijven ongewijzigd.':
@@ -828,16 +854,16 @@ document.getElementById('session-import').addEventListener('change',async functi
    'Import geweigerd: '+(error instanceof Error?error.message:'onbekende bron');
  }finally{input.value='';}
 });
+for(const item of [...tickets,...prs,...collisionRows]){
+ item.addEventListener('input',updateSessionIndicator);
+ item.addEventListener('change',updateSessionIndicator);
+}
 window.addEventListener('beforeunload',function(e){
- if(tickets.some(t=>t.querySelector('textarea').value.trim()||
-   t.querySelector('.local-state').value!=='open')||
-    prs.some(p=>p.querySelector('.pr-note').value.trim()||
-    p.querySelector('.pr-local-state').value!=='open')||
-    collisionRows.some(c=>c.querySelector('.collision-note').value.trim()||
-     c.querySelector('.collision-state').value!=='unreviewed')){
+ if(sessionDirty()){
   e.preventDefault();e.returnValue='';
  }
 });
+lastSavedState=localSnapshot();
 refresh();
 })();</script>"""
     # Exact saved source identity; local notes cannot silently attach
@@ -962,6 +988,7 @@ refresh();
         "<p id='visible' aria-live='polite'></p>"
         "<p id='collision-visible' aria-live='polite'></p>"
         "<p id='session-status' aria-live='polite'></p>"
+        "<p id='unsaved' role='status' aria-live='polite'></p>"
         "<div id='focus-bar' class='focus-bar' role='status' hidden>"
         "<strong id='focus-title'></strong>"
         "<button id='focus-next' type='button'>Volgende nog te bekijken issue</button>"
