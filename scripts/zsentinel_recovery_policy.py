@@ -747,14 +747,16 @@ def case_markdown(batch):
         (batch["source_queue_observed_at_utc"] or "UNKNOWN"),
         "- Policy evaluated (UTC): " + batch["evaluated_at_utc"],
         "- Source scope: " + batch["source_project_scope"],
-        "- Focused historical view: " +
-        batch["source_case_view"]["selected_project"] + " through " +
-        batch["source_case_view"]["through_priority"] +
-        " (hidden source entries: " +
-        str(batch["source_case_view"]["hidden_by_view"]) +
-        "; does NOT clear a live backlog)",
-        "",
     ]
+    if "source_case_view" in batch:
+        view = batch["source_case_view"]
+        lines.append(
+            "- Focused historical view: " + view["selected_project"] +
+            " through " + view["through_priority"] +
+            " (hidden source entries: " + str(view["hidden_by_view"]) +
+            "; does NOT clear a live backlog)"
+        )
+    lines.append("")
     for row in batch["owner_workorders"]:
         urls = row["source_urls"]
         links = (
