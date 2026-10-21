@@ -105,6 +105,9 @@ def render(report: dict) -> str:
         lines += ["", "## Verandering sinds vorige bronopname", "",
                   "- Baselineversheid: " + _md(comparison.get("snapshot_freshness", "unknown")),
                   "- Leeftijd baseline (seconden): " + _md(comparison.get("snapshot_age_seconds", "unknown")),
+                  "- Bron SHA-256 (exact gelezen vorige JSON): " + _md(comparison.get("baseline_sha256", "unknown")),
+                  "- Bron bytes: " + _md(comparison.get("baseline_bytes", "unknown")),
+                  "- Bronlees-integriteit: " + _md(comparison.get("baseline_integrity", "unknown")),
                   "- Herstelconclusies toegestaan: " + _md(comparison.get("resolution_credit_allowed", "unknown")),
                   ""]
         for key, label in (("new_findings", "Nieuw"),
