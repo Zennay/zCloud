@@ -159,6 +159,9 @@ def render_text(report):
         "Queuebronparen vergelijkbaar %d, onbekend %d (claimpogingen != retries)" % (
             report["queue_pressure_history"]["compared_pairs"],
             report["queue_pressure_history"]["unknown_pairs"]),
+        "Status=blocked bronparen vergelijkbaar %d, onbekend %d (aantallen != herstelbewijs)" % (
+            report["queue_pressure_history"]["blocked_queue_compared_pairs"],
+            report["queue_pressure_history"]["blocked_queue_unknown_pairs"]),
         "Workerbronparen deels of geheel ONBEKEND %d; nieuwe generatiesignalen %d "
         "(GEEN productlevering)" % (
             report["worker_continuity_history"]["unknown_or_partial_pairs"],
@@ -190,6 +193,18 @@ def render_text(report):
                 ("ONBEKEND" if delta["inconsistent_owner_lease_window_rows"] is None
                  else "%+d" % delta["inconsistent_owner_lease_window_rows"]) +
                 "; eigenaar verifieert claimed_at en claim_expires.")
+        blocked = pair["blocked_queue_comparison"]
+        if blocked["delta"] is None:
+            lines.append("  Status=blocked: ONBEKEND door bronhiaat of verouderde waarneming.")
+        else:
+            lines.append("  Status=blocked rijen: %d → %d (Δ %+d); verandering is geen bewijs van herstel." %
+                         (blocked["from_total"], blocked["to_total"], blocked["delta"]))
+            if blocked["project_deltas"] is not None:
+                for group in blocked["project_deltas"]:
+                    if group["blocked_rows_delta_not_resolution_proof"] != 0:
+                        lines.append("    %s %s · status=blocked %+d · eigenaar moet actuele rij verifiëren." %
+                                     (group["priority"], group["project_id"],
+                                      group["blocked_rows_delta_not_resolution_proof"]))
     for pair in report["queue_pressure_history"]["adjacent_comparisons"]:
         if pair["observed_increased_refs_total"] is None:
             continue
@@ -238,7 +253,11 @@ def render_markdown(report):
         "- Wachtrijvergelijkingen: " +
         str(report["queue_pressure_history"]["compared_pairs"]) +
         " bronparen; onbekend " +
-        str(report["queue_pressure_history"]["unknown_pairs"]), "",
+        str(report["queue_pressure_history"]["unknown_pairs"]),
+        "- Status=blocked vergelijkingen: " +
+        str(report["queue_pressure_history"]["blocked_queue_compared_pairs"]) +
+        " bronparen; onbekend " +
+        str(report["queue_pressure_history"]["blocked_queue_unknown_pairs"]), "",
         "## Historische SQLite-wachtrijdruk (geen claim- of retryrechten)", "",
     ] + [
         ("- Vensters %d → %d: %s" % (
@@ -249,6 +268,27 @@ def render_markdown(report):
                 pair["deltas"]["high_claim_attempt_items"],
                 pair["deltas"]["expired_owner_lease_rows"]))))
         for pair in report["queue_pressure_history"]["adjacent_comparisons"]
+    ] + [
+        "",
+        "## Historische rijen met status=blocked (geen herstelbewijs)", "",
+    ] + [
+        ("- Vensters %d → %d: ONBEKEND door bronhiaat of verouderde bron." %
+         (pair["from_window"], pair["to_window"])
+         if pair["blocked_queue_comparison"]["delta"] is None else
+         "- Vensters %d → %d: status=blocked %d → %d (Δ %+d); "
+         "aantalsverandering bewijst geen taakherstel." %
+         (pair["from_window"], pair["to_window"],
+          pair["blocked_queue_comparison"]["from_total"],
+          pair["blocked_queue_comparison"]["to_total"],
+          pair["blocked_queue_comparison"]["delta"]))
+        for pair in report["queue_pressure_history"]["adjacent_comparisons"]
+    ] + [
+        ("  - " + group["priority"] + " " + group["project_id"] +
+         " · status=blocked %+d · actuele rij door bevoegde eigenaar controleren."
+         % group["blocked_rows_delta_not_resolution_proof"])
+        for pair in report["queue_pressure_history"]["adjacent_comparisons"]
+        for group in (pair["blocked_queue_comparison"].get("project_deltas") or [])
+        if group["blocked_rows_delta_not_resolution_proof"] != 0
     ] + [
         "",
         "## Leaseklokfouten per oude SQLite-aggregaat", "",
