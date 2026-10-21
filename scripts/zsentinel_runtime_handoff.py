@@ -400,7 +400,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             priority = row["priority"] if row["priority"] in ("P0", "P1") else "P2"
             cards.append(_card(
                 priority, project, "incident_dependency_owner_hold",
-                "Taak " + row["id"] + " HOLD: " +
+                "Routeerbare kandidaat " + row["id"] + " HOLD: "
                 str(row["unresolved_count"]) + " incidentafhankelijkheden missen " +
                 "exacte job-reconciliatie. Bevoegde eigenaar herbeoordeelt " +
                 "originele bron/claims; GEEN dispatch of leasevrijgave.",
@@ -1200,7 +1200,7 @@ def handoff_html(report):
         "Taak-/claiminventaris onvolledig of verouderd; totaal ONBEKEND, nul is geen vrijgave."
         if dependency["coverage"] == "incomplete_or_stale" else
         str(dependency["held_count"]) +
-        " expliciete taak-HOLDs; exacte bronreconciliatie vereist." +
+        " routeerbare kandidaat-taken op incident-HOLD; exacte bronreconciliatie vereist." +
         (" Zichtbare voorbeelden afgekapt."
          if dependency["coverage"] == "bounded_examples_truncated" else ""))
     if dependency_reasons:
@@ -1329,7 +1329,7 @@ def markdown(report):
         if type(count) is not int or not 0 <= count <= 250:
             raise ValueError("invalid held task count")
         lines.append("Incidentafhankelijkheden: " + str(count) +
-                     " taken op HOLD; alleen exacte job-reconciliatie kan status herstellen." +
+                     " verder routeerbare kandidaat-taken op HOLD; alleen exacte job-reconciliatie kan status herstellen." +
                      (" Steekproef afgekapt."
                       if dep["coverage"] == "bounded_examples_truncated" else ""))
     lines.append("")
