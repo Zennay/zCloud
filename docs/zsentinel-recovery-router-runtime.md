@@ -3747,8 +3747,11 @@ projects must exist in the supplied canonical registry. No project is selected
 implicitly, and worker evidence is not added to ICS or the incident-desk
 format; when this source is requested, use `--format json`, `text` or `html`.
 
-Example (choose the actual existing database and only the projects you intend
-to inspect; keep output private):
+Examples below use a new output file in an existing directory owned by the
+operator and not group/world writable. The report writer enforces mode 0600,
+refuses overwrite/symlink paths and never prints the private report to stdout
+when `--output` is selected. Choose the actual existing database and only the
+projects you intend to inspect:
 
 ```sh
 python scripts/zsentinel_recovery_refresh.py private-observation.json \
