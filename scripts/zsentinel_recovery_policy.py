@@ -684,6 +684,36 @@ def markdown_batch(batch):
         "## Per-proposal evidence",
         "",
     ]
+    lines.extend([
+        "## Incident desk (HOLD first, source-bound)",
+        "",
+        "This offline worklist does not prove owner availability or permission to act.",
+        "",
+    ])
+    for incident in batch["incident_triage"]:
+        lines.extend([
+            "### " + incident["project_id"] + " / " + incident["incident_id"],
+            "",
+            "- Decision: **" + incident["decision"] + "**",
+            "- Proposed alternatives: " + ", ".join(incident["proposed_actions"]),
+            "- Proposal indices (zero-based): " + ", ".join(
+                str(index) for index in incident["request_indices"]),
+            "- Next human step: " + incident["next_step"],
+            "- Owner hint (not independently verified): " +
+                (incident["operator_owner_hint"] or "UNKNOWN"),
+            "- Owner hints conflict: " +
+                ("yes" if incident["owner_hints_conflict"] else "no"),
+            "- Blockers: " + (", ".join(incident["blocker_codes"]) or "none"),
+            "- Required evidence: " +
+                (", ".join(incident["required_evidence"]) or "none"),
+            "- Claim/merge/deploy authorized: no",
+            "",
+        ])
+        for source in incident["source_urls"]:
+            lines.append("- Source: <code>" + html.escape(source, quote=True) + "</code>")
+        lines.append("")
+    lines.extend(["## Detailed proposals", ""])
+
     for item in batch["results"]:
         report = item["report"]
         lines.extend([
