@@ -830,6 +830,9 @@ def compare_snapshot(path: Path, current: dict) -> dict:
         ],
         "unchanged": old == new,
         "snapshot_age_seconds": snapshot_age_seconds,
+        "baseline_sha256": hashlib.sha256(raw_baseline).hexdigest(),
+        "baseline_bytes": len(raw_baseline),
+        "baseline_integrity": "single_open_nofollow_stable_inode_duplicate_json_rejected",
         "snapshot_freshness": ("stale_baseline_no_resolution_credit" if stale_baseline
                                 else "fresh_within_24h"),
         "resolution_credit_allowed": not stale_baseline,
@@ -1096,6 +1099,7 @@ def main() -> int:
         if "comparison" in report:
             change = report["comparison"]
             print(f"Previous snapshot: {change['snapshot_freshness']} · age={change['snapshot_age_seconds']}s · resolution credit={change['resolution_credit_allowed']}")
+            print(f"Bound source SHA256: {change['baseline_sha256']} ({change['baseline_bytes']} bytes; no-follow stable inode)")
             print(f"New findings: {', '.join(change['new_findings']) or 'none'}")
             print(f"Confirmed resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
             print(f"Recovery unverified: {', '.join(change['recovery_unverified_findings']) or 'none'}")
