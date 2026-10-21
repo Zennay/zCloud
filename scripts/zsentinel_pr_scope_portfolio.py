@@ -1063,6 +1063,23 @@ def as_markdown(board):
                          ") ↔ [#" + str(right["number"]) + "](" + right["url"] +
                          "): " + str(pair["shared_file_count_observed"]) +
                          " gedeelde bestanden")
+        lines.extend(["", "### Bestand/map-ancestorconflicten", "",
+                      "Een bestandspad in de ene PR is een bovenliggend pad van "
+                      "een bestand in de andere PR. Dit is een scopeconflict-signaal, "
+                      "geen bewezen Git-mergeconflict of eigenaarschap.", ""])
+        for pair in view.get("shown_path_scope_collision_pairs", []):
+            left, right = pair["left"], pair["right"]
+            lines.append("- [#" + str(left["number"]) + "](" + left["url"] +
+                         ") ↔ [#" + str(right["number"]) + "](" + right["url"] +
+                         "): " + str(pair["path_conflict_count_observed"]) + " padparen")
+            for conflict in pair["path_conflicts"]:
+                lines.append("  - `" + conflict["left_path"].replace("`", "\\`") +
+                             "` ↔ `" + conflict["right_path"].replace("`", "\\`") +
+                             "` [" + conflict["relation"] + "]")
+        if not view.get("shown_path_scope_collision_pairs"):
+            lines.append("Geen bestand/map-ancestorparen waargenomen in de steekproef.")
+        if view.get("path_scope_collision_pairs_truncated"):
+            lines.append("**ONVOLLEDIG:** overige bestand/map-conflicpparen buiten de weergavelimiet.")
         lines.extend(["", "### Meerdere open PR's noemen hetzelfde issue (geen fix-/claimbewijs)", ""])
         for group in view["shown_duplicate_issue_groups"]:
             refs = ", ".join("[PR](" + pr["url"] + ")" for pr in group["shown_pr_sources"])
@@ -1088,6 +1105,7 @@ def as_html(board):
     cards = []
     for view in board["project_views"]:
         rows = []
+        scope_rows = []
         if view["source_status"] != "unavailable":
             for pair in view["shown_collision_pairs"]:
                 left, right = pair["left"], pair["right"]
@@ -1101,6 +1119,20 @@ def as_html(board):
                     "' rel='noopener noreferrer'>#" + str(right["number"]) +
                     "</a></td><td>" + str(pair["shared_file_count_observed"]) +
                     "</td><td>" + files + "</td></tr>")
+            for pair in view.get("shown_path_scope_collision_pairs", []):
+                left, right = pair["left"], pair["right"]
+                examples = "<br>".join(
+                    "<code>" + escape(conflict["left_path"]) + "</code> ↔ <code>" +
+                    escape(conflict["right_path"]) + "</code><br><small>" +
+                    escape(conflict["relation"]) + "</small>"
+                    for conflict in pair["path_conflicts"])
+                scope_rows.append(
+                    "<tr><td><a href='" + escape(left["url"], quote=True) +
+                    "' rel='noopener noreferrer'>#" + str(left["number"]) +
+                    "</a> ↔ <a href='" + escape(right["url"], quote=True) +
+                    "' rel='noopener noreferrer'>#" + str(right["number"]) +
+                    "</a></td><td>" + str(pair["path_conflict_count_observed"]) +
+                    "</td><td>" + examples + "</td></tr>")
         if not rows:
             if view["source_status"] == "unavailable":
                 rows = ["<tr><td colspan='3'>BRON ONBESCHIKBAAR: er is geen "
@@ -1155,6 +1187,13 @@ def as_html(board):
             "</ol><table><thead><tr><th>Open PR's</th><th>Gedeelde bestanden</th>"
             "<th>Bestandsnamen</th></tr></thead><tbody>" +
             "".join(rows) + "</tbody></table>"
+            "<h3>Bestand/map-ancestorconflicten</h3>"
+            "<p>Padrelaties zijn scopeconflicten, geen bewezen Git-mergeconflicten of eigenaarschap.</p>"
+            "<table><thead><tr><th>Open PR's</th><th>Padparen</th><th>Waargenomen paden en relatie</th></tr></thead><tbody>" +
+            ("".join(scope_rows) or "<tr><td colspan='3'>Geen bestand/map-ancestorparen waargenomen in de gelezen steekproef.</td></tr>") +
+            "</tbody></table>" +
+            ("<p><strong>ONVOLLEDIG:</strong> overige bestand/map-conflicpparen kunnen ontbreken.</p>"
+             if view.get("path_scope_collision_pairs_truncated") else "") +
             "<h3>Meerdere open PR's noemen hetzelfde issue</h3>"
             "<p>De links zijn tekstverwijzingen, geen bewezen oplossings-/eigenaarsrelatie.</p><ul>" +
             ("".join(duplicates) or "<li>Geen dubbele issue-vermeldingen in gelezen steekproef.</li>") +
@@ -1323,6 +1362,7 @@ def as_private_csv(board):
         "pr_base_sha", "previous_pr_base_sha",
         "related_pr_url", "related_pr_head_sha", "cluster_number",
         "shared_filename", "shared_files_observed",
+        "scope_conflict_relation", "scope_conflict_left_path", "scope_conflict_right_path",
         "issue_number_hint", "current_exact_head_gate_status",
         "check_name", "check_state", "check_conclusion", "check_url",
         "prior_gate_blocker", "current_gate_blocker", "gate_episode_change",
@@ -1397,6 +1437,22 @@ def as_private_csv(board):
                  related_pr_head_sha=pair["right"]["head_sha"],
                  shared_files_observed=pair["shared_file_count_observed"],
                  operator_notice="Observed common filenames, Git merge conflict NOT verified.")
+        for pair in view.get("shown_path_scope_collision_pairs", []):
+            for conflict in pair["path_conflicts"]:
+                emit("file_directory_scope_conflict", project, repo, source_status,
+                     **summary, pr_number=pair["left"]["number"],
+                     pr_url=pair["left"]["url"],
+                     pr_head_sha=pair["left"]["head_sha"],
+                     related_pr_url=pair["right"]["url"],
+                     related_pr_head_sha=pair["right"]["head_sha"],
+                     shared_files_observed=pair["path_conflict_count_observed"],
+                     scope_conflict_relation=conflict["relation"],
+                     scope_conflict_left_path=conflict["left_path"],
+                     scope_conflict_right_path=conflict["right_path"],
+                     operator_notice="File/directory ancestor scope conflict; no merge authority.")
+        if view.get("path_scope_collision_pairs_truncated"):
+            emit("source_warning", project, repo, source_status, **summary,
+                 operator_notice="Additional file/directory PR pairs beyond bounded output cap.")
         for issue in view["shown_duplicate_issue_groups"]:
             for pr in issue["shown_pr_sources"]:
                 emit("unverified_issue_number", project, repo, source_status,
