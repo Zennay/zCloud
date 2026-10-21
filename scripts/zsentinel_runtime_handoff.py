@@ -922,6 +922,13 @@ def _notion_review_html(report):
     source = _notion_review_summary(report)
     if source is None:
         return ""
+    if source["coverage"] == "not_requested_or_unavailable":
+        return ('<section class="panel" aria-label="Notion eigenaarbron onbekend">'
+                '<h2>Notion eigenaarbron ONBEKEND</h2><p>De aangevraagde '
+                'statusbron is niet bereikbaar of niet bruikbaar. '
+                'Geen nul-claims, vrije scope of herstelbevoegdheid '
+                'afleiden; actuele bron door bevoegde eigenaar herlezen.</p>'
+                '</section>')
     age = source["source_age_seconds"]
     old = age is None or age > 600
     lines = []
@@ -1112,7 +1119,13 @@ def markdown(report):
     if queue_partial:
         lines.append("Queuebron niet volledig; verborgen leaseconflicten ONBEKEND.")
     notion = _notion_review_summary(report)
-    if notion is not None:
+    if notion is not None and notion["coverage"] == "not_requested_or_unavailable":
+        lines.extend([
+            "", "## Notion · bron ONBEKEND",
+            "Aangevraagde Notion-statusbron onbereikbaar of niet bruikbaar. "
+            "GEEN nul actieve claims en GEEN vrijgave; eigenaar leest opnieuw."
+        ])
+    elif notion is not None:
         age = notion["source_age_seconds"]
         lines.extend([
             "", "## Notion · onafgerond werk (GEEN claimautorisatie)",
