@@ -111,7 +111,7 @@ def _pr_summary(payload, full_name, number):
     }
 
 
-def _checks_summary(payload, sha):
+def _checks_summary(payload, sha, full_name):
     """A bounded incomplete HEAD-scoped observation, never a required-CI verdict."""
     if not isinstance(payload, dict) or type(payload.get("total_count")) is not int:
         raise GitHubReadError("check-run response missing total count")
@@ -121,6 +121,10 @@ def _checks_summary(payload, sha):
         raise GitHubReadError("check-run sample invalid")
     sums = {"completed_success": 0, "completed_other": 0, "not_completed": 0}
     observed_names = []
+    sampled_blocking_checks = []
+    sampled_pending_checks = []
+    # These are only hints from a first-page sample. They never establish
+    # which checks branch protection requires or make CI green.
     for row in rows:
         if not isinstance(row, dict):
             raise GitHubReadError("invalid check-run row")
@@ -128,18 +132,44 @@ def _checks_summary(payload, sha):
         if source_sha is not None and source_sha != sha:
             raise GitHubReadError("check-run does not belong to observed exact HEAD")
         status = row.get("status")
+        conclusion = row.get("conclusion")
+        check_id = row.get("id")
+        check_link = (
+            "https://github.com/" + full_name + "/runs/" + str(check_id)
+            if type(check_id) is int and 1 <= check_id <= 2**53 - 1 else None
+        )
+        name = row.get("name")
+        # Do not place provider-supplied control characters in human
+        # handoffs. The check URL itself is built from canonical identity.
+        clean_name = (
+            "".join(c if c.isprintable() else " " for c in name)[:90]
+            if isinstance(name, str) else "unnamed sampled check"
+        )
+        if (status == "completed" and conclusion in
+                ("failure", "timed_out", "action_required")
+                and len(sampled_blocking_checks) < 6):
+            sampled_blocking_checks.append({
+                "name": clean_name, "conclusion": conclusion, "url": check_link,
+                "required_by_branch_protection": "UNKNOWN",
+            })
+        if status != "completed" and len(sampled_pending_checks) < 6:
+            sampled_pending_checks.append({
+                "name": clean_name, "status": str(status)[:32],
+                "url": check_link, "required_by_branch_protection": "UNKNOWN",
+            })
         if status == "completed":
             sums["completed_success" if row.get("conclusion") == "success"
                  else "completed_other"] += 1
         else:
             sums["not_completed"] += 1
-        name = row.get("name")
-        if isinstance(name, str) and name[:120] not in observed_names:
-            observed_names.append(name[:120])
+        if clean_name not in observed_names:
+            observed_names.append(clean_name)
     return {
         "sampled_count": len(rows), "provider_total_count": count,
         "sample_incomplete": count > len(rows),
         "sample_status_counts": sums, "sample_names": observed_names[:12],
+        "sampled_blocking_checks": sampled_blocking_checks,
+        "sampled_pending_checks": sampled_pending_checks,
         "required_checks_identified": False,
         "required_ci_verdict": "UNKNOWN",
     }
@@ -220,7 +250,7 @@ def observe_candidate_prs(issue, *, token=None):
                 checks = _checks_summary(_limited_json(
                     api + "/commits/" + before["exact_head_sha"] +
                     "/check-runs?per_page=" + str(MAX_LIST_PAGE), token=token
-                ), before["exact_head_sha"])
+                ), before["exact_head_sha"], full_name)
             except GitHubReadError as exc:
                 source_gaps.append("check-runs: " + str(exc))
                 if "authentication, quota or provider admission" in str(exc):
@@ -247,7 +277,8 @@ def observe_candidate_prs(issue, *, token=None):
             if (before["exact_head_sha"] != after["exact_head_sha"] or
                     before["observed_state"] != after["observed_state"] or
                     before["reported_merged"] != after["reported_merged"] or
-                    before["observed_draft"] != after["observed_draft"]):
+                    before["observed_draft"] != after["observed_draft"] or
+                    before["target_branch"] != after["target_branch"]):
                 raise GitHubReadError("PR changed during live read; no stable exact HEAD")
             base.update(before)
             base["observed_at_utc"] = utc()
@@ -257,12 +288,42 @@ def observe_candidate_prs(issue, *, token=None):
                 base["check_runs"] = checks
             if reviews is not None:
                 base["reviews"] = reviews
-            base["next_human_step"] = (
-                "already_merged_verify_main_commit_and_deploy" if before["reported_merged"] else
-                "not_open_refresh_project_and_issue" if before["observed_state"] != "open" else
-                "finish_draft_with_current_owner" if before["observed_draft"] else
-                "verify_protected_main_required_ci_independent_review_and_ownership"
-            )
+            if before["reported_merged"]:
+                owner_action = "verify_reported_merge_on_main_and_postmerge_health"
+                review_rank = 5
+            elif before["observed_state"] != "open":
+                owner_action = "locate_replacement_pr_for_closed_unmerged_source"
+                review_rank = 6
+            elif before["target_branch"] != "main":
+                owner_action = "check_target_branch_and_actual_release_intent"
+                review_rank = 4
+            elif before["observed_draft"]:
+                owner_action = "finish_existing_draft_with_authorized_owner"
+                review_rank = 3
+            elif checks is not None and checks["sampled_blocking_checks"]:
+                owner_action = "inspect_sampled_failed_head_checks_before_merge"
+                review_rank = 0
+            elif checks is not None and checks["sampled_pending_checks"]:
+                owner_action = "inspect_sampled_pending_head_jobs_and_runner_admission"
+                review_rank = 1
+            elif checks is None:
+                owner_action = "recover_missing_check_source_before_merge_review"
+                review_rank = 2
+            else:
+                owner_action = "verify_required_ci_independent_review_protection_and_owner"
+                review_rank = 2
+            base["next_human_step"] = owner_action
+            base["owner_review_priority"] = review_rank
+            base["release_gate_summary"] = {
+                "pr_head_reobserved": True,
+                "target_is_main": before["target_branch"] == "main",
+                "sampled_check_source_available": checks is not None,
+                "sampled_review_source_available": reviews is not None,
+                "required_ci_status": "UNKNOWN",
+                "independent_review_status": "UNKNOWN",
+                "active_owner_status": "UNKNOWN",
+                "safe_to_merge": False,
+            }
         except GitHubReadError as exc:
             base["status"] = "UNKNOWN_PROVIDER"
             base["reason"] = str(exc)
@@ -278,6 +339,16 @@ def observe_candidate_prs(issue, *, token=None):
         "candidate_count": len(candidates),
         "source_candidate_count": issue["candidate_count"],
         "observations": observations, "sample_scope_only": True,
+        "suggested_owner_review_order": [
+            {"number": row["number"], "url": row["url"],
+             "next_human_step": row["next_human_step"],
+             "owner_review_priority": row.get("owner_review_priority", 7)}
+            for row in sorted(
+                observations, key=lambda item: (
+                    item.get("owner_review_priority", 7), item["number"]
+                )
+            )
+        ],
         "provider_admission_paused": provider_paused,
         "read_get_attempt_upper_bound": 4 * len(candidates),
         "get_attempts": total_gets_attempted,
