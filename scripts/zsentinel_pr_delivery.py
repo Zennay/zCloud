@@ -496,7 +496,9 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
         "schema": "zsentinel-pr-delivery-desk-v1",
         "source": "github_canonical_readonly_bounded_pr_gets",
         "items": items, "request_count": calls,
-        "observed_at_utc": observed_at,
+        # A skip-only receipt has an operator processing time, but no GitHub
+        # observation time. Never mark the pinned PR's CI/reviews as refreshed.
+        "observed_at_utc": observed_at if skip_provider_denial is None else None,
         "maximum_requests": MAX_CALLS + (MAX_PRS if inspect_no_start_annotations else 0),
         "merge_authorized": False, "deploy_authorized": False,
         "owner_verified": False, "writes_performed": False,
