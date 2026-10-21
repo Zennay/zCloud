@@ -1493,7 +1493,7 @@ def graph_private_csv(report):
         "record_type", "repository", "source_page", "source_complete",
         "cluster_number", "shared_filename", "pr_number", "pr_url",
         "pr_head_sha", "related_pr_url", "related_pr_head_sha",
-        "shared_files_observed", "scope_conflict_relation",
+        "shared_files_observed", "scope_conflict_pairs_observed", "scope_conflict_relation",
         "scope_conflict_left_path", "scope_conflict_right_path",
         "unverified_issue_number", "issue_identity_status", "observed_issue_priority",
         "owner_verified", "merge_authorized", "operator_notice"
@@ -1556,7 +1556,7 @@ def graph_private_csv(report):
                 pr_head_sha=pair["left"]["head_sha"],
                 related_pr_url=pair["right"]["url"],
                 related_pr_head_sha=pair["right"]["head_sha"],
-                shared_files_observed=pair["path_conflict_count_observed"],
+                scope_conflict_pairs_observed=pair["path_conflict_count_observed"],
                 scope_conflict_relation=conflict["relation"],
                 scope_conflict_left_path=conflict["left_path"],
                 scope_conflict_right_path=conflict["right_path"],
