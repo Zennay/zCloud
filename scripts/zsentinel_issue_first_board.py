@@ -22,6 +22,7 @@ from zsentinel_issue_merge_priority import (
     classification, references, title_references, reference_hints
 )
 
+MAX_PROJECTS = 3
 MAX_PER_PROJECT = 4
 TARGET_CANDIDATES_PER_PAGE = 20
 MAX_TARGET_PAGES = 50
@@ -140,7 +141,7 @@ def issue_local_claim_evidence(project, local_claims):
         "CLAIM_INVENTORY_TRUNCATED", "CLAIM_SOURCE_INVALID",
     }
     status = row.get("status")
-    if status not in allowed:
+    if not isinstance(status, str) or status not in allowed:
         return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
     fields = (
         "active_local_leases_observed", "expired_local_leases_observed",
@@ -1317,8 +1318,10 @@ def main():
                           " next=" + issue["operator_action"] +
                           " local_claims=" +
                           str((issue.get("local_claim_evidence") or {}).get("status", "UNKNOWN")) +
-                          "(active=" + str((issue.get("local_claim_evidence") or {}).get("active_local_leases_observed", "UNKNOWN")) +
-                          ";expired=" + str((issue.get("local_claim_evidence") or {}).get("expired_local_leases_observed", "UNKNOWN")) +
+                          "(active=" + str((issue.get("local_claim_evidence") or {}).get("active_local_leases_observed")
+                                           if type((issue.get("local_claim_evidence") or {}).get("active_local_leases_observed")) is int else "UNKNOWN") +
+                          ";expired=" + str((issue.get("local_claim_evidence") or {}).get("expired_local_leases_observed")
+                                            if type((issue.get("local_claim_evidence") or {}).get("expired_local_leases_observed")) is int else "UNKNOWN") +
                           ";owner_free=NOT_INFERABLE)" +
                           " readonly_command=" +
                           (issue["read_only_issue_command"] or "UNAVAILABLE"))
