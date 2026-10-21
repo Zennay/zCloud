@@ -337,6 +337,7 @@ const visible=document.getElementById('visible'), prState=document.getElementByI
 const focusBar=document.getElementById('focus-bar'),focusTitle=document.getElementById('focus-title');
 const focusClear=document.getElementById('focus-clear');
 const focusNext=document.getElementById('focus-next');
+const focusExport=document.getElementById('focus-export');
 let focusedPr=null,focusIndex=-1;
 function linkedToFocus(t){
  return Boolean(focusedPr)&&
@@ -418,6 +419,57 @@ document.getElementById('reset').addEventListener('click',function(){
 function safeText(value){
  return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#\x60~])/g,'\\$1').slice(0,720);
 }
+function privateDownload(filename,source){
+ const blob=new Blob([source],{type:'text/markdown;charset=utf-8'});
+ const url=URL.createObjectURL(blob),a=document.createElement('a');
+ a.href=url;a.download=filename;a.click();
+ window.setTimeout(()=>URL.revokeObjectURL(url),3000);
+}
+function onePrHandoff(){
+ const p=prs.find(group=>group.dataset.pr===focusedPr);
+ if(!p)return;
+ const url=p.dataset.pr,head=p.dataset.head||'ONBEKEND';
+ const linked=p.dataset.sourceIssues.trim().split(' ').filter(Boolean);
+ const shown=p.dataset.issues.trim().split(' ').filter(Boolean);
+ const linkedTickets=tickets.filter(t=>linked.includes(t.dataset.issue));
+ const repoUrl=url.split('/pull/')[0];
+ const lines=[
+  '# zSentinel · privé opvolging voor bestaande PR '+url.split('/').pop(),'',
+  '> Offline handmatige BRONOPNAME; geen actuele CI, eigenaar, review, merge, fix of deployautorisatie.','',
+  '- Bestaande PR: [Open op GitHub]('+url+')',
+  '- Waargenomen bron HEAD: '+safeText(head),
+  '- Waargenomen broncommit: '+(head==='ONBEKEND'?'ONBEKEND':'[GitHub commit]('+repoUrl+'/commit/'+head+')'),
+  '- Waargenomen gate: '+safeText(p.dataset.gate),
+  '- Menselijke gates: '+safeText(p.dataset.next),
+  '- Bestandsoverlap in bron: '+safeText(p.dataset.overlap),
+  '- Historische bronbeweging: '+safeText(p.dataset.movement),
+  '- Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
+  '- PR-bron UTC: '+safeText(document.getElementById('pr-time').textContent),
+  '- Privé bron-token: '+safeText(document.body.dataset.sourceToken),
+  '- Beperkte bronvermeldingen voor deze PR: '+linked.length,
+  '- Momenteel in deze export zichtbare bronissues: '+shown.length,
+  '- Geen bewering over ontbrekende bronissues of de huidige GitHub-status.','',
+  '## Gekoppelde bronissues (géén bewezen fixes)',''
+ ];
+ for(const issue of linked){
+  const t=linkedTickets.find(t=>t.dataset.issue===issue);
+  lines.push('- [Issue '+issue.split('/').pop()+']('+issue+')');
+  if(!t){lines.push('  - Niet in dit beperkte werkbakvenster; huidige toestand ONBEKEND.');continue;}
+  lines.push('  - '+safeText(t.dataset.priority)+' · '+safeText(t.dataset.title));
+  lines.push('  - Handmatige lokale opvolging: '+labels[t.querySelector('.local-state').value]);
+  lines.push('  - Menselijke vervolgstap uit de bron: '+safeText(t.dataset.next));
+  const note=t.querySelector('textarea').value.trim();
+  if(note)lines.push('  - Privé issuenotitie: '+safeText(note));
+ }
+ lines.push('','## Privé PR-eigenaarsopvolging','',
+   '- Handmatige PR-status: '+prLabels[p.querySelector('.pr-local-state').value]);
+ const note=p.querySelector('.pr-note').value.trim();
+ if(note)lines.push('- Privé PR-notitie: '+safeText(note));
+ lines.push('','**Volgende geautoriseerde stap:** controleer opnieuw de actuele PR-HEAD, alle verplichte check runs, onafhankelijke review, branch protection en actieve claims; dit dossier doet geen GitHub-, Notion-, worker- of productiewijzigingen.','');
+ privateDownload('zsentinel-pr-'+url.split('/').pop()+'-privé-overdracht.md',
+   lines.join('\n')+'\n');
+}
+focusExport.addEventListener('click',onePrHandoff);
 document.getElementById('export').addEventListener('click',function(){
  const parts=['# zSentinel · private handmatige opvolging','',
   'Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
@@ -448,6 +500,9 @@ document.getElementById('export').addEventListener('click',function(){
    ' · '+safeText(p.dataset.project));
   const issues=p.dataset.issues.trim()?p.dataset.issues.trim().split(' '):[];
   for(const issue of issues)parts.push('  - [Bronissue]('+issue+')');
+  parts.push('  - Waargenomen bron HEAD: '+safeText(p.dataset.head||'ONBEKEND'));
+  if(p.dataset.head)parts.push('  - Broncommit: [GitHub commit]('+
+    url.split('/pull/')[0]+'/commit/'+p.dataset.head+')');
   parts.push('  - Waargenomen gatebron: '+safeText(p.dataset.gate)+
    ' (geen autorisatie)');
   parts.push('  - Handmatige PR-status: '+prLabels[p.querySelector('.pr-local-state').value]);
@@ -656,6 +711,7 @@ refresh();
         "<div id='focus-bar' class='focus-bar' role='status' hidden>"
         "<strong id='focus-title'></strong>"
         "<button id='focus-next' type='button'>Volgende nog te bekijken issue</button>"
+        "<button id='focus-export' type='button'>Download overdracht voor deze PR</button>"
         "<button id='focus-clear' type='button'>Terug naar alle bronissues</button></div>"
         "<p>Filters en PR-focus veranderen de privé-export niet: deze bevat alle bronkaarten.</p>" + hidden +
         "<main>" + groups_panel + "".join(output) + "</main>" + script + "</body></html>"
