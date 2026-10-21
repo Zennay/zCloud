@@ -12,6 +12,7 @@ import os
 import re
 import stat
 import tempfile
+import unicodedata
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from html import escape
@@ -464,6 +465,15 @@ def queue_owner_pressure_panel(decision):
             '</section>')
 
 
+def _operator_visible_label(label):
+    """Expose bidi/zero-width formatting instead of hiding it in owner labels."""
+    return escape("".join(
+        f"⟦U+{ord(char):04X}⟧" if (
+            unicodedata.category(char) in ("Cf", "Zl", "Zp") or
+            (char.isspace() and char != " ")) else char
+        for char in label))
+
+
 def runtime_source_panel(decision):
     """Private, read-only worker/Notion context for the interactive incident desk.
 
@@ -551,6 +561,7 @@ def runtime_source_panel(decision):
                 and (notion.get("origin_authenticity_verified") is not False
                      or notion.get("live_claim_ownership_verified") is not False)):
             raise ValueError("saved Notion snapshot lacks unverified-origin guard")
+        observed = _stamp(notion.get("observed_at"))
         labels = []
         for item in notion["items"]:
             if type(item) is not dict or item.get("status") not in (
@@ -565,7 +576,7 @@ def runtime_source_panel(decision):
                 if (type(value) is not str or len(value) > limit
                         or any(ord(char) < 32 or ord(char) == 127 for char in value)):
                     raise ValueError("unsafe private Notion status label")
-                parts.append(escape(value))
+                parts.append(_operator_visible_label(value))
             labels.append("<li>" + " · ".join(parts) + "</li>")
         caveat = ("HANDMATIG OPGESLAGEN · oorsprong en huidige claims onbekend"
                   if expected == "private_connector_snapshot_unverified_origin"
@@ -575,7 +586,8 @@ def runtime_source_panel(decision):
         panels.append('<details><summary>Notion statusbron · ' +
                       str(notion["active_count"]) + ' waargenomen werkregels' +
                       (' · samples afgekapt' if notion["items_truncated"] else '') +
-                      '</summary><p>' + escape(caveat) +
+                      '</summary><p>Bronmoment: ' + escape(observed) +
+                      ' · ' + escape(caveat) +
                       '</p><ul>' + ''.join(labels) +
                       '</ul><p>Niet bevoegd om werk over te nemen, te hervatten of'
                       ' als voltooid te markeren.</p></details>')
