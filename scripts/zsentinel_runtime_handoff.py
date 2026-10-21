@@ -710,9 +710,28 @@ def handoff_html(report):
             raise ValueError("untrusted overdue classification")
         due_label = (" · DEADLINE VERSTREKEN" if overdue else "") + (
             " · Beoordelen vóór " + escape(due) if due else "")
+        pr_label = ""
+        if item.get("kind") == "open_pr_owner_review":
+            source = item.get("pr_observation_coverage")
+            if source not in ("bounded_exact_head_review_and_checks",
+                              "source_incomplete_or_changed",
+                              "not_queried_after_auth_or_rate_limit"):
+                raise ValueError("untrusted private PR observation coverage")
+            head = item.get("pr_observed_head_sha")
+            if head is not None and (type(head) is not str or not SAFE_SHA.fullmatch(head)):
+                raise ValueError("untrusted private PR exact head")
+            if (item.get("merge_authorized") is not False
+                    or item.get("exact_head_required_ci_verified") is not False
+                    or item.get("independent_review_policy_verified") is not False):
+                raise ValueError("PR gate unexpectedly authorizing")
+            pr_label = (" · PR-bron: " + escape(source) +
+                        (" · geobserveerde HEAD " + escape(head[:12]) if head else
+                         " · actuele HEAD ONBEKEND") +
+                        " · vereiste CI/review niet bewezen")
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
-                     escape(_short(item.get("next_step"))) + due_label + link + pr_links + verified_links + '</li>')
+                     escape(_short(item.get("next_step"))) + due_label + pr_label +
+                     link + pr_links + verified_links + '</li>')
     coverage = report.get("coverage", {})
     if not isinstance(coverage, dict) or len(coverage) > 8:
         raise ValueError("invalid handoff source coverage")
@@ -798,6 +817,18 @@ def markdown(report):
                 lines.append("   GitHub-commit: " + card["exact_github_commit_url"])
         for pr in card.get("existing_pr_urls", []):
             lines.append("   Eerst bestaande PR beoordelen: " + pr)
+        if card.get("kind") == "open_pr_owner_review":
+            coverage = card.get("pr_observation_coverage")
+            if coverage not in ("bounded_exact_head_review_and_checks",
+                                "source_incomplete_or_changed",
+                                "not_queried_after_auth_or_rate_limit"):
+                raise ValueError("untrusted private PR Markdown coverage")
+            head = card.get("pr_observed_head_sha")
+            if head is not None and (type(head) is not str or not SAFE_SHA.fullmatch(head)):
+                raise ValueError("untrusted private PR Markdown head")
+            lines.append("   PR-bron: " + _md(coverage, 50) +
+                         " · geobserveerde HEAD " + (head if head else "ONBEKEND") +
+                         " · vereiste CI/review, eigenaar en merge NIET bevestigd.")
     if not report["priority_items"]:
         lines.append("Geen actie in de beperkte steekproef; brongebrek is geen groen licht.")
     if report["items_truncated"]:
