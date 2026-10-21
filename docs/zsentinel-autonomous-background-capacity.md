@@ -432,6 +432,12 @@ python3 scripts/zsentinel_operator_export.py \
   --compare-dir "$HOME/private-recovery/pakket-A" \
   --compare-format markdown
 # --compare-format text (standaard) of json is eveneens mogelijk.
+# Optionele veilige bewaaractie: uitsluitend NIEUW bestand in bestaande privémap:
+python3 scripts/zsentinel_operator_export.py \
+  --verify-dir "$HOME/private-recovery/pakket-B" \
+  --compare-dir "$HOME/private-recovery/pakket-A" \
+  --compare-format markdown \
+  --compare-output "$HOME/private-recovery/bronvergelijking.md"
 ```
 
 Beide bronpakketten worden **afzonderlijk** eigenaar-privé en byte-voor-byte
@@ -452,6 +458,13 @@ gecorrumpeerde, niet-private of onbekende bronbestanden blokkeren de vergelijkin
 De benodigde GitHub exact-HEAD CI, onafhankelijke review, branch protection
 en aangewezen runtime-eigenaar blijven ongewijzigd verplicht. Dit commando
 maakt geen nieuwe bundel en verleent geen merge- of deploybevoegdheid.
+
+De optionele `--compare-output` schrijft een **nieuw** Markdown-, tekst- of
+JSON-overdrachtsbestand met `0600` in een **reeds bestaande**, eigenaar-private
+(geen groeps- of wereldtoegang) doelmap. Bestaande bestanden worden niet
+aangeraakt; het bestandsachtervoegsel moet bij `--compare-format` passen.
+Zonder `--compare-output` blijft het resultaat alleen op stdout staan.
+Deze lokale handoff installeert of wijzigt geen timer, service of runner.
 
 ## Samenhangend privé operatorpakket (geen installatie)
 
