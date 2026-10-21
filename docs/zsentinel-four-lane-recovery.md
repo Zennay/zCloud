@@ -54,6 +54,36 @@ to make these labels turn green.
 
 ## Private four-lane operator desk
 
+### 21 October · private owner brief for a specific real project
+
+The existing read-only four-lane desk now includes a targeted **owner handoff**
+for any of the thirteen canonical portfolio projects. Example:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --format owner-brief --owner-project supa \
+  --output /PRIVATE-OWNER-DIRECTORY/supa-owner-brief.md
+```
+
+The selected-project brief uses the **same** transactional SQLite snapshot as
+the four-lane dashboard: P0/P1 waiting counts, `eligible=1` local hints,
+P0/P1 currently active counts, the UTC source moment, whether that aggregate
+may be truncated/partial, and static canonical existing GitHub PR/issue links.
+It guides an authorized owner to inspect current Notion claims and existing
+PRs, then verify exact-head required CI, reviews and protection before any
+merge. If the canonical project is absent from the aggregate, the brief
+says only **not observed locally**, never `no open work`.
+
+This is intentionally an opt-in `--format owner-brief` output and **requires**
+`--owner-project` plus a new `.md` file inside an owner-private directory.
+The original create-only, symlink-denying, `0600` output policy is reused;
+unknown project keys and selectors in other output modes are refused.
+No production queue mutation, owner reassignment, API calls, worker actions,
+QA package, CI retry or automatic scheduling is added. The aggregate still
+cannot differentiate product from QA-only queue rows; filter current work
+against the user's product-only policy before acting. It conveys no owner,
+claim, merge or deployment authority.
+
 ### 21 October · prioritized, bounded human owner review queue
 
 The four-lane operator desk now turns the **existing same-transaction local
