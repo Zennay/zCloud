@@ -350,7 +350,13 @@ request bounds, and never starts Actions or calls merge/claim/deploy endpoints.
 
 The observation scope is **one exact project/issue and at most three
 canonical, same-repository PR links** already validated against the
-original Activity case. The same command also supports a portable,
+original Activity case. A first bounded, canonical GitHub **issue GET**
+now refreshes only the original issue's current open/closed state. A
+closed issue is *not* automatically deemed fixed, merged, or free of an
+owner lease: the desk instead directs a human to verify the closure and
+existing repair before reopening any product work. If that issue GET is
+denied, the state remains UNKNOWN; admission/rate-limit failure also
+stops further GitHub reads in the same bounded collection. The same command also supports a portable,
 script-free offline HTML operator desk:
 
 ```sh
@@ -362,16 +368,25 @@ python3 scripts/zsentinel_recovery_policy.py \
 ```
 
 The HTML has a restrictive Content-Security-Policy, escaped labels,
-direct canonical PR links, **direct per-HEAD checks and changed-files links**
-for a stably observed PR, expandable sampled check/review evidence and
-clear UNKNOWN/HOLD signals. These links facilitate legitimate review,
+a prominent **suggested existing-PR owner action list**, direct canonical PR
+links, **direct per-HEAD checks and changed-files links**
+for a stably observed PR, expandable sampled check/review evidence,
+individual links to at most six observed failing and six queued/pending
+check runs, and clear UNKNOWN/HOLD signals. It distinguishes **sampled
+failing HEAD checks** (investigate the actual source failure before
+merging), **sampled waiting HEAD jobs** (investigate runner/queue admission),
+an existing draft, a non-main target, closed unmerged PR, and a reported
+merged PR (verify actual main merge commit). These are bounded first-page
+signals and never replace the complete protected-branch required checks
+or independent review requirements. These links facilitate legitimate review,
 not an automated CI-pass or merge decision. No remote assets, client-side API requests,
 tracking scripts or external style resources are included.
 
 Each candidate has a bounded current PR GET,
 a sample of at most 30 exact-HEAD check runs, at most 30 reviews, and a
-second PR GET to detect an intervening HEAD/state change: **at most 12 GETs
-across all candidates**. If an initial PR read or the final HEAD/state re-read fails, the
+second PR GET to detect an intervening HEAD/target/state change:
+**at most 13 GETs in total** (one original-issue read plus four per
+referenced PR). If an initial PR read or the final HEAD/state re-read fails, the
 candidate remains `UNKNOWN_PROVIDER`, not absent or merged. If the core
 PR source remains readable but a **secondary** check-run/review endpoint
 fails without an account-admission denial, the second PR read still
@@ -400,6 +415,16 @@ then separately generate a **HOLD-first** review worksheet using
 protection and ownership evidence from authorized sources. These are
 two deliberately separate steps; the live read is not a new gate and
 does not auto-merge any PR.
+
+
+The imported historical issue export timestamp, issue observation time,
+sample-truncation state and whether the original source was stale are
+retained separately from the new live GitHub GET clock. A live PR read
+**does not renew historical issue→PR linkage evidence**. The JSON
+`historical_case_provenance` and `current_issue` keep both types of
+evidence distinct, with active claims and release permission still false
+or UNKNOWN. The optional ordered `suggested_owner_review_order` is a
+small, non-executable review shortlist, **not** a task queue or dispatcher.
 
 ### Project- and priority-focused historical owner views
 
