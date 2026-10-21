@@ -585,9 +585,43 @@ def compare_snapshot(path: Path, current: dict) -> dict:
         raise ValueError("Previous report is not a supported bounded zCloud read-only snapshot.") from None
     new = {item["code"]: item["severity"] for item in current["findings"]}
     changed = sorted(set(old) & set(new))
+    # Optional reads can disappear simply because the next invocation omitted
+    # their flags. Missing measurement is NOT remediation of an old blocker.
+    optional_sources = {
+        "STORAGE_TRIAGE_PARTIAL": "storage_inventory",
+        "ARCHIVE_COLD_TIER_NOT_READY": "archive_readiness",
+        "ARCHIVE_WRITE_UNVERIFIED": "archive_readiness",
+        "ACTIVE_WORK_REQUIRES_DRAIN": "worker_safety",
+        "WORKER_EVIDENCE_INCOMPLETE": "worker_safety",
+        "WORKER_IDLE_NOT_PROVEN": "worker_safety",
+    }
+    ram_codes = {"LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE"}
+    disk_codes = {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW"}
+    disappeared = set(old) - set(new)
+    def reobserved(code: str) -> bool:
+        source = optional_sources.get(code)
+        if source and current.get(source) is None:
+            return False
+        resources = current.get("resources") or {}
+        if code in ram_codes and resources.get("available_ram_pct") is None:
+            return False
+        if code == "SWAP_EXHAUSTED" and resources.get("swap_used_pct") is None:
+            return False
+        if code in disk_codes and resources.get("disk_free_bytes") is None:
+            return False
+        if code in {"TRACKED_CHANGES", "UNTRACKED_FILES"} and (
+                "CHECKOUT_STATUS_UNAVAILABLE" in new or "CHECKOUT_UNAVAILABLE" in new):
+            return False
+        if code in {"RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_AMBIGUOUS",
+                    "RUNNER_UNIT_TRANSITIONING"} and current["runner"]["unit_state"] == "unavailable":
+            return False
+        return True
+    confirmed_resolved = sorted(code for code in disappeared if reobserved(code))
+    not_reobserved = sorted(disappeared - set(confirmed_resolved))
     return {
         "new_findings": sorted(set(new) - set(old)),
-        "resolved_findings": sorted(set(old) - set(new)),
+        "resolved_findings": confirmed_resolved,
+        "not_reobserved_findings": not_reobserved,
         "still_present": changed,
         "severity_changes": [
             {"code": code, "previous": old[code], "current": new[code]}
