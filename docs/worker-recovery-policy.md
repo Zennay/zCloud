@@ -500,7 +500,11 @@ incompatible source modes fail closed.
 
 The operation reads only GitHub's canonical issue, issue timeline,
 open-PR list and at most three PR/check/review observations, under the
-existing **20-GET upper bound**. It never performs a claim, retry,
+existing **20-GET upper bound**. A current issue's explicit `P0` through
+`P3` or `priority:p0` through `priority:p3` labels are surfaced as
+advisory priority only. Missing or conflicting priority labels result
+in `UNKNOWN`, never an invented emergency, owner claim or automatic
+escalation. No free-form issue title or body is exported. It never performs a claim, retry,
 workflow dispatch, merge, deployment, runner restart, SQLite mutation or
 Notion write. Partial/failed GitHub sources remain UNKNOWN, never `no
 repair exists`. A GitHub 401/403/429 in timeline or list discovery
