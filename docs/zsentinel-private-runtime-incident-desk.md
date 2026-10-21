@@ -300,3 +300,20 @@ Een integratie- of live-release mag pas na **exact-head verplichte CI,
 afzonderlijke review, beschermde branch en bevoegde owner/releaseactie**.
 `merge_authorized=false`, `deploy_authorized=false` en onvolledige claimdekking
 blijven behouden.
+
+
+## Eén providerweigering geldt voor het hele gekozen bronvenster
+
+Bij een **verifieerbare** GitHub-401 of API-quota-uitputting in de
+vastgepinde run/job-verversing worden de latere optionele issue- en
+PR-collectors voor datzelfde token niet alsnog afzonderlijk bevraagd.
+`issue_source=degraded_skipped_after_provider_denial` geeft expliciet
+nul vervolgreads door deze collector aan, **niet nul issues**.
+Expliciet opgegeven `--existing-pr PROJECT:NUMBER` blijft als veilige
+navigeerbare PR-link bewaard met `next_step=verify_pr_source_with_owner`,
+maar HEAD, review en CI-status worden niet verzonnen. Niet ontdekte
+PR’s blijven onbekend; de private HTML/JSON-handoff toont dit apart.
+Een GitHub-403 zonder bewezen globale limiet wordt niet portfolio-breed
+geblokkeerd: andere repositorybronnen kunnen wel onafhankelijk beschikbaar
+zijn. Deze logica wijzigt geen GitHub-ratelimits, kosten, claimleases,
+worker-, scheduler- of deploygedrag.
