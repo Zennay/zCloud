@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from datetime import datetime, timezone
 import hashlib
 from html import escape
 from io import BytesIO, StringIO
@@ -28,12 +29,61 @@ REPO = re.compile(r"Zennay/[A-Za-z0-9_.-]{1,100}\Z")
 ATTENTION = ("multiple-prs", "lost-issue-link", "missing-final-pr")
 
 
-def issue_worklist(report):
+def source_freshness(source_snapshots, *, stale_after_hours=6, evaluated_at=None):
+    """Label the newest saved observation's age, never live status.
+
+    A recent snapshot is still historical evidence. Clock-skewed or unreadable
+    timestamps fail closed and require a fresh source inspection.
+    """
+    if type(stale_after_hours) is not int or not 1 <= stale_after_hours <= 168:
+        raise ValueError("Stale threshold must be an integer from 1 to 168 hours")
+    now = evaluated_at or datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("Freshness evaluation time must be timezone-aware")
+    now = now.astimezone(timezone.utc)
+    raw = (source_snapshots[-1].get("latest_observed_utc")
+           if source_snapshots else None)
+    result = {
+        "status": "unknown",
+        "latest_observed_utc": raw if isinstance(raw, str) else None,
+        "evaluated_at_utc": now.isoformat(),
+        "age_hours": None,
+        "stale_after_hours": stale_after_hours,
+        "source_is_live": False,
+        "live_recheck_required_before_action": True,
+        "refresh_required": True,
+    }
+    try:
+        if not isinstance(raw, str) or not raw:
+            raise ValueError("Missing source timestamp")
+        observed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if observed.tzinfo is None or observed.utcoffset() is None:
+            raise ValueError("Source timestamp lacks timezone")
+        age_seconds = (now - observed.astimezone(timezone.utc)).total_seconds()
+        if age_seconds < -300:
+            result["status"] = "clock-skew"
+            return result
+        age_seconds = max(0.0, age_seconds)
+        stale = age_seconds > stale_after_hours * 3600
+        result.update({
+            "status": "stale" if stale else "recent-snapshot",
+            "age_hours": round(age_seconds / 3600, 2),
+            "refresh_required": stale,
+        })
+    except (ValueError, TypeError, OverflowError, OSError):
+        # Malformed timestamps must never be presented as recent.
+        pass
+    return result
+
+
+def issue_worklist(report, *, stale_after_hours=6):
     """Group truly linked canonical issue addresses across sampled existing PRs.
 
     An issue absent from these PR snapshots is unknown, not fixed or free.
     The same issue may have several existing PRs and independent current owners.
     """
+    freshness = source_freshness(
+        report["source_snapshots"], stale_after_hours=stale_after_hours)
     indexed = {}
     unlinked = []
     for candidate in report["entries"]:
@@ -166,6 +216,7 @@ def issue_worklist(report):
     return {
         "schema": "zsentinel-private-saved-issue-first-handoff-v1",
         "source": "existing_pr_issue_links_in_saved_private_snapshots_not_live",
+        "source_freshness": freshness,
         "scope": report["scope"],
         "source_snapshots": report["source_snapshots"],
         "total_distinct_saved_prs": report["distinct_pr_candidates"],
@@ -327,6 +378,14 @@ def html_content(result):
         '">' + e(p["priority"]) + ' · ' + e(p["url"]) + '</a></li>'
         for p in result["unlinked_prs"])
     selection = result["selection"]
+    freshness = result["source_freshness"]
+    freshness_age = (str(freshness["age_hours"]) + " uur"
+                     if freshness["age_hours"] is not None else "ONBEKEND")
+    freshness_warning = (
+        "Vernieuw de oorspronkelijke bron vóór beslissingen; dit dossier is historisch."
+        if freshness["refresh_required"] else
+        "De bron is historisch; controleer live eigenaar, CI en merge vóór actie."
+    )
     source_cards = []
     for item in result["source_snapshots"]:
         source_cards.append(
@@ -354,7 +413,8 @@ li{margin:8px 0;overflow-wrap:anywhere}details summary{cursor:pointer;padding:10
 <aside><strong>Geen actuele GitHub-issuescan.</strong> Dit zijn alleen de
 historische bronissues die al aan waargenomen bestaande PR's gekoppeld waren.
 Open/closed, actieve eigenaren, verplichte CI/review en merge zijn onbekend.
-Ontbrekende issuekoppelingen mogen geen vrije werkclaim suggereren.</aside>
+Ontbrekende issuekoppelingen mogen geen vrije werkclaim suggereren.</p>
+<p><strong>Bronactualiteit: """ + e(freshness["status"].upper()) + " · leeftijd " + e(freshness_age) + " · drempel " + str(freshness["stale_after_hours"]) + " uur · laatste waarneming UTC " + e(freshness["latest_observed_utc"] or "ONBEKEND") + ".</strong> " + e(freshness_warning) + " Evaluatiemoment UTC: " + e(freshness["evaluated_at_utc"]) + ". Een recente snapshot is geen live status.</p></aside>"""
 <details><summary>Bronherkomst · SHA256 en steekproefdekking</summary><ol>""" +
 "".join(source_cards) + """</ol><p>Bron-hashes identificeren opgeslagen
 manifesten, niet de huidige GitHub-status.</p></details><p>
@@ -385,6 +445,9 @@ Dit dossier doet geen dispatch, merge of deploy.</footer></main></body></html>""
 
 def markdown_content(result):
     sel = result["selection"]
+    freshness = result["source_freshness"]
+    freshness_age = (str(freshness["age_hours"]) + " uur"
+                     if freshness["age_hours"] is not None else "ONBEKEND")
     lines = ["# zSentinel · issue-eerst bestaande PR-werkrij", "",
              "> Alleen historische private PR-issues; geen owner, CI, review, "
              "GitHub-issue-openstatus, main-merge of live herstel geverifieerd.", "",
@@ -395,6 +458,12 @@ def markdown_content(result):
              "- Projectfilter: " + (sel["project_filter"] or "alle opgeslagen projecten"),
              "- Aandachtsfocus: " + (sel["attention_filter"] or "alle bronissues") +
              " (niet getoond betekent niet gesloten of vrij)",
+             "- Bronactualiteit: " + freshness["status"].upper() +
+             " · leeftijd " + freshness_age + " · drempel " +
+             str(freshness["stale_after_hours"]) + " uur · laatste bron UTC " +
+             str(freshness["latest_observed_utc"] or "ONBEKEND"),
+             "- Evaluatie UTC: " + freshness["evaluated_at_utc"] +
+             " · live status: NIET GEVERIFIEERD · live hercontrole vóór actie verplicht",
              "- PRs zonder bronissue in deze selectie: " +
              str(sel["selected_unlinked_prs_shown"]) +
              " / " + str(sel["source_unlinked_prs_total"]) +
@@ -485,7 +554,9 @@ def csv_content(result):
         "PR later zonder gekoppeld issue bemonsterd",
         "Prioriteit tijdens laatste echte issue-link",
         "Originele bron-UTC bij laatste issue-link",
-        "Projectfilter", "Aandachtsfocus",
+        "Projectfilter", "Aandachtsfocus", "Bronactualiteit",
+        "Leeftijd bron uren", "Bronactualiteit geëvalueerd UTC",
+        "Stale-drempel uren", "Live status geverifieerd",
     ])
     first_manifest = result["source_snapshots"][0]["original_review_manifest_sha256"]
     last_manifest = result["source_snapshots"][-1]["original_review_manifest_sha256"]
@@ -513,6 +584,11 @@ def csv_content(result):
                 p["time_at_last_issue_link"],
                 result["selection"]["project_filter"] or "ALLE",
                 result["selection"]["attention_filter"] or "ALLE",
+                result["source_freshness"]["status"],
+                result["source_freshness"]["age_hours"] if result["source_freshness"]["age_hours"] is not None else "ONBEKEND",
+                result["source_freshness"]["evaluated_at_utc"],
+                result["source_freshness"]["stale_after_hours"],
+                "NEE",
             ])
     for p in result["unlinked_prs"]:
         writer.writerow([
@@ -527,6 +603,11 @@ def csv_content(result):
             "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND",
             result["selection"]["project_filter"] or "ALLE",
             result["selection"]["attention_filter"] or "ALLE",
+            result["source_freshness"]["status"],
+            result["source_freshness"]["age_hours"] if result["source_freshness"]["age_hours"] is not None else "ONBEKEND",
+            result["source_freshness"]["evaluated_at_utc"],
+            result["source_freshness"]["stale_after_hours"],
+            "NEE",
         ])
     return "\ufeff" + source.getvalue()
 
@@ -557,6 +638,7 @@ def private_issue_package(report):
         "selected_issue": report["selection"]["exact_source_issue_filter"],
         "selected_project": report["selection"]["project_filter"],
         "historical_attention_focus": report["selection"]["attention_filter"],
+        "source_freshness": report["source_freshness"],
         "selected_issue_count": report["selection"]["shown_source_issues"],
         "matched_issue_count_in_selected_scope": report["selection"]["matched_source_issues"],
         "source_total_issue_count": report["selection"]["total_source_issues"],
@@ -619,6 +701,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, action="append", required=True,
                         help="Chronological private ZIP, 1..12 times")
+    parser.add_argument("--stale-after-hours", type=int, default=6,
+                        help="Mark saved evidence stale after 1..168 hours (default: 6)")
     parser.add_argument("--priority", choices=PRIORITIES)
     parser.add_argument("--project", help="Canonical saved repository, e.g. Zennay/zCloud")
     parser.add_argument("--attention", choices=ATTENTION,
@@ -633,7 +717,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         source = build_timeline(args.source, minimum_sources=1)
-        issue_report = issue_worklist(source)
+        issue_report = issue_worklist(
+            source, stale_after_hours=args.stale_after_hours)
         filtered = filter_issue_page(
             issue_report, priority=args.priority, issue_url=args.inspect_issue,
             project=args.project, attention=args.attention,
@@ -657,7 +742,10 @@ def main(argv=None):
               str(filtered["selection"]["shown_source_issues"]) + " issue(s) shown, " +
               str(issue_report["linked_issue_count"]) + " source-linked, " +
               str(issue_report["pr_without_source_issue_count"]) +
-              " original PRs without an issue reference. Filters never imply closure, owner availability or merge.")
+              " original PRs without an issue reference. Source freshness=" +
+              issue_report["source_freshness"]["status"] + ", age_hours=" +
+              str(issue_report["source_freshness"]["age_hours"]) +
+              ". Freshness never implies current owner availability or merge.")
         return 0
     except (OSError, ValueError, TypeError, KeyError, UnicodeError,
             BadZipFile, OverflowError) as exc:
