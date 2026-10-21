@@ -68,6 +68,43 @@ def _work_number(value):
     return None
 
 
+def _native_row(row, known):
+    """Normalize one genuine Notion API property payload without titles.
+
+    This remains an unverified, locally supplied source. A malformed source
+    row cannot become a positive claim or a dispatch/ownership permission.
+    """
+    properties = row.get("properties")
+    page_id = row.get("id")
+    if (type(properties) is not dict or not isinstance(page_id, str)
+            or not UUID.fullmatch(page_id)
+            or any(key in row for key in ("Work ID", "Status", "Project"))):
+        raise ValueError("ambiguous or invalid native Notion row")
+    work_prop = properties.get("Work ID")
+    status_prop = properties.get("Status")
+    project_prop = properties.get("Project")
+    if (type(work_prop) is not dict or work_prop.get("type") != "number"
+            or type(status_prop) is not dict or status_prop.get("type") != "status"
+            or type(status_prop.get("status")) is not dict):
+        raise ValueError("native Notion row missing typed work/status properties")
+    work = _work_number(work_prop.get("number"))
+    status = status_prop["status"].get("name")
+    if (type(project_prop) is not dict or project_prop.get("type") != "relation"
+            or project_prop.get("has_more") is True):
+        # Never infer a project from titles or a truncated relation.
+        label = "onbekend"
+    else:
+        relations = project_prop.get("relation")
+        if (type(relations) is not list or len(relations) != 1
+                or type(relations[0]) is not dict
+                or not isinstance(relations[0].get("id"), str)
+                or not UUID.fullmatch(relations[0]["id"])):
+            label = "onbekend"
+        else:
+            label = known.get(relations[0]["id"].replace("-", "").lower(), "onbekend")
+    return work, status, label, page_id.lower()
+
+
 def observe_saved_connector(source_file: Path, data_source_id: str,
                             known: dict, now=None):
     """Return privacy-minimal active-status lower bounds for this one snapshot.
@@ -102,19 +139,25 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
             or response.get("next_cursor") not in (None, "")):
         # An old or cursor-continued page is never a complete claim snapshot.
         raise ValueError("Notion snapshot incomplete or not bound to exact source")
-    seen, active, counts = set(), [], {}
+    seen, page_ids, active, counts = set(), set(), [], {}
     for row in rows:
         if type(row) is not dict:
             raise ValueError("invalid Notion work record")
-        work = _work_number(row.get("Work ID"))
+        if "properties" in row:
+            work, status, label, page_id = _native_row(row, known)
+            if page_id in page_ids:
+                raise ValueError("duplicate native Notion page identity")
+            page_ids.add(page_id)
+        else:
+            work = _work_number(row.get("Work ID"))
+            status = row.get("Status")
+            label = _project(row.get("Project"), known)
         if work is None or work in seen:
             raise ValueError("duplicate/out-of-range Notion work identity")
         seen.add(work)
-        status = row.get("Status")
         if status not in ACTIVE:
             # Filtering to active Notion statuses is mandatory, not optional.
             raise ValueError("Notion snapshot not restricted to active work")
-        label = _project(row.get("Project"), known)
         counts[label] = counts.get(label, 0) + 1
         active.append({"work": f"PWQ-{work}", "project": label, "status": status})
     active.sort(key=lambda r: (r["project"], r["work"]))
