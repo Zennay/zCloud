@@ -434,12 +434,15 @@ def classify_backlog_item(project, item):
     ).lower()
     scored = [(_lane_score(text, lane, profile), index, lane) for index, lane in enumerate(lanes)]
     score, _, lane = max(scored, key=lambda value: (value[0], -value[1]))
+    routing_origin = "KEYWORD_CLASSIFICATION" if score > 0 else "NO_KEYWORD_FALLBACK"
     # Unknown product work belongs to product remediation, not the PR
     # release lane. A title without "PR"/"merge" evidence must never
     # masquerade as an unfinished product PR.
     if score <= 0:
         lane = (next(l for l in lanes if l["id"] == "product-remediation")
                 if profile == "portfolio-recovery" else lanes[0])
+        if profile == "portfolio-recovery":
+            routing_origin = "PRODUCT_REMEDIATION_FALLBACK"
     if (profile == "portfolio-recovery"
             and str(item.get("status") or "").strip().lower() in ACTIVE_STATUSES):
         # An existing active worker owns the *persisted* canonical lane,
@@ -453,10 +456,12 @@ def classify_backlog_item(project, item):
                 pinned = next((l for l in lanes if l["id"] == lane_id), None)
                 if pinned is not None:
                     lane = pinned
+                    routing_origin = "PERSISTED_ACTIVE_LANE"
     project_id = str(project.get("id") or item.get("project_id") or "").strip().lower()
     return {
         "lane_id": lane["id"],
         "profile": profile,
+        "routing_origin": routing_origin,
         "scope": _lane_scope(project_id, lane["id"], item),
     }
 
@@ -775,6 +780,8 @@ def generate_execution_lanes(project, backlog, claims=()):
             "project_id": project_id,
             "profile": profile,
             "lane_id": lane_id,
+            "routing_origin": (chosen.get("routing_origin", "UNKNOWN")
+                               if chosen else "NO_LOCAL_TASK"),
             "queue_id": str(chosen.get("queue_id") or "") if chosen else None,
             "status": str(chosen.get("status") or "") if chosen else "blocked" if (blocked_by or deferred_qa_by_lane[lane_id]) else "idle",
             "deferred_qa_packages": deferred_qa_by_lane[lane_id],
