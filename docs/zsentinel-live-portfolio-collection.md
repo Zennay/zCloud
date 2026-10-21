@@ -181,3 +181,34 @@ review en productie-eigenaar blijven de enige geldige autoriteitsroute.
 
 Dit bestand beschrijft source-codeproductgedrag op de open zCloud PR, **niet**
 een reeds gemergede main-versie of live geautoriseerde scheduler.
+
+
+## 21 oktober · Notion-claimimport zonder handmatige veldconversie
+
+De bestaande `--notion-claims-export PRIVATE.json`-ingang (live-cockpit,
+productissuebord en portfolioweergave) accepteert nu beide concrete
+*opgeslagen* responsvormen binnen dezelfde strikte
+`zsentinel-notion-connector-snapshot-v1` wrapper:
+
+- Genormaliseerde connectorrijen met `Work ID: 433` **of**
+  `Work ID: "PWQ-433"`, `Status: "Claimed" | "Running"` en de
+  relationele `Project` als één canonieke URL, als JSON-lijst of
+  vooraf geserialiseerde JSON-lijst. Een optionele Notion `?pvs=204`
+  verwijdert de projectidentiteit niet meer.
+- Ongewijzigde Notion-API paginarijen met unieke UUID `id` en
+  getypeerde `properties["Work ID"].number`,
+  `properties["Status"].status.name` en
+  `properties["Project"].relation` met exact één UUID die voorkomt in
+  het canonieke projectregister. Een afgekapt/onbekend project wordt
+  weergegeven als **ONBEKEND**, niet als vrije of verifieerbare claim.
+
+De operator bewaart de werkelijke bron-`observed_at_utc` en data-source
+in de bestaande wrapper; een oud bestand opnieuw inpakken maakt de bron
+niet live. Bestaande strikte eisen blijven: unieke Work IDs, alleen
+Claimed/Running, geen cursor of incomplete paginering, ≤100 rijen,
+≤128 KiB, ≤10 minuten oud, geen symlink, geen dubbele JSON-sleutels.
+Een ongeldige of conflicterende rij degradeert de hele optionele
+Notion-bron. Import is alleen een **positieve statusaanwijzing**;
+werkelijke claimhouder, scope, bestandsrechten, dispatch, merge, runner
+en productieherstel blijven onbewezen en ongeautoriseerd. De tool voert
+geen Notion-write of GitHub/VPS-actie uit.
