@@ -295,12 +295,37 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
                 str(pr["pr_number"]) + '</a> · saved ' +
                 e(pr["source_priority"]) + ' · observed gate ' +
                 e(pr["observed_primary_gate"]) +
+                ' · PR-last observed HEAD <code>' +
+                e(pr["observed_head"] or "UNKNOWN") + '</code>' +
+                ' · HEAD at last issue link <code>' +
+                e(pr["head_at_last_issue_link"] or "UNKNOWN") + '</code>' +
+                (' · <strong>HEAD changed in sampled history</strong> (' +
+                 str(pr["observed_head_changes"]) + ' observed transitions)'
+                 if pr["observed_head_changes"] else '') +
                 ' · last issue-link source #' +
                 str(pr["issue_ref_last_seen_snapshot"]) +
+                (' · <strong>Issue link disappeared while PR remained sampled;'
+                 ' verify current PR description and owner</strong>'
+                 if pr["pr_observed_after_link_absent"] else '') +
                 (' · issue-link NOT seen in final sample (UNKNOWN)'
                  if pr["issue_ref_absent_in_last_snapshot"] else '') +
+                (' · <strong>PR absent from final saved sample;'
+                 ' NOT confirmed merged</strong>'
+                 if pr["missing_from_final_sample"] else '') +
                 '</li>')
         omitted = len(match["linked_existing_prs"]) - len(prs)
+        issue_attention = (
+            "<p><strong>Historical source-review focus:</strong> " +
+            e(match["triage_focus"]) +
+            " No current issue-fix or owner authorization inferred.</p>"
+            "<p>Source-bound links lost while PR still sampled: " +
+            str(match["links_lost_while_pr_still_sampled"]) +
+            " · PRs absent from final saved batch: " +
+            str(match["sampled_prs_missing_from_final"]) +
+            " · multiple PR candidates: " +
+            ("YES" if match["multiple_candidate_prs_need_owner_review"] else "NO") +
+            ". Check current HEAD/CI/review, issue references and active leases.</p>"
+        )
         cards.append(
             '<article class="brief"><details><summary>' +
             e(card["priority"]) + ' ' + e(card["issue"]) + ' · ' +
@@ -309,7 +334,7 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
             'rel="noopener noreferrer" href="' + e(card["url"]) + '">' +
             e(card["title"]) +
             '</a> · Old saved PR references only; live ownership/CI/review '
-            'remain UNKNOWN.</p><ol>' +
+            'remain UNKNOWN.</p>' + issue_attention + '<ol>' +
             ''.join(prs) + '</ol>' +
             ('<p>' + str(omitted) +
              ' other saved PR references not displayed. NOT resolved.</p>'
@@ -319,6 +344,18 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
         if row["issue_url"] not in visited
     ]
     unlinked_prs = report["unlinked_prs"]
+    source_freshness = report["source_freshness"]
+    if (source_freshness.get("source_is_live") is not False or
+            source_freshness.get("live_recheck_required_before_action") is not True or
+            report.get("main_merge_verified") is not False or
+            report.get("owner_claim_verified") is not False):
+        raise ValueError("Saved PR issue evidence may not claim live authorizations")
+    source_age = (str(source_freshness["age_hours"]) + " hours"
+                  if source_freshness.get("age_hours") is not None else "UNKNOWN")
+    latest_source = (report["source_snapshots"][-1]["latest_observed_utc"]
+                     if report["source_snapshots"] else "UNKNOWN")
+    missing_batches = any(bool(x["missing_batch_indexes"])
+                          for x in report["source_snapshots"])
     unlinked_links = [
         '<li><a href="' + e(pr["url"]) +
         '" target="_blank" rel="noopener noreferrer">' +
@@ -343,7 +380,15 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
         'sources were validated independently, so a missing link never proves '
         'that a project has no PR or an issue is free. Active owner, current '
         'HEAD, required CI, independent review and main merge remain UNKNOWN.</p>'
-        '<p>PR sources: ' + str(len(report["source_snapshots"])) +
+        '<p><strong>Original ZIP source freshness: ' +
+        e(source_freshness["status"]) +
+        '</strong> · observed ' + e(latest_source) +
+        ' · age ' + e(source_age) +
+        ' · live source/issue/CI/owner unverified.' +
+        (' At least one original archive has missing batches; '
+         'omitted PRs stay UNKNOWN.' if missing_batches else
+         ' No missing archive batches reported; live inventory still UNKNOWN.') +
+        '</p><p>PR sources: ' + str(len(report["source_snapshots"])) +
         ' · matched board issues: ' + str(len(cards)) +
         ' · other source-linked issues: ' + str(len(other_issues)) +
         ' · PRs without saved issue links: ' +
