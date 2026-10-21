@@ -965,13 +965,22 @@ def render_markdown(board):
                          (" · VEROUDERD" if win["stale_after_10_minutes"] else ""))
 
     if notion:
-        lines.extend(["", "## Notion actief werk (statuswaarneming, geen file-owner)",
+        lines.extend(["", "## Notion onafgerond werk (geen file-owner)",
                       "Dekking: " + _markdown_literal(notion["coverage"]),
                       "Bron: " + _markdown_literal(notion["observed_at_utc"])])
+        verifying = notion.get("verifying_project_min")
+        if verifying is not None and (
+                type(verifying) is not dict or
+                set(verifying) != set(notion["active_project_min"])):
+            raise ValueError("untrusted Notion verification workboard")
         for pid, amount in notion["active_project_min"].items():
-            lines.append("- " + _markdown_literal(pid) + ": " +
-                         ("minstens " + str(amount) + " actief" if amount
-                          else "ONBEKEND; geen vrijgavebewijs"))
+            line = ("- " + _markdown_literal(pid) + ": " +
+                    ("minstens " + str(amount) + " onafgerond" if amount
+                     else "ONBEKEND; geen vrijgavebewijs"))
+            if verifying is not None and verifying[pid] is not None:
+                line += (" · Verifying minstens " + str(verifying[pid]) +
+                         " · eigenaar/review opnieuw controleren")
+            lines.append(line)
     if progress is not None:
         change_map = {entry["issue_url"]: entry for entry in progress["observed_changes"]}
         lines.extend([
