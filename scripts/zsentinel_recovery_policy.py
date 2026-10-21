@@ -628,6 +628,67 @@ def evaluate_batch(data, max_age_minutes):
     }
 
 
+def workorders_html(batch):
+    """Static, offline, script-free owner cockpit for a validated batch."""
+    esc = lambda value: html.escape(str(value), quote=True)
+    counts = batch["decision_counts"]
+    parts = [
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
+        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none';\">",
+        "<title>zSentinel | incident workorders</title>",
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1000px;"
+        "padding:1.5rem;margin:auto;background:#f8fafc;color:#172538}"
+        "header{border-bottom:2px solid #29374d;padding-bottom:1rem}"
+        "section{background:white;border:1px solid #ccd5e0;"
+        "border-left:5px solid #a75a14;border-radius:.6rem;"
+        "padding:1rem;margin:1rem 0;overflow-wrap:anywhere}"
+        "section.ready{border-left-color:#286454}"
+        "h1{font-size:1.7rem}h2{font-size:1.12rem;margin:.3rem 0}"
+        "p{margin:.4rem 0}strong{font-weight:700}"
+        "summary{cursor:pointer;font-weight:600;padding:.3rem 0}"
+        "a{color:#1458a1}a:focus-visible,summary:focus-visible{outline:3px solid #1458a1}"
+        ".muted{color:#4a596f}.status{font-weight:700}"
+        "ul{padding-left:1.4rem}code{word-break:break-word}</style>",
+        "</head><body><header><h1>zSentinel incident workorders</h1>",
+        "<p><strong>Advisory only.</strong> This is supplied policy evidence, "
+        "not live GitHub/Notion verification, claim admission or release approval.</p>",
+        "<p>Observed: <time>" + esc(batch["evaluated_at_utc"]) + "</time>"
+        " · incidents: " + str(batch["incident_count"]) +
+        " · HOLD proposals: " + str(counts["HOLD"]) +
+        " · policy-ready proposals: " + str(counts["READY_FOR_HUMAN_REVIEW"]) +
+        "</p></header><main>",
+    ]
+    for item in batch["owner_workorders"]:
+        held = item["decision"] == "HOLD"
+        codes = ", ".join(item["problem_codes"]) if item["problem_codes"] else (
+            "No supplied-policy HOLD; live checks remain mandatory"
+        )
+        parts.extend([
+            "<section" + ("" if held else " class='ready'") + " aria-label='Incident'>",
+            "<h2>" + esc(item["project_id"]) + " / " + esc(item["incident_id"]) + "</h2>",
+            "<p><strong>Problem:</strong> " + esc(codes) + "</p>",
+            "<p><strong>Action:</strong> " + esc(item["next_step"]) +
+            " · proposals: " + esc(", ".join(item["proposed_actions"])) +
+            " · owner: " + esc(item["owner"] or "UNKNOWN") + "</p>",
+            "<p class='status'><strong>Status:</strong> " + esc(item["decision"]) + "</p>",
+            "<details><summary>Source receipts and boundaries</summary>",
+            "<p class='muted'>Locally supplied, not independently verified. "
+            "Human review required; no retry, claim, merge, deploy or restart.</p>",
+            "<ul>",
+        ])
+        for url in item["source_urls"]:
+            parts.append("<li><a href='" + esc(url) +
+                         "' target='_blank' rel='noopener noreferrer'>" +
+                         esc(url) + "</a></li>")
+        parts.append("</ul></details></section>")
+    parts.append("</main><footer><p class='muted'>Never treat these cards as "
+                 "active-owner verification or permission to change runtime state."
+                 "</p></footer></body></html>\n")
+    return "".join(parts)
+
+
 def markdown(report):
     lines = [
         "# zSentinel recovery policy decision",
@@ -788,7 +849,7 @@ def main(argv=None):
     parser.add_argument("--incident-id", help="incident slug used by --template")
     parser.add_argument("--source-url", help="canonical HTTPS GitHub/Notion source used by --template")
     parser.add_argument("--owner", help="known owner slug used by --template; omit if unknown")
-    parser.add_argument("--format", choices=("json", "markdown", "workorders"), default="json")
+    parser.add_argument("--format", choices=("json", "markdown", "workorders", "html"), default="json")
     parser.add_argument("--fail-on-hold", action="store_true", help="return exit code 2 when a valid evaluation contains any HOLD")
     parser.add_argument("--max-age-minutes", type=int, default=60,
                         help="maximum accepted observation age (1..1440; default 60)")
@@ -825,7 +886,8 @@ def main(argv=None):
             data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                               parse_constant=_reject_constant)
             report = evaluate_batch(data, args.max_age_minutes)
-            output = (workorders_text(report) if args.format == "workorders" else
+            output = (workorders_html(report) if args.format == "html" else
+                      workorders_text(report) if args.format == "workorders" else
                       markdown_batch(report) if args.format == "markdown" else
                       json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
             encoded = output.encode("utf-8")
@@ -838,8 +900,8 @@ def main(argv=None):
             return 2
     if not args.input:
         parser.error("either --input, --batch-input or --template is required")
-    if args.format == "workorders":
-        parser.error("--format workorders requires --batch-input")
+    if args.format in ("workorders", "html"):
+        parser.error("--format workorders/html requires --batch-input")
     if any((args.project_id, args.incident_id, args.source_url, args.owner)):
         parser.error("template identity options require --template")
     try:
