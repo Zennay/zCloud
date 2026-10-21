@@ -499,11 +499,29 @@ def _batch_workorders(results):
     ))
 
 
+def _observation_disclosure(batch):
+    """Distinguish a historical case export from the local policy clock."""
+    evaluated = batch["evaluated_at_utc"]
+    generated = batch.get("source_generated_at_utc")
+    if generated is None:
+        return "Policy evaluated locally: " + evaluated + " (supplied evidence unverified)"
+    state = "STALE" if batch["source_case_stale"] else "HISTORICAL"
+    queue = batch.get("source_queue_observed_at_utc")
+    queue_status = batch.get("source_queue_stale")
+    return (
+        "Source case exported: " + generated + " [" + state + "]"
+        + (" | Queue observed: " + queue + (" [STALE]" if queue_status else " [sampled]")
+           if queue is not None else " | Queue observation: UNKNOWN")
+        + " | Policy evaluated locally: " + evaluated
+        + " | No live source verification"
+    )
+
+
 def workorders_text(batch):
     """Compact three-line per-incident owner handoff, not a job dispatcher."""
     lines = [
         "zSentinel | advisory incident workorders",
-        "Observed: " + batch["evaluated_at_utc"] +
+        _observation_disclosure(batch) +
         " | Incident groups: " + str(batch["incident_count"]) +
         " | No independent source verification or execution.",
         "",
@@ -659,7 +677,7 @@ def workorders_html(batch):
         "</head><body><header><h1>zSentinel incident workorders</h1>",
         "<p><strong>Advisory only.</strong> This is supplied policy evidence, "
         "not live GitHub/Notion verification, claim admission or release approval.</p>",
-        "<p>Observed: <time>" + esc(batch["evaluated_at_utc"]) + "</time>"
+        "<p>" + esc(_observation_disclosure(batch)) +
         " · incidents: " + str(batch["incident_count"]) +
         " · HOLD proposals: " + str(counts["HOLD"]) +
         " · policy-ready proposals: " + str(counts["READY_FOR_HUMAN_REVIEW"]) +
@@ -802,6 +820,7 @@ def evaluate_recovery_case(data):
     retry_stale = retry_cov.get("source_stale")
     if type(retry_stale) is not bool:
         raise PolicyInputError("queue source freshness status missing")
+    queue_observed = None
     if covered is True:
         try:
             queue_observed = _timestamp(retry_cov.get("observed_at"))
@@ -878,6 +897,12 @@ def evaluate_recovery_case(data):
         "schema_version": 1, "policy": "zsentinel-recovery-case-handoff-v1",
         "evaluated_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "source_generated_at_utc": generated.isoformat().replace("+00:00", "Z"),
+        "source_case_stale": case_old,
+        "source_queue_observed_at_utc": (
+            queue_observed.isoformat().replace("+00:00", "Z")
+            if queue_observed is not None else None
+        ),
+        "source_queue_stale": retry_stale if covered else None,
         "source_project_scope": project,
         "incident_count": len(orders), "request_count": len(orders),
         "decision_counts": {"HOLD": len(orders), "READY_FOR_HUMAN_REVIEW": 0},
