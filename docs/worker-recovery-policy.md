@@ -650,3 +650,7 @@ python3 scripts/zsentinel_recovery_policy.py \
 ```
 
 Use a new output filename in an existing owner-controlled private directory. The existing output cap and create-only mode-0600 contract still apply. This is a presentation route only: it does not check live providers, acquire claims, retry CI, merge, deploy or restart runners.
+
+## Claim-state gates for execution-impacting recovery
+
+Retry, root-fix routing, independent task admission, parking/resuming a task, merging a PR, deploying and restarting a runner now all require the observed claim state to be explicitly none. Missing or unknown claim evidence is a HOLD; an active claim must not be displaced by a second recovery action. Human escalation is different: it may be routed to a known current owner, but unknown ownership remains blocked. These policy decisions are advisory only and do not change any live claim, queue, runner or release state.
