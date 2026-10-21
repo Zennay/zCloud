@@ -110,7 +110,8 @@ def prioritize_observed_work(rows):
     return [row for _, row in sorted(ranked, key=lambda item: item[0])]
 
 
-def observed_issue_inbox(rows, unlinked, partial, repo_projects, limit=48):
+def observed_issue_inbox(rows, unlinked, partial, repo_projects,
+                         source_inventory=None, limit=48):
     """Turn the *observed* P0/P1 issue window into a read-only action inbox.
 
     A selected PR's explicit issue reference is an inspection hint, not a fix,
@@ -121,7 +122,32 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects, limit=48):
         raise ValueError("invalid bounded issue inbox limit")
     if not isinstance(repo_projects, dict):
         raise ValueError("missing canonical project registry")
+    if source_inventory is None:
+        source_inventory = []
+    if not isinstance(source_inventory, list) or len(source_inventory) > 300:
+        raise ValueError("invalid bounded issue source")
     issue_map = {}
+    for source_issue in source_inventory:
+        repo, number = source_issue["repo"], source_issue["number"]
+        key = (repo, number)
+        if key in issue_map:
+            raise ValueError("duplicate canonical priority issue")
+        candidates = source_issue["candidate_pr_numbers"]
+        if (not isinstance(candidates, list) or len(candidates) > 10
+                or any(type(n) is not int or not 1 <= n <= 9999999
+                       for n in candidates) or len(set(candidates)) != len(candidates)):
+            raise ValueError("invalid source PR candidates")
+        issue_map[key] = {
+            "repo": repo, "number": number,
+            "priority": source_issue["priority"],
+            "title": source_issue["title"], "url": source_issue["url"],
+            "reference_coverage": "OBSERVED_PRIORITY_ISSUE_AND_RECENT_PR_PAGE",
+            "linked_prs": [], "ownership": "NOT_INFERABLE",
+            "candidate_pr_numbers": candidates,
+            "candidate_pr_count_in_sample": source_issue["candidate_pr_count_in_sample"],
+            "candidate_prs_omitted": source_issue["candidate_prs_omitted"],
+            "candidate_pr_source": "UNVERIFIED_RECENT_OPEN_PR_LISTING",
+        }
     for row in rows:
         repo = row["repo"]
         for ref in row.get("observed_issue_refs") or []:
@@ -133,6 +159,8 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects, limit=48):
                 "title": ref["title"], "url": ref["url"],
                 "reference_coverage": "SELECTED_PR_SOURCE_ONLY",
                 "linked_prs": [], "ownership": "NOT_INFERABLE",
+                "candidate_pr_numbers": [], "candidate_pr_count_in_sample": 0,
+                "candidate_prs_omitted": 0, "candidate_pr_source": "NOT_OBSERVED",
             })
             if (entry["priority"] != ref["priority"]
                     or entry["title"] != ref["title"] or entry["url"] != ref["url"]):
@@ -162,6 +190,8 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects, limit=48):
             "priority": ref["priority"], "title": ref["title"],
             "url": ref["url"], "reference_coverage": "UNLINKED_WITHIN_SELECTED_PR_WINDOW",
             "linked_prs": [], "ownership": "NOT_INFERABLE",
+            "candidate_pr_numbers": [], "candidate_pr_count_in_sample": 0,
+            "candidate_prs_omitted": 0, "candidate_pr_source": "NOT_OBSERVED",
         }
     # First prefer existing PRs for the same severity; source-unknown issues
     # are still explicitly shown, never silently assigned to a new worker.
