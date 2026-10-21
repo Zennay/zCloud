@@ -555,6 +555,9 @@ def csv_content(report):
         "Link in laatste PR-steekproef", "Link in laatste totaalsample",
         "Issue live opgelost bewezen",
         "Originele reviewmanifest-SHAs", "Ontbrekende bronbatches per snapshot",
+        "Issue PR kandidaten in filter", "Issue PR links laatste totaalsample",
+        "Issue ontbrekende PRs laatste totaalsample",
+        "Issue koppelingen per origineel bronmoment",
     ])
     for item in report["entries"]:
         writer.writerow([
@@ -589,6 +592,13 @@ def csv_content(report):
             json.dumps({str(src["index"]): src["missing_batch_indexes"]
                         for src in report["source_snapshots"]
                         if src["missing_batch_indexes"]}, sort_keys=True),
+            ((report.get("issue_focus_summary") or {}).get("matched_saved_prs", "")),
+            ((report.get("issue_focus_summary") or {}).get(
+                "linked_in_final_source_snapshot", "")),
+            ((report.get("issue_focus_summary") or {}).get(
+                "prs_absent_from_final_source_snapshot", "")),
+            json.dumps((report.get("issue_focus_summary") or {}).get(
+                "per_source_observed_linked_pr_counts", []), sort_keys=True),
         ])
     return "\ufeff" + target.getvalue()
 
