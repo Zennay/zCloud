@@ -280,12 +280,12 @@ def render_json(report):
 
 
 def render_csv(report):
-    """Emit one spreadsheet-safe row per selected issue and repeat source provenance."""
+    """Emit a provenance summary plus spreadsheet-safe rows for selected issues."""
     display = report["display"]
     old_freshness = report["old_source_freshness"]
     new_freshness = report["new_source_freshness"]
     fields = (
-        "schema", "source", "source_scope",
+        "record_type", "schema", "source", "source_scope",
         "old_manifest_sha256", "new_manifest_sha256",
         "old_latest_observed_utc", "new_latest_observed_utc",
         "old_freshness_status", "old_freshness_age_hours",
@@ -310,37 +310,54 @@ def render_csv(report):
     writer = csv.DictWriter(out, fieldnames=fields, lineterminator="\\r\\n",
                             quoting=csv.QUOTE_MINIMAL)
     writer.writeheader()
+    metadata = {
+        "record_type": "summary",
+        "schema": report["schema"], "source": report["source"],
+        "source_scope": report.get("source_scope"),
+        "old_manifest_sha256": report["old_manifest_sha256"],
+        "new_manifest_sha256": report["new_manifest_sha256"],
+        "old_latest_observed_utc": report["old_latest_observed_utc"],
+        "new_latest_observed_utc": report["new_latest_observed_utc"],
+        "old_freshness_status": old_freshness["status"],
+        "old_freshness_age_hours": old_freshness["age_hours"],
+        "old_freshness_stale_after_hours": old_freshness["stale_after_hours"],
+        "old_freshness_evaluated_at_utc": old_freshness["evaluated_at_utc"],
+        "new_freshness_status": new_freshness["status"],
+        "new_freshness_age_hours": new_freshness["age_hours"],
+        "new_freshness_stale_after_hours": new_freshness["stale_after_hours"],
+        "new_freshness_evaluated_at_utc": new_freshness["evaluated_at_utc"],
+        "old_sample_missing_batches": report["old_sample_missing_batches"],
+        "new_sample_missing_batches": report["new_sample_missing_batches"],
+        "old_sample_issues": report["old_sample_issues"],
+        "new_sample_issues": report["new_sample_issues"],
+        "total_distinct_source_issues": report["total_distinct_source_issues"],
+        "newly_sampled_issues_total": report["counts"]["newly_sampled_issues"],
+        "not_seen_in_newer_sample_total": report["counts"]["not_seen_in_newer_sample"],
+        "changed_existing_issue_prs_total": report["counts"]["changed_existing_issue_prs"],
+        "unchanged_sampled_issues_total": report["counts"]["unchanged_sampled_issues"],
+        "filter_priority": display["priority"],
+        "filter_repository": display["repository"],
+        "filter_changed_only": display["change_only"],
+        "page": display["page"], "page_size": display["page_size"],
+        "total_pages": display["total_pages"], "shown": display["shown"],
+        "matched": display["matched"],
+        "sample_absence_is_not_resolution": report["sample_absence_is_not_resolution"],
+        "worker_claim_authorized": report["worker_claim_authorized"],
+        "required_ci_review_verified": report["required_ci_review_verified"],
+        "merged_on_main_verified": report["merged_on_main_verified"],
+        "live_verified": report["live_verified"],
+    }
+
+    def emit(record):
+        writer.writerow({name: _csv_cell(record.get(name)) for name in fields})
+
+    # The summary row preserves provenance and honest zero-match information
+    # even when filters select no issue rows.
+    emit(metadata)
     for issue in report["issues"]:
-        record = {
-            "schema": report["schema"], "source": report["source"],
-            "source_scope": report.get("source_scope"),
-            "old_manifest_sha256": report["old_manifest_sha256"],
-            "new_manifest_sha256": report["new_manifest_sha256"],
-            "old_latest_observed_utc": report["old_latest_observed_utc"],
-            "new_latest_observed_utc": report["new_latest_observed_utc"],
-            "old_freshness_status": old_freshness["status"],
-            "old_freshness_age_hours": old_freshness["age_hours"],
-            "old_freshness_stale_after_hours": old_freshness["stale_after_hours"],
-            "old_freshness_evaluated_at_utc": old_freshness["evaluated_at_utc"],
-            "new_freshness_status": new_freshness["status"],
-            "new_freshness_age_hours": new_freshness["age_hours"],
-            "new_freshness_stale_after_hours": new_freshness["stale_after_hours"],
-            "new_freshness_evaluated_at_utc": new_freshness["evaluated_at_utc"],
-            "old_sample_missing_batches": report["old_sample_missing_batches"],
-            "new_sample_missing_batches": report["new_sample_missing_batches"],
-            "old_sample_issues": report["old_sample_issues"],
-            "new_sample_issues": report["new_sample_issues"],
-            "total_distinct_source_issues": report["total_distinct_source_issues"],
-            "newly_sampled_issues_total": report["counts"]["newly_sampled_issues"],
-            "not_seen_in_newer_sample_total": report["counts"]["not_seen_in_newer_sample"],
-            "changed_existing_issue_prs_total": report["counts"]["changed_existing_issue_prs"],
-            "unchanged_sampled_issues_total": report["counts"]["unchanged_sampled_issues"],
-            "filter_priority": display["priority"],
-            "filter_repository": display["repository"],
-            "filter_changed_only": display["change_only"],
-            "page": display["page"], "page_size": display["page_size"],
-            "total_pages": display["total_pages"], "shown": display["shown"],
-            "matched": display["matched"],
+        record = dict(metadata)
+        record.update({
+            "record_type": "issue",
             "issue_url": issue["issue_url"], "repository": issue["repository"],
             "priority": issue["priority"], "old_priority": issue["old_priority"],
             "new_priority": issue["new_priority"], "kind": issue["kind"],
@@ -353,13 +370,8 @@ def render_csv(report):
             "claim_verified": issue["claim_verified"],
             "merge_verified": issue["merge_verified"],
             "deploy_verified": issue["deploy_verified"],
-            "sample_absence_is_not_resolution": report["sample_absence_is_not_resolution"],
-            "worker_claim_authorized": report["worker_claim_authorized"],
-            "required_ci_review_verified": report["required_ci_review_verified"],
-            "merged_on_main_verified": report["merged_on_main_verified"],
-            "live_verified": report["live_verified"],
-        }
-        writer.writerow({name: _csv_cell(record[name]) for name in fields})
+        })
+        emit(record)
     value = out.getvalue()
     if not value or len(value.encode("utf-8")) > MAX_BYTES:
         raise ValueError("Private portfolio CSV exceeds size budget")
