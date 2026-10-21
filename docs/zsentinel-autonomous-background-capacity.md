@@ -795,7 +795,12 @@ remain readable by `--verify-bundle`; older HTML files are not modified.
 
 Historical saved-receipt HTML now explicitly identifies its source as
 **historical owner-private evidence**, rather than implying a new live
-Linux/systemd observation. No offline content is evidence of current GitHub
+Linux/systemd observation.
+When the operator supplies `--previous T0.json`, the one-shot **new** host
+reading plus saved historical T0 are labelled `local-current-with-saved-previous`
+in the machine-readable owner inbox and are explained separately in the
+Markdown handoff and redacted GitHub-owner issue draft. T0 must not be
+misrepresented as an independently current second observation. No offline content is evidence of current GitHub
 assignment, active claim, passed CI or a production release.
 
 All of these changes remain *PR-branch source code* until exact-head required
