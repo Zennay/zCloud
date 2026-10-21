@@ -73,6 +73,12 @@ python3 scripts/zsentinel_merge_first_owner_csv.py \
   --output ./private-archived-linked-prs.json
 ```
 
+In de menselijke HTML- en Markdown-overdrachten staat nu **per individuele
+issue-link** of deze werkelijk uit het originele issueboard komt of
+uitsluitend uit de bewaarde historische PR-dossiers. Hierdoor hoeft
+een operator bij gemengde PR's niet op basis van één geaggregeerd
+archief-aantal te raden welk issue opnieuw live bekeken moet worden.
+
 Een PR met uitsluitend archief-issuekoppelingen krijgt
 `historical_pr_linked_to_issue_absent_from_board`; bij een combinatie
 van board- en archieflinks krijgt hij
