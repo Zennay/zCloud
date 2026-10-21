@@ -180,5 +180,6 @@ jobs:
           sudo -n install -D -m 0755 scripts/zcloud_worker_watchdog.py "$live"
           sudo -n cmp scripts/zcloud_worker_watchdog.py "$live"
           echo "LIVE_WATCHDOG_NO_BROWSER_RESTART=1"
+          python3 scripts/zsentinel_release_receipt.py --component watchdog --outcome disk-installed
           echo "EXISTING_TABS_AND_FIREFOX_PROCESSES_UNTOUCHED=1"
           echo "Manual install handled without a shared runtime source overwrite."
