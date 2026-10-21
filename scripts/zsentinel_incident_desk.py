@@ -1495,6 +1495,15 @@ $("downloadOwnerRecheck").onclick=()=>{
  }
 };
 function incidentLabel(x){return x.priority+" · "+x.project+" · "+x.problem}
+function actionSourceWarning(){
+ const observed=Date.parse(source.observed_at);
+ const age=Date.now()-observed;
+ if(!Number.isFinite(age)||age< -120000)
+  return "> ONBETROUWBARE BRONKLOK: tijdherkomst kan niet worden vastgesteld; eerst live controleren.";
+ if(age>600000)
+  return "> VEROUDERDE INCIDENTBRON (>10 minuten): dit zijn HISTORISCHE eigenaaracties. Controleer alle actuele PR/queue/Notion/worker-gates opnieuw.";
+ return "> RECENTE MOMENTOPNAME (<10 minuten), maar slechts gedeeltelijke bron; geen toestemming voor herstel, claim of merge.";
+}
 function isFresh(){
  const delta=Date.now()-Date.parse(source.observed_at);
  const msg=(delta<0?"Systeemklok wijkt af;":delta>600000?"OUDER DAN 10 MINUTEN;":"Momentopname;");
@@ -1750,21 +1759,25 @@ $("downloadBrief").onclick=()=>{
 let reviewedAction=null;
 $("previewAction").onclick=()=>{
  try{
+  isFresh();
   if(typeof actionBrief!=="string"||actionBrief.length>100000||
      !actionBrief.includes(source.fingerprint))
     throw Error("Bron en actieoverdracht komen niet overeen");
-  $("actionText").textContent=actionBrief;
-  $("actionStatus").textContent="Privé bronoverdracht voorvertoond. Controleer alle onbekende eigenaars en gates handmatig.";
-  reviewedAction={source:source.fingerprint,content:actionBrief};
+  const prepared=actionSourceWarning()+"\n\n"+actionBrief;
+  $("actionText").textContent=prepared;
+  $("actionStatus").textContent="Privé actiebron voorvertoond: "+actionSourceWarning().slice(2)+" Controleer gates met de eigenaar.";
+  reviewedAction={source:source.fingerprint,content:prepared};
   $("downloadAction").disabled=false;
  }catch(_){reviewedAction=null;$("downloadAction").disabled=true;
    $("actionStatus").textContent="Privé overdracht niet beschikbaar: bronvalidatie ontbreekt.";}
 };
 $("downloadAction").onclick=()=>{
  try{
+  isFresh();
   if(!reviewedAction||reviewedAction.source!==source.fingerprint||
-     reviewedAction.content!==actionBrief)throw Error("Verouderde preview");
-  const url=URL.createObjectURL(new Blob([actionBrief],{type:"text/markdown;charset=utf-8"}));
+     reviewedAction.content!==actionSourceWarning()+"\n\n"+actionBrief)
+    throw Error("Momentopname/ouderdom gewijzigd; opnieuw voorvertonen");
+  const url=URL.createObjectURL(new Blob([reviewedAction.content],{type:"text/markdown;charset=utf-8"}));
   const a=el("a");a.href=url;a.download="zsentinel-private-owner-action-brief.md";
   document.body.append(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -1773,6 +1786,7 @@ $("downloadAction").onclick=()=>{
   $("actionStatus").textContent="Voorvertoning ongeldig; beoordeel de bron opnieuw.";}
 };
 isFresh();render();
+setInterval(isFresh,60000); // local clock label only; no network, tasks or dispatch
 </script></html>"""
     # Split the ORIGINAL template before inserting either source-derived
     # value. Never scan an inserted incident/branch value for another marker.
