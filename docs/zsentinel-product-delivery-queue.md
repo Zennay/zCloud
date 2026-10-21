@@ -923,3 +923,32 @@ geautoriseerde native writer/backoff-/NEEDS_AI-implementatie; deze wijziging
 claimt die implementatie niet. Geen automatische claim, vrijgave, retry,
 CI-dispatch of live-VPS-write. Zonder volledige bron kan een lage teller
 geen bewijs voor een gezonde of lege volledige queue zijn.
+
+
+### 21 oktober · De productshortlist toont bestaande eigenaars
+
+`delivery_policy.project_shortlist` bevat per geobserveerde
+productkandidaat nu aanvullend `active_claims_visible`,
+`active_claim_evidence_gaps_visible`,
+`repeated_claim_attempts_visible`, `owner_next_step` en
+onvoorwaardelijk `new_claim_authorized=false`. De bestaande
+maximaal `max_visible` globale `candidates` tonen ook
+`observed_active_project_owners` en expliciet
+`owner_scope_and_capacity_not_verified=true`.
+
+Hiermee kan een gebruiker P0-productwerk in de wachtrij onderscheiden
+van werk dat al in datzelfde project wordt uitgevoerd: een zichtbare
+kandidaat is *niet* automatisch veilig te claimen. Alle live project-/lane-,
+runner-, Notion-, lease- en capaciteitsbeslissingen blijven bij de
+bestaande geautoriseerde allocator en eigenaars. De oorspronkelijke
+sorteervolgorde op P0/P1 en het bestaande `items`-API-contract blijven
+intact; deze velden zijn alleen operatorinformatie.
+
+### 21 oktober · Geneste QA-workstreams consequent uitsluiten
+
+Ook `metadata.execution_lane.lane`, `lane_focus` en `workstream`
+worden nu bij **nieuwe** taken volgens dezelfde expliciete QA-only
+metadataregels behandeld als een bovenliggende `metadata.workstream`.
+Dit sluit het geval waarin een producent een oude QA-lane nested aanbiedt
+maar de top-level bron geen lane bevat. Deze bronclassificatie heeft
+**geen** terugwerkende gevolgen voor actieve claims of hun voortgang.
