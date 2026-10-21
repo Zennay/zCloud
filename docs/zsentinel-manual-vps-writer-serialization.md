@@ -98,3 +98,40 @@ Related infrastructure blockers are tracked independently:
 
 The old unmerged source branches for individual workflows were inspected as
 ownership signals; none had an open PR at the time of this change.
+
+
+## Operator delivery receipts (GitHub Actions)
+
+Each of the three manual live jobs now appends a source-bound observation
+to the **GitHub Actions job summary** via
+`scripts/zsentinel_release_receipt.py`. The formatter accepts only fixed
+component/outcome combinations and a canonical owner-dispatched exact-main
+GitHub run context. It emits the exact 40-character workflow SHA, run link,
+UTC observation time, outcome and next operator action. It does not read
+secrets, runner identities, raw responses or backup paths and does not provide
+additional deployment authority.
+
+| Manual operation | GitHub summary outcome | What it actually means |
+| --- | --- | --- |
+| Worker addon install, after source bytes are compared | `INSTALLED_ON_DISK` | Installed file verified; **browser activation not confirmed** |
+| Worker addon: no debugger, busy/unverified idle, or failed reload command | `RELOAD_DEFERRED` | Disk install may be complete; **not actively reloaded** |
+| Worker addon: in-place reload command returned success | `RELOAD_COMMAND_SUCCEEDED` | Reload command worked; **not independent end-to-end live proof** |
+| Standalone watchdog install with final byte comparison | `INSTALLED_ON_DISK` | Standalone executable updated; **no live recovery proof** |
+| Owner-approved emergency addon reload preserving Firefox PID | `RELOAD_COMMAND_SUCCEEDED` | Requested reload succeeded; **independent behaviour remains unverified** |
+
+A green GitHub job with a deferred action is **not** equivalent to a live
+upgrade. Where observation is denied by a missing debugger, worker activity or
+a failed reload, the summary explicitly recommends a later owner-approved
+activation window rather than silently declaring completion. A job that fails
+before it reaches the summary code remains a failed job, not a successful
+release receipt.
+
+The worker-add-on install and activation are separate shell steps. The
+activation step explicitly re-resolves its installed add-on directory; using
+the shell-local `live` variable from the preceding install step used to fail
+under `set -u` before any reload, despite a successful on-disk copy.
+
+**Important:** These receipts describe what a GitHub manual workflow has
+observed *after* authorized execution. They are not proof of merged PR code,
+a recovered runner, or independent live verification. No workflows have been
+manually dispatched as part of this source change.
