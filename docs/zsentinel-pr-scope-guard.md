@@ -2558,3 +2558,11 @@ ook apart: PR-groepen met onbekende HEAD en groepen met conflicterende
 HEAD-waarnemingen. Als de tellerbron ontbreekt, toont de overdracht
 **ONBEKEND** in plaats van nul. Deze aantallen zijn observaties van de huidige
 beperkte issue-/PR-bron, geen volledige backlog- of mergevrijgave.
+
+## 21 oktober · bestand-/mapconflicten in de merge-first werkbak
+
+De directe exact-HEAD werkbak toont nu twee verschillende soorten overlap naast elkaar:
+- **Exact gedeeld bestandspad**, zoals `src/app.py` tegenover `src/app.py`.
+- **Bestand-/mapconflict**, zoals een PR die het bestand `src` wijzigt terwijl een andere PR `src/app.py` nodig heeft. Een Git-pad kan niet tegelijk een bestand en de bovenliggende map zijn.
+
+De werkbak hergebruikt de al verzamelde begrensde bestandspaden; er komen geen extra GitHub-verzoeken bij. De uitvoer noemt het aantal bestand-/mapconflicten en toont een begrensde set padparen. Het blijft steekproefbewijs: ontbrekende PR's, actieve eigenaarclaims, actuele branchbescherming en mergeautorisatie blijven onbekend en worden niet afgeleid.
