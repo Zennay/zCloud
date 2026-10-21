@@ -176,6 +176,21 @@ def render_html(board, max_rows=20):
                 type(primary_head) is not str or
                 re.fullmatch(r"[0-9a-f]{40}", primary_head) is None):
             raise ValueError("untrusted primary PR source HEAD")
+        # Preserve per-issue saved PR receipts even when the grouped PR
+        # panel is bounded out of this particular offline HTML window.
+        candidate_receipts = []
+        for candidate in full:
+            source_head = candidate.get("source_head_observed")
+            source_gate = candidate.get("gate_state")
+            if (source_gate not in GATE_LABELS or
+                    (source_head is not None and
+                     (type(source_head) is not str or
+                      re.fullmatch(r"[0-9a-f]{40}", source_head) is None))):
+                raise ValueError("invalid source-bound issue PR receipt")
+            candidate_receipts.append({
+                "url": candidate["url"], "head": source_head,
+                "gate": source_gate,
+            })
         pr_link = (
             "<a rel='noopener noreferrer' target='_blank' href='" + h(pr) +
             "'>Bestaande PR ↗</a><br>" + source_head_link(pr, primary_head)
@@ -204,6 +219,8 @@ def render_html(board, max_rows=20):
             "' data-collision='" + ("yes" if len(full) > 1 else "no") +
             "' data-pr='" + h(pr or "") +
             "' data-prs='" + h(" ".join(item[0] for item in alt_items)) +
+            "' data-candidate-evidence='" + h(json.dumps(
+                candidate_receipts, ensure_ascii=True, separators=(",", ":"))) +
             "' data-title='" + h(row["title"]) +
             "' data-category='" + h(row["category_nl"]) +
             "' data-activity='" + h(row["activity_signal"]) +
@@ -749,9 +766,13 @@ function exportOpenIssueHandoff(){
   if(!candidates.length)lines.push('- Bestaande PRs: ONBEKEND; geen kandidaat in beperkt venster.');
   for(const pr of candidates){
    const p=prs.find(group=>group.dataset.pr===pr);
+   const receipt=issueReceipt(t,pr);
+   const h=p&&p.dataset.head, r=receipt&&receipt.head;
+   const evidenceHead=h&&r&&h!==r?'ONBEKEND (BRONCONFLICT)':(h||r||'ONBEKEND');
+   const evidenceGate=p?(gateLabels[p.dataset.gate]||p.dataset.gate):
+    (receipt?(gateLabels[receipt.gate]||receipt.gate):'ONBEKEND');
    lines.push('  - [Bestaande PR #'+pr.split('/').pop()+']('+pr+') · geobserveerde HEAD '+
-    safeText(p&&p.dataset.head||'ONBEKEND')+' · gate '+
-    safeText(p?(gateLabels[p.dataset.gate]||p.dataset.gate):'ONBEKEND')+
+    safeText(evidenceHead)+' · gate '+safeText(evidenceGate)+
     (p?' · lokale opvolging '+safeText(prLabels[p.querySelector('.pr-local-state').value]):''));
   }
   const c=collisionRows.find(row=>row.dataset.issue===issue);
@@ -832,6 +853,11 @@ function onePrHandoff(){
  privateDownload('zsentinel-pr-'+url.split('/').pop()+'-privé-overdracht.md',
    lines.join('\n')+'\n');
 }
+function issueReceipt(t,url){
+ // Receipts come from Python's validated, bounded historical issue rows.
+ const saved=JSON.parse(t.dataset.candidateEvidence||'[]');
+ return saved.find(entry=>entry.url===url)||null;
+}
 function oneIssueHandoff(t){
  const issue=t.dataset.issue;
  if(!tickets.includes(t))return;
@@ -872,10 +898,16 @@ function oneIssueHandoff(t){
   'Geen gekoppelde PR in deze beperkte steekproef waargenomen. Dat bewijst NIET dat er geen bestaande PR bestaat.','');
  for(const [i,url] of candidates.entries()){
   const p=prs.find(group=>group.dataset.pr===url);
-  const head=p&&p.dataset.head||'ONBEKEND';
+  const receipt=issueReceipt(t,url);
+  const groupHead=p&&p.dataset.head;
+  const receiptHead=receipt&&receipt.head;
+  const sourceMismatch=Boolean(groupHead&&receiptHead&&groupHead!==receiptHead);
+  const head=sourceMismatch?'ONBEKEND (BRONCONFLICT)':(groupHead||receiptHead||'ONBEKEND');
+  const gate=p?(gateLabels[p.dataset.gate]||p.dataset.gate):
+   (receipt?(gateLabels[receipt.gate]||receipt.gate):'ONBEKEND');
   lines.push('### '+(i+1)+'. [Bestaande PR #'+url.split('/').pop()+']('+url+')','',
    '- Historisch geobserveerde HEAD: '+safeText(head),
-   '- Historische gatebron: '+(p?safeText(gateLabels[p.dataset.gate]||p.dataset.gate):'ONBEKEND / niet gekoppeld aan dit bronvenster'),
+   '- Historische gatebron: '+safeText(gate)+(sourceMismatch?' · TEGENSTRIJDIGE HEADs; herlees bron':''),
    '- PR-groep in werkbak: '+(p?'JA':'NEE, geen actuele bronconclusie'));
   if(head!=='ONBEKEND')lines.push(
    '- Exact broncommit: [GitHub commit]('+url.split('/pull/')[0]+'/commit/'+head+')');
