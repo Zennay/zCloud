@@ -298,3 +298,17 @@ de som met `active_count`; tegenstrijdige receipts worden geweigerd.
 Er zijn geen nieuwe provider-GET-budgetten, tokenlogs, leasevrijgaves,
 productie-SQLite-/Notion-writes, GitHub-workflow-reruns, automatische
 taakovername, merges, deploys of QA-/regressiesuites bijgekomen.
+
+### Fair voorbeeldvenster (zonder extra bronvragen)
+
+De optionele Notion-operatorlijst toont maximaal dertig werkitems.
+Voorheen konden veel `Claimed`-regels alle zichtbare voorbeeldplaatsen
+bezetten terwijl de volledige bron ook `Running` of `Verifying` bevatte.
+De bestaande live-lezer en de veilige privé snapshotadapter delen nu een
+begrensde round-robin selectiefunctie: zichtbare voorbeelden wisselen
+**Claimed → Running → Verifying** af zolang die statussen daadwerkelijk
+in de opgevraagde bron voorkomen. Het totale project-/statusoverzicht
+wordt ongewijzigd berekend over **alle** bronrijen, niet alleen de
+voorbeeldlijst. De voorbeeldreeks geeft nooit bewijs van volledigheid,
+workeridentiteit, lease of werkeigendom; handmatig opgeslagen exports
+blijven van ongeverifieerde herkomst.
