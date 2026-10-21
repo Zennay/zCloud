@@ -15,6 +15,9 @@ import json
 import re
 
 from zsentinel_pr_scope_guard import edit_path
+from zsentinel_pr_gate_continuity import (
+    LABELS as HISTORICAL_CHANGE_LABELS, NEXT_STEP_LABELS,
+)
 
 SCHEMA = "zsentinel-private-pr-workorders-v1"
 BOARD = "zsentinel-portfolio-pr-collision-board-v1"
@@ -268,26 +271,34 @@ def collect_workorders(board):
         if history_code is None:
             if history_step is not None or history_new:
                 raise ValueError("unsourced historical PR next step")
-            history_state = "not_compared"
+            history_state, history_label, step_label = (
+                "not_compared", "Geen historische bronvergelijking", None)
         else:
-            if type(history_code) is not str or history_step is None:
-                raise ValueError("malformed historical gate comparison")
-            _markdown(history_code)
-            _markdown(history_step)
-            if history_code == "one_or_both_gate_observations_absent":
-                if history_new:
-                    raise ValueError("historical gap cannot prove new gate evidence")
-                history_state = "source_gap"
-            elif history_code == "same_exact_head_and_gate_receipts_at_two_observations":
-                if history_new:
-                    raise ValueError("unchanged gate receipts cannot be new evidence")
-                history_state = "unchanged_two_snapshots"
-            else:
-                if not history_new:
-                    raise ValueError("historical change missing new-evidence marker")
-                history_state = "changed_two_snapshots"
+            if (type(history_code) is not str
+                    or history_code not in HISTORICAL_CHANGE_LABELS
+                    or type(history_step) is not str
+                    or history_step not in NEXT_STEP_LABELS):
+                raise ValueError("malformed or unknown historical gate comparison")
+            history_state = {
+                "same_exact_head_and_gate_receipts_at_two_observations":
+                    "unchanged_two_snapshots",
+                "gate_receipt_changed_same_head":
+                    "changed_gate_receipt",
+                "head_changed_or_source_uncertain":
+                    "changed_or_uncertain_head",
+                "gate_source_incomplete_no_stability_claim":
+                    "incomplete_gate_source",
+                "newly_selected_in_current_sample_not_new_pr":
+                    "newly_selected_not_new_pr",
+            }.get(history_code)
+            if history_state is None:
+                raise ValueError("historical PR source no longer selected")
+            if history_new != (history_state != "unchanged_two_snapshots"):
+                raise ValueError("historical attention change flag mismatch")
+            history_label = HISTORICAL_CHANGE_LABELS[history_code]
+            step_label = NEXT_STEP_LABELS[history_step]
             notes.append("Historische vergelijking: " +
-                         _markdown(history_code) +
+                         _markdown(history_label) +
                          "; géén bewijs over de tijd tussen de opnames.")
         defer_repeat = (history_state == "unchanged_two_snapshots"
                         and item["rank"] == 5)
@@ -295,9 +306,12 @@ def collect_workorders(board):
             notes.append("Ongewijzigde waarneming: dezelfde HOLD niet "
                          "opnieuw onderzoeken zonder nieuw bronbewijs; "
                          "vervolg ander veilig werk.")
-        if history_state == "source_gap":
-            notes.append("Vorige en/of huidige vergelijkingsbron ontbreekt: "
-                         "een wijziging kan niet betrouwbaar worden bepaald.")
+        if history_state in ("incomplete_gate_source",
+                             "changed_or_uncertain_head",
+                             "newly_selected_not_new_pr"):
+            notes.append(
+                "Bron vraagt mogelijk herbeoordeling, maar bewijst niet "
+                "dat een PR-HEAD, merge of CI-status echt gewijzigd is.")
         if paths_cut or item.get("non_green_jobs_hidden") or (
                 item.get("source_current_head_verified") is not True):
             notes.append("Brongegevens voor conflicterende paden/CI zijn mogelijk afgekapt.")
@@ -326,8 +340,8 @@ def collect_workorders(board):
             "rank": item["rank"], "check_links": links,
             "change_since_previous_observation": history_state,
             "historical_change_code": history_code,
-            "historical_next_step": (
-                _markdown(history_step) if history_step is not None else None),
+            "historical_change_label": history_label,
+            "historical_next_step": _markdown(step_label) if step_label else None,
             "new_evidence_since_previous_sample": history_new,
             "repeat_hold_deferred": defer_repeat,
             "check_links_hidden": int(item.get("non_green_jobs_hidden", 0)),
