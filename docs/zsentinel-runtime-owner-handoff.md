@@ -73,6 +73,44 @@ opgehaalde `decision` en geen extra providerrequests. Er vindt ook hier geen
 claim-, merge-, queue- of releasewrite plaats; het nieuwe opt-in vlagargument
 wordt bij niet-HTML-uitvoer geweigerd.
 
+## 21 oktober · bestaand PR-werk direct in de centrale eigenaaroverdracht
+
+Bij de portfolio-CLI wordt de optionele eigenaaroverdracht nu **ná** de al
+bestaande begrensde PR-observatie samengesteld. Daarmee komen open product-PR's
+niet meer uitsluitend in het afzonderlijke PR-paneel terecht: de gedeelde
+HTML-, JSON-, Markdown- en tekstoverdracht toont voor maximaal drie gekozen
+PR's een directe bestaande PR-link, de geobserveerde bronstatus en de concrete
+volgende eigenaaractie. Is de exact-head check- en reviewbron compleet genoeg
+waargenomen, dan bevat JSON ook de geobserveerde volledige HEAD SHA en alle
+vier expliciet onware claim-/retry-/merge-/deploy-toestemmingen.
+
+Voor de portfolio-CLI, met `--window` ingesteld op het betreffende projectvenster:
+
+```sh
+umask 077
+python3 scripts/zsentinel_portfolio_overview.py \
+  --github-only --window 0 \
+  --inspect-pr cloud:1563 --show-owner-handoff \
+  --format handoff > /private/zsentinel/pr-eigenaaroverdracht.md
+```
+
+Dit voorbeeld veronderstelt dat venster 0 `cloud` bevat; kies anders het
+betreffende venster. Een optionele `--discover-open-prs` of
+`--inspect-referenced-prs` hergebruikt dezelfde bronkoppeling; de handoff
+start geen extra API-reads bovenop de **expliciet geselecteerde** PR-inspectie.
+Zonder optionele PR-inspectie is `coverage.prs = not_requested`, nooit
+"geen PR's". Bij een gewijzigde PR-head, ontoegankelijke GitHub-bron of
+gedeeltelijke bron toont de kaart uitsluitend een menselijke broncontrole:
+geen afgeleide CI-goedkeuring en geen onbetrouwbare HEAD.
+
+Prioriteiten blijven P0-eerst. Echte geobserveerde PR-reparaties staan vóór
+nieuwe P1-productissues binnen dezelfde ernst; wachtende review/CI krijgt P2
+en verdringt dus geen verse P0/P1-herstelactie. GitHub-meta- en reviewbronnen
+bewijzen nooit de volledige branchbescherming. De operator moet op het actuele
+exacte commitmoment required checks, onafhankelijke reviews, actieve owners en
+mergebevoegdheid controleren. `source_committed` of `mergeable=true` betekent
+hier uitdrukkelijk niet `merged_main` of `live_verified`.
+
 ## Beveiliging en release
 
 - De samenstelling is lokaal, onveranderlijk, éénmalig en zonder provider-I/O; alle netwerk-GETs komen uitsluitend uit de al bestaande, begrensde live cockpit.
