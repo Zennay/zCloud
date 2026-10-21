@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from zsentinel_recovery_router import read_json
+from zsentinel_notion_claim_observer import fair_active_samples
 
 SCHEMA = "zsentinel-notion-connector-snapshot-v1"
 UUID = re.compile(r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$", re.I)
@@ -186,7 +187,6 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
         if status == "Verifying":
             verifying_counts[label] = verifying_counts.get(label, 0) + 1
         active.append({"work": f"PWQ-{work}", "project": label, "status": status})
-    active.sort(key=lambda r: (r["project"], r["work"]))
     return {
         "source": "user_supplied_notion_connector_export_unverified_origin",
         "observed_at": captured.isoformat().replace("+00:00", "Z"),
@@ -195,7 +195,8 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
         "active_project_counts": dict(sorted(counts.items())),
         "verifying_project_counts": dict(sorted(verifying_counts.items())),
         "verifying_count": sum(verifying_counts.values()),
-        "items": active[:30],
+        "items": fair_active_samples(active),
+        "items_sample_policy": "round_robin_source_order_by_work_status",
         "items_truncated": len(active) > 30,
         "claim_scope_verified": False,
         "task_inventory_verified": False,
