@@ -1161,7 +1161,19 @@ def handoff_html(report):
     if truncated:
         queue_line += " Bron niet volledig; niet-getoonde conflicten blijven ONBEKEND."
     dependency = report.get("incident_dependency_owner_summary", {})
+    allowed_dependency_reasons = {
+        "claim_inventory_not_complete", "task_inventory_not_complete",
+        "claim_observation_missing", "task_observation_missing",
+        "claim_observation_stale_or_future", "task_observation_stale_or_future",
+        "active_claim_scope_unknown",
+    }
+    dependency_reasons = (dependency.get("coverage_reasons", [])
+                          if type(dependency) is dict else None)
     if (type(dependency) is not dict
+            or type(dependency_reasons) is not list or len(dependency_reasons) > 7
+            or any(reason not in allowed_dependency_reasons for reason in dependency_reasons)
+            or (dependency.get("coverage") in ("bounded_examples", "bounded_examples_truncated")
+                and dependency_reasons)
             or dependency.get("coverage") not in (
                 "not_supplied", "incomplete_or_stale",
                 "bounded_examples", "bounded_examples_truncated")
@@ -1173,6 +1185,15 @@ def handoff_html(report):
                 and (type(dependency.get("held_count")) is not int
                      or not 0 <= dependency["held_count"] <= 250))):
         raise ValueError("untrusted dependency owner summary")
+    dependency_reason_labels = {
+        "claim_inventory_not_complete": "claiminventaris niet expliciet compleet",
+        "task_inventory_not_complete": "taakinventaris niet expliciet compleet",
+        "claim_observation_missing": "waarneming van actieve claims ontbreekt",
+        "task_observation_missing": "waarneming van de taakinventaris ontbreekt",
+        "claim_observation_stale_or_future": "claimwaarneming verouderd of ongeldige toekomsttijd",
+        "task_observation_stale_or_future": "taakwaarneming verouderd of ongeldige toekomsttijd",
+        "active_claim_scope_unknown": "bestandsscope van een actieve claim onbekend",
+    }
     dep_line = (
         "Bron niet aangeleverd; afhankelijke taken ONBEKEND."
         if dependency["coverage"] == "not_supplied" else
@@ -1182,6 +1203,9 @@ def handoff_html(report):
         " expliciete taak-HOLDs; exacte bronreconciliatie vereist." +
         (" Zichtbare voorbeelden afgekapt."
          if dependency["coverage"] == "bounded_examples_truncated" else ""))
+    if dependency_reasons:
+        dep_line += " Bronprobleem: " + "; ".join(
+            dependency_reason_labels[reason] for reason in dependency_reasons) + "."
     return ('<section class="panel warn" aria-label="Prioritaire eigenaaroverdracht">'
             '<h2>Nu opvolgen · P0 eerst</h2><p>Actuele, begrensde '
             'bronwaarneming. GEEN vrijgave voor workerclaim, retry, merge of deploy.</p>'
@@ -1264,7 +1288,19 @@ def markdown(report):
                          str(notion["unregistered_work_status_min"]) +
                          " statuswaarnemingen.")
     dep = report.get("incident_dependency_owner_summary", {})
+    allowed_dependency_reasons = {
+        "claim_inventory_not_complete", "task_inventory_not_complete",
+        "claim_observation_missing", "task_observation_missing",
+        "claim_observation_stale_or_future", "task_observation_stale_or_future",
+        "active_claim_scope_unknown",
+    }
+    dependency_reasons = (dep.get("coverage_reasons", [])
+                          if type(dep) is dict else None)
     if (type(dep) is not dict
+            or type(dependency_reasons) is not list or len(dependency_reasons) > 7
+            or any(reason not in allowed_dependency_reasons for reason in dependency_reasons)
+            or (dep.get("coverage") in ("bounded_examples", "bounded_examples_truncated")
+                and dependency_reasons)
             or dep.get("coverage") not in (
                 "not_supplied", "incomplete_or_stale",
                 "bounded_examples", "bounded_examples_truncated")
@@ -1277,6 +1313,17 @@ def markdown(report):
         if dep.get("held_count") is not None:
             raise ValueError("incomplete dependency source must not carry a zero/all-clear count")
         lines.append("Incidentafhankelijkheden: inventaris onvolledig/verouderd; totaal ONBEKEND, nul is geen vrijgave.")
+        reason_labels = {
+            "claim_inventory_not_complete": "claiminventaris niet expliciet compleet",
+            "task_inventory_not_complete": "taakinventaris niet expliciet compleet",
+            "claim_observation_missing": "waarneming van actieve claims ontbreekt",
+            "task_observation_missing": "waarneming van de taakinventaris ontbreekt",
+            "claim_observation_stale_or_future": "claimwaarneming verouderd of ongeldige toekomsttijd",
+            "task_observation_stale_or_future": "taakwaarneming verouderd of ongeldige toekomsttijd",
+            "active_claim_scope_unknown": "bestandsscope van een actieve claim onbekend",
+        }
+        for reason in dependency_reasons:
+            lines.append("   Bronprobleem: " + reason_labels[reason] + ".")
     else:
         count = dep.get("held_count")
         if type(count) is not int or not 0 <= count <= 250:
