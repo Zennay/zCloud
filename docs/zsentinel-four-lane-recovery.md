@@ -741,3 +741,28 @@ dienst, notificatie of andere productiebron gewijzigd. De bronwijziging
 is **niet** op main of live zolang exacte-head verplichte CI,
 onafhankelijke review, branchbescherming en eigenaarsautorisatie niet
 zijn afgerond.
+
+
+### Eén klik naar bestaande GitHub-bronnen, zonder eigenaarschap aan te nemen
+
+De private offline HTML-tabel en Markdown-overdracht bieden nu per
+geobserveerd portfolio-project **Open PRs** en **Open issues**.
+Een vaste allowlist bevat uitsluitend de dertien op GitHub bevestigde
+bestaande repositories; namen of URLs uit wachtrijtitels en metadata
+worden nooit als linkdoel gebruikt. Een niet-herkend project blijft
+gewone tekst zonder link. Links openen de huidige GitHub-inbox in een
+apart tabblad met `noopener noreferrer`, zonder browser- of
+serverbackground-verzoeken vanuit het offline rapport.
+
+Deze links **halen geen actuele GitHub-status op**. De aantallen naast
+de links blijven alleen de read-only SQLite-waarneming; de gebruiker
+moet in GitHub zelf de exacte open PR, SHA, CI, review, branch protection
+en eigenaar vaststellen. De kopieerbare Markdown geeft dezelfde twee
+navigatie-ingangen. Dit is een direct bruikbare merge-first
+operatorfunctie, geen toestemming om een PR te claimen, mergen of
+deployen.
+
+Broncommit:
+[cf2db868](https://github.com/Zennay/zCloud/commit/cf2db86886d355d3048536078596840cfa90b2f0).
+Nog steeds onderdeel van **dezelfde open PR #1572**; geen live
+installatie of onafhankelijke release-acceptatie verondersteld.
