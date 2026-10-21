@@ -346,6 +346,44 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     if not isinstance(sources, dict) or not isinstance(incidents, list) or len(incidents) > 200:
         raise ValueError("handoff requires assembled live source provenance")
     cards = []
+    dep = decision.get("incident_dependency_holds")
+    dependency_coverage = "not_supplied"
+    dependency_count = None
+    if dep is not None:
+        examples = dep.get("examples") if type(dep) is dict else None
+        if (type(dep) is not dict or type(dep.get("count")) is not int
+                or not 0 <= dep["count"] <= 250
+                or type(examples) is not list or len(examples) > 8
+                or len(examples) > dep["count"]
+                or dep.get("samples_truncated") is not (
+                    dep["count"] > len(examples))
+                or dep.get("exact_reconciliation_required") is not True
+                or dep.get("claim_authorized") is not False):
+            raise ValueError("untrusted dependency HOLD source")
+        dependency_count = dep["count"]
+        dependency_coverage = ("bounded_examples_truncated"
+                               if dep["samples_truncated"] else "bounded_examples")
+        for row in examples:
+            if (type(row) is not dict
+                    or row.get("reason") != "incident_dependency_reconciliation_required"
+                    or row.get("claim_authorized") is not False
+                    or row.get("priority") not in ("P0", "P1", "P2", "P3")
+                    or type(row.get("id")) is not str
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", row["id"])
+                    or type(row.get("unresolved_count")) is not int
+                    or not 1 <= row["unresolved_count"] <= 30
+                    or type(row.get("observed_blocked_count")) is not int
+                    or not 0 <= row["observed_blocked_count"] <= row["unresolved_count"]):
+                raise ValueError("invalid dependency HOLD owner source")
+            project = _project(row.get("project_id"))
+            priority = row["priority"] if row["priority"] in ("P0", "P1") else "P2"
+            cards.append(_card(
+                priority, project, "incident_dependency_owner_hold",
+                "Taak " + row["id"] + " HOLD: " +
+                str(row["unresolved_count"]) + " incidentafhankelijkheden missen " +
+                "exacte job-reconciliatie. Bevoegde eigenaar herbeoordeelt " +
+                "originele bron/claims; GEEN dispatch of leasevrijgave.",
+                source="bounded_router_incident_dependency_hold"))
     notion_owner_status = _notion_owner_status_summary(
         decision.get("notion_claims_observation"), sources.get("notion"), registry)
     pr_cards, pr_coverage = _observed_pr_owner_cards(pr_desk, registry)
@@ -692,8 +730,9 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     kind_order = {"fresh_incident": 0, "worker_owner_review": 1,
                   "queue_current_owner_review": 2,
                   "queue_lease_window_review": 3,
-                  "vps_capacity_owner_review": 4,
-                  "open_pr_owner_review": 5, "open_product_issue": 6}
+                  "incident_dependency_owner_hold": 4,
+                  "vps_capacity_owner_review": 5,
+                  "open_pr_owner_review": 6, "open_product_issue": 7}
     cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
                               c.get("review_by_utc", "9999"),
                               0 if c.get("existing_pr_urls") else 1,
@@ -710,6 +749,12 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                      "issues": issue_coverage, "prs": pr_coverage,
                      "notion": _short(sources.get("notion"), 80)},
         "priority_items": cards[:MAX_ITEMS],
+        "incident_dependency_owner_summary": {
+            "coverage": dependency_coverage,
+            "held_count": dependency_count,
+            "claim_authorized": False,
+            "runtime_recovered_verified": False,
+        },
         "notion_owner_status_review": notion_owner_status,
         "current_queue_lease_owner_summary": current_queue,
         "queue_claim_conflict_total_observed": conflict_total,
@@ -1092,6 +1137,24 @@ def handoff_html(report):
                   "alleen handmatige eigenaarverificatie.")
     if truncated:
         queue_line += " Bron niet volledig; niet-getoonde conflicten blijven ONBEKEND."
+    dependency = report.get("incident_dependency_owner_summary", {})
+    if (type(dependency) is not dict
+            or dependency.get("coverage") not in (
+                "not_supplied", "bounded_examples", "bounded_examples_truncated")
+            or dependency.get("claim_authorized") is not False
+            or dependency.get("runtime_recovered_verified") is not False
+            or (dependency["coverage"] == "not_supplied"
+                and dependency.get("held_count") is not None)
+            or (dependency["coverage"] != "not_supplied"
+                and (type(dependency.get("held_count")) is not int
+                     or not 0 <= dependency["held_count"] <= 250))):
+        raise ValueError("untrusted dependency owner summary")
+    dep_line = ("Niet aangeleverd; afhankelijke taken ONBEKEND."
+                if dependency["coverage"] == "not_supplied" else
+                str(dependency["held_count"]) +
+                " expliciete taak-HOLDs; exacte bronreconciliatie vereist." +
+                (" Zichtbare voorbeelden afgekapt."
+                 if dependency["coverage"] == "bounded_examples_truncated" else ""))
     return ('<section class="panel warn" aria-label="Prioritaire eigenaaroverdracht">'
             '<h2>Nu opvolgen · P0 eerst</h2><p>Actuele, begrensde '
             'bronwaarneming. GEEN vrijgave voor workerclaim, retry, merge of deploy.</p>'
@@ -1099,6 +1162,7 @@ def handoff_html(report):
             '<p class="small muted">Queue huidig: ' +
             escape(current_queue_line) + '</p>' +
             '<p class="small muted">Queue #677: ' + escape(queue_line) + '</p>' +
+            '<p class="small muted">Afhankelijke taken: ' + escape(dep_line) + '</p>' +
             ('<ol>' + ''.join(cards) + '</ol>' if cards else
              '<p>Geen actie in het onderzochte venster; geen compleet herstelbewijs.</p>') +
             ('<p>Werkbak afgekapt; extra items blijven buiten dit venster.</p>'
@@ -1172,6 +1236,23 @@ def markdown(report):
             lines.append("Niet aan project toe te wijzen: minstens " +
                          str(notion["unregistered_work_status_min"]) +
                          " statuswaarnemingen.")
+    dep = report.get("incident_dependency_owner_summary", {})
+    if (type(dep) is not dict
+            or dep.get("coverage") not in (
+                "not_supplied", "bounded_examples", "bounded_examples_truncated")
+            or dep.get("claim_authorized") is not False
+            or dep.get("runtime_recovered_verified") is not False):
+        raise ValueError("invalid dependency status in owner handoff")
+    if dep["coverage"] == "not_supplied":
+        lines.append("Incidentafhankelijkheden: bron ONBEKEND, nooit veronderstellen dat alle taken vrij zijn.")
+    else:
+        count = dep.get("held_count")
+        if type(count) is not int or not 0 <= count <= 250:
+            raise ValueError("invalid held task count")
+        lines.append("Incidentafhankelijkheden: " + str(count) +
+                     " taken op HOLD; alleen exacte job-reconciliatie kan status herstellen." +
+                     (" Steekproef afgekapt."
+                      if dep["coverage"] == "bounded_examples_truncated" else ""))
     lines.append("")
     lines.append("## Prioritaire opvolging")
     for n, card in enumerate(report["priority_items"], 1):
