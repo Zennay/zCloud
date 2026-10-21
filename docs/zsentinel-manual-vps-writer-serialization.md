@@ -58,7 +58,11 @@ production writer from cancelling an in-flight deployment.
    It does not update the shared runtime script: an owner-modified/untracked
    file must be resolved by that owner first. Read-only zSSH observation on
    21 October found an untracked watchdog script in the VPS runtime checkout;
-   this is a **real non-overwrite case**, not permission to reset it.
+   this is a **real non-overwrite case**, not permission to reset it. The
+   standalone promotion now completes runtime-source admission *before* any
+   backup directory/file creation, denies symlinked root targets or colliding
+   backup names, and stores any previous standalone executable as an owner-only
+   mode-0600 backup. Backups do not appear in normal GitHub Actions logs.
 7. The emergency reload workflow rechecks actual installed addon bytes,
    trusted/non-symlink paths and its tab-open/close restrictions **after**
    the final current-main and worker-idle checks, immediately before invoking
