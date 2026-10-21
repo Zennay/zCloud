@@ -741,6 +741,88 @@ def text_view(data):
     return "\n".join(out) + "\n"
 
 
+
+def project_review_status(data, project_id):
+    """Conservative local project decision; never implies owner freedom."""
+    if project_id not in PORTFOLIO_PROJECTS:
+        raise ValueError("Unknown canonical project")
+    name = PORTFOLIO_PROJECTS[project_id]
+    matches = [row for row in data["portfolio_urgent_local"]
+               if row["project"] == name]
+    if len(matches) > 1:
+        raise ValueError("Duplicate canonical project in local snapshot")
+    item = matches[0] if matches else None
+    incomplete = (data["portfolio_priority_partial"]
+                  or bool(data["portfolio_unknown_project_groups"])
+                  or not data["source_complete"])
+    if incomplete:
+        code = "HOLD_LOCAL_SOURCE_PARTIAL"
+        message = ("Lokale bron niet volledig; vraag eerst actuele "
+                   "Notion/GitHub- en eigenaarsbewijzen op.")
+    elif item is None:
+        code = "NO_URGENT_LOCAL_OBSERVATION"
+        message = ("Geen P0/P1-groep lokaal waargenomen; controleer "
+                   "bestaande GitHub-issues en lopende Notion-claims.")
+    elif item["in_flight_p0"] or item["in_flight_p1"]:
+        code = "HOLD_ACTIVE_OWNER"
+        message = ("Actieve lokale taken aangetroffen; behoud bestaande "
+                   "eigenaars, bespreek wachtrijwerk met hen.")
+    elif item["queued_p0"] or item["queued_p1"]:
+        if item["eligible_queued_p0"] or item["eligible_queued_p1"]:
+            code = "OWNER_REVIEW_REQUIRED"
+            message = ("Lokale wachtrijkandidaat zichtbaar; controleer "
+                       "actuele Notion-claims, open product-PRs, verplichte "
+                       "CI/review en rechten voor enige nieuwe actie.")
+        else:
+            code = "HOLD_NO_LOCAL_ELIGIBLE_HINT"
+            message = ("P0/P1-wachtwerk aanwezig maar lokaal niet eligible; "
+                       "vraag de bestaande wachtrijeigenaar om de reden.")
+    else:
+        code = "NO_URGENT_LOCAL_OBSERVATION"
+        message = ("Alleen lopende of geen urgente taken gezien; "
+                   "controleer externe bronnen voor productwerk.")
+    return {"code": code, "next_step": message,
+            "local_only": True, "owner_authorized": False}
+
+
+def project_cards_html(data):
+    """All canonical projects as navigable offline HTML, no browser scripts."""
+    observed = {row["project"]: row for row in data["portfolio_urgent_local"]}
+    blocks = []
+    for project_id, name in sorted(PORTFOLIO_PROJECTS.items(),
+                                   key=lambda pair: pair[1].casefold()):
+        row = observed.get(name)
+        status = project_review_status(data, project_id)
+        if row:
+            numbers = (
+                "P0 wacht: " + str(row["queued_p0"]) +
+                " (eligible-hint " + str(row["eligible_queued_p0"]) + "); "
+                "P1 wacht: " + str(row["queued_p1"]) +
+                " (eligible-hint " + str(row["eligible_queued_p1"]) + "); "
+                "P0 actief: " + str(row["in_flight_p0"]) +
+                "; P1 actief: " + str(row["in_flight_p1"]) + "."
+            )
+        else:
+            numbers = ("Geen lokale P0/P1-bronrij gezien; "
+                       "dit is geen bewijs van ontbrekend werk.")
+        blocks.append(
+            "<details id='project-" + project_id + "'><summary>"
+            + html.escape(name) + " · " + html.escape(status["code"])
+            + "</summary><p>" + html.escape(numbers) + "</p><p>"
+            + html.escape(status["next_step"]) + "</p>"
+            + html_inbox_links(name) + "</details>"
+        )
+    return (
+        "<section class='notice' id='project-owner-dossiers'>"
+        "<h2>Projecten · eigenaarsoverleg</h2>"
+        "<p>Dertien echte portfolio-projecten uit één SQLite-bronmoment. "
+        "Open een project voor wachtrijcontext, handmatige vervolgstap "
+        "en de bestaande GitHub-inbox; ontbrekend is niet nul. "
+        "Geen eigenaar, claim of release is geautoriseerd.</p>"
+        + "".join(blocks) + "</section>"
+    )
+
+
 def html_view(data):
     cards = []
     for lane in data["lanes"]:
