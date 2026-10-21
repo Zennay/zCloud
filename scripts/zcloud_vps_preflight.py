@@ -1170,35 +1170,8 @@ def save_private_report(destination: Path, rendered: str) -> None:
                 pass
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=Path("/home/ubuntu/zennay-cloud"))
-    parser.add_argument("--json", action="store_true", help="Print bounded machine-readable evidence")
-    parser.add_argument("--disk-hotspots", action="store_true",
-                        help="Optional bounded read-only du inventory of five known storage categories")
-    parser.add_argument("--archive-readiness", action="store_true",
-                        help="Read-only external archive mount inspection; never proves write permission")
-    parser.add_argument("--host-pressure", action="store_true",
-                        help="Opt-in bounded CPU load + kernel PSI pressure observation; no workload actions")
-    parser.add_argument("--worker-safety", action="store_true",
-                        help="Read-only portfolio queue and browser-event admission snapshot; cannot prove safe idle")
-    parser.add_argument("--previous-report", type=Path, default=None,
-                        help="Compare with a saved bounded JSON report; never modifies the prior file")
-    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "brief"), default="text",
-                        help="Output as console text, JSON, offline HTML, or three-line owner handoff")
-    parser.add_argument("--expected-main-sha", default=None,
-                        help="Exact independently fetched 40-character main commit SHA (no network requests)")
-    args = parser.parse_args()
-    if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
-        parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
-    report = measure(args.root.resolve(), args.expected_main_sha, args.disk_hotspots, args.archive_readiness, args.worker_safety, args.host_pressure)
-    if args.previous_report is not None:
-        try:
-            report["comparison"] = compare_snapshot(args.previous_report, report)
-            report["owner_handoff"] = operator_handoff(report)
-        except ValueError as exc:
-            print(f"PREVIOUS_REPORT_INVALID: {exc}", file=sys.stderr)
-            return 2
+def render_report_to_stdout(report: dict, args: argparse.Namespace) -> None:
+    """Preserve existing stdout formatting across terminal and private output."""
     if args.json or args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
     elif args.format == "html":
@@ -1263,6 +1236,56 @@ def main() -> int:
         for index, item in enumerate(report["recovery_priorities"], 1):
             print(f"  {index}. {item['code']} [{item['owner']}]: {item['next_action']}")
         print(report["next_step"])
+
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path("/home/ubuntu/zennay-cloud"))
+    parser.add_argument("--json", action="store_true", help="Print bounded machine-readable evidence")
+    parser.add_argument("--disk-hotspots", action="store_true",
+                        help="Optional bounded read-only du inventory of five known storage categories")
+    parser.add_argument("--archive-readiness", action="store_true",
+                        help="Read-only external archive mount inspection; never proves write permission")
+    parser.add_argument("--host-pressure", action="store_true",
+                        help="Opt-in bounded CPU load + kernel PSI pressure observation; no workload actions")
+    parser.add_argument("--worker-safety", action="store_true",
+                        help="Read-only portfolio queue and browser-event admission snapshot; cannot prove safe idle")
+    parser.add_argument("--previous-report", type=Path, default=None,
+                        help="Compare with a saved bounded JSON report; never modifies the prior file")
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "brief"), default="text",
+                        help="Output as console text, JSON, offline HTML, or three-line owner handoff")
+    parser.add_argument("--expected-main-sha", default=None,
+                        help="Exact independently fetched 40-character main commit SHA (no network requests)")
+    parser.add_argument("--output", type=Path, default=None,
+                        help="Create a NEW private 0600 report of the selected format; never overwrite")
+    args = parser.parse_args()
+    if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
+        parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
+    report = measure(args.root.resolve(), args.expected_main_sha, args.disk_hotspots, args.archive_readiness, args.worker_safety, args.host_pressure)
+    if args.previous_report is not None:
+        try:
+            report["comparison"] = compare_snapshot(args.previous_report, report)
+            report["owner_handoff"] = operator_handoff(report)
+        except ValueError as exc:
+            print(f"PREVIOUS_REPORT_INVALID: {exc}", file=sys.stderr)
+            return 2
+    if args.output is None:
+        render_report_to_stdout(report, args)
+    else:
+        try:
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                render_report_to_stdout(report, args)
+            save_private_report(args.output, buffer.getvalue())
+        except (OSError, ValueError, UnicodeError):
+            # Input/output paths may identify private owner workspaces.
+            print("PRIVATE_PREFLIGHT_REPORT_NOT_CREATED: destination unavailable, "
+                  "existing or outside the bound; no existing report replaced.",
+                  file=sys.stderr)
+            return 2
+        print("Private zSentinel VPS report created (0600, no replace).",
+              file=sys.stderr)
     return 2 if report["result"] == "blocked" else (1 if report["result"] == "partial" else 0)
 
 
