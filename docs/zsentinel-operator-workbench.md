@@ -51,3 +51,44 @@ The existing opt-in, source-token-bound private JSON session persists the date a
 The offline multi-PR collision panel can export locally scheduled, unresolved follow-ups as an RFC 5545 `.ics` calendar file. Each valid, open collision issue with a private follow-up date becomes an all-day calendar item with a stable issue-based UID, source issue link, observed local coordination status and a note that the date is **not** a GitHub deadline or SLA. The event title and description also list up to eight canonical linked PR candidates from the bounded saved source, clearly labelled as candidates (a shared issue does not prove overlapping files or duplicate fixes). It also includes the saved issue/PR source timestamps and explicitly instructs the operator to recheck current claims, exact PR HEAD, required CI, independent review and branch protection before acting. Unicode calendar lines are folded by UTF-8 octet length; ICS text separators and newlines are escaped.
 
 Only the date and public source fields are included. Private operator notes are intentionally omitted. Items already marked as locally followed up, entries without a valid date, and non-canonical GitHub issue URLs are excluded. The export is a local download only; it does not create calendar events through an external API, write back to GitHub/Notion, or authorize a claim, review, merge or release.
+
+## 21 October · direct te importeren merge-first issue/PR werkbak als privé-CSV
+
+De bestaande `scripts/zsentinel_issue_scope_cockpit.py` accepteert
+`--format worklist-csv` met `--worklist-limit 1..60`. De export gebruikt
+exact dezelfde reeds verzamelde, begrensde GitHub- en opgeslagen brondata
+als de issue-first werkbak. Er wordt **geen extra provider-opvraag,
+claimcontrole, CI-run of dispatch** gestart door de CSV-renderer.
+
+```bash
+umask 077
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  <dezelfde reeds gebruikte bronopties> \
+  --format worklist-csv --worklist-limit 60 \
+  --output /secure/private/zsentinel-merge-first-worklist.csv
+```
+
+De CLI verwerkt de bronopties identiek aan zijn bestaande HTML-uitvoer.
+De CSV bevat **één rij per unieke bestaande PR als eerste groep**, gevolgd
+door P0/P1/P2-issuekaarten in bestaande prioriteitsvolgorde. Eén PR met
+meerdere genoemde issues veroorzaakt nooit meerdere fictieve
+implementatietaken. Per rij zie je bronlinks, geobserveerde PR-HEAD (of
+leeg/UNKNOWN), gate-status als *bronwaarneming*, PR-/issue-moment, relatieve
+source-coverage en één menselijke vervolgstap. Als `--worklist-limit` een
+deel van de bron verbergt blijft dat expliciet gelabeld; de export claimt
+niet alle open branches, actuele eigenaren of PRs te zien.
+
+Titels en menselijke velden worden beperkt tot één cel, op Excel/Sheets
+CSV-formuleaanzet gecontroleerd (ook na onzichtbare Unicodeprefixes) en met
+correcte CSV-escaping gequote. Het bestand gebruikt de bestaande
+create-only `0600` privéschrijfroutine. Publiceer de privé-CSV niet
+automatisch in GitHub-issues of chatlogboeken.
+
+**Vrijgavegrens:** alle rijen hebben expliciet
+`current_owner_verified=NO`, `claim_authorized=NO`,
+`merge_authorized=NO`, `deploy_authorized=NO`. Deze offline werkbak
+is een menselijke overdracht; exacte actuele GitHub-HEAD, verplichte
+CI/branchregels, onafhankelijke review en Notion-/worker-eigenaarschap
+moeten nog apart gecontroleerd worden. Een geobserveerde groene check
+is geen merge-toestemming.
+
