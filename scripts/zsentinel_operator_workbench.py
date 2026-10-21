@@ -4065,6 +4065,31 @@ function mergeFirstInventory(){
      }
    }
  }
+ // Preserve unlinked PRs from admitted ZIP evidence, but NEVER broaden a
+ // filtered issue scope to other repositories or unrelated search results.
+ const selectedRepos=new Set(cards.map(card=>card.url.split('/issues/')[0]));
+ const sourceOnlyQuery=document.getElementById('search').value.trim();
+ const scopedHistoryFilter=document.getElementById('historicalPrFilter').value;
+ const scopedDeltaFilter=document.getElementById('change').value;
+ const priorityChoice=document.getElementById('priority').value;
+ if(!sourceOnlyQuery&&!scopedHistoryFilter&&!scopedDeltaFilter){
+   for(const pr of savedPrHistory.unlinked_prs||[]){
+     const repo=pr.url.split('/pull/')[0];
+     if(!selectedRepos.has(repo)||(priorityChoice&&priorityChoice!==pr.priority))
+       continue;
+     let row=rows.get(pr.url);
+     if(!row){
+       row={url:pr.url,issues:[],boardHeads:new Set(),archiveHeads:new Set(),
+         sourceKinds:new Set(),archivedGates:new Set(),
+         boardGates:new Set(),missingFinal:false,lostIssueLink:false,
+         unobservedAdditionalPrs:false};
+       rows.set(pr.url,row);
+     }
+     row.sourceKinds.add('saved_pr_without_observed_issue_link');
+     row.unlinkedPriority=pr.priority;
+     row.missingFinal ||=pr.missing_from_final_sample;
+   }
+ }
  const archivedSourceReceipts=savedPrHistory.original_archive_sources.map(source=>({
    manifest:source.review_manifest_sha256,
    from:source.earliest_observed_utc,
@@ -4078,12 +4103,14 @@ function mergeFirstInventory(){
    const heads=[...new Set([...row.boardHeads,...row.archiveHeads])].sort();
    const alternatives=row.issues.some(issue=>issue.alternatives);
    const variation=heads.length>1;
-   const next=alternatives?'inspect_competing_existing_prs_and_owner_claims':
+   const next=!row.issues.length?'inspect_unlinked_existing_pr_current_owner_and_issue_relations':
+     alternatives?'inspect_competing_existing_prs_and_owner_claims':
      variation?'refresh_current_exact_head_and_required_gates':
      row.missingFinal||row.lostIssueLink?'refresh_live_pr_and_issue_association':
      'inspect_existing_pr_exact_head_owner_ci_review_and_protection';
    return {
-     url:row.url,priority:row.issues[0].priority,issues:row.issues,
+     url:row.url,priority:row.issues[0]?.priority||row.unlinkedPriority||'Unspecified',
+     issues:row.issues,
      board_heads:[...row.boardHeads].sort(),
      archived_heads:[...row.archiveHeads].sort(),
      distinct_source_heads:heads.length,
@@ -4097,6 +4124,7 @@ function mergeFirstInventory(){
      archived_candidates_truncated:row.unobservedAdditionalPrs,
      issue_has_alternative_prs:row.issues.some(issue=>issue.alternatives),
      same_pr_covers_multiple_issues:row.issues.length>1,
+     no_issue_observed_in_saved_pr_source:row.issues.length===0,
      active_owner_verified:false,required_ci_verified:false,
      independent_review_verified:false,main_merge_verified:false,
      dispatch_authorized:false,merge_authorized:false,deploy_authorized:false,
@@ -4204,7 +4232,9 @@ function refreshMergeFirst(){
  summary.textContent=data.selected_issues+' source-filtered issue(s), '+
    data.total_saved_prs+' distinct historical/board PR reference(s), '+
    data.issues_with_alternative_prs+' issue(s) with multiple PR candidates, '+
-   data.unknown_issue_prs+' issue(s) without an admitted PR reference (UNKNOWN). '+
+   data.unknown_issue_prs+' issue(s) without an admitted PR reference (UNKNOWN), '+
+   data.rows.filter(row=>row.no_issue_observed_in_saved_pr_source).length+
+   ' saved PR(s) with no issue relation observed (UNKNOWN). '+
    (data.hidden_due_to_display_limit?
      data.hidden_due_to_display_limit+' PRs omitted from visible desk only; full reviewed CSV preserves them. ':'')+
    (data.archive_source_incomplete?
@@ -4230,6 +4260,8 @@ function refreshMergeFirst(){
    if(row.missing_final_archived_pr_sample||row.issue_link_disappeared_in_archive)
       item.append(elem('p','Saved PR/issue link disappeared from a later bounded archive. NOT evidence of closure or a merge.','meta'));
    const links=elem('div');
+   if(!row.issues.length)
+     links.append(elem('p','No linked issue was observed for this saved PR. Current GitHub issue and owner relationships remain UNKNOWN.','meta'));
    for(const issue of row.issues){
      const p=elem('p',issue.priority+' · ');
      p.append(link(issue.issue+' ↗',issue.url));
