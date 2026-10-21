@@ -90,8 +90,8 @@ def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES,
     # Exact shape, owner, issue-only filter, fixed sort and page cap prevent
     # passing arbitrary external provider URLs or unbounded search queries.
     issue_search = isinstance(path, str) and re.fullmatch(
-        r"/search/issues\\?q=repo%3AZennay%2F[A-Za-z0-9_.-]{1,100}"
-        r"\\+is%3Aissue\\+is%3Aopen&sort=updated&order=desc"
+        r"/search/issues\?q=repo%3AZennay%2F[A-Za-z0-9_.-]{1,100}"
+        r"\+is%3Aissue\+is%3Aopen&sort=updated&order=desc"
         r"&per_page=30&page=[123]",
         path,
     ) is not None
