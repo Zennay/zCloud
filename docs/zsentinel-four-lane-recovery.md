@@ -38,6 +38,33 @@ This is routing, not proof of ownership or permission to take a task.
 
 ## Runtime boundaries
 
+### 21 October · host-pressure admission connected to actual lane cards
+
+With the **existing** optional `--host-pressure` flag the four-lane
+desk now reads the bounded host snapshot **once** and uses that same
+observation in the operator recovery cards, the action list and JSON.
+
+- `HIGH_LOCAL_PRESSURE` or `ELEVATED_LOCAL_PRESSURE` produces
+  `HOLD_HOST_PRESSURE` for an otherwise queued new worker. This includes
+  independently observed high host pressure even if another portion of
+  procfs/PSI is partial. The current worker is never preempted.
+- A requested host snapshot that cannot establish reliable pressure
+  produces `HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED` rather than silently
+  presenting an extra worker candidate.
+- Without `--host-pressure`, `host_admission=NOT_REQUESTED`;
+  existing behavior and external release/claim gates remain unchanged.
+  A low-pressure reading yields `NO_ADDITIONAL_HOLD`, **not**
+  an authorization to add workers.
+- `admission_summary.held_by_optional_host_pressure` and
+  `host_admission` explain the visible result in text/JSON; offline
+  HTML reuses each lane's concrete HOLD label and the existing host
+  pressure section.
+
+No new processes, worker claims, governor writes, service actions,
+CI triggers or QA suites. This is a read-only, **conservative**
+owner decision; there is no inference about free cgroup capacity
+or an actual GitHub runner assignment.
+
 ### 21 October · actual four-worker cap required in the recovery desk
 
 The read-only local operator desk now compares **both** pieces of the
