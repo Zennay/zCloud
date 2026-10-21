@@ -20,6 +20,32 @@ from zsentinel_pr_scope_guard import github_json, REPO, SHA
 from zsentinel_private_report_writer import write_private_report
 
 SCHEMA = "zsentinel-current-pr-gate-observation-v1"
+# Shared Dutch owner actions for direct receipts, live issue UI and saved batches.
+# They explain human decisions; none of them grants merge/claim authority.
+GATE_STEPS_NL = {
+    "owner_finish_draft_before_merge_review":
+        "Concept-PR: bevoegde eigenaar rondt product af en maakt reviewklaar.",
+    "owner_resolve_current_base_conflicts":
+        "GitHub meldt mergeconflict op huidige basis; bevoegde PR-eigenaar lost dit op.",
+    "wait_for_github_mergeability_evaluation":
+        "GitHub moet samenvoegbaarheid nog berekenen; nieuwe actuele bron nodig.",
+    "inspect_incomplete_current_head_gate_source":
+        "Onvolledige GitHub check-/reviewbron; bewijs opnieuw ophalen.",
+    "inspect_current_head_failed_checks_with_owner":
+        "Mislukte huidige checks; bevoegde PR-eigenaar onderzoekt de oorzaak.",
+    "wait_for_existing_current_head_checks":
+        "Bestaande exact-head checks lopen nog; niet opnieuw starten.",
+    "owner_address_exact_head_review_changes":
+        "Onafhankelijke reviewer heeft wijzigingen gevraagd; eigenaar handelt die af.",
+    "verify_missing_current_head_checks_and_rules":
+        "Geen checks gezien; verplichte checks en branchregels apart controleren.",
+    "wait_for_requested_independent_review":
+        "Onafhankelijke review is al aangevraagd bij persoon/team; wacht op beslissing.",
+    "request_independent_current_head_review":
+        "Vraag onafhankelijke review op de actuele HEAD aan.",
+    "verify_required_rules_ownership_and_release_separately":
+        "Branchregels, eigenaar en release apart verifiëren; nog geen mergevrijgave.",
+}
 MAX_PRS = 4
 NUMBER = re.compile(r"^[1-9][0-9]{0,8}$")
 OK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
@@ -425,7 +451,8 @@ def human_gate_summary(source: dict) -> str:
             "Openstaande reviewaanvragen: " +
             str(item["pending_individual_review_requests_observed"]) + " personen, " +
             str(item["pending_team_review_requests_observed"]) + " teams (geen approvals).")
-        lines.append("Volgende menselijke actie: " + item["human_next_gate_step"])
+        lines.append("Volgende menselijke actie: " +
+                     GATE_STEPS_NL[item["human_next_gate_step"]])
         if (item["legacy_status_source_may_be_truncated"] or
                 not item["check_runs_page_complete"] or
                 item["review_page_may_be_truncated"]):
