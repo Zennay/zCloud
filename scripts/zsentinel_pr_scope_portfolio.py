@@ -58,6 +58,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "shown_path_scope_collision_pairs": [],
                 "observed_path_scope_collision_pairs": None,
                 "path_scope_collision_pairs_truncated": False,
+                "path_scope_examples_truncated": False,
                 "linked_pr_collision_clusters": [],
                 "observed_connected_pr_collision_clusters": None,
                 "shown_duplicate_issue_groups": [],
@@ -100,6 +101,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "path_scope_collision_pairs_truncated": (
                 source["path_scope_collision_pairs_truncated"] or
                 len(source["shown_path_scope_collision_pairs"]) > MAX_VISIBLE_PAIRS),
+            "path_scope_examples_truncated": source["path_scope_examples_truncated"],
             "linked_pr_collision_clusters": source["linked_pr_collision_clusters"],
             "observed_connected_pr_collision_clusters":
                 source["observed_connected_pr_collision_clusters"],
