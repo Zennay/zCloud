@@ -1014,7 +1014,7 @@ def workorders_html(batch):
         "summary{cursor:pointer;font-weight:600;padding:.3rem 0}"
         "a{color:#1458a1}a:focus-visible,summary:focus-visible{outline:3px solid #1458a1}"
         ".muted{color:#4a596f}.status{font-weight:700}"
-        "ul{padding-left:1.4rem}code{word-break:break-word}</style>",
+        "ul{padding-left:1.4rem}code{word-break:break-word}.proposal{border-top:1px solid #d8e0ea;padding:.7rem 0}.proposal h3{font-size:1rem;margin:.25rem 0}</style>",
         "</head><body><header><h1>zSentinel incident workorders</h1>",
         "<p><strong>Advisory only.</strong> This is supplied policy evidence, "
         "not live GitHub/Notion verification, claim admission or release approval.</p>",
@@ -1072,7 +1072,46 @@ def workorders_html(batch):
             parts.append("<li><strong>" + esc(source_label) + ":</strong> <a href='" + esc(url) +
                          "' target='_blank' rel='noopener noreferrer'>" +
                          esc(url) + "</a></li>")
-        parts.append("</ul></details></section>")
+        parts.append("</ul></details>")
+        # Batch inputs may propose more than one recovery action for one
+        # incident. Keep the grouped owner workorder, but expose each route's
+        # HOLD reasons and safe next step so the owner can choose deliberately.
+        proposals = [
+            row["report"] for row in batch.get("results", [])
+            if row["report"]["project_id"] == item["project_id"]
+            and row["report"]["incident_id"] == item["incident_id"]
+        ]
+        if proposals:
+            parts.append("<details><summary>Per-proposal recovery guidance</summary>")
+            for proposal in proposals:
+                parts.append(
+                    "<div class='proposal'><h3>" + esc(proposal["action"]) +
+                    " · " + esc(proposal["decision"]) + "</h3>" +
+                    "<p><strong>Recommended next step:</strong> " +
+                    esc(proposal["recommended_next_step"]) + "</p>" +
+                    "<p><strong>Source:</strong> <a href='" +
+                    esc(proposal["source_url"]) +
+                    "' target='_blank' rel='noopener noreferrer'>" +
+                    esc(proposal["source_url"]) + "</a></p>"
+                )
+                if proposal["blockers"]:
+                    parts.append("<p><strong>Holds</strong></p><ul>")
+                    for blocker in proposal["blockers"]:
+                        parts.append(
+                            "<li><strong>" + esc(blocker["code"]) + ":</strong> " +
+                            esc(blocker["message"]) + "</li>"
+                        )
+                    parts.append("</ul>")
+                if proposal["required_evidence"]:
+                    parts.append(
+                        "<p><strong>Required evidence:</strong> " +
+                        esc(", ".join(proposal["required_evidence"])) + "</p>"
+                    )
+                parts.append(
+                    "<p class='muted'>Advisory only. No claim, retry, merge, deploy or runner action.</p></div>"
+                )
+            parts.append("</details>")
+        parts.append("</section>")
     parts.append("</main><footer><p class='muted'>Never treat these cards as "
                  "active-owner verification or permission to change runtime state."
                  "</p></footer></body></html>\n")
