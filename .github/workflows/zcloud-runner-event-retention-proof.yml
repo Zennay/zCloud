@@ -1,0 +1,46 @@
+name: zCloud selective runner event retention proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_runner_event_retention.py
+      - tests/test_runner_event_retention.py
+      - tests/test_runner_event_retention_workflow.py
+      - .github/workflows/zcloud-runner-event-retention-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-runner-event-retention-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dry-run-proof:
+    if: github.actor == 'Zennay' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Enforce permanent zCloud VPS runner identity
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Prove selective retention implementation
+        run: python3 -m unittest -v tests.test_runner_event_retention
+
+      - name: Dry-run live selective retention
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_runner_event_retention.py \
+            --db /home/ubuntu/zennay-cloud/history.db \
+            --retention-hours 192 \
+            --batch-limit 5000 \
+            --pretty
