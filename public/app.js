@@ -3119,7 +3119,18 @@ function exportRetryHandoff(){
       'Project scope: '+clean(snap.scope.project),
       'Claim-attempt threshold: '+snap.scope.minimum_claim_attempts,
       'Sample complete: '+snap.complete,
-      'High-attempt items: '+snap.totals.high_attempt_items,'');
+      'High-attempt items: '+snap.totals.high_attempt_items,'',
+      '## Recovery owner workorders (advisory only)','');
+    const orders=retryOwnerWorkorders(snap,filter);
+    if(filter&&snap.scope.project!=='all'&&snap.scope.project!==filter)
+      lines.push('Current evidence has no coverage for the selected project; action UNKNOWN.');
+    else if(!orders.length)lines.push('No high-attempt group in current source; past issues remain UNKNOWN.');
+    for(const row of orders.slice(0,32)){
+      lines.push('Problem: '+clean(row.priority+' '+row.project+' — '+row.problem),
+        'Action: '+clean(row.action),
+        'Status: '+clean(row.status+'; '+row.coverage+'; no authority granted.'),'');
+    }
+    if(orders.length>32)lines.push('TRUNCATED: filter by project for remaining workorders.');
     for(const row of snap.rows.filter(x=>known.has(x.project)&&(!filter||x.project===filter)).slice(0,30))
       lines.push('- '+row.priority+' '+row.project+' ['+row.ref+']: '+row.attempts+
         ' claims · '+row.status+' · owner unverified; do not auto-retry.');
