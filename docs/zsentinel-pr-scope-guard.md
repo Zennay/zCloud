@@ -2032,3 +2032,62 @@ geen volledige verplichte CI-/review- of branch-protectiondekking, geen
 github write, Notion write, runnerrestart, queue claim, deploy of merge.
 De GitHub `/issues/N`-links zijn uitsluitend **onbevestigde PR-tekstvermeldingen**:
 ook een PR of niet-bestaand nummer kan achter zo'n link zitten.
+
+## 21 oktober · brongebonden gewijzigde-gate actielijst zonder dubbele controle
+
+De optionele reeds bestaande `--compare-previous` bron wordt nu **echt
+hergebruikt in de private workorders** in plaats van alleen in het grote
+portfolio-overzicht. Op één plek in de offline HTML, Markdown en CSV ziet
+de verantwoordelijke welke PRs sinds een vorige opname prioriteit vragen.
+De huidige exact-HEAD bevinding, eerdere gatevergelijking en eventuele
+ongewijzigde HOLD blijven nadrukkelijk verschillende soorten bewijs.
+
+Een historisch verschil krijgt **dezelfde brongebonden uitleg en concrete
+menselijke vervolgstap** als de bestaande
+`scripts/zsentinel_pr_gate_continuity.py` vergelijking. De werkbak
+onderscheidt expliciet:
+
+- `changed_gate_receipt`: bewijs veranderd bij exact dezelfde HEAD;
+- `changed_or_uncertain_head`: HEAD verschillend **of bron onzeker**, dus
+  niet zonder meer als codewijziging presenteren;
+- `incomplete_gate_source`: de twee bronnen hebben geen volledige dekking,
+  geen bewezen gewijzigde of constante situatie;
+- `newly_selected_not_new_pr`: voor het eerst in de afgebakende selectie,
+  niet noodzakelijk een nieuwe PR;
+- `unchanged_two_snapshots`: twee identieke exact-HEAD gateopnames; herhaal
+  geen HOLD-onderzoek zonder nieuwe informatie;
+- `not_compared`: geen historische bronvergelijking aanwezig.
+
+Per PR verschijnen de al eerder waargenomen **gewijzigde check-run-links**
+en veranderde gatebewijstypen direct in de private HTML en Markdown; CSV
+geeft afzonderlijke `observed_change`, `changed_check` en
+`changed_gate_evidence` regels. Historische checklinks worden beperkt
+tot canonieke paden van dezelfde GitHub-repository. Niet-canonieke links,
+ontbrekende bronregels en afgekapt bewijs krijgen een zichtbare
+dekkingwaarschuwing, geen fictieve statusupdate. Er worden hiervoor
+**geen extra GitHub-requests, retries, workerclaims of productieacties**
+uitgevoerd.
+
+Vanuit de zCloud repository root (nieuwe outputbestandsnamen vereist):
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format json --output /private/zsentinel-eerder.json
+
+# Op een later bronmoment: dezelfde projectset en PR-selectie.
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --compare-previous /private/zsentinel-eerder.json \
+  --format workorders-html \
+  --output /private/zsentinel-nieuwe-owner-desk.html
+```
+
+Alternatief: `--format workorders` voor Markdown of
+`--format workorders-csv` voor een private CSV. Alle bestanden worden
+uitsluitend nieuw/private aangemaakt, niet in-place overschreven.
+Voor alle weergaven geldt: twee waarnemingen tonen **niet** de ononderbroken
+toestand daartussen, geen actuele claims, geen branch-protection-vrijgave,
+geen onafhankelijke review en geen productie-releasebevoegdheid.
