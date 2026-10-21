@@ -1234,7 +1234,7 @@ function exportCollisionHandoff(onlyUnresolved,focusIssue=null,onlyOverdue=false
   '- In dit bestand: '+selectedCollisions.length,
   '- Geselecteerd bronissue: '+(focusIssue||'geen, volledige of openstaande beperkte bronlijst'),
   '- Alleen verlopen privé opvolgdatums: '+(onlyOverdue?'JA':'NEE'),
-  '- Peildatum: '+todayLocal()+' (lokale apparaatdatum, geen server- of GitHub SLA),
+  '- Peildatum: '+todayLocal()+' (lokale apparaatdatum, geen server- of GitHub SLA)',
   '- Handmatig opvolging vastgelegd (niet opgelost), overgeslagen bij open werk: '+
     (onlyUnresolved?collisionRows.filter(c=>c.querySelector('.collision-state').value==='followup').length:0),
   '- Huidige UI-filters of geselecteerde PR veranderen de opgeslagen bronlijst niet.',
