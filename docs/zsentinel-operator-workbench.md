@@ -3869,7 +3869,7 @@ independently by the authorized operator before such decisions.
 
 The standalone `scripts/zsentinel_merge_first_owner_csv.py --format html`
 report now displays the original board SHA-256 and observation UTC, saved
-archive-manifest SHA-256 list (explicit `not-provided` when no archive was supplied), missing-batch flag and advisory age labels in a
+archive-manifest SHA-256 list (explicit `not-provided` when no archive was supplied), a separate `saved_pr_archive_supplied` flag, missing-batch flag and advisory age labels in a
 top-level source-custody section. This metadata is still shown when a valid
 bounded board produces **zero owner rows**; the report no longer substitutes
 "unknown" provenance simply because no issue/PR card was selected. The CSV route also emits one explicitly non-actionable
