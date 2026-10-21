@@ -84,6 +84,13 @@ volgende eigenaaractie. Is de exact-head check- en reviewbron compleet genoeg
 waargenomen, dan bevat JSON ook de geobserveerde volledige HEAD SHA en alle
 vier expliciet onware claim-/retry-/merge-/deploy-toestemmingen.
 
+De UI noemt daarnaast aantoonbaar geobserveerde falende, wachtende en
+onbesliste check-runs uitsluitend als **ondergrenzen van de GitHub-steekproef**,
+en het aantal in hetzelfde head-venster aangetroffen onafhankelijke approvals.
+Bij een onvolledige bron ontbreken deze cijfers bewust; nul waargenomen
+approvals is nooit voldoende reviewbewijs. Vereiste checks en branchregels
+blijven expliciet **niet geverifieerd**.
+
 Voor de portfolio-CLI, met `--window` ingesteld op het betreffende projectvenster:
 
 ```sh
