@@ -206,6 +206,68 @@ def _observed_pr_owner_cards(pr_desk, registry):
 
 
 
+def _link_issue_pr_owner_evidence(cards, pr_cards):
+    """Attach already-inspected PR gate steps to related open issue cards.
+
+    The issue's body can only suggest a relationship. Matching canonical
+    PRs still does NOT prove the issue is fixed or authorize merge/release.
+    No additional provider reads, active-owner inference, or queue changes.
+    """
+    observed = {}
+    for pr in pr_cards:
+        urls = pr.get("existing_pr_urls")
+        if (pr.get("kind") != "open_pr_owner_review"
+                or type(urls) is not list or len(urls) != 1
+                or type(urls[0]) is not str or not SAFE_PR.fullmatch(urls[0])
+                or urls[0] in observed
+                or pr.get("merge_authorized") is not False
+                or pr.get("exact_head_required_ci_verified") is not False
+                or pr.get("independent_review_policy_verified") is not False):
+            raise ValueError("untrusted existing PR owner source for issue routing")
+        coverage = pr.get("pr_observation_coverage")
+        if coverage not in (
+                "bounded_exact_head_review_and_checks",
+                "source_incomplete_or_changed",
+                "not_queried_after_auth_or_rate_limit"):
+            raise ValueError("unknown existing PR source coverage")
+        sha = pr.get("pr_observed_head_sha")
+        if coverage != "bounded_exact_head_review_and_checks" and sha is not None:
+            raise ValueError("incomplete PR source cannot supply observed HEAD")
+        if sha is not None and (type(sha) is not str or
+                                not SAFE_SHA.fullmatch(sha)):
+            raise ValueError("invalid linked exact PR SHA")
+        observed[urls[0]] = {
+            "pr_url": urls[0],
+            "source_coverage": coverage,
+            "observed_head_sha": sha,
+            "next_step": pr["pr_gate_next_step"],
+            "issue_fixed_verified": False,
+            "current_owner_verified": False,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+        }
+    for card in cards:
+        if card.get("kind") != "open_product_issue":
+            continue
+        issue = card.get("issue_url")
+        links = card.get("existing_pr_urls")
+        if (type(issue) is not str or not SAFE_ISSUE.fullmatch(issue)
+                or type(links) is not list or len(links) > 3
+                or card.get("merge_authorized") is not False):
+            raise ValueError("invalid open issue to PR linkage")
+        origin = issue.split("/issues/", 1)[0] + "/pull/"
+        if any(type(url) is not str or not SAFE_PR.fullmatch(url)
+               or not url.startswith(origin) for url in links):
+            raise ValueError("cross-repository issue/PR linkage")
+        matches = [dict(observed[url]) for url in dict.fromkeys(links)
+                   if url in observed]
+        card["linked_inspected_pr_gates"] = matches
+        card["uninspected_related_pr_count"] = len(set(links)) - len(matches)
+        card["issue_fixed_verified"] = False
+        # Keep issue priority intact; never turn a sampled PR listing into
+        # a reason to take another worker's issue or to close it.
+
+
 def _notion_owner_status_summary(observed, source_mode, registry):
     """Handoff positive incomplete work statuses, never claim/lease authority.
 
@@ -927,6 +989,9 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                          "historical_reconciliation_required": True,
                          "live_alert_authorized": False})
             historical.append(card)
+    # Match linked open issues only against the SAME verified PR observation.
+    # This is a cross-reference, not proof of closure, ownership or merge.
+    _link_issue_pr_owner_evidence(cards, pr_cards)
     # Reuse the very same bounded GitHub read; no extra fetch or release action.
     cards.extend(pr_cards)
     # Priority before kind: make owner/incident work visible before new intake.
