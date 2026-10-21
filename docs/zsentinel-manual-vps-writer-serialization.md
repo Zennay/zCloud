@@ -43,9 +43,13 @@ production writer from cancelling an in-flight deployment.
    live install**, repeats the check immediately before the atomic rename,
    and rechecks again immediately before reload. Busy/draining/pending,
    malformed, changing or unreadable workers deny installation and/or defer
-   reload; unknown is never treated as idle. The old flow could already
-   replace live addon bytes before doing its first idle check. Worker
-   sessions and tabs are not forcibly restarted.
+   reload; unknown is never treated as idle. The observer also rejects
+   stale/offline worker states, event timestamps older than 90 seconds,
+   future-dated timestamps and missing/non-boolean activity fields. Its
+   decision is a bounded point-in-time observation, **not** a lock or
+   replacement for actual owner approval. The old flow could already replace
+   live addon bytes before doing its first idle check. Worker sessions and
+   tabs are not forcibly restarted.
 5. All three VPS checkout steps rely on the canonical GitHub workflow-event
    SHA selected by the pinned `actions/checkout`. Explicit `ref` expression
    overrides in these privileged jobs were removed because they were rejected
