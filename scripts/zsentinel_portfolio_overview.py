@@ -1115,8 +1115,8 @@ def main():
         problem_inbox = next_problems(summary, decision, selected)
         # PR observation is explicitly opt-in. Never treat GitHub metadata
         # as an owner claim, required-check inventory or merge permission.
-        if (args.inspect_pr or args.inspect_referenced_prs or args.discover_open_prs) and args.format in ("ics", "desk"):
-            raise ValueError("existing PR desk supports only html, json or text")
+        if (args.inspect_pr or args.inspect_referenced_prs or args.discover_open_prs) and args.format == "ics":
+            raise ValueError("existing PR inspection is not an iCalendar source")
         pr_selection = []
         for raw in args.inspect_pr:
             if not isinstance(raw, str):
@@ -1164,8 +1164,9 @@ def main():
             pr_desk["open_pr_discovery"] = (pr_discovery if pr_discovery is not None else {
                 "coverage": "not_requested", "all_open_prs_observed": False,
                 "merge_authorized": False})
-            # The same already-read exact-head PR advice is available in
-            # HTML, JSON and plain text; no extra GitHub calls or claims.
+            # The same existing exact-head PR source also supplies the
+            # private incident workbench; no second GET/review/claim.
+            decision["pr_delivery"] = pr_desk
             problem_inbox = link_existing_pr_actions(problem_inbox, pr_desk)
         if args.show_owner_handoff:
             from zsentinel_runtime_handoff import build_handoff
