@@ -1041,6 +1041,8 @@ def init_db():
         c.execute('CREATE TABLE IF NOT EXISTS host_samples(ts TEXT PRIMARY KEY, cpu REAL, memory REAL, disk REAL, load REAL)')
         c.execute('CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, ts TEXT, project TEXT, kind TEXT, title TEXT, detail TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS events_ts ON events(ts)')
+        # Prepared only at an authorized startup, never by Activity GET.
+        c.execute('CREATE INDEX IF NOT EXISTS events_project_ts_id ON events(project,ts DESC,id DESC)')
         c.execute('CREATE TABLE IF NOT EXISTS runner_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, event TEXT, target TEXT, title TEXT, generating INTEGER, sending INTEGER, reason TEXT, tab_id INTEGER, error TEXT)')
         columns={r['name'] for r in c.execute('PRAGMA table_info(runner_events)').fetchall()}
         if 'project_id' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN project_id TEXT')
