@@ -88,7 +88,7 @@ def validated_view(source: dict) -> dict:
         raise ValueError("Freshness flags and original source clocks disagree")
     # The producer already stores exact-head PR gate observations, but the
     # workbench previously dropped them. Admit only canonical read-only facts.
-    saved_prs = source.get("pr_delivery_observations")
+    saved_prs = source.get("pr_delivery_observations", [])
     if type(saved_prs) is not list or len(saved_prs) > 5:
         raise ValueError("Unbounded or missing exact-head PR source")
     if saved_prs and (source_fresh.get("prs") is not True or "prs" not in admitted_clocks):
@@ -156,7 +156,7 @@ def validated_view(source: dict) -> dict:
         if (type(gaps) is not list or len(gaps) > MAX_GAPS or
             any(type(g) is not str or len(g) > 300 for g in gaps)):
             raise ValueError("Untrusted or unbounded evidence gaps")
-        linked_gates = card.get("pr_delivery_candidates")
+        linked_gates = card.get("pr_delivery_candidates", [])
         expected = [observed_prs[url] for url in refs if url in observed_prs]
         if (type(linked_gates) is not list or len(linked_gates) > MAX_REFERENCES
                 or [{k: v for k, v in item.items() if k != "source_observed_at_utc"}
