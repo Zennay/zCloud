@@ -19,7 +19,7 @@ import re
 import sys
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile, ZipInfo
 
-from zsentinel_saved_dossier_timeline import build_timeline, PRIORITIES
+from zsentinel_saved_dossier_timeline import build_timeline, source_freshness, PRIORITIES
 
 MAX_BYTES = 1024 * 1024
 MAX_ISSUES = 600
@@ -27,53 +27,6 @@ RANK = {name: index for index, name in enumerate(PRIORITIES)}
 ISSUE = re.compile(r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}\Z")
 REPO = re.compile(r"Zennay/[A-Za-z0-9_.-]{1,100}\Z")
 ATTENTION = ("multiple-prs", "lost-issue-link", "missing-final-pr")
-
-
-def source_freshness(source_snapshots, *, stale_after_hours=6, evaluated_at=None):
-    """Label the newest saved observation's age, never live status.
-
-    A recent snapshot is still historical evidence. Clock-skewed or unreadable
-    timestamps fail closed and require a fresh source inspection.
-    """
-    if type(stale_after_hours) is not int or not 1 <= stale_after_hours <= 168:
-        raise ValueError("Stale threshold must be an integer from 1 to 168 hours")
-    now = evaluated_at or datetime.now(timezone.utc)
-    if now.tzinfo is None or now.utcoffset() is None:
-        raise ValueError("Freshness evaluation time must be timezone-aware")
-    now = now.astimezone(timezone.utc)
-    raw = (source_snapshots[-1].get("latest_observed_utc")
-           if source_snapshots else None)
-    result = {
-        "status": "unknown",
-        "latest_observed_utc": raw if isinstance(raw, str) else None,
-        "evaluated_at_utc": now.isoformat(),
-        "age_hours": None,
-        "stale_after_hours": stale_after_hours,
-        "source_is_live": False,
-        "live_recheck_required_before_action": True,
-        "refresh_required": True,
-    }
-    try:
-        if not isinstance(raw, str) or not raw:
-            raise ValueError("Missing source timestamp")
-        observed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if observed.tzinfo is None or observed.utcoffset() is None:
-            raise ValueError("Source timestamp lacks timezone")
-        age_seconds = (now - observed.astimezone(timezone.utc)).total_seconds()
-        if age_seconds < -300:
-            result["status"] = "clock-skew"
-            return result
-        age_seconds = max(0.0, age_seconds)
-        stale = age_seconds > stale_after_hours * 3600
-        result.update({
-            "status": "stale" if stale else "recent-snapshot",
-            "age_hours": round(age_seconds / 3600, 2),
-            "refresh_required": stale,
-        })
-    except (ValueError, TypeError, OverflowError, OSError):
-        # Malformed timestamps must never be presented as recent.
-        pass
-    return result
 
 
 def issue_worklist(report, *, stale_after_hours=6):
