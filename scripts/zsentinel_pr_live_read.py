@@ -291,19 +291,30 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
     matched_candidates, seen, matched_total, skipped_rows = [], set(), 0, 0
     scanned_rows = 0
     pages_scanned = 0
+    get_attempts = 0
+    source_error = None
     first_page_rows = None
     first_page_skipped_rows = 0
     last_page_short = False
     # Pagination is limited to four 30-PR pages. The last short page is a
     # historical observation, not durable proof that no other repair exists.
     for page_number in range(1, MAX_DISCOVERY_PAGES + 1):
-        payload = _limited_json(
-            path + "/pulls?state=open&per_page=" + str(MAX_LIST_PAGE) +
-            "&page=" + str(page_number),
-            token=token, max_body_bytes=MAX_DISCOVERY_BODY_BYTES,
-        )
+        try:
+            get_attempts += 1
+            payload = _limited_json(
+                path + "/pulls?state=open&per_page=" + str(MAX_LIST_PAGE) +
+                "&page=" + str(page_number),
+                token=token, max_body_bytes=MAX_DISCOVERY_BODY_BYTES,
+            )
+        except GitHubReadError as exc:
+            # Preserve previously observed candidates AND independently
+            # observed issue timeline links. Incomplete provider coverage
+            # must remain visible and cannot authorize new work.
+            source_error = str(exc)
+            break
         if not isinstance(payload, list) or len(payload) > MAX_LIST_PAGE:
-            raise GitHubReadError("bounded GitHub open-PR page has invalid shape")
+            source_error = "bounded GitHub open-PR page has invalid shape"
+            break
         pages_scanned += 1
         scanned_rows += len(payload)
         if first_page_rows is None:
@@ -384,6 +395,9 @@ def _discover_sampled_open_prs(issue_url, *, token=None):
         "first_page_rows": first_page_rows,
         "first_page_limit": MAX_LIST_PAGE,
         "pages_scanned": pages_scanned,
+        "get_attempts": get_attempts,
+        "source_error": source_error,
+        "partial_or_unknown": bool(source_error) or not last_page_short,
         "max_pages": MAX_DISCOVERY_PAGES,
         "open_pr_rows_scanned": scanned_rows,
         "last_page_short_at_observation": last_page_short,
@@ -579,7 +593,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
             source_url, token=token,
         )
         extra_get_attempts = (
-            timeline["get_attempts"] + discovery["pages_scanned"]
+            timeline["get_attempts"] + discovery["get_attempts"]
         )
         seen_refs = set(historical_urls)
         deduplicated = 0
@@ -1035,6 +1049,8 @@ def owner_html(report):
             str(discovery["closing_keyword_candidates_retained"]) +
             " · skipped invalid records: " +
             str(discovery["skipped_or_malformed_rows_in_window"]) +
+            (" · source unavailable: " + esc(discovery["source_error"])
+             if discovery["source_error"] else "") +
             (" · candidate sample truncated" if discovery[
                 "candidate_list_truncated"] else "") + ".</p></section>"
         )
@@ -1265,6 +1281,8 @@ def markdown(report):
             str(discovery["max_pages"]) + ", max " +
             str(discovery["first_page_limit"]) + " records/page)",
             "- Pagination window full: " + str(discovery["pagination_window_full"]),
+            "- Source partial/unknown: " + str(discovery["partial_or_unknown"]),
+            "- Source error: " + (discovery["source_error"] or "none"),
             "- Candidate text references found: " +
             str(discovery["candidate_text_matches_in_page"]),
             "- Text-linked navigation hints retained: " +
