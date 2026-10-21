@@ -988,6 +988,7 @@ def render_html(report: dict) -> str:
             '<section aria-labelledby="diff"><h2 id="diff">Changes since previous report</h2>'
             f'<dl>{item("Previous snapshot freshness", comparison.get("snapshot_freshness", "unknown"))}'
             f'{item("Previous snapshot age (seconds)", comparison.get("snapshot_age_seconds", "unknown"))}'
+            f'{item("Boot/checkout source comparison", comparison.get("source_scope_comparison", "unknown"))}'
             f'{item("Exact prior source SHA-256", comparison.get("baseline_sha256", "unknown"))}'
             f'{item("Exact prior source bytes", comparison.get("baseline_bytes", "unknown"))}'
             f'{item("Prior source read integrity", comparison.get("baseline_integrity", "unknown"))}'
@@ -1161,6 +1162,8 @@ def main() -> int:
     elif args.format == "brief":
         print("zSentinel owner handoff · read-only · NOT release authorized")
         print("Observation: " + report["observed_at"])
+        print("Local source binding: " + report["source_scope"]["state"] +
+              " (operator source only; no host attestation)")
         for card in report["owner_handoff"]:
             print("Problem [" + card["code"] + "]: " + card["problem"])
             print("Action [" + card["owner"] + "]: " + card["action"])
@@ -1182,6 +1185,7 @@ def main() -> int:
             change = report["comparison"]
             print(f"Previous snapshot: {change['snapshot_freshness']} · age={change['snapshot_age_seconds']}s · resolution credit={change['resolution_credit_allowed']}")
             print(f"Bound source SHA256: {change['baseline_sha256']} ({change['baseline_bytes']} bytes; no-follow stable inode)")
+            print(f"Source scope: {change['source_scope_comparison']} · recovery credit allowed={change['resolution_credit_allowed']}")
             print(f"New findings: {', '.join(change['new_findings']) or 'none'}")
             print(f"Confirmed resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
             print(f"Recovery unverified: {', '.join(change['recovery_unverified_findings']) or 'none'}")
