@@ -312,6 +312,8 @@ def main():
                         help="create-only 0600 private .md merge-first owner briefing from same read-only decision")
     parser.add_argument("--owner-handoff-output", type=Path,
                         help="private create-only .md/.json/.csv merged recovery + exact-PR owner handoff")
+    parser.add_argument("--previous-pr-report", type=Path,
+                        help="private prior live/refresh JSON, show exact PR gate changes and HOLD continuity")
     args = parser.parse_args()
     ledger_lock = None
     try:
@@ -333,6 +335,19 @@ def main():
                 raise ValueError("--output overlaps a source, ledger or other private report")
         if (args.pr_project or args.existing_pr) and not args.read_existing_prs:
             raise ValueError("--pr-project/--existing-pr requires --read-existing-prs")
+        if args.previous_pr_report is not None:
+            if not args.read_existing_prs or args.previous_pr_report.suffix != ".json":
+                raise ValueError("--previous-pr-report requires --read-existing-prs and private JSON")
+            protected = (
+                Path(args.bundle), args.registry, args.state,
+                args.queue_database, args.worker_events_database,
+                args.notion_claims_export, args.output, args.desk_output,
+                args.action_output, args.owner_handoff_output,
+            )
+            if any(p is not None and
+                   args.previous_pr_report.resolve() == Path(p).resolve()
+                   for p in protected):
+                raise ValueError("previous PR report aliases input, ledger or output")
         if args.read_existing_prs and args.format not in ("json", "text", "html", "desk"):
             raise ValueError("PR source supports JSON, text, HTML or private desk output")
         if args.worker_project and args.worker_events_database is None:
@@ -583,9 +598,22 @@ def main():
                 notion_status = "degraded_unavailable_no_claim_authority"
                 source["notion_claims_reason"] = "notion_source_unavailable_or_incomplete"
         source["notion_claims"] = notion_status
+        pr_continuity = None
+        if args.previous_pr_report is not None:
+            from zsentinel_portfolio_pr_delta import load_previous_portfolio
+            from zsentinel_pr_hold_continuity import compare
+            previous_report, prior_digest = load_previous_portfolio(
+                args.previous_pr_report)
+            previous_pr = previous_report.get("pr_delivery")
+            if type(previous_pr) is not dict:
+                raise ValueError("previous private JSON lacks PR delivery evidence")
+            pr_continuity = compare(pr_delivery, previous_pr, prior_digest)
+            source["pr_gate_comparison"] = "private_saved_exact_pr_source_no_gets"
         routed, updated = plan(enriched, old)
         if pr_delivery is not None:
             routed["pr_delivery"] = pr_delivery
+        if pr_continuity is not None:
+            routed["pr_gate_continuity"] = pr_continuity
         routed["live_github_read"] = source
         routed["live_sources"] = {
             "notion": notion_status,
@@ -614,6 +642,9 @@ def main():
             if args.format == "text" and pr_delivery is not None:
                 from zsentinel_pr_delivery import handoff_markdown
                 rendered += "\n\n" + handoff_markdown(pr_delivery)
+            if args.format == "text" and pr_continuity is not None:
+                from zsentinel_pr_hold_continuity import text_summary
+                rendered += "\n\n" + text_summary(pr_continuity)
         handoff_content = None
         if args.owner_handoff_output is not None:
             from zsentinel_runtime_handoff import build_handoff, serialize
