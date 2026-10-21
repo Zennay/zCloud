@@ -86,6 +86,14 @@ python3 scripts/zsentinel_saved_dossier_timeline.py \
 
 Beide CLI's gebruiken nu dezelfde gedeelde tijdstempelregels en leggen
 status, leeftijd, evaluatie-UTC en gekozen drempel vast in hun output.
+De vergelijkende portfolio-inbox geeft de actualiteit van beide bronmomenten
+naast elkaar weer en gebruikt dezelfde begrensde drempel:
+
+```sh
+python3 scripts/zsentinel_saved_issue_portfolio_delta.py \
+  --previous ./saved-older.zip --current ./saved-newer.zip \
+  --stale-after-hours 6 --format html --output ./private-issue-delta.html
+```
 
 Geen filter, versheidslabel of ZIP-receipt bewijst eigenaar, claimvrijgave,
 issue-sluiting, verplichte CI, review, merge of live herstel.
