@@ -728,7 +728,8 @@ def html_view(decision, registry=None):
         provenance = ("Notion claimstatus kon niet worden gelezen; nul actieve claims "
                       "mag hier niet uit worden afgeleid. Geen automatische taakclaim.")
     elif live is not None:
-        provenance = ("Notion en runtime zijn niet uitgelezen; actieve eigenaren zijn onbekend. "
+        provenance = ("Geen live Notion-claimstatus; runtime-claim/lease is niet geverifieerd. "
+                      "Eventmetadata, indien apart waargenomen, bewijst geen eigenaar of herstel. "
                       "Dit dashboard biedt observatie, geen automatische taakclaim.")
     else:
         provenance = ("Dit dashboard is gebaseerd op een apart aangeleverd bronpakket; "
