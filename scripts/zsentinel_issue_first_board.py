@@ -1055,7 +1055,7 @@ def render_claim_visibility(source):
 
 
 def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=None,
-            local_claims=None, issue_inbox=None):
+            local_claims=None, issue_inbox=None, targeted_project=None):
     raw = board.render(rows, observed)
     esc = lambda x: html.escape(str(x), quote=True)
     cards = []
@@ -1085,6 +1085,39 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
             "geen ownership-, fix- of mergebewijs. Bij UNKNOWN mag de eerdere "
             "P0/P1-prioriteit niet als actueel bewezen gelden.</p>"
         )
+        target_claims = issue_local_claim_evidence(
+            targeted_project, local_claims or {})
+        show_count = lambda key: (
+            str(target_claims.get(key)) if type(target_claims.get(key)) is int
+            else "UNKNOWN")
+        target_section += (
+            "<p><strong>Lokale projectclaimbron:</strong> " +
+            esc(target_claims["status"]) +
+            " · actief=" + esc(show_count("active_local_leases_observed")) +
+            " · verlopen=" + esc(show_count("expired_local_leases_observed")) +
+            " · schrijvers=" + esc(show_count("active_local_writers_observed")) +
+            " · ambigu=" + esc(show_count("ambiguous_active_leases")) +
+            ". Owner-vrijgave en externe Notion-status: UNKNOWN.</p>"
+        )
+        if target_claims["status"] == "EXPIRED_LOCAL_LEASES_OBSERVED":
+            target_section += (
+                "<p><strong>Volgende veilige stap:</strong> verifieer de "
+                "actuele worker, Notion-claim en queue voordat een claim wordt "
+                "overgenomen; verlopen lease alleen geeft geen bevoegdheid.</p>"
+            )
+        elif target_claims["status"] == "LOCAL_ACTIVE_CLAIMS_OBSERVED":
+            target_section += (
+                "<p><strong>Volgende veilige stap:</strong> respecteer actieve/"
+                "ambigue lokale claims en bevestig onafhankelijk de huidige "
+                "eigenaar voordat je mutaties overweegt.</p>"
+            )
+        elif target_claims["status"] not in {
+                "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED"}:
+            target_section += (
+                "<p><strong>Volgende veilige stap:</strong> herstel of vernieuw "
+                "de vertrouwde claimbron; ontbrekende/onvolledige data bewijst "
+                "geen vrije eigenaar.</p>"
+            )
         if target_coverage and target_coverage.get("source") == "EXPLICIT_PR_CANONICAL_GET":
             numbers = target_coverage["requested_pr_numbers"]
             canonical_repo_url = targeted["url"].rsplit("/issues/", 1)[0]
@@ -1306,7 +1339,8 @@ def main():
                                         targeted=targeted,
                                         target_coverage=target_coverage,
                                         local_claims=local_claims,
-                                        issue_inbox=issue_inbox))
+                                        issue_inbox=issue_inbox,
+                                        targeted_project=args.project[0] if targeted else None))
         payload = {
             "observed_utc": observed,
             "project_ids": args.project,
@@ -1316,6 +1350,9 @@ def main():
             "selection": ("TARGETED_OPEN_ISSUE" if args.issue is not None
                           else "P0_P1_OBSERVED_PR_LINK_FIRST"),
             "targeted_issue": targeted,
+            "targeted_local_claim_evidence": (
+                issue_local_claim_evidence(args.project[0], local_claims)
+                if targeted else None),
             "targeted_coverage": target_coverage,
             "observed_unlinked_issues": unmatched,
             "issue_inbox": issue_inbox,
@@ -1401,6 +1438,13 @@ def main():
             if not rows:
                 print("No linked existing product PRs observed; this does not prove none exist.")
             if targeted:
+                target_claims = issue_local_claim_evidence(args.project[0], local_claims)
+                print("TARGET_LOCAL_CLAIMS " + target_claims["status"] +
+                      " active=" + str(target_claims["active_local_leases_observed"]
+                                        if type(target_claims["active_local_leases_observed"]) is int else "UNKNOWN") +
+                      " expired=" + str(target_claims["expired_local_leases_observed"]
+                                         if type(target_claims["expired_local_leases_observed"]) is int else "UNKNOWN") +
+                      " owner_free=NOT_INFERABLE authorization=NOT_GRANTED")
                 print(f"TARGET_ISSUE {targeted['priority']} #{targeted['number']} "
                       f"{targeted['url']} state={targeted.get('current_state', 'UNKNOWN')} "
                       "(issue priority may be stale if state is UNKNOWN; not fix proof)")
