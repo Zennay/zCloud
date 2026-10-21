@@ -813,7 +813,8 @@ def generate_execution_lanes(project, backlog, claims=()):
             "routing_origin": (chosen.get("routing_origin", "UNKNOWN")
                                if chosen else "NO_LOCAL_TASK"),
             "queue_id": str(chosen.get("queue_id") or "") if chosen else None,
-            "status": str(chosen.get("status") or "") if chosen else "blocked" if (blocked_by or deferred_qa_by_lane[lane_id]) else "idle",
+            "status": str(chosen.get("status") or "") if chosen else "blocked" if (blocked_by or deferred_qa_by_lane[lane_id]
+                or deferred_ineligible_by_lane[lane_id]) else "idle",
             "deferred_qa_packages": deferred_qa_by_lane[lane_id],
             "deferred_ineligible_packages": deferred_ineligible_by_lane[lane_id],
             "scope": scope,
