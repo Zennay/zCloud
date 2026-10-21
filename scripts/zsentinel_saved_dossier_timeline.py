@@ -310,7 +310,31 @@ def select_page(report, *, priority=None, tag=None, issue_url=None,
     if first >= len(matched) and (page != 1 or matched):
         raise ValueError("Page outside selected saved source worklist")
     result = dict(report)
-    result["entries"] = matched[first:first + page_size]
+    visible = []
+    for item in matched[first:first + page_size]:
+        if issue_url is None:
+            visible.append(item)
+            continue
+        seen_in = [row["snapshot_index"] for row in item["observations"]
+                   if issue_url in row["linked_issue_urls"]]
+        if not seen_in:
+            raise ValueError("Issue filter contradicts admitted PR history")
+        last_pr_snapshot = item["observations"][-1]
+        in_last_pr_snapshot = issue_url in last_pr_snapshot["linked_issue_urls"]
+        entry = dict(item)
+        entry["selected_issue_source_history"] = {
+            "issue_url": issue_url,
+            "linked_observed_in_snapshots": seen_in,
+            "last_linked_snapshot": seen_in[-1],
+            "linked_in_last_observed_pr_snapshot": in_last_pr_snapshot,
+            "linked_in_latest_source_snapshot": (
+                in_last_pr_snapshot and
+                last_pr_snapshot["snapshot_index"] == len(report["source_snapshots"])),
+            "current_issue_resolved_verified": False,
+            "live_owner_verified": False,
+        }
+        visible.append(entry)
+    result["entries"] = visible
     result["display"] = {
         "source_pr_candidates_total": report["distinct_pr_candidates"],
         "matched_source_pr_candidates": len(matched),
@@ -383,6 +407,17 @@ def markdown(report):
             (", ".join(item["tags"]) or "geen waarneembare bronwissels") + ".",
             "  - Menselijke actie: " + item["human_next_action"],
         ])
+        selected_issue = item.get("selected_issue_source_history")
+        if selected_issue is not None:
+            lines.append(
+                "  - Geselecteerd issue laatst gekoppeld in bron " +
+                str(selected_issue["last_linked_snapshot"]) +
+                "; nog gekoppeld bij laatste PR-waarneming: " +
+                ("JA (historisch)" if selected_issue["linked_in_last_observed_pr_snapshot"]
+                 else "NEE (geen fixbewijs)") +
+                "; gekoppeld in laatste volledige bronsample: " +
+                ("JA (historisch)" if selected_issue["linked_in_latest_source_snapshot"]
+                 else "NIET BEWEZEN") + ".")
         for observation in item["observations"]:
             lines.append("    - #" + str(observation["snapshot_index"]) +
                          " " + observation["observed_utc"] + " · HEAD " +
@@ -422,6 +457,9 @@ def csv_content(report):
         "Main merge bewezen", "Live bewezen", "Bronactualiteit",
         "Leeftijd bron uren", "Bronactualiteit geëvalueerd UTC",
         "Stale-drempel uren", "Live status geverifieerd",
+        "Geselecteerd historisch issue", "Laatst gekoppeld bronmoment",
+        "Link in laatste PR-steekproef", "Link in laatste totaalsample",
+        "Issue live opgelost bewezen",
     ])
     for item in report["entries"]:
         writer.writerow([
@@ -443,6 +481,13 @@ def csv_content(report):
             report["source_freshness"]["age_hours"] if report["source_freshness"]["age_hours"] is not None else "ONBEKEND",
             report["source_freshness"]["evaluated_at_utc"],
             report["source_freshness"]["stale_after_hours"],
+            "NEE",
+            (item.get("selected_issue_source_history") or {}).get("issue_url", ""),
+            (item.get("selected_issue_source_history") or {}).get("last_linked_snapshot", ""),
+            ("JA, HISTORISCH" if (item.get("selected_issue_source_history") or {})
+             .get("linked_in_last_observed_pr_snapshot") else "NIET BEWEZEN"),
+            ("JA, HISTORISCH" if (item.get("selected_issue_source_history") or {})
+             .get("linked_in_latest_source_snapshot") else "NIET BEWEZEN"),
             "NEE",
         ])
     return "\ufeff" + target.getvalue()
@@ -485,6 +530,19 @@ def html_content(report):
                 e(o["observed_head"] or "ONBEKEND") + " · " +
                 e(o["primary_gate"]) + e(stats) + "<br>" + issues +
                 issue_delta + "</li>")
+        linked_issue = item.get("selected_issue_source_history")
+        focus_note = ""
+        if linked_issue is not None:
+            focus_note = (
+                "<p>Geselecteerd issue laatst gekoppeld bij bron " +
+                str(linked_issue["last_linked_snapshot"]) +
+                " · nog gekoppeld in laatste PR-bron: " +
+                ("JA, HISTORISCH" if linked_issue["linked_in_last_observed_pr_snapshot"]
+                 else "NIET WAARGENOMEN") +
+                " · gekoppeld in laatste volledige bronsample: " +
+                ("JA, HISTORISCH" if linked_issue["linked_in_latest_source_snapshot"]
+                 else "NIET BEWEZEN") +
+                ". Een ontbrekende koppeling bewijst geen issuefix.</p>")
         cards.append(
             '<article><h2><a target="_blank" rel="noopener noreferrer" href="' +
             e(item["url"]) + '">' + e(item["latest_sample_priority"]) +
@@ -500,7 +558,8 @@ def html_content(report):
             " · Niet-vergelijkbare HEAD-receipts: " +
             str(item["incomparable_receipt_observation_pairs"]) +
             "</p><p><strong>" + e(item["human_next_action"]) +
-            "</strong></p><details><summary>Volledige bronhistorie</summary><ol>" +
+            "</strong></p>" + focus_note +
+            "<details><summary>Volledige bronhistorie</summary><ol>" +
             "".join(observations) + "</ol></details></article>")
     times = " · ".join(
         "Bron " + str(s["index"]) + ": " + e(s["latest_observed_utc"])
