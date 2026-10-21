@@ -18,7 +18,13 @@ python3 scripts/zsentinel_route_continuity.py \
 
 `--format json` schrijft een nieuwe `.json`, `--format text` een nieuwe
 `.md` en `--format csv` een nieuwe `.csv` met een importeerbare
-**menselijke herstelwerklijst**. De CSV houdt P0/P1-voorstellen, wijzigingen,
+**menselijke herstelwerklijst**. HTML, tekst en CSV gebruiken dezelfde strikt **P0-eerst** gesorteerde
+eigenaaracties: binnen een prioriteit komen routewijzigingen, nieuwe
+waarnemingen, verdwenen-niet-opgeloste en pas daarna ongewijzigde taken.
+Ook de standalone offline HTML toont leesbare, mobielvriendelijke
+drie-regelige kaarten zonder JavaScript of externe requests.
+
+De CSV houdt P0/P1-voorstellen, wijzigingen,
 niet meer waargenomen taken en bronvolledigheid uit elkaar. Iedere rij
 bevat opnieuw expliciet `claim_authorized=false`,
 `dispatch_authorized=false`, `merge_authorized=false` en
