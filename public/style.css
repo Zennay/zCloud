@@ -88,6 +88,9 @@
 .blocked-queue-item button{flex:0 0 auto;border:1px solid #5a5273;background:#252033;color:#e0d5ff;border-radius:8px;padding:8px 11px;font-size:11px}
 .blocked-queue-state{margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .blocked-queue-state button{border:1px solid #66577e;background:#292238;color:#e3d8fb;border-radius:8px;padding:8px 11px;font-size:12px;min-height:38px}
+.blocked-queue-project-label{display:inline-flex;align-items:center;gap:8px;font-weight:600;color:#d9cbee}
+.blocked-queue-project-label select{max-width:min(275px,75vw);min-height:38px;border:1px solid #66577e;border-radius:8px;background:#211c2d;color:#f4edff;padding:7px 10px}
+@media(max-width:760px){.blocked-queue-project-label{width:100%;justify-content:space-between}.blocked-queue-project-label select{min-height:44px;max-width:70%}}
 .blocked-queue-state button:hover,.blocked-queue-state button[aria-pressed="true"]{border-color:#b89be7;background:#342748;color:#fff}
 @media(max-width:760px){.blocked-queue-state button{min-height:44px;flex:1 1 auto}}
 
