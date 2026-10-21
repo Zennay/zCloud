@@ -135,6 +135,11 @@ def _timestamp(value):
 def _source_url(value):
     if type(value) is not str or len(value) > 500:
         raise PolicyInputError("source_url must be a canonical HTTPS source link")
+    # Source links are repeated in Markdown handoffs. Raw control/whitespace
+    # characters can break the literal HTML-code line and inject new Markdown.
+    # Require a canonical, single-line URL before any renderer sees it.
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7f for char in value):
+        raise PolicyInputError("source_url must not contain whitespace or control characters")
     try:
         parsed = urlparse(value)
     except ValueError as exc:
