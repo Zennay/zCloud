@@ -31,6 +31,7 @@ def _empty(status):
         "source": "LOCAL_SQLITE_READ_ONLY",
         "status": status,
         "active_local_leases_observed": None,
+        "expired_local_leases_observed": None,
         "active_local_writers_observed": None,
         "ambiguous_active_leases": None,
         "notion_claim_status": "NOT_OBSERVED",
@@ -67,7 +68,7 @@ def observe(db_path, projects):
         if len(rows) > MAX_CLAIMS:
             return {p: _empty("CLAIM_INVENTORY_TRUNCATED") for p in projects}
         now = dt.datetime.now(dt.timezone.utc)
-        counts = {p: [0, 0, 0] for p in projects}
+        counts = {p: [0, 0, 0, 0] for p in projects}
         for project, lease_until, raw_metadata in rows:
             if project not in counts:
                 return {p: _empty("CLAIM_SOURCE_INVALID") for p in projects}
@@ -77,6 +78,8 @@ def observe(db_path, projects):
                 counts[project][2] += 1
                 continue
             if expiration <= now:
+                # Expiry is recovery evidence, never proof of release or owner vacancy.
+                counts[project][3] += 1
                 continue
             counts[project][0] += 1
             if (not isinstance(raw_metadata, str)
@@ -104,11 +107,14 @@ def observe(db_path, projects):
                 continue
             if any(cap in WRITER_CAPABILITIES for cap in caps):
                 counts[project][1] += 1
-        for project, (active, writers, ambiguous) in counts.items():
+        for project, (active, writers, ambiguous, expired) in counts.items():
+            status = ("LOCAL_ACTIVE_CLAIMS_OBSERVED" if active or ambiguous
+                      else "EXPIRED_LOCAL_LEASES_OBSERVED" if expired
+                      else "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED")
             result[project] = {
-                **_empty("LOCAL_ACTIVE_CLAIMS_OBSERVED" if active or ambiguous
-                         else "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED"),
+                **_empty(status),
                 "active_local_leases_observed": active,
+                "expired_local_leases_observed": expired,
                 "active_local_writers_observed": writers,
                 "ambiguous_active_leases": ambiguous,
             }
