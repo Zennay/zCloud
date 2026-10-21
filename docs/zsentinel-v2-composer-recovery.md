@@ -128,3 +128,17 @@ The actual single-tab v2 engine now closes three independent duplicate-dispatch 
 **Operator action:** Read the original GitHub/Notion/SQLite queue claim and browser conversation evidence with existing permissions. Reconcile the original task outcome or issue an explicitly authorized new queue assignment; do not clear the session marker as an automatic retry and do not assume that either browser status proves execution or cancellation. Restarting a tab or issuing an identical prompt without adjudicating the prior dispatch is unsafe.
 
 This is source-only product work inside existing [PR #1552](https://github.com/Zennay/zCloud/pull/1552). It did **not** run a QA/regression suite, write a live queue/lease, restart Firefox, change userscript version, dispatch CI or deploy to production. Protected-main CI on the eventual exact HEAD, independent review and the original release owner remain required. `PR_open` is not `merged_on_main`; neither proves a live browser update.
+
+
+## 21 October · Browser command result is not a second execution
+
+The existing `/runner-commands` poll and `/runner-command-result` acknowledgment are separate browser-to-zCloud requests. Previously `lastCommand` advanced **only after** an acknowledged command-result POST. If a prompt Send succeeded but that POST failed, the pending database command could be re-read after the generated response completed and `send("database-…")` would run for a second time. This is a genuine duplicate-execution risk, not a QA-only concern.
+
+The v2 engine now separates these outcomes:
+- Upon a successful local `send()` action, mark the command ID handled immediately and hold an in-memory **completed acknowledgment**. A refused automatic `new_chat` command is likewise marked handled and holds a **failed acknowledgment** without clicking the UI.
+- Retry only the original `/runner-command-result` POST on the **existing** 30-second worker poll until the server acknowledges it. Do not create new timers, tabs or queue claims. If acknowledgment remains unavailable, do not fetch/dispatch further commands from this pass.
+- Bound pending command receipts to 16. On saturation report `command-ack-backlog-manual-review` without another command Send. No private prompt, browser content or account token is stored in these receipts.
+- A full reload still uses the separate per-tab *may-have-dispatched queue* marker; it must not infer that the remote task succeeded, or automatically clear the original queue/claim merely because the local command receipt was queued.
+- `send-blocked` now counts as acknowledged for deduplication only after a successful `/runner-status` response. A transient status outage must not permanently suppress the sole operator-visible reason; retries occur only during existing polls.
+
+**Release/ownership:** these are source improvements on [existing #1552](https://github.com/Zennay/zCloud/pull/1552) and the matching readonly operator guidance is in [existing Activity #1550](https://github.com/Zennay/zCloud/pull/1550). They do not assert actual delivery, close a GitHub issue, retry CI, mutate SQLite outside the previously existing user-facing command-result endpoint or authorize a merge/deploy. The original required CI, independent review and owner-managed browser release remain mandatory.
