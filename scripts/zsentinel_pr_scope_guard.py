@@ -1388,6 +1388,48 @@ def graph_html(report):
             ("<p>Meer gedeelde bestandspaden zijn niet afgebeeld.</p>"
              if cluster["shared_files_sample_truncated"] else "") +
             "</details></li>")
+    scope_cluster_cards = []
+    for cluster in report["linked_pr_path_scope_collision_clusters"]:
+        members = "".join(
+            "<li><a rel='noopener noreferrer' href='" +
+            escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
+            "</a> · HEAD <code>" + escape(pr["head_sha"][:12]) +
+            "</code> · " + str(pr["other_prs_with_scope_conflicts_observed"]) +
+            " directe scopeverbindingen · " +
+            ("volledige" if pr["file_list_complete"] else "gedeeltelijke") +
+            " bestandsscope</li>"
+            for pr in cluster["participating_prs"])
+        examples = "".join(
+            "<li><a rel='noopener noreferrer' href='" +
+            escape(conflict["left_pr_url"], quote=True) + "'>PR #" +
+            str(conflict["left_pr_number"]) + "</a> <code>" +
+            escape(conflict["left_path"]) + "</code> ↔ <a rel='noopener noreferrer' href='" +
+            escape(conflict["right_pr_url"], quote=True) + "'>PR #" +
+            str(conflict["right_pr_number"]) + "</a> <code>" +
+            escape(conflict["right_path"]) + "</code><br><small>" +
+            escape(conflict["relation"]) + "</small></li>"
+            for conflict in cluster["path_conflicts_sample"])
+        scope_cluster_cards.append(
+            "<li><h3>Scopegroep " + str(cluster["component_number"]) +
+            " · " + str(cluster["pr_count_observed"]) + " open PRs</h3><p>" +
+            str(cluster["scope_collision_edge_count_observed"]) +
+            " PR-paren · " + str(cluster["path_conflict_count_observed"]) +
+            " waargenomen padconflicten. Geen bewijs van Git-mergeconflict, "
+            "eigenaar of integratievolgorde.</p><ul>" + members +
+            "</ul><details><summary>Begrensde padvoorbeelden</summary><ul>" +
+            examples + "</ul>" +
+            ("<p>Meer padconflicten in deze groep niet afgebeeld.</p>"
+             if cluster["path_conflicts_sample_truncated"] else "") +
+            "</details></li>")
+    scope_cluster_section = (
+        "<h2>Verbonden bestand/map-scopegroepen (" +
+        str(report["observed_connected_path_scope_collision_clusters"]) +
+        " waargenomen)</h2><p>Transitive groepen van bestand/map-ancestorparen. "
+        "Alleen de waargenomen open-PR-steekproef; geen mergevolgorde of eigenaarschap.</p><ol>" +
+        ("".join(scope_cluster_cards) or "<li>Geen verbonden scopegroepen waargenomen.</li>") +
+        "</ol>" +
+        ("<p role='alert'>Weergave afgekapt; overige scopegroepen onbekend.</p>"
+         if report["path_scope_collision_clusters_truncated"] else ""))
     return ("<!doctype html><html lang='nl'><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>zSentinel PR-conflictenkaart</title>"
@@ -1423,7 +1465,8 @@ def graph_html(report):
             "".join(rows) + "</tbody></table>"
             "<h2>Bestand/map-ancestorconflicten (" +
             str(report["observed_path_scope_collision_pairs"]) + ")</h2>"
-            "<p>Een PR gebruikt een pad als bestand terwijl een andere PR daaronder bestanden toevoegt. Dit is een scopeconflict-signaal, geen bewezen Git-mergeconflict of eigenaarschap.</p>"
+            "<p>Een PR gebruikt een pad als bestand terwijl een andere PR daaronder bestanden toevoegt. Dit is een scopeconflict-signaal, geen bewezen Git-mergeconflict of eigenaarschap.</p>" +
+            scope_cluster_section +
             "<table><thead><tr><th>Open PR's</th><th>Padparen</th><th>Waargenomen paden en relatie</th></tr></thead><tbody>" +
             "".join(scope_rows) + "</tbody></table>" +
             ("<p role='alert'>ONVOLLEDIG: aanvullende bestand/map-conflicpparen ontbreken buiten de weergavelimiet.</p>"
