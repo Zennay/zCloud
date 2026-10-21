@@ -1192,6 +1192,25 @@ def _notion_review_html(report):
     )
 
 
+def _selection_owner_line(report):
+    """Source truth for fair shortlist omissions, not active work claims."""
+    value = report.get("routing_selection_owner_summary")
+    if (type(value) is not dict or value.get("claim_authorized") is not False
+            or value.get("dispatch_authorized") is not False
+            or type(value.get("sample_truncated")) is not bool):
+        raise ValueError("invalid shortlist owner summary")
+    coverage = value.get("coverage")
+    count = value.get("held_count")
+    if coverage in ("not_supplied", "incomplete_or_stale") and count is None:
+        return "Shortlistbron ONBEKEND; geen scopevrijgave of claim."
+    if coverage == "complete" and type(count) is int and 0 <= count <= 250:
+        return (str(count) + " niet-geselecteerde, verder geschikte taken " +
+                "(overlap of vijf-plaatsenlimiet); eigenaar controleert " +
+                "huidige leases opnieuw." +
+                (" Voorbeelden afgekapt." if value["sample_truncated"] else ""))
+    raise ValueError("contradictory shortlist owner evidence")
+
+
 def _gate_owner_html_line(report):
     """One source-bound summary reused by the existing offline cockpit."""
     gate = report.get("routing_gate_owner_summary")
@@ -1372,6 +1391,8 @@ def handoff_html(report):
             '<p class="small muted">Afhankelijke taken: ' + escape(dep_line) + '</p>' +
             '<p class="small muted">Uitvoergates: ' +
             escape(_gate_owner_html_line(report)) + '</p>' +
+            '<p class="small muted">Project-gebalanceerde shortlist: ' +
+            escape(_selection_owner_line(report)) + '</p>' +
             ('<ol>' + ''.join(cards) + '</ol>' if cards else
              '<p>Geen actie in het onderzochte venster; geen compleet herstelbewijs.</p>') +
             ('<p>Werkbak afgekapt; extra items blijven buiten dit venster.</p>'
@@ -1515,6 +1536,7 @@ def markdown(report):
                       gate_summary.get("sample_truncated") is True else ""))
     else:
         raise ValueError("invalid routing gate coverage")
+    lines.append("Project-gebalanceerde shortlist: " + _selection_owner_line(report))
     lines.append("")
     lines.append("## Prioritaire opvolging")
     for n, card in enumerate(report["priority_items"], 1):
