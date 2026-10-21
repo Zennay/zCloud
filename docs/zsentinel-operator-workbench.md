@@ -20,6 +20,31 @@ python3 scripts/zsentinel_operator_workbench.py \
 3. Open the HTML locally, on mobile or desktop. Search and filter the *already observed* real issues by project or priority. Each card links to the original GitHub issue, its bounded existing PR references, known evidence gaps and the owner's recommended next investigation. Choose a **human-only disposition**: investigate, inspect/integrate existing PR, coordinate owner, park external blocker, or candidate for new product implementation (requiring independent fresh claim verification).
 4. Add a private note for an issue. **Download private human handoff** to create a source-bound `zsentinel-human-handoff.json` in your browser. If you close the page, **Reopen own handoff** restores precisely that file only if the SHA-256 of the original board, observation timestamp, entire known issue inventory and read-only authorization flags match. Wrong, malformed, overlong or foreign handoffs leave the current notes alone. There is no automatic persistence, autosave, external API call or output to Notion.
 
+## Merge-first: exact gespeelde bron-HEAD en ontbrekende gatebewijzen
+
+De bestaande opgeslagen PR-batch kan nu in de **projectpagina** én de
+**issue→PR-inbox** rechtstreeks verwijzen naar de **waargenomen commit-SHA**.
+Elke bestaande PR-kaart toont de bron-HEAD (of expliciet `ONBEKEND`), een
+klikbare commitlink indien volledig gevalideerd, en een aparte
+bronintegriteitssamenvatting. De volgende PR per project krijgt die informatie
+ook buiten de uitklapbare lijst, zodat de operator onmiddellijk ziet waar het
+onderzoek kan beginnen.
+
+Dezelfde broninformatie gaat mee naar de **project Markdown-handoff** en de
+**per-PR CSV-export** als `Bronintegriteit` / `Bron gate integriteit`:
+compleet of onvolledig ontvangen checkpagina, mogelijk afgekapt review-/legacy
+statusvenster, waargenomen wijzigingsverzoeken en legacy pending/failed
+signalen. Bij ontbrekende gatebronnen is de HEAD **onbekend**, niet groen.
+De bron-SHA betekent alleen *destijds waargenomen broncommit*; de actuele HEAD,
+voldoende verplichte CI, onafhankelijke review, actieve claim, werkelijke merge
+en live status blijven expliciet **apart** door de bevoegde operator te
+bevestigen.
+
+Deze wijzigingen lezen uitsluitend bestaande, begrensde offline brondata en
+genereren lokale HTML/Markdown/CSV. Ze voeren geen GitHub-GET uit tijdens het
+tonen, claimen geen werk, starten geen CI en autoriseren geen merge of deploy.
+Er zijn geen QA-, regressie- of testsuites toegevoegd of handmatig gedraaid.
+
 ## Source, privacy and safety
 
 The workbench opens **one existing regular-file JSON board** via one bounded no-follow descriptor and hashes the **exact bytes that were validated**; a second path reopen cannot silently point its human handoffs to a different board. Duplicate JSON keys, nonfinite values, source mutation, wrong schema and unexpected authorizing flags fail closed. Every GitHub issue/PR link is reconstructed or validated against canonical GitHub-only paths. All visible strings are DOM text nodes, never dynamic `innerHTML`. The embedded JSON escapes HTML delimiters. A strict local Content Security Policy blocks network connections, forms, scripts outside the generated page, images and external resources.
