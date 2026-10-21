@@ -55,6 +55,11 @@ gemarkeerd, niet als nul issues of vrij eigenaarschap. Het maximum van
 48 getoonde kaarten, projectmapping vanuit de canonieke registry en de
 bestaande bron-/tijdbudgetten voorkomen een onbeperkte operatorfeed.
 
+Bij gelijke P0/P1-prioriteit en gelijke bestaande-PR-dekking rouleren
+de issuekaarten tussen canonical repositories. Daarmee domineert één
+luidruchtig project niet de begrensde 48-kaartenweergave. De weergave
+verandert geen werkverdeling, lease of feitelijke GitHub-issueprioriteit.
+
 De inbox zoekt niet zelfstandig nieuwe repositories en voert geen
 claim, rerun, merge of deploy uit. Een issue dat geen PR toont, is
 uitsluitend **binnen de geselecteerde, begrensde PR-bron** niet gekoppeld.
