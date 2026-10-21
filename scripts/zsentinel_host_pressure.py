@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 from scripts.zsentinel_disk_pressure import observe_root_disk
+from scripts.zsentinel_psi_pressure import observe_psi, psi_sentence
 
 MAX_SOURCE_BYTES = 4096
 MEM_FIELDS = ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree")
@@ -53,6 +54,7 @@ def observe_host_pressure():
         "new_worker_authorized": False,
         "runtime_recovered": False,
         "root_disk": observe_root_disk(),
+        "psi": observe_psi(),
     }
     try:
         rows = {}
@@ -88,17 +90,20 @@ def observe_host_pressure():
         root_disk = report["root_disk"]
         disk_high = root_disk.get("pressure_hint") == "HIGH"
         disk_elevated = root_disk.get("pressure_hint") == "ELEVATED"
+        psi = report["psi"]
+        psi_high = psi.get("pressure_hint") == "HIGH"
+        psi_elevated = psi.get("pressure_hint") == "ELEVATED"
         # Review hints only. No claim, RAM promise or admission decision.
         hint = (
             "HIGH_LOCAL_PRESSURE" if (
                 memory_available_pct < 15 or
                 (swap_total > 0 and swap_used_pct >= 90) or
-                one_per_cpu >= 2 or disk_high
+                one_per_cpu >= 2 or disk_high or psi_high
             ) else
             "ELEVATED_LOCAL_PRESSURE" if (
                 memory_available_pct < 25 or
                 (swap_total > 0 and swap_used_pct >= 70) or
-                one_per_cpu >= 1.25 or disk_elevated
+                one_per_cpu >= 1.25 or disk_elevated or psi_elevated
             ) else "NO_LOCAL_THRESHOLD_CROSSED"
         )
         report.update({
@@ -132,5 +137,6 @@ def pressure_sentence(report):
         f"({report['host_memory_available_percent']}%); "
         f"swap gebruikt {report['swap_used_percent']}%; "
         f"load/CPU {report['load_one_per_cpu']}; {disk_line}. "
+        + psi_sentence(report.get("psi")) + " "
         "Alleen hostbron; geen cgroup-, claim- of nieuwe-worker-toelating."
     )
