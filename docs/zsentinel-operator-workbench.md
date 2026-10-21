@@ -2660,6 +2660,12 @@ python3 scripts/zsentinel_saved_issue_portfolio_delta.py \
   --current ./newer-private-issue-portfolio.zip \
   --repository Zennay/zCloud --changed-only --format json \
   --output ./private-zcloud-changed-issue-delta.json
+
+python3 scripts/zsentinel_saved_issue_portfolio_delta.py \
+  --previous ./older-private-issue-portfolio.zip \
+  --current ./newer-private-issue-portfolio.zip \
+  --priority P0 --format zip \
+  --output ./private-p0-issue-delta.zip
 ```
 
 CSV bevat eerst één samenvattingsrij met de exacte manifest-SHA256's,
@@ -2675,11 +2681,17 @@ expliciete **false**-waarden voor niet-geverifieerde issue-status,
 eigenaarschap, CI/review, merge en live herstel. Beide formaten respecteren
 de bestaande limiet van 48 KiB en vereisen respectievelijk .csv en .json.
 
-CSV en JSON zijn, net als HTML/Markdown, uitsluitend een privé-overdracht
+ZIP bundelt de vier gerenderde bestanden plus manifest.json met de SHA256
+en bytegrootte van elk lid, beide oorspronkelijke bronmanifesten, de
+observatietijden en expliciete niet-autoriserende statusvelden. De vaste
+interne bestandsnamen, 256 KiB-archiefgrens en create-only private writer
+houden de bundel begrensd en voorkomen overschrijven of symlink-following.
+
+CSV, JSON en ZIP zijn, net als HTML/Markdown, uitsluitend een privé-overdracht
 uit twee eerder opgeslagen bronmomenten. Ze halen geen live GitHub-status
 op en autoriseren geen claim, workflow, merge of deployment.
 
-Uitvoer is alleen een **nieuw 0600 privé HTML-, Markdown-, CSV- of JSONbestand**.
+Uitvoer is alleen een **nieuw 0600 privé HTML-, Markdown-, CSV-, JSON- of ZIPbestand**.
 In deze route vinden geen live GitHub-/Notion-/VPS-schrijfoperaties,
 workflow-reruns, claims, QA-suites, merges of deployments plaats. Iedere
 echte release blijft vereisen: huidige issue- en PR-status, actuele
