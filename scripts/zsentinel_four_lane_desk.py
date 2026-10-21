@@ -199,6 +199,7 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
     """
     state = str(lane.get("status") or "idle").lower()
     deferred = max(0, int(lane.get("deferred_qa_packages") or 0))
+    deferred_ineligible = max(0, int(lane.get("deferred_ineligible_packages") or 0))
     blocked = lane.get("blocked_by") or []
     if state in ACTIVE:
         return {
@@ -253,6 +254,12 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
             "code": "HOLD_EXISTING_CLAIM_OR_SCOPE",
             "label": "Conflict of seriële schrijfgrens",
             "next_step": "Vergelijk actieve leases en bestandsbereiken met de huidige eigenaren.",
+        }
+    if state == "blocked" and deferred_ineligible:
+        return {
+            "code": "HOLD_QUEUE_NOT_ELIGIBLE",
+            "label": "Wachtwerk zonder expliciete lokale eligible-vrijgave",
+            "next_step": "Laat de bestaande queue-/Notion-eigenaar verifiëren waarom eligible niet 1 is; activeer of herclaim niets automatisch.",
         }
     if state == "blocked" and deferred:
         return {
@@ -588,6 +595,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             "candidate_observed": lane.get("queue_id") is not None,
             "active_backlog_count": lane.get("active_backlog_count", 0),
             "deferred_qa_packages": lane.get("deferred_qa_packages", 0),
+            "deferred_ineligible_packages": lane.get("deferred_ineligible_packages", 0),
             "parallel_active_warning": lane.get("parallel_active_warning", False),
             "serialized_unscoped_queue_admitted": lane.get(
                 "serialized_unscoped_queue_admitted", False
@@ -809,6 +817,8 @@ def text_view(data):
         extra = " | MEERDERE ACTIEVE TAKEN" if lane["parallel_active_warning"] else ""
         if lane["deferred_qa_packages"]:
             extra += f" | {lane['deferred_qa_packages']} QA-taken uitgesloten"
+        if lane["deferred_ineligible_packages"]:
+            extra += f" | {lane['deferred_ineligible_packages']} niet-eligible taken uitgesloten"
         if lane["serialized_unscoped_queue_admitted"]:
             extra += " | MAXIMAAL EEN SCHRIJVER ZONDER SCOPE"
         if lane["new_write_admission_held"]:
@@ -1019,6 +1029,9 @@ def html_view(data):
         if lane["deferred_qa_packages"]:
             warning += ("<p class=\u0027warn\u0027>" + str(lane["deferred_qa_packages"])
                         + " wachtende QA-/validatietaken uitgesloten van nieuwe toelating.</p>")
+        if lane["deferred_ineligible_packages"]:
+            warning += ("<p class='warn'>" + str(lane["deferred_ineligible_packages"])
+                        + " niet-eligible wachtrijtaken niet toegelaten als nieuwe worker.</p>")
         if lane["serialized_unscoped_queue_admitted"]:
             warning += "<p class='warn'>Wachtende taak zonder schrijfscope: uitsluitend seriële kandidaat, geen claimautorisatie.</p>"
         if lane["new_write_admission_held"]:
@@ -1333,6 +1346,7 @@ def markdown_view(data):
             + " — " + lane["admission"]["label"],
             "- **Vervolgactie:** " + lane["admission"]["next_step"],
             "- **Uitgestelde QA-opdrachten:** " + str(lane["deferred_qa_packages"]),
+            "- **Niet-eligible wachtrijtaken:** " + str(lane["deferred_ineligible_packages"]),
         ))
     lines.extend(("", "## Geprioriteerde herstelacties"))
     for action in data["recovery_actions"]:
