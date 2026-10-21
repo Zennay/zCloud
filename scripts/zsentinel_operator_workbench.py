@@ -2113,10 +2113,13 @@ function refreshComparison(){
   '; unavailable/degraded projects: '+degraded(board.coverage)+
   '. Exact-head PR gate deltas compare only the same canonical PR link and admitted saved receipts; missing receipts remain UNKNOWN. Neither board establishes completeness, resolution, current ownership or merge clearance.';
  const events=changesSinceBaseline();
+ const projectEvents=projectChangesSinceBaseline();
  const gateChangedIssues=events.filter(e=>(e.changedFields||[]).some(field=>
   field.startsWith('PR gate ')||field.startsWith('PR observed '))).length;
  stats.append(elem('dt','Issues with changed saved PR gate evidence'),
   elem('dd',String(gateChangedIssues)));
+ stats.append(elem('dt','Project recovery changes / disappearances'),
+  elem('dd',String(projectEvents.length)));
  const names=[['new-observation','New in current snapshot'],
   ['changed-evidence','Changed issue/PR/gate evidence'],
   ['still-observed','Still observed'],['not-observed','No longer in current snapshot (NOT resolved)']];
@@ -2135,6 +2138,27 @@ function refreshComparison(){
    }
    list.append(li);
   });
+ }
+ for(const event of projectEvents){
+  const title=event.kind==='new-observation'?'New project recovery observation':
+   event.kind==='not-observed'?'Project no longer observed (NOT resolved)':
+   'Changed project recovery evidence';
+  const li=elem('li');
+  li.append(elem('strong',title+' · '),elem('span',event.project));
+  if(event.changedFields?.length)
+   li.append(elem('small',' · Changed: '+event.changedFields.join(', ')));
+  if(event.kind!=='not-observed'&&board.project_operations.some(row=>row.project===event.project)){
+   const button=elem('button','Inspect project recovery desk');button.type='button';
+   button.onclick=()=>{
+    const target=document.getElementById('projectRecoveryDesk');
+    target?.scrollIntoView({block:'start'});
+    const rows=Array.from(document.querySelectorAll('[data-recovery-project]'));
+    const row=rows.find(candidate=>candidate.getAttribute('data-recovery-project')===event.project);
+    row?.scrollIntoView({block:'nearest'});
+   };
+   li.append(' ',button);
+  }
+  list.append(li);
  }
 }
 function emptyManual(entry){
