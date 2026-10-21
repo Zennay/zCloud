@@ -135,6 +135,48 @@ mislukte/wachtende/onbesliste checknamen, klassieke statuscontexten en
 waargenomen onafhankelijke reviewtelling. Afzonderlijke branch protection
 en niet-gescande verplichte checks blijven altijd **NIET BEWEZEN**.
 
+## Betrouwbare actuele versus historische broninformatie
+
+De HTML-actieoverdracht en de create-only CLI-briefing hanteren nu
+expliciete bronouderdom per afzonderlijke bron, onafhankelijk van de
+algemene incidentklok:
+
+- **Exacte GitHub-job**: na tien minuten expliciet historisch; een
+  `waiting`/`pending` job wordt niet gediagnosticeerd als kapotte
+  self-hosted runner. Het advies wordt dan een nieuwe exacte joblezing.
+- **Notion**: een handmatig opgeslagen connector-snapshot is nooit live.
+  Alleen een recente token-gedreven statuswaarneming mag als beperkte
+  actieve-statusondergrens worden aangeduid; ook dan is geen filelease
+  of eigenaarschap bevestigd.
+- **Browserworker-events**: een bron ouder dan tien minuten toont geen
+  oude `safe_followup` meer als actuele eigenaaractie. Eerst bron en
+  queuelease verversen, zonder workerherstart.
+- **Queue**: actuele bron vereist geldige bronleeftijd van hoogstens vijf
+  minuten en complete inventaris. Oude of onvolledige aantallen worden
+  als eerder waargenomen geëtiketteerd.
+- **Geblokkeerde werkregels**: dezelfde privéoverdracht groepeert
+  `status=blocked` apart op P0/P1/P2/P3, met maximaal twintig
+  huidige project/priority-groepen. Een stale of incomplete bron laat
+  geen oude individuele groepen als actuele taken zien. Deze status
+  bewijst nooit een technische fout of toestemming tot retry.
+
+Ook wanneer het offline HTML-bestand lang in een browsertabblad open
+blijft, werkt de lokale incidentbron-ouderdomswaarschuwing bij.
+De **privé actieoverdracht** krijgt bij elke preview een prominente
+actuele klokwaarschuwing vóór het gecompileerde bronmateriaal. Als
+de ouderdomscategorie tussen preview en download verandert, is een
+nieuwe bronvoorvertoning vereist. Dit is enkel een lokale labelcontrole:
+geen achtergrond-fetch, Notion-query, workflowdispatch of claim.
+
+## Herstelde tekstuitvoer
+
+De live-cockpit accepteerde reeds `--format text --output NEW.txt`,
+maar gebruikte vervolgens abusievelijk het writerformaat `text` in
+plaats van `txt`. De private create-only writer accepteert
+uitsluitend echte bestandsextensies. Deze route schrijft nu daadwerkelijk
+de gevraagde `.txt` via dezelfde eigenaar- en no-follow-bescherming.
+De `--format desk` en JSON/HTML-bestanden blijven ongewijzigd.
+
 ## Wat de werkbank laat zien
 
 - **Huidige incidentkaarten:** prioriteit, bronstatus, menselijke vervolgstap en lokaal bewaarde notities tot een expliciete privé-export.
