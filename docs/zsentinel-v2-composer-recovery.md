@@ -153,3 +153,18 @@ Before the irreversible Send click, the actual v2 engine now saves the same smal
 This is deliberately not an automatic acknowledgement or task completion: a marker is written **before** clicking and may conservatively block a send which was never accepted. The owner must examine the original queue receipt and browser conversation and issue a distinct authorized assignment if work should restart. Clearing the store without adjudicating the original dispatch risks duplicate execution. No automatic timeout deletes evidence. User-facing Activity continues to describe `previous-queue-send-after-reload-manual-review` as unverified and human-only.
 
 These source changes are bundled into the **existing** PR #1552; no QA suite, live browser update, force, lease take-over or deployment is claimed.
+
+
+## 21 October · Restart-safe command acknowledgement recovery
+
+The actual browser userscript (and its matching standalone v2 engine) now saves a **private, worker-keyed ledger of only pending `/runner-command-result` acknowledgements**. This closes the earlier gap where pending receipts existed only in a JavaScript `Map` and vanished when Firefox or a tab restarted.
+
+- The ledger is a strictly validated, maximum-16-entry JSON array of **positive numeric command IDs and fixed `completed`/`failed` statuses** in Violentmonkey `GM_getValue`/`GM_setValue` storage. It contains no task text, browser conversation, receipt errors, account tokens, queue claims or private results.
+- After a local ChatGPT Send action succeeds, only its command **result receipt** is stored. Before requesting any new command, the worker retries an outstanding `/runner-command-result` POST on its *normal heartbeat*; a full browser restart restores and drains exactly those receipts. Once zCloud acknowledges each receipt, the corresponding private pending entry is removed. A stale duplicate result POST is an idempotent update to the existing command ID, not a second browser Send.
+- No new work is dispatched while a command receipt remains pending, even through the automatic normal conversation continuation path. The same guard prevents New Chat UI rotation from hiding the original ambiguous dispatch. Receipt-only recovery is attempted even when the queue assignment is paused, replaced, or the composer is absent.
+- A malformed/unreadable/private-ledger write without read-back proof is **not treated as an empty ledger**. Instead the worker reports `command-ack-ledger-unavailable` and stops new command execution. If the receipt server is temporarily unavailable but the private pending ledger is readable, the blocker `command-ack-pending-no-new-send` remains safe and retry is for the **receipt only**.
+- For truly new browser Send clicks, check the private *may-have-sent queue* witness again immediately before the irreversible Send, after all asynchronous UI work, to reduce the window for another tab dispatching the same assignment.
+
+**Owner recovery procedure:** inspect the existing command row and browser conversation, verify which command result was received, then reconcile the private ledger and queue with the rightful owner. Do not clear witnesses or restart a sent queue merely because the current tab shows no response. Private ledger storage is local recovery evidence, not an independently verified queue lease or permission to complete a PR.
+
+This update stays on the existing [#1552](https://github.com/Zennay/zCloud/pull/1552); the Activity operator message allowlist remains separately integrated on existing [#1550](https://github.com/Zennay/zCloud/pull/1550). Source changes are not merged or live merely because committed, and existing independent review, exact-head CI and browser-install authorization apply.
