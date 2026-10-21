@@ -284,6 +284,51 @@ def _validate(data):
     return observed, source, evidence
 
 
+def recommended_next_step(action, blockers, required_evidence):
+    """Give a deterministic safe handoff; never turn policy output into execution."""
+    codes = {item["code"] for item in blockers}
+    if "source_stale" in codes:
+        return "Refresh the original source observation and reevaluate; stale evidence cannot clear a HOLD."
+    if codes & {"claim_not_clear", "claim_state_unknown"}:
+        return "Ask the current owner to confirm or release the exact claim; do not preempt, reassign, or mutate the queue."
+    if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
+                "main_state_not_open", "main_merge_unverified",
+                "branch_protection_not_satisfied", "independent_review_missing",
+                "review_threads_open_or_unknown"}:
+        return "Refresh the exact-head GitHub gate state and wait for required CI/review; never bypass branch protection."
+    if codes & {"capacity_not_healthy", "running_jobs_unknown_or_active",
+                "runner_unavailability_unproven"}:
+        return "Wait for current capacity and runner/job evidence; do not launch or restart workers from this report."
+    if codes & {"owner_authorization_missing", "runtime_owner_missing",
+                "human_approval_missing", "human_owner_missing", "owner_missing"}:
+        return "Route the scoped request to the named authorized owner and obtain explicit approval before any change."
+    if codes & {"retry_budget_exhausted_or_unknown", "backoff_not_elapsed"}:
+        return "Do not retry now; confirm the bounded retry budget and backoff or choose an independently safe route."
+    if codes & {"failure_not_deterministic", "root_cause_unconfirmed", "not_transient"}:
+        return "Collect the missing failure classification and root-cause evidence before routing a repair or retry."
+    if codes & {"dependency_not_reconfirmed", "dependency_not_confirmed_cleared",
+                "blocked_task_not_preserved", "previous_blocker_evidence_missing",
+                "dependency_not_external", "dependency_scope_too_broad"}:
+        return "Refresh evidence for the exact dependent queue item and preserve its blocker history; do not change the queue yet."
+    if codes & {"scope_overlap_unknown", "task_not_ready", "independent_work_not_ready"}:
+        return "Identify a ready task and positively establish disjoint scope from every active claim before admission."
+    if blockers:
+        code = blockers[0]["code"]
+        fields = ", ".join(required_evidence[:4]) or "fresh source evidence"
+        return "Resolve HOLD " + code + " using current evidence (" + fields + "); do not bypass required gates."
+    return {
+        "retry_ci": "An authorized owner may review one bounded retry against the current exact head; this report does not dispatch it.",
+        "route_root_fix": "Hand the confirmed root cause and narrow scope to the named owner; implementation remains a separate authorized action.",
+        "assign_independent_work": "Have the owner recheck live claims, disjoint scope and capacity before admitting the independent task.",
+        "park_blocker": "Have the owner park only the exact dependent task after confirming unrelated ready work; no queue mutation is performed here.",
+        "resume_blocked": "Have the owner recheck the exact task and cleared dependency before explicitly resuming it.",
+        "escalate_human": "Route the specific permission or risk decision to the named human owner; preserve all existing claims.",
+        "merge_pr": "Have the authorized owner recheck exact-head CI, review threads and branch protection before a normal GitHub merge.",
+        "deploy": "Have the runtime owner verify the exact merged commit, post-merge health and release approval before deployment.",
+        "restart_runner": "Have the runtime owner verify zero running jobs and claims, confirm the failure cause, and approve recovery explicitly.",
+    }[action]
+
+
 def evaluate(data, max_age_minutes, *, now=None):
     if type(max_age_minutes) is not int or not 1 <= max_age_minutes <= 1440:
         raise PolicyInputError("max_age_minutes must be an integer from 1 to 1440")
@@ -563,6 +608,7 @@ def evaluate(data, max_age_minutes, *, now=None):
         "owner": data["owner"],
         "blockers": blockers,
         "required_evidence": requirements,
+        "recommended_next_step": recommended_next_step(action, blockers, requirements),
         "advisory_only": True,
         "evidence_independently_verified": False,
         "actions_executed": False,
@@ -1371,6 +1417,7 @@ def markdown(report):
         "- Incident: " + report["incident_id"],
         "- Proposed action: " + report["action"],
         "- Decision: **" + report["decision"] + "**",
+        "- Recommended next step: " + report["recommended_next_step"],
         "- Source observation: " + report["observed_at_utc"],
         "- Source: <code>" + html.escape(report["source_url"], quote=True) + "</code>",
         "- Evidence independently verified: no",
@@ -1419,6 +1466,7 @@ def policy_html(report):
         "<li>Project: <strong>" + esc(report["project_id"]) + "</strong></li>",
         "<li>Incident: <strong>" + esc(report["incident_id"]) + "</strong></li>",
         "<li>Proposed action: <strong>" + esc(report["action"]) + "</strong></li>",
+        "<li>Recommended next step: " + esc(report["recommended_next_step"]) + "</li>",
         "<li>Source observed (UTC): " + esc(report["observed_at_utc"]) + "</li>",
         "<li>Source age at evaluation: " + esc(report["source_age_seconds"]) + " seconds</li>",
         "<li>Source: <a href='" + esc(report["source_url"]) + "'>" + esc(report["source_url"]) + "</a></li>",
