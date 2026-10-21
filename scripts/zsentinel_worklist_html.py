@@ -276,7 +276,7 @@ def render_html(board, max_rows=20):
             "</select></label><label>Privé botsingsnotitie (geen GitHub-status)"
             "<textarea class='collision-note' maxlength='500' rows='2' "
             "placeholder='Eigenaar/contact of apart te controleren PR'></textarea>"
-            "</label></div></li>"
+            "</label></div><button type='button' class='collision-export-one'>Download privéoverdracht voor dit issue</button></li>"
         )
     visible_issues = {card["issue_url"] for card in cards[:max_rows]}
     visible_project = {card["issue_url"]: card["project"]
@@ -657,19 +657,23 @@ function onePrHandoff(){
    lines.join('\n')+'\n');
 }
 focusExport.addEventListener('click',onePrHandoff);
-function exportCollisionHandoff(onlyUnresolved){
- const selectedCollisions=collisionRows.filter(c=>!onlyUnresolved||
-  c.querySelector('.collision-state').value!=='followup');
+function exportCollisionHandoff(onlyUnresolved,focusIssue=null){
+ if(focusIssue!==null&&!collisionRows.some(c=>c.dataset.issue===focusIssue))return;
+ const selectedCollisions=collisionRows.filter(c=>(!focusIssue||c.dataset.issue===focusIssue)&&
+  (!onlyUnresolved||c.querySelector('.collision-state').value!=='followup'));
  const lines=[
-  '# zSentinel · '+(onlyUnresolved?'openstaande privé PR-afstemming':'privé afstemming meervoudige PR-bronissues'),'',
-  '> Volledige beperkte opgeslagen botsingsinventaris; geen bewezen file conflict, fixes, eigenaren, CI of mergebevoegdheid.','',
+  '# zSentinel · '+(focusIssue?'privé PR-afstemming voor één issue':
+   onlyUnresolved?'openstaande privé PR-afstemming':'privé afstemming meervoudige PR-bronissues'),'',
+  '> '+(focusIssue?'Eén bronissue uit de':'Volledige')+
+   ' beperkte opgeslagen botsingsinventaris; geen bewezen file conflict, fixes, eigenaren, CI of mergebevoegdheid.','',
   '- Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
   '- PR-bron UTC: '+safeText(document.getElementById('pr-time').textContent),
   '- Exact privé bron-token: '+safeText(document.body.dataset.sourceToken),
   '- Totale meervoudige bronissuevermeldingen: '+collisionRows.length,
   '- In dit bestand: '+selectedCollisions.length,
+  '- Geselecteerd bronissue: '+(focusIssue||'geen, volledige of openstaande beperkte bronlijst'),
   '- Handmatig opvolging vastgelegd (niet opgelost), overgeslagen bij open werk: '+
-    (collisionRows.length-selectedCollisions.length),
+    (onlyUnresolved?collisionRows.filter(c=>c.querySelector('.collision-state').value==='followup').length:0),
   '- Huidige UI-filters of geselecteerde PR veranderen de opgeslagen bronlijst niet.',
   '- Open-werkexport sluit alleen lokaal gemarkeerde opvolging uit; bewijst geen oplossing.',''
  ];
@@ -708,11 +712,14 @@ function exportCollisionHandoff(onlyUnresolved){
   lines.push('');
  }
  lines.push('Herlees op GitHub/Notion voor werkovername of merge: huidige claims en PR HEAD, verplichte CI, onafhankelijke reviews, branch protection en exacte scope.','');
- privateDownload(onlyUnresolved?'zsentinel-pr-botsingen-open-afstemming.md':
+ privateDownload(focusIssue?'zsentinel-pr-botsing-issue-'+focusIssue.split('/').pop()+'-prive.md':
+  onlyUnresolved?'zsentinel-pr-botsingen-open-afstemming.md':
   'zsentinel-pr-botsingen-prive-overdracht.md',lines.join('\n')+'\n');
 }
 collisionExport.addEventListener('click',()=>exportCollisionHandoff(false));
 collisionOpenExport.addEventListener('click',()=>exportCollisionHandoff(true));
+for(const c of collisionRows)c.querySelector('.collision-export-one').addEventListener('click',
+ ()=>exportCollisionHandoff(false,c.dataset.issue));
 document.getElementById('export').addEventListener('click',function(){
  const parts=['# zSentinel · private handmatige opvolging','',
   'Issuebron UTC: '+safeText(document.getElementById('issue-time').textContent),
