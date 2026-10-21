@@ -518,6 +518,12 @@ def private_issue_package(report):
         "schema": "zsentinel-private-issue-continuity-zip-v1",
         "source": "previously_saved_private_zip_sources_not_live",
         "selected_issue": report["selection"]["exact_source_issue_filter"],
+        "selected_project": report["selection"]["project_filter"],
+        "historical_attention_focus": report["selection"]["attention_filter"],
+        "selected_issue_count": report["selection"]["shown_source_issues"],
+        "matched_issue_count_in_selected_scope": report["selection"]["matched_source_issues"],
+        "source_total_issue_count": report["selection"]["total_source_issues"],
+        "filtered_out_does_not_mean_closed_or_unowned": True,
         "original_manifest_sha256": [
             item["original_review_manifest_sha256"]
             for item in report["source_snapshots"]
