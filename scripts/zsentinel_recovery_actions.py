@@ -103,6 +103,27 @@ def suggested_actions(packet):
     result = []
     # Keep queued records with existing worker slots out of any new
     # admission. The private desk deliberately never reveals slot IDs.
+    untrusted_slot_lanes = _number(packet.get("queued_assigned_lanes_untrusted"))
+    if untrusted_slot_lanes:
+        result.append(action(
+            "queued-slot-lane-origin-owner-review", "urgent",
+            f"{untrusted_slot_lanes} gereserveerde wachtrijtaken hebben een "
+            "onbetrouwbare lane-/profielherkomst.",
+            "Behoud bestaande reserveringen; vraag de huidige runtime-eigenaar "
+            "om het oorspronkelijke execution_lane record met de echte "
+            "slottoewijzing te reconciliëren vóór nieuwe parallelle opdrachten.",
+            "HOLD_ASSIGNED_LANE_PROVENANCE",
+        ))
+    unknown_slot_scopes = _number(packet.get("queued_assigned_scopes_not_declared"))
+    if unknown_slot_scopes:
+        result.append(action(
+            "queued-slot-write-scope-owner-review", "urgent",
+            f"{unknown_slot_scopes} gereserveerde wachtrijtaken missen een "
+            "expliciete geldige schrijfscope.",
+            "Laat de huidige claimeigenaar de werkelijke bestandscope vastleggen; "
+            "geen extra schrijfworker, slotvrijgave of claimovername.",
+            "HOLD_ASSIGNED_SCOPE_UNKNOWN",
+        ))
     reserved_slots = sum(
         _number(lane.get("deferred_assigned_packages"))
         for lane in packet.get("lanes", [])[:4] if isinstance(lane, dict)
