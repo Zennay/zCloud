@@ -156,6 +156,24 @@ def refresh(bundle, registry, token=None):
             conclusion = job.get("conclusion")
             if status == "completed" and conclusion not in CONCLUSION:
                 raise ValueError("github_job_conclusion_unsupported")
+            if status != "completed" and conclusion is not None:
+                # Two provider endpoints are read sequentially. If the job
+                # changed lifecycle mid-read, suppress contradictory data:
+                # never report a final failure as a waiting/runner incident.
+                raise ValueError("github_job_status_conclusion_inconsistent")
+            # Complete job timestamps are useful provenance, but never an
+            # authorization to requeue or restart a self-hosted runner.
+            started_at = job.get("started_at")
+            completed_at = job.get("completed_at")
+            started = timestamp(started_at) if started_at is not None else None
+            completed = timestamp(completed_at) if completed_at is not None else None
+            if (started is not None and started < queued_at
+                    or completed is not None and
+                    (status != "completed" or completed < queued_at
+                     or (started is not None and completed < started))
+                    or started is not None and started > observed
+                    or completed is not None and completed > observed):
+                raise ValueError("github_job_timeline_inconsistent")
             route = runner_route(job)
             updated = {
                 "run_id": run_id, "job_id": job_id,
@@ -163,6 +181,8 @@ def refresh(bundle, registry, token=None):
                 "verified_matching_run_attempt": attempt_verified,
                 "run_attempt": run_attempt if attempt_verified else None,
                 "queued_at": utc_string(queued_at),
+                "started_at": utc_string(started) if started is not None else None,
+                "completed_at": utc_string(completed) if completed is not None else None,
                 "observed_at": utc_string(observed),
                 "runner_assigned": bool(runner_id),
                 "canonical_zcloud_runner_assignment_observed": canonical_runner_assigned,
@@ -204,6 +224,8 @@ def refresh(bundle, registry, token=None):
                            "run_attempt": run_attempt if attempt_verified else None,
                            "observed_at": utc_string(observed),
                            "queued_at": utc_string(queued_at),
+                           "started_at": utc_string(started) if started is not None else None,
+                           "completed_at": utc_string(completed) if completed is not None else None,
                            "job_status": status, "runner_assigned": bool(runner_id),
                            "canonical_zcloud_runner_assignment_observed": canonical_runner_assigned,
                            "runner_id_observed": runner_id if runner_id else None,
