@@ -1087,15 +1087,20 @@ def owner_html(report):
             "reported_state_reason", "UNKNOWN")) +
         " · CLOSED never means a fix is merged or the worker claim released."
         " This single issue read is not a continuous issue-state guarantee.</p>",
-        "<p><strong>Historical issue source (not reobserved):</strong> " +
-        esc(report["historical_case_provenance"]["issue_source_observed_utc"] or "UNKNOWN") +
-        " · original case export: " +
-        esc(report["historical_case_provenance"]["case_export_utc"]) +
-        (" · ISSUE SOURCE STALE" if report["historical_case_provenance"][
-            "issue_source_stale_at_import"] else "") +
-        (" · PARTIAL issue sample" if report["historical_case_provenance"][
-            "issue_sample_truncated"] else "") +
-        ". Current PR observations do NOT refresh historical issue links.</p>",
+        ("<p><strong>No historical dossier was supplied.</strong> "
+         "This direct live observation is one bounded GitHub snapshot, "
+         "not an exhaustive issue history or owner admission.</p>"
+         if report["observation_mode"] == "direct_live_issue_readonly"
+         else "<p><strong>Historical issue source (not reobserved):</strong> " +
+         esc(report["historical_case_provenance"]["issue_source_observed_utc"]
+             or "UNKNOWN") +
+         " · original case export: " +
+         esc(report["historical_case_provenance"]["case_export_utc"]) +
+         (" · ISSUE SOURCE STALE" if report["historical_case_provenance"][
+             "issue_source_stale_at_import"] else "") +
+         (" · PARTIAL issue sample" if report["historical_case_provenance"][
+             "issue_sample_truncated"] else "") +
+         ". Current PR observations do NOT refresh historical issue links.</p>"),
         "<p>Observed " + str(report["live_observations"]) + " / " +
         str(report["candidate_count"]) + " referenced candidates; " +
         str(report["unknown_observations"]) + " UNKNOWN · GET attempts " +
@@ -1352,9 +1357,13 @@ def markdown(report):
         "- Current issue source was reobserved once, not continuously",
         "- Closed issue implies merged repair: NO",
         "- Observed live PRs: " + report["observed_at_utc"],
-        "- Original case export: " + report["historical_case_provenance"]["case_export_utc"],
+        "- Source mode: " + report["observation_mode"],
+        "- Historical case supplied: " +
+        str(report["historical_case_provenance"]["historical_case_provided"]),
+        "- Original case export: " +
+        (report["historical_case_provenance"]["case_export_utc"] or "NOT SUPPLIED"),
         "- Historical issue observed: " +
-        (report["historical_case_provenance"]["issue_source_observed_utc"] or "UNKNOWN"),
+        (report["historical_case_provenance"]["issue_source_observed_utc"] or "NOT SUPPLIED"),
         "- Historical issue source stale at import: " +
         str(report["historical_case_provenance"]["issue_source_stale_at_import"]),
         "- Historical issue sample truncated: " +
