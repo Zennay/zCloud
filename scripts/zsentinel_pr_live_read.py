@@ -15,7 +15,7 @@ import os
 import re
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, parse_qs
 from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 UTC = timezone.utc
@@ -32,7 +32,7 @@ MAX_CANDIDATES = 3
 MAX_LIST_PAGE = 30
 MAX_DISCOVERY_PAGES = 4  # Bounded open-PR inventory; never an exhaustive ownership claim.
 MAX_DISCOVERY_HINTS = 12  # Navigation-only hints; at most 3 can get live PR reads.
-MAX_TIMELINE_PAGES = 2  # 60 chronological issue events; not exhaustive.
+MAX_TIMELINE_PAGES = 3  # First + at most two recent tail pages.
 
 
 class GitHubReadError(ValueError):
@@ -48,7 +48,37 @@ def utc():
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES):
+def _timeline_last_page(link_header, requested_path):
+    """Parse only a canonical GitHub timeline rel=last page number.
+
+    Never follow provider-supplied URLs. Reconstruct the next request from
+    the already-validated issue identity and one bounded integer.
+    """
+    if not isinstance(link_header, str) or len(link_header) > 4096:
+        return None
+    expected_path = requested_path.partition("?")[0]
+    for part in link_header.split(","):
+        match = re.fullmatch(
+            r'\\s*<([^<>]{1,1000})>\\s*;\\s*rel=["\\\']?last["\\\']?\\s*',
+            part,
+        )
+        if not match:
+            continue
+        parsed = urlsplit(match.group(1))
+        if (parsed.scheme != "https" or parsed.netloc != "api.github.com"
+                or parsed.path != expected_path or parsed.fragment):
+            continue
+        query = parse_qs(parsed.query, strict_parsing=True)
+        if set(query) != {"per_page", "page"} or query["per_page"] != [str(MAX_LIST_PAGE)]:
+            continue
+        page = query["page"][0] if len(query["page"]) == 1 else ""
+        if re.fullmatch(r"[1-9][0-9]{0,5}", page):
+            return int(page)
+    return None
+
+
+def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES,
+                  include_timeline_last_page=False):
     """One fixed-host HTTPS GitHub GET, no redirects, strict byte cap."""
     if (max_body_bytes not in (MAX_BODY_BYTES, MAX_DISCOVERY_BODY_BYTES)
             or (max_body_bytes == MAX_DISCOVERY_BODY_BYTES
@@ -57,6 +87,8 @@ def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES):
                     "/timeline?per_page=" in path
                 ))):
         raise GitHubReadError("oversized read requires a bounded PR-list or issue-timeline page")
+    if include_timeline_last_page and "/timeline?per_page=" not in path:
+        raise GitHubReadError("timeline pagination metadata requires timeline path")
     if not path.startswith("/repos/Zennay/") or (
         any(char in path for char in ("#", "\\", "\n", "\r", "\t"))
     ):
@@ -76,7 +108,12 @@ def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES):
             data = response.read(max_body_bytes + 1)
             if len(data) > max_body_bytes:
                 raise GitHubReadError("bounded GitHub response size exceeded")
-            return json.loads(data.decode("utf-8"))
+            payload = json.loads(data.decode("utf-8"))
+            if include_timeline_last_page:
+                return payload, _timeline_last_page(
+                    response.headers.get("Link"), path
+                )
+            return payload
     except HTTPError as exc:
         # Never print provider error bodies: a private error could echo secrets.
         if exc.code in (401, 403, 429):
