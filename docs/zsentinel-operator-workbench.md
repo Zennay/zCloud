@@ -1,5 +1,49 @@
 # zSentinel · Private Product Delivery Workbench
 
+## 21 oktober · gerichte historische aandachtspunten voor P0-eigenaarsoverleg
+
+De merge-first CLI ondersteunt nu `--attention`: een specifiek
+**bron-geobserveerd** aandachtspunt, in plaats van alle PR's opnieuw
+handmatig te scannen. Deze selectie werkt op de volledig vooraf toegelaten
+bronrecords en combineert met `--repository`, `--priority`,
+`--record-type`, `--inspect-pr-url` en `--inspect-issue-url`.
+
+Beschikbare waarden: `all` (standaard),
+`shared-issue-prs` (meerdere opgeslagen PR-kandidaten bij een issue),
+`missing-final-sample` (een PR ontbreekt in de laatste beperkte
+historische snapshot), `lost-issue-link` (historisch issueverband
+verdwijnt), `historical-head-changes` (verschillende historisch
+geobserveerde HEADs, **geen** bewezen codeconflict),
+`archive-only-linked` (gekoppeld issue alleen in het privé-archief,
+niet in originele issuekaart) en `unlinked-pr` (PR zonder waargenomen
+issueverband).
+
+```sh
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --pr-dossier ./previously-saved-prs.zip \
+  --repository Zennay/zCloud --priority P0 \
+  --attention shared-issue-prs \
+  --format markdown --output ./private-shared-p0-brief.md
+
+python3 scripts/zsentinel_merge_first_owner_csv.py \
+  --board ./my-delivery-board.json \
+  --pr-dossier ./previously-saved-prs.zip \
+  --repository Zennay/zCloud \
+  --attention archive-only-linked \
+  --format html --output ./private-missing-board-issue-prs.html
+```
+
+Iedere CSV/HTML/Markdown/JSON-export toont de letterlijke
+`selection_attention` en aantallen `source_record_count` en
+`excluded_source_record_count`, zodat een leeg gefilterd
+overzicht nooit als huidige backlogvrijgave wordt gelezen.
+Exact geselecteerde PR- of issueidentiteiten die niet in de
+begrensde combinatie voorkomen worden vóór bestandsschrijven
+geweigerd. Geen filter kan live claims, bronvolledigheid,
+CI-review, merge of deploy autoriseren. Er is geen provider-call,
+queuewrite, CI- of QA-trigger toegevoegd.
+
 ## 21 oktober · eerder gekoppelde PR's herstellen buiten het begrensde issueboard
 
 De offline merge-first eigenaarsexport behoudt nu niet alleen
