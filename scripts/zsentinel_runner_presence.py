@@ -203,6 +203,21 @@ def observe_local_runners(proc_root="/proc"):
                         denied += 1
                         continue
                 if signature is None:
+                    # The executable symlink can be readable while its path
+                    # belongs to a runner installation not in our allowlist.
+                    # If either the executable basename or kernel comm still
+                    # identifies a runner, absence is not a complete sample.
+                    process_name = Path(executable).name.removesuffix(" (deleted)")
+                    is_runner = process_name in ("Runner.Listener", "Runner.Worker")
+                    if not is_runner:
+                        try:
+                            with (process_dir / "comm").open("r", encoding="utf-8") as fh:
+                                is_runner = fh.read(32).strip() in (
+                                    "Runner.Listener", "Runner.Worker")
+                        except (OSError, UnicodeError):
+                            is_runner = False
+                    if is_runner:
+                        unclassified_runner_processes += 1
                     continue
                 family, role = signature
                 seen[family]["listeners" if role == "Runner.Listener" else "workers"] += 1
