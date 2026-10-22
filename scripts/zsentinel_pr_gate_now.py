@@ -526,14 +526,29 @@ REVIEW_PR_URL = re.compile(
 
 
 def read_review_manifest(path: Path, batch: int = 1):
-    """Bounded read-only handoff selection; no claim or merge permission."""
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    """Bounded read-only handoff selection; never open a blocking pipe/device.
+
+    Pin a regular file before and after its bounded read. This is a local
+    operator input, not evidence of current ownership or merge permission.
+    """
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        raise ValueError("safe regular-file opening unavailable")
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or not 2 <= before.st_size <= REVIEW_MAX_BYTES:
+        raise ValueError("review manifest must be a bounded regular JSON file")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or not 2 <= info.st_size <= REVIEW_MAX_BYTES:
-            raise ValueError("review manifest must be a bounded regular JSON file")
-        with os.fdopen(fd, "rb", closefd=False) as stream:
+        identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns)
+        if (not stat.S_ISREG(info.st_mode) or
+                not 2 <= info.st_size <= REVIEW_MAX_BYTES or
+                identity(before) != identity(info)):
+            raise ValueError("review manifest changed before read")
+        with os.fdopen(os.dup(fd), "rb") as stream:
             raw = stream.read(REVIEW_MAX_BYTES + 1)
+        after = os.fstat(fd)
+        if len(raw) != info.st_size or identity(after) != identity(info):
+            raise ValueError("review manifest changed during read")
     finally:
         os.close(fd)
     if len(raw) > REVIEW_MAX_BYTES:
