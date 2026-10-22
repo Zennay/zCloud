@@ -174,3 +174,24 @@ This update stays on the existing [#1552](https://github.com/Zennay/zCloud/pull/
 The v2 producer's `progressAt` now means the last **observed generation-progress or generation-finished event**, not the time of whichever status POST happens to be sent. Ordinary heartbeat, blocked, composer and conversation-status events preserve that timestamp, so a heartbeat cannot make old generation work appear freshly progressed. The in-memory marker resets whenever the queue assignment or conversation identity changes. After a userscript reload it remains unknown until new generation evidence is observed; no timestamp is fabricated from startup or heartbeat alone.
 
 This is a producer-side correction only. It does not create a claim epoch or independently prove a live worker is healthy; the exact current queue/claim, browser evidence and existing backend/release ownership remain authoritative.
+
+
+## 22 October · Lease-bound New chat rotation
+
+Every New chat action now performs a fresh read of /runner-targets immediately
+before the UI click. The engine captures the queue ID, global slot, normalized
+prompt, route and conversation before the asynchronous read; it refuses the
+click if the current lease/assignment differs, the tab was navigated meanwhile,
+a response/send is active, a reset is already pending, or command acknowledgments
+are unresolved. The button is reacquired after the read rather than retaining a
+possibly stale DOM node.
+
+This closes the delayed-poll race where a task could be reassigned during an
+earlier await and the old browser target could still trigger an irreversible
+New chat action in a tab now assigned elsewhere. An unavailable or changed
+source emits a bounded blocker and stops the current poll; no queue/lease is
+renewed, abandoned or rewritten. The standalone engine and embedded userscript
+are kept aligned. This is source-only work on existing PR #1552, not a live
+browser rollout or proof of task recovery; exact-head CI, independent review,
+extension/version coordination and the normal release owner remain mandatory.
+
