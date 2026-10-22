@@ -7,6 +7,10 @@ on:
         description: Exact canonical Zennay/zSSH main SHA to deploy
         required: true
         type: string
+      confirm_sha:
+        description: Exact current Zennay/zCloud main SHA being authorized
+        required: true
+        type: string
       activation_phrase:
         description: Type INSTALL_ZSSH_PUBLIC_INGRESS
         required: true
@@ -22,13 +26,20 @@ concurrency:
 jobs:
   bootstrap:
     name: Install Caddy and promote zSSH public ingress
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 20
     env:
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
-      ZSSH_PRODUCTION_ORIGIN: https://zssh.cheapgpt.shop
-      ZSSH_PRODUCTION_HOST: zssh.cheapgpt.shop
+      ZSSH_PRODUCTION_ORIGIN: https://zssh.zennay.nl
+      ZSSH_PRODUCTION_HOST: zssh.zennay.nl
       ZSSH_EXPECTED_IPV4: 198.244.191.182
       ZSSH_PUBLIC_GATEWAY_PORT: "8789"
     steps:
@@ -41,6 +52,7 @@ jobs:
         env:
           ACTIVATION_PHRASE: "${{ inputs.activation_phrase }}"
           EXPECTED_ZSSH_SHA: "${{ inputs.expected_zssh_sha }}"
+          CONFIRM_SHA: "${{ inputs.confirm_sha }}"
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -48,11 +60,27 @@ jobs:
           test "$GITHUB_REF_NAME" = "main"
           test "$ACTIVATION_PHRASE" = "INSTALL_ZSSH_PUBLIC_INGRESS"
           [[ "$EXPECTED_ZSSH_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$CONFIRM_SHA"
+          live_zcloud_main="$(git ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$live_zcloud_main" = "$CONFIRM_SHA"
           python3 scripts/zcloud_vps_runner_guard.py --json             | tee "$RUNNER_TEMP/zssh-public-ingress-runner-guard.json"
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
           test "$(id -u)" -ne 0
           sudo -n true
+
+      - name: Verify the existing Docker Caddy ingress topology
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f /home/ubuntu/.config/zssh/https/Caddyfile
+          sudo -n docker inspect --format '{{.State.Running}}|{{.HostConfig.NetworkMode}}|{{range .Mounts}}{{if eq .Destination "/etc/caddy/Caddyfile"}}{{.Source}}|{{.RW}}{{end}}{{end}}' zssh-https > "$RUNNER_TEMP/zssh-docker-caddy-topology.txt"
+          topology="$(cat "$RUNNER_TEMP/zssh-docker-caddy-topology.txt")"
+          test "$topology" = "true|host|/home/ubuntu/.config/zssh/https/Caddyfile|false"
+          sudo -n docker exec zssh-https caddy version
+          sudo -n docker exec zssh-https caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          echo "ZSSH_DOCKER_CADDY_TOPOLOGY_GREEN"
 
       - name: Require production DNS to point directly at this VPS
         shell: bash
@@ -113,73 +141,22 @@ jobs:
           npm --prefix zssh-source install --ignore-scripts --no-audit --no-fund
           (
             cd zssh-source
-            node --test test/public-caddy-renderer.test.mjs test/public-caddy-installer.test.mjs test/deploy.test.mjs test/runtime-dependency-policy.test.mjs
+            node --test test/public-caddy-renderer.test.mjs test/public-caddy-installer.test.mjs test/public-caddy-docker-installer.test.mjs test/deploy.test.mjs test/runtime-dependency-policy.test.mjs
             bash -n deploy/install-public-caddy.sh
             bash -n deploy/install-target-agent.sh
           )
           echo "ZSSH_PUBLIC_CADDY_TRANSACTION_TESTS_GREEN sha=$ZSSH_SHA"
 
-      - name: Require public web ports to be unclaimed before first Caddy install
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          if command -v caddy >/dev/null 2>&1; then
-            echo "ZSSH_CADDY_ALREADY_PRESENT_SKIP_PORT_OWNERSHIP_CHECK"
-            exit 0
-          fi
-          listeners="$(sudo -n ss -H -ltnp 2>/dev/null | awk '$4 ~ /:80$|:443$/ {print}')"
-          if [[ -n "$listeners" ]]; then
-            echo "Ports 80/443 already have listeners; refusing first Caddy installation." >&2
-            exit 2
-          fi
-          echo "ZSSH_PUBLIC_WEB_PORTS_FREE_GREEN"
-
-      - name: Install official stable Caddy package when absent
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          if command -v caddy >/dev/null 2>&1; then
-            echo "ZSSH_CADDY_PACKAGE_ALREADY_PRESENT version=$(caddy version)"
-            exit 0
-          fi
-
-          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update
-          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install --yes             debian-keyring debian-archive-keyring apt-transport-https curl gnupg
-
-          key_src="$RUNNER_TEMP/caddy-stable.gpg.key"
-          keyring="$RUNNER_TEMP/caddy-stable-archive-keyring.gpg"
-          list_src="$RUNNER_TEMP/caddy-stable.list"
-
-          curl --fail --silent --show-error --location             "https://dl.cloudsmith.io/public/caddy/stable/gpg.key"             --output "$key_src"
-          gpg --batch --yes --dearmor --output "$keyring" "$key_src"
-
-          curl --fail --silent --show-error --location             "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt"             --output "$list_src"
-
-          test -s "$keyring"
-          test -s "$list_src"
-          sudo -n install -m 0644 "$keyring" /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-          sudo -n install -m 0644 "$list_src" /etc/apt/sources.list.d/caddy-stable.list
-
-          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update
-          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install --yes caddy
-
-          command -v caddy
-          caddy version
-          sudo -n systemctl is-active --quiet caddy
-          sudo -n systemctl is-enabled --quiet caddy
-          sudo -n test -f /etc/caddy/Caddyfile
-          echo "ZSSH_CADDY_PACKAGE_INSTALL_GREEN version=$(caddy version)"
-
-      - name: Promote canonical zSSH Caddy ingress transaction
+      - name: Promote canonical zSSH Docker Caddy ingress transaction
         shell: bash
         run: |
           set -Eeuo pipefail
           source_root="$GITHUB_WORKSPACE/zssh-source"
           export ZSSH_PUBLIC_BASE_URL="$ZSSH_PRODUCTION_ORIGIN"
           export ZSSH_PUBLIC_GATEWAY_PORT
-          bash "$source_root/deploy/install-public-caddy.sh" "$source_root"             | tee "$RUNNER_TEMP/zssh-public-caddy-install.txt"
-          grep -F "ZSSH_PUBLIC_CADDY_INSTALL_GREEN host=$ZSSH_PRODUCTION_HOST port=$ZSSH_PUBLIC_GATEWAY_PORT"             "$RUNNER_TEMP/zssh-public-caddy-install.txt"
-          sudo -n systemctl is-active --quiet caddy
+          bash "$source_root/deploy/install-public-caddy-docker.sh" "$source_root"             | tee "$RUNNER_TEMP/zssh-public-caddy-install.txt"
+          grep -F "ZSSH_PUBLIC_CADDY_DOCKER_INSTALL_GREEN host=$ZSSH_PRODUCTION_HOST port=$ZSSH_PUBLIC_GATEWAY_PORT"             "$RUNNER_TEMP/zssh-public-caddy-install.txt"
+          sudo -n docker exec zssh-https caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           echo "ZSSH_PUBLIC_CADDY_PROMOTION_GREEN sha=$ZSSH_SHA"
 
       - name: Prove local TLS ingress reaches exact zSSH health surface
@@ -311,9 +288,9 @@ jobs:
           live_main_after="$(git ls-remote https://github.com/Zennay/zSSH.git refs/heads/main | awk '{print $1}')"
           test "$live_main_after" = "$ZSSH_SHA"
 
-          caddy_version="$(caddy version)"
-          root_sha="$(sudo -n sha256sum /etc/caddy/Caddyfile | awk '{print $1}')"
-          snippet_sha="$(sudo -n sha256sum /etc/caddy/zssh-public.caddy | awk '{print $1}')"
+          caddy_version="$(sudo -n docker exec zssh-https caddy version)"
+          root_sha="$(sudo -n sha256sum /home/ubuntu/.config/zssh/https/Caddyfile | awk '{print $1}')"
+          snippet_sha="$(sudo -n docker exec zssh-https sha256sum /etc/caddy/Caddyfile | awk '{print $1}')"
 
           evidence_json="$(python3 - "$caddy_version" "$root_sha" "$snippet_sha" <<'PY'
           import json
@@ -336,13 +313,15 @@ jobs:
               "caddy_version": sys.argv[1],
               "caddy_root_sha256": sys.argv[2],
               "caddy_snippet_sha256": sys.argv[3],
+              "caddy_host_config_sha256": sys.argv[2],
+              "caddy_container_config_sha256": sys.argv[3],
               "local_tls_health_green": True,
               "canonical_main_reconfirmed": True,
           }, sort_keys=True, separators=(",", ":")))
           PY
           )"
 
-          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Installed Caddy, promoted transactional zSSH public TLS ingress, and proved the outbound reviewer target agent"             --commit "$ZSSH_SHA"             --ci-status success             --next-gate "Run GitHub-hosted zSSH external public-ingress preflight against https://zssh.cheapgpt.shop/mcp, then continue Auth0 and reviewer pairing/login gates"             --source "github-actions:zssh-public-ingress-bootstrap"             --evidence-json "$evidence_json"
+          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Promoted transactional Docker zSSH public TLS ingress, and proved the outbound reviewer target agent"             --commit "$ZSSH_SHA"             --ci-status success             --next-gate "Run GitHub-hosted zSSH external public-ingress preflight against https://zssh.zennay.nl/mcp, then continue Auth0 and reviewer pairing/login gates"             --source "github-actions:zssh-public-ingress-bootstrap"             --evidence-json "$evidence_json"
 
           echo "$evidence_json" > "$RUNNER_TEMP/zssh-public-ingress-bootstrap.json"
           echo "ZSSH_PUBLIC_INGRESS_BOOTSTRAP_GREEN sha=$ZSSH_SHA"
