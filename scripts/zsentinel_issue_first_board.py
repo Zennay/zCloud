@@ -141,6 +141,7 @@ def issue_local_claim_evidence(project, local_claims):
     allowed = {
         "LOCAL_ACTIVE_CLAIMS_OBSERVED", "EXPIRED_LOCAL_LEASES_OBSERVED",
         "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED", "LOCAL_SOURCE_UNAVAILABLE",
+        "LOCAL_SOURCE_CHANGED_DURING_OBSERVATION",
         "CLAIM_INVENTORY_TRUNCATED", "CLAIM_SOURCE_INVALID",
     }
     status = row.get("status")
