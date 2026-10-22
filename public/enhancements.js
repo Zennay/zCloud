@@ -80,10 +80,12 @@
   function qPanel(p){
     var q=p&&p.quality;
     if(!q||!q.available||!q.headline)return '';
+    var sourceUnconfirmed=DATA.stale===true;
     var items=(q.items||[]).map(function(x){
       return '<div><span>'+esc(x.label)+'</span><strong>'+esc(x.value)+esc(x.unit||'')+'</strong></div>';
     }).join('');
-    return '<div class="panel quality-panel"><div class="panel-header"><div><h2>Live kwaliteit</h2><div class="panel-subtitle">'+esc(q.stage||'Evidence-backed')+'</div></div>'+icon('pulse')+'</div><div class="quality-hero">'+esc(q.headline.label)+'<strong>'+esc(q.headline.value)+esc(q.headline.unit||'')+'</strong><span>'+esc(q.headline.note||'')+'</span></div><div class="quality-grid">'+items+'</div></div>';
+    var sourceNotice=sourceUnconfirmed?'<div class="alert-empty" role="status">Monitoring data is stale. Quality values below are last-known, not live. <a class="events-link" href="/">Dashboard opnieuw laden</a></div>':'';
+    return '<div class="panel quality-panel'+(sourceUnconfirmed?' source-unconfirmed':'')+'"><div class="panel-header"><div><h2>'+(sourceUnconfirmed?'Last-known quality':'Live kwaliteit')+'</h2><div class="panel-subtitle">'+esc(q.stage||'Evidence-backed')+(sourceUnconfirmed?' · monitoring data is stale':'')+'</div></div>'+icon('pulse')+'</div>'+sourceNotice+'<div class="quality-hero">'+esc(q.headline.label)+'<strong>'+esc(q.headline.value)+esc(q.headline.unit||'')+'</strong><span>'+esc(q.headline.note||'')+'</span></div><div class="quality-grid">'+items+'</div></div>';
   }
   function readinessPanel(p){
     if(!p||p.id!=='ftmo')return '';
