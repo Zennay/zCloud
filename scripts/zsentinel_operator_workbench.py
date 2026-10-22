@@ -478,6 +478,31 @@ def project_operations_html(view: dict) -> str:
     for row in sorted(view["project_operations"], key=rank):
         counts = row["issue_counts_in_sample"]
         queue = row["queue_observation"]
+        queue_handoff_html = ""
+        if (counts["P0"] or counts["P1"] or (
+            queue is not None and (
+                queue["high_claim_attempts"] > 0 or
+                queue["expired_active_leases"] > 0
+            )
+        )):
+            queue_active = queue["active_items"] if queue is not None else "UNKNOWN"
+            high_cycles = queue["high_claim_attempts"] if queue is not None else "UNKNOWN"
+            expired_leases = queue["expired_active_leases"] if queue is not None else "UNKNOWN"
+            handoff = "\n".join((
+                "Problem: {} · P0={} P1={} · queue active={} high claim cycles={} expired leases={}".format(
+                    row["project"], counts["P0"], counts["P1"],
+                    queue_active, high_cycles, expired_leases),
+                "Action: {} (human-only; no automatic claim, retry, reclaim or merge).".format(
+                    row["recommended_next_step"]),
+                "Status: HOLD · issue coverage={} · queue source UTC={} · "
+                "current owner/lease, exact-head CI, review and release authority UNKNOWN.".format(
+                    row["issue_coverage"],
+                    row["queue_source_observed_at_utc"] or "unavailable"),
+            ))
+            queue_handoff_html = (
+                '<details><summary>Three-line incident handoff (copy manually)</summary><pre>' +
+                escape(handoff) + '</pre></details>'
+            )
         queue_text = (
             "Queue source absent (UNKNOWN)"
             if queue is None else
@@ -535,7 +560,8 @@ def project_operations_html(view: dict) -> str:
             '">Preview portfolio briefing (current filters)</button> ' +
             '<button type="button" data-project-packet="' +
             escape(row["project"], quote=True) +
-            '">Create single-project owner packet</button></li>'
+            '">Create single-project owner packet</button>' +
+            queue_handoff_html + '</li>'
         )
     return (
         '<section class="portfolio" id="projectRecoveryDesk">'
