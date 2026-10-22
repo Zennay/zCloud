@@ -991,3 +991,27 @@ restart, lease release, CI bypass or production mutation is introduced.
 
 All changes are confined to existing PR #1565 pending exact-head CI,
 independent review, branch protection, authorized merge and live proof.
+
+
+## Collision-safe automatic continuation admission
+
+Since protected blocked/claimed/completed queue identities are immutable, a
+counter-only refill using `COUNT(*)+1` could accidentally select a parent ID
+still owned by a historical original task after other rows had been removed.
+The resulting enqueue would (correctly) refuse the collision, but project
+refill could then leave an otherwise runnable project with no new work.
+
+Only when no parent was explicitly provided, `portfolio_write_continuation`
+now inspects the existing portfolio queue and chooses the first unreserved
+`auto-refill-<project>-<sequence>` parent after its legacy starting counter.
+This is a bounded read of up to 128 identifiers and never modifies a previous
+parent, parked blocker, claim record or completion receipt. On exhaustion it
+returns a concrete validation refusal instead of silently rewriting work.
+Explicit original parents from worker completion stay unchanged and preserve
+the original task identity. Concurrent refill readers may select the same
+unclaimed parent; their existing transactional enqueue remains idempotent and
+only a genuinely created row is included in audit `created` results.
+
+The scheduler's claim-safe queue admission and source freshness rules remain
+separate from actual lane execution, independent review, branch protection
+and production release permissions.
