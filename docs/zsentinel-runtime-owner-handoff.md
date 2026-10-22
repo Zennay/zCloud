@@ -842,3 +842,16 @@ geblokkeerde werkbak onderdrukt en wordt geen nulstatus verzonnen.
 
 Alle kaarten blijven zonder retry, claim-, hervat-, merge- of deployrecht.
 Geen QA-/regressiesuites of handmatige workflow dispatch uitgevoerd.
+
+
+## Werkelijk zichtbare blocked-kaarten na globale P0/PR-limiet
+
+De centrale eigenaarwerkbak toont maximaal 24 kaarten. De
+`blocked_queue_owner_summary.priority_groups_shown` wordt nu **pas na de
+globale P0-/PR-sorteer- en afkapstap** berekend, op basis van werkelijk
+opgenomen `blocked_queue_owner_review`-kaarten. Een geldig geblokkeerd
+project kan door eerdere urgente incident- of merge-first-kaarten buiten de
+werkbak vallen. De samenvatting meldt dan expliciet dat niet alle
+P0/P1-groepen zichtbaar zijn; 8 vooraf geselecteerde kandidaten worden
+nooit meer ten onrechte als 8 getoonde kaarten geteld. De volledige
+geselecteerde bron is daarmee niet bewezen verwerkt of vrijgegeven.
