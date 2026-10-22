@@ -472,6 +472,11 @@ def _coordination_groups(cards):
                 or type(card.get("overlap_paths_hidden")) is not bool):
             raise ValueError("invalid PR coordination freshness flags")
         coverage_reasons = card.get("source_coverage_reasons", [])
+        page_count = card.get("source_open_pr_pages", 1)
+        window_complete = card.get("source_open_pr_window_complete", False)
+        if (type(page_count) is not int or not 1 <= page_count <= 3
+                or type(window_complete) is not bool):
+            raise ValueError("invalid PR source pagination receipt")
         if (type(coverage_reasons) is not list or len(coverage_reasons) > 16
                 or any(type(reason) is not str or
                        re.fullmatch(r"[a-z0-9_:-]{1,120}", reason) is None
@@ -1189,6 +1194,9 @@ def collect_workorders(board):
             "overlap_paths": [_markdown(p) for p in paths],
             "overlap_paths_hidden": paths_cut,
             "source_coverage_reasons": coverage_reasons,
+            "source_open_pr_pages": projects[project].get("open_pr_pages_read", 1),
+            "source_open_pr_window_complete": (
+                projects[project].get("open_pr_window_complete") is True),
             "scope_path_conflicts": scope_conflicts,
             "related_prs": related, "unverified_issue_hints": hints,
             "peer_head_evidence": peer_evidence,
@@ -1284,7 +1292,8 @@ def render_csv(bundle):
         "operator_action_link", "operator_action_kind",
         "head_sha_at_observation", "target_branch_at_observation",
         "target_branch_capture", "target_branch_second_read", "target_branch_stable",
-        "current_source_verified", "rank",
+        "current_source_verified", "source_open_pr_pages",
+        "source_open_pr_window_complete", "rank",
         "category", "blocker", "human_next_step", "operator_primary_step",
         "parallel_review_possible", "source_observed_at_utc",
         "source_sha256", "link", "detail",
@@ -1342,6 +1351,9 @@ def render_csv(bundle):
                 "target_branch_second_read": card["observed_base_ref"],
                 "target_branch_stable": card["base_ref_stable_on_second_read"],
                 "current_source_verified": bool(card["source_current"]),
+                "source_open_pr_pages": card.get("source_open_pr_pages", 1),
+                "source_open_pr_window_complete": card.get(
+                    "source_open_pr_window_complete", False),
                 "rank": card["rank"], "category": card["category"],
                 "blocker": card["blocker"],
                 "human_next_step": card["human_next_step"],
@@ -1771,6 +1783,12 @@ def render_html(bundle):
             ("HISTORISCH of HEAD ONBEKEND" if not card["source_current"]
              else "HEAD vastgepind bij recente bronopname") +
             "</span> · rang " + e(card["rank"]) + "</p>",
+            "<p><strong>PR-inventaris:</strong> " +
+            e(card.get("source_open_pr_pages", 1)) +
+            " opeenvolgende pagina('s) · lijstbron: " +
+            ("VOLLEDIG" if card.get("source_open_pr_window_complete") is True
+             else "ONVOLLEDIG/ONBEKEND") +
+            ". Claims en mergegates apart controleren.</p>",
             "<p><strong>Vergelijking:</strong> " +
             e(card["historical_change_label"]) +
             (" · <strong>Ongewijzigde HOLD: laat liggen tot nieuw bewijs</strong>"
@@ -2092,6 +2110,11 @@ def render_markdown(bundle):
             "](" + card["url"] + ")",
             "",
             "**Huidige blokkade:** " + card["blocker"],
+            "**Open-PR-bronvenster:** " +
+            str(card.get("source_open_pr_pages", 1)) + " pagina('s); " +
+            ("volledig" if card.get("source_open_pr_window_complete") is True
+             else "onvolledig/onbekend") +
+            " (niet hetzelfde als claim-/mergeautorisatie)",
             "**Eerstvolgende menselijke actie:** " + card["operator_primary_step"],
             "**Brongebaseerde gateactie:** " + card["human_next_step"],
             "**Werkstroom:** " + card["workstream_label"] +
