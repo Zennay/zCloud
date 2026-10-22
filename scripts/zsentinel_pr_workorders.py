@@ -449,6 +449,7 @@ def _coordination_groups(cards):
     parent = {url: url for url in by_url}
     edges = set()
     external_peers = {url: set() for url in by_url}
+    partial_urls = set()
     missing_or_partial = False
 
     def root(url):
@@ -484,6 +485,7 @@ def _coordination_groups(cards):
         if (not card["source_current"] or card["peer_head_evidence_partial"]
                 or card["overlap_paths_hidden"]):
             missing_or_partial = True
+            partial_urls.add(source)
         observed = []
         for peer in peer_rows:
             if type(peer) is not dict:
@@ -508,6 +510,7 @@ def _coordination_groups(cards):
             if other is None:
                 external_peers[source].add(url)
                 missing_or_partial = True
+                partial_urls.add(source)
                 continue
             # Never join historical commits or a peer that moved since the
             # collision sample. A changed HEAD is an operator recheck.
@@ -515,6 +518,7 @@ def _coordination_groups(cards):
                     or other["head_sha"] != sha or
                     other["repository"] != card["repository"]):
                 missing_or_partial = True
+                partial_urls.update((source, url))
                 continue
             edge = tuple(sorted((source, url)))
             edges.add(edge)
@@ -527,6 +531,9 @@ def _coordination_groups(cards):
                 # A related selected PR without a pinned pair is still an
                 # unresolved source gap, not an external PR or safe wave.
                 missing_or_partial = True
+                partial_urls.add(source)
+                if peer_url in by_url:
+                    partial_urls.add(peer_url)
 
     components = {}
     for card in cards:
@@ -544,6 +551,8 @@ def _coordination_groups(cards):
                 "head_sha_at_observation": member["head_sha"],
             } for member in members],
             "observed_selected_scope_collisions": len(linked),
+            "source_partial_or_unpinned": any(
+                member["url"] in partial_urls for member in members),
             "external_peer_pr_urls_to_recheck": external_group_peers[:12],
             "external_peer_preview_truncated": len(external_group_peers) > 12,
             "owner_coordination_recommended": bool(linked) or bool(external_group_peers),
@@ -556,6 +565,8 @@ def _coordination_groups(cards):
                 url for url in urls if url != member["url"])
             member["coordination_external_peer_urls"] = sorted(
                 external_peers[member["url"]])[:8]
+            member["coordination_group_source_partial"] = (
+                group["source_partial_or_unpinned"])
         groups.append(group)
     return {
         "groups": groups,
@@ -600,7 +611,8 @@ def validate_coordination_receipt(bundle):
     for original, computed in zip(items, copies):
         for key in ("coordination_group_number",
                     "coordination_selected_peer_urls",
-                    "coordination_external_peer_urls"):
+                    "coordination_external_peer_urls",
+                    "coordination_group_source_partial"):
             if original.get(key) != computed.get(key):
                 raise ValueError("per-PR coordination metadata mismatch")
     return expected
@@ -1182,7 +1194,8 @@ def render_csv(bundle):
     validate_coordination_receipt(bundle)
     fields = (
         "record_type", "project", "pr_number", "pr_url",
-        "coordination_group_number", "observed_selected_scope_peers",
+        "coordination_group_number", "coordination_group_source_partial",
+        "observed_selected_scope_peers",
         "external_peer_prs_to_recheck", "external_peer_prs_to_recheck_count",
         "attention_status", "attention_label", "workstream", "workstream_label",
         "operator_action_link", "operator_action_kind",
@@ -1232,6 +1245,8 @@ def render_csv(bundle):
             row.update({
                 "project": card["project"], "pr_number": card["number"],
                 "coordination_group_number": card["coordination_group_number"],
+                "coordination_group_source_partial": card[
+                    "coordination_group_source_partial"],
                 "observed_selected_scope_peers": len(card["coordination_selected_peer_urls"]),
                 "external_peer_prs_to_recheck": "; ".join(
                     card["coordination_external_peer_urls"]),
@@ -1580,6 +1595,8 @@ def render_html(bundle):
                      (" · <strong>eigenaren afstemmen</strong>"
                       if group["owner_coordination_recommended"] else
                       " · geen onderlinge botsing waargenomen, niet bewezen vrij") +
+                     (" · BRON ONVOLLEDIG: hercontrole nodig"
+                      if group["source_partial_or_unpinned"] else "") +
                      (" · andere PRs opnieuw controleren: " + ", ".join(external_links)
                       if external_links else "") +
                      (" (aanvullende PRs verborgen)" if group[
@@ -1947,6 +1964,8 @@ def render_markdown(bundle):
                      mentions + " · " +
                      str(group["observed_selected_scope_collisions"]) +
                      " geobserveerde scopebotsingen; " +
+                     ("BRON ONVOLLEDIG, hercontrole nodig; " if group[
+                         "source_partial_or_unpinned"] else "") +
                      ("afstemmen met eigenaren" if group[
                          "owner_coordination_recommended"] else
                       "geen botsing in geselecteerde bron, niet bewezen vrij"))
