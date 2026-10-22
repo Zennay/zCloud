@@ -69,10 +69,19 @@ def read_private_previous(path: Path):
                 raise ValueError("duplicate snapshot JSON keys")
             result[key] = value
         return result
+    def reject_nonfinite(value):
+        raise ValueError("non-finite historical snapshot JSON value")
+
     try:
-        return json.loads(raw.decode("utf-8"), object_pairs_hook=unique)
-    except (UnicodeError, json.JSONDecodeError):
-        raise ValueError("previous snapshot is not valid JSON") from None
+        parsed = json.loads(raw.decode("utf-8", errors="strict"),
+                            object_pairs_hook=unique,
+                            parse_constant=reject_nonfinite)
+        # json.loads accepts escaped lone surrogates; reject ambiguous
+        # identities before comparing PR paths or project evidence.
+        json.dumps(parsed, ensure_ascii=False).encode("utf-8", errors="strict")
+        return parsed
+    except (ValueError, UnicodeError, RecursionError):
+        raise ValueError("previous snapshot is not valid UTF-8 JSON") from None
 
 
 def _pins(view, repo):
