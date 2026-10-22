@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""zSentinel read-only source discovery: queued jobs within queued/running workflows, then failures.
+"""zSentinel read-only source discovery: queued jobs, approval waits, then failures.
 
 The caller gets one verified (project/run/job/SHA) candidate per repository.
 All requests are canonical GitHub GETs, bounded, without redirect replay.
@@ -21,7 +21,7 @@ MAX_PROJECTS = 3
 MAX_RUNS = 5
 MAX_JOBS = 25
 RUN_PAGES_PER_WINDOW = 2
-RUN_WINDOWS = ("queued", "in_progress", "failure")
+RUN_WINDOWS = ("queued", "in_progress", "waiting", "failure")
 MAX_GETS_PER_PROJECT = len(RUN_WINDOWS) * (1 + RUN_PAGES_PER_WINDOW)
 RESULTS = {"failure", "timed_out", "action_required"}
 MAX_VISIBLE_EXTRA_JOBS = 5
@@ -145,6 +145,12 @@ def run_job_candidates(root, run_id, sha, token, kind):
         if kind in ("queued", "in_progress"):
             if status != "queued" or bool(runner):
                 continue
+        elif kind == "waiting":
+            # GitHub environment approvals and concurrency admissions may be
+            # pending/waiting without any self-hosted runner shortage.
+            # Only observe these; never suggest a runner restart or bypass.
+            if status not in ("waiting", "pending"):
+                continue
         elif status != "completed" or conclusion not in RESULTS:
             continue
         try:
@@ -162,13 +168,14 @@ def run_job_candidates(root, run_id, sha, token, kind):
         # A verified self-hosted queue has higher priority than a hosted
         # queue. Invalid labels do not erase unrelated well-formed jobs.
         rank = ({"self_hosted": 0, "unknown": 1, "hosted_or_custom": 2}[
-            route["runner_route"]] if status == "queued" else 3)
+            route["runner_route"]] if status == "queued" else
+            3 if status == "completed" else 4)
         candidates.append((rank, created, run_id, jid, sha, status, conclusion, runner, route, kind))
     return candidates, partial
 
 
 def discover(registry, selected, token=None):
-    """At most nine GitHub GETs per project and one actionable sampled job."""
+    """At most twelve GitHub GETs per project and one observed job."""
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(set(selected)) != len(selected)
             or any(pid not in registry for pid in selected)):
@@ -223,9 +230,10 @@ def discover(registry, selected, token=None):
                         break
                 # A queued-workflow candidate must not suppress discovery
                 # of a stronger self-hosted queue in a RUNNING workflow.
-                # Once both waiting windows were sampled, failures are a
-                # fallback only if no queued job was found.
-                if status == "in_progress" and candidates:
+                # Always observe the separate approval-wait window even when
+                # an unassigned queue was found. Failures remain a fallback
+                # once the queued, running and approval windows were read.
+                if status == "waiting" and candidates:
                     break
             if not candidates:
                 coverage.append({
