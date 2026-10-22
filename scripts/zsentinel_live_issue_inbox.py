@@ -27,6 +27,7 @@ ISSUE = re.compile(
 MAX_PAGES = 3
 PAGE_SIZE = 30
 MAX_DISPLAY = 45
+MAX_SAMPLED_DISPLAY_PAGES = 5  # 3x30 recent + 4x30 recall <= 210 source rows
 MAX_LABELS = 100
 RECOGNIZED = {
     prefix + priority for prefix in ("", "priority:", "priority/")
@@ -218,13 +219,15 @@ def _operator_workflow(item):
     }
 
 
-def observe_repo_inbox(repo_full_name, *, token=None):
+def observe_repo_inbox(repo_full_name, *, token=None, display_page=1):
     """Recent issue inventory plus bounded P0/P1 recall when recent window ends.
 
     The issue-only search preserves original GitHub source ordering; the
     result is still a bounded snapshot, not an exhaustive owner assignment.
     P0/P1 title recall is a navigation hint and must never grant authority.
     """
+    if type(display_page) is not int or not 1 <= display_page <= MAX_SAMPLED_DISPLAY_PAGES:
+        raise GitHubReadError("inbox display page must be 1 through 5")
     if not isinstance(repo_full_name, str):
         raise GitHubReadError("inbox repository must be owner/name")
     match = REPO.fullmatch(repo_full_name)
@@ -393,7 +396,11 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         0 if x["no_github_issue_update_for_72h"] is True else 1,
         -(x["last_github_update_age_hours"] or 0),
     ))
-    chosen = issues[:MAX_DISPLAY]
+    start = (display_page - 1) * MAX_DISPLAY
+    chosen = issues[start:start + MAX_DISPLAY]
+    sampled_display_pages = max(
+        1, (len(issues) + MAX_DISPLAY - 1) // MAX_DISPLAY
+    )
     source_owner_workstreams = {}
     for item in issues:
         category = item["operator_workflow"]["workstream"]
@@ -444,6 +451,14 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         "invalid_or_inaccessible_rows_excluded": invalid_excluded,
         "total_issues_seen": len(issues), "displayed_issues": len(chosen),
         "display_truncated": len(issues) > MAX_DISPLAY,
+        "display_page": display_page,
+        "display_pages_in_sample": sampled_display_pages,
+        "display_page_unavailable_in_sample": (
+            display_page > sampled_display_pages
+        ),
+        "display_omitted_sample_issues": len(issues) - len(chosen),
+        "display_has_next_sample_page": display_page < sampled_display_pages,
+        "display_has_previous_sample_page": display_page > 1,
         "source_window_full": (
             recent_window_truncated and source_error is None
         ),
@@ -524,6 +539,12 @@ def markdown(report):
                   report["operator_workstreams_in_bounded_source"].items()),
         "- Issues visible: " + str(report["total_issues_seen"]),
         "- Issues displayed: " + str(report["displayed_issues"]),
+        "- Selected sampled page: " + str(report["display_page"]) +
+        "/" + str(report["display_pages_in_sample"]),
+        "- Other sampled issues excluded from this page: " +
+        str(report["display_omitted_sample_issues"]),
+        "- Selected page outside current bounded sample: " +
+        str(report["display_page_unavailable_in_sample"]),
         "- Source partial/unknown: " + str(report["source_partial_or_unknown"]),
         "- Output truncated: " + str(report["display_truncated"]),
         "- GitHub GET attempts: " + str(report["get_attempts"]),
@@ -581,8 +602,9 @@ def markdown(report):
         ])
     if not report["issues"]:
         lines.append(
-            "- No issues observed in this bounded source window. "
-            "This does NOT prove that no incidents exist."
+            "- No issues observed on selected page of this bounded source. "
+            "Other sampled pages may still contain incidents; this does "
+            "NOT prove that no incidents exist."
         )
     lines.extend([
         "",
@@ -599,7 +621,8 @@ def workorders_csv(report):
     rows = io.StringIO(newline="")
     writer = csv.writer(rows, lineterminator=chr(10))
     headings = (
-        "observed_at_utc", "repository", "issue_url", "priority_source",
+        "observed_at_utc", "repository", "display_page",
+        "sampled_pages", "issue_url", "priority_source",
         "unverified_title_hint", "source_window_drift",
         "priority_label_conflict", "label_title_disagreement",
         "operator_workstream", "owner_step_code", "problem", "human_action", "status",
@@ -630,8 +653,9 @@ def workorders_csv(report):
     for item in report["issues"]:
         workflow = item["operator_workflow"]
         writer.writerow([safe(value) for value in (
-            report["observed_at_utc"], report["repository"], item["url"],
-            item["priority_from_explicit_labels"],
+            report["observed_at_utc"], report["repository"],
+            report["display_page"], report["display_pages_in_sample"],
+            item["url"], item["priority_from_explicit_labels"],
             item["unverified_title_prefix_hint"],
             item["source_window_identity_drift"],
             item["explicit_priority_label_conflict"],
@@ -648,8 +672,9 @@ def workorders_csv(report):
         # Preserve original source custody instead of an easily
         # misinterpreted header-only CSV.
         writer.writerow([safe(value) for value in (
-            report["observed_at_utc"], report["repository"], "", "UNKNOWN",
-            "NONE", False, False, "UNKNOWN", "metadata_only_no_issues",
+            report["observed_at_utc"], report["repository"],
+            report["display_page"], report["display_pages_in_sample"],
+            "", "UNKNOWN", "NONE", False, False, "UNKNOWN", "metadata_only_no_issues",
             "inspect_source_before_owner_action",
             "No issues observed in bounded sampled source",
             "Refresh source and independently inspect current open issues",
@@ -695,7 +720,10 @@ def html_view(report):
         esc(report["provider_incomplete_results"]) +
         " · issues observed " +
         esc(report["total_issues_seen"]) + " · displayed " +
-        esc(report["displayed_issues"]) + "</p>",
+        esc(report["displayed_issues"]) + " · sampled page " +
+        esc(report["display_page"]) + "/" +
+        esc(report["display_pages_in_sample"]) + " · other sample rows " +
+        esc(report["display_omitted_sample_issues"]) + "</p>",
         "<p>Observed explicit label/title priority disagreements: " +
         esc(report["observed_label_title_disagreements"]) +
         " · reconcile with the issue owner; never silently promote a " +
@@ -800,8 +828,9 @@ def html_view(report):
         rows.append("</ol></section>")
     if not report["issues"]:
         rows.append(
-            "<section><p>No recent issue observed in the bounded window. "
-            "Absence has NOT been verified.</p></section>"
+            "<section><p>No issue observed on this selected bounded page. "
+            "Other pages may contain issues. Absence has NOT been "
+            "verified.</p></section>"
         )
     rows.extend([
         "<section><h2>Inspect one issue next</h2>",
