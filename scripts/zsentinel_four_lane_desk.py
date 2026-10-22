@@ -923,7 +923,7 @@ def text_view(data):
     out.append("Prioritaire eigenaaroverdracht (NIET vrijgegeven, lokale bron):")
     for item in data["owner_review_shortlist"]:
         out.append(
-            f"  {item['priority']} {item['project']}: "
+            f"  {item['priority']} {item['project']} [{item['owner_review_kind']}]: "
             f"P0 wacht {item['queued_p0']} (eligible-hint {item['eligible_hint_p0']}), "
             f"P1 wacht {item['queued_p1']} (eligible-hint {item['eligible_hint_p1']}), "
             f"P0 {item['active_p0']} / P1 {item['active_p1']} actief; huidige eigenaar ONBEKEND."
@@ -1291,7 +1291,13 @@ def html_view(data):
     owner_cards = "".join(
         "<article><div class='eyebrow'>Lokale owner triage · geen claimvrijgave</div>"
         "<h3>" + html.escape(item["priority"]) + " · "
-        + html.escape(item["project"]) + "</h3><p>"
+        + html.escape(item["project"]) + "</h3><p><strong>"
+        + html.escape({
+            "P0_QUEUED": "P0 wacht · eigenaar controleren",
+            "P0_ACTIVE_OWNER": "P0 al actief · eigenaar behouden",
+            "P1_QUEUED": "P1 wacht · eigenaar controleren",
+            "P1_ACTIVE_OWNER": "P1 al actief · eigenaar behouden",
+        }[item["owner_review_kind"]]) + "</strong></p><p>"
         + "P0 wacht " + str(item["queued_p0"]) + " (eligible-hint "
         + str(item["eligible_hint_p0"]) + "); P1 wacht "
         + str(item["queued_p1"]) + " (eligible-hint "
@@ -1473,6 +1479,7 @@ def markdown_view(data):
         lines.extend((
             "",
             "### " + item["priority"] + " · " + name,
+            "- **Werkcategorie lokaal:** " + item["owner_review_kind"],
             "- **P0 wacht lokaal / eligible-hint:** " + str(item["queued_p0"])
             + " / " + str(item["eligible_hint_p0"]),
             "- **P1 wacht lokaal / eligible-hint:** " + str(item["queued_p1"])
@@ -1893,7 +1900,7 @@ def portfolio_owner_book(data):
     for item in data["owner_review_shortlist"]:
         contents.append(
             "- " + item["priority"] + " " + item["project"] +
-            ": P0 wacht " + str(item["queued_p0"]) +
+            " [" + item["owner_review_kind"] + "]: P0 wacht " + str(item["queued_p0"]) +
             ", P1 wacht " + str(item["queued_p1"]) + " in lokale bron; " +
             "P0 " + str(item["active_p0"]) + " / P1 " + str(item["active_p1"]) + " actief; huidige eigenaar ONBEKEND."
         )
@@ -1903,7 +1910,7 @@ def portfolio_owner_book(data):
         )
     if not data["owner_review_shortlist"]:
         contents.append(
-            "- Geen lokaal P0/P1-wachtwerk in deze steekproef; "
+            "- Geen lokaal P0/P1-wacht- of actief werk in deze steekproef; "
             "er kunnen elders wel open issues of actieve claims zijn."
         )
     contents.extend(("", *portfolio_changes_lines(data, markdown=True), ""))
