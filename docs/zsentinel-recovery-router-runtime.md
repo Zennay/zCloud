@@ -2973,6 +2973,20 @@ De handmatige exact-pinmodus blijft beschikbaar en is wederzijds exclusief
 met `--discover`. Beide routes blijven read-only en geven geen toestemming
 voor restart, retry, claim of release.
 
+Bij een ontdekt terminaal jobresultaat onderscheidt de correlator nu
+`failure`, `timed_out` en `action_required` expliciet als
+`terminal_ci_failure_not_runner_recovery`. De operator wordt naar de
+bestaande exacte job en een root-fix geleid, niet naar runnerherstart of
+blind opnieuw uitvoeren. Andere terminale conclusies blijven eveneens
+historisch jobbewijs en worden niet als actuele listenerstoring geïnterpreteerd.
+De drie tekstregels bevatten de waargenomen jobstatus/conclusie; JSON houdt
+deze velden afzonderlijk vast.
+
+De private HTML toont maximaal vijf aanvullende, canonieke exacte joblinks
+uit dezelfde discovery-steekproef (run/job/SHA/status/route gevalideerd).
+Deze extra jobs blijven observation-only, zonder dispatch- of herstelknoppen;
+een afgekapt venster wordt nooit als volledige CI-inventaris getoond.
+
 Voor [P0 GitHub-hosted billing/admission #1523](https://github.com/Zennay/zCloud/issues/1523)
 is daarnaast `scripts/zsentinel_hosted_gate_triage.py` op dezelfde PR
 geïmplementeerd. Deze leest alleen één bestaande exacte GitHub-run/job/SHA
