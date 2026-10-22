@@ -12,6 +12,7 @@ import os
 
 MAX_PROC_ENTRIES = 20000
 MAX_CGROUP_BYTES = 4096
+MAX_PROC_STAT_BYTES = 4096
 ZCLOUD_SERVICE_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
 
 NEXT_STEPS = {
@@ -70,6 +71,47 @@ def _classify_executable(executable):
     return (family, role) if family else None
 
 
+
+def _process_start_ticks(process_dir, expected_pid):
+    """Read bounded /proc stat identity; return starttime ticks, never the PID."""
+    fd = None
+    try:
+        fd = os.open(
+            str(process_dir / "stat"),
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0),
+        )
+        raw = os.read(fd, MAX_PROC_STAT_BYTES + 1)
+    except FileNotFoundError:
+        return None, "vanished"
+    except PermissionError:
+        return None, "unreadable"
+    except OSError:
+        return None, "unavailable"
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if not raw or len(raw) > MAX_PROC_STAT_BYTES:
+        return None, "oversized"
+    try:
+        value = raw.decode("ascii")
+    except UnicodeError:
+        return None, "malformed"
+    left, right = value.find("("), value.rfind(")")
+    if left < 0 or right <= left:
+        return None, "malformed"
+    try:
+        observed_pid = int(value[:left].strip())
+        fields = value[right + 2:].split()
+        if observed_pid != expected_pid or len(fields) < 20:
+            return None, "identity_mismatch"
+        start_ticks = int(fields[19])
+    except (ValueError, IndexError):
+        return None, "malformed"
+    if start_ticks < 0:
+        return None, "malformed"
+    return start_ticks, None
+
+
 def _zcloud_service_cgroup_membership(process_dir):
     """Return only whether a zCloud process belongs to its expected service cgroup.
 
@@ -121,7 +163,7 @@ def observe_local_runners(proc_root="/proc"):
     }
     observation = {
         "observed_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "source": "local_procfs_executable_symlinks",
+        "source": "local_procfs_executable_and_starttime_identity",
         "source_available": False,
         "source_complete": False,
         "github_assignment": "NOT_OBSERVED",
@@ -163,7 +205,11 @@ def observe_local_runners(proc_root="/proc"):
                     observation["source_warnings"].append("procfs_entry_budget_exceeded")
                     break
                 lower_assurance = False
+                process_id = int(item.name)
                 process_dir = root / item.name
+                start_before, start_error = _process_start_ticks(process_dir, process_id)
+                if start_error == "vanished":
+                    continue
                 try:
                     executable = os.readlink(process_dir / "exe")
                     signature = _classify_executable(executable)
@@ -220,6 +266,25 @@ def observe_local_runners(proc_root="/proc"):
                         unclassified_runner_processes += 1
                     continue
                 family, role = signature
+                if start_before is None:
+                    # A candidate runner without a start-time baseline cannot
+                    # be bound to one process lifetime; keep absence UNKNOWN.
+                    unclassified_runner_processes += 1
+                    continue
+                membership = (
+                    _zcloud_service_cgroup_membership(process_dir)
+                    if family == "zCloud" else None
+                )
+                start_after, after_error = _process_start_ticks(process_dir, process_id)
+                if after_error == "vanished":
+                    # A runner that exited during this snapshot is not a current
+                    # occupancy signal; the remaining source can still be complete.
+                    continue
+                if start_after is None or start_after != start_before:
+                    # PID reuse or unavailable identity means the executable and
+                    # cgroup reads may refer to different process lifetimes.
+                    unclassified_runner_processes += 1
+                    continue
                 seen[family]["listeners" if role == "Runner.Listener" else "workers"] += 1
                 if family == "zCloud":
                     service = observation["zcloud_service_cgroup"]
@@ -229,7 +294,6 @@ def observe_local_runners(proc_root="/proc"):
                         # certify membership in the expected systemd unit.
                         service["process_identity_unverified"] += 1
                     role_key = "listener" if role == "Runner.Listener" else "worker"
-                    membership = _zcloud_service_cgroup_membership(process_dir)
                     if membership == "EXPECTED_UNIT":
                         service[f"{role_key}_in_expected_unit"] += 1
                     elif membership == "OTHER_UNIT":
