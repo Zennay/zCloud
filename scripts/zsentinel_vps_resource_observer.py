@@ -81,6 +81,43 @@ def observe_vps_capacity(database: Path):
     else:
         inode_available = inode_total = inode_unavailable_percent = None
         inode_source = "unsupported_or_unknown_not_zero"
+    # The queue database can live on a large mounted archive while the
+    # host root filesystem containing runner executables/logs is nearly full.
+    # Observe root separately: healthy database storage is NOT proof that
+    # new runner jobs can start safely on the system mount.
+    root_flags = (os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
+                  getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0))
+    root_fd = os.open("/", root_flags)
+    try:
+        root_identity = os.fstat(root_fd)
+        root_fs = os.fstatvfs(root_fd)
+    finally:
+        os.close(root_fd)
+    if (not stat.S_ISDIR(root_identity.st_mode)
+            or root_fs.f_blocks <= 0 or root_fs.f_frsize <= 0
+            or not 0 <= root_fs.f_bavail <= root_fs.f_blocks):
+        raise ValueError("invalid VPS root filesystem capacity")
+    root_free = root_fs.f_bavail * root_fs.f_frsize / (1024 ** 3)
+    root_unavailable_pct = 100 * (1 - root_fs.f_bavail / root_fs.f_blocks)
+    if any(type(x) is not int or x < 0 for x in
+           (root_fs.f_files, root_fs.f_ffree, root_fs.f_favail)):
+        raise ValueError("invalid VPS root inode accounting")
+    if root_fs.f_files > 0:
+        if root_fs.f_ffree > root_fs.f_files or root_fs.f_favail > root_fs.f_ffree:
+            raise ValueError("contradictory VPS root inode counters")
+        root_inode_available = root_fs.f_favail
+        root_inode_total = root_fs.f_files
+        root_inode_pct = round(
+            100 * (1 - root_inode_available / root_inode_total), 2)
+        root_inode_source = "root_directory_fstatvfs"
+    else:
+        root_inode_available = root_inode_total = root_inode_pct = None
+        root_inode_source = "unsupported_or_unknown_not_zero"
+    if (not math.isfinite(root_free) or root_free < 0
+            or root_free > 100000
+            or not math.isfinite(root_unavailable_pct)
+            or not 0 <= root_unavailable_pct <= 100):
+        raise ValueError("invalid VPS root mount observation")
     vals = (load, available, swap, free, unavailable_percent)
     if any(not math.isfinite(value) or value < 0 for value in vals):
         raise ValueError("invalid host resource observation")
@@ -92,8 +129,17 @@ def observe_vps_capacity(database: Path):
             "load_5m": round(load, 3),
             "available_memory_mib": round(available, 1),
             "available_swap_mib": round(swap, 1),
+            # Existing unprefixed capacity remains the database mount.
             "free_disk_gib": round(free, 3),
             "disk_unavailable_percent": round(unavailable_percent, 2),
+            "root_free_disk_gib": round(root_free, 3),
+            "root_disk_unavailable_percent": round(root_unavailable_pct, 2),
+            "root_inode_available": root_inode_available,
+            "root_inode_total": root_inode_total,
+            "root_inode_unavailable_percent": root_inode_pct,
+            "root_inode_source": root_inode_source,
+            "root_mount_same_device_as_database": (
+                root_identity.st_dev == db_stat.st_dev),
             "inode_available": inode_available,
             "inode_total": inode_total,
             "inode_unavailable_percent": inode_unavailable_percent,
