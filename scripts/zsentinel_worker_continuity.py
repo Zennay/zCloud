@@ -23,6 +23,9 @@ ASSIGNMENT_COVERAGE = frozenset((
 OWNER_REVIEW_CATEGORIES = frozenset((
     "allocated_paused_with_claimed_queue_owner_gate",
     "allocated_queue_claim_expired_or_invalid_owner_recheck",
+    "allocated_no_active_claim_owner_review",
+    "allocated_multiple_active_claims_owner_review",
+    "allocated_queue_source_unavailable_owner_review",
     "recent_client_block_event_owner_review",
     "recent_browser_block_without_prompt_context_owner_review",
     "generating_but_progress_unverified_or_stale",
@@ -32,6 +35,9 @@ OWNER_REVIEW_CATEGORIES = frozenset((
 OWNER_REVIEW_PRIORITY = {
     "allocated_paused_with_claimed_queue_owner_gate": 0,
     "allocated_queue_claim_expired_or_invalid_owner_recheck": 0,
+    "allocated_no_active_claim_owner_review": 0,
+    "allocated_multiple_active_claims_owner_review": 0,
+    "allocated_queue_source_unavailable_owner_review": 0,
     "recent_client_block_event_owner_review": 1,
     "recent_browser_block_without_prompt_context_owner_review": 1,
     "generating_but_progress_unverified_or_stale": 2,
