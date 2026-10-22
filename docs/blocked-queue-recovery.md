@@ -263,3 +263,33 @@ klikbare kaartlink. Linknavigatie verandert geen claim of queuebron,
 en de daadwerkelijke backend-hervatcontrole blijft onafhankelijk.
 De zoekbalk accepteert ook het exacte opgeslagen `source_url` als
 zoekterm, maar haalt geen nieuwe privé-informatie op.
+
+## 22 oktober · bronmoment, operatorcontext en private handoff
+
+De kaarten in **Dependency Holds** tonen na uitklappen nu de oorspronkelijk
+geregistreerde wachtrijaanmaak, het laatste queue-update-moment, het aantal
+geobserveerde claimpogingen en of de geladen status een gekoppelde menselijke
+Attention bevat. Claim attempts betekenen niet automatisch mislukkingen.
+De bronregel toont de daadwerkelijk meegeleverde `time` van
+`GET /api/portfolio-queue`; ontbrekende/tijdelijk onbereikbare bronnen
+worden niet als actuele of lege wachtrij gepresenteerd.
+
+De zichtbare hervatknop vereist `status=blocked`, `eligible=false`,
+geen worker-slot en geen resterende lease. De backend bewaakt daarnaast de
+exacte taak, dependency-velden en versie in zijn transactie. Een afwijkende
+bron geeft geen stilzwijgende taakoverdracht of hervatting.
+
+De operator kan met **Export selected handoff** na uitdrukkelijke lokale
+bevestiging een JSON-bestand downloaden van maximaal honderd geobserveerde,
+door huidige project/urgentie/zoekfilters geselecteerde blokkades.
+Formaat `zsentinel.dependency-holds.local-handoff.v1` bewaart
+waarnemingstijd, exporttijd, gefilterde aantallen, expliciete truncatie,
+canonieke bronlinks, begrensde queue-/project-ID's, prioriteit,
+Attention-indicator en niet-autoriserende eigenaarvervolgstap.
+De uitvoer is maximaal 100 KiB. **Geen ruwe blocker-, evidence- of
+titels worden geëxporteerd.** Het bestand is lokaal en kan
+identificerende interne metadata bevatten: controleer het vóór delen.
+Dit is een niet-ondertekende bronsteekproef, geen toestemming,
+claimbevestiging, queue-retry, workerhervatting of productie-release.
+Bij onbeschikbare bron of ontbrekende geldige waarnemingstijd weigert
+de export. Er is geen extra API-writer, workflowdispatch of VPS-actie.
