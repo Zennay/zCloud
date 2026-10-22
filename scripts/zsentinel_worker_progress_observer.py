@@ -155,6 +155,10 @@ def _safe_followup(state, assignment):
         return "owner_check_paused_worker_with_current_queue_lease"
     if state == "allocated_queue_claim_expired_or_invalid_owner_recheck":
         return "owner_reconcile_stale_queue_claim_without_claim_transfer"
+    if state in ("allocated_no_active_claim_owner_review",
+                 "allocated_multiple_active_claims_owner_review",
+                 "allocated_queue_source_unavailable_owner_review"):
+        return "owner_verify_current_queue_claim_and_slot_without_takeover"
     if state == "recent_client_block_event_owner_review":
         return "owner_inspect_current_assignment_and_recent_browser_block"
     if state == "recent_browser_block_without_prompt_context_owner_review":
@@ -263,6 +267,13 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
     stale_queue_claim = bool(
         global_slot is not None and assignment["status"] is not None
         and assignment["coverage"] == "lease_expired_or_invalid_owner_recheck")
+    # Browser telemetry never establishes an active queue task. A reused
+    # browser tab can emit progress after an old claim has disappeared.
+    queue_context_review = {
+        "no_active_claim_for_slot": "allocated_no_active_claim_owner_review",
+        "multiple_active_claims_owner_review": "allocated_multiple_active_claims_owner_review",
+        "queue_source_unavailable": "allocated_queue_source_unavailable_owner_review",
+    }.get(assignment["coverage"]) if global_slot is not None else None
     last = con.execute(
         "SELECT id,ts,event,generating,sending,progress_at,assistant_chars "
         "FROM runner_events WHERE project_id=? AND worker_slot=? "
@@ -295,6 +306,8 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
                 if paused_with_claim else
                 "allocated_queue_claim_expired_or_invalid_owner_recheck"
                 if stale_queue_claim else
+                queue_context_review
+                if desired_state == "running" and queue_context_review is not None else
                 "configured_running_no_event_evidence"
                 if desired_state == "running" and global_slot is not None
                 else "configured_not_allocated_not_a_stalled_worker"
@@ -312,6 +325,8 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
                 if paused_with_claim else
                 "allocated_queue_claim_expired_or_invalid_owner_recheck"
                 if stale_queue_claim else
+                queue_context_review
+                if desired_state == "running" and queue_context_review is not None else
                 "configured_running_no_event_evidence"
                 if desired_state == "running" and global_slot is not None else
                 "configured_not_allocated_not_a_stalled_worker"
@@ -481,6 +496,10 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         # A lingering running configuration without an assigned global slot
         # is not an active, stalled worker, regardless of old events.
         state = "configured_not_allocated_not_a_stalled_worker"
+    elif queue_context_review is not None:
+        # Current queue context is not independently trustworthy; an event
+        # must not mask missing or duplicate leases. No automatic repair.
+        state = queue_context_review
     elif blocked_after_prompt and newer_signal:
         state = "post_block_progress_signal_owner_verification_required"
     elif blocked_after_prompt:
@@ -581,8 +600,11 @@ def observe_worker_progress(database, projects, *, now=None):
         if not {"slot", "project_id", "worker_slot"}.issubset(slot_columns):
             raise ValueError("global slot allocation source missing; no active-worker claim")
         queue_cols = {r[1] for r in con.execute("PRAGMA table_info(portfolio_queue)")}
-        queue_available = {"project_id", "worker_slot", "status",
-                           "claim_expires", "updated_at"}.issubset(queue_cols)
+        # Check every field queried below; older/partial schemas degrade
+        # instead of throwing during a live read-only observation.
+        queue_available = {"queue_id", "project_id", "worker_slot", "status",
+                           "claimed_at", "claim_expires", "attempts",
+                           "updated_at"}.issubset(queue_cols)
         con.execute("BEGIN")
         # This is the existing *slot assignment*, not an active queue lease.
         # Limit the total cardinality and never follow unowned conversation IDs.
@@ -641,6 +663,9 @@ def observe_worker_progress(database, projects, *, now=None):
     actionable = {
         "allocated_paused_with_claimed_queue_owner_gate",
         "allocated_queue_claim_expired_or_invalid_owner_recheck",
+        "allocated_no_active_claim_owner_review",
+        "allocated_multiple_active_claims_owner_review",
+        "allocated_queue_source_unavailable_owner_review",
         "recent_client_block_event_owner_review",
         "recent_browser_block_without_prompt_context_owner_review",
         "post_block_progress_signal_owner_verification_required",
@@ -750,6 +775,11 @@ def _operator_worker_priority(row):
     if row.get("classification") == "allocated_paused_with_claimed_queue_owner_gate":
         return (0, row.get("project_id", ""), row.get("worker_slot", 0))
     if row.get("classification") == "allocated_queue_claim_expired_or_invalid_owner_recheck":
+        return (1, row.get("project_id", ""), row.get("worker_slot", 0))
+    if row.get("classification") in (
+            "allocated_no_active_claim_owner_review",
+            "allocated_multiple_active_claims_owner_review",
+            "allocated_queue_source_unavailable_owner_review"):
         return (1, row.get("project_id", ""), row.get("worker_slot", 0))
     if (row.get("classification") == "recent_client_block_event_owner_review"
             and isinstance(row.get("timeline"), dict)
