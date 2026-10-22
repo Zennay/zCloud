@@ -823,6 +823,92 @@ def render_csv_history(snapshots: list[dict], index_name: str, machine_text: str
 
 
 
+
+def render_history_pr_csv(snapshots: list[dict], index_name: str,
+                          machine_text: str | None = None) -> str:
+    """Detailed *historical* merge-first PR rows and observed PR transitions.
+
+    All observations are derived from an existing private source sample. This
+    is not a current gate or complete repository PR inventory.
+    """
+    import csv
+    from io import StringIO
+
+    report = json.loads(machine_text if machine_text is not None
+                        else render_machine(snapshots, index_name))
+    fields = (
+        "kind", "source_bundle", "previous_bundle", "observed_at_utc",
+        "pr_url", "head_sha_at_capture", "observed_checks_success",
+        "observed_legacy_success", "observed_approvals",
+        "observed_mergeable", "blocking_unknowns_json",
+        "changed_fields_json", "observation_clock_utc",
+        "absence_proves_merge", "current_head_verified",
+        "current_claim_verified", "merge_authorized", "live_verified",
+    )
+    output = StringIO(newline="")
+    writer = csv.writer(output, delimiter=";", lineterminator="\r\n")
+    writer.writerow(fields)
+    snapshots_by_name = {row["bundle"]: row for row in report["snapshots"]}
+    for snapshot in report["snapshots"]:
+        for pr in snapshot["saved_pr_observations"]:
+            data = {
+                "kind": "saved_observation",
+                "source_bundle": snapshot["bundle"],
+                "observed_at_utc": snapshot["saved_board_observed_at_utc"],
+                "pr_url": pr["url"], "head_sha_at_capture": pr["head_sha"],
+                "observed_checks_success": pr["observed_check_success"],
+                "observed_legacy_success": pr["legacy_context_success"],
+                "observed_approvals": pr["observed_approvals"],
+                "observed_mergeable": pr["mergeable_observed"],
+                "blocking_unknowns_json": pr["blocking_unknowns"],
+                "observation_clock_utc": pr["source_observed_at_utc"],
+                "absence_proves_merge": False,
+                "current_head_verified": False, "current_claim_verified": False,
+                "merge_authorized": False, "live_verified": False,
+            }
+            writer.writerow([_history_csv_cell(data.get(key)) for key in fields])
+    for transition in report["sample_transitions"]:
+        old = snapshots_by_name[transition["from_bundle"]]
+        new = snapshots_by_name[transition["to_bundle"]]
+        old_rows = {pr["url"]: pr for pr in old["saved_pr_observations"]}
+        new_rows = {pr["url"]: pr for pr in new["saved_pr_observations"]}
+        changed = transition["saved_pr_observation_changes"]
+        kinds = (
+            ("newly_sampled", changed["newly_sampled_pr_urls"]),
+            ("no_longer_sampled", changed["no_longer_sampled_pr_urls"]),
+            ("observed_change", sorted(changed["changed_pr_fields"])),
+        )
+        for kind, urls in kinds:
+            for url in urls:
+                row = new_rows.get(url) or old_rows[url]
+                data = {
+                    "kind": kind,
+                    "source_bundle": transition["to_bundle"],
+                    "previous_bundle": transition["from_bundle"],
+                    "observed_at_utc": new["saved_board_observed_at_utc"],
+                    "pr_url": url,
+                    "head_sha_at_capture": row["head_sha"],
+                    "observed_checks_success": row["observed_check_success"],
+                    "observed_legacy_success": row["legacy_context_success"],
+                    "observed_approvals": row["observed_approvals"],
+                    "observed_mergeable": row["mergeable_observed"],
+                    "blocking_unknowns_json": row["blocking_unknowns"],
+                    "changed_fields_json": (
+                        changed["changed_pr_fields"].get(url) if
+                        kind == "observed_change" else None),
+                    "observation_clock_utc": row["source_observed_at_utc"],
+                    "absence_proves_merge": False,
+                    "current_head_verified": False,
+                    "current_claim_verified": False,
+                    "merge_authorized": False, "live_verified": False,
+                }
+                writer.writerow([_history_csv_cell(data.get(key)) for key in fields])
+    result = "\ufeff" + output.getvalue()
+    if len(result.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("private historical PR CSV exceeds one MiB")
+    return result
+
+
 def render_history_package(snapshots: list[dict], index_name: str) -> bytes:
     """Portable private HTML/JSON/CSV history plus member checksums.
 
@@ -838,6 +924,8 @@ def render_history_package(snapshots: list[dict], index_name: str) -> bytes:
         "history.html": render(snapshots, index_name).encode("utf-8"),
         "history.json": machine.encode("utf-8"),
         "history.csv": render_csv_history(
+            snapshots, index_name, machine_text=machine).encode("utf-8"),
+        "history-prs.csv": render_history_pr_csv(
             snapshots, index_name, machine_text=machine).encode("utf-8"),
         "README.txt": (
             "Private zSentinel historical source sample, NOT a live inventory.\n"
