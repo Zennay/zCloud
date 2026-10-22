@@ -1,5 +1,48 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · veilige opgeslagen gatebatches en directe eigenaarwerkbak
+
+De al bestaande merge-first batchroute combineert maximaal 75 door de
+zSentinel-gatecollector gemaakte JSON-receipts uit een lokaal opgeslagen
+reviewmanifest. De ontvangst is nu aanzienlijk strikter:
+
+- `--receipt` wordt uitsluitend als eigen, regulier, privébestand gelezen
+  (geen pipes, symlinks of vreemde bestandsowners). `O_NOFOLLOW`,
+  `O_NONBLOCK`, bestandsgroottegrens en dezelfde inode/mtime/size-identiteit
+  vóór, tijdens en na openen voorkomen blokkeren en gemengde bronbytes.
+- Een bestand met groeps-/wereldleesrechten, dubbele JSON-sleutels,
+  niet-eindige getallen, invalide UTF-8, of escaped lone surrogate wordt
+  geweigerd. Ontvangstruimte blijft beperkt tot één MiB per receipt.
+  De bestaande aparte manifestlezer blijft de manifestbron valideren.
+- Het **eigenaaractiepaneel** splitst historische PRs in vijf categorieën:
+  bron opnieuw lezen, bestaand product/gate herstellen, reviewer aanvragen,
+  externe CI/review-wacht parkeren en beschermde release-overdracht.
+  De uitkomsten worden in zowel offline HTML als tekst/Markdown weergegeven.
+- Binnen elke categorie blijft de oorspronkelijke manifestvolgorde intact.
+  De aparte oorspronkelijke, P0/P1-gerangschikte merge-first-lijst blijft
+  daarnaast zichtbaar, zodat een actiegerichte sortering nooit als een
+  nieuwe bronprioriteit wordt aangezien.
+- De werkbak toont een maximum van 24 actiekaarten met expliciete
+  verborgen aantallen. Bronobservaties ouder dan 15 minuten worden
+  uitsluitend als historie behandeld. Een ontbrekende batch of claimbron
+  kan nooit een lege open-PR-backlog of vrijgave bewijzen.
+
+Bestaande gebruikswijze (read-only, output altijd nieuw en privé):
+
+```bash
+python3 scripts/zsentinel_pr_gate_batches.py \
+  --from-review /eigen/private/merge-first-review.json \
+  --receipt /eigen/private/gate-batch-1.json \
+  --format html \
+  --output /eigen/private/merge-first-werkbak.html
+```
+
+Als een receipt eerder met onveilige bestandsrechten is opgeslagen, maak
+eerst een nieuw expliciet privébestand via de bestaande collector;
+**verruim de lezer niet** en sla verplichte GitHub-gates niet over.
+Geen QA-suites, autonome CI-dispatch, queue/claimwrite, reviewer- of
+runner-actie is onderdeel van deze offline productroute.
+
 ## 22 oktober · één direct bruikbare privé-HTML-werkbak voor actuele PR-gates
 
 De bestaande GitHub exact-HEAD bronobserver in
