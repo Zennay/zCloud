@@ -185,6 +185,48 @@ The same receipt samples the `statvfs` read-only flag before and after the capac
 These are **evidence/offload constraints**, separate from the resource-pressure `warnings` and `severity` fields. Missing archive storage does not itself claim high CPU/RAM/disk pressure, and it never authorizes moving or deleting files. If root storage is critical, preserve active work and obtain an owner-authorized storage inventory; do not treat the mere existence of the archive directory as proof that external storage is mounted.
 
 
+## zSentinel: 30 GiB bulk-storage decision without false training clearance
+
+The existing owner-only `/zssh workers` command now includes
+`host_capacity_observation.bulk_storage_advisory`, a bounded, read-only
+assessment of the **configured archive mount** only (currently
+`/home/ubuntu/VPS-Archief`). It does not assume that this archive mount is
+the actual Fuckball/HaxLab training output path. The explicit threshold is
+`minimum_free_bytes=32212254720` (30 GiB, binary units).
+
+A complete `state` is one of:
+
+- `mount_missing` / `mount_unknown`: no verified archive mount.
+- `root_filesystem_shared` / `filesystem_identity_unknown`: no verified
+  separate filesystem; an archive directory is not a separate drive.
+- `read_only_mount` / `mount_writability_unknown`: archive mount flags
+  cannot support or prove writes.
+- `free_space_unknown` / `below_30_gib`: free-space evidence unavailable or
+  below the minimum, even when other mount evidence is valid.
+- `capacity_candidate_not_training_authorization`: separate mounted
+  filesystem, non-read-only mount flag, at least 30 GiB free. **This is only an
+  archive-capacity candidate, not an external physical drive or training
+  readiness verdict.**
+
+Every state has a concise `operator_summary`, a stable
+`next_step_code`, and a matching `operator_action_codes` entry (for example
+`ARCHIVE_BULK_BELOW_30_GIB` or
+`ARCHIVE_BULK_CAPACITY_CANDIDATE_REQUIRES_EXTERNAL_PROOF`). The receipt
+**always** sets `physical_drive_separation_verified=false`,
+`training_output_path_verified=false`,
+`training_user_write_permission_verified=false`,
+`training_running_verified=false`, `training_start_authorized=false`, and
+`archive_offload_authorized=false`.
+
+This operator receipt cannot prove that two mountpoints use physically
+different disks, that the actual training directory is on the archive mount,
+or that the training user can write to that directory. Those facts require
+independent owner-authorized VPS/storage inspection before an actual training
+service launch. Do not move existing data, relabel training as active, replace
+a running worker, bypass an external-disk preflight, or infer free system-disk
+capacity from this receipt. No shell, device writes, service actions, claims,
+training jobs or file migration are performed by this advisory.
+
 ## zSentinel process identity and PID reuse
 
 The current `Runner.Worker` is identified through the bounded parent chain and excluded from the other-worker count using the pair `PID + /proc/<pid>/stat start_ticks`, not PID alone. This prevents a process that reuses the same PID between ancestry discovery and the inventory scan from being silently treated as the current worker. The public receipt exposes only the basis label `pid_and_start_ticks` or `unknown`; it never returns raw PIDs or start ticks. A missing self-identity remains unknown and does not authorize takeover.
