@@ -3020,6 +3020,12 @@ die aanvullende links ook bij `--observe-local-runners` wanneer `cloud`
 geselecteerd is. De JSON bewaart dezelfde begrensde lijst; de drieregelige
 tekst blijft compact en toont de primaire eigenaaractie.
 
+Een ongeldige optionele lijst aanvullende links wordt in de cockpit
+nu expliciet als `degraded_untrusted_receipt` getoond. Alleen die optionele
+lijst wordt weggelaten; het primaire exacte job-/VPS-correlatiepaneel blijft
+beschikbaar. Een fout in die secundaire bron kan zo geen geldige hoofdtriage
+verbergen en wordt ook niet stilzwijgend als lege/gezonde inventaris behandeld.
+
 Voor [P0 GitHub-hosted billing/admission #1523](https://github.com/Zennay/zCloud/issues/1523)
 is daarnaast `scripts/zsentinel_hosted_gate_triage.py` op dezelfde PR
 geïmplementeerd. Deze leest alleen één bestaande exacte GitHub-run/job/SHA
