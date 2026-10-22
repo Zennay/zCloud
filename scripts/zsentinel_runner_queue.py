@@ -41,6 +41,7 @@ def collect(repo, token=None):
     now = datetime.now(timezone.utc)
     selected = []
     seen_ids = set()
+    run_state_drift = False
     windows = []
     for status in STATUS_WINDOWS:
         result = github_json(
@@ -59,13 +60,19 @@ def collect(repo, token=None):
         })
         for row in rows:
             if (type(row) is not dict or type(row.get("id")) is not int
-                    or row["id"] <= 0 or row.get("status") not in
-                    ("queued", "in_progress", "requested", "waiting", "pending")
-                    or type(row.get("head_sha")) is not str
+                    or row["id"] <= 0 or type(row.get("head_sha")) is not str
                     or SHA.fullmatch(row["head_sha"]) is None):
                 raise ValueError("invalid GitHub Actions run identity")
+            # Queued/in-progress windows are sequential GETs. A run finishing
+            # or moving between windows is normal. Keep the other read-only
+            # observations, but mark the inventory as drifted/incomplete.
+            if row.get("status") not in (
+                    "queued", "in_progress", "requested", "waiting", "pending"):
+                run_state_drift = True
+                continue
             if row["id"] in seen_ids:
-                raise ValueError("duplicate GitHub Actions run across windows")
+                run_state_drift = True
+                continue
             seen_ids.add(row["id"])
             selected.append(row)
     jobs = []
@@ -97,6 +104,7 @@ def collect(repo, token=None):
                 raise ValueError("invalid GitHub Actions job source identity")
             seen_job_ids.add(row["id"])
             if row.get("status") not in ("queued", "in_progress", "waiting", "pending"):
+                run_state_drift = True
                 continue
             rider, rname = row.get("runner_id"), row.get("runner_name")
             # Neither missing assignment nor missing labels proves a listener outage.
@@ -134,6 +142,7 @@ def collect(repo, token=None):
         "observed_at_utc": now.isoformat(),
         "source": "bounded_read_only_github_actions_runs_and_jobs",
         "run_windows": windows, "run_receipts": run_receipts,
+        "run_state_drift_observed": run_state_drift,
         "sampled_jobs": jobs,
         "unassigned_queued_jobs_observed": sum(
             x["assignment"] == "NO_ASSIGNMENT_OBSERVED"
@@ -157,6 +166,7 @@ def unavailable(repo):
         "source": "github_actions_source_unavailable",
         "source_status": "unavailable", "sampled_jobs": [],
         "run_windows": [], "run_receipts": [],
+        "run_state_drift_observed": False,
         "unassigned_queued_jobs_observed": None,
         "observed_pending_jobs": None,
         "all_repository_jobs_inspected": False,
@@ -185,6 +195,8 @@ def lines(receipt):
             (str(age // 60) + "m" if age is not None else "ONBEKEND") +
             " · labels " + (",".join(row["labels_observed"]) or "ONBEKEND") +
             " · " + row["job_url"])
+    if receipt.get("run_state_drift_observed"):
+        result.append("BRON VERANDERD: run-/jobstatus verschoof tijdens opeenvolgende GitHub GETs.")
     if any(not w["all_status_runs_sampled"] for w in receipt["run_windows"]) or any(
             not r["jobs_sample_complete"] for r in receipt["run_receipts"]):
         result.append("BRON ONVOLLEDIG: meer runs of jobs buiten de limiet.")
@@ -215,7 +227,8 @@ def html(receipt):
             escape(", ".join(job["labels_observed"]) or "ONBEKEND") +
             (" (labels onvolledig)" if not job["labels_complete"] else "") +
             "</li>")
-    partial = (any(not x["all_status_runs_sampled"] for x in receipt["run_windows"])
+    partial = (receipt.get("run_state_drift_observed") is True
+               or any(not x["all_status_runs_sampled"] for x in receipt["run_windows"])
                or any(not x["jobs_sample_complete"] for x in receipt["run_receipts"]))
     return (
         header + "<p>Niet toegewezen queued jobs in de begrensde bron: " +
