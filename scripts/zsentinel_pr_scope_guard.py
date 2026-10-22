@@ -1875,11 +1875,11 @@ def as_markdown(report):
         lines.append("Geen mogelijke cross-platform padaliases waargenomen.")
     for hit in report["observed_portable_path_aliases"]:
         lines.append("- [PR #" + str(hit["pr_number"]) + "](" + hit["pr_url"] +
-                     ") · gevraagd pad " + chr(96) + hit["path"] + chr(96) +
+                     ") · gevraagd pad " + chr(96) + hit["path"].replace(chr(96), "\\" + chr(96)) + chr(96) +
                      " · " + str(hit["alias_count_observed"]) +
                      " mogelijke aliases · HEAD " + hit["observed_head_sha"][:12])
         for alias in hit["matching_aliases"]:
-            lines.append("  - " + chr(96) + alias["changed_path"] + chr(96) +
+            lines.append("  - " + chr(96) + alias["changed_path"].replace(chr(96), "\\" + chr(96)) + chr(96) +
                          " [" + alias["relation"] + "]")
         if hit["matches_truncated"]:
             lines.append("  - Extra aliasvoorbeelden buiten de limiet.")
