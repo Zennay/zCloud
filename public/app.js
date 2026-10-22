@@ -964,6 +964,10 @@ async function closeBlockedQueue(queueId,button){
       body:JSON.stringify({
         action:'drop',queue_id:queueId,evidence:note.trim(),
         expected_status:'blocked',expected_updated_at:fresh.updated_at,
+        expected_project_id:String(fresh.project_id||''),
+        expected_title:String(fresh.title||''),
+        expected_priority:String(fresh.priority||''),
+        expected_source_url:String(fresh.source_url||''),
         expected_blocker:String(fresh.blocker||''),
         expected_evidence:String(fresh.evidence||'')
       }),signal:AbortSignal.timeout(10000)
