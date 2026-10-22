@@ -2790,6 +2790,19 @@ def portfolio_attention_resolve(attention_id):
         raise ValueError('attention_id is verplicht')
     ts=now()
     with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if attention_id.startswith('queue:'):
+            queue_id=attention_id[len('queue:'):]
+            # An API client must not silence a human dependency gate while
+            # its exact queue item remains blocked. Resume or terminal
+            # cancellation settles this Attention in the SAME queue writer.
+            parked=c.execute(
+                "SELECT 1 FROM portfolio_queue WHERE queue_id=? AND status='blocked' LIMIT 1",
+                (queue_id,),
+            ).fetchone()
+            if parked:
+                return {'resolved':False,'attention_id':attention_id,
+                        'reason':'queue-dependency-still-blocked'}
         cur=c.execute("""UPDATE portfolio_attention SET status='resolved',resolved_at=?,updated_at=?
                          WHERE attention_id=? AND status='open'""",(ts,ts,attention_id))
     return {'resolved':bool(cur.rowcount),'attention_id':attention_id}
