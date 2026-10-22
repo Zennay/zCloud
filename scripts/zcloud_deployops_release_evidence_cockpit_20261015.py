@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -543,6 +544,62 @@ Groene GitHub-status is geen bewijs van actuele runtimegezondheid.</p>
 <p>Bevoegd tot deploy: <strong>NEE</strong></p></article></html>"""
 
 
+def write_create_only_outputs(json_path: str, html_path: str,
+                               json_payload: str, html_payload: str) -> None:
+    """Publish private reports without following or replacing existing targets.
+
+    Each file is staged in its destination directory, flushed, and published
+    with a no-clobber hard link. If either publication fails, remove any output
+    already published by this invocation only while it still names our inode.
+    """
+    destinations = [
+        Path(os.path.abspath(os.fspath(json_path))),
+        Path(os.path.abspath(os.fspath(html_path))),
+    ]
+    if destinations[0] == destinations[1]:
+        raise EvidenceError("output_paths_must_be_distinct")
+    staged: list[tuple[Path, Path]] = []
+    published: list[tuple[Path, Path]] = []
+    try:
+        for destination, payload in zip(
+            destinations, (json_payload, html_payload), strict=True
+        ):
+            if not destination.parent.is_dir():
+                raise EvidenceError("output_parent_not_directory")
+            fd, stage_name = tempfile.mkstemp(
+                prefix=".zcloud-release-evidence-", dir=os.fspath(destination.parent)
+            )
+            stage = Path(stage_name)
+            staged.append((stage, destination))
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(payload.encode("utf-8"))
+                stream.flush()
+                os.fsync(stream.fileno())
+        for stage, destination in staged:
+            # link() is create-only: an existing file or symlink is never
+            # opened, followed, truncated, or replaced.
+            os.link(stage, destination, follow_symlinks=False)
+            published.append((stage, destination))
+    except (OSError, EvidenceError) as exc:
+        for stage, destination in reversed(published):
+            try:
+                source_stat = os.stat(stage, follow_symlinks=False)
+                target_stat = os.stat(destination, follow_symlinks=False)
+                if (source_stat.st_dev, source_stat.st_ino) == (
+                    target_stat.st_dev, target_stat.st_ino
+                ):
+                    os.unlink(destination)
+            except OSError:
+                pass
+        raise EvidenceError("output_publish_failed") from exc
+    finally:
+        for stage, _ in staged:
+            try:
+                os.unlink(stage)
+            except OSError:
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", default="deploy-ops-evidence.json")
@@ -578,9 +635,16 @@ def main(argv: list[str] | None = None) -> int:
         status = 2
     else:
         status = 0 if not data["warnings"] else 1
-    Path(args.json).write_text(json.dumps(data, indent=2, sort_keys=True) + "\n",
-                               encoding="utf-8")
-    Path(args.html).write_text(render_html(data), encoding="utf-8")
+    try:
+        write_create_only_outputs(
+            args.json, args.html,
+            json.dumps(data, indent=2, sort_keys=True) + "\n",
+            render_html(data),
+        )
+    except EvidenceError:
+        # Never print arbitrary paths or filesystem exception details.
+        print("zCloud deploy-ops evidence: output_publish_failed authorized=false")
+        return 2
     # Only fixed internal error codes are emitted, never raw API payloads,
     # authenticated URLs or HTTP exception text.
     reason = data["warnings"][0] if status == 2 else "none"
