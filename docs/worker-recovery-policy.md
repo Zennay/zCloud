@@ -1004,7 +1004,9 @@ moet worden bijgewerkt, zonder force of gate-bypass. `DEFAULT_BRANCH_SOURCE_UNKN
 blijft gelden als de branchnaambron ontbreekt of verandert; `BASE_NOT_DEFAULT`
 markeert een PR die niet naar de waargenomen standaardbranch wijst. PR-status,
 base-branch-SHA, draft, merged en HEAD worden opnieuw gelezen vóór een stabiele
-exact-HEAD wordt getoond. De check-run samenvatting scheidt potentieel blokkerende
+exact-HEAD wordt getoond. Een mislukte laatste PR-herlezing wordt als
+`SOURCE_UNKNOWN` met een concrete bronfout in het handoff teruggegeven; de
+eerste waargenomen HEAD wordt dan niet als stabiel gepresenteerd. De check-run samenvatting scheidt potentieel blokkerende
 terminale non-success (failure/cancelled/stale/unknown), neutral/skipped en
 pending; neutral/skipped zijn uitdrukkelijk géén succesbewijs. Markdown en
 de scriptvrije offline HTML linken iedere zichtbare check naar het bestaande
