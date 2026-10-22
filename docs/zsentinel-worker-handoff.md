@@ -267,7 +267,8 @@ read-only HTML en tekst tonen welke events binnen/buiten het venster vallen.
 **Belangrijke grens:** `runner_events` bevat geen queue-ID. Dit is daarom
 uitsluitend tijdvenster-correlatie, expliciet `time_window_only_not_identity_bound`,
 en geen exacte claim-epoch-binding of herstelautorisatie. Bij een gewijzigd
-venster tussen twee snapshots weigeren `zsentinel_worker_progress_delta.py` en
-`zsentinel_worker_continuity.py` de cursorvergelijking als dezelfde taak en
-maken ze een afzonderlijke eigenaarcontrole zichtbaar. Productoplevering,
+venster tussen twee snapshots weigeren `zsentinel_worker_progress_delta.py`, `zsentinel_worker_continuity.py` én
+`zsentinel_worker_handoff.py` weigeren een cursorvergelijking over gewijzigde
+claimvensters als dezelfde taak en maken een afzonderlijke eigenaarcontrole
+zichtbaar. Productoplevering,
 claimovername, retry, restart en release blijven onbewezen en onbevoegd.
