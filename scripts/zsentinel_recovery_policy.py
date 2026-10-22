@@ -879,6 +879,8 @@ def _batch_workorders(results):
             "required_evidence": needed,
             "source_urls": sorted({report["source_url"] for report in reports}),
             "next_step": ("select_one_authorized_action" if conflict else
+                          "reconcile_same_blocked_task_across_incident_aliases"
+                          if "competing_blocked_task_routes" in blockers else
                           "resolve_evidence_holds" if blockers else
                           "verify_live_gates_and_obtain_owner_approval"),
             "human_review_required": True,
@@ -1052,6 +1054,10 @@ def evaluate_batch(data, max_age_minutes):
             )
 
     workorders = _batch_workorders(results)
+    collision_groups = sum(
+        len({item["report"]["incident_id"] for item in proposals}) > 1
+        for proposals in blocked_routes.values()
+    )
     # The incident desk is source-bound to this exact batch. It is a
     # human worklist, not a live queue and not permission to claim work.
     incident_triage = []
@@ -1065,6 +1071,8 @@ def evaluate_batch(data, max_age_minutes):
                             for field in report["required_evidence"]})
         if len(reports) > 1:
             next_step = "choose_one_incident_route_with_authorized_owner"
+        elif "competing_blocked_task_routes" in holds:
+            next_step = "reconcile_same_blocked_task_across_incident_aliases"
         elif holds:
             next_step = "resolve_observed_holds_and_refresh_source"
         else:
@@ -1097,6 +1105,7 @@ def evaluate_batch(data, max_age_minutes):
         "evaluated_at_utc": evaluated_at.isoformat().replace("+00:00", "Z"),
         "request_count": len(results),
         "incident_count": len(workorders),
+        "blocked_task_collision_group_count": collision_groups,
         "owner_workorders": workorders,
         "decision_counts": {
             "HOLD": decisions.count("HOLD"),
