@@ -4050,3 +4050,25 @@ onbekend. Er wordt geen expiry-beslissing afgeleid, geen claim vrijgegeven en
 een handmatig opgeslagen connector-snapshot zonder deze velden wordt niet als
 live leasebron voorgesteld. De bestaande `claim_scope_verified=false`,
 `can_dispatch=false` en `can_release_claim=false` blijven verplicht.
+
+
+## 22 oktober · claimvensterbewuste worker-voortgang (#1342)
+
+De bestaande read-only `scripts/zsentinel_worker_progress_observer.py` valideert
+nu de start én afloop van de queuelease voordat hij de claim als huidig
+classificeert. De claimduur moet geldig zijn en maximaal zeven dagen bedragen;
+ontbrekende/ongeldige `claimed_at`-metadata maakt de lease onbekend/ongeldig,
+niet actief.
+
+De observer koppelt een private, gehashte queue-claimvensterfingerprint aan het
+project/worker-slot en begrenst actuele prompt-, blokkerings- en progressignalen
+tot timestamps binnen dat venster. Oude events van een eerdere taak worden niet
+meer als actuele claimvoortgang geclassificeerd. De bestaande
+`worker_progress_delta.py` en `worker_continuity.py` herkennen een gewijzigde
+fingerprint tussen snapshots en melden eigenaarcontrole in plaats van
+cursors als voortgang van dezelfde taak te vergelijken.
+
+De queue-ID wordt niet geëxporteerd en er wordt niets geschreven. Omdat
+`runner_events` zelf geen queue-ID draagt, blijft dit
+`time_window_only_not_identity_bound`: geen exacte claim-epoch-binding,
+geen bewezen productcommit en geen toestemming voor automatische recovery.
