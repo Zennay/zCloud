@@ -30,22 +30,36 @@ def _clock(value):
 
 
 def read_private_previous(path: Path):
-    """No follow, no shared/other-readable historical PR metadata."""
-    if not isinstance(path, Path) or path.is_symlink():
-        raise ValueError("previous snapshot must not be a symlink")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags)
+    """One private, bounded previous snapshot; reject pipes before opening.
+
+    The regular-file inode, size and modification time must remain stable
+    throughout the read. No source row grants a claim, merge or release.
+    """
+    if not isinstance(path, Path):
+        raise ValueError("previous snapshot path must be explicit")
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        raise ValueError("safe regular-file opening unavailable")
+    before = path.lstat()
+    if (not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or before.st_mode & 0o077
+            or not 0 < before.st_size <= MAX_BYTES):
+        raise ValueError("previous snapshot must be private 0600 and bounded")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         meta = os.fstat(fd)
+        identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns)
         if (not stat.S_ISREG(meta.st_mode)
                 or meta.st_uid != os.geteuid()
                 or meta.st_mode & 0o077
-                or not 0 < meta.st_size <= MAX_BYTES):
-            raise ValueError("previous snapshot must be private 0600 and bounded")
-        with os.fdopen(fd, "rb", closefd=False) as source:
+                or identity(before) != identity(meta)):
+            raise ValueError("previous snapshot changed before read")
+        with os.fdopen(os.dup(fd), "rb") as source:
             raw = source.read(MAX_BYTES + 1)
-        if len(raw) > MAX_BYTES:
-            raise ValueError("previous snapshot oversized")
+        after = os.fstat(fd)
+        if (len(raw) != meta.st_size or identity(meta) != identity(after)
+                or after.st_mode & 0o077 or after.st_uid != os.geteuid()):
+            raise ValueError("previous snapshot changed during read")
     finally:
         os.close(fd)
     def unique(pairs):
