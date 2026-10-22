@@ -133,6 +133,61 @@ def _rows(source):
     return _clock(source.get("observed_at_utc")), rows
 
 
+
+def _observed_transition(current, prior):
+    """Owner-friendly before→after counts, never a complete CI/review verdict."""
+    if current is None or prior is None:
+        return []
+    changes = []
+    run_new, run_old = current["check_runs"], prior["check_runs"]
+    if run_new != run_old:
+        labels = (("getoonde falende checks", 3),
+                  ("getoonde wachtende checks", 4),
+                  ("getoonde onbesliste checks", 5))
+        for name, offset in labels:
+            left, right = len(run_old[offset]), len(run_new[offset])
+            if left != right or run_old[offset] != run_new[offset]:
+                changes.append(name + ": " + str(left) + " → " + str(right))
+        if run_new[1] != run_old[1]:
+            changes.append("gerapporteerde totale check-runs: " +
+                           str(run_old[1]) + " → " + str(run_new[1]))
+        if run_new[2] != run_old[2]:
+            changes.append("getoond checkvenster volledig: " +
+                           ("ja" if run_old[2] else "nee") + " → " +
+                           ("ja" if run_new[2] else "nee"))
+    legacy_new, legacy_old = current["classic_statuses"], prior["classic_statuses"]
+    if legacy_new != legacy_old:
+        if legacy_new[0] != legacy_old[0]:
+            changes.append("klassieke gezamenlijke status: " +
+                           legacy_old[0] + " → " + legacy_new[0])
+        for name, offset in (("falende legacy-contexts", 3),
+                             ("wachtende legacy-contexts", 4)):
+            left, right = len(legacy_old[offset]), len(legacy_new[offset])
+            if left != right or legacy_old[offset] != legacy_new[offset]:
+                changes.append(name + ": " + str(left) + " → " + str(right))
+        if legacy_new[1] != legacy_old[1]:
+            changes.append("getoonde legacy-contexts: " +
+                           str(legacy_old[1]) + " → " + str(legacy_new[1]))
+        if legacy_new[2] != legacy_old[2]:
+            changes.append("legacy-pagina afgekapt: " +
+                           ("ja" if legacy_old[2] else "nee") + " → " +
+                           ("ja" if legacy_new[2] else "nee"))
+    review_new, review_old = current["same_head_reviews"], prior["same_head_reviews"]
+    if review_new != review_old:
+        if review_new[0] != review_old[0]:
+            changes.append("getoonde same-head approvals: " +
+                           str(review_old[0]) + " → " + str(review_new[0]))
+        if review_new[1] != review_old[1]:
+            changes.append("getoonde changes-requested: " +
+                           ("ja" if review_old[1] else "nee") + " → " +
+                           ("ja" if review_new[1] else "nee"))
+        if review_new[2] != review_old[2]:
+            changes.append("reviewpagina afgekapt: " +
+                           ("ja" if review_old[2] else "nee") + " → " +
+                           ("ja" if review_new[2] else "nee"))
+    return changes[:14]
+
+
 def compare(current, previous, previous_sha256, now=None):
     """Summarize only observed gate changes in two private PR report windows."""
     if type(previous_sha256) is not str or not FINGERPRINT.fullmatch(previous_sha256):
@@ -185,6 +240,9 @@ def compare(current, previous, previous_sha256, now=None):
             "previous_next_step": old["step"] if old else None,
             "observed_gate_families_changed": gate_fields_changed,
             "observed_gate_sample_changed": bool(gate_fields_changed),
+            "observed_gate_transitions": (
+                _observed_transition(item["gates"], old["gates"])
+                if gate_fields_changed else []),
             "gate_changed_proven": state in (
                 "exact_head_changed_REINSPECT_GATE",
                 "same_head_owner_step_changed_REVIEW_GATE",
