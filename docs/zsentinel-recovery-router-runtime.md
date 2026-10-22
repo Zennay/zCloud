@@ -3930,3 +3930,30 @@ VPS-serviceherstart of deploy. Alleen de bevoegde runtime-eigenaar mag
 na een actuele bron-/claim- en dependencycontrole een echte mutatie doen.
 De open writer-afhankelijkheid van #677 blijft apart; deze werkbak
 verandert geen native queue-retrycontract.
+
+
+### 22 oktober · claimveilige worker-slotindicatie bij geblokkeerde taken
+
+De echte `portfolio_queue`-tabel bevat, naast `claimed_at` en
+`claim_expires`, ook `worker_slot INTEGER`. Deze velddekking is
+nu expliciet meegenomen in de **begrensde, alleen-lezen geblokkeerde
+P0/P1-taakselectie**. Een `worker_slot IS NOT NULL` wordt als
+aanwezig claimbewijs beschouwd, ook wanneer beide tijdstempels
+ontbreken. De werkbak exporteert **uitsluitend een boolean**;
+een ruwe slotidentiteit of workernaam wordt niet gepubliceerd.
+
+Als een oudere databron deze kolom niet heeft, blijft de
+worker-slotstatus **ONBEKEND**, niet `false`. De herstelrouter
+verifieert dat iedere individuele bronkaart dezelfde
+`worker_slot_source_covered`-dekking draagt, dat een aangetroffen
+slot een expliciet claimwaarschuwingsveld veroorzaakt en dat de
+bron niet stilzwijgend eigenaar- of hervatautorisatie verleent.
+De HTML-tabel en de CLI noemen nu afzonderlijk of een slot
+daadwerkelijk bezet gezien, leeg waargenomen of niet beschikbaar
+in de bron is.
+
+Een lege `claimed_at`, `claim_expires` én `worker_slot` is
+slechts een historische waarneming, nooit bewezen actuele vrijheid:
+de operator moet nog steeds de huidige queue-state, overige leases,
+runtime-dependencies en expliciete rechten controleren.
+Geen claim, worker-slot of queue-record is gewijzigd.
