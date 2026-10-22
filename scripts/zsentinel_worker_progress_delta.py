@@ -31,6 +31,7 @@ MAX_HOURS = 72
 # before routine activity signals; none of these classes proves recovery.
 OPERATOR_ORDER = {
     "missing_in_current_sample_not_resolved": 0,
+    "claim_window_changed_requires_owner_recheck": 1,
     "indexed_source_reset_or_regression": 1,
     "paused_or_draining_owner_hold": 2,
     "running_allocated_no_new_event": 3,
@@ -42,6 +43,7 @@ OPERATOR_ORDER = {
 }
 OPERATOR_LABELS = {
     "missing_in_current_sample_not_resolved": "Niet meer waargenomen (geen herstel)",
+    "claim_window_changed_requires_owner_recheck": "Queue-claimvenster gewijzigd; eigenaarcontrole nodig",
     "indexed_source_reset_or_regression": "Eventbron mogelijk gereset",
     "paused_or_draining_owner_hold": "Pauze/drain door eigenaar",
     "running_allocated_no_new_event": "Running, geen nieuw event gezien",
@@ -121,6 +123,19 @@ def _source(r):
                 or row.get("repair_authorized") is not False
                 or row.get("event_source") != "indexed_local_runner_events_only"):
             raise ValueError("untrusted worker slot or authorization flag")
+        claim_window_fingerprint = row.get("claim_window_fingerprint")
+        if (claim_window_fingerprint is not None and
+                (type(claim_window_fingerprint) is not str
+                 or not HEX64.fullmatch(claim_window_fingerprint))):
+            raise ValueError("invalid private claim-window fingerprint")
+        claim_window_correlation = row.get("claim_window_correlation")
+        if claim_window_correlation is not None and claim_window_correlation not in (
+                "time_window_only_not_identity_bound",
+                "unavailable_no_valid_current_lease"):
+            raise ValueError("invalid claim-window correlation")
+        if ((claim_window_correlation == "time_window_only_not_identity_bound")
+                != (claim_window_fingerprint is not None)):
+            raise ValueError("claim-window identity and fingerprint coverage disagree")
         last = _cursor(row.get("latest_indexed_event_id"))
         progress = _cursor(row.get("latest_indexed_progress_event_id"))
         if progress is not None and (last is None or progress > last):
@@ -138,6 +153,7 @@ def _source(r):
             "claim_from_source": row.get("queue_claim_status_observed")
                                  in ("claimed", "running", "verifying"),
             "claim_lease_current_from_source": row.get("queue_lease_current_from_source") is True,
+            "claim_window_fingerprint": claim_window_fingerprint,
         }
     return identity, _utc(r.get("observed_at_utc")), tuple(projects), observed
 
@@ -161,6 +177,7 @@ def compare(previous, current, now=None):
         "running_allocated_no_new_event": 0,
         "paused_or_draining_owner_hold": 0,
         "indexed_source_reset_or_regression": 0,
+        "claim_window_changed_requires_owner_recheck": 0,
         "new_in_bounded_sample_not_new_claim": 0,
         "missing_in_current_sample_not_resolved": 0,
         "other_bounded": 0,
@@ -195,6 +212,15 @@ def compare(previous, current, now=None):
         elif after is None:
             stage = "missing_in_current_sample_not_resolved"
             action = "Controleer bij eigenaar waarom de worker niet meer wordt waargenomen; geen herstel of vrijgave bewezen."
+        elif (before["claim_window_fingerprint"] != after["claim_window_fingerprint"]
+              and (before["claim_window_fingerprint"] is not None
+                   or after["claim_window_fingerprint"] is not None)):
+            stage = "claim_window_changed_requires_owner_recheck"
+            action = (
+                "Het waargenomen queue-claimvenster veranderde tussen snapshots; "
+                "vergelijk cursors niet alsof dit dezelfde taak is. Laat de bevoegde "
+                "eigenaar de actuele claim en voortgang handmatig verifiëren."
+            )
         elif ((first is not None and last is not None and last < first)
                 or (pfirst is not None and plast is not None and plast < pfirst)
                 or (pfirst is not None and plast is None)):
@@ -229,6 +255,15 @@ def compare(previous, current, now=None):
             "current_global_slot_observed": after["allocated"] if after is not None else None,
             "source_claim_lease_current_but_not_authority":
                 after["claim_lease_current_from_source"] if after is not None else False,
+            "claim_window_changed_observed": bool(
+                before is not None and after is not None
+                and before["claim_window_fingerprint"] != after["claim_window_fingerprint"]
+                and (before["claim_window_fingerprint"] is not None
+                     or after["claim_window_fingerprint"] is not None)),
+            "previous_claim_window_observed": (
+                before["claim_window_fingerprint"] is not None if before is not None else False),
+            "current_claim_window_observed": (
+                after["claim_window_fingerprint"] is not None if after is not None else False),
             "slot_present_in_previous_sample": before is not None,
             "slot_present_in_current_sample": after is not None,
             "claim_epoch_verified": False,
@@ -276,6 +311,8 @@ def public_summary(report):
         "running_without_new_events": report["counts"]["running_allocated_no_new_event"],
         "owner_paused_or_draining": report["counts"]["paused_or_draining_owner_hold"],
         "source_regressions": report["counts"]["indexed_source_reset_or_regression"],
+        "claim_window_changes_requiring_owner_review":
+            report["counts"]["claim_window_changed_requires_owner_recheck"],
         "new_in_sample_not_new_claim": report["new_worker_slots_unpaired"],
         "missing_in_sample_not_recovered": report["disappeared_worker_slots_unpaired"],
         "product_delivery_verified": False,
@@ -297,6 +334,8 @@ def human_text(report):
         " voor het eerst zichtbare eventcursors zonder delta-bewijs, " +
         str(data["running_without_new_events"]) +
         " toegewezen workers zonder eventtoename; " +
+        str(data["claim_window_changes_requiring_owner_review"]) +
+        " gewijzigde claimvensters die een eigenaarcontrole vereisen; " +
         str(data["new_in_sample_not_new_claim"]) +
         " nieuw in steekproef (geen nieuwe claim), " +
         str(data["missing_in_sample_not_recovered"]) +
@@ -319,7 +358,9 @@ def public_html(report):
         str(data["first_cursor_seen_not_delta"]) +
         '; toegewezen running zonder nieuwe events: ' +
         str(data["running_without_new_events"]) +
-        '; nieuw in beperkte steekproef (geen nieuwe claim): ' +
+        '; gewijzigde claimvensters met eigenaarcontrole: ' +
+        str(data["claim_window_changes_requiring_owner_review"]) +
+        '; nieuw in beperkte steekproef (geen nieuwe claim): '
         str(data["new_in_sample_not_new_claim"]) +
         '; verdwenen uit beperkte steekproef (geen herstel): ' +
         str(data["missing_in_sample_not_recovered"]) +
@@ -355,6 +396,8 @@ def private_markdown(report):
         str(data["new_in_sample_not_new_claim"]),
         "- Verdwenen uit beperkte bron (niet opgelost): " +
         str(data["missing_in_sample_not_recovered"]),
+        "- Gewijzigde claimvensters (cursorvergelijking geblokkeerd): " +
+        str(data["claim_window_changes_requiring_owner_review"]),
         "",
         "| Project | Worker-slot | Waarneming | Bevoegde eigenaaractie |",
         "| --- | ---: | --- | --- |",
