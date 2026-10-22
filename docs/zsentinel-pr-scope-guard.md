@@ -3507,3 +3507,20 @@ hoogstens vier exacte-HEAD PR's per run: 48 PR's lezen betekent niet dat
 48 CI/review-gates beoordeeld zijn. Noch volledige paginering noch
 afwezigheid van overlappende paden verleent een actieve claim,
 branch-recht, merge- of deployautorisatie.
+
+### Operatorwerkopdrachten met herleidbare paginabron
+
+De bestaande `--inspect-current-pr-gates`-flow kiest ook na een
+meerpagina-scan slechts maximaal vier PR's om exact-HEAD gatebonnen
+op te halen. Hun individuele private werkopdracht vermeldt nu hoeveel
+opeenvolgende open-PR-pagina's zijn gelezen en of dit *open-PR-venster*
+volledig was. De JSON bewaart deze bronfeiten als
+`source_open_pr_pages` en `source_open_pr_window_complete`, de
+CSV biedt afzonderlijke kolommen en tekst/Markdown/HTML tonen dezelfde
+feitelijke dekking. Oudere opgeslagen receipts zonder de nieuwe
+optionele velden blijven leesbaar als één pagina met onbekende
+volledigheid; er wordt geen voltooid bronvenster verzonnen.
+
+Ook bij volledig open-PR-venster blijven padlimieten, review/CI,
+claim-/workerbezit, PR-loze branches, branch protection en
+release-eigenaar apart onbekend totdat de bevoegde actor ze vaststelt.
