@@ -3765,12 +3765,15 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_up
         if (not project or str(project.get('status') or 'active')!='active'
                 or str(project.get('queue_mode') or '').lower()=='human-gated'):
             raise ValueError('Project is niet actief of is menselijk afgeschermd; hervatten geweigerd')
-        previous_blocker=str(row['blocker'] or '')[:1000]
-        previous_evidence=str(row['evidence'] or '')[:1200]
+        previous_blocker=str(row['blocker'] or '')[:2000]
+        previous_evidence=str(row['evidence'] or '')[:4000]
+        # Keep the operator's actual decision FIRST, as with terminal close.
+        # A long original blocker/evidence may be truncated in the legacy
+        # queue evidence field, but must never truncate the human attestation.
         receipt=(
+            f'Operator {actor} attests dependency cleared: {note}\n'
             f'Previous blocker: {previous_blocker}\n'
-            f'Previous evidence: {previous_evidence}\n'
-            f'Operator {actor} attests dependency cleared: {note}'
+            f'Previous evidence: {previous_evidence}'
         )[:4000]
         cur=c.execute("""UPDATE portfolio_queue
                          SET status='queued',eligible=1,evidence=?,blocker='',
