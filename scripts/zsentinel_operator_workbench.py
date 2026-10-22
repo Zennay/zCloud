@@ -138,7 +138,7 @@ def validated_view(source: dict) -> dict:
                                     card.get("priority"))
         if (type(issue) is not str or not ISSUE.fullmatch(issue) or issue in seen
                 or type(project) is not str or not PROJECT.fullmatch(project)
-                or priority not in PRIORITIES):
+                or type(priority) is not str or priority not in PRIORITIES):
             raise ValueError("Noncanonical or duplicate product issue")
         seen.add(issue)
         refs = card.get("open_pr_candidates")
