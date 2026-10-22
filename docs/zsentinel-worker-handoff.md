@@ -1,3 +1,16 @@
+## 22 oktober 2026 · toekomstklokken worden geen verse worker-voortgang
+
+De read-only `runner_events` observer behandelt een eventtijd in de toekomst
+nu niet langer als leeftijd `0` en koppelt zo'n event niet aan het actuele
+queue-claimvenster. Een timestamp die later is dan het observatiemoment wordt
+als `FUTURE` gemarkeerd; onparseerbare/zonder-zone timestamps zijn `UNKNOWN`.
+De private HTML- en tekstweergave tonen alleen deze status-enums en leeftijdswaarden,
+nooit ruwe eventklokken of payloads. Oude browser-events blijven niet
+claim-epoch-gebonden: `runner_events` bevat geen queue-ID, en dit lost het
+backend-contract van issue #1342 niet op. `server.py`, SQLite-schema en
+browser/userscript writers blijven buiten scope; geen worker/claim/queue/
+service-mutatie of herstelautorisatie.
+
 # zSentinel · privé workercontinuïteit zonder control-plane writes
 
 ## Wat is geleverd
