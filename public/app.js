@@ -894,6 +894,16 @@ async function inspectBlockedQueue(queueId,button){
           +'Linked human Attention: '+String(result.linked_attention_status||'unknown')+'.')
         :'Queue item not found.')+'</p>'
       +(details?'<ul>'+details+'</ul>':'')
+      +(result.receipt_source_available===false
+        ?'<p><b>Recovery receipt history unavailable; no prior decision can be verified.</b></p>'
+        :result.latest_operator_receipt
+          ?'<p>Latest matching durable operator receipt: '
+            +esc(result.latest_operator_receipt.operation)+' #'
+            +esc(result.latest_operator_receipt.id)+' · '
+            +esc(blockedQueueTime(result.latest_operator_receipt.observed_at)||'time unknown')
+            +'. This proves an earlier recorded decision, not that an unacknowledged request was yours.</p>'
+          :'<p>No matching recent operator receipt in the bounded project history'
+            +(result.receipt_scan_limited===true?' (limited coverage)':'')+'.</p>')
       +'<small>This observation never clears a dependency or lease. Final writes still require a fresh complete source guard and operator authorization.</small>';
   }catch(error){
     region.textContent='Inspection unavailable: '+String(error?.message||error)+'. No queue state changed.';
