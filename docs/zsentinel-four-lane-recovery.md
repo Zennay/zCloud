@@ -1,3 +1,23 @@
+## 22 oktober 2026 · host-capaciteit vereist volledige brondekking voor een groen oordeel
+
+De gecombineerde hostobserver hield eerder alleen de RAM/swap- en loadavg-parsing
+binnen één foutgrens. Daardoor kon een fout in loadavg correcte RAM/swap-data
+laten verdwijnen; omgekeerd kon een geldige meminfo/loadavg-meting samen met
+onvolledige root-schijf- of PSI-dekking nog steeds `HOST_SNAPSHOT_OBSERVED`
+en `NO_LOCAL_THRESHOLD_CROSSED` opleveren.
+
+De observer leest de vier bronnen nu onafhankelijk en behoudt iedere geldige
+meting. JSON bevat `source_coverage`, `observed_sources`, `partial_sources`
+en `missing_sources` voor `meminfo`, `loadavg`, `root_disk` en `psi`.
+Een bekende HIGH/ELEVATED-drempel blijft zichtbaar, ook bij gedeeltelijke
+dekking. Zonder bekende drempeloverschrijding wordt de algemene hint alleen
+`NO_LOCAL_THRESHOLD_CROSSED` wanneer alle vier bronnen volledig zijn
+waargenomen; anders blijft de hint `UNKNOWN` en de status `HOST_PARTIAL`
+(of `UNKNOWN` wanneer geen bron bruikbaar is). De bestaande desk zet
+nieuwe-work-admissie bij onvolledige hostbron al op HOLD; lopende eigenaren
+worden niet onderbroken. De mensentaalweergave toont de werkelijk bekende
+RAM/swap/load-metingen en noemt precies welke bronnen ontbreken.
+
 ## 22 oktober 2026 · swap niet aanwezig is niet hetzelfde als 0% gebruikt
 
 De read-only hostobservatie gaf voor een machine zonder geconfigureerde swap
