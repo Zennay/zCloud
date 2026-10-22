@@ -1326,18 +1326,22 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
     for left, right in alias_pairs:
         collided.add(left)
         collided.add(right)
-    # A contiguous, double-read window starting at page one can prove the
-    # current open-PR enumeration ended: every preceding page is full and
-    # the last page is short. A full final page, skipped first page, drifted
-    # listing or missing middle page never proves repository completeness.
-    # For single-page inspection, the existing one-extra-PR lookahead applies.
+    # A complete source terminates at its FIRST short page. Explicitly
+    # requested subsequent pages must then be empty; a nonempty later page
+    # would be inconsistent pagination and must not clear the inventory.
+    # A full last page still cannot prove there are no newer/unread PRs.
+    # In one-page mode we preserve the original one-extra-PR lookahead.
+    page_lengths = [len(page) for page in snapshots_before]
+    first_short_page = next(
+        (index for index, size in enumerate(page_lengths) if size < page_size),
+        None)
+    page_termination_proven = (
+        first_short_page is not None and
+        all(size == page_size for size in page_lengths[:first_short_page]) and
+        all(size == 0 for size in page_lengths[first_short_page + 1:]))
     window_complete = (
-        open_page == 1 and (
-            (page_count == 1 and len(before) <= limit and
-             len(snapshots_before[0]) < page_size) or
-            (page_count > 1 and
-             all(len(page) == page_size for page in snapshots_before[:-1]) and
-             len(snapshots_before[-1]) < page_size)))
+        open_page == 1 and page_termination_proven and
+        (page_count > 1 or len(before) <= limit))
     # Full PR pagination does not prove full *file-scope* evidence: any capped
     # path-pair or alias preview still blocks false clearance and work selection.
     source_coverage_reasons = []
