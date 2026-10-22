@@ -940,7 +940,7 @@ def render_history_package(snapshots: list[dict], index_name: str) -> bytes:
         raise ValueError("private history package member exceeds one MiB")
     parsed = json.loads(machine)
     receipt = {
-        "schema": "zsentinel-private-recovery-history-package-v1",
+        "schema": "zsentinel-private-recovery-history-package-v2",
         "source": "verified_saved_operator_bundles_not_live",
         "generated_at_local_utc": parsed["generated_at_local_utc"],
         "saved_bundle_board_sha256": {
