@@ -75,3 +75,9 @@ The offline cockpit and private owner report show the same-row count separately
 from all uncertain clock fields. The report's provenance validator refuses
 contradictory status/clock totals, source timestamps, owner permissions or
 priority labels rather than silently passing them to the operator.
+
+The private incident desk now also renders the same-row `Claimed/Running`
+anomaly count, sorted top project groups and a visible **partial-coverage**
+disclaimer. It independently reconciles the per-project clock classifications
+with the source's portfolio aggregates and refuses contradictory statuses.
+It remains a private, non-executable owner workspace.
