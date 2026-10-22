@@ -219,6 +219,82 @@ def _scope_pairs(view, repo, pins):
     return result
 
 
+def _portable_path_key(path):
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", path).casefold())
+
+
+def _portable_alias_pairs(view, repo, pins):
+    """Validate NFC/casefold alias hints against both exact sampled PR identities."""
+    rows = view.get("shown_portable_path_alias_pairs")
+    if rows is None:
+        return None  # pre-feature snapshot; historical comparison is unavailable
+    if type(rows) is not list or len(rows) > 80:
+        raise ValueError("portable alias source invalid")
+    observed = view.get("observed_portable_path_alias_pairs")
+    pairs_truncated = view.get("portable_path_alias_pairs_truncated")
+    examples_truncated = view.get("portable_path_alias_examples_truncated")
+    if (type(observed) is not int or observed < len(rows)
+            or type(pairs_truncated) is not bool
+            or type(examples_truncated) is not bool):
+        raise ValueError("portable alias coverage metadata invalid")
+    allowed = {
+        "case_or_unicode_normalization_alias",
+        "left_path_alias_conflicts_with_right_descendant",
+        "right_path_alias_conflicts_with_left_descendant",
+    }
+    result = set()
+    seen_pairs = set()
+    for row in rows:
+        if type(row) is not dict:
+            raise ValueError("portable alias row invalid")
+        left, right = row.get("left"), row.get("right")
+        if type(left) is not dict or type(right) is not dict:
+            raise ValueError("portable alias PR identity invalid")
+        a, b = left.get("number"), right.get("number")
+        if type(a) is not int or type(b) is not int or not 0 < a < b < 100000000:
+            raise ValueError("portable alias PR ordering invalid")
+        _validate_pair_heads(row, repo, pins)
+        pair_key = (a, b)
+        if pair_key in seen_pairs:
+            raise ValueError("duplicate portable alias PR pair")
+        seen_pairs.add(pair_key)
+        aliases = row.get("path_aliases")
+        count = row.get("path_alias_count_observed")
+        truncated = row.get("path_aliases_truncated")
+        if (type(aliases) is not list or len(aliases) > 8
+                or type(count) is not int or count < 1 or count < len(aliases)
+                or type(truncated) is not bool
+                or truncated != (count > len(aliases))
+                or row.get("heuristic") != "unicode_nfc_casefold_advisory_not_git_identity"):
+            raise ValueError("portable alias preview metadata invalid")
+        for item in aliases:
+            if type(item) is not dict or item.get("relation") not in allowed:
+                raise ValueError("portable alias relation invalid")
+            left_path = _scope_path(item.get("left_path"))
+            right_path = _scope_path(item.get("right_path"))
+            left_key, right_key = _portable_path_key(left_path), _portable_path_key(right_path)
+            if (left_path == right_path
+                    or right_path.startswith(left_path + "/")
+                    or left_path.startswith(right_path + "/")):
+                raise ValueError("portable alias is an ordinary identical/ancestor path")
+            relation = item["relation"]
+            if relation == "case_or_unicode_normalization_alias" and left_key != right_key:
+                raise ValueError("portable alias does not normalize to the same path")
+            if (relation == "left_path_alias_conflicts_with_right_descendant"
+                    and (not right_key.startswith(left_key + "/")
+                         or right_path.startswith(left_path + "/"))):
+                raise ValueError("left portable ancestor relation does not match paths")
+            if (relation == "right_path_alias_conflicts_with_left_descendant"
+                    and (not left_key.startswith(right_key + "/")
+                         or left_path.startswith(right_path + "/"))):
+                raise ValueError("right portable ancestor relation does not match paths")
+            identity = (a, b, left_path, right_path, relation)
+            if identity in result:
+                raise ValueError("duplicate portable alias path pair")
+            result.add(identity)
+    return result
+
+
 def _connected_pr_sets(pairs):
     """Compute complete observed pair components, not claim/merge rights."""
     adjacency = {}
@@ -330,6 +406,39 @@ def compare(previous, current):
                             and full_scope_preview(new))
         old_scope_pairs = old_seen_scope if scope_comparable else set()
         new_scope_pairs = new_seen_scope if scope_comparable else set()
+        old_seen_aliases = (_portable_alias_pairs(old, repo, old_pins)
+                            if old_stable else None)
+        new_seen_aliases = (_portable_alias_pairs(new, repo, new_pins)
+                            if new_stable else None)
+
+        def full_alias_preview(view, aliases):
+            rows = view.get("shown_portable_path_alias_pairs")
+            observed = view.get("observed_portable_path_alias_pairs")
+            return (
+                aliases is not None and type(rows) is list
+                and type(observed) is int and observed == len(rows)
+                and view.get("portable_path_alias_pairs_truncated") is False
+                and view.get("portable_path_alias_examples_truncated") is False
+                and all(type(row) is dict
+                        and row.get("path_aliases_truncated") is False
+                        and type(row.get("path_alias_count_observed")) is int
+                        and row["path_alias_count_observed"] == len(row.get("path_aliases", []))
+                        for row in rows)
+            )
+
+        alias_comparable = (
+            both_complete and old_seen_aliases is not None
+            and new_seen_aliases is not None
+            and full_alias_preview(old, old_seen_aliases)
+            and full_alias_preview(new, new_seen_aliases))
+        old_aliases = old_seen_aliases if alias_comparable else set()
+        new_aliases = new_seen_aliases if alias_comparable else set()
+        current_alias_delta = (
+            new_seen_aliases - old_seen_aliases
+            if stable and old_seen_aliases is not None and new_seen_aliases is not None else set())
+        previous_alias_delta = (
+            old_seen_aliases - new_seen_aliases
+            if stable and old_seen_aliases is not None and new_seen_aliases is not None else set())
         old_clusters = set(_connected_pr_sets(old_pairs))
         new_clusters = set(_connected_pr_sets(new_pairs))
         def linked_groups(groups):
@@ -348,6 +457,13 @@ def compare(previous, current):
                      "right": f"https://github.com/{repo}/pull/{b}",
                      "left_path": left_path, "right_path": right_path,
                      "relation": relation}
+                    for a, b, left_path, right_path, relation in sorted(pairs)[:40]]
+        def describe_aliases(pairs):
+            return [{"left": f"https://github.com/{repo}/pull/{a}",
+                     "right": f"https://github.com/{repo}/pull/{b}",
+                     "left_path": left_path, "right_path": right_path,
+                     "relation": relation,
+                     "not_git_merge_conflict": True}
                     for a, b, left_path, right_path, relation in sorted(pairs)[:40]]
         current_scope_delta = (new_seen_scope - old_seen_scope
                                if stable and old_seen_scope is not None
@@ -390,6 +506,22 @@ def compare(previous, current):
                     or new.get("path_scope_examples_truncated") is True)),
             "scope_conflict_comparison_unavailable": (
                 old_seen_scope is None or new_seen_scope is None),
+            "portable_aliases_comparable_if_complete": alias_comparable,
+            "added_portable_path_aliases_if_complete": describe_aliases(new_aliases - old_aliases),
+            "disappeared_portable_path_aliases_if_complete": describe_aliases(old_aliases - new_aliases),
+            "portable_path_aliases_only_in_current_sample_not_proven_new": (
+                describe_aliases(current_alias_delta) if stable and not alias_comparable else []),
+            "portable_path_aliases_only_in_previous_sample_not_proven_resolved": (
+                describe_aliases(previous_alias_delta) if stable and not alias_comparable else []),
+            "portable_alias_preview_truncated": (
+                stable and not alias_comparable and (
+                    len(current_alias_delta) > 40 or len(previous_alias_delta) > 40
+                    or old.get("portable_path_alias_pairs_truncated") is True
+                    or new.get("portable_path_alias_pairs_truncated") is True
+                    or old.get("portable_path_alias_examples_truncated") is True
+                    or new.get("portable_path_alias_examples_truncated") is True)),
+            "portable_alias_comparison_unavailable": (
+                old_seen_aliases is None or new_seen_aliases is None),
             "connected_cluster_comparison_complete": both_complete,
             "current_connected_clusters_if_complete": (
                 linked_groups(new_clusters) if both_complete else []),
