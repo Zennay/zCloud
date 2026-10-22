@@ -473,13 +473,27 @@ def html(data):
             escape(link, quote=True) + '">Existing PR ' +
             escape(link.rsplit("/", 1)[-1]) + '</a> ' for link in row["open_pr_candidates"])
         gaps = "".join("<li>" + escape(g) + "</li>" for g in row["evidence_gaps"])
+        # A copyable three-line handoff follows the Notion recovery contract:
+        # problem, human-only next action, and honest source/release status.
+        # It deliberately does not infer live ownership or authorize a retry.
+        handoff = "\n".join((
+            "Problem: {} · {} · {} — {}".format(
+                row["priority"], row["project"], row["issue"], row["title"]),
+            "Action: {} (human-only; no automatic claim, retry or merge).".format(
+                row["recommended_next_step"]),
+            "Status: HOLD · source coverage={} · current claim, exact-head CI, "
+            "independent review and release authority UNKNOWN.".format(
+                row["issue_coverage"]),
+        ))
         rows.append('<article><small>' + escape(row["priority"]) + " · " +
             escape(row["project"]) + " · " + escape(row["issue"]) +
             '</small><h2><a target="_blank" rel="noopener noreferrer" href="' +
             escape(row["url"], quote=True) + '">' + escape(row["title"]) +
             '</a></h2><p><strong>Next:</strong> ' +
             escape(row["recommended_next_step"]) + '</p><p>' + links +
-            '</p><details><summary>Evidence gaps</summary><ul>' + gaps +
+            '</p><details><summary>Three-line incident handoff (copy manually)</summary><pre>' +
+            escape(handoff) + '</pre></details>' +
+            '<details><summary>Evidence gaps</summary><ul>' + gaps +
             '</ul></details></article>')
     css = """
 :root{color-scheme:dark;background:#101722;color:#edf3fa;font:16px/1.5 system-ui,sans-serif}
@@ -489,7 +503,7 @@ a{color:#bddfff}a:focus-visible,summary:focus-visible{outline:3px solid #ffd98b}
 .board{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr));gap:14px}
 article{padding:18px;background:#1d2b3c;border:1px solid #3b5268;border-radius:12px}
 small{color:#cad8e8}.notice{border-left:4px solid #ffcf77;padding:14px;background:#302921}
-summary{cursor:pointer}
+summary{cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0}
 table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;padding:8px;border-bottom:1px solid #395165}
 .scroll{overflow-x:auto}
 """
