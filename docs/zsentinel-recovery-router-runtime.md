@@ -3026,6 +3026,12 @@ lijst wordt weggelaten; het primaire exacte job-/VPS-correlatiepaneel blijft
 beschikbaar. Een fout in die secundaire bron kan zo geen geldige hoofdtriage
 verbergen en wordt ook niet stilzwijgend als lege/gezonde inventaris behandeld.
 
+De gedeelde `validate_additional_jobs` normaliseert ieder geaccepteerd
+item naar een vaste allowlist van run/job/SHA/status/route/venster en drie
+niet-autorisatieve flags; provider-extra velden komen niet mee in het cockpit-
+JSON. `additional_links_coverage` wordt al bij bronadmissie gezet, zodat
+HTML, JSON en tekst dezelfde degradatiestatus behouden.
+
 Voor [P0 GitHub-hosted billing/admission #1523](https://github.com/Zennay/zCloud/issues/1523)
 is daarnaast `scripts/zsentinel_hosted_gate_triage.py` op dezelfde PR
 geïmplementeerd. Deze leest alleen één bestaande exacte GitHub-run/job/SHA
