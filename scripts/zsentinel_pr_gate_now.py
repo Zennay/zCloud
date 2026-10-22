@@ -805,6 +805,108 @@ def html_gate_summary(source: dict) -> str:
         "GitHub kan na dit bronmoment veranderen.</footer></body></html>\n")
 
 
+def markdown_gate_summary(source: dict) -> str:
+    """Portable three-line owner handoff per current PR; never approval."""
+    if (type(source) is not dict or source.get("schema") != SCHEMA
+            or source.get("merge_authorized") is not False
+            or source.get("deployment_authorized") is not False
+            or source.get("writes_performed") is not False
+            or type(source.get("items")) is not list
+            or len(source["items"]) > MAX_PRS):
+        raise ValueError("invalid source for private Markdown gate handoff")
+
+    lines = [
+        "# zSentinel · actueel PR-hersteloverzicht (read-only)",
+        "",
+        "Bronmoment UTC: " + str(source.get("observed_at_utc", "ONBEKEND")),
+        "Dit is geen goedkeuring voor claim, review, CI-retry, merge of deploy.",
+    ]
+    if "source_review_manifest_sha256" in source:
+        fingerprint = source["source_review_manifest_sha256"]
+        board = source.get("source_review_board_sha256")
+        batch = source.get("source_review_batch_index")
+        batches = source.get("source_review_batches_total")
+        if (type(fingerprint) is not str or re.fullmatch(r"[a-f0-9]{64}", fingerprint) is None
+                or type(board) is not str or re.fullmatch(r"[a-f0-9]{64}", board) is None
+                or type(batch) is not int or type(batches) is not int
+                or not 1 <= batch <= batches):
+            raise ValueError("invalid saved review batch source")
+        lines.extend([
+            "Opgeslagen reviewbatch: " + str(batch) + "/" + str(batches) +
+            " (geen volledige portfoliobron).",
+            "Manifest SHA256: `" + fingerprint + "` · board SHA256: `" + board + "`",
+        ])
+    else:
+        lines.append("Directe PR-selectie (maximaal vier, Notion-claims niet gecontroleerd).")
+    for item in source["items"]:
+        repo, number = item.get("repository"), item.get("number")
+        if (type(repo) is not str or REPO.fullmatch(repo) is None
+                or type(number) is not int or not 1 <= number <= 999999999):
+            raise ValueError("invalid pinned handoff repository")
+        url = "https://github.com/" + repo + "/pull/" + str(number)
+        lines.extend(["", "## [PR #" + str(number) + "](" + url + ")"])
+        if item.get("status") != "observed_current_head_partial_gate_evidence":
+            lines.extend([
+                "- Probleem: huidige GitHub-bron onbereikbaar of HEAD gewijzigd.",
+                "- Actie: herlees de actuele PR, eigenaarclaim en verplichte releasegates.",
+                "- Status: ONBEKEND; geen automatische actie of merge.",
+            ])
+            continue
+        head = item.get("head_sha_observed")
+        step = item.get("human_next_gate_step")
+        if (type(head) is not str or SHA.fullmatch(head) is None
+                or step not in GATE_STEPS_NL):
+            raise ValueError("invalid pinned source or human action")
+        if item.get("draft_at_read") is True:
+            problem = "PR is nog concept."
+        elif item.get("merge_conflict_observed") is True:
+            problem = "GitHub meldt mergeconflict op huidige basis."
+        elif item.get("observed_checks_not_successful", 0):
+            problem = "Mislukte CI-checks op huidige HEAD."
+        elif item.get("observed_exact_head_changes_requested", 0):
+            problem = "Onafhankelijke reviewer vraagt wijzigingen."
+        elif item.get("observed_checks_pending", 0):
+            problem = "Bestaande checks staan nog open."
+        else:
+            problem = "Geldende required checks, review en branchbescherming niet volledig vastgesteld."
+        lines.extend([
+            "- Probleem: " + problem,
+            "- Actie: " + GATE_STEPS_NL[step],
+            "- Status: [HEAD `" + head[:12] + "`](https://github.com/" +
+                repo + "/commit/" + head + ") · checks pending " +
+                str(item["observed_checks_pending"]) + ", mislukt " +
+                str(item["observed_checks_not_successful"]) +
+                ", onafhankelijk goedgekeurd " +
+                str(item["observed_independent_exact_head_approvals"]) +
+                "; niet gemerged/geautoriseerd door deze waarneming.",
+        ])
+        parallel = item.get("parallel_independent_review_step")
+        if parallel is not None:
+            if parallel not in GATE_STEPS_NL:
+                raise ValueError("invalid parallel owner action")
+            lines.append("- Parallel: " + GATE_STEPS_NL[parallel])
+        # Keep specific problematic jobs actionable, but do not mistake
+        # provider-controlled names/URLs for Markdown-safe trusted anchors.
+        for job in item.get("observed_actionable_check_runs", [])[:8]:
+            if not (job.get("running_attention_60m") is True
+                    or job.get("queued_attention_30m") is True):
+                continue
+            job_id = job.get("check_run_id")
+            if type(job_id) is not int or job_id <= 0:
+                raise ValueError("invalid current check run ID")
+            check_url = "https://github.com/" + repo + "/runs/" + str(job_id)
+            reason = ("in_progress >60 minuten" if job.get("running_attention_60m")
+                      else "queued >30 minuten")
+            lines.append("- Onderzoek CI: [" + reason + "](" + check_url +
+                         ") (geen runneruitval bewezen).")
+        if (item.get("legacy_status_source_may_be_truncated") is True
+                or item.get("check_runs_page_complete") is not True
+                or item.get("review_page_may_be_truncated") is True):
+            lines.append("- Brondekking: ONVOLLEDIG; geen releaseconclusie mogelijk.")
+    lines.extend(["", "Geen herdispatch, claimovername, CI-bypass of deployment uitgevoerd."])
+    return "\n".join(lines) + "\n"
+
+
 REVIEW_SCHEMA = "zsentinel-offline-merge-first-review-v1"
 REVIEW_MAX_BYTES = 1024 * 1024
 REVIEW_MAX_PRS = 300
@@ -922,7 +1024,7 @@ def main(argv=None):
         "--batch", type=int, default=1,
         help="1-based bounded review manifest batch (four PRs maximum per operation)")
     parser.add_argument(
-        "--format", choices=("json", "text", "html"), default="json",
+        "--format", choices=("json", "text", "html", "markdown"), default="json",
         help="JSON receipt (default), Dutch text triage or private offline HTML desk")
     parser.add_argument(
         "--output", type=Path,
@@ -957,7 +1059,8 @@ def main(argv=None):
         rendered = (
             json.dumps(source, sort_keys=True, ensure_ascii=True, indent=2) + "\n"
             if args.format == "json" else html_gate_summary(source)
-            if args.format == "html" else human_gate_summary(source))
+            if args.format == "html" else markdown_gate_summary(source)
+            if args.format == "markdown" else human_gate_summary(source))
         if args.output is None:
             sys.stdout.write(rendered)
         else:
