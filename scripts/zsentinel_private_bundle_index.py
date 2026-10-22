@@ -12,6 +12,7 @@ from collections import Counter
 from datetime import datetime, timezone, timedelta
 from html import escape
 import hashlib
+import json
 from pathlib import Path
 import re
 import sys
@@ -233,7 +234,84 @@ def render(snapshots: list[dict], index_name: str) -> str:
     )
 
 
-def build_index(directory: Path, stems: list[str], name: str) -> dict:
+def render_machine(snapshots: list[dict], index_name: str) -> str:
+    """Produce a private machine-readable history without live authority."""
+    ordered = sorted(snapshots, key=lambda item: (item["observed"], item["stem"]))
+    entries = []
+    for snap in ordered:
+        projects = []
+        for project, data in sorted(snap["projects"].items()):
+            projects.append({
+                "project": project,
+                "sampled_issue_count": len(data["issues"]),
+                "sampled_priorities": {
+                    priority: data["priorities"][priority] for priority in PRIORITIES
+                },
+                "sampled_issue_ids": sorted(data["issues"]),
+                "sampled_pr_candidate_urls": sorted(data["prs"]),
+            })
+        entries.append({
+            "bundle": snap["stem"],
+            "board_sha256": snap["sha256"],
+            "saved_board_observed_at_utc": snap["observed"].isoformat(),
+            "saved_individual_source_clocks": snap["source_times"],
+            "saved_individual_source_freshness_at_capture": snap["source_fresh"],
+            "sampled_cards": snap["card_count"],
+            "sample_truncated": snap["sample_truncated"],
+            "current_inventory_complete_verified": False,
+            "projects": projects,
+        })
+    transitions = []
+    for old, new in zip(ordered, ordered[1:]):
+        projects = []
+        for project in sorted(set(old["projects"]) | set(new["projects"])):
+            previous = old["projects"].get(project, {})
+            current = new["projects"].get(project, {})
+            old_issues = previous.get("issues", {})
+            new_issues = current.get("issues", {})
+            old_prs = previous.get("prs", set())
+            new_prs = current.get("prs", set())
+            old_priority = previous.get("issue_priorities", {})
+            new_priority = current.get("issue_priorities", {})
+            raised = sorted(
+                issue for issue in old_issues.keys() & new_issues.keys()
+                if PRIORITIES.index(new_priority[issue]) <
+                   PRIORITIES.index(old_priority[issue])
+            )
+            projects.append({
+                "project": project,
+                "newly_sampled_issue_ids": sorted(new_issues.keys() - old_issues.keys()),
+                "no_longer_sampled_issue_ids": sorted(old_issues.keys() - new_issues.keys()),
+                "still_sampled_issue_count": len(old_issues.keys() & new_issues.keys()),
+                "higher_sampled_priority_issue_ids": raised,
+                "newly_sampled_pr_candidates": sorted(new_prs - old_prs),
+                "no_longer_sampled_pr_candidates": sorted(old_prs - new_prs),
+            })
+        transitions.append({
+            "from_bundle": old["stem"], "to_bundle": new["stem"],
+            "projects": projects, "closure_or_merge_inferred": False,
+        })
+    report = {
+        "schema": "zsentinel-saved-bundle-history-v1",
+        "index_name": index_name,
+        "generated_at_local_utc": datetime.now(timezone.utc).isoformat(),
+        "saved_bundle_integrity_verified": True,
+        "observations_are_historical_and_bounded": True,
+        "current_live_source_checked": False,
+        "issue_closure_verified": False,
+        "current_claims_verified": False,
+        "required_ci_verified": False,
+        "independent_review_verified": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "snapshots": entries,
+        "sample_transitions": transitions,
+    }
+    return json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def build_index(directory: Path, stems: list[str], name: str,
+                output_format: str = "html") -> dict:
     if type(name) is not str or INDEX.fullmatch(name) is None:
         raise ValueError("invalid private index name")
     if not 2 <= len(stems) <= MAX_BUNDLES or len(set(stems)) != len(stems):
@@ -242,9 +320,12 @@ def build_index(directory: Path, stems: list[str], name: str) -> dict:
         raise ValueError("index stem must not match a bundled snapshot")
     if any(type(stem) is not str or STEM.fullmatch(stem) is None for stem in stems):
         raise ValueError("invalid source bundle stem")
+    if output_format not in ("html", "json"):
+        raise ValueError("unsupported private history format")
     snapshots = [load_snapshot(directory, stem) for stem in stems]
-    payload = render(snapshots, name)
-    filename = name + ".index.html"
+    payload = (render(snapshots, name) if output_format == "html"
+               else render_machine(snapshots, name))
+    filename = name + ".index." + output_format
     write_create_only(directory / filename, payload)
     return {
         "file": filename, "snapshots_indexed": len(snapshots),
@@ -265,9 +346,11 @@ def main(argv=None) -> int:
                         help="Saved bundle stem; repeat 2–24 times")
     parser.add_argument("--name", required=True,
                         help="New create-only index stem")
+    parser.add_argument("--format", choices=("html", "json"), default="html",
+                        help="Script-free offline HTML or non-authorizing machine JSON")
     args = parser.parse_args(argv)
     try:
-        result = build_index(args.directory, args.bundle, args.name)
+        result = build_index(args.directory, args.bundle, args.name, args.format)
     except (OSError, BundleInvalid, ValueError, TypeError, KeyError) as exc:
         print("zSentinel offline history refused: " +
               (str(exc) if isinstance(exc, (BundleInvalid, ValueError))
