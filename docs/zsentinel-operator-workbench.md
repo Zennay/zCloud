@@ -4288,3 +4288,31 @@ cryptographic signature, source authenticity claim, proof of unchanged live
 GitHub/Notion state, or an approval for CI/claim/retry/merge/deploy. For a
 new current decision, independently re-read the actual exact-head GitHub
 checks, reviews and active owner lease through approved tools.
+
+
+## 22 oktober · open privésamenstelling direct vanuit de operatorwerkbak
+
+De bestaande `scripts/zsentinel_operator_bundle.py` levert bij één
+operator-aanroep al drie of vier create-only privé-artifacts: een opgeslagen
+board, de offline `.desk.html`, een optionele `.owner.md` en als laatste
+het brongebonden `.receipt.json`. De gegenereerde HTML bevat nu ook
+**Lokale bronbestanden van deze werkbak**: echte, klikbare relatieve
+bestandslinks naar het board, de optionele eigenaarsoverdracht en het
+ontvangstbewijs. De browser blijft in de oorspronkelijke privémap; er
+worden geen API-calls, queue-, claim-, retry-, review- of mergeacties
+uitgevoerd. Het is geen bron voor actuele GitHub-status.
+
+De links bestaan alleen uit de door de bestaande beperkte stem-validator
+toegelaten bestandsnaam plus vaste extensies. Het script weigert een
+onverwachte HTML-afsluiting in plaats van navigatie op een ambigue plaats
+te injecteren. De navigatie wordt **vóór** de digest- en receiptconstructie
+toegevoegd; het bestaande receipt blijft de volledige gepubliceerde
+HTML-bytes SHA-256-binden. De bestaande optionele read-only
+`zsentinel_verify_operator_bundle.py` hoeft daarom geen nieuw schema,
+extra artifact of permissie te accepteren.
+
+Operatorgebruik: genereer dezelfde `--output-dir`-bundle als voorheen
+en open `<stem>.desk.html` uit die directory. Onderaan staan de lokale
+bronlinks, inclusief eigenaarspakket wanneer `--owner-handoff` is gekozen.
+Neem nooit de aanwezigheid van `.receipt.json` of een klikbare link
+als goedkeuring voor een merge, productie-release of actieve claim.
