@@ -1,10 +1,12 @@
 ## 22 October 2026 — onbekend runnerproces kan geen complete afwezigheidswaarneming opleveren
 
 De read-only `scripts/zsentinel_runner_presence.py` markeert de procfs-bron nu
-als **onvolledig** wanneer de kernel `comm` een `Runner.Listener` of
-`Runner.Worker` aanwijst, maar de begrensde `argv0`-fallback het proces niet
-aan een bekende runnerfamilie en dezelfde rol kan binden. Eerder werd zo'n
-proces stil overgeslagen, terwijl `source_complete=true` kon blijven en
+als **onvolledig** wanneer de kernel `comm` of de executable-basename een
+`Runner.Listener`/`Runner.Worker` aanwijst, maar het proces niet aan een
+bekende runnerfamilie en dezelfde rol kan worden gebonden. Dit geldt zowel
+voor een onleesbare executable met een niet-herkenbare `argv0`-fallback als
+voor een leesbare executable buiten de bekende runnerpaden. Eerder kon zo'n
+proces stil worden overgeslagen terwijl `source_complete=true` bleef en
 een lege listenersteekproef daardoor te sterk kon lijken.
 
 De operator ziet nu alleen een begrensd aantal niet-classificeerbare
