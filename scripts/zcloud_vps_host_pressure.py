@@ -81,14 +81,21 @@ def pressure_findings(sample: dict) -> list[dict[str, str]]:
         return [{"code": "HOST_PRESSURE_INCOMPLETE", "severity": "warn",
                  "detail": "Host-pressure snapshot is unavailable; no headroom or clearance assertion."}]
 
+    coverage_gaps: list[str] = []
+    state = sample.get("state")
+    if state != "observed":
+        coverage_gaps.append(
+            "state=partial" if state == "partial" else
+            "state=unknown" if state == "unknown" else "state=invalid"
+        )
+
     ratio = sample.get("load_per_cpu")
     ratio_is_number = (
         type(ratio) in (int, float) and
         (type(ratio) is int or math.isfinite(ratio))
     )
     if not ratio_is_number or ratio < 0 or ratio > 1e6:
-        findings.append({"code": "HOST_PRESSURE_INCOMPLETE", "severity": "warn",
-                         "detail": "Unable to observe CPU demand; no host-headroom assertion."})
+        coverage_gaps.append("load_per_cpu")
     elif ratio >= 2.0:
         findings.append({"code": "HOST_CPU_SATURATED", "severity": "block",
                          "detail": "One-minute runnable/I/O demand at least 2x logical CPU count; preserve active jobs."})
@@ -96,8 +103,8 @@ def pressure_findings(sample: dict) -> list[dict[str, str]]:
         findings.append({"code": "HOST_CPU_BUSY", "severity": "warn",
                          "detail": "One-minute demand at least logical CPU count; inspect concurrent workloads before release."})
 
-    # CPU/load availability is independent from kernel PSI. Do not return early:
-    # missing load must not hide valid CPU, memory or I/O stall measurements.
+    # CPU/load availability is independent from kernel PSI. Missing or malformed
+    # fields must be named explicitly; they must never suppress another valid stall.
     for field, code, detail in (
         ("cpu_some_avg10_pct", "HOST_CPU_STALL",
          "CPU PSI some stall >=10% over ten seconds; preserve active jobs and inspect CPU contention."),
@@ -111,11 +118,17 @@ def pressure_findings(sample: dict) -> list[dict[str, str]]:
             type(value) in (int, float) and
             (type(value) is int or math.isfinite(value))
         )
-        if finite_number and 10 <= value <= 100:
+        if not finite_number or value < 0 or value > 100:
+            coverage_gaps.append(field)
+            continue
+        if value >= 10:
             findings.append({"code": code, "severity": "block", "detail": detail})
 
-    if (sample.get("state") in ("partial", "unknown")
-            and not any(item["code"] == "HOST_PRESSURE_INCOMPLETE" for item in findings)):
-        findings.append({"code": "HOST_PRESSURE_INCOMPLETE", "severity": "warn",
-                         "detail": "Kernel PSI or CPU-demand coverage incomplete; missing counters are not zero pressure."})
+    if coverage_gaps:
+        findings.append({
+            "code": "HOST_PRESSURE_INCOMPLETE", "severity": "warn",
+            "detail": "Incomplete host-pressure evidence (" +
+                      ", ".join(coverage_gaps[:4]) +
+                      "); missing or invalid counters are not zero pressure.",
+        })
     return findings
