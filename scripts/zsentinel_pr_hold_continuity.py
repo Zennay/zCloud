@@ -33,6 +33,66 @@ def _clock(value):
     return stamp.astimezone(timezone.utc)
 
 
+
+def _gate_sample(row, head):
+    """Capture bounded EXACT-HEAD gate samples; no required-check inference.
+
+    Check-run and classic status samples are separate API families. Approval
+    count is a bounded same-head observation, not branch-protection approval.
+    """
+    ci, legacy, reviews = (row.get("ci"),
+                           row.get("legacy_status_contexts"),
+                           row.get("reviews"))
+    if any(type(source) is not dict or source.get("head_sha") != head
+           for source in (ci, legacy, reviews)):
+        raise ValueError("exact-HEAD gate source mismatch")
+    sampled, total = ci.get("sampled"), ci.get("total_reported")
+    if (type(sampled) is not int or type(total) is not int
+            or not 0 <= sampled <= 30 or not sampled <= total <= 1000000
+            or type(ci.get("all_checks_observed")) is not bool
+            or ci.get("branch_protection_verified") is not False
+            or ci.get("status_contexts_verified") is not False):
+        raise ValueError("untrusted bounded check-run gate source")
+    def names(source, key, cap):
+        values = source.get(key)
+        if (type(values) is not list or len(values) > cap
+                or any(type(name) is not str or not 1 <= len(name) <= 180
+                       or any(ord(char) < 32 or ord(char) == 127 for char in name)
+                       for name in values)):
+            raise ValueError("invalid sampled GitHub gate names")
+        return tuple(sorted(values))
+    checks = {key: names(ci, key, 8)
+              for key in ("failed", "pending", "inconclusive")}
+    count = legacy.get("sampled")
+    if (type(count) is not int or not 0 <= count <= 100
+            or legacy.get("required_contexts_verified") is not False
+            or legacy.get("branch_protection_verified") is not False
+            or type(legacy.get("page_truncated_or_unknown")) is not bool
+            or legacy.get("combined_observed") not in
+               ("pending", "success", "failure", "error")):
+        raise ValueError("invalid bounded classic status source")
+    classic = {key: names(legacy, key, 8)
+               for key in ("failed", "pending")}
+    approvals = reviews.get("same_head_approvals_seen")
+    if (type(approvals) is not int or not 0 <= approvals <= 30
+            or type(reviews.get("same_head_changes_requested")) is not bool
+            or type(reviews.get("review_page_full")) is not bool
+            or reviews.get("independent_policy_verified") is not False):
+        raise ValueError("invalid bounded same-head review source")
+    return {
+        "check_runs": (
+            sampled, total, ci["all_checks_observed"],
+            checks["failed"], checks["pending"], checks["inconclusive"]),
+        "classic_statuses": (
+            legacy["combined_observed"], count,
+            legacy["page_truncated_or_unknown"],
+            classic["failed"], classic["pending"]),
+        "same_head_reviews": (
+            approvals, reviews["same_head_changes_requested"],
+            reviews["review_page_full"]),
+    }
+
+
 def _rows(source):
     if (type(source) is not dict or
             source.get("schema") != "zsentinel-pr-delivery-desk-v1" or
@@ -65,8 +125,11 @@ def _rows(source):
                 raise ValueError("complete exact-PR coverage lacks head")
         elif head is not None:
             raise ValueError("incomplete PR source cannot carry current head")
+        # Only a FULL exact-head PR observation can prove which bounded
+        # CI/status/review fields came from this source snapshot.
+        gates = _gate_sample(row, head) if coverage == EXACT else None
         rows[url] = {"url": url, "head": head, "step": action,
-                     "coverage": coverage}
+                     "coverage": coverage, "gates": gates}
     return _clock(source.get("observed_at_utc")), rows
 
 
