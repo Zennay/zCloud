@@ -405,6 +405,17 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
     }
 
 
+def handoff_freshness(data):
+    """Render saved-source freshness without implying that a snapshot is live."""
+    fresh = data.get("fresh")
+    if type(fresh) is not dict or not fresh:
+        return "unknown"
+    return ", ".join(
+        "{}={}".format(name, "fresh" if state is True else "stale/unknown")
+        for name, state in sorted(fresh.items())
+    )
+
+
 def markdown(data):
     lines = ["# zSentinel · Product delivery board", "",
              "**Read-only evidence; no work ownership, merge or deployment authority.**", "",
@@ -453,8 +464,10 @@ def markdown(data):
             safe(row["title"]),
             "Action: " + safe(row["recommended_next_step"]) +
             " (human-only; no automatic claim, retry or merge).",
-            "Status: HOLD · source coverage=" + safe(row["issue_coverage"]) +
-            "; current claim, exact-head CI, independent review and release " +
+            "Status: HOLD · board UTC=" + safe(data["observed_at_utc"]) +
+            " · source freshness=" + safe(handoff_freshness(data)) +
+            " · coverage=" + safe(row["issue_coverage"]) +
+            " · current claim, exact-head CI, independent review and release " +
             "authority UNKNOWN.",
             "",
         ])
@@ -496,8 +509,10 @@ def html(data):
                 row["priority"], row["project"], row["issue"], row["title"]),
             "Action: {} (human-only; no automatic claim, retry or merge).".format(
                 row["recommended_next_step"]),
-            "Status: HOLD · source coverage={} · current claim, exact-head CI, "
-            "independent review and release authority UNKNOWN.".format(
+            "Status: HOLD · board UTC={} · source freshness={} · coverage={} · "
+            "current claim, exact-head CI, independent review and release "
+            "authority UNKNOWN.".format(
+                data["observed_at_utc"], handoff_freshness(data),
                 row["issue_coverage"]),
         ))
         rows.append('<article><small>' + escape(row["priority"]) + " · " +
