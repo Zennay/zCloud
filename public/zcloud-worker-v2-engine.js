@@ -193,6 +193,35 @@
         "command-ack-pending-no-new-send");
       return false;
     }
+    // Poll can spend time awaiting DOM/API work before reaching this action.
+    // Bind the click to the exact still-authorized assignment and the same
+    // conversation/route observed when rotation was requested.
+    const assignment=target;
+    const queueId=String(assignment?.queue_item?.queue_id||"");
+    const slot=Number(assignment?.global_worker_slot||0);
+    const prompt=String(assignment?.prompt||"").trim();
+    const route=location.pathname;
+    const conversationId=conversation();
+    if(!ready(assignment)||assignment.project_id!==id||!queueId||!slot){
+      await blocked("new-chat-assignment-not-ready");return true;
+    }
+    let snapshot;
+    try{snapshot=await api("/runner-targets")}
+    catch(_){await blocked("new-chat-lease-unavailable");return true}
+    const current=snapshot.projects?.[id];
+    if(!ready(current)||current.project_id!==id||
+       String(current.queue_item?.queue_id||"")!==queueId||
+       Number(current.global_worker_slot||0)!==slot||
+       String(current.prompt||"").trim()!==prompt||
+       !ready(target)||target.project_id!==id||
+       String(target.queue_item?.queue_id||"")!==queueId||
+       Number(target.global_worker_slot||0)!==slot||
+       String(target.prompt||"").trim()!==prompt||
+       location.pathname!==route||conversation()!==conversationId||
+       generating()||sending||awaiting||resetRoute!==null||
+       commandAckStorageInvalid||pendingCommandAcks.size>0){
+      await blocked("new-chat-context-changed-before-click");return true;
+    }
     const button=newChatButton();
     if(!button){await blocked("new-chat-button-missing");return false}
     resetRoute=location.pathname;
