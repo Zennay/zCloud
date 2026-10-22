@@ -1,42 +1,70 @@
 #!/usr/bin/env bash
-# Run as root on the new VPS. Collects safe, non-secret cutover evidence and starts existing base services.
+# New-VPS cutover inventory. Read-only by default; opt in to base-service startup.
+# Never stops migrated runner units or touches SQLite/Firefox/worker state.
 set -Eeuo pipefail
+
 expected='VM-7eb5ee16-2c71-440d-b7fd-8095d204e930'
-[[ "$EUID" -eq 0 && "$(hostname)" == "$expected" ]] || { echo "Refusing: this is not root on $expected"; exit 2; }
-out="/var/log/zcloud-cutover-$(date +%Y%m%d-%H%M%S).log"
-exec > >(tee "$out") 2>&1
-echo "=== $(date -Is) / $(hostname) ==="
-echo "-- storage --"
-systemctl enable --now zcloud-external-archive.service || true
-systemctl is-active zcloud-external-archive.service || true
-df -h / || true
-findmnt -rn -o TARGET,SOURCE,FSTYPE | grep -E 'VPS-Archief|/dev/sda' || true
+mode='status'
+case "${1:-}" in
+  '') ;;
+  --apply-base) mode='apply-base' ;;
+  --help)
+    printf 'Usage: %s [--apply-base]\n' "$0"
+    printf 'Default: read-only inventory. --apply-base starts Docker and the archive mount unit only.\n'
+    exit 0
+    ;;
+  *) echo "Refusing unknown option: $1" >&2; exit 2 ;;
+esac
+[[ "$EUID" -eq 0 && "$(hostname)" == "$expected" ]] || {
+  echo "Refusing: this command must run as root on $expected" >&2
+  exit 2
+}
+if [[ "$mode" == 'apply-base' ]]; then
+  # Deliberately narrow opt-in: no GitHub runner, scheduler, queue or browser mutation.
+  out="/var/log/zcloud-cutover-base-$(date +%Y%m%d-%H%M%S).log"
+  exec > >(tee "$out") 2>&1
+  echo "-- explicit base-service activation --"
+  systemctl enable --now docker.service
+  systemctl enable --now zcloud-external-archive.service
+fi
+
+echo "=== $(date -Is) / $(hostname) / mode=$mode ==="
+echo "-- storage; filesystem type and source must be inspected before any training --"
+df -hT /
+findmnt -rn -o TARGET,SOURCE,FSTYPE |
+  grep -E 'VPS-Archief|/dev/|fuckball|haxlab' || true
+echo "-- external training guard --"
+echo 'A rclone/FUSE archive or /dev/sda2 system partition is NEVER a training disk.'
+echo 'Fuckball external training requires a separately mounted ext4/xfs/btrfs block disk.'
 echo "-- docker --"
 if command -v docker >/dev/null 2>&1; then
- systemctl enable --now docker
- docker info --format 'Server: {{.ServerVersion}}' || true
- docker ps -a --format '{{.Names}}: {{.Status}}' || true
+  systemctl is-active docker.service || true
+  if [[ "$mode" == 'apply-base' ]]; then
+    docker info --format 'Server: {{.ServerVersion}}' || true
+  fi
+  docker ps -a --format '{{.Names}}: {{.Status}}' || true
 else
- echo 'Docker not installed. Use the activation script first.'
+  echo 'Docker not installed.'
 fi
-echo "-- files --"
-for p in /home/ubuntu/.mozilla/firefox/profiles.ini /home/ubuntu/zennay-cloud /home/ubuntu/actions-runner-zcloud /home/desktop/.xsession /home/ubuntu/.config/zssh /home/ubuntu/.local/bin/zssh; do
- [[ -e "$p" ]] && echo "PRESENT $p" || echo "MISSING $p"
+echo "-- file presence only (no secret contents) --"
+for p in \
+  /home/ubuntu/.mozilla/firefox/profiles.ini \
+  /home/ubuntu/zennay-cloud \
+  /home/ubuntu/actions-runner-zcloud \
+  /home/desktop/.xsession \
+  /home/ubuntu/.config/zssh \
+  /home/ubuntu/.local/bin/zssh; do
+  [[ -e "$p" ]] && echo "PRESENT $p" || echo "MISSING $p"
 done
-echo "-- units --"
-systemctl list-unit-files --no-legend | grep -Ei '^(zssh|zcloud|actions\.runner)' | sed -E 's/[[:space:]]+/ /g' || true
-echo "-- zssh socket --"
+echo "-- discovered unit names --"
+systemctl list-unit-files --no-legend |
+  grep -Ei '^(zssh|zcloud|actions\.runner)' |
+  sed -E 's/[[:space:]]+/ /g' || true
+echo "-- unit activity, no starts/stops --"
+systemctl is-active docker.service xrdp.service zcloud-external-archive.service zssh.service 2>/dev/null || true
+echo "-- zssh listen sockets --"
 ss -lnt | grep -E ':8788|:8789' || true
-echo "-- migrated runner unit safety --"
-mapfile -t old_units < <(systemctl list-unit-files --no-legend 'actions.runner.*.service' | awk '{print $1}')
-for unit in "${old_units[@]}"; do
-  case "$unit" in
-   *vps-bb300bba*|*zcloud-vps-1*|*zssh-vps-1*)
-    systemctl disable "$unit" >/dev/null 2>&1 || true
-    systemctl stop "$unit" >/dev/null 2>&1 || true
-    echo "Disabled cloned runner identity: $unit";;
-  esac
-done
-echo "-- loaded service state --"
-systemctl is-active docker xrdp zcloud-external-archive.service zssh.service 2>/dev/null || true
-echo "DONE log=$out"
+echo "-- runner identities: report only; retirement requires separate drain and registration proof --"
+systemctl list-unit-files --no-legend 'actions.runner.*.service' |
+  sed -E 's/[[:space:]]+/ /g' || true
+echo "DONE mode=$mode"
