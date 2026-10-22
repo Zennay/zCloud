@@ -293,6 +293,14 @@ def main():
     args = parser.parse_args()
     ledger_lock = None
     try:
+        # PR pins, discovery selectors and continuity reports belong to the
+        # same explicit read-only PR observer. Never silently discard owner
+        # input or compare a prior source against a missing current receipt.
+        if (args.existing_pr or args.pr_project or args.previous_pr_report is not None):
+            if not args.inspect_existing_prs:
+                raise ValueError(
+                    "--existing-pr, --pr-project and --previous-pr-report require "
+                    "--inspect-existing-prs")
         if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
             raise ValueError("disk hotspot scan requires both root and private output")
         if (args.archive_target is not None and args.disk_hotspots_root is None
