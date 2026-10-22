@@ -152,6 +152,9 @@ def _observed_transition(current, prior):
     changes = []
     run_new, run_old = current["check_runs"], prior["check_runs"]
     if run_new != run_old:
+        if run_new[0] != run_old[0]:
+            changes.append("getoonde check-runs: " +
+                           str(run_old[0]) + " → " + str(run_new[0]))
         labels = (("getoonde falende checks", 3),
                   ("getoonde wachtende checks", 4),
                   ("getoonde onbesliste checks", 5))
@@ -197,6 +200,35 @@ def _observed_transition(current, prior):
                            ("ja" if review_old[2] else "nee") + " → " +
                            ("ja" if review_new[2] else "nee"))
     return changes[:14]
+
+
+
+def _operator_step_for_sample(item, old, changed_fields):
+    """Name safe manual next work on newly observed evidence, not release."""
+    if not changed_fields:
+        return None
+    new = item["gates"]
+    before = old["gates"]
+    if ("check_runs" in changed_fields and
+            new["check_runs"][3] != before["check_runs"][3] and
+            new["check_runs"][3]):
+        return ("Onderzoek de actuele falende check-runs op deze PR-HEAD "
+                "met de bevoegde code-eigenaar; geen automatische CI-rerun.")
+    if ("classic_statuses" in changed_fields and
+            new["classic_statuses"][3] != before["classic_statuses"][3] and
+            new["classic_statuses"][3]):
+        return ("Onderzoek falende klassieke GitHub-statuscontexts op de "
+                "exacte PR-HEAD; stem herstel af met de eigenaar.")
+    if ("same_head_reviews" in changed_fields and
+            new["same_head_reviews"][1] and
+            not before["same_head_reviews"][1]):
+        return ("Verwerk het nieuwe same-head wijzigingsverzoek met de "
+                "huidige PR-eigenaar; merge blijft geblokkeerd.")
+    if "same_head_reviews" in changed_fields:
+        return ("Beoordeel de gewijzigde same-head reviews met een "
+                "onafhankelijke reviewer en huidige branch protection.")
+    return ("Controleer exact-HEAD CI en vereiste reviewgates opnieuw met "
+            "de PR-eigenaar; het gewijzigde bronvenster geeft geen mergevrijgave.")
 
 
 def compare(current, previous, previous_sha256, now=None):
@@ -254,6 +286,9 @@ def compare(current, previous, previous_sha256, now=None):
             "observed_gate_transitions": (
                 _observed_transition(item["gates"], old["gates"])
                 if gate_fields_changed else []),
+            "observed_gate_owner_step": (
+                _operator_step_for_sample(item, old, gate_fields_changed)
+                if gate_fields_changed else None),
             "gate_changed_proven": state in (
                 "exact_head_changed_REINSPECT_GATE",
                 "same_head_owner_step_changed_REVIEW_GATE",
