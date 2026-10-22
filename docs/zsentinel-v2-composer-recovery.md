@@ -214,3 +214,19 @@ fresh queue claim or infer current owner approval.
 This is a source-level product guard on existing PR #1552, not an installed
 browser release. The protected branch's required exact-head CI, reviewer
 approval, version-controlled distribution and release ownership still apply.
+
+
+## 22 October · No chat rotation after a possibly dispatched queue
+
+The same exact-assignment New chat guard now consults the existing persistent
+worker-keyed may-have-dispatched queue marker on a newly loaded browser
+document. If it contains the current queue (or the storage is unavailable or
+unreadable), it refuses rotation and reports the existing
+previous-queue-send-after-reload-manual-review reason. This applies to every
+automatic New chat caller, not only idle-composer repair or Send admission.
+In-document responses are unchanged. An owner must reconcile the original
+browser and queue evidence before choosing a new assignment. The marker is
+not erased, no retry is issued, and the current queue/lease remains untouched.
+
+Both source engine copies carry the same refusal. The code is in open #1552;
+it does not assert that the userscript is installed or that a workflow passed.
