@@ -1412,6 +1412,10 @@ def render_csv(bundle):
         row.update(extra)
         writer.writerow([inert(row.get(key)) for key in fields])
     for project, queue in bundle.get("repository_runner_queue_sources", {}).items():
+        # Validate canonical workflow links and the non-authorizing receipt in
+        # every export format, including CSV where the shared HTML renderer is
+        # not invoked.
+        runner_queue_lines(queue)
         repo = queue["repository"]
         status = queue.get("source_status", "sampled_nonatomic")
         add("runner_queue_overview", project=project, detail=(
@@ -1421,7 +1425,14 @@ def render_csv(bundle):
                       str(window["runs_reported_by_github"]) +
                       " / sampled=" + str(window["rows_observed"])
                       for window in queue.get("run_windows", [])) +
+            "; workflow wait coverage=" +
+            str(queue.get("workflow_wait_coverage", "unknown")) +
             "; no runner health, workflow/claim, CI or merge authority."))
+        for wait in queue.get("workflow_waits", [])[:2]:
+            add("runner_queue_workflow_wait", project=project, link=wait["url"],
+                detail=("GitHub workflow status waiting · HEAD " +
+                        wait["head_sha"][:12] +
+                        " · no job/runner failure proven; owner only."))
         for job in queue.get("sampled_jobs", [])[:64]:
             add("runner_queue_job", project=project, link=job["job_url"],
                 detail=job["assignment"] + " · " + job["status_at_read"] +
