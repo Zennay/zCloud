@@ -20,6 +20,7 @@ import sys
 
 from zsentinel_pr_scope_guard import (
     REPO, SHA, csv_formula_inert, edit_path, unique, observe_conflict_graph,
+    portable_path_alias_relation,
 )
 from zsentinel_private_report_writer import write_private_report
 
@@ -213,6 +214,9 @@ MAX_CLUSTER_EXAMPLE_PATHS = 18
 MAX_CROSS_WINDOW_SCOPE_PAIRS = 80
 MAX_SCOPE_PATH_EXAMPLES = 8
 MAX_SCOPE_PATH_COMPARISONS = 2_000_000
+MAX_CROSS_WINDOW_ALIAS_PAIRS = 80
+MAX_ALIAS_PATH_EXAMPLES = 8
+MAX_ALIAS_PATH_COMPARISONS = 2_000_000
 
 
 def connected_cross_window_groups(all_prs, owners):
@@ -425,6 +429,78 @@ def cross_window_scope_conflicts(all_prs):
         if not scan_complete:
             break
     truncated = (not scan_complete or observed_pairs > MAX_CROSS_WINDOW_SCOPE_PAIRS)
+    return top, observed_pairs, scan_complete, comparisons, per_pr_counts, truncated
+
+
+def cross_window_portable_aliases(all_prs):
+    """Find bounded cross-window NFC/casefold path aliases, never Git conflicts."""
+    numbers = sorted(all_prs)
+    candidates = [
+        (left, right) for index, left in enumerate(numbers)
+        for right in numbers[index + 1:]
+        if all_prs[left]["snapshot"] != all_prs[right]["snapshot"]
+    ]
+    candidates.sort(key=lambda pair: (
+        min(all_prs[pair[0]]["snapshot"], all_prs[pair[1]]["snapshot"]),
+        max(all_prs[pair[0]]["snapshot"], all_prs[pair[1]]["snapshot"]),
+        pair[0], pair[1]))
+    top = []
+    observed_pairs = 0
+    comparisons = 0
+    scan_complete = True
+    per_pr_counts = {number: {"pair_count": 0, "path_alias_count": 0}
+                     for number in numbers}
+    for left_num, right_num in candidates:
+        left, right = all_prs[left_num], all_prs[right_num]
+        count, examples = 0, []
+        pair_complete = True
+        for left_path in sorted(left["files"]):
+            for right_path in sorted(right["files"]):
+                if comparisons >= MAX_ALIAS_PATH_COMPARISONS:
+                    pair_complete = scan_complete = False
+                    break
+                comparisons += 1
+                # Exact Git paths and ordinary file/directory ancestors are
+                # represented by their own evidence classes, not as aliases.
+                if (left_path == right_path
+                        or right_path.startswith(left_path + "/")
+                        or left_path.startswith(right_path + "/")):
+                    continue
+                relation = portable_path_alias_relation(left_path, right_path)
+                if relation is None:
+                    continue
+                count += 1
+                if len(examples) < MAX_ALIAS_PATH_EXAMPLES:
+                    examples.append({
+                        "left_path": left_path, "right_path": right_path,
+                        "relation": relation,
+                    })
+            if not pair_complete:
+                break
+        if count:
+            observed_pairs += 1
+            per_pr_counts[left_num]["pair_count"] += 1
+            per_pr_counts[right_num]["pair_count"] += 1
+            per_pr_counts[left_num]["path_alias_count"] += count
+            per_pr_counts[right_num]["path_alias_count"] += count
+            top.append({
+                "left_url": left["url"], "right_url": right["url"],
+                "left_head_sha": left["head_sha"], "right_head_sha": right["head_sha"],
+                "left_base_ref": left["base_ref"], "right_base_ref": right["base_ref"],
+                "left_snapshot": left["snapshot"], "right_snapshot": right["snapshot"],
+                "path_alias_count_observed": count,
+                "path_aliases": examples,
+                "path_aliases_truncated": count > len(examples) or not pair_complete,
+                "pair_scan_complete": pair_complete,
+                "heuristic": "unicode_nfc_casefold_advisory_not_git_identity",
+                "merge_conflict_verified": False,
+            })
+            top.sort(key=lambda row: (-row["path_alias_count_observed"],
+                                      row["left_url"], row["right_url"]))
+            del top[MAX_CROSS_WINDOW_ALIAS_PAIRS:]
+        if not scan_complete:
+            break
+    truncated = not scan_complete or observed_pairs > MAX_CROSS_WINDOW_ALIAS_PAIRS
     return top, observed_pairs, scan_complete, comparisons, per_pr_counts, truncated
 
 
