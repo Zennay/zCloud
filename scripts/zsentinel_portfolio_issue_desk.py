@@ -530,6 +530,54 @@ def as_csv(result):
     return output
 
 
+def _same_observation_snapshot(report):
+    """Save raw bounded source cards only, not a nested previous comparison.
+
+    The snapshot is reusable for a later invocation, with the same
+    sampled-at timestamps as the rendered operator report.
+    """
+    sample = {key: value for key, value in report.items()
+              if key != "comparison"}
+    return json.dumps(sample, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def write_private_portfolio_outputs(report, *, format_name, output,
+                                    snapshot_output=None):
+    """Create report and optional raw snapshot from ONE source observation.
+
+    Never overwrite any operator artifact. The two outputs have distinct
+    paths, are individually create-only and private, and are size-bounded
+    before any output is created.
+    """
+    if format_name not in ("html", "markdown", "csv", "json"):
+        raise PolicyInputError("unsupported portfolio private output format")
+    if not isinstance(output, Path):
+        raise PolicyInputError("portfolio requires a private output path")
+    if snapshot_output is not None:
+        if not isinstance(snapshot_output, Path) or snapshot_output.suffix != ".json":
+            raise PolicyInputError("paired source snapshot must be a .json file")
+        if os.path.abspath(output) == os.path.abspath(snapshot_output):
+            raise PolicyInputError("report and raw snapshot paths must differ")
+    rendered = (
+        as_html(report) if format_name == "html" else
+        as_markdown(report) if format_name == "markdown" else
+        as_csv(report) if format_name == "csv" else
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+    snapshot = _same_observation_snapshot(report) if snapshot_output else None
+    for name, content in (("portfolio report", rendered),
+                          ("paired source snapshot", snapshot)):
+        if content is not None and not 1 <= len(content.encode("utf-8")) <= MAX_OUTPUT_BYTES:
+            raise PolicyInputError(name + " exceeds the 128 KiB private output bound")
+    # Write the snapshot first, allowing a subsequent run to recover source
+    # evidence if writing the formatted operator report fails. Both retain
+    # the same observed source timestamp, even in a partial filesystem write.
+    if snapshot_output is not None:
+        _emit_output(snapshot, snapshot_output, "json")
+    _emit_output(rendered, output, format_name)
+    return True
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Bounded multi-repository GitHub P0-first owner desk, read-only."
@@ -544,6 +592,8 @@ def main(argv=None):
                         default="html")
     parser.add_argument("--output", type=Path, required=True,
                         help="Create-only private output path; no stdout mode.")
+    parser.add_argument("--snapshot-output", type=Path,
+                        help="optional second create-only .json snapshot from same GitHub reads")
     parser.add_argument("--previous-snapshot", type=Path,
                         help="Prior private JSON desk output for conservative offline visible-card comparison")
     args = parser.parse_args(argv)
@@ -559,17 +609,10 @@ def main(argv=None):
         )
         if previous is not None:
             report["comparison"] = compare_snapshots(previous, report)
-        source = (
-            as_html(report) if args.format == "html" else
-            as_markdown(report) if args.format == "markdown" else
-            as_csv(report) if args.format == "csv" else
-            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        write_private_portfolio_outputs(
+            report, format_name=args.format, output=args.output,
+            snapshot_output=args.snapshot_output,
         )
-        if not 1 <= len(source.encode("utf-8")) <= MAX_OUTPUT_BYTES:
-            raise PolicyInputError(
-                "portfolio owner handoff exceeds 128 KiB; reduce repositories"
-            )
-        _emit_output(source, args.output, args.format)
         return 0
     except (ValueError, OSError, UnicodeError, GitHubReadError, PolicyInputError) as exc:
         print("zSentinel portfolio issue desk: " + str(exc), file=sys.stderr)
