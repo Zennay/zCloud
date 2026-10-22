@@ -9,6 +9,7 @@ The old-host writer fence and transfer are separate operator responsibilities.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -76,7 +77,7 @@ def inspect(path: Path, uid: int) -> dict:
     # inspection; SQLite will not create a -shm or mutate the database.
     uri = "file:" + quote(str(path), safe="/") + "?mode=ro&immutable=1"
     try:
-        with sqlite3.connect(uri, uri=True, timeout=5) as conn:
+        with closing(sqlite3.connect(uri, uri=True, timeout=5)) as conn:
             conn.execute("PRAGMA query_only=ON")
             result = conn.execute("PRAGMA quick_check").fetchall()
             if result != [("ok",)]:
