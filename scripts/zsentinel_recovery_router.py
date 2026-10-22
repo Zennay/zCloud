@@ -435,6 +435,8 @@ def vps_capacity(bundle, now):
     band_present = [key in metrics for key in band_keys]
     if any(band_present) and not all(band_present):
         raise ValueError("partial filesystem capacity-band receipt")
+    if extended_present[0] and not all(band_present):
+        raise ValueError("expanded capacity receipt lacks filesystem bands")
     root_band = metrics.get("root_capacity_band")
     database_band = metrics.get("database_capacity_band")
     if any(band_present):
@@ -470,6 +472,40 @@ def vps_capacity(bundle, now):
                 and (archive_receipt.get("mount_point_detected") is not True
                      or archive_receipt.get("same_device_as_root") is not False)):
             raise ValueError("archive mount classification lacks separate-device evidence")
+    if extended_present[0]:
+        if archive_receipt is None:
+            raise ValueError("expanded capacity receipt lacks archive metadata")
+        expected_warnings = set()
+        if root_band in ("critical", "high"):
+            expected_warnings.add("root_filesystem_" + root_band)
+        if database_band in ("critical", "high"):
+            expected_warnings.add("database_mount_" + database_band)
+        swap_used = optional_percentages["swap_used_percent"]
+        available_memory_pct = optional_percentages["available_memory_percent"]
+        load_per_core = optional_percentages["load_5m_per_core"]
+        if swap_used is not None and swap_used >= 90:
+            expected_warnings.add("swap_pressure_high")
+        if available_memory_pct is not None and available_memory_pct <= 10:
+            expected_warnings.add("memory_pressure_high")
+        if load_per_core is not None and load_per_core >= 2:
+            expected_warnings.add("load_pressure_high")
+        archive_free = archive_receipt.get("free_disk_gib")
+        archive_has_capacity = (
+            archive_receipt.get("state") == "observed_external_mount"
+            and type(archive_free) in (int, float)
+            and math.isfinite(archive_free) and archive_free > 0
+        )
+        if root_band == "critical" and not archive_has_capacity:
+            expected_warnings.add("no_verified_external_archive_headroom")
+        if set(capacity_warnings) != expected_warnings:
+            raise ValueError("VPS capacity warnings disagree with bounded counters")
+        expected_severity = (
+            "critical" if root_band == "critical" or database_band == "critical"
+            or (swap_used is not None and swap_used >= 98)
+            else "high" if expected_warnings else "normal"
+        )
+        if capacity_severity != expected_severity:
+            raise ValueError("VPS capacity severity disagrees with bounded counters")
 
     overloaded = load > 1.5 * cores
     low_memory = memory < 1024

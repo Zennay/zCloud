@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from io import StringIO
@@ -708,30 +709,128 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 "swap_headroom_low", "disk_headroom_low",
                 "disk_unavailable_at_least_90_percent",
                 "database_mount_inodes_unavailable_at_least_90_percent",
+                "root_filesystem_headroom_below_2_gib",
+                "root_filesystem_headroom_below_5_gib",
+                "root_filesystem_unavailable_at_least_90_percent",
+                "root_filesystem_inodes_unavailable_at_least_90_percent",
+                "database_mount_headroom_below_5_gib",
+                "swap_used_percent_at_least_90",
+                "available_memory_percent_at_most_10",
+                "capacity_severity_high", "capacity_severity_critical",
+                "root_filesystem_critical", "root_filesystem_high",
+                "database_mount_critical", "database_mount_high",
+                "swap_pressure_high", "memory_pressure_high",
+                "load_pressure_high", "no_verified_external_archive_headroom",
             }
             reasons = capacity["reason"].split(",")
             if not reasons or len(reasons) != len(set(reasons)) or any(
                     reason not in allowed for reason in reasons):
                 raise ValueError("untrusted VPS overload reason")
-            # Rank disk and swap before load: the bounded operator label
-            # has room for two reasons, but the JSON card retains all of them.
+            observation = decision.get("vps_resource_observation")
+            severity = "unknown"
+            metrics = None
+            if observation is not None:
+                if (type(observation) is not dict
+                        or observation.get("source") != "trusted_readonly_vps_snapshot"
+                        or type(observation.get("observed_at")) is not str
+                        or type(observation.get("vps")) is not dict):
+                    raise ValueError("untrusted detailed VPS capacity handoff")
+                metrics = observation["vps"]
+                severity = metrics.get("capacity_severity")
+                if severity not in ("critical", "high", "normal"):
+                    raise ValueError("invalid VPS capacity severity in handoff")
+                warnings = metrics.get("capacity_warnings")
+                if (type(warnings) is not list or len(warnings) > 8
+                        or any(type(code) is not str or code not in allowed
+                               for code in warnings)
+                        or len(set(warnings)) != len(warnings)):
+                    raise ValueError("invalid VPS capacity warning handoff")
+                archive = metrics.get("archive_target")
+                if (type(archive) is not dict
+                        or archive.get("offload_authorized") is not False
+                        or archive.get("mutation_performed") is not False
+                        or archive.get("source_files_inspected") is not False
+                        or archive.get("state") not in (
+                            "not_requested", "unavailable", "observed_external_mount",
+                            "same_as_root_filesystem", "mount_point_not_verified")):
+                    raise ValueError("archive capacity must remain non-authorizing")
+            priority = "P0" if severity == "critical" else "P1"
             reason_order = (
+                "root_filesystem_critical",
+                "database_mount_critical",
+                "root_filesystem_inodes_unavailable_at_least_90_percent",
                 "database_mount_inodes_unavailable_at_least_90_percent",
-                "disk_unavailable_at_least_90_percent", "disk_headroom_low",
-                "swap_headroom_low", "memory_headroom_low",
-                "load_above_conservative_capacity",
+                "root_filesystem_headroom_below_2_gib",
+                "root_filesystem_headroom_below_5_gib",
+                "database_mount_headroom_below_5_gib",
+                "root_filesystem_unavailable_at_least_90_percent",
+                "disk_unavailable_at_least_90_percent",
+                "root_filesystem_high", "database_mount_high",
+                "disk_headroom_low", "no_verified_external_archive_headroom",
+                "swap_used_percent_at_least_90", "swap_pressure_high",
+                "swap_headroom_low", "available_memory_percent_at_most_10",
+                "memory_pressure_high", "memory_headroom_low",
+                "load_pressure_high", "load_above_conservative_capacity",
+                "capacity_severity_critical", "capacity_severity_high",
             )
             reasons.sort(key=reason_order.index)
+            reason_labels = {
+                "root_filesystem_critical": "systeemschijf kritiek",
+                "database_mount_critical": "databasemount kritiek",
+                "root_filesystem_inodes_unavailable_at_least_90_percent": "systeemschijf-inodes kritiek",
+                "database_mount_inodes_unavailable_at_least_90_percent": "databasemount-inodes kritiek",
+                "root_filesystem_headroom_below_2_gib": "systeemschijf <2 GiB vrij",
+                "root_filesystem_headroom_below_5_gib": "systeemschijf <5 GiB vrij",
+                "database_mount_headroom_below_5_gib": "databasemount <5 GiB vrij",
+                "root_filesystem_unavailable_at_least_90_percent": "systeemschijf >=90% bezet",
+                "disk_unavailable_at_least_90_percent": "databasemount >=90% bezet",
+                "root_filesystem_high": "systeemschijf krap",
+                "database_mount_high": "databasemount krap",
+                "disk_headroom_low": "minder dan 2 GiB vrije databasemount",
+                "no_verified_external_archive_headroom": "geen externe archief-headroom bewezen",
+                "swap_used_percent_at_least_90": "swap >=90% gebruikt",
+                "swap_pressure_high": "swapdruk hoog",
+                "swap_headroom_low": "minder dan 256 MiB vrije swap",
+                "available_memory_percent_at_most_10": "RAM beschikbaar <=10%",
+                "memory_pressure_high": "RAM-druk hoog",
+                "memory_headroom_low": "minder dan 1 GiB beschikbare RAM",
+                "load_pressure_high": "load >=2x toegestane CPU-capaciteit",
+                "load_above_conservative_capacity": "load boven conservatieve CPU-capaciteit",
+                "capacity_severity_critical": "kritieke capaciteitsdruk",
+                "capacity_severity_high": "hoge capaciteitsdruk",
+            }
+            display_reasons = [reason_labels[reason] for reason in reasons]
+            details = []
+            if metrics is not None:
+                root_free = metrics.get("root_free_disk_gib")
+                swap_pct = metrics.get("swap_used_percent")
+                if type(root_free) in (int, float) and math.isfinite(root_free) and root_free >= 0:
+                    details.append("root " + f"{root_free:.1f}" + " GiB vrij")
+                if type(swap_pct) in (int, float) and math.isfinite(swap_pct) and 0 <= swap_pct <= 100:
+                    details.append("swap " + f"{swap_pct:.1f}" + "% gebruikt")
+                archive = metrics.get("archive_target", {})
+                if (type(archive) is dict
+                        and archive.get("state") == "observed_external_mount"
+                        and type(archive.get("free_disk_gib")) in (int, float)
+                        and math.isfinite(archive["free_disk_gib"])
+                        and archive["free_disk_gib"] >= 0):
+                    details.append("extern archief " + f"{archive['free_disk_gib']:.1f}" + " GiB vrij")
+            detail_text = "; ".join(details)
             card = _card(
-                "P1", "cloud", "vps_capacity_owner_review",
-                "VPS capaciteitsdruk (" + ", ".join(reasons[:2]) +
-                (" + meer" if len(reasons) > 2 else "") +
+                priority, "cloud", "vps_capacity_owner_review",
+                "VPS capaciteitsdruk (" + ", ".join(display_reasons[:2]) +
+                (" + meer" if len(display_reasons) > 2 else "") +
+                (("; " + detail_text) if detail_text else "") +
                 "). Hosteigenaar beoordeelt vrije ruimte en actieve jobs. "
                 "GEEN cleanup, service-restart of workerstop.",
                 source="validated_recent_readonly_vps_capacity",
                 ref="https://github.com/Zennay/zCloud/issues/1326")
             card["observed_capacity_state"] = "overloaded"
+            card["capacity_severity"] = severity
             card["capacity_reasons"] = reasons
+            card["cleanup_authorized"] = False
+            card["offload_authorized"] = False
+            card["restart_authorized"] = False
             cards.append(card)
         elif capacity_coverage == "unavailable" and capacity["reason"] in {
             "database_mount_inode_capacity_unknown",
