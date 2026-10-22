@@ -2882,3 +2882,9 @@ op verschillende doelbranches blijven zichtbaar als gedeelde bestands-/scope-
 waarneming, maar de operator ziet nu expliciet dat hun release-target verschilt.
 
 Deze toevoeging verandert geen bestaande claim-, merge-, CI- of deploybevoegdheid.
+
+
+Ook wanneer de steekproef geen botsing toont, staan de daadwerkelijk bekeken
+PR-identiteiten met HEAD, doelbranch en bestandlijstdekking expliciet in
+operator-tekst, Markdown, offline HTML en private CSV. Die lijst blijft een
+begrensde observatie en noemt geen PR claimvrij of mergeklaar.
