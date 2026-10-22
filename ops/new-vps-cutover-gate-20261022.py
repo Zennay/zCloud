@@ -25,8 +25,9 @@ REQUIRED_RUNNERS = 14
 REQUIRED_WORKERS = 10
 REQUIRED_PUBLIC_ROUTES = ("zcloud_dashboard", "zssh_plugin")
 REQUIRED_PROJECTS = (
-    "FTMO", "Supa", "LightUp", "TradeEngine", "Tuddy",
-    "zSentinel", "Fuckball-game", "RaiseAI", "zGuard",
+    "HaxLab", "FTMO", "TradeEngine", "zCloud", "Supa", "RaiseAI",
+    "uLab", "zSSH", "LightUp", "zGuard/zBrowse", "MixLab",
+    "Fuckball", "Tuddy", "BrowserAgent", "zSentinel",
 )
 FILESYSTEMS = {"ext4", "xfs", "btrfs"}
 
@@ -69,6 +70,10 @@ def physical_disk(device: str) -> str | None:
         if not block.is_dir():
             return None
         disk = block.parent if (block / "partition").is_file() else block
+        # Fail closed on mapper, RAID, loop and RAM devices: their apparent
+        # sysfs parent does not prove a distinct underlying physical disk.
+        if disk.name.startswith(("dm-", "md", "loop", "ram", "zram")):
+            return None
         return str(disk.resolve(strict=True))
     except (OSError, RuntimeError):
         return None
