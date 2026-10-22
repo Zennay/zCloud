@@ -87,6 +87,12 @@ def recent_runs(root, canonical_repository, token, status):
             continue
         rid, sha = run.get("id"), run.get("head_sha")
         repository = run.get("repository")
+        # GitHub filter parameters alone do not prove a changing workflow
+        # still awaits approval at the instant of this run-list response.
+        if status == "waiting" and (run.get("status") != "waiting"
+                                    or run.get("conclusion") is not None):
+            partial = True
+            continue
         if (type(rid) is not int or not 1 <= rid <= 2**53 - 1
                 or not isinstance(sha, str) or not SHA.fullmatch(sha)
                 or not isinstance(repository, dict)
@@ -210,6 +216,7 @@ def discover(registry, selected, token=None):
                         # human triage without inventing a queued runner job.
                         approval_wait_runs = [{
                             "run_id": rid, "head_sha": sha,
+                            "workflow_status_observed": "waiting",
                             "url": "https://github.com/" + canonical_repository +
                                    "/actions/runs/" + str(rid),
                             "action_authorized": False,
