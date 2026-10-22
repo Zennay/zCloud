@@ -3180,6 +3180,12 @@ def portfolio_queue_audit(refill=True):
     """Keep the execution queue write-only, broad enough, and separate from human gates."""
     removed=[]
     protected_active=[]
+    protected_reasons={
+        'assigned_or_queue_lease':0,
+        'separate_claim_record':0,
+        'claim_source_unknown':0,
+        'changed_before_atomic_update':0,
+    }
     with connect() as c:
         rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria,
                                  status,worker_slot,claimed_at,claim_expires
@@ -3195,6 +3201,7 @@ def portfolio_queue_audit(refill=True):
                 if (str(row['status'])!='queued' or row['worker_slot'] is not None or
                         row['claimed_at'] is not None or row['claim_expires'] is not None):
                     protected_active.append(str(row['queue_id']))
+                    protected_reasons['assigned_or_queue_lease']+=1
                     continue
                 # Even an unassigned queue row can have a separate owner claim.
                 # Never interpret claim expiry, an inconsistent project, or a
@@ -3203,6 +3210,10 @@ def portfolio_queue_audit(refill=True):
                     c,row['project_id'],row['queue_id'],datetime.now(timezone.utc))
                 if not claim['source_available'] or claim['state']!='none':
                     protected_active.append(str(row['queue_id']))
+                    protected_reasons[
+                        'claim_source_unknown' if not claim['source_available'] or
+                        claim['state']=='unknown' else 'separate_claim_record'
+                    ]+=1
                     continue
                 cur=c.execute("""UPDATE portfolio_queue SET status='dropped',eligible=0,worker_slot=NULL,
                              claimed_at=NULL,claim_expires=NULL,blocker=?,updated_at=?
@@ -3219,11 +3230,13 @@ def portfolio_queue_audit(refill=True):
                     removed.append(str(row['queue_id']))
                 else:
                     protected_active.append(str(row['queue_id']))
+                    protected_reasons['changed_before_atomic_update']+=1
     if not refill:
         with connect() as c:
             ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
             projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
-        return {'ready':int(ready),'projects':int(projects),'removed':removed,'protected_active':protected_active,'created':[],'time':now()}
+        return {'ready':int(ready),'projects':int(projects),'removed':removed,'protected_active':protected_active,'protected_reasons':protected_reasons,
+                'created':[],'time':now()}
     # Keep at least one executable item available for every non-human-gated active project.
     with connect() as c:
         rows=c.execute("""SELECT DISTINCT project_id FROM portfolio_queue
@@ -3252,7 +3265,8 @@ def portfolio_queue_audit(refill=True):
                            WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
         projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue
                               WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
-    return {'ready':int(ready),'projects':int(projects),'removed':removed,'protected_active':protected_active,'created':created,'time':now()}
+    return {'ready':int(ready),'projects':int(projects),'removed':removed,'protected_active':protected_active,'protected_reasons':protected_reasons,
+            'created':created,'time':now()}
 
 def portfolio_queue_health():
     with connect() as c:
