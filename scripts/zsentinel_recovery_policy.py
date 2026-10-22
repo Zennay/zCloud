@@ -354,8 +354,6 @@ def recommended_next_step_code(action, blockers):
         for code in codes
     ):
         return "refresh_source"
-    if "task_claim_expired_record" in codes:
-        return "reconcile_expired_task_claim_with_owner"
     if codes & {"independent_task_id_missing", "independent_task_project_missing",
                 "independent_task_source_url_missing", "independent_task_source_unverified",
                 "independent_task_source_not_guarded", "independent_task_version_unknown",
@@ -363,6 +361,8 @@ def recommended_next_step_code(action, blockers):
         return "bind_exact_independent_task_identity"
     if codes & {"independent_task_not_queued", "independent_task_not_eligible"}:
         return "select_queued_eligible_independent_task"
+    if "task_claim_expired_record" in codes:
+        return "reconcile_expired_task_claim_with_owner"
     if codes & {"claim_not_clear", "claim_state_unknown", "queue_lease_not_clear", "task_claim_not_clear"}:
         if codes & {"owner_missing", "human_owner_missing"}:
             return "identify_claim_owner"
