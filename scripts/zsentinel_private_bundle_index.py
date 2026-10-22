@@ -176,6 +176,27 @@ def pr_links(items: set[str]) -> str:
 
 def compare(previous: dict, current: dict) -> str:
     rows = []
+    old_fresh = previous.get("source_fresh", {})
+    new_fresh = current.get("source_fresh", {})
+    freshness_changes = {
+        name: {"before": old_fresh.get(name), "after": new_fresh.get(name)}
+        for name in sorted(set(old_fresh) | set(new_fresh))
+        if old_fresh.get(name) != new_fresh.get(name)
+    }
+    freshness_labels = {
+        True: "vers bij opname", False: "verouderd bij opname",
+        None: "niet waargenomen",
+    }
+    freshness_html = (
+        "<p><strong>Bronfreshness gewijzigd:</strong> " +
+        "; ".join(
+            escape(name) + ": " +
+            escape(freshness_labels.get(change["before"], "onbekend")) + " → " +
+            escape(freshness_labels.get(change["after"], "onbekend"))
+            for name, change in freshness_changes.items()
+        ) + "</p>" if freshness_changes else
+        "<p>Bronfreshness ongewijzigd binnen de opgeslagen bronvlaggen.</p>"
+    )
     for project in sorted(set(previous["projects"]) | set(current["projects"])):
         old_data = previous["projects"].get(project, {})
         new_data = current["projects"].get(project, {})
@@ -249,7 +270,7 @@ def compare(previous: dict, current: dict) -> str:
         "waargenomen issues, PR-kandidaten en queue-/adviesveranderingen gelden "
         "uitsluitend binnen twee begrensde samples. Niet meer waargenomen betekent "
         "<strong>niet</strong> gesloten, gemerged of eigenaarsvrij. Ontbrekende "
-        "queuewaarneming is onbekend, niet nul.</p>"
+        "queuewaarneming is onbekend, niet nul.</p>" + freshness_html +
         "<table><thead><tr><th>Project</th><th>Nieuw issue</th>"
         "<th>Issue niet opnieuw gezien</th><th>In beide</th>"
         "<th>Urgentie gestegen in sample</th><th>PR-kandidaten gewijzigd</th>"
@@ -419,8 +440,17 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
                 "recommended_next_step_after": new_advice,
                 "current_live_queue_verified": False,
             })
+        old_fresh = old.get("source_fresh", {})
+        new_fresh = new.get("source_fresh", {})
         transitions.append({
             "from_bundle": old["stem"], "to_bundle": new["stem"],
+            "source_freshness_before": old_fresh,
+            "source_freshness_after": new_fresh,
+            "source_freshness_changes": {
+                name: {"before": old_fresh.get(name), "after": new_fresh.get(name)}
+                for name in sorted(set(old_fresh) | set(new_fresh))
+                if old_fresh.get(name) != new_fresh.get(name)
+            },
             "projects": projects, "closure_or_merge_inferred": False,
         })
     report = {
