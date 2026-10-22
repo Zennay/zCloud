@@ -671,7 +671,7 @@ def render_html(board):
             lines.append(
                 "<li><strong>" + escape(pid) + "</strong> · " +
                 str(summary["issues_sampled"]) + " issue(s) in steekproef · " +
-                str(summary["owner_only_sampled"]) + " eigenaar-P0 · " +
+                str(summary["owner_only_sampled"]) + " eigenaaractie · " +
                 ("VEROUDERD (" + str(source["age_seconds"] // 60) + " min)"
                  if source["stale_after_10_minutes"] else "recent bronmoment") +
                 " · " + escape(source["source_coverage"][pid]) +
