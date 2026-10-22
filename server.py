@@ -1511,7 +1511,7 @@ def canonical_main_sha():
     return None
 
 def improvement_loop_state(project_id=IMPROVEMENT_PROJECT_ID):
-    with connect() as c:
+    with connect_readonly() as c:
         row=c.execute('SELECT * FROM improvement_loops WHERE project_id=?',(project_id,)).fetchone()
     if not row:
         return {'project_id':project_id,'state':IMPROVEMENT_RUNNING,'iteration_count':0,'clean_reviews':0,
@@ -1621,7 +1621,7 @@ def coordination_vps_health(profile='default'):
     firefox=firefox_runner_status()
     checks['firefox_automation']=bool(firefox.get('active'))
     try:
-        with connect() as c:
+        with connect_readonly() as c:
             quick=c.execute('PRAGMA quick_check').fetchone()
         checks['state_store']=bool(quick and str(quick[0]).lower()=='ok')
     except Exception:
@@ -2838,7 +2838,7 @@ def _attention_action_for_blocker(project_id,title,evidence):
     return f'{name}: your input is needed to unblock this step'
 
 def portfolio_queue_items(include_done=False):
-    with connect() as c:
+    with connect_readonly() as c:
         if include_done:
             rows=c.execute("""SELECT * FROM portfolio_queue
                               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
@@ -2854,7 +2854,7 @@ def portfolio_queue_current_for_slot(global_slot):
     try: slot=int(global_slot)
     except Exception: return None
     ts=now()
-    with connect() as c:
+    with connect_readonly() as c:
         row=c.execute("""SELECT * FROM portfolio_queue
                          WHERE worker_slot=? AND status IN ('claimed','running','verifying')
                            AND (claim_expires IS NULL OR claim_expires>?)
@@ -2863,7 +2863,7 @@ def portfolio_queue_current_for_slot(global_slot):
 
 def portfolio_queue_has_project_assignment(project_id):
     ts=now()
-    with connect() as c:
+    with connect_readonly() as c:
         row=c.execute("""SELECT 1 FROM portfolio_queue
                          WHERE project_id=? AND status IN ('claimed','running','verifying')
                            AND (claim_expires IS NULL OR claim_expires>?) LIMIT 1""",(project_id,ts)).fetchone()
@@ -3571,7 +3571,7 @@ def portfolio_queue_allocation():
     # physical slot. If an idle lower-numbered slot is later Force-assigned
     # to the same project, renumbering its generating worker would silently
     # orphan the active browser session.
-    with connect() as c:
+    with connect_readonly() as c:
         previous={
             (str(r['project_id']),int(r['slot'])):int(r['worker_slot'])
             for r in c.execute(
@@ -3716,7 +3716,7 @@ def _current_global_slot_map():
     if GLOBAL_CHATGPT_WORKER_LIMIT <= 0:
         return {}
     try:
-        with connect() as c:
+        with connect_readonly() as c:
             rows=c.execute('SELECT slot,project_id,worker_slot FROM ai_global_slots ORDER BY slot LIMIT ?',
                            (GLOBAL_CHATGPT_WORKER_LIMIT,)).fetchall()
             if rows:
@@ -3863,7 +3863,7 @@ def autonomy_scheduler():
         time.sleep(AUTONOMY_TICK_SECONDS)
 
 def runner_targets():
-    with connect() as c:
+    with connect_readonly() as c:
         rows=c.execute('SELECT project_id,name,conversation_id,prompt,active,worker_count FROM runner_targets ORDER BY project_id').fetchall()
     out={}
     for r in rows:
@@ -4080,7 +4080,7 @@ def runner_record(payload):
 
 def runner_status(project_id=None, target_cfg=None):
     target_cfg=target_cfg if target_cfg is not None else runner_targets()
-    with connect() as c:
+    with connect_readonly() as c:
         if project_id in target_cfg:
             cfg=target_cfg[project_id]
             if cfg['conversation_id']:
@@ -4138,7 +4138,7 @@ def runner_worker_statuses(project_id, *, base=None, targets=None):
         if worker_id:
             by_worker.setdefault(worker_id,[]).append(claim)
     out=[]
-    with connect() as c:
+    with connect_readonly() as c:
         for worker_key,cfg in sorted(targets.items(),key=lambda item:item[1].get('worker_slot',1)):
             if cfg.get('base_project_id')!=project_id:
                 continue
