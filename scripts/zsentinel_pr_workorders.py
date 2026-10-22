@@ -775,6 +775,8 @@ def collect_workorders(board):
             and live_gate.get("legacy_status_source_may_be_truncated") is False
             and live_gate.get("observed_checks_pending", 0) > 0
             and live_gate.get("observed_checks_not_successful") == 0
+            and live_gate.get("observed_checks_unknown") == 0
+            and live_gate.get("observed_legacy_failure_or_error") == 0
             and live_gate.get("observed_exact_head_changes_requested") == 0
             and live_gate.get("observed_independent_exact_head_approvals") == 0
             and requests is not None
@@ -782,6 +784,18 @@ def collect_workorders(board):
         workstream = _operator_workstream(
             item.get("blocker"), pinned, source_stale, history_state,
             defer_repeat, parallel_review)
+        # A real failing exact-head job can be opened directly. Do not send
+        # the owner back to a generic PR checks list if GitHub already
+        # supplied a canonical actionable job link in the pinned receipt.
+        failing_jobs = [
+            job for job in links if (
+                (job["kind"] == "check_run" and job["state"] == "completed") or
+                (job["kind"] == "legacy_status" and
+                 job["state"] in ("failure", "error")))]
+        direct_failure = (
+            failing_jobs[0] if item.get("blocker") ==
+            "failed_checks_or_legacy_context" and
+            pinned and not source_stale and failing_jobs else None)
         if parallel_review:
             attention_status = "parallel_review_while_ci"
             notes.append(
@@ -789,22 +803,35 @@ def collect_workorders(board):
                 "De bevoegde PR-eigenaar kan parallel een onafhankelijke "
                 "review aanvragen na hercontrole van de actuele GitHub-HEAD. "
                 "Dit dossier vraagt niets automatisch aan.")
+        primary_step = (
+            "Open de bestaande falende exacte-HEAD job: " +
+            direct_failure["name"] + " (PR-eigenaar onderzoekt de oorzaak)."
+            if direct_failure else
+            "Vraag onafhankelijke review aan bij huidige PR terwijl de "
+            "bestaande CI loopt (alleen bevoegde eigenaar, HEAD herlezen)."
+            if parallel_review else _markdown(next_step))
+        primary_link = (
+            direct_failure["url"] if direct_failure else
+            url if parallel_review else
+            url + "/checks" if item.get("blocker") in (
+                "failed_checks_or_legacy_context",
+                "checks_still_running", "check_source_not_terminal") else url)
         cards.append({
             "attention_status": attention_status,
             "attention_label": ATTENTION_LABELS[attention_status],
             "workstream": workstream,
             "workstream_label": WORKSTREAM_LABELS[workstream],
-            "operator_action_link": (
-                url if parallel_review else
-                url + "/checks" if item.get("blocker") in (
+            "operator_action_link": primary_link,
+            "operator_primary_step": _markdown(primary_step),
+            "operator_action_kind": (
+                "inspect_failing_exact_head_job" if direct_failure else
+                "request_parallel_independent_review" if parallel_review else
+                "inspect_existing_checks" if item.get("blocker") in (
                     "failed_checks_or_legacy_context",
-                    "checks_still_running", "check_source_not_terminal")
-                else url),
+                    "checks_still_running", "check_source_not_terminal") else
+                "inspect_existing_pr"),
+            "operator_action_authorized": False,
             "parallel_review_request_possible_at_observation": parallel_review,
-            "operator_primary_step": (
-                "Vraag onafhankelijke review aan bij huidige PR terwijl "
-                "de bestaande CI loopt (alleen bevoegde eigenaar, HEAD herlezen)."
-                if parallel_review else _markdown(next_step)),
             "project": project, "repository": repo, "number": num,
             "url": url, "files_url": url + "/files",
             "checks_url": url + "/checks", "review_url": url,
