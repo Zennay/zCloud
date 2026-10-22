@@ -482,6 +482,15 @@ def observe_exact_pr(pr_url, *, token=None):
     mergeability_hint_stable = (
         first.get("mergeable_hint") == second.get("mergeable_hint")
     )
+    base_tip_matches_default = (
+        first["base_sha"] == default_branch_sha
+        if first["target_branch"] == default_branch and
+        default_branch is not None and default_branch_sha_stable else None
+    )
+    pr_base_sync = (
+        "current" if base_tip_matches_default is True else
+        "stale" if base_tip_matches_default is False else "unknown"
+    )
     report = {
         "schema_version": 1, "policy": "zsentinel-exact-pr-preflight-v1",
         "url": pr_url, "observed_at_utc": utc(),
@@ -492,11 +501,14 @@ def observe_exact_pr(pr_url, *, token=None):
         "repository_default_branch_stable": default_branch_stable,
         "repository_default_branch_sha": default_branch_sha,
         "repository_default_branch_sha_stable": default_branch_sha_stable,
-        "base_tip_matches_default": (
-            first["base_sha"] == default_branch_sha
-            if first["target_branch"] == default_branch and
-            default_branch is not None and default_branch_sha_stable else None
-        ),
+        "base_tip_matches_default": base_tip_matches_default,
+        "merge_policy_input_hint": {
+            "pr_base_sync": pr_base_sync,
+            "source_stable_between_reads": True,
+            "default_branch_tip_stable": default_branch_sha_stable,
+            "advisory_only": True,
+            "merge_authorized": False,
+        },
         "target_is_default_branch": (
             first["target_branch"] == default_branch
             if default_branch is not None and default_branch_stable else None
@@ -506,9 +518,7 @@ def observe_exact_pr(pr_url, *, token=None):
         "operator_gates": _gate_cards(
             first, checks, reviews, True, default_branch, default_branch_stable,
             default_branch_sha, default_branch_sha_stable,
-            first["base_sha"] == default_branch_sha
-            if first["target_branch"] == default_branch and
-            default_branch_sha is not None and default_branch_sha_stable else None,
+            base_tip_matches_default,
             mergeability_hint_stable=mergeability_hint_stable,
         ),
         "next_human_step": next_step,
@@ -539,6 +549,13 @@ def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None,
         "repository_default_branch_sha": None,
         "unconfirmed_default_branch_sha": default_branch_sha,
         "repository_default_branch_sha_stable": False,
+        "merge_policy_input_hint": {
+            "pr_base_sync": "unknown",
+            "source_stable_between_reads": False,
+            "default_branch_tip_stable": False,
+            "advisory_only": True,
+            "merge_authorized": False,
+        },
         "base_tip_matches_default": None,
         "target_is_default_branch": None,
         "secondary_source_gaps": gaps, "sampled_check_runs": None,
@@ -586,6 +603,8 @@ def as_markdown(report):
         "- Default branch stable across reads: " + str(report.get("repository_default_branch_stable", False)),
         "- Default branch tip stable across reads: " + str(report.get("repository_default_branch_sha_stable", False)),
         "- Base tip matches current default: " + _known(report.get("base_tip_matches_default")),
+        "- Recovery-policy input hint evidence.pr_base_sync: " +
+        str((report.get("merge_policy_input_hint") or {}).get("pr_base_sync", "unknown")),
         "- Base is current default: " + _known(report.get("target_is_default_branch")),
         "- Sampled checks: " + str(checks.get("sampled_count", "UNKNOWN")) +
         " of " + str(checks.get("provider_total_count", "UNKNOWN")),
@@ -659,6 +678,8 @@ def as_html(report):
         ("Default branch stable across reads", report.get("repository_default_branch_stable", False)),
         ("Default branch tip stable across reads", report.get("repository_default_branch_sha_stable", False)),
         ("Base tip matches current default", _known(report.get("base_tip_matches_default"))),
+        ("Recovery-policy input hint evidence.pr_base_sync",
+         (report.get("merge_policy_input_hint") or {}).get("pr_base_sync", "unknown")),
         ("Base is current default", _known(report.get("target_is_default_branch"))),
         ("Reported merged", observed.get("reported_merged", "UNKNOWN")),
         ("Check sample", str(checks.get("sampled_count", "UNKNOWN")) + " / " +
