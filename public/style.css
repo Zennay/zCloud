@@ -222,3 +222,15 @@
   .owner-integrity-filters button,.owner-integrity-foot button{min-height:44px}
   .owner-integrity-foot button{width:100%}
 }
+
+/* Read-only zSentinel recovery source inspection, never an action grant. */
+.blocked-queue-item{flex-wrap:wrap}
+.blocked-queue-inspect{background:#263749!important;border-color:#65829a!important;color:#e3f1ff!important}
+.blocked-queue-inspection{width:100%;flex:1 0 100%;min-width:0;border:1px solid #4d6a82;background:#162432;border-radius:8px;padding:12px 14px;color:#d8e8f6;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.blocked-queue-inspection strong{display:block;font-size:12px;color:#f1f7ff}
+.blocked-queue-inspection p{margin:7px 0}
+.blocked-queue-inspection p b{color:#ffdda7}
+.blocked-queue-inspection ul{margin:7px 0;padding-left:20px}
+.blocked-queue-inspection li{margin:4px 0}
+.blocked-queue-inspection small{display:block;margin-top:7px;color:#afc2d3}
+.blocked-queue-inspect:focus-visible{outline:2px solid #c9e5ff;outline-offset:2px}
