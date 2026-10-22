@@ -163,42 +163,8 @@ def html_document(report):
             row = coverage[0]
             if type(row) is not dict or row.get("project_id") != "cloud":
                 raise ValueError("untrusted discovery project")
-            extras = row.get("additional_job_links", [])
-            if type(extras) is not list or len(extras) > 5:
-                raise ValueError("unbounded discovered job links")
-            items = []
-            for job in extras:
-                if (type(job) is not dict
-                        or type(job.get("run_id")) is not int
-                        or not 1 <= job["run_id"] <= 2**53 - 1
-                        or type(job.get("job_id")) is not int
-                        or not 1 <= job["job_id"] <= 2**53 - 1
-                        or type(job.get("head_sha")) is not str
-                        or not re.fullmatch(r"[a-f0-9]{40}", job["head_sha"])
-                        or job.get("job_status") not in ("queued", "in_progress", "completed")
-                        or job.get("runner_route") not in ("self_hosted", "hosted_or_custom", "unknown")
-                        or job.get("source_window") not in ("queued", "in_progress", "failure")
-                        or job.get("observed_only") is not True
-                        or job.get("work_resumed_verified") is not False
-                        or job.get("action_authorized") is not False
-                        or job.get("url") != (
-                            "https://github.com/Zennay/zCloud/actions/runs/" +
-                            str(job["run_id"]) + "/job/" + str(job["job_id"]))):
-                    raise ValueError("untrusted additional exact job receipt")
-                items.append(
-                    '<li><a rel="noopener noreferrer" href="' +
-                    escape(job["url"], quote=True) + '">Run ' +
-                    str(job["run_id"]) + ' · job ' + str(job["job_id"]) +
-                    '</a> · ' + escape(job["job_status"]) + ' · ' +
-                    escape(job["runner_route"]) + ' · SHA ' +
-                    escape(job["head_sha"][:8]) +
-                    ' · alleen waargenomen; geen actieautorisatie</li>')
-            if items:
-                extra_html = (
-                    '<section><h2>Andere waargenomen exacte jobs</h2><ul>' +
-                    ''.join(items) + '</ul><p>Maximaal vijf aanvullende links; '
-                    'dit is geen volledige CI-inventaris en geen bewijs van herstel.</p></section>'
-                )
+            from zsentinel_runner_cross_source import additional_jobs_html
+            extra_html = additional_jobs_html(row.get("additional_job_links", []))
     return (
         '<!doctype html><html lang="nl"><meta charset="utf-8">'
         '<meta name="referrer" content="no-referrer">'
