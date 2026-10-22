@@ -469,10 +469,11 @@ def project_operations_html(view: dict) -> str:
     def rank(row):
         queue = row["queue_observation"] or {}
         counts = row["issue_counts_in_sample"]
-        # A sampled expired lease is a human reconciliation lead, not a
-        # released lease. Preserve P0 priority inside that bounded category.
-        return (0 if queue.get("expired_active_leases", 0) else
-                1 if counts["P0"] else
+        # P0 product blockers always rank first. Expired leases and high
+        # claim cycles follow as human reconciliation leads, never as proof
+        # that a lease is released or a retry is authorized.
+        return (0 if counts["P0"] else
+                1 if queue.get("expired_active_leases", 0) else
                 2 if queue.get("high_claim_attempts", 0) else
                 3 if counts["P1"] else 4, row["project"])
     for row in sorted(view["project_operations"], key=rank):
