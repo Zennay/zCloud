@@ -432,6 +432,14 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1,
 
     recall_partial = any(item["truncated"] or item["provider_incomplete"]
                          for item in recall_sources)
+    # Derive both public aliases from the same coverage state. In particular,
+    # exhausting the bounded page budget is not a complete issue inventory.
+    recent_window_complete = (
+        pages_read > 0 and source_error is None
+        and not provider_incomplete and not recent_provider_count_drift
+        and not recent_window_truncated
+        and not recent_duplicate_issue_records and not invalid_excluded
+    )
     return {
         "schema_version": 1, "policy": "zsentinel-live-github-issue-inbox-v1",
         "repository": repo_full_name,
@@ -450,13 +458,7 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1,
             item["source_window_identity_drift"] for item in issues
         ),
         "recent_window_truncated": recent_window_truncated,
-        "recent_issue_window_complete": (
-            pages_read > 0 and source_error is None
-            and not provider_incomplete and not recent_provider_count_drift
-            and not recent_window_truncated
-            and not recent_duplicate_issue_records
-            and not invalid_excluded
-        ),
+        "recent_issue_window_complete": recent_window_complete,
         "priority_recall_performed": recall_performed,
         "priority_recall_sources": recall_sources,
         "priority_recall_not_authoritative": True,
@@ -476,15 +478,8 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1,
         "display_has_previous_sample_page": (
             not display_all_sample and display_page > 1
         ),
-        # "full" means the recent issue inventory actually finished with
-        # stable coverage, not that the three-page budget was exhausted.
-        "source_window_full": (
-            pages_read > 0 and source_error is None
-            and not provider_incomplete and not recent_provider_count_drift
-            and not recent_window_truncated
-            and not recent_duplicate_issue_records
-            and not invalid_excluded
-        ),
+        # Historic consumers use this legacy alias for completeness.
+        "source_window_full": recent_window_complete,
         "source_partial_or_unknown": (
             bool(source_error) or provider_incomplete or recent_provider_count_drift
             or recent_window_truncated or recall_partial
