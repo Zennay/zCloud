@@ -596,7 +596,7 @@ def main():
                     else "unknown")
                 incomplete_windows = cloud_coverage.get("incomplete_windows", [])
                 not_scanned_windows = cloud_coverage.get("not_scanned_windows", [])
-                raw_secondary_links = cloud_coverage.get("additional_job_links", [])
+                raw_secondary_links = cloud_coverage.get("additional_job_links")
                 try:
                     secondary_links = validate_additional_jobs(raw_secondary_links)
                     secondary_links_coverage = "bounded_observed"
