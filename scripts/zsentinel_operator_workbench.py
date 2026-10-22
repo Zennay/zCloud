@@ -3457,6 +3457,7 @@ function projectRecoveryPacket(project,includePrivate){
   source_clocks_utc:board.project_source_observed_at_utc,
   project:row.project,issue_source_coverage:row.issue_coverage,
   issue_sample_may_be_incomplete:true,
+  issue_sample_size_for_this_project:issueRows.length,
   sampled_issue_counts:row.issue_counts_in_sample,
   sampled_queue_observation:row.queue_observation,
   original_queue_source_utc:row.queue_source_observed_at_utc,
@@ -3493,15 +3494,19 @@ function previewProjectPacket(project){
  const includePrivate=document.getElementById('projectPacketPrivate').checked;
  const payload=projectRecoveryPacket(project,includePrivate);
  const content=JSON.stringify(payload,null,2)+'\\n';
- if(content.length>262144)throw Error('One-project packet exceeds 256 KiB limit');
+ if(new TextEncoder().encode(content).length>262144)
+  throw Error('One-project packet exceeds 256 KiB UTF-8 limit');
  viewedProjectPacket={project,includePrivate,content};
  document.getElementById('projectPacketContent').textContent=content;
  document.getElementById('projectPacketPanel').hidden=false;
  document.getElementById('downloadProjectPacket').disabled=false;
+ const age=Date.now()-Date.parse(board.observed_at_utc);
+ const sourceAge=(Number.isFinite(age)&&age>=0&&age<=6*3600000)?
+  'SAVED snapshot within 6h (not live)':'STALE/UNKNOWN snapshot; recheck all sources';
  document.getElementById('projectPacketScope').textContent=
   project+' · '+payload.issues.length+
   ' saved issue(s); private annotation '+(includePrivate?'explicitly included':'excluded')+
-  '. Owner and release still UNKNOWN.';
+  '. '+sourceAge+'. Owner and release still UNKNOWN.';
 }
 document.getElementById('projectPacketPrivate').addEventListener('change',()=>{
  clearProjectPacketPreview('Privacy choice changed. Preview the selected project again.');
