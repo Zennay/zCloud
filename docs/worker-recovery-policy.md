@@ -554,17 +554,21 @@ maximum 7 GET per repo and 42 overall, no arbitrary remote hosts,
 and at most 120 P0-first issue cards in a source-bound snapshot.
 The input repo list is explicit rather than inferred from a historical
 Notion claim. Observations across repositories are **not atomic**.
-Authentication, rate-limit or unknown provider failures are isolated as
-`SOURCE_UNAVAILABLE` and stop further API calls for the run; earlier
-repository issue cards remain available in the private output. Projects
-not read after a global provider error become
-`NOT_READ_AFTER_SOURCE_ERROR`, never implicitly empty. An explicit
-repository-local not-found/inaccessible GitHub response affects **only that
-repository**, so other independently requested projects can still be read
-without repeating the blocked repo request. Project source observations
-include a human follow-up action (`human_source_followup_code`) and
-distinct `source_error_scope` for repository-only versus provider/unknown
-errors; follow-ups are never executed by the CLI. The report separates
+Authentication, confirmed global rate-limit and unknown network/malformed
+provider failures are isolated as `SOURCE_UNAVAILABLE` and stop further API
+calls for the run; earlier repository issue cards remain available in the
+private output. Projects not read after a global provider error become
+`NOT_READ_AFTER_SOURCE_ERROR`, never implicitly empty. A 404 or a 403 without
+a confirmed global cooldown (`X-RateLimit-Remaining: 0` or `Retry-After`)
+is kept as repository-scoped access/inaccessibility UNKNOWN and affects **only
+that repository**, so other independently requested projects can still be
+read without repeating the blocked repo request. This is not proof that a
+repository is private/deleted or that an issue is resolved. A 403 with a
+confirmed global cooldown, a 401 or a 429 remains provider-wide and stops
+subsequent reads. Project source observations include a human follow-up action
+(`human_source_followup_code`) and distinct `source_error_scope` for
+repository-only versus provider/unknown errors; follow-ups are never executed
+by the CLI. The report separates
 unread/incomplete provider sources (`source_partial_or_unknown`) from
 issues deliberately omitted by the local view/display cap
 (`display_partial`); the combined legacy `partial_or_unknown` flag
