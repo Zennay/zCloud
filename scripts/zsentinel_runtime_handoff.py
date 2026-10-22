@@ -919,6 +919,12 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 or worker.get("worker_resumed_verified") is not False
                 or worker.get("runner_restart_authorized") is not False):
             raise ValueError("untrusted worker progress source")
+        # The same bounded read-only admission used by the offline worker
+        # cockpit must apply here; otherwise a source can reach owner cards
+        # with classification/followup combinations the cockpit would reject.
+        from zsentinel_worker_progress_observer import worker_progress_html
+        from zsentinel_worker_handoff import STEP as WORKER_OWNER_STEPS
+        worker_progress_html(worker)
         worker_coverage = _short(worker.get("coverage"), 80)
         followups = worker.get("owner_followup_candidates")
         if not isinstance(followups, list) or len(followups) > 24:
@@ -938,12 +944,24 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 raise ValueError("duplicate worker owner followup")
             seen.add(key)
             cls = item.get("classification")
+            followup_code = item.get("safe_followup")
+            if (type(followup_code) is not str
+                    or followup_code not in WORKER_OWNER_STEPS):
+                raise ValueError("worker owner action has no approved explanation")
             priority = ("P0" if cls == "allocated_paused_with_claimed_queue_owner_gate"
                         else "P1")
-            cards.append(_card(priority, project, "worker_owner_review",
-                               "Worker " + str(item["worker_slot"]) + ": " +
-                               _short(item.get("safe_followup"), 150),
-                               source="indexed_browser_event_and_queue_sample"))
+            card = _card(
+                priority, project, "worker_owner_review",
+                "Worker " + str(item["worker_slot"]) + ": " +
+                WORKER_OWNER_STEPS[followup_code],
+                source="indexed_browser_event_and_queue_sample")
+            # Only bounded, non-identifying source indicators; no queue ID,
+            # claim fingerprint, worker-browser URL or execution permission.
+            card["worker_slot"] = item["worker_slot"]
+            card["worker_condition"] = _short(cls, 85)
+            card["queue_lease_observed_not_verified"] = (
+                item.get("current_queue_lease_observed") is True)
+            cards.append(card)
     pressure = decision.get("live_queue_pressure")
     queue_coverage = "not_requested_or_unavailable"
     if pressure is not None:
