@@ -3504,6 +3504,11 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
             raise ValueError('Bronversie is vereist voor definitief sluiten')
         if len(note)<12 or not actor:
             raise ValueError('Concrete sluitreden en geauthenticeerde operator vereist')
+        # A source-guarded terminal decision is valid only for a COMPLETE
+        # dependency fingerprint. Partial guards permit an unnoticed blocker
+        # edit when the update clock has not advanced or lacks precision.
+        if expected_blocker is None or expected_evidence is None:
+            raise ValueError('Brongebonden sluiten vereist blocker en evidence, ook indien leeg')
     elif expected_updated_at is not None:
         raise ValueError('Bronstatus is vereist bij brongebonden sluiting')
     if expected_blocker is not None and (
@@ -3524,13 +3529,23 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
                 or row['claim_expires'] is not None):
             return {'dropped':False,'queue_id':queue_id,
                     'reason':'active-claim-or-lease','queue_audit':None}
+        # A guarded close applies only to the SAME safely parked item.
+        # Do not terminally close a malformed blocked/eligible row.
+        if guarded and row['eligible']!=0:
+            return {'dropped':False,'queue_id':queue_id,
+                    'reason':'blocked-task-not-parked','queue_audit':None}
+        # Without project metadata, a durable project receipt cannot be
+        # written. Preserve the task and its original evidence for the owner.
+        project_id=str(row['project_id'] or '')
+        project=PROJECT_INDEX.get(project_id)
+        if project is None:
+            return {'dropped':False,'queue_id':queue_id,
+                    'reason':'missing-project-receipt-context','queue_audit':None}
         if guarded and (
                 str(row['status'])!=expected_status or
                 str(row['updated_at'] or '')!=expected_updated_at or
-                (expected_blocker is not None and
-                 str(row['blocker'] or '')!=expected_blocker) or
-                (expected_evidence is not None and
-                 str(row['evidence'] or '')!=expected_evidence)):
+                str(row['blocker'] or '')!=expected_blocker or
+                str(row['evidence'] or '')!=expected_evidence):
             return {'dropped':False,'queue_id':queue_id,
                     'reason':'dependency-source-changed-reconfirm',
                     'queue_audit':None}
@@ -3555,17 +3570,15 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
                              worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                          WHERE queue_id=? AND status IN ('queued','blocked')
                            AND worker_slot IS NULL AND claimed_at IS NULL
-                           AND claim_expires IS NULL""",
-                      (proof,note[:2000],ts,queue_id))
+                           AND claim_expires IS NULL
+                           AND (?=0 OR (status='blocked' AND eligible=0))""",
+                      (proof,note[:2000],ts,queue_id,int(guarded)))
         dropped=bool(cur.rowcount)
         attention_resolved=False
         if dropped:
             # The action, actor and original blocker must be auditable in the
             # same commit as the state transition, not a separate best-effort log.
-            project_id=str(row['project_id'] or '')
-            if project_id in PROJECT_INDEX:
-                project=PROJECT_INDEX[project_id]
-                project_runtime.record_receipt(
+            project_runtime.record_receipt(
                     c,project_id,
                     phase=str(project.get('phase') or ''),
                     action=f"Operator terminally closed queue item {queue_id}",
@@ -3585,7 +3598,7 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
                               'terminal_resolution_note':note,
                               'source_version_guarded':guarded,
                               'active_claim_revoked':False},
-                )
+            )
             # A terminally cancelled queue item cannot still demand that a
             # human resume it; settle only its exact queue-bound Attention.
             attention_resolved=bool(c.execute(
@@ -3626,9 +3639,12 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_up
     if expected_evidence is not None and (
             not isinstance(expected_evidence,str) or len(expected_evidence)>6000):
         raise ValueError('Ongeldige bronevidence voor hervatten')
-    if (expected_updated_at is None and
-            (expected_blocker is not None or expected_evidence is not None)):
-        raise ValueError('Bronversie is vereist bij een dependency-hercontrole')
+    # A partial modern source guard is not enough to bind a human attestation
+    # to the exact blocker/evidence. Unguarded legacy calls remain supported
+    # by the existing authenticated endpoint for backward compatibility.
+    if any(v is not None for v in (expected_updated_at,expected_blocker,expected_evidence)) and (
+            expected_updated_at is None or expected_blocker is None or expected_evidence is None):
+        raise ValueError('Een dependency-hercontrole vereist volledige bronversie, blocker en evidence')
     ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
@@ -3685,7 +3701,8 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_up
             str(row['project_id']),
             phase=str(project.get('phase') or ''),
             action=f"Operator resumed parked task {queue_id}",
-            ci_status='queued',
+            # This is QUEUE admission, not a new observation of project CI.
+            ci_status='',
             blocker='',
             next_gate=str(row['title'] or ''),
             source='portfolio_queue_resume_blocked',
