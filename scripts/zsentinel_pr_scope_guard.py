@@ -107,6 +107,53 @@ def coverage_reason_text(reasons):
     return "; ".join(dict.fromkeys(labels)) if labels else "specifieke bronbeperking onbekend"
 
 
+def coverage_recovery_steps(reasons):
+    """Bounded, manual-only operator actions derived from source gaps.
+
+    An instruction is not a lease, approval or permission to mutate a
+    running worker. Prefer the actual GitHub PR sources, not missing evidence.
+    """
+    if type(reasons) is not list:
+        return ["Herlees de GitHub-PR-bron met bevoegde eigenaar; geen vrijgave."]
+    codes = {
+        value.split(":", 1)[-1] for value in reasons[:16]
+        if type(value) is str and len(value) <= 140
+    }
+    actions = []
+    if "github_source_unavailable" in codes:
+        actions.append(
+            "Controleer GitHub-toegang en PR-bron; herhaal uitsluitend een toegestane read-only inspectie.")
+    if "open_pr_snapshot_changed_or_duplicate" in codes or "open_pr_snapshot_unstable" in codes:
+        actions.append(
+            "Lees de actuele open-PR-pagina's opnieuw; bij verschuivende HEADs geen oude conflictkaart hergebruiken.")
+    if "open_pr_window_incomplete" in codes or "open_pr_inventory_incomplete" in codes:
+        actions.append(
+            "Vergroot zo nodig de read-only PR-scan met --max-prs 16 --pages 3; boven 48 PRs blijft de dekking ONVOLLEDIG.")
+    if "pr_file_lists_incomplete" in codes:
+        actions.append(
+            "Open Files changed van de betrokken PRs; de laatste volle bestandenpagina is geen volledigheidsbewijs.")
+    preview_causes = {
+        "shared_file_pairs_truncated", "shared_file_examples_truncated",
+        "path_scope_pairs_truncated", "path_scope_examples_truncated",
+        "path_scope_clusters_truncated", "path_scope_cluster_examples_truncated",
+        "portable_alias_pairs_truncated", "portable_alias_examples_truncated",
+        "portfolio_shared_file_pairs_display_truncated",
+        "portfolio_path_scope_pairs_display_truncated",
+        "portfolio_path_alias_pairs_display_truncated",
+        "portfolio_collision_evidence_display_truncated",
+        "path_scope_preview_incomplete", "portable_alias_preview_incomplete",
+        "path_scope_comparison_unavailable",
+        "portable_alias_comparison_unavailable",
+    }
+    if codes & preview_causes:
+        actions.append(
+            "Inspecteer de bron-PRs en hun exacte bestandsdiffs; afgekapt bewijs sluit verborgen botsingen niet uit.")
+    if not actions:
+        actions.append(
+            "Controleer de originele GitHub-bronnen; deze waarneming is geen bewijs van eigenaarschap of mergevrijgave.")
+    return actions[:5]
+
+
 def unique(pairs):
     result = {}
     for key, value in pairs:
@@ -1478,6 +1525,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "open_pr_window_complete": window_complete and stable,
         "pr_file_scope_sample_complete": fully_sampled,
         "source_coverage_reasons": source_coverage_reasons,
+        "source_recovery_steps": coverage_recovery_steps(source_coverage_reasons),
         "source_result": ("collisions_observed" if ordered or ordered_scope else
                           "portable_path_aliases_advisory" if ordered_alias else
                           "incomplete_no_collisions_observed" if not fully_sampled
@@ -1525,6 +1573,8 @@ def graph_operator_text(report):
     if report.get("source_coverage_reasons"):
         result.append("Bronbeperkingen: " +
                       coverage_reason_text(report["source_coverage_reasons"]))
+        for action in report.get("source_recovery_steps", []):
+            result.append("  Eigenaarroute: " + action)
     for receipt in report["open_pr_page_receipts"]:
         result.append("BRONPAGINA " + str(receipt["page"]) + " · posities " +
                       str(receipt["first_position"]) + "–" +
@@ -1718,6 +1768,7 @@ def graph_html(report):
                     else "onvolledig; bron/venster niet stabiel of afgekapt")
     if report.get("source_coverage_reasons"):
         completeness += " · " + coverage_reason_text(report["source_coverage_reasons"])
+        completeness += " · Actie: " + " / ".join(report.get("source_recovery_steps", []))
     unpaired = report["unpaired_open_prs_in_sample_not_claim_verified"]
     page_rows = "".join(
         "<li>Pagina " + str(r["page"]) + " · posities " +
@@ -2022,6 +2073,8 @@ def graph_markdown(report):
     ]
     if report.get("source_coverage_reasons"):
         lines.append("Bronbeperkingen: " + coverage_reason_text(report["source_coverage_reasons"]))
+        for action in report.get("source_recovery_steps", []):
+            lines.append("- **Eigenaarroute:** " + action)
     lines.extend(["", "## Waargenomen GitHub-pagina's", ""])
     for receipt in report["open_pr_page_receipts"]:
         lines.append("- Pagina " + str(receipt["page"]) + " · posities " +
