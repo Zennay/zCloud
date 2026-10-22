@@ -799,6 +799,7 @@ function blockedQueuePanel(){
           +'</div><div class="blocked-queue-actions">'
           +'<button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Inconsistent queue state"':'')+'>Resume after confirmation</button>'
           +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Current parked-task claim is inconsistent"':'')+'>Close permanently…</button>'
+          +'<button type="button" class="blocked-queue-inspect" data-inspect-blocked="'+esc(item.queue_id)+'">Inspect current recovery conditions</button>'
           +'</div></article>';
       }).join('')+'</div>'
       :'<p class="blocked-queue-state">'+(search
@@ -841,6 +842,65 @@ function blockedResumeFingerprint(item){
     String(item?.claim_expires??''),String(item?.source_url??'')
   ]);
 }
+
+const BLOCKED_INSPECT_REASON_TEXT={
+  task_not_found:'The queue item does not exist in the current source.',
+  task_not_blocked:'The item is no longer blocked.',
+  blocked_task_eligible:'The blocked item is marked eligible; the owner must reconcile queue state.',
+  claim_or_lease_still_bound:'A worker claim or lease field is still present; do not take over.',
+  project_registration_missing:'Project registration is missing; no durable recovery receipt can be guaranteed.',
+  project_not_active:'The owning project is not active; resumption is not permitted.',
+  project_human_gated:'The project requires human admission rather than worker allocation.',
+  operator_decision_and_fresh_source_required:'A human must verify the dependency or closure reason; a new guarded transaction is required.'
+};
+async function inspectBlockedQueue(queueId,button){
+  if(blockedResumesPending.has(queueId))return;
+  const card=button.closest('.blocked-queue-item');
+  if(!card){window.alert('Original queue card unavailable. No action performed.');return;}
+  const old=button.textContent;
+  button.disabled=true;button.textContent='Reading current source…';
+  let region=card.querySelector('[data-blocked-inspection]');
+  if(!region){
+    region=document.createElement('div');
+    region.setAttribute('data-blocked-inspection','');
+    region.className='blocked-queue-inspection';
+    region.setAttribute('role','status');
+    card.append(region);
+  }
+  region.textContent='Reading the authorized queue state; this is not recovery authorization.';
+  try{
+    const response=await fetch('/api/portfolio-queue',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'inspect_blocked',queue_id:queueId}),
+      signal:AbortSignal.timeout(10000)
+    });
+    const packet=await response.json().catch(()=>({}));
+    if(!response.ok||packet.ok!==true||packet.result?.read_only!==true){
+      throw new Error(packet.error||'Current queue inspection unavailable');
+    }
+    const result=packet.result;
+    if(String(result.queue_id||'')!==queueId)throw new Error('Queue identity mismatch; inspect the original source.');
+    const original=(BLOCKED_QUEUE||[]).find(row=>String(row.queue_id)===queueId);
+    const changed=!result.found||!original||String(original.updated_at||'')!==String(result.queue_updated_at||'')
+      ||String(original.status||'')!==String(result.queue_status||'');
+    const reasons=Array.isArray(result.reason_codes)?result.reason_codes.slice(0,12):[];
+    const details=reasons.map(code=>'<li>'+esc(BLOCKED_INSPECT_REASON_TEXT[String(code)]||String(code))+'</li>').join('');
+    region.innerHTML='<strong>Read-only recovery inspection · '+esc(blockedQueueTime(result.observed_at)||'time unknown')+'</strong>'
+      +'<p>'+(changed?'<b>Source changed since the loaded card. Refresh before any operator decision.</b> '
+         :'Observed version matches the visible card; permissions and dependencies still require confirmation. ')
+      +esc(result.found?('Queue: '+String(result.queue_status||'unknown')+'. '
+          +'Resume candidate: '+(result.resume_candidate===true?'yes':'no')+'. '
+          +'Terminal-close candidate: '+(result.close_candidate===true?'yes':'no')+'.')
+        :'Queue item not found.')+'</p>'
+      +(details?'<ul>'+details+'</ul>':'')
+      +'<small>This observation never clears a dependency or lease. Final writes still require a fresh complete source guard and operator authorization.</small>';
+  }catch(error){
+    region.textContent='Inspection unavailable: '+String(error?.message||error)+'. No queue state changed.';
+  }finally{
+    button.disabled=false;button.textContent=old;
+  }
+}
+
 async function resumeBlockedQueue(queueId,button){
   if(blockedResumesPending.has(queueId))return;
   const item=(BLOCKED_QUEUE||[]).find(row=>String(row?.queue_id)===queueId&&blockedQueueIsParked(row));
@@ -1409,6 +1469,7 @@ function projectBlockedQueuePanel(project){
       +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'
       +(parked?'':' disabled title="Current parked-task owner, claim timestamp or lease state inconsistent"')
       +'>Close permanently…</button>'
+          +'<button type="button" class="blocked-queue-inspect" data-inspect-blocked="'+esc(item.queue_id)+'">Inspect current recovery conditions</button>'
       +'</div></article>';
   }).join('');
   return '<section class="blocked-queue-panel blocked-project-panel">'
@@ -1525,7 +1586,7 @@ const integrityExport=e.target.closest('[data-owner-integrity-export]');if(integ
 const integrityMore=e.target.closest('[data-owner-integrity-more]');if(integrityMore){e.preventDefault();ownerIntegrityVisible+=12;render();return}
 const integrityLess=e.target.closest('[data-owner-integrity-less]');if(integrityLess){e.preventDefault();ownerIntegrityVisible=12;render();return}
 const integrityOpen=e.target.closest('[data-owner-integrity-open]');if(integrityOpen){e.preventDefault();ownerIntegrityProject=integrityOpen.dataset.ownerIntegrityOpen;ownerIntegrityUrgentOnly=false;ownerIntegrityVisible=12;location.hash='#overview';return}
-const churnAnomalies=e.target.closest('[data-claim-churn-anomalies]');if(churnAnomalies){e.preventDefault();claimChurnAnomaliesOnly=!claimChurnAnomaliesOnly;claimChurnVisible=12;render();return}const churnExpired=e.target.closest('[data-claim-churn-expired]');if(churnExpired){e.preventDefault();claimChurnExpiredOnly=!claimChurnExpiredOnly;claimChurnVisible=12;render();return}const churnExport=e.target.closest('[data-claim-churn-export]');if(churnExport){e.preventDefault();downloadClaimChurnHandoff();return}const churnMore=e.target.closest('[data-claim-churn-more]');if(churnMore){e.preventDefault();claimChurnVisible+=12;render();return}const churnLess=e.target.closest('[data-claim-churn-less]');if(churnLess){e.preventDefault();claimChurnVisible=12;render();return}const churnUrgent=e.target.closest('[data-claim-churn-priority]');if(churnUrgent){e.preventDefault();claimChurnUrgentOnly=!claimChurnUrgentOnly;claimChurnVisible=12;render();return}const churnOpen=e.target.closest('[data-claim-churn-open]');if(churnOpen){e.preventDefault();claimChurnVisible=12;location.hash='#overview';return}const closeBlocked=e.target.closest('[data-close-blocked]');if(closeBlocked){e.preventDefault();e.stopPropagation();await closeBlockedQueue(closeBlocked.dataset.closeBlocked,closeBlocked);return}const resumeBlocked=e.target.closest('[data-resume-blocked]');if(resumeBlocked){e.preventDefault();e.stopPropagation();await resumeBlockedQueue(resumeBlocked.dataset.resumeBlocked,resumeBlocked);return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
+const churnAnomalies=e.target.closest('[data-claim-churn-anomalies]');if(churnAnomalies){e.preventDefault();claimChurnAnomaliesOnly=!claimChurnAnomaliesOnly;claimChurnVisible=12;render();return}const churnExpired=e.target.closest('[data-claim-churn-expired]');if(churnExpired){e.preventDefault();claimChurnExpiredOnly=!claimChurnExpiredOnly;claimChurnVisible=12;render();return}const churnExport=e.target.closest('[data-claim-churn-export]');if(churnExport){e.preventDefault();downloadClaimChurnHandoff();return}const churnMore=e.target.closest('[data-claim-churn-more]');if(churnMore){e.preventDefault();claimChurnVisible+=12;render();return}const churnLess=e.target.closest('[data-claim-churn-less]');if(churnLess){e.preventDefault();claimChurnVisible=12;render();return}const churnUrgent=e.target.closest('[data-claim-churn-priority]');if(churnUrgent){e.preventDefault();claimChurnUrgentOnly=!claimChurnUrgentOnly;claimChurnVisible=12;render();return}const churnOpen=e.target.closest('[data-claim-churn-open]');if(churnOpen){e.preventDefault();claimChurnVisible=12;location.hash='#overview';return}const inspectBlocked=e.target.closest('[data-inspect-blocked]');if(inspectBlocked){e.preventDefault();e.stopPropagation();await inspectBlockedQueue(inspectBlocked.dataset.inspectBlocked,inspectBlocked);return}const closeBlocked=e.target.closest('[data-close-blocked]');if(closeBlocked){e.preventDefault();e.stopPropagation();await closeBlockedQueue(closeBlocked.dataset.closeBlocked,closeBlocked);return}const resumeBlocked=e.target.closest('[data-resume-blocked]');if(resumeBlocked){e.preventDefault();e.stopPropagation();await resumeBlockedQueue(resumeBlocked.dataset.resumeBlocked,resumeBlocked);return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
 document.addEventListener('input',e=>{
