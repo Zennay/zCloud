@@ -4356,3 +4356,8 @@ bevoegde release-eigenaar blijven onveranderd nodig; geen QA-suite uitgevoerd.
 ### 22 oktober · Systemd-bronklok bij runnertriage
 
 De exacte runnertriage valideert de klok van de systemd-waarneming afzonderlijk van de lokale `/proc`-steekproef. Een ontbrekende of ongeldige UTC-tijd, een systemd-waarneming ouder dan vijf minuten of een bronklok meer dan twee minuten in de toekomst wordt als `UNKNOWN` geclassificeerd (`invalid_observation_clock`, `stale_observation_clock` of `future_observation_clock`). Zo kan een verse buitenste rapporttijdstempel een oude unitstatus niet opnieuw actueel laten lijken. De JSON-, tekst- en HTML-uitvoer toont het systemd-bronmoment wanneer dit parseerbaar is. Een onbekende of verouderde unitwaarneming mag geen service/proces-relatie of runnerherstel bewijzen; er worden geen processen, services, claims, jobs of queues gewijzigd. Deze wijziging voegt geen QA-suite toe of voert die uit en vervangt geen verplichte exacte-head CI/review-gate.
+
+
+### 22 oktober · Swapdruk telt mee in runner-hosttriage
+
+De optionele read-only runner-hostmeting classificeert nu ook **geconfigureerde maar bijna lege swap**: maximaal 5% vrij wordt `critical_headroom_observed`; maximaal 15% vrij wordt ten minste `constrained_headroom_observed`. De aparte `swap_status` is `OBSERVED` wanneer swap is geconfigureerd en `NO_SWAP_CONFIGURED` wanneer de totale swap nul is. Geen swap configureren wordt dus niet foutief als uitgeputte swap gerapporteerd. De private operatorregel toont vrije/totale swap en de vervolgstap noemt geheugen/swap naast disk/inodes. Dit blijft alleen een hostdruksignaal: het bewijst niet dat swapdruk de runneroorzaak is en autoriseert geen cleanup, stop, restart, retry of claimwijziging.
