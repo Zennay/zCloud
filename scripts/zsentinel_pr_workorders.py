@@ -16,6 +16,9 @@ import re
 import unicodedata
 
 from zsentinel_pr_scope_guard import coverage_reason_text, csv_formula_inert, edit_path
+from zsentinel_runner_queue import (
+    lines as runner_queue_lines, html as runner_queue_html, SCHEMA as RUNNER_QUEUE_SCHEMA,
+)
 from zsentinel_pr_gate_continuity import (
     LABELS as HISTORICAL_CHANGE_LABELS, NEXT_STEP_LABELS,
 )
@@ -1256,9 +1259,20 @@ def collect_workorders(board):
             card["parallel_review_request_possible_at_observation"]
             for card in cards),
     }
+    queue_sources = board.get("runner_queue_observations", {})
+    if type(queue_sources) is not dict or set(queue_sources) - set(projects):
+        raise ValueError("invalid runner queue project source")
+    for project, source in queue_sources.items():
+        if (type(source) is not dict or source.get("schema") != RUNNER_QUEUE_SCHEMA
+                or source.get("repository") != projects[project]["repository"]
+                or any(source.get(key) is not False for key in (
+                    "runner_health_verified", "claim_authorized",
+                    "merge_authorized", "restart_authorized", "writes_performed"))):
+            raise ValueError("untrusted runner assignment receipt")
     receipt = {
         "schema": SCHEMA, "source_observed_at_utc": observed_at,
         "project_set": list(project_ids), "items": cards,
+        "repository_runner_queue_sources": queue_sources,
         "selected_pr_coordination": coordination,
         "review_request_worklist_summary": review_summary,
         "workstream_summary": workstream_summary,
@@ -1397,6 +1411,17 @@ def render_csv(bundle):
             })
         row.update(extra)
         writer.writerow([inert(row.get(key)) for key in fields])
+    for project, queue in bundle.get("repository_runner_queue_sources", {}).items():
+        repo = queue["repository"]
+        status = queue.get("source_status", "sampled_nonatomic")
+        add("runner_queue_overview", project=project, detail=(
+            "GitHub Actions: " + status +
+            "; no runner health, workflow/claim, CI or merge authority."))
+        for job in queue.get("sampled_jobs", [])[:64]:
+            add("runner_queue_job", project=project, link=job["job_url"],
+                detail=job["assignment"] + " · " + job["status_at_read"] +
+                       " · " + job["name"] +
+                       " · labels " + (",".join(job["labels_observed"]) or "UNKNOWN"))
     add("receipt", detail=(
         "BOUNDED READ-ONLY SOURCE; NOT a full PR inventory, ownership proof, "
         "required-CI set, review, merge or deploy approval. "
@@ -1595,6 +1620,8 @@ def render_html(bundle):
         "geen huidige eigenaar, vereiste CI, onafhankelijke review of merge- en "
         "deployrecht.</p></header>",
     ]
+    for source in bundle.get("repository_runner_queue_sources", {}).values():
+        parts.append(runner_queue_html(source))
     if bundle["previous_source_observed_at_utc"]:
         parts.append("<p class=\"meta\">Vorige bronopname (UTC): " +
                      e(bundle["previous_source_observed_at_utc"]) +
@@ -2032,6 +2059,9 @@ def render_markdown(bundle):
         "branch protection, merge- of deploytoestemming.",
         "",
     ]
+    for project, source in bundle.get("repository_runner_queue_sources", {}).items():
+        lines.extend(["", "## Runnerwachtrij · " + project] +
+                     ["- " + line for line in runner_queue_lines(source)])
     if bundle.get("source_observation_stale") is True:
         lines.append(
             "**HISTORISCHE BRON (>6 uur):** geen actuele PR-/HEAD-/"
