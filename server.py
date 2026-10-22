@@ -2871,6 +2871,10 @@ def _portfolio_task_claim_state(lease_until, observed_at=None):
 
 def _portfolio_queue_task_claim_guard(connection, project_id, queue_id, observed_at=None):
     """Observe the separate task_claims lease for one queue item; never mutate it."""
+    project_id=str(project_id or '').strip()
+    queue_id=str(queue_id or '').strip()
+    if not project_id or not queue_id:
+        return {'source_available': True, 'state': 'unknown', 'lease_until': None}
     try:
         claim = connection.execute(
             'SELECT lease_until FROM task_claims WHERE project_id=? AND claim_key=?',
@@ -2892,8 +2896,12 @@ def _portfolio_queue_task_claim_snapshot(connection, rows, observed_at=None):
     """Batch-read task_claims for blocked queue rows from the same SQLite snapshot."""
     blocked = [row for row in rows if str(row['status'] or '') == 'blocked']
     keys = {(str(row['project_id'] or ''), str(row['queue_id'] or '')) for row in blocked}
-    states = {key: {'source_available': True, 'state': 'none', 'lease_until': None}
-              for key in keys}
+    states = {
+        key: {'source_available': True,
+              'state': 'none' if key[0].strip() and key[1].strip() else 'unknown',
+              'lease_until': None}
+        for key in keys
+    }
     if not keys:
         return states
     queue_ids = sorted({queue_id for _, queue_id in keys if queue_id})
@@ -2908,8 +2916,9 @@ def _portfolio_queue_task_claim_snapshot(connection, rows, observed_at=None):
                 placeholders + ')', chunk,
             ).fetchall()
             for claim in claims:
-                key = (str(claim['project_id'] or ''), str(claim['claim_key'] or ''))
-                if key not in states:
+                key = (str(claim['project_id'] or '').strip(),
+                       str(claim['claim_key'] or '').strip())
+                if key not in states or not key[0] or not key[1]:
                     continue
                 lease_until = claim['lease_until']
                 states[key] = {
