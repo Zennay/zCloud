@@ -364,7 +364,9 @@ function blockedResumeFingerprint(item){
     String(item?.queue_id??''),String(item?.project_id??''),
     String(item?.title??''),String(item?.priority??''),
     String(item?.status??''),String(item?.eligible??''),
-    String(item?.blocker??''),String(item?.evidence??'')
+    String(item?.blocker??''),String(item?.evidence??''),
+    String(item?.updated_at??''),String(item?.worker_slot??''),
+    String(item?.claim_owner??''),String(item?.claim_expires??'')
   ]);
 }
 async function resumeBlockedQueue(queueId,button){
