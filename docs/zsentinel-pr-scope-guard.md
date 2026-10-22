@@ -2949,3 +2949,18 @@ De activiteitssignaalbron valideert ook iedere gekoppelde PR-URL vóór set-/map
 Onjuiste typen, niet-canonieke URL's, te lange identiteiten en dubbele refs leveren
 een begrensde bronfout op in plaats van een ongecontroleerde `TypeError` of een
 ambigu activiteitsoverzicht. Dit verandert geen claim- of releasebesluit.
+
+
+## 22 oktober · expliciete anomalie voor toekomstige issue-/PR-activiteitsklokken
+
+Een issue- of gekoppelde open-PR-update die ná de gekozen observatieklok valt,
+wordt niet langer alleen als een ontbrekende timestamp verwerkt. De classifier
+markeert `source_clock_incoherent` en levert `event_clock_incoherent=true`.
+Zo kan een recente issue-update een toekomstige PR-timestamp niet verbergen
+achter een normaal ogend activiteitssignaal.
+
+De menselijke werkbak en issue-CSV tonen de anomalie expliciet. De gegroepeerde
+PR-CSV-regel bewaart dezelfde boolean per gekoppeld issue in het
+`related_issue_activity_snapshot_json`. Oudere opgeslagen boards zonder deze
+nieuwe receipt krijgen `UNKNOWN` in plaats van een verzonnen `NO`. Dit is
+alleen een observatie van bronklokken, geen bewijs van stilstand of vrije claim.
