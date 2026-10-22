@@ -364,6 +364,7 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
             retry_meta["scope"] in ("all", pid)) else None
         active = (claims_by_project.get(pid, []) if claims_by_project is not None
                   and fresh.get("claims") else None)
+        coverage_status = coverage.get(pid, "unavailable")
         if active:
             action = "Preserve active owner; review claim-specific next steps."
         elif queue and queue["expired_active_leases"]:
@@ -371,7 +372,15 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         elif queue and queue["high_claim_attempts"]:
             action = "Inspect recurring claim cycles; do not auto-retry."
         elif issue_totals.get(pid, {}).get("P0", 0):
-            action = "Review P0 issue and current owner/PR state."
+            action = "Review sampled P0 issues and current owner/PR state."
+        elif issue_totals.get(pid, {}).get("P1", 0):
+            action = "Review sampled P1 issues and current owner/PR state."
+        elif coverage_status == "unavailable":
+            action = "Restore GitHub issue-source coverage; zero observed issues are not a clean backlog."
+        elif coverage_status == "degraded":
+            action = "Repair degraded GitHub issue coverage before trusting backlog prioritization."
+        elif coverage_status == "partial":
+            action = "Refresh the bounded issue inventory; unseen issues remain unknown."
         else:
             action = "Review live claims and existing PRs before action."
         coverage_status = coverage.get(pid, "unavailable")
