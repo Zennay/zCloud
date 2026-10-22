@@ -198,6 +198,44 @@ def _gate_class(item: dict, observed: bool, old: bool) -> str:
     return "verify_live_branch_and_owner_rules"
 
 
+def _owner_check_links_from_receipt(item, repository, head):
+    """Create bounded numeric GitHub check links from saved, pinned receipts.
+
+    An offline receipt is historical: these are owner navigation aids, never
+    proof of current CI, runtime recovery or branch-protection requirements.
+    """
+    source = item.get("observed_actionable_check_runs", [])
+    if type(source) is not list or len(source) > 12:
+        raise ValueError("unbounded saved exact-head check preview")
+    result, seen = [], set()
+    for row in source:
+        if type(row) is not dict:
+            raise ValueError("malformed saved exact-head check entry")
+        check_id = row.get("check_run_id")
+        if (type(check_id) is not int or check_id <= 0 or check_id in seen):
+            raise ValueError("duplicate or invalid saved GitHub check identity")
+        seen.add(check_id)
+        url = "https://github.com/" + repository + "/runs/" + str(check_id)
+        if row.get("url") != url:
+            raise ValueError("check link escaped pinned repository identity")
+        state = row.get("state")
+        if state == "completed":
+            if row.get("conclusion") in ("success", "neutral", "skipped"):
+                raise ValueError("successful check incorrectly marked actionable")
+            kind = "failed_check"
+        elif (state == "in_progress" and
+              row.get("running_attention_60m") is True):
+            kind = "long_running_check"
+        elif state == "queued" and row.get("queued_attention_30m") is True:
+            kind = "long_queued_check"
+        else:
+            continue
+        if len(result) < 8:
+            result.append({"url": url, "kind": kind,
+                           "saved_head": head, "live_state_verified": False})
+    return result
+
+
 def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
     if not 1 <= len(receipt_paths) <= MAX_RECEIPTS:
         raise ValueError("choose one to 75 separately created saved gate receipts")
@@ -308,7 +346,12 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                         "observed_checks_pending", "observed_checks_not_successful",
                         "observed_independent_exact_head_approvals")):
                     raise ValueError("invalid negative observed gate count")
+            # Only a pinned exact-head receipt can supply direct historical
+            # owner links. Never reuse links from drifted/unavailable PR reads.
+            owner_check_links = (_owner_check_links_from_receipt(
+                item, repo, item["head_sha_observed"]) if observed else [])
             rows.append({
+                "owner_check_links": owner_check_links,
                 "url": url,
                 "target_branch_observed": (
                     item.get("base_ref_observed") if
@@ -369,6 +412,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
             "target_branch_observed": row["target_branch_observed"],
             "target_branch_identity_known": row["target_branch_identity_known"],
             "exact_head_observed": row["exact_head_observed"],
+            "owner_check_links": row["owner_check_links"],
             "receipt_old": row["saved_source_stale_over_15_minutes"],
             "current_head_verified": False,
             "owner_and_release_authorized": False,
