@@ -308,3 +308,13 @@ neemt dezelfde geselecteerde rijen en noteert de actieve
 Attention-filter in het niet-autoriserende bronpakket.
 Geen nieuw achtergrondproces, alert, claim, queue-write of automatische
 hervatting.
+
+De implementatie toont bij een verdwenen `attention_needed`-bron onder
+een nog ingeschakelde Attention-filter expliciet **bron onbekend**,
+in plaats van stilzwijgend alle taken als passend te presenteren.
+Ongeldige of meer dan twee minuten toekomstige bronklokken zijn geen
+geldige waarnemingstijd en kunnen niet als privé-exportbron dienen.
+Een inconsistente geparkeerde rij met `eligible=true`, een worker-slot
+of een resterende lease krijgt geen hervatknop; de concrete
+inconsistentie staat bij de operatorcontext. De server blijft de
+uiteindelijke autorisatie en transactie bewaken.
