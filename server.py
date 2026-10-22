@@ -4322,7 +4322,9 @@ def _age_seconds(ts):
     except Exception: return None
 
 def worker_debug_report():
-    workers = runner_worker_targets()
+    # A GET diagnostic must observe the current worker map without reconciling it.
+    # reconcile=True performs INSERT/UPDATE work in runner_workers.
+    workers = runner_worker_targets(reconcile=False)
     window = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
     marks = ','.join('?' * len(WORKER_BLOCK_EVENTS))
     rows = []
@@ -4366,7 +4368,9 @@ def worker_debug_report():
         cmds = [{'status': r['status'], 'result': r['r'], 'count': r['n']} for r in c.execute("SELECT status,COALESCE(substr(result,1,90),'') r,COUNT(*) n FROM runner_commands WHERE created_at>? GROUP BY 1,2 ORDER BY n DESC LIMIT 8", (window,)).fetchall()]
     try: firefox = firefox_runner_status()
     except Exception as exc: firefox = {'active': None, 'error': str(exc)[:120]}
-    return {'time': now(), 'workers': rows, 'summary': summary, 'events_15m': events, 'failed_commands_15m': failed,
+    return {'time': now(), 'read_only_observation': True,
+            'sqlite_reconciliation_performed': False, 'queue_mutations_performed': False,
+            'workers': rows, 'summary': summary, 'events_15m': events, 'failed_commands_15m': failed,
             'commands_15m': cmds, 'firefox': firefox,
             'contract': {'prompt': 'project-first', 'queue_binding': 'structured-metadata', 'text_boilerplate_required': False}}
 
@@ -4857,7 +4861,12 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()
-            return self.reply({'projects':runner_worker_targets(allocation=allocation),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings()})
+            # GET /api/runner-targets is observational: never reconcile runner_workers here.
+            projects=runner_worker_targets(allocation=allocation,reconcile=False)
+            return self.reply({'projects':projects,'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,
+                               'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings(),
+                               'read_only_observation':True,'sqlite_reconciliation_performed':False,
+                               'queue_mutations_performed':False})
         if u.path=='/api/runner-live':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             target_cfg=runner_targets()
