@@ -667,6 +667,8 @@ def render_private_csv(report):
         "filename", "file_cross_window", "file_pr_count", "pr_number",
         "pr_url", "pr_head_sha", "pr_base_ref", "pr_source_window", "related_pr_url",
         "related_pr_head_sha", "related_pr_base_ref", "related_pr_source_window", "pair_shared_files",
+        "scope_conflicts_for_pr", "scope_conflict_pairs_observed", "scope_conflict_relation",
+        "scope_conflict_left_path", "scope_conflict_right_path",
         "cross_window_pairs_for_pr", "shared_files_for_pr",
         "unverified_issue_number", "unverified_issue_mentions_for_pr",
         "source_complete_for_all_open_prs", "claims_verified",
@@ -719,6 +721,7 @@ def render_private_csv(report):
             pr_source_window=pr["snapshot"],
             cross_window_pairs_for_pr=pr["cross_window_file_pair_count"],
             shared_files_for_pr=pr["cross_window_shared_file_count"],
+            scope_conflicts_for_pr=pr["cross_window_scope_pair_count"],
             unverified_issue_mentions_for_pr=pr["cross_window_number_hint_count"],
             operator_notice="PR to inspect, not a claim or integration order.")
     for group in report["shown_connected_cross_window_groups"]:
@@ -751,6 +754,26 @@ def render_private_csv(report):
             related_pr_source_window=pair["right_snapshot"],
             pair_shared_files=pair["shared_files_observed"],
             operator_notice="Same filename in both PRs, not a verified git conflict.")
+    for pair in report["shown_cross_window_scope_conflict_pairs"]:
+        for conflict in pair["path_conflicts"]:
+            row("cross_window_file_directory_scope_conflict",
+                pr_url=pair["left_url"],
+                pr_head_sha=pair["left_head_sha"],
+                pr_base_ref=pair["left_base_ref"],
+                pr_source_window=pair["left_snapshot"],
+                related_pr_url=pair["right_url"],
+                related_pr_head_sha=pair["right_head_sha"],
+                related_pr_base_ref=pair["right_base_ref"],
+                related_pr_source_window=pair["right_snapshot"],
+                scope_conflict_pairs_observed=pair["path_conflict_count_observed"],
+                scope_conflict_relation=conflict["relation"],
+                scope_conflict_left_path=conflict["left_path"],
+                scope_conflict_right_path=conflict["right_path"],
+                operator_notice="Cross-window file/directory ancestor relationship; not a proven Git merge conflict.")
+        if pair["path_conflicts_truncated"] or not pair["pair_scan_complete"]:
+            row("source_warning", pr_url=pair["left_url"],
+                related_pr_url=pair["right_url"],
+                operator_notice="Cross-window scope examples are incomplete or the pair scan reached its bound.")
     for group in report["shown_issue_number_hints"]:
         for pr in group["shown_prs"]:
             row("unverified_issue_number_hint",
@@ -769,6 +792,8 @@ def render_private_csv(report):
          "Additional existing PRs excluded from the ranked sample."),
         ("collision_pairs_truncated",
          "More shared filename pairs exist than this CSV displays."),
+        ("cross_window_scope_conflicts_truncated",
+         "Cross-window file/directory scope scan or display was truncated; unseen conflicts remain UNKNOWN."),
         ("issue_hint_groups_truncated",
          "Additional unverified issue-number groups were not exported."),
         ("partial_file_scope_list_truncated",
@@ -803,6 +828,10 @@ def render(report, fmt):
         ", ".join(map(str, report["observed_source_page_numbers"])),
         "Nieuwe OVER-PAGINA bestandsparen: " +
         str(report["cross_snapshot_file_collision_pairs_observed"]),
+        "Bestand/map-ancestorconflicten over vensters: " +
+        str(report["cross_window_scope_conflict_pairs_observed"]) +
+        " · scan " + ("volledig" if report["cross_window_scope_scan_complete"] else "AFGEKAPT/ONVOLLEDIG") +
+        " · padvergelijkingen " + str(report["cross_window_scope_path_comparisons"]),
         "Verbonden groepen over PR-pagina's: " +
         str(report["connected_cross_window_groups_observed"]),
         "Geen atomische live bron, geen eigenaarsclaim en geen mergevrijgave.",
@@ -818,6 +847,8 @@ def render(report, fmt):
                      " bestandspaar-botsingen / " +
                      str(item["cross_window_shared_file_count"]) +
                      " gedeelde bestanden · " +
+                     str(item["cross_window_scope_pair_count"]) +
+                     " bestand/map-scopeparen · " +
                      str(item["cross_window_number_hint_count"]) +
                      " ongeverifieerde issue-/PR-nummerhints")
     if not report["prioritized_existing_prs"]:
@@ -881,6 +912,25 @@ def render(report, fmt):
             lines.append("    - … overige paden niet getoond")
     if not report["shown_collision_pairs"]:
         lines.append("Geen cross-window botsing in deze bestanden gezien; GEEN vrijgave.")
+    lines.extend(["", "## Cross-window bestand/map-ancestorconflicten", "",
+                  "Een PR gebruikt een pad als bestand terwijl een andere PR daaronder bestanden toevoegt. Dit is een scopeconflict-signaal, geen bewezen Git-mergeconflict of eigenaarschap.", ""])
+    for pair in report["shown_cross_window_scope_conflict_pairs"]:
+        lines.append("- [PR](" + pair["left_url"] + ") ↔ [PR](" +
+                     pair["right_url"] + ") · " +
+                     str(pair["path_conflict_count_observed"]) +
+                     " waargenomen padparen · vensters " +
+                     str(pair["left_snapshot"]) + "/" + str(pair["right_snapshot"]) +
+                     (" · scan voor dit paar volledig" if pair["pair_scan_complete"]
+                      else " · AFGESNEDEN: alleen waargenomen ondergrens"))
+        for conflict in pair["path_conflicts"]:
+            lines.append("    - " + conflict["left_path"] + " ↔ " +
+                         conflict["right_path"] + " [" + conflict["relation"] + "]")
+        if pair["path_conflicts_truncated"]:
+            lines.append("    - Extra padparen niet getoond.")
+    if not report["shown_cross_window_scope_conflict_pairs"]:
+        lines.append("Geen cross-window bestand/map-ancestorconflict waargenomen in de onderzochte bron.")
+    if report["cross_window_scope_conflicts_truncated"]:
+        lines.append("ONVOLLEDIG: scan of weergave begrensd; niet getoonde PR-paren blijven ONBEKEND.")
     lines.extend([
         "",
         "## Mogelijk dubbel productwerk: zelfde issue-nummer OVER vensters",
@@ -930,8 +980,21 @@ def render(report, fmt):
         "<br>".join(escape(name) for name in item["shared_paths"]) +
         "</td></tr>"
         for item in report["shown_collision_pairs"])
+    scope_rows = "".join(
+        "<tr><td><a rel='noopener noreferrer' href='" +
+        escape(pair["left_url"], quote=True) + "'>PR</a> ↔ <a rel='noopener noreferrer' href='" +
+        escape(pair["right_url"], quote=True) + "'>PR</a></td><td>" +
+        str(pair["path_conflict_count_observed"]) + "</td><td>" +
+        "<br>".join("<code>" + escape(item["left_path"]) + "</code> ↔ <code>" +
+                    escape(item["right_path"]) + "</code> <small>" +
+                    escape(item["relation"]) + "</small>" for item in pair["path_conflicts"]) +
+        ("<br><small>Voorbeelden afgekapt of paar gedeeltelijk gescand.</small>"
+         if pair["path_conflicts_truncated"] or not pair["pair_scan_complete"] else "") +
+        "</td></tr>" for pair in report["shown_cross_window_scope_conflict_pairs"])
+    if not scope_rows:
+        scope_rows = "<tr><td colspan='3'>Geen cross-window bestand/map-ancestorconflict waargenomen in deze bron.</td></tr>"
     shortlist_rows = "".join(
-        "<li><a rel='noopener noreferrer' href='" +
+        "<li><a rel='noopener noreferrer' href='"
         escape(item["url"], quote=True) + "'>PR #" +
         str(item["pr_number"]) + "</a> · " +
         str(item["cross_window_file_pair_count"]) +
@@ -939,6 +1002,7 @@ def render(report, fmt):
         " · botsende PR-paren / " +
         str(item["cross_window_shared_file_count"]) +
         " gedeelde bestanden · " +
+        str(item["cross_window_scope_pair_count"]) + " bestand/map-scopeparen · " +
         str(item["cross_window_number_hint_count"]) +
         " onzekere issue-/PR-nummers</li>"
         for item in report["prioritized_existing_prs"])
@@ -1035,7 +1099,12 @@ def render(report, fmt):
         "<table><thead><tr><th>Open bron-PRs</th><th>Gedeelde bestanden</th>"
         "<th>Doelbranches</th><th>Voorbeeldpaden</th></tr></thead><tbody>" +
         (rows or "<tr><td colspan='4'>Geen botsing gezien, geen vrijgave.</td></tr>") +
-        "</tbody></table><h2>Zelfde nummer in PR-titel of body over vensters</h2>"
+        "</tbody></table><h2>Cross-window bestand/map-ancestorconflicten</h2>"
+        "<p>Bestand/map-scope is een afzonderlijk signaal, geen bewezen Git-conflict. Scanvolledigheid: " +
+        ("volledig" if report["cross_window_scope_scan_complete"] else "ONVOLLEDIG") +
+        "; waargenomen PR-paren: " + str(report["cross_window_scope_conflict_pairs_observed"]) +
+        ".</p><table><thead><tr><th>Open PRs</th><th>Padparen waargenomen</th><th>Padrelaties</th></tr></thead><tbody>" +
+        scope_rows + "</tbody></table><h2>Zelfde nummer in PR-titel of body over vensters</h2>"
         "<p>Niet geverifieerd als bestaand issue of bewezen fix. Controleer GitHub.</p>"
         "<ul>" + (issue_rows or "<li>Geen nieuwe nummeroverlap in deze "
                 "steekproef, GEEN vrijgave.</li>") + "</ul></html>"
