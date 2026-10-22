@@ -5,6 +5,7 @@ Only projects already selected for a read-only PR workboard are supported.
 Issue/PR references are observational clues, never proof of fixes, claims,
 required reviews, merge authorization or production completion.
 """
+import datetime as dt
 import re
 
 # A single GitHub action may link several issues: "Fixes: #12, #13 and #14".
@@ -23,6 +24,24 @@ LABELS_P0 = {"p0", "priority:p0", "priority/p0", "critical", "severity:critical"
              "severity/p0", "urgent", "blocker"}
 LABELS_P1 = {"p1", "priority:p1", "priority/p1", "high", "severity:high",
              "severity/p1"}
+
+
+def parse_utc_timestamp(value):
+    """Parse one bounded timezone-aware timestamp; naive clocks are unknown."""
+    if not isinstance(value, str) or not 1 <= len(value) <= 45:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def normalized_utc_timestamp(value):
+    parsed = parse_utc_timestamp(value)
+    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ") if parsed else None
 
 
 def classification(issue):
@@ -49,7 +68,12 @@ def classification(issue):
         return None
     if issue.get("state") != "open":
         return None
-    return {"number": number, "priority": prio, "title": title[:160]}
+    return {
+        "number": number, "priority": prio, "title": title[:160],
+        # GitHub's issue updated_at is last issue activity, not proof of work,
+        # owner liveness or dependency resolution. Missing/naive values stay unknown.
+        "updated_at_utc": normalized_utc_timestamp(issue.get("updated_at")),
+    }
 
 
 def issue_inventory(raw, repo):
