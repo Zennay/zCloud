@@ -517,7 +517,41 @@ Each page selection performs the same bounded source read with at most
 run separately, page 2 is a **new observation time**, not an atomic
 continuation of page 1; compare original timestamps before interpreting
 cross-page changes. This pagination navigates only the sampled source
-(<=210 source rows), never claims an exhaustive GitHub backlog. Columns carry the original
+(<=210 source rows), never claims an exhaustive GitHub backlog.
+
+**One-snapshot alternative for the complete bounded issue sample:** to
+avoid moving GitHub Search results between separately requested pages, use
+`--inbox-all-sampled-csv` with private CSV output. It selects *all* up to
+210 deduplicated issues admitted by **one** existing maximum-7-GET read,
+not a new inventory or a GitHub-side bulk action:
+
+```sh
+umask 077
+mkdir -p -m 700 "$HOME/.local/share/zsentinel"
+python3 scripts/zsentinel_recovery_policy.py \\
+  --live-inbox-repo Zennay/zCloud \\
+  --inbox-all-sampled-csv \\
+  --format csv \\
+  --output "$HOME/.local/share/zsentinel/all-issues-$(date -u +%Y%m%dT%H%M%S)-$.csv"
+```
+
+This restricted mode requires the default page 1 selector, an existing
+private output directory, and `--format csv --output`. The compact CSV
+retains original GitHub URL, priority as observed, owner action code,
+human follow-up, source-drift warning, timestamp and coverage flags,
+while omitting untrusted issue titles and private worker details. Its
+false owner/merge-authority columns do not imply eligible work. If the
+sample is empty, one provenance row says that *the sampled source*
+contained no issue records, never that the live backlog is empty.
+Both paged and complete-sample CSV use the same create-only 0600 output
+guard and 128-KiB bounded output. The complete sample is still
+bounded by provider pagination/partial results; it is not a claim of
+all open GitHub issues.
+
+The legacy JSON field `source_window_full` now matches
+`recent_issue_window_complete`: true requires a stable, complete,
+error-free recent source, rather than incorrectly returning true when
+the three-page read was exhausted while more GitHub issues remained. Columns carry the original
 GitHub issue, unverified title hints, observed severity, source-window
 coverage, explicit human-only owner action code, and three short fields
 **problem / action / status**. CSV prefixes unsafe spreadsheet formulas,
