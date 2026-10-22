@@ -23,8 +23,12 @@ STEP = {
         "Controleer met de eigenaar waarom een toegewezen worker met queuelease gepauzeerd is.",
     "owner_reconcile_stale_queue_claim_without_claim_transfer":
         "Een claimregel bestaat maar de lease is verlopen/ongeldig. Laat de bevoegde eigenaar de originele claimstatus handmatig beoordelen; reset of herverdeel niets.",
-    "owner_verify_current_queue_claim_and_slot_without_takeover":
-        "Deze toegewezen worker mist een unieke, leesbare actuele queueclaim. Laat de eigenaar de bron en slottoewijzing controleren; browseractiviteit bewijst geen taaklease. Niet resetten, vrijgeven of herverdelen.",
+    "owner_verify_unclaimed_allocated_slot":
+        "Worker is toegewezen maar er is geen actieve queueclaim. Controleer bij de eigenaar of de slottoewijzing nog klopt; niet herverdelen.",
+    "owner_reconcile_duplicate_active_queue_claims":
+        "Meerdere actieve queueclaims verwijzen naar dit slot. Laat de bevoegde queue-eigenaar de dubbele bezetting beoordelen; geen van beide claims vrijgeven.",
+    "owner_recheck_queue_observer_source_scope":
+        "Queuebron of vereiste kolommen niet leesbaar. Laat de broneigenaar schema en toegangsbereik controleren; geen gevolgtrekking uit browseractiviteit of restart.",
     "owner_inspect_current_assignment_and_recent_browser_block":
         "Controleer de huidige toewijzing en het recente browserblokkadesignaal bij de eigenaar.",
     "owner_verify_orphan_browser_block_without_prompt_identity":
