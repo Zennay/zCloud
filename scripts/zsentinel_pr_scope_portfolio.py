@@ -445,7 +445,9 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "base_sha_observed": captured["base_sha"],
                 "base_ref_observed": gate.get("base_ref_observed"),
                 "captured_base_ref": captured["base_ref"],
-                "base_ref_stable_on_second_read": False,
+                "base_ref_stable_on_second_read": (
+                    type(gate.get("base_ref_observed")) is str and
+                    gate.get("base_ref_observed") == captured["base_ref"]),
                 "observed_in_recent_pr_collision_sample":
                     not captured.get("direct_explicit_source_only", False),
                 "complete_file_collision_coverage_verified": False,
