@@ -88,9 +88,35 @@ def edit_path(value):
 
 
 def registry(path):
-    if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= MAX_REGISTRY_BYTES:
+    """Read the canonical project registry without following links or pipes.
+
+    A registry update racing the read is rejected, not silently mixed into
+    a partial project/PR scan. This is read-only discovery, not ownership.
+    """
+    if not isinstance(path, Path):
+        raise ValueError("canonical registry requires a file path")
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        raise ValueError("safe canonical registry opening unavailable")
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= MAX_REGISTRY_BYTES:
         raise ValueError("missing or oversized canonical registry")
-    rows = json.loads(path.read_bytes().decode("utf-8"), object_pairs_hook=unique)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns)
+        if (not stat.S_ISREG(info.st_mode)
+                or not 0 < info.st_size <= MAX_REGISTRY_BYTES
+                or identity(before) != identity(info)):
+            raise ValueError("canonical registry replaced before read")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            payload = stream.read(MAX_REGISTRY_BYTES + 1)
+        after = os.fstat(fd)
+        if len(payload) != info.st_size or identity(after) != identity(info):
+            raise ValueError("canonical registry changed during read")
+    finally:
+        os.close(fd)
+    rows = json.loads(payload.decode("utf-8", errors="strict"),
+                      object_pairs_hook=unique)
     if not isinstance(rows, list):
         raise ValueError("invalid canonical registry")
     result = {}
