@@ -3542,9 +3542,27 @@ document.getElementById('projectRecoveryDesk').addEventListener('input',event=>{
    label.textContent=recoveryReviewStatus(recoveryHandoffs.get(project));
  });
  setUnsaved(true);invalidateBrief();drawList();
+ if(viewedProjectPacket?.project===project)
+  clearProjectPacketPreview('Project contact/date/note changed. Preview new packet before download.');
  status.textContent='Local project follow-up changed; export private handoff to preserve it.';
 });
 document.getElementById('projectRecoveryDesk').addEventListener('click',event=>{
+ const packetButton=event.target.closest('[data-project-packet]');
+ if(packetButton){
+  const project=packetButton.dataset.projectPacket;
+  try{
+   if(!board.project_operations.some(row=>row.project===project))
+    throw Error('Selected project outside the original source scope');
+   saveSelection();
+   previewProjectPacket(project);
+   document.getElementById('projectPacketPanel').scrollIntoView({block:'nearest'});
+   status.textContent='Source-only packet prepared for '+project+
+    '; preview current notes and privacy choice before saving.';
+  }catch(err){
+   clearProjectPacketPreview('Project packet refused: '+err.message);
+  }
+  return;
+ }
  const target=event.target.closest('[data-preview-recovery]');
  if(!target)return;
  const project=target.dataset.previewRecovery;
