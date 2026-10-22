@@ -1000,6 +1000,30 @@ krijgen de bestaande exclusieve `0600`-creatiegrenzen, geen overwrite.
 Gebruik `GITHUB_TOKEN` alleen voor normale leesrechten op private repos;
 de token wordt niet in de uitvoer gezet.
 
+### Parallelle merge-eigenaaracties (read-only)
+
+De exacte PR-preflight levert naast de ene overkoepelende `status`
+nu `parallel_owner_actions` in de JSON-resultaten en dezelfde kaarten als
+**Problem / Action / Status** in Markdown en statische offline HTML.
+Hierdoor maskeert `BASE_TIP_OUTDATED` geen afzonderlijke `pending`
+of terminal niet-geslaagde checks: een eigenaar kan tegelijkertijd de
+base oplossen, runner-/CI-toewijzing onderzoeken en onafhankelijke review
+regelen. Een gedeeltelijke checkpagina vraagt expliciet om inspectie van
+alle verplichte exacte-HEAD-checks; een lege reviewsteekproef is alleen
+`ZERO_REVIEWS_IN_SAMPLE`, nooit bewijs dat op GitHub geen reviewer bestaat.
+
+Elke kaart heeft een stabiele code, herleidbare *sample*-categorie en
+`status=HOLD_OWNER_REVIEW`, met `execution_authorized=false`.
+Gesloten PRs worden niet meer als mergekandidaat aangeboden; bij
+`merged=true` gaat de eigenaarshandoff uitsluitend over controle van de
+default-branch-mergecommit en een afzonderlijke live release.
+Instabiele PR- of default-branch-bron geeft uitsluitend een bronherleesactie,
+zonder onbetrouwbare parallelle gateclaims. Er is geen extra GitHub API GET,
+workflow-rerun, claim, queue-mutatie, merge of deploy gekoppeld aan deze
+werkkaarten. Dit blijft een bron- en operatorfunctie op een open PR;
+een volledige review, branch-protectionbeleid en eigenaarsmandaat
+zijn apart verplicht.
+
 De nieuwe `scripts/zsentinel_pr_merge_preflight.py` valideert een exacte
 `Zennay/<repo>/pull/<positief-nummer>` URL, gebruikt maximaal acht
 **read-only** GitHub API GETs (PR → repository-default-branch → default-branch
