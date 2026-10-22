@@ -31,8 +31,9 @@ bronnen een eigen create-only naam en expliciete JSON-keuze:
       --name recovery-history-machine --format json
 
 De JSON bevat per oorspronkelijke bundel bron-SHA-256, UTC-bronklokken,
-P0/P1-steekproeven en PR-kandidaten, plus per opeenvolgend paar expliciete
-nieuwe/niet opnieuw waargenomen issues, kandidaten en urgentieverhogingen.
+bronfreshness, P0/P1-steekproeven, PR-kandidaten en geaggregeerde queue-status,
+plus per opeenvolgend paar nieuwe/niet opnieuw waargenomen issues, kandidaten,
+urgentieverschillen, queue-/advieswijzigingen en veranderde bronfreshness.
 Het formaat zsentinel-saved-bundle-history-v1 bevat de velden
 current_live_source_checked=false, issue_closure_verified=false,
 current_claims_verified=false, required_ci_verified=false,
@@ -69,6 +70,11 @@ gepresenteerd. Geen raw queue-ID's of claim-eigenaars worden toegevoegd.
 Een toekomstig opgeslagen tijdstempel wordt nu apart gemarkeerd als mogelijke
 klokdrift; negatieve leeftijd wordt ook expliciet bewaard in de JSON. Zo kan
 een snapshot met een verkeerde klok niet stilzwijgend als vers worden gelezen.
+
+Een wijziging van bronfreshness (bijvoorbeeld retrybron van vers naar verouderd)
+verschijnt apart per snapshot-overgang, ook als de issue- en queue-aantallen gelijk
+blijven. Dit zijn uitsluitend de oorspronkelijke freshness-vlaggen bij opname,
+geen nieuwe fetch en geen bewijs van actuele bronbeschikbaarheid.
 
 
 Open vervolgens recovery-history-october.index.html in die privémap.
