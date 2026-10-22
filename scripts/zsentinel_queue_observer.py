@@ -31,6 +31,9 @@ MAX_ROWS = 2500
 MAX_SAMPLES = 20
 MAX_BLOCKED_GROUPS = 250
 MAX_BLOCKED_WORK_ITEMS = 24
+CANONICAL_WORK_LINK = re.compile(
+    r"^https://github\\.com/Zennay/[A-Za-z0-9_.-]{1,100}/(?:issues|pull)/[1-9][0-9]{0,8}$"
+)
 MAX_BYTES_PER_TEXT = 180
 UTC = timezone.utc
 
@@ -73,6 +76,7 @@ def _read_sqlite(path):
         # Optional schema coverage: a live worker slot is a claim even when
         # both claim timestamps are absent. Never publish the slot number.
         worker_slot_covered = "worker_slot" in fields
+        source_link_column = "source_url" if "source_url" in fields else "NULL"
         worker_slot_predicate = (
             "worker_slot IS NOT NULL" if worker_slot_covered else "NULL")
         # Portfolio-fair blocked task shortlist: one high-volume project
@@ -105,8 +109,8 @@ def _read_sqlite(path):
                 candidates.append([dict(row) for row in connection.execute(
                     "SELECT queue_id,project_id,priority,attempts,eligible,"
                     "updated_at,claimed_at,claim_expires,title," +
-                    worker_slot_predicate +
-                    " AS worker_slot_present FROM portfolio_queue "
+                    worker_slot_predicate + " AS worker_slot_present," +
+                    source_link_column + " AS source_url_observed FROM portfolio_queue "
                     "WHERE status='blocked' AND priority=? AND project_id=? LIMIT ?",
                     (priority, project, remaining)
                 )])
@@ -201,6 +205,14 @@ def _blocked_queue_observation(raw, observed_at):
         seen_refs.add(queue_ref)
         title_text = (" ".join(title.split())[:MAX_BYTES_PER_TEXT]
                       if type(title) is str else "Unlabeled queue item")
+        # An operator may navigate to a canonical GitHub issue/PR, but
+        # a queue-supplied link is unverified text, NOT proof of ownership,
+        # issue status, successful fix or permission to edit.
+        source_url = row.get("source_url_observed")
+        safe_source_url = (
+            source_url if type(source_url) is str
+            and len(source_url) <= 220
+            and CANONICAL_WORK_LINK.fullmatch(source_url) else None)
         # Nonempty claim fields mean a blocked task is NOT automatically safe
         # to resume. Preserve the warning without copying owner identifiers.
         worker_slot_present = row.get("worker_slot_present")
@@ -214,6 +226,7 @@ def _blocked_queue_observation(raw, observed_at):
         work.append({
             "queue_ref": queue_ref, "project_id": pid, "priority": priority,
             "title": title_text, "claim_attempts": attempts,
+            "canonical_github_source_link_unverified": safe_source_url,
             "eligible_observed": bool(eligible),
             "claim_fields_present_observed": claim_fields_present,
             "worker_slot_present_observed": (
