@@ -61,12 +61,12 @@ RELEASE_BLOCKERS = frozenset({"branch_rules_ownership_and_release_not_verified"}
 
 def _operator_workstream(blocker, pinned, source_stale, history_state, defer_repeat):
     """Actionable source interpretation, never admission or merge permission."""
-    if defer_repeat:
-        return "defer_unchanged_hold"
     if (source_stale or not pinned or history_state in (
             "changed_or_uncertain_head", "incomplete_gate_source",
             "newly_selected_not_new_pr")):
         return "inspect_changed_source"
+    if defer_repeat:
+        return "defer_unchanged_hold"
     if blocker in OWNER_BLOCKERS:
         return "owner_action_now"
     if blocker in EXTERNAL_WAIT_BLOCKERS:
