@@ -11,6 +11,8 @@ import re
 import stat
 import unicodedata
 
+from zsentinel_pr_scope_guard import coverage_reason_text
+
 SCHEMA = "zsentinel-portfolio-pr-snapshot-delta-v1"
 BOARD = "zsentinel-portfolio-pr-collision-board-v1"
 SHA = re.compile(r"^[a-f0-9]{40}$")
@@ -716,10 +718,10 @@ def render_delta(delta, format="text"):
             reason_notes = []
             if not row["scope_conflicts_comparable_if_complete"]:
                 reason_notes.append("Bestand/map-vergelijking onvolledig: " +
-                                    ", ".join(row.get("scope_conflict_comparison_reasons", [])))
+                                    coverage_reason_text(row.get("scope_conflict_comparison_reasons", [])))
             if not row.get("portable_aliases_comparable_if_complete"):
                 reason_notes.append("Padaliasvergelijking onvolledig: " +
-                                    ", ".join(row.get("portable_alias_comparison_reasons", [])))
+                                    coverage_reason_text(row.get("portable_alias_comparison_reasons", [])))
             reason_html = ("<p><strong>Bronbeperkingen:</strong> " +
                            escape(" · ".join(reason_notes)) + "</p>"
                            if reason_notes else "")
