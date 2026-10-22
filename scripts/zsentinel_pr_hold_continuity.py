@@ -408,6 +408,9 @@ def text_summary(report):
     for row in report["current_prs"]:
         description = {
             "exact_head_changed_REINSPECT_GATE": "HEAD veranderd: exacte CI/reviews opnieuw inspecteren",
+            "same_head_target_base_changed_REINSPECT_GATE": "Doelbranch SHA gewijzigd: hercontroleer PR-basis en CI",
+            "same_head_draft_changed_REVIEW_GATE": "Draftstatus gewijzigd: bepaal actuele reviewroute",
+            "same_head_mergeability_hint_changed_RECHECK_RULES": "GitHub mergeable-indicatie veranderd: vereiste regels opnieuw lezen",
             "same_head_owner_step_changed_REVIEW_GATE": "Owneractie veranderd: actuele releasegate beoordelen",
             "same_head_observed_ci_or_review_changed_REVIEW_GATE": "Zelfde HEAD, maar geobserveerde CI/status/review gewijzigd: gate opnieuw bekijken",
             "same_observed_head_and_gate_sample_NOT_ALL_CLEAR": "Zelfde HEAD, eigenaaractie en begrensde CI/reviewsteekproef; overige gates ONBEKEND",
@@ -435,7 +438,15 @@ def text_summary(report):
                  or not 1 <= len(owner_action) <= 280
                  or any(ord(ch) < 32 for ch in owner_action))):
             raise ValueError("invalid observed gate owner next step")
+        metadata_transitions = row.get("observed_metadata_transitions", [])
+        if (type(metadata_transitions) is not list or
+                len(metadata_transitions) > 3 or
+                any(type(x) is not str or len(x) > 150 or
+                    any(ord(ch) < 32 for ch in x) for x in metadata_transitions)):
+            raise ValueError("invalid PR metadata transition")
         lines.append(row["pr_url"] + " · " + description +
+                     (" · " + "; ".join(metadata_transitions)
+                      if metadata_transitions else "") +
                      (" · geobserveerd: " + ", ".join(labels[x] for x in families)
                       if families else "") +
                      (" · " + "; ".join(transitions) if transitions else "") +
@@ -456,6 +467,12 @@ def html_panel(report):
     descriptions = {
         "exact_head_changed_REINSPECT_GATE":
             "HEAD gewijzigd · controleer verplichte CI en reviews opnieuw",
+        "same_head_target_base_changed_REINSPECT_GATE":
+            "Doelbranch gewijzigd · controleer exact-HEAD status tegen actuele basis",
+        "same_head_draft_changed_REVIEW_GATE":
+            "Draftstatus gewijzigd · bespreek onafhankelijke review met huidige eigenaar",
+        "same_head_mergeability_hint_changed_RECHECK_RULES":
+            "GitHub mergeable-hint veranderd · geen bewijs van beschermde-branch toestemming",
         "same_head_owner_step_changed_REVIEW_GATE":
             "Vervolgactie gewijzigd · huidige gate opnieuw bekijken",
         "same_head_observed_ci_or_review_changed_REVIEW_GATE":
@@ -492,7 +509,15 @@ def html_panel(report):
             raise ValueError("invalid PR observed state transitions")
         delta = (" · gewijzigd: " + ", ".join(labels[x] for x in families)
                  if families else "")
-        detail = (" · " + "; ".join(transitions) if transitions else "")
+        metadata_transitions = item.get("observed_metadata_transitions", [])
+        if (type(metadata_transitions) is not list or
+                len(metadata_transitions) > 3 or
+                any(type(x) is not str or len(x) > 150 or
+                    any(ord(ch) < 32 for ch in x) for x in metadata_transitions)):
+            raise ValueError("invalid PR metadata changes in operator HTML")
+        detail = (" · " + "; ".join(metadata_transitions)
+                  if metadata_transitions else "") + (
+                    " · " + "; ".join(transitions) if transitions else "")
         owner_action = item.get("observed_gate_owner_step")
         if (owner_action is not None and
                 (type(owner_action) is not str or
