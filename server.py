@@ -3579,7 +3579,7 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
             # The action, actor and original blocker must be auditable in the
             # same commit as the state transition, not a separate best-effort log.
             project_runtime.record_receipt(
-                    c,project_id,
+                c,project_id,
                     phase=str(project.get('phase') or ''),
                     action=f"Operator terminally closed queue item {queue_id}",
                     # The *queue item*, not the project's CI, was cancelled.
@@ -3607,9 +3607,21 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
                    WHERE attention_id=? AND status='open'""",
                 (ts,ts,'queue:'+queue_id),
             ).rowcount)
-    # No-op/rejected drops must not trigger a queue refill or audit writer.
-    audit=portfolio_queue_audit(refill=True) if dropped else None
+    # The terminal transition and its receipt are already COMMITTED here.
+    # If subsequent queue refill fails, a 503 would incorrectly imply that
+    # the cancellation did not happen and encourage an unsafe operator retry.
+    # Report the committed transition precisely and separately identify
+    # admission/refill work that still needs its normal owner.
+    audit=None
+    audit_deferred=False
+    if dropped:
+        try:
+            audit=portfolio_queue_audit(refill=True)
+        except Exception:
+            logging.exception('Post-commit queue refill failed after terminal close')
+            audit_deferred=True
     return {'dropped':dropped,'queue_id':queue_id,'queue_audit':audit,
+            'queue_audit_deferred':audit_deferred,
             'status':'dropped' if dropped else str(row['status']),
             'source_guarded':bool(guarded),
             'attention_resolved':attention_resolved,
