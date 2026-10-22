@@ -1923,6 +1923,8 @@ def main(argv=None):
                         help="repeat 2–6 canonical repos for one private P0-first portfolio desk")
     parser.add_argument("--portfolio-previous-snapshot",
                         help="prior private portfolio JSON for source-conservative visible-card comparison")
+    parser.add_argument("--portfolio-snapshot-output", type=Path,
+                        help="second private .json artifact from the SAME bounded portfolio GitHub read")
     parser.add_argument("--portfolio-view", choices=(
         "all", "explicit-critical", "critical-and-title-hints",
     ), default="all", help="source-only portfolio issue display focus")
@@ -1962,6 +1964,8 @@ def main(argv=None):
         parser.error("--portfolio-view requires --portfolio-repo")
     if args.portfolio_previous_snapshot and not args.portfolio_repo:
         parser.error("--portfolio-previous-snapshot requires --portfolio-repo")
+    if args.portfolio_snapshot_output and not args.portfolio_repo:
+        parser.error("--portfolio-snapshot-output requires --portfolio-repo")
     if args.portfolio_repo and (
         not args.output or args.live_inbox_repo or args.live_issue_url
         or args.input or args.batch_input or args.case_input or args.template
@@ -2051,9 +2055,7 @@ def main(argv=None):
     if args.portfolio_repo:
         try:
             from zsentinel_portfolio_issue_desk import (
-                observe_portfolio, as_html as portfolio_html,
-                as_markdown as portfolio_markdown,
-                as_csv as portfolio_csv,
+                observe_portfolio, write_private_portfolio_outputs,
             )
             previous = None
             if args.portfolio_previous_snapshot:
@@ -2071,15 +2073,10 @@ def main(argv=None):
             )
             if previous is not None:
                 report["comparison"] = compare_snapshots(previous, report)
-            output = (
-                portfolio_html(report) if args.format == "html" else
-                portfolio_markdown(report) if args.format == "markdown" else
-                portfolio_csv(report) if args.format == "csv" else
-                json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            write_private_portfolio_outputs(
+                report, format_name=args.format, output=args.output,
+                snapshot_output=args.portfolio_snapshot_output,
             )
-            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
-                raise PolicyInputError("portfolio output exceeds 128 KiB")
-            _emit_output(output, args.output, args.format)
             return 0
         except (OSError, UnicodeError, ValueError, PolicyInputError) as exc:
             print("zSentinel portfolio: " + str(exc), file=sys.stderr)
