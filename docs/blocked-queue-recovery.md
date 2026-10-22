@@ -894,6 +894,11 @@ It applies these rules:
   Successfully created rows expose `created`; updates to an untouched queued
   item expose `updated_unclaimed`. These response markers are advisory
   descriptions of the completed transaction, never scheduling permission.
+  The worker-completion state receipt additionally carries the bounded
+  `next_task_queue_id` and `next_task_enqueue_admission` when a follow-up
+  was admitted. This distinguishes an existing unchanged task from new
+  continuation creation in durable project progress evidence; missing
+  follow-up admission remains null rather than a fabricated success.
 - Explicit queue identifiers must be 1–160 characters of canonical ASCII
   `[A-Za-z0-9._:-]`. The server rejects whitespace, Unicode/confusable
   aliases, invalid punctuation and overlong identifiers instead of silently
