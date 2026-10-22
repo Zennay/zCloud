@@ -56,11 +56,28 @@ def load_snapshot(directory: Path, stem: str) -> dict:
         pid = card["project"]
         project = projects.setdefault(pid, {
             "issues": {}, "issue_priorities": {}, "priorities": Counter(), "prs": set(),
+            "operations": None,
         })
         project["issues"][card["issue"]] = card["url"]
         project["issue_priorities"][card["issue"]] = card["priority"]
         project["priorities"][card["priority"]] += 1
         project["prs"].update(card["open_pr_candidates"])
+    # Retain validated aggregate queue/coverage/recommendation facts from the
+    # same saved board. Never reconstruct a queue from issue-card absence.
+    for row in view["project_operations"]:
+        pid = row["project"]
+        project = projects.setdefault(pid, {
+            "issues": {}, "issue_priorities": {}, "priorities": Counter(), "prs": set(),
+            "operations": None,
+        })
+        project["operations"] = {
+            "issue_coverage": row["issue_coverage"],
+            "issue_counts_in_sample": row["issue_counts_in_sample"],
+            "queue_observation": row["queue_observation"],
+            "queue_source_observed_at_utc": row["queue_source_observed_at_utc"],
+            "claim_context": row["claim_context"],
+            "recommended_next_step": row["recommended_next_step"],
+        }
     return {
         "stem": stem, "observed": observed,
         "source_times": board["source_times_utc"],
@@ -90,21 +107,55 @@ def issue_links(items: dict, maximum=MAX_LINKS) -> str:
     return ", ".join(links)
 
 
+def queue_summary(queue: dict | None) -> str:
+    """Render observed aggregates only; missing/stale sources are not zero."""
+    if queue is None:
+        return "geen verse queuebron"
+    return (
+        "actief " + str(queue["active_items"]) +
+        " · hoge pogingen " + str(queue["high_claim_attempts"]) +
+        " · verlopen leases " + str(queue["expired_active_leases"])
+    )
+
+
 def project_table(snapshot: dict) -> str:
     rows = []
     for pid, data in sorted(snapshot["projects"].items()):
         counts = data["priorities"]
+        operations = data.get("operations") or {}
+        queue = operations.get("queue_observation")
+        coverage = operations.get("issue_coverage", "niet waargenomen")
+        source_counts = operations.get("issue_counts_in_sample") or {}
+        source_priority = (
+            "bron P0 " + str(source_counts.get("P0", "onbekend")) +
+            " / P1 " + str(source_counts.get("P1", "onbekend"))
+        )
+        queue_text = queue_summary(queue)
+        details = (
+            "<details><summary>Bron en vervolgactie</summary><p>" +
+            "Dekking: " + escape(str(coverage)) + " · " +
+            escape(source_priority) + "</p><p>Claimcontext: " +
+            escape(str(operations.get("claim_context", "niet geverifieerd"))) +
+            "</p><p>Queue-bronklok: " +
+            escape(str(operations.get("queue_source_observed_at_utc") or
+                       "geen verse queuewaarneming")) + "</p><p>Vervolgadvies: " +
+            escape(str(operations.get("recommended_next_step") or
+                       "Geen opgeslagen advies voor dit project.")) +
+            "</p></details>"
+        )
         rows.append(
             "<tr><th scope='row'>" + escape(pid) + "</th><td>" +
             str(counts["P0"]) + "</td><td>" + str(counts["P1"]) +
             "</td><td>" + str(len(data["issues"])) + "</td><td>" +
-            str(len(data["prs"])) + "</td></tr>"
+            str(len(data["prs"])) + "</td><td>" + escape(str(coverage)) +
+            "</td><td>" + escape(queue_text) + details + "</td></tr>"
         )
     return (
-        "<table><thead><tr><th>Project (sample)</th><th>P0</th><th>P1</th>"
-        "<th>Issues</th><th>PR-kandidaten</th></tr></thead><tbody>" +
+        "<table><thead><tr><th>Project (sample)</th><th>Kaart-P0</th>"
+        "<th>Kaart-P1</th><th>Issuekaarten</th><th>PR-kandidaten</th>"
+        "<th>Brondekking</th><th>Opgeslagen queuebeeld en advies</th></tr></thead><tbody>" +
         ("".join(rows) if rows else
-         "<tr><td colspan='5'>Geen issues in de begrensde sample</td></tr>") +
+         "<tr><td colspan='7'>Geen projectgegevens in de begrensde sample</td></tr>") +
         "</tbody></table>"
     )
 
