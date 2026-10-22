@@ -404,6 +404,11 @@ def compare_gate_episodes(previous, current):
             "current_base": base if type(base) is str and SHA.fullmatch(base) else None,
             "previous_base_ref": old_base_ref if _valid_base_ref(old_base_ref) else None,
             "current_base_ref": base_ref if _valid_base_ref(base_ref) else None,
+            "target_branch_changed": (
+                old_base_ref != base_ref
+                if _valid_base_ref(old_base_ref) and _valid_base_ref(base_ref) else None),
+            "target_branch_identity_unknown": not (
+                _valid_base_ref(old_base_ref) and _valid_base_ref(base_ref)),
             "change": change,
             "operator_next_step": _next_step(change, now),
             "previous_blocker": past.get("human_gate_blocker") if past else None,
@@ -489,7 +494,10 @@ def render_gate_episodes(report, style="text"):
             escape(row["url"], quote=True) + "'>" + escape(row["url"]) +
             "</a>: " + escape(LABELS[row["change"]]) +
             "<p>Doelbranch: " + escape(row.get("previous_base_ref") or "ONBEKEND") +
-            " → " + escape(row.get("current_base_ref") or "ONBEKEND") + "</p>" +
+            " → " + escape(row.get("current_base_ref") or "ONBEKEND") +
+            " · gewijzigd: " +
+            ("ONBEKEND" if row.get("target_branch_changed") is None else
+             "ja" if row["target_branch_changed"] else "nee") + "</p>" +
             "<p>Vervolg: " + escape(NEXT_STEP_LABELS[row["operator_next_step"]]) +
             "</p>" +
             ("<p>Gewijzigd bronbewijs: " +
@@ -530,7 +538,10 @@ def render_gate_episodes(report, style="text"):
                      (" · HEAD " + row["current_head"][:12] if row["current_head"] else ""))
         lines.append("  Doelbranch: " +
                      (row.get("previous_base_ref") or "ONBEKEND") + " → " +
-                     (row.get("current_base_ref") or "ONBEKEND"))
+                     (row.get("current_base_ref") or "ONBEKEND") +
+                     " · gewijzigd: " +
+                     ("ONBEKEND" if row.get("target_branch_changed") is None else
+                      "ja" if row["target_branch_changed"] else "nee"))
         lines.append("  Vervolg: " + NEXT_STEP_LABELS[row["operator_next_step"]])
         if row["observed_changed_gate_evidence_categories"]:
             lines.append("  Gewijzigd bronbewijs: " +
