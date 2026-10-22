@@ -794,8 +794,9 @@ The queue snapshot now reads the separate task claim for blocked items in the
 same read-only SQLite snapshot and exposes only `task_claim_state`,
 `task_claim_source_available`, and its lease expiry. Recovery inspection,
 resume, and terminal close all refuse if the claim source is unavailable, a
-live claim exists, a malformed lease cannot be classified, or **any claim
-record remains after expiry**. Expiry alone is not authorization to take over;
+live claim exists, a malformed lease or conflicting project identity cannot be
+classified, or **any claim record remains after expiry**. Expiry alone is not
+authorization to take over;
 the current owner must reconcile/release the stale record first. No recovery
 path prunes, releases, or overwrites a task claim.
 
