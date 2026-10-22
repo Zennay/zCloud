@@ -1183,7 +1183,7 @@ def render_csv(bundle):
     fields = (
         "record_type", "project", "pr_number", "pr_url",
         "coordination_group_number", "observed_selected_scope_peers",
-        "external_peer_prs_to_recheck",
+        "external_peer_prs_to_recheck", "external_peer_prs_to_recheck_count",
         "attention_status", "attention_label", "workstream", "workstream_label",
         "operator_action_link", "operator_action_kind",
         "head_sha_at_observation", "target_branch_at_observation",
@@ -1233,7 +1233,10 @@ def render_csv(bundle):
                 "project": card["project"], "pr_number": card["number"],
                 "coordination_group_number": card["coordination_group_number"],
                 "observed_selected_scope_peers": len(card["coordination_selected_peer_urls"]),
-                "external_peer_prs_to_recheck": len(card["coordination_external_peer_urls"]),
+                "external_peer_prs_to_recheck": "; ".join(
+                    card["coordination_external_peer_urls"]),
+                "external_peer_prs_to_recheck_count": len(
+                    card["coordination_external_peer_urls"]),
                 "pr_url": _same_repo_url(card["url"], card["repository"]),
                 "head_sha_at_observation": card["head_sha"],
                 "target_branch_at_observation": card["base_ref"],
