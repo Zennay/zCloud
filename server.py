@@ -3639,7 +3639,9 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
             'reason':None if dropped else 'active-claim-or-not-droppable'}
 
 
-def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_updated_at=None, expected_blocker=None, expected_evidence=None):
+def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_updated_at=None, expected_blocker=None, expected_evidence=None,
+                                   expected_project_id=None,expected_title=None,
+                                   expected_priority=None,expected_source_url=None):
     """Resume one parked task after an authenticated operator records resolution evidence."""
     queue_id=str(queue_id or '').strip()
     note=re.sub(r'[\x00-\x1f\x7f]+',' ',str(resolution_note or ''))
@@ -3662,12 +3664,19 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_up
     if expected_evidence is not None and (
             not isinstance(expected_evidence,str) or len(expected_evidence)>6000):
         raise ValueError('Ongeldige bronevidence voor hervatten')
-    # A partial modern source guard is not enough to bind a human attestation
-    # to the exact blocker/evidence. Unguarded legacy calls remain supported
-    # by the existing authenticated endpoint for backward compatibility.
-    if any(v is not None for v in (expected_updated_at,expected_blocker,expected_evidence)) and (
-            expected_updated_at is None or expected_blocker is None or expected_evidence is None):
-        raise ValueError('Een dependency-hercontrole vereist volledige bronversie, blocker en evidence')
+    # All modern source checks bind the decision to the full task identity,
+    # not only the blocker text. Untouched legacy calls remain permitted by
+    # the original authenticated endpoint, but mixing guarded/unguarded
+    # fields must never create a partial confirmation.
+    identity=(expected_project_id,expected_title,expected_priority,expected_source_url)
+    guarded=any(v is not None for v in (expected_updated_at,expected_blocker,expected_evidence,*identity))
+    if guarded:
+        if any(v is None for v in (expected_updated_at,expected_blocker,expected_evidence,*identity)):
+            raise ValueError('Dependency-hercontrole vereist bronversie, volledige taakidentiteit, blocker en evidence')
+        for value,cap,name in zip(identity,(100,4096,32,2048),
+                                  ('project_id','title','priority','source_url')):
+            if not isinstance(value,str) or len(value)>cap or (name!='source_url' and not value):
+                raise ValueError(f'Ongeldige bronidentiteit bij hervatten: {name}')
     ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
@@ -3686,10 +3695,14 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_up
         # Compare within the SAME BEGIN IMMEDIATE transaction that writes the
         # queued transition. A changed blocker/evidence must be reconfirmed,
         # even if a browser observed the prior state only milliseconds ago.
-        if expected_updated_at is not None and (
+        if guarded and (
                 str(row['updated_at'] or '')!=expected_updated_at or
-                (expected_blocker is not None and str(row['blocker'] or '')!=expected_blocker) or
-                (expected_evidence is not None and str(row['evidence'] or '')!=expected_evidence)):
+                str(row['project_id'] or '')!=expected_project_id or
+                str(row['title'] or '')!=expected_title or
+                str(row['priority'] or '')!=expected_priority or
+                str(row['source_url'] or '')!=expected_source_url or
+                str(row['blocker'] or '')!=expected_blocker or
+                str(row['evidence'] or '')!=expected_evidence):
             return {'resumed':False,'queue_id':queue_id,
                     'reason':'dependency-source-changed-reconfirm'}
         project=PROJECT_INDEX.get(str(row['project_id'] or '')) or {}
@@ -3745,7 +3758,7 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_up
         'resumed':True,'queue_id':queue_id,'status':'queued',
         'project_id':str(row['project_id']),'priority':str(row['priority']),
         'resume_basis':'operator_attestation_not_independently_verified',
-        'dependency_source_guarded':expected_updated_at is not None,
+        'dependency_source_guarded':bool(guarded),
         'attention_resolved':bool(attention_updated),
         'note':'Task returned to normal queue selection; no worker or slot was forced.',
     }
@@ -5058,6 +5071,10 @@ class Handler(BaseHTTPRequestHandler):
                             expected_updated_at=payload.get('expected_updated_at'),
                             expected_blocker=payload.get('expected_blocker'),
                             expected_evidence=payload.get('expected_evidence'),
+                            expected_project_id=payload.get('expected_project_id'),
+                            expected_title=payload.get('expected_title'),
+                            expected_priority=payload.get('expected_priority'),
+                            expected_source_url=payload.get('expected_source_url'),
                         )
                         return self.reply({
                             'ok':bool(item.get('resumed')),
