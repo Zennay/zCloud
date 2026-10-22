@@ -75,7 +75,11 @@ read-only census of repository-local branches and same-repository open-PR heads.
 The branch collector reads every bounded `/branches` and open-`/pulls` page,
 then repeats both inventories and the canonical main read. It refuses incomplete
 pagination, invalid identities, inventory churn, or a main-SHA mismatch. The
-workflow requires the PR-file snapshot and branch snapshot to carry the same
+branch JSON now records `snapshot_started_at_utc`, `snapshot_completed_at_utc`
+and `snapshot_duration_seconds`; these describe the inventory read window,
+not branch creation or last-commit time. A backwards local clock refuses the
+snapshot instead of emitting a negative duration.
+The workflow requires the PR-file snapshot and branch snapshot to carry the same
 `main_sha == GITHUB_SHA` before it reports a combined result. The bounded JSON
 snapshots are retained as a 14-day workflow artifact; the summary shows counts
 and up to 20 PR-less branch names.
