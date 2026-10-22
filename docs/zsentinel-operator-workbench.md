@@ -111,3 +111,41 @@ projectfilter verandert de oorspronkelijke opgeslagen CSV-bron niet.
 Het blijft een privé-export zonder eigenaars-, claim-, CI-, merge- of
 deployautorisatie. De gebruiker moet bij ieder besluit eerst de live
 GitHub- en Notion-bron en verplichte releasevoorwaarden controleren.
+
+## 22 October · source-pinned PR coordination groups
+
+The existing private merge-first PR workorders now contain **human coordination groups**
+for the selected (maximum four) PRs. The workbench builds a graph using only
+observed shared-file or file/directory ancestor collisions tied to both
+selected PRs' exact observed HEADs. A collision whose peer moved to another
+commit, whose source is stale, or whose peer is outside the selection cannot
+establish a current pair. The private JSON groups hold the selected PR URLs,
+observed commit SHA values, observed pair count, and explicit
+`merge_authorized=false` / `all_project_claims_verified=false` flags.
+
+The script-free HTML workbench shows the groups before the individual PR
+cards; each item links directly to its existing card. The Markdown owner
+handoff lists the same coordination groups, and the CSV worklist includes
+`coordination_group_number` and `observed_selected_scope_peers` per
+existing PR row for spreadsheet filtering. The source receipt SHA256 now
+covers the new groups, so a saved private workorder remains bound to
+the observed graph rather than an inferred live state.
+
+A group with two or more PRs means **coordinate with current owners before
+integrating either branch**. A singleton or two separate groups does *not*
+mean those PRs are safe to merge concurrently: an incomplete bounded PR
+sample, another repository PR, an inactive or unknown claim, a target-branch
+change or unobserved file overlap can still prevent integration. The
+workbench explicitly sets
+`cross_group_independence_verified=false` and
+`selection_not_full_inventory=true`, even when every selected HEAD is
+pinned. If any source/peer cannot be reconciled, the UI marks the
+coordination picture partial.
+
+This is a usable triage aid, not a new release gate or automatic scheduler.
+It never polls additional endpoints, writes a Notion/SQLite/GitHub claim,
+requests review, dispatches CI, starts a runner, resolves an active task,
+or merges/releases source. Before acting, independently verify current
+claims and file ownership, required exact-head checks, submitted review,
+branch protection and authorized merge/deploy rights.
+
