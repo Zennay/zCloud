@@ -339,6 +339,18 @@ function blockedQueueIsParked(item){
     &&item.worker_slot==null&&item.claimed_at==null&&item.claim_expires==null
     &&item.task_claim_source_available===true&&item.task_claim_state==='none';
 }
+function blockedQueueTaskClaimNotice(item){
+  const state=item?.task_claim_source_available===true
+    ?String(item?.task_claim_state||'unknown'):'source-unavailable';
+  if(state==='none')return '';
+  const messages={
+    active:'A separate task claim has a live lease. Resume and close are disabled until its owner reconciles/releases it.',
+    'expired-record':'A task-claim record remains after lease expiry. Expiry alone is not takeover permission; the owner must reconcile it.',
+    unknown:'The separate task-claim lease is malformed or unknown. Resume and close are disabled.',
+    'source-unavailable':'The separate task-claim source could not be read. Claim-free status is unknown; resume and close are disabled.'
+  };
+  return '<p class="blocked-queue-warning" role="alert">'+esc(messages[state]||messages.unknown)+'</p>';
+}
 function blockedQueueSourceUrl(raw){
   // Queue evidence can contain user-supplied URLs. Only link exact GitHub
   // issues/PRs owned by this portfolio; never render arbitrary href schemes.
@@ -778,12 +790,14 @@ function blockedQueuePanel(){
         const attention=Array.isArray(DATA.attention_needed)
           ?DATA.attention_needed.find(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'):null;
         const eligibilityConflict=!blockedQueueIsParked(item);
+        const taskClaimNotice=blockedQueueTaskClaimNotice(item);
         const action=attention?'Human action recorded — inspect its source and confirm the dependency has cleared.'
           :'Review the original dependency and its evidence. No automatic resolution is established.';
         const context='<details class="blocked-queue-context" data-disclosure="block-'+esc(item.queue_id)+'">'
           +'<summary>Operator context and next step</summary>'
           +'<p><strong>Next step:</strong> '+esc(action)+'</p>'
-          +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state inconsistent: eligibility, worker slot, claim timestamp or lease is still bound. Inspect source before acting.</p>':'')
+          +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state or separate task-claim state is unknown/bound. Inspect source before acting.</p>':'')
+          +taskClaimNotice
           +'<dl>'
           +'<div><dt>Queue update</dt><dd>'+esc(lastUpdated||'Unknown')+'</dd></div>'
           +'<div><dt>Original queue entry</dt><dd>'+esc(createdAt||'Unknown')+'</dd></div>'
