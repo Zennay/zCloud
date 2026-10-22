@@ -69,7 +69,7 @@ def observe_discovered_job(token=None):
     receipts = {}
     try:
         receipts, discovery = discover(REGISTRY, ["cloud"], token=token)
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         # Do not turn an inaccessible source into an empty/healthy job inventory.
         discovery = {
             "source": "github_canonical_readonly_bounded_discovery",
@@ -228,7 +228,7 @@ def main():
         write_private_output(args.output, raw, args.format)
         print("Private exact-runner report created (no workspace path or token printed).")
         return 0
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError) as exc:
         # Never echo provider responses, bearer tokens or private paths.
         parser.exit(2, "zSentinel exact runner observation unavailable; no changes made.\n")
 
