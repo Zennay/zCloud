@@ -497,6 +497,17 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
     activity_summary = {band: sum(item.get("activity_age_band") == band
                                   for item in ordered)
                         for band in activity_bands}
+    activity_actions = (
+        "REVIEW_EXISTING_ISSUE_PR_AND_EXACT_HEAD_GATES",
+        "INSPECT_EXISTING_PR_AND_GATES",
+        "RECONCILE_SOURCE_TIMESTAMP",
+        "INSPECT_CURRENT_SOURCE_EVIDENCE",
+        "REFRESH_CANONICAL_ISSUE_TIMESTAMP",
+    )
+    activity_action_summary = {
+        code: sum(item.get("activity_follow_up_code") == code for item in ordered)
+        for code in activity_actions
+    }
     return {
         "coverage": "PARTIAL_OBSERVATION" if partial else "SELECTED_SOURCE_WINDOW_ONLY",
         "ownership": "NOT_INFERABLE",
@@ -509,6 +520,7 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
             not x["linked_prs"] and not x["candidate_pr_numbers"]
             for x in ordered),
         "issue_activity_bands_in_sample": activity_summary,
+        "issue_activity_follow_up_codes_in_sample": activity_action_summary,
         "visible": len(limited),
         "omitted": len(ordered) - len(limited),
         "items": limited,
@@ -580,6 +592,9 @@ def render_issue_inbox(inbox):
             "; niet getoond: " + esc(inbox["omitted"]) + ". Laatste issue-activiteit in bronvenster: "
             + ", ".join(esc(key) + "=" + esc(value) for key, value in
                           inbox.get("issue_activity_bands_in_sample", {}).items())
+            + ". Vervolgacties: " + ", ".join(
+                esc(key) + "=" + esc(value) for key, value in
+                inbox.get("issue_activity_follow_up_codes_in_sample", {}).items())
             + ".</p><p>"
             "Dit is een begrensde bronselectie, geen compleet issue-overzicht "
             "en geen toestemming tot claim, merge of deploy. Dekking: " +
@@ -1598,6 +1613,9 @@ def main():
                       " coverage=" + issue_inbox["coverage"] +
                       " activity_bands=" + json.dumps(
                           issue_inbox.get("issue_activity_bands_in_sample", {}),
+                          sort_keys=True) +
+                      " activity_next_codes=" + json.dumps(
+                          issue_inbox.get("issue_activity_follow_up_codes_in_sample", {}),
                           sort_keys=True))
                 for issue in issue_inbox["items"]:
                     prs = ",".join(
