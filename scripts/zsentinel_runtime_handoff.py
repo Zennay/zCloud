@@ -1205,7 +1205,23 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 "resume_authorized": False,
             }
             for pid, pri, count in candidates[:8]:
-                example = sample_by_key.get((pid, pri), [])
+                # A bounded sample may contain two entries from one group.
+                # Prefer the one requiring owner attention; the first rowid
+                # is NOT inherently the most relevant blocked task.
+                example_candidates = sample_by_key.get((pid, pri), [])
+                def owner_signal_rank(item):
+                    return (
+                        1 if item.get("claim_fields_present_observed") is True else 0,
+                        1 if item.get("eligible_observed") is False else 0,
+                        1 if item.get("updated_at_clock_anomaly_observed") is True else 0,
+                        1 if item.get("canonical_github_source_link_unverified") else 0,
+                        min(item.get("claim_attempts", 0), 10)
+                        if type(item.get("claim_attempts")) is int else 0,
+                    )
+                example = (
+                    [max(example_candidates, key=owner_signal_rank)]
+                    if example_candidates else []
+                )
                 title = (_short(example[0].get("title"), 65)
                          if example else None)
                 action = (str(count) + " geblokkeerde queue-items (" + pri +
