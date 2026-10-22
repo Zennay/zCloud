@@ -1,5 +1,19 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · fail-closed canonical project registry
+
+`registry()` now treats the canonical project list as an all-or-nothing
+source. A non-object row, malformed project ID or repository URL, whitespace
+or control characters in the URL, non-canonical GitHub URL, invalid repository
+slug, duplicate project ID, or duplicate repository identity (case-insensitive)
+stops the scope scan instead of silently skipping a row.
+
+This prevents a partial registry from being mistaken for a complete
+cross-project collision view and prevents one GitHub repository from being
+counted as multiple projects. Correct the canonical source before rerunning
+the existing read-only scan. No registry, queue, claim, CI, or runtime write
+is performed.
+
 ## 21 oktober · P0/P1 issuegerichte eigenaarsoverdracht zonder remote acties
 
 De bestaande [merge-eerst PR #1567](https://github.com/Zennay/zCloud/pull/1567)
