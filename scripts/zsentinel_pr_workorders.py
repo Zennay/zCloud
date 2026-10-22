@@ -1012,6 +1012,7 @@ def render_csv(bundle):
         "attention_status", "attention_label", "workstream", "workstream_label",
         "operator_action_link", "operator_action_kind",
         "head_sha_at_observation", "target_branch_at_observation",
+        "target_branch_capture", "target_branch_second_read", "target_branch_stable",
         "current_source_verified", "rank",
         "category", "blocker", "human_next_step", "operator_primary_step",
         "parallel_review_possible", "source_observed_at_utc",
@@ -1058,6 +1059,9 @@ def render_csv(bundle):
                 "pr_url": _same_repo_url(card["url"], card["repository"]),
                 "head_sha_at_observation": card["head_sha"],
                 "target_branch_at_observation": card["base_ref"],
+                "target_branch_capture": card["captured_base_ref"],
+                "target_branch_second_read": card["observed_base_ref"],
+                "target_branch_stable": card["base_ref_stable_on_second_read"],
                 "current_source_verified": bool(card["source_current"]),
                 "rank": card["rank"], "category": card["category"],
                 "blocker": card["blocker"],
@@ -1394,6 +1398,13 @@ def render_html(bundle):
         repo = card["repository"]
         url = _same_repo_url(card["url"], repo)
         files = url + "/files"
+        branch_observation = ""
+        if not card["base_ref_stable_on_second_read"]:
+            branch_observation = (
+                "<br>Doelbranch capture → tweede read: <code>" +
+                e(card["captured_base_ref"] or "ONBEKEND") + "</code> → <code>" +
+                e(card["observed_base_ref"] or "ONBEKEND") +
+                "</code> · stabiel: nee")
         parts += [
             "<article id=\"" + e(_article_anchor(card)) + "\"><h2>" +
             e(card["project"]) + " · <a target=\"_blank\" "
@@ -1440,7 +1451,7 @@ def render_html(bundle):
             " · HEAD bij observatie: <code>" + e(card["head_sha"] or "ONBEKEND") +
             "</code><br>Doelbranch: <code>" + e(card["base_ref"] or "ONBEKEND") +
             "</code><br>Doelbasis: <code>" + e(card["base_sha"] or "ONBEKEND") +
-            "</code> · <a target=\"_blank\" rel=\"noopener noreferrer\" "
+            "</code>" + branch_observation + " · <a target=\"_blank\" rel=\"noopener noreferrer\" "
             "href=\"" + e(files) + "\">Bestandswijzigingen</a></p>",
         ]
         if card["head_sha"] and card["base_sha"]:
