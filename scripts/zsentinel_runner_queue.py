@@ -54,6 +54,7 @@ def collect(repo, token=None):
         rows = result["workflow_runs"]
         windows.append({
             "status_requested": status,
+            "runs_reported_by_github": result["total_count"],
             "rows_observed": len(rows),
             "all_status_runs_sampled": result["total_count"] == len(rows)
                 and len(rows) < MAX_RUNS_PER_WINDOW,
@@ -184,6 +185,11 @@ def lines(receipt):
               " · geen service-/workflowingreep"]
     if receipt.get("source_status") == "unavailable":
         return result + ["GitHub Actions jobbron ONBEKEND; geen uitspraak over runnergezondheid."]
+    result.append("GitHub gemelde workflowruns (NIET hetzelfde als individuele jobs): " +
+                  ", ".join(window["status_requested"] + "=" +
+                            str(window["runs_reported_by_github"]) +
+                            " · bekeken " + str(window["rows_observed"])
+                            for window in receipt["run_windows"]))
     result.append("Niet toegewezen queued jobs in begrensde bron: " +
                   str(receipt["unassigned_queued_jobs_observed"]) +
                   " (geen bewijs dat listener offline is).")
@@ -230,8 +236,13 @@ def html(receipt):
     partial = (receipt.get("run_state_drift_observed") is True
                or any(not x["all_status_runs_sampled"] for x in receipt["run_windows"])
                or any(not x["jobs_sample_complete"] for x in receipt["run_receipts"]))
+    windows_note = "; ".join(
+        window["status_requested"] + ": GitHub meldt " +
+        str(window["runs_reported_by_github"]) + " runs, bekeken " +
+        str(window["rows_observed"]) for window in receipt["run_windows"])
     return (
-        header + "<p>Niet toegewezen queued jobs in de begrensde bron: " +
+        header + "<p>" + escape(windows_note) + "</p>"
+        "<p>Niet toegewezen queued jobs in de begrensde bron: " +
         str(receipt["unassigned_queued_jobs_observed"]) +
         " · geen bewijs van runneruitval.</p><ol>" +
         ("".join(rows) or "<li>Geen queued of lopende jobs gezien in deze bron.</li>") +
