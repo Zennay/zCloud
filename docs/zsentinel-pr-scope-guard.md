@@ -1,5 +1,33 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · actieve CI-wacht en parallel review zichtbaar in PR-geschiedenis
+
+De eerdere live exact-HEAD PR-collector had al brongebonden operatoracties
+voor `queued ≥30 min`, `in_progress ≥60 min` en een onafhankelijk
+reviewverzoek naast CI. De source-bridge gaf die signalen echter niet allemaal
+door aan de bestaande twee-snapshot historische PR-vergelijker.
+
+Dezelfde bestaande product-PR integreert nu:
+
+- `zsentinel_pr_scope_portfolio.py` geeft vier CI-leeftijdssignalen,
+  `parallel_independent_review_step` en de uitgefilterde botreviewtelling
+  vanuit de huidige read-only GitHub-bron door aan het opgeslagen board.
+- `zsentinel_pr_gate_continuity.py` neemt die expliciete signalen mee in
+  twee bronmomenten, valideert dat leeftijdtellingen begrensde niet-negatieve
+  gehele getallen zijn en accepteert alleen bekende read-only
+  eigenaaradviezen als parallelle reviewactie.
+- Oudere snapshots zonder deze velden worden **niet** ineens een betrouwbaar
+  'ongewijzigde HOLD' bewijs; voor een stabiele vergelijking zijn twee
+  complete, consistente bronvensters vereist.
+- Een actuele waargenomen langdurige queued of in-progress check leidt
+  in het historie-dossier tot **gericht onderzoek door de runner-eigenaar**,
+  niet langer uitsluitend tot een algemeen 'wacht op CI'-bericht.
+
+Dit is uitsluitend historische **observatie**, geen bewijs van werkelijke
+runneruitval, continuïteit tussen twee bronmomenten of toestemming tot
+herdispatch. Geen QA-suite, extra workflow-run, bronclaim, serverwrite,
+privilege-omweg, force merge of deploy.
+
 ## 22 oktober · CI-stilstand is nu uitvoerbaar eigenaarwerk, geen blind wachten
 
 Een samenhangende correctie verbindt de nieuwe **actuele exact-head
