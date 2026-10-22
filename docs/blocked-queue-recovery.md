@@ -684,3 +684,53 @@ Verplichte exacte-head CI, onafhankelijke review, protected-main en
 release-eigenaarschap blijven intact. De eerder gemelde
 `blocked` versus `dropped` OOM-guard-afwijking is hiermee
 niet verhuld of omzeild; contractbesluit en CI blijven noodzakelijk.
+
+## 22 oktober · actuele read-only herstelinspectie per geblokkeerde taak
+
+De bestaande Dependency Holds-werkbank op portfolio- én projectdetail
+heeft nu **Inspect current recovery conditions**. Dit is een apart,
+**alleen-lezen** productonderdeel waarmee een operator de actuele
+situatie kan bekijken *zonder* een bevestiging te geven, een claim te
+wissen of een taak te hervatten. Het inspecteren verandert geen
+queue-/Attention-/runner-/projectstatus en maakt geen receipt of
+workflowdispatch.
+
+De knop gebruikt de al bestaande, met
+`action_request_allowed` beschermde `POST /api/portfolio-queue`
+met uitsluitend `action=inspect_blocked` en `queue_id`.
+`portfolio_queue_recovery_inspect` voert één bestaande-DB-
+`SELECT` uit, zonder `UPDATE`, claim, leaseverlenging, audit/refill
+of afhankelijkheidsattestatie. Er wordt **geen aparte publieke
+endpointprivilege** gemaakt. Voor een ontbrekende rij retourneert
+de inspectie expliciet `found=false`, niet een verzonnen
+beschikbaar herstel.
+
+De actuele diagnose omvat: werkelijke taakstatus en bronversie,
+`eligible`, ieder nog vastzittend `worker_slot`/
+`claimed_at`/`claim_expires`, projectregistratie, actieve
+projectstatus, human-gated-modus en daarmee uitsluitend
+**read-only** `resume_candidate`/`close_candidate`-indicaties.
+Concrete `reason_codes` verklaren onder meer: taak niet meer
+geblokkeerd, malformed `blocked/eligible`, nog gekoppelde
+werknemer/lease, ontbrekende projectregistratie, gepauzeerd
+project en human-gated-project.
+
+De interface toont die uitkomsten onder de exacte taakkaart,
+inclusief oorspronkelijk observatiemoment. Als de bronstatus of
+`updated_at` inmiddels verschilt van de geladen kaart, wordt
+duidelijk gewaarschuwd om te verversen. De indicaties zijn **geen
+transactie-, dependency-clearance-, privacy- of releasebewijs**:
+elke mutatie vereist daarna nog een zelfstandige menselijke reden,
+verse complete bronfingerprint, autorisatie en de bestaande
+`BEGIN IMMEDIATE`-controle. Zelfs een verlopen lease blijft van
+de huidige eigenaar tot een onafhankelijke bevoegde overgang.
+
+Geïntegreerde bestanden:
+`server.py`, `public/app.js`, `public/style.css` en
+`public/index.html`. De HTML laadt expliciet de exact gepinde
+GitHub-blobs `app.js=90521753ce18` en
+`style.css=87b0cd17c5a2`. Dit blijft werk op de bestaande
+[PR #1565](https://github.com/Zennay/zCloud/pull/1565),
+niet op `main` en niet op productie. De bestaande falende OOM-guard,
+onafhankelijke review en echte release-autorisatie zijn
+niet omzeild; er zijn geen nieuwe QA-suites geschreven of uitgevoerd.
