@@ -65,6 +65,11 @@ ChatGPT. Interactive terminal sessions are not part of this design.
 
 ## Runner occupancy snapshot
 
+The receipt uses the stable schema identifier `zssh.runner-workers.v1` for both
+observed and unavailable outcomes. Consumers should branch on this identifier,
+treat unknown action codes conservatively, and preserve all explicit
+`*_verified=false` and `*_authorized=false` fields.
+
 `/zssh workers` reads only bounded `/proc/<pid>/stat` identity fields and
 `/proc/uptime`. It never reads command lines, environments, process IDs in the
 receipt, private files, or GitHub tokens; it does not invoke a shell, change
