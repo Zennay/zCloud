@@ -1255,6 +1255,8 @@ def workorders_csv(batch):
                     "recommended_next_step_code": result["report"]["recommended_next_step_code"],
                     "blocker_codes": [blocker["code"] for blocker in result["report"]["blockers"]],
                     "required_evidence": result["report"]["required_evidence"],
+                    "source_clock_observations_unverified":
+                        result["report"].get("source_clock_observations_unverified", {}),
                 }
                 for result in batch.get("results", [])
                 if result["report"]["project_id"] == item["project_id"]
@@ -1444,6 +1446,14 @@ def workorders_html(batch):
                     "' target='_blank' rel='noopener noreferrer'>" +
                     esc(proposal["source_url"]) + "</a></p>"
                 )
+                if proposal.get("source_clock_observations_unverified"):
+                    parts.append("<p><strong>Queue/claim source clocks (unverified)</strong></p><ul>")
+                    for name, clock in sorted(proposal["source_clock_observations_unverified"].items()):
+                        duration = ("unknown" if clock["age_seconds"] is None
+                                    else str(clock["age_seconds"]) + " seconds")
+                        parts.append("<li><code>" + esc(name) + "</code>: " +
+                                     esc(clock["status"]) + " (" + esc(duration) + ")</li>")
+                    parts.append("</ul>")
                 if proposal["blockers"]:
                     parts.append("<p><strong>Holds</strong></p><ul>")
                     for blocker in proposal["blockers"]:
@@ -1981,6 +1991,13 @@ def markdown_batch(batch):
             "- Action executed: no",
             "",
         ])
+        if report.get("source_clock_observations_unverified"):
+            lines.extend(["### Queue/claim source clocks (operator-supplied; unverified)", ""])
+            for name, clock in sorted(report["source_clock_observations_unverified"].items()):
+                duration = ("unknown" if clock["age_seconds"] is None
+                            else str(clock["age_seconds"]) + " seconds")
+                lines.append("- " + name + ": " + clock["status"] + " (" + duration + ")")
+            lines.append("")
         if report["blockers"]:
             lines.extend(["### Holds to resolve", ""])
             lines.extend(
