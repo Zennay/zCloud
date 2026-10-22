@@ -441,6 +441,29 @@ def overlap_relation(wanted, changed):
     if target.startswith(changed + "/"):
         return "changed_file_is_ancestor_of_target"
     raise ValueError("path pair does not overlap")
+def portable_path_key(path):
+    """Conservative cross-platform alias key; advisory, not Git path identity."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", path).casefold())
+
+
+def portable_path_alias_relation(left_path, right_path):
+    """Detect likely case/NFC aliases on case-insensitive or normalizing filesystems.
+
+    Git paths remain case-sensitive. Keep this separate from actual shared
+    paths and Git tree ancestor conflicts; hints never establish a merge conflict.
+    """
+    if left_path == right_path:
+        return None
+    left_key, right_key = portable_path_key(left_path), portable_path_key(right_path)
+    if left_key == right_key:
+        return "case_or_unicode_normalization_alias"
+    if right_key.startswith(left_key + "/"):
+        return "left_path_alias_conflicts_with_right_descendant"
+    if left_key.startswith(right_key + "/"):
+        return "right_path_alias_conflicts_with_left_descendant"
+    return None
+
+
 def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
             expanded_source_files=False, open_page=1, page_count=1):
     if (not REPO.fullmatch(repo) or not isinstance(wanted, list)
@@ -691,6 +714,8 @@ def html_view(report):
 MAX_CONFLICT_PAIRS = 200
 MAX_SHARED_FILES_PER_PAIR = 24
 MAX_SCOPE_PATH_PAIRS_PER_PAIR = 24
+MAX_PORTABLE_ALIAS_PAIRS = 80
+MAX_PORTABLE_ALIAS_EXAMPLES_PER_PAIR = 8
 MAX_REFERENCED_ISSUES = 32
 MAX_DUPLICATE_ISSUE_GROUPS = 80
 MAX_IDENTITY_LOOKUPS = 8
@@ -1086,6 +1111,47 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
                 # examples are deterministic without materializing the full edge.
                 scope_pairs[key] = examples
                 scope_pair_counts[key] = conflict_count
+    # Separate advisory for paths which are distinct Git paths but may alias
+    # on case-insensitive or Unicode-normalizing developer filesystems.
+    # Retain only a bounded prefix per PR pair; count all observed aliases.
+    alias_pairs = {}
+    alias_pair_counts = {}
+    for left_index, left in enumerate(scope_prs):
+        for right in scope_prs[left_index + 1:]:
+            alias_count = 0
+            alias_examples = []
+            for left_path in left["file_paths_observed"]:
+                for right_path in right["file_paths_observed"]:
+                    if (left_path == right_path
+                            or right_path.startswith(left_path + "/")
+                            or left_path.startswith(right_path + "/")):
+                        continue
+                    relation = portable_path_alias_relation(left_path, right_path)
+                    if relation is None:
+                        continue
+                    alias_count += 1
+                    if len(alias_examples) < MAX_PORTABLE_ALIAS_EXAMPLES_PER_PAIR:
+                        alias_examples.append({
+                            "left_path": left_path, "right_path": right_path,
+                            "relation": relation,
+                        })
+            if alias_count:
+                key = (left["number"], right["number"])
+                alias_pairs[key] = alias_examples
+                alias_pair_counts[key] = alias_count
+    ordered_alias = sorted(
+        alias_pairs.items(), key=lambda item: (-alias_pair_counts[item[0]], item[0]))
+    alias_cards = [{
+        "left": scope_pr_ref(by_num[left]), "right": scope_pr_ref(by_num[right]),
+        "path_alias_count_observed": alias_pair_counts[(left, right)],
+        "path_aliases": aliases,
+        "path_aliases_truncated": alias_pair_counts[(left, right)] > len(aliases),
+        "heuristic": "unicode_nfc_casefold_advisory_not_git_identity",
+        "merge_conflict_verified": False,
+        "same_active_owner_verified": False,
+    } for (left, right), aliases in ordered_alias[:MAX_PORTABLE_ALIAS_PAIRS]]
+    alias_pairs_truncated = len(ordered_alias) > MAX_PORTABLE_ALIAS_PAIRS
+    alias_examples_truncated = any(card["path_aliases_truncated"] for card in alias_cards)
     ordered_scope = sorted(scope_pairs.items(),
                            key=lambda item: (-scope_pair_counts[item[0]], item[0]))
     scope_cards = [{
@@ -1121,13 +1187,18 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
     for left, right in scope_pairs:
         collided.add(left)
         collided.add(right)
+    for left, right in alias_pairs:
+        collided.add(left)
+        collided.add(right)
     # Combining bounded pages improves collision discovery, not claim admission.
     # With more than one page we never infer whole-inventory completeness.
     fully_sampled = (page_count == 1 and open_page == 1
                      and len(before) < page_size and len(before) <= limit
                      and not suspicious_lists and stable
                      and len(ordered) <= MAX_CONFLICT_PAIRS
-                     and not scope_pairs_truncated)
+                     and not scope_pairs_truncated
+                     and not alias_pairs_truncated
+                     and not alias_examples_truncated)
     # An unpaired PR is a useful independent-work candidate ONLY after the
     # entire open-PR source sample is complete and stable. An unchecked PR
     # could otherwise touch the exact same path.
@@ -1202,6 +1273,11 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "shown_file_collision_pairs": cards,
         "observed_path_scope_collision_pairs": len(ordered_scope),
         "shown_path_scope_collision_pairs": scope_cards,
+        "observed_portable_path_alias_pairs": len(ordered_alias),
+        "shown_portable_path_alias_pairs": alias_cards,
+        "portable_path_alias_pairs_truncated": alias_pairs_truncated,
+        "portable_path_alias_examples_truncated": alias_examples_truncated,
+        "portable_path_alias_heuristic": "unicode_nfc_casefold_advisory_not_git_identity",
         "path_scope_collision_pairs_truncated": scope_pairs_truncated,
         "path_scope_examples_truncated": any(
             row["path_conflicts_truncated"] for row in scope_cards),
@@ -1225,7 +1301,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
                                               len(snapshots_before[-1]) == page_size),
         "open_pr_snapshot_stable": stable,
         "pr_file_scope_sample_complete": fully_sampled,
-        "source_result": ("collisions_observed" if ordered or ordered_scope else
+        "source_result": ("collisions_observed" if ordered or ordered_scope or ordered_alias else
                           "incomplete_no_collisions_observed" if not fully_sampled
                           else "no_open_pr_shared_paths_observed"),
         "findings_are_merge_conflicts": False,
