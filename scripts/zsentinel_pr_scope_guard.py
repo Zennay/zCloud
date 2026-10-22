@@ -1899,8 +1899,13 @@ def main(argv=None):
                 print(graph_markdown(report))
             else:
                 print(graph_operator_text(report))
-            return (2 if report["observed_file_collision_pairs"] else
-                    3 if not report["pr_file_scope_sample_complete"] else 0)
+            # Ancestor file/directory conflicts are equally actionable:
+            # git cannot represent a file and its descendant directory.
+            # An exact-filename-only check could report exit 0 despite
+            # observed cross-PR tree collisions.
+            return (2 if (report["observed_file_collision_pairs"] or
+                          report["observed_path_scope_collision_pairs"])
+                    else 3 if not report["pr_file_scope_sample_complete"] else 0)
         if args.resolve_issue_identity:
             raise ValueError("--resolve-issue-identity requires --audit-open-prs")
         report = observe(
