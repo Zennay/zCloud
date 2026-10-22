@@ -2027,7 +2027,8 @@ def operator_text(result):
     lines.append(
         "Native retry contract: NOT VERIFIED by read-only view · required semantics "
         "failure disposition/backoff/finite budget/claim continuity · attempts are claims, "
-        "not failures · issue #677 link is navigation only · no retry, queue write or counter reset."
+        "not failures · " + retry_contract["source_issue_url"] +
+        " (navigation only) · no retry, queue write or counter reset."
     )
     if queue_report["totals"]:
         values = queue_report["totals"]
