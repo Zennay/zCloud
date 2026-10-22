@@ -311,7 +311,13 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1,
                         or existing["priority_from_explicit_labels"] !=
                             item["priority_from_explicit_labels"]
                         or existing["unverified_title_prefix_hint"] !=
-                            item["unverified_title_prefix_hint"]):
+                            item["unverified_title_prefix_hint"]
+                        or existing["label_source_complete"] !=
+                            item["label_source_complete"]
+                        or existing["explicit_priority_label_conflict"] !=
+                            item["explicit_priority_label_conflict"]
+                        or existing["explicit_label_title_disagreement"] !=
+                            item["explicit_label_title_disagreement"]):
                     # GitHub result pages are not an atomic snapshot.
                     # Drift means the original derived priority is no longer
                     # reliable and cannot remain prioritized as a P0.
@@ -320,6 +326,8 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1,
                         "recheck_changed_issue_source_before_owner_action"
                     )
                     existing["explicit_label_title_disagreement"] = "UNKNOWN"
+                    existing["explicit_priority_label_conflict"] = "UNKNOWN"
+                    existing["label_source_complete"] = False
                     existing["priority_from_explicit_labels"] = "UNKNOWN"
                     existing["unverified_title_prefix_hint"] = "NONE"
                     existing["triage_rank"] = 6
