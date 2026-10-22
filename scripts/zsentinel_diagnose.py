@@ -16,8 +16,13 @@ from typing import Any
 UTC = timezone.utc
 PAUSED = frozenset({"paused", "parked", "human-blocked"})
 RUNNING = frozenset({"running", "in_progress"})
-COMPLETED = frozenset({"completed", "failure", "success", "cancelled"})
-RESULTS = frozenset({"success", "failure", "cancelled", "timed_out", "action_required", "neutral", "skipped", "stale", "startup_failure"})
+RESULTS = frozenset({
+    "success", "failure", "cancelled", "timed_out", "action_required",
+    "neutral", "skipped", "stale", "startup_failure",
+})
+# Accept legacy snapshots that encode a terminal outcome in job_status, while
+# still requiring an explicit paired conclusion below.
+COMPLETED = frozenset({"completed"}) | RESULTS
 MAX_PROJECTS = 200
 
 
