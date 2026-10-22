@@ -234,3 +234,11 @@
 .blocked-queue-inspection li{margin:4px 0}
 .blocked-queue-inspection small{display:block;margin-top:7px;color:#afc2d3}
 .blocked-queue-inspect:focus-visible{outline:2px solid #c9e5ff;outline-offset:2px}
+
+/* zSentinel: sample-bound priority workbench; these controls never mutate queue state. */
+.blocked-queue-severity{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 5px}
+.blocked-queue-severity button{display:inline-flex;align-items:center;gap:8px;border:1px solid #66577e;border-radius:10px;background:#211c2d;color:#eee5ff;padding:9px 12px;min-height:44px;font-size:12px;cursor:pointer}
+.blocked-queue-severity button span{display:inline-block;min-width:20px;text-align:center;border-radius:999px;background:#403450;color:#f6eefe;padding:2px 6px;font-variant-numeric:tabular-nums}
+.blocked-queue-severity button[aria-pressed="true"]{background:#49365f;border-color:#b992f8;color:#fff}
+.blocked-queue-severity button:focus-visible{outline:2px solid #e6d0ff;outline-offset:3px}
+@media(max-width:760px){.blocked-queue-severity button{flex:1 1 auto;justify-content:space-between}}
