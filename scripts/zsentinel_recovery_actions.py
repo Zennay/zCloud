@@ -177,16 +177,16 @@ def suggested_actions(packet):
         if contract.get("matches_proposed_profile") == "MISMATCH_LOCAL_FILE":
             result.append(action(
                 "local-contract-profile-owner-review", "urgent",
-                "Het lokale vierbaanprofiel of de cap van precies vier herstelworkers wijkt af.",
+                "Het lokale vierbaanprofiel of de actuele cap van vijf workers wijkt af.",
                 "Laat de runtime-eigenaar het actuele portfolio-recovery profiel, "
-                "ai_worker_cap=4 en de werkelijk geladen service vergelijken. "
+                "ai_worker_cap=5 en de werkelijk geladen service vergelijken. "
                 "Behoud bestaande claims; geen automatische opschaling of overname.",
                 "HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH",
             ))
         elif contract.get("status") != "OBSERVED_LOCAL_FILE":
             result.append(action(
                 "local-contract-unverified-owner-review", "urgent",
-                "Het lokale vier-workercontract is niet betrouwbaar geobserveerd.",
+                "Het lokale workercontract is niet betrouwbaar geobserveerd.",
                 "Laat de runtime-eigenaar het bronbestand en de werkelijk geladen "
                 "serviceconfiguratie vaststellen; houd nieuwe schrijvers tegen.",
                 "HOLD_LOCAL_CONTRACT_UNVERIFIED",
