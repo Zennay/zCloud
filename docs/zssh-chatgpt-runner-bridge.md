@@ -119,8 +119,10 @@ For example, a listener observed inside the expected unit does not hide a
 worker observed outside it: the receipt emits `OWNER_RECONCILIATION_REQUIRED`
 plus `WORKER_SERVICE_MEMBERSHIP_MISMATCH`. The corresponding listener code is
 `LISTENER_SERVICE_MEMBERSHIP_MISMATCH`. Mixed membership in either role also
-requires owner reconciliation. These codes do not prove executable identity
-or GitHub assignment. These codes summarize the same bounded observation;
+requires owner reconciliation. The combined human summary prioritizes an
+outside/mixed worker finding over a listener-in-unit finding, so an in-unit
+listener cannot mask an anomalous worker. These codes do not prove executable
+identity or GitHub assignment. These codes summarize the same bounded observation;
 they are not a task/claim inventory and never authorize mutation, takeover,
 service restart, release, or deployment.
 
