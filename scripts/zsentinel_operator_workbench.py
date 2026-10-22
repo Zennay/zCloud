@@ -3423,6 +3423,99 @@ function syncRecoveryControls(){
   area.textContent=recoveryReviewStatus(recoveryHandoffs.get(area.dataset.recoveryDueLabel));
  });
 }
+// A portable owner packet is one PROJECT only. Never take unrelated issue
+// search/disposition filters or other projects' private notes into a handoff.
+let viewedProjectPacket=null;
+function projectRecoveryPacket(project,includePrivate){
+ const row=board.project_operations.find(item=>item.project===project);
+ if(!row)throw Error('Unknown project in captured source board');
+ const issueRows=board.cards.filter(item=>item.project===project).map(item=>({
+  issue:item.issue,url:item.url,priority:item.priority,title:item.title,
+  open_pr_candidates:item.open_pr_candidates.slice(0,3),
+  exact_head_pr_source_only:item.pr_gate_observations.map(pr=>({
+   url:pr.url,observed_head_sha:pr.head_sha,
+   observed_checks_success:pr.observed_check_success,
+   observed_legacy_context_success:pr.legacy_context_success,
+   observed_non_author_approvals:pr.observed_approvals,
+   merge_authorized:false
+  })),
+  current_claim_verified:false,
+  recommended_human_step:item.recommended_next_step,
+  evidence_gaps:item.evidence_gaps.slice(0,15)
+ }));
+ const payload={
+  schema_version:1,kind:'zsentinel-single-project-recovery-packet',
+  source_board_sha256:boardSha,source_observed_at_utc:board.observed_at_utc,
+  source_clocks_utc:board.project_source_observed_at_utc,
+  project:row.project,issue_source_coverage:row.issue_coverage,
+  issue_sample_may_be_incomplete:true,
+  sampled_issue_counts:row.issue_counts_in_sample,
+  sampled_queue_observation:row.queue_observation,
+  original_queue_source_utc:row.queue_source_observed_at_utc,
+  claim_context_at_source:row.claim_context,
+  recommended_human_step:row.recommended_next_step,
+  issues:issueRows,
+  source_is_live:false,current_owner_verified:false,
+  required_exact_head_ci_verified:false,independent_review_verified:false,
+  authorizes_claim:false,authorizes_retry:false,
+  authorizes_merge:false,authorizes_deploy:false,
+  owner_must_recheck:'Current live ownership, GitHub HEAD/CI/reviews and release authority.',
+ };
+ if(includePrivate){
+  const local=recoveryHandoffs.get(project);
+  payload.private_operator_handoff={
+   decision:local?.decision||'investigate',
+   contact_label:contactLabel(local?.owner||''),
+   review_date_utc:validFollowupDate(local?.due||'')?(local?.due||''):'',
+   note:String(local?.note||'').slice(0,500),
+   local_annotation_only:true,
+   no_owner_claim_granted:true
+  };
+ }
+ return payload;
+}
+function clearProjectPacketPreview(message){
+ viewedProjectPacket=null;
+ document.getElementById('projectPacketPanel').hidden=true;
+ document.getElementById('projectPacketContent').textContent='';
+ document.getElementById('downloadProjectPacket').disabled=true;
+ if(message)document.getElementById('projectPacketScope').textContent=message;
+}
+function previewProjectPacket(project){
+ const includePrivate=document.getElementById('projectPacketPrivate').checked;
+ const payload=projectRecoveryPacket(project,includePrivate);
+ const content=JSON.stringify(payload,null,2)+'\\n';
+ if(content.length>262144)throw Error('One-project packet exceeds 256 KiB limit');
+ viewedProjectPacket={project,includePrivate,content};
+ document.getElementById('projectPacketContent').textContent=content;
+ document.getElementById('projectPacketPanel').hidden=false;
+ document.getElementById('downloadProjectPacket').disabled=false;
+ document.getElementById('projectPacketScope').textContent=
+  project+' · '+payload.issues.length+
+  ' saved issue(s); private annotation '+(includePrivate?'explicitly included':'excluded')+
+  '. Owner and release still UNKNOWN.';
+}
+document.getElementById('projectPacketPrivate').addEventListener('change',()=>{
+ clearProjectPacketPreview('Privacy choice changed. Preview the selected project again.');
+});
+document.getElementById('downloadProjectPacket').addEventListener('click',()=>{
+ if(!viewedProjectPacket)return;
+ try{
+  const {project,includePrivate,content}=viewedProjectPacket;
+  if(includePrivate!==document.getElementById('projectPacketPrivate').checked||
+     JSON.stringify(projectRecoveryPacket(project,includePrivate),null,2)+'\\n'!==content){
+   clearProjectPacketPreview('Source or local notes changed. Preview the project again.');
+   return;
+  }
+  const uri=URL.createObjectURL(new Blob([content],{type:'application/json'}));
+  const link=elem('a');link.href=uri;
+  link.download='zsentinel-project-'+project+'-recovery.json';link.click();
+  setTimeout(()=>URL.revokeObjectURL(uri),1000);
+  status.textContent='Single-project recovery packet downloaded locally; no owner, CI or release state changed.';
+ }catch(err){
+  clearProjectPacketPreview('Owner packet not exported: '+err.message);
+ }
+});
 document.getElementById('projectRecoveryDesk').addEventListener('input',event=>{
  const target=event.target;
  const project=target?.dataset?.recoveryChoice||target?.dataset?.recoveryNote||
