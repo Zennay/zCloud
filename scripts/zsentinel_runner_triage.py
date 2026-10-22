@@ -102,6 +102,8 @@ def observe_discovered_job(token=None, host_pressure=False):
                 "project_id": "cloud", "status": "degraded_unavailable",
                 "authoritative_all_clear": False,
                 "additional_job_links": [],
+                "approval_wait_workflows": [],
+                "approval_wait_workflows_sampled": 0,
             }],
             "full_repo_ci_inventory": False,
             "jobs_restarted": False,
@@ -122,12 +124,13 @@ def observe_discovered_job(token=None, host_pressure=False):
                     "selected_one_source_bound_job",
                     "selected_one_source_bound_job_partial_window",
                     "no_actionable_job_in_sampled_windows",
+                    "approval_wait_workflow_no_job_selected",
                     "degraded_unavailable")
                 or type(row.get("additional_job_links", [])) is not list
                 or len(row.get("additional_job_links", [])) > 5):
             raise ValueError("malformed cloud discovery coverage")
         requests = discovery.get("request_count")
-        if requests is not None and (type(requests) is not int or not 0 <= requests <= 9):
+        if requests is not None and (type(requests) is not int or not 0 <= requests <= 12):
             raise ValueError("invalid bounded discovery request count")
         if "cloud" in receipts:
             pin = receipts["cloud"]
@@ -157,10 +160,13 @@ def observe_discovered_job(token=None, host_pressure=False):
     if status not in (
             "selected_one_source_bound_job",
             "selected_one_source_bound_job_partial_window",
-            "no_actionable_job_in_sampled_windows", "degraded_unavailable"):
+            "no_actionable_job_in_sampled_windows",
+            "approval_wait_workflow_no_job_selected", "degraded_unavailable"):
         status = "degraded_unavailable"
     # Optional secondary links never invalidate the primary exact-job receipt.
-    from zsentinel_runner_cross_source import validate_additional_jobs
+    from zsentinel_runner_cross_source import (
+        validate_additional_jobs, validate_approval_workflows,
+    )
     try:
         row["additional_job_links"] = validate_additional_jobs(
             row.get("additional_job_links"))
@@ -168,6 +174,13 @@ def observe_discovered_job(token=None, host_pressure=False):
     except (ValueError, TypeError, KeyError, AttributeError):
         row["additional_job_links"] = []
         row["additional_links_coverage"] = "degraded_untrusted_receipt"
+    try:
+        row["approval_wait_workflows"] = validate_approval_workflows(
+            row.get("approval_wait_workflows", []))
+        row["approval_links_coverage"] = "bounded_observed"
+    except (ValueError, TypeError, KeyError, AttributeError):
+        row["approval_wait_workflows"] = []
+        row["approval_links_coverage"] = "degraded_untrusted_receipt"
     if "cloud" in receipts:
         pin = receipts["cloud"]
         report = observe_exact_job(
@@ -190,6 +203,15 @@ def observe_discovered_job(token=None, host_pressure=False):
             "status": "degraded",
         }] if incomplete else [])
         combined = combine(local, receipt)
+        if status == "approval_wait_workflow_no_job_selected":
+            # GitHub can hold at workflow level before a job/runner exists.
+            # Preserve local observation but route approval to its owner.
+            combined["problem"] = (
+                "GitHub-workflow wacht op toestemming/concurrency; "
+                "er is geen exacte runnerjob als herstelkandidaat.")
+            combined["next_action"] = (
+                "Bevoegde workflow-eigenaar controleert de gekoppelde "
+                "approval-run; geen runnerrestart of automatische goedkeuring.")
         report = {
             "schema": "zsentinel-single-exact-runner-workbench-v1",
             "runner": combined,
@@ -212,7 +234,7 @@ def observe_discovered_job(token=None, host_pressure=False):
     detail = " · discovery=" + status
     windows = row.get("incomplete_windows", [])
     if isinstance(windows, list) and windows:
-        safe_windows = [x for x in windows if x in ("queued", "in_progress", "failure")]
+        safe_windows = [x for x in windows if x in ("queued", "in_progress", "waiting", "failure")]
         if safe_windows:
             detail += " (" + ",".join(safe_windows) + " onvolledig)"
     if len(report["runner"]["status"]) + len(detail) <= 320:
@@ -240,7 +262,9 @@ def html_document(report):
             row = coverage[0]
             if type(row) is not dict or row.get("project_id") != "cloud":
                 raise ValueError("untrusted discovery project")
-            from zsentinel_runner_cross_source import additional_jobs_html
+            from zsentinel_runner_cross_source import (
+                additional_jobs_html, approval_workflows_html,
+            )
             if row.get("additional_links_coverage") == "degraded_untrusted_receipt":
                 extra_html = (
                     '<section><h2>Aanvullende GitHub-jobs</h2>'
@@ -248,6 +272,14 @@ def html_document(report):
                     '<p>Geen retry-, merge- of runnerautorisatie.</p></section>')
             else:
                 extra_html = additional_jobs_html(row.get("additional_job_links", []))
+            if row.get("approval_links_coverage") == "degraded_untrusted_receipt":
+                extra_html += (
+                    '<section><h2>GitHub-goedkeuringswacht</h2>'
+                    '<p>ONBEKEND · Ongeldige bron; geen approval- of '
+                    'runnerherstel geautoriseerd.</p></section>')
+            else:
+                extra_html += approval_workflows_html(
+                    row.get("approval_wait_workflows", []))
     return (
         '<!doctype html><html lang="nl"><meta charset="utf-8">'
         '<meta name="referrer" content="no-referrer">'
@@ -280,7 +312,7 @@ def html_document(report):
 def main():
     parser = argparse.ArgumentParser(description="Inspect one exact existing GitHub job and local runner; no mutation")
     parser.add_argument("--discover", action="store_true",
-                        help="discover one bounded existing queued/running/failing job before exact refresh")
+                        help="discover bounded queued/running/approval/failed workflow evidence before exact job refresh")
     parser.add_argument("--observe-host-pressure", action="store_true",
                         help="opt-in bounded read-only VPS root disk/inode/memory capacity")
     parser.add_argument("--run-id", type=int,
