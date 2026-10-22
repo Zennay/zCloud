@@ -54,3 +54,24 @@ The existing `zsentinel_runtime_handoff.py` now turns the **per-project observed
 The new project-owner workboard is accessible through the pre-existing `--read-notion-claims` live refresh and existing optional private `--owner-handoff-output` / incident-desk output, without any new API budget, daemon, scheduler, test suite, DB migration, or write permission.
 
 **Release:** This documentation and source are on the existing PR #1563 until exact-head mandatory CI, independent review, branch protection and authorization permit merging; a branch commit is not a main-branch release.
+
+## Same-row urgency, not project-wide inference
+
+The latest owner workboard revision also preserves whether an **individual
+Notion row** with an anomalous claim clock is itself in `Claimed` or
+`Running`. It exposes bounded
+`active_project_in_progress_claim_clock_rechecks` alongside the original
+per-project histogram. Every count is checked against the corresponding
+project's observed non-`Verifying` status count and anomalous clock total.
+
+This distinction matters: one valid-looking `Running` item elsewhere in a
+project must **not** escalate a historical `Verifying` clock anomaly to a P1
+active-worker incident. Owner actions are P1 only when at least one anomalous
+clock belongs to a `Claimed`/`Running` status row; otherwise P2. This is
+**advisory triage**, never proof of current worker activity, claim ownership,
+failed retry or lease expiry in the authoritative SQLite queue.
+
+The offline cockpit and private owner report show the same-row count separately
+from all uncertain clock fields. The report's provenance validator refuses
+contradictory status/clock totals, source timestamps, owner permissions or
+priority labels rather than silently passing them to the operator.
