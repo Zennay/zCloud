@@ -21,30 +21,30 @@ browser events, TLS/auth, and rollback availability.
 
 ## Receipt manifest contract
 
-- \`target_hostname\`: exact new hostname
-- \`collected_at\`: timezone-aware ISO-8601 timestamp, no older than 60 minutes
-- \`database\`: \`old_writers_fenced\`, \`new_writer_singleton\`,
-  \`restored_on_new\`, \`wal_consistent\` must be true;
-  \`final_backup_sha256\` must be a real 64-character hex digest;
-  \`source_tables\` and \`target_tables\` equal, positive integer;
-  \`snapshot_at\` fresh within 24 hours
-- \`scheduler\`: \`old_disabled\` and \`new_active\` true;
-  \`last_completed_dispatch_at\` fresh within one hour
-- \`runners\`: exactly 14 distinct entries with \`runner_id\` > 0,
-  unique \`name\` and \`job_id\` > 0, \`job_conclusion: success\`,
-  \`repository\`, \`host\` matching new VPS and recent \`job_completed_at\`
-- \`workers\`: exactly 10 distinct slots numbered 1–10, unique \`worker_id\`,
-  new-VPS \`host\`, \`heartbeat_at\` within five minutes and
-  \`last_event_at\` within one hour
-- \`public_routes\`: \`name: zcloud_dashboard\` and \`name: zssh_plugin\`,
-  HTTPS \`url\`, \`tls_verified\`, \`authentication_verified\`,
-  \`new_vps_origin_verified\` true, \`checked_at\` within one hour
-- \`project_services\`: one record for FTMO, Supa, LightUp, TradeEngine,
-  Tuddy, zSentinel, Fuckball-game, RaiseAI and zGuard. Each has \`state\`
-  \`healthy\` or \`intentionally_offline\`, a recent \`checked_at\`, and
-  nonempty \`evidence\` identifying the functional proof or explicit reason.
-- \`rollback\`: \`old_host_preserved\`, \`restore_procedure_confirmed\`,
-  \`backup_off_host\` true.
+- `target_hostname`: exact new hostname
+- `collected_at`: timezone-aware ISO-8601 timestamp, no older than 60 minutes
+- `database`: `old_writers_fenced`, `new_writer_singleton`,
+  `restored_on_new`, `wal_consistent` must be true;
+  `final_backup_sha256` must be a real 64-character hex digest;
+  `source_tables` and `target_tables` equal, positive integer;
+  `snapshot_at` fresh within 24 hours
+- `scheduler`: `old_disabled` and `new_active` true;
+  `last_completed_dispatch_at` fresh within one hour
+- `runners`: exactly 14 distinct entries with `runner_id` > 0,
+  unique `name` and `job_id` > 0, `job_conclusion: success`,
+  `repository`, `host` matching new VPS and recent `job_completed_at`
+- `workers`: exactly 10 distinct slots numbered 1–10, unique `worker_id`,
+  new-VPS `host`, `heartbeat_at` within five minutes and
+  `last_event_at` within one hour
+- `public_routes`: `name: zcloud_dashboard` and `name: zssh_plugin`,
+  HTTPS `url`, `tls_verified`, `authentication_verified`,
+  `new_vps_origin_verified` true, `checked_at` within one hour
+- `project_services`: one record for FTMO, Supa, LightUp, TradeEngine,
+  Tuddy, zSentinel, Fuckball-game, RaiseAI and zGuard. Each has `state`
+  `healthy` or `intentionally_offline`, a recent `checked_at`, and
+  nonempty `evidence` identifying the functional proof or explicit reason.
+- `rollback`: `old_host_preserved`, `restore_procedure_confirmed`,
+  `backup_off_host` true.
 
 All timestamps require a timezone; future timestamps beyond two minutes are
 rejected. The manifest must be populated from source evidence — **not**
@@ -53,9 +53,9 @@ contents, passwords, session cookies or private keys in the manifest.
 
 ## Training storage
 
-This tool inspects the running host's \`/proc/self/mountinfo\` and
-\`/sys/dev/block\`. It requires an exact canonical mountpoint with ext4/xfs/btrfs,
-a local \`/dev/\` block source, and a *different physical parent disk* from
+This tool inspects the running host's `/proc/self/mountinfo` and
+`/sys/dev/block`. It requires an exact canonical mountpoint with ext4/xfs/btrfs,
+a local `/dev/` block source, and a *different physical parent disk* from
 the root filesystem. Root partitions, bind-mounts, FUSE/rclone, network mounts,
 tmpfs and missing/unreadable mount evidence are rejected. It does not create
 a mount or start training.
