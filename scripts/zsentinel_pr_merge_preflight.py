@@ -158,7 +158,7 @@ def observe_exact_pr(pr_url, *, token=None):
         attempted += 1
         reviews = _review_summary(_limited_json(
             path + "/reviews?per_page=" + str(MAX_LIST_PAGE), token=token,
-        ))
+        ), first["exact_head_sha"])
     except GitHubReadError as exc:
         missing.append("reviews: " + str(exc))
         if "authentication, quota or provider admission" in str(exc):
@@ -364,8 +364,15 @@ def as_markdown(report):
         "- Base is current default: " + _known(report.get("target_is_default_branch")),
         "- Sampled checks: " + str(checks.get("sampled_count", "UNKNOWN")) +
         " of " + str(checks.get("provider_total_count", "UNKNOWN")),
-        "- Sampled review states: " +
+        "- Sampled review states (all observed commits): " +
         json.dumps(reviews.get("observed_review_states", {}), sort_keys=True),
+        "- Reviews bound to exact HEAD: " + str(reviews.get("exact_head_review_count", "UNKNOWN")),
+        "- Exact-HEAD review states: " +
+        json.dumps(reviews.get("observed_review_states_exact_head", "UNKNOWN"), sort_keys=True),
+        "- Reviews on other HEADs: " + str(reviews.get("other_head_review_count", "UNKNOWN")),
+        "- Reviews without valid commit binding: " + str(reviews.get("unbound_review_count", "UNKNOWN")),
+        "- Exact-HEAD review coverage: " + str(reviews.get("exact_head_review_coverage", "UNKNOWN")),
+        "- Independent review verdict: UNKNOWN (counts are not approval authority)",
         "- GitHub GET attempts: " + str(report["get_attempts"]),
         "", "## Operator next step", "", report["next_human_step"], "",
         "## Owner gate checklist — observation is not authorization", "",
@@ -419,7 +426,13 @@ def as_html(report):
         ("Reported merged", observed.get("reported_merged", "UNKNOWN")),
         ("Check sample", str(checks.get("sampled_count", "UNKNOWN")) + " / " +
          str(checks.get("provider_total_count", "UNKNOWN"))),
-        ("Review sample", json.dumps(reviews.get("observed_review_states", {}), sort_keys=True)),
+        ("Review sample, all observed commits", json.dumps(reviews.get("observed_review_states", {}), sort_keys=True)),
+        ("Reviews bound to exact HEAD", reviews.get("exact_head_review_count", "UNKNOWN")),
+        ("Exact-HEAD review states", json.dumps(reviews.get("observed_review_states_exact_head", "UNKNOWN"), sort_keys=True)),
+        ("Reviews on other HEADs", reviews.get("other_head_review_count", "UNKNOWN")),
+        ("Reviews without valid commit binding", reviews.get("unbound_review_count", "UNKNOWN")),
+        ("Exact-HEAD review coverage", reviews.get("exact_head_review_coverage", "UNKNOWN")),
+        ("Independent review verdict", "UNKNOWN — sampled counts are not approval authority"),
     ]
     parts = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
