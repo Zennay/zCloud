@@ -1575,30 +1575,35 @@ def improvement_loop_resume(project_id=IMPROVEMENT_PROJECT_ID):
             (project_id,IMPROVEMENT_RUNNING,0,0,None,None,None,ts))
     return improvement_loop_state(project_id)
 
-def _coordination_claim_rows_locked(connection,project_id,exclude_owner=None,ts=None):
+def _coordination_claim_rows_locked(connection,project_id,exclude_owner=None,ts=None,*,prune_expired=True):
+    """Observe live claims; only an explicit writable control path prunes rows."""
     ts=ts or now()
-    connection.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+    if prune_expired:
+        connection.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
     rows=connection.execute(
-        'SELECT project_id,claim_key,owner_id,worker_id FROM task_claims WHERE project_id=? ORDER BY claim_key,owner_id,worker_id',
-        (project_id,),
+        'SELECT project_id,claim_key,owner_id,worker_id FROM task_claims '
+        'WHERE project_id=? AND lease_until>? ORDER BY claim_key,owner_id,worker_id',
+        (project_id,ts),
     ).fetchall()
     return [
         {'project_id':r['project_id'],'claim_key':r['claim_key'],'owner_id':r['owner_id'],'worker_id':r['worker_id']}
         for r in rows if not exclude_owner or r['owner_id']!=exclude_owner
     ]
 
-def _coordination_claims_fingerprint_locked(connection,project_id,exclude_owner=None,ts=None):
-    rows=_coordination_claim_rows_locked(connection,project_id,exclude_owner,ts)
+def _coordination_claims_fingerprint_locked(connection,project_id,exclude_owner=None,ts=None,*,prune_expired=True):
+    rows=_coordination_claim_rows_locked(
+        connection,project_id,exclude_owner,ts,prune_expired=prune_expired
+    )
     raw=json.dumps(rows,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
     return hashlib.sha256(raw).hexdigest(),rows
 
 def _coordination_claim_rows(project_id, exclude_owner=None):
     with connect_readonly() as c:
-        return _coordination_claim_rows_locked(c,project_id,exclude_owner)
+        return _coordination_claim_rows_locked(c,project_id,exclude_owner,prune_expired=False)
 
 def _coordination_claims_fingerprint(project_id, exclude_owner=None):
     with connect_readonly() as c:
-        return _coordination_claims_fingerprint_locked(c,project_id,exclude_owner)
+        return _coordination_claims_fingerprint_locked(c,project_id,exclude_owner,prune_expired=False)
 
 def coordination_vps_health(profile='default'):
     profile=str(profile or 'default').strip().lower()
@@ -1728,7 +1733,7 @@ def worker_preflight_record(project_id,worker_id,owner_id,notion,github,vps_prof
         )
     return worker_preflight_state(project_id,worker_id,owner_id)
 
-def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=None):
+def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=None,*,prune_expired=True):
     row=connection.execute(
         'SELECT * FROM worker_preflights WHERE project_id=? AND worker_id=? AND owner_id=?',
         (project_id,worker_id,owner_id),
@@ -1744,7 +1749,8 @@ def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=N
     except Exception:
         expired=True
     fingerprint,current_claims=_coordination_claims_fingerprint_locked(
-        connection,project_id,owner_id,ts or reference.isoformat()
+        connection,project_id,owner_id,ts or reference.isoformat(),
+        prune_expired=prune_expired
     )
     claims_changed=fingerprint!=row['claims_fingerprint']
     try:notion=json.loads(row['notion_json'])
@@ -1771,7 +1777,7 @@ def worker_preflight_state(project_id,worker_id,owner_id):
     # HTTP GET and post-creation state reads are observations, not renewals.
     # Preflight CREATE/UPDATE uses the separate authorized writable path.
     with connect_readonly() as c:
-        return _worker_preflight_state_locked(c,project_id,worker_id,owner_id)
+        return _worker_preflight_state_locked(c,project_id,worker_id,owner_id,prune_expired=False)
 
 def _normalize_conflict_scope(metadata):
     metadata=metadata if isinstance(metadata,dict) else {}
