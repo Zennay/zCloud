@@ -81,6 +81,16 @@ The dashboard focuses on P0/P1 by default, with an explicit option to include lo
 
 The central server and /api/activity are **not** modified here. Central eventstream, runtime/writer ownership, canonical main integration, release gating and worker scheduling stay with existing owners (#580/#1089, #776/#777 and #1519). A source-only PR or successful local syntax/build check is **not** a live feed repair. Before automated live GitHub synchronization, the integration owner must reconcile GitHub/local event identity, per-project fair paging/cursors, branch coverage, private-repo access, sync budgets and exact-main provenance. Do not replace the existing local events or mark the UI fully live from these partial source observations.
 
+The server-side explicit refresh provider also reserves its own bounded request budget
+before dispatch: at most two concurrent observations and 45 expected GitHub GETs per
+rolling hour in that process. One Activity refresh reserves **10** GETs at worst
+(5 PR pages, 2 Actions pages, 2 canonical-main commit pages and 1 branch-head page);
+the P0/P1 issue inbox reserves 3. Fresh receipts are cached for five minutes, and an
+older valid receipt may be returned as explicitly **stale** for up to one hour while
+a refresh or rate-budget wait is in progress. This is an in-process burst guard, not
+a guarantee about traffic from other processes sharing the same anonymous GitHub IP;
+stale/partial receipts never count as synchronized or release evidence.
+
 No QA/regression suite is introduced or manually executed under the 17 October product-delivery instruction. Existing mandatory GitHub-hosted CI, branch protection and production review remain intact.
 
 
