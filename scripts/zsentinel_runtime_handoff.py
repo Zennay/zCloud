@@ -1964,6 +1964,16 @@ def handoff_html(report):
             ' <a href="' + escape(source_url, quote=True) +
             '" target="_blank" rel="noopener noreferrer">Bronlink uit queue '
             '(NIET geverifieerd)</a>' if source_url is not None else '')
+        cautions = item.get("sample_only_cautions", [])
+        if (type(cautions) is not list or len(cautions) > 6
+                or (cautions and item.get("kind") != "blocked_queue_owner_review")
+                or any(type(value) is not str or not 0 < len(value) <= 100
+                       for value in cautions)):
+            raise ValueError("untrusted blocked-work sample-only caution")
+        caution_label = (
+            ' <span class="muted">Voorbeeldsignalen (niet volledig): ' +
+            escape("; ".join(cautions)) + '</span>'
+            if cautions else '')
         url = item.get("issue_url")
         link = (' <a href="' + escape(url, quote=True) +
                 '" target="_blank" rel="noopener noreferrer">Bestaand issue</a>'
@@ -2055,8 +2065,8 @@ def handoff_html(report):
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
                      escape(_short(item.get("next_step"))) + due_label + pr_label +
-                     link + queue_link + pr_links + verified_links + linked_labels +
-                     missing_label + '</li>')
+                     link + queue_link + caution_label + pr_links +
+                     verified_links + linked_labels + missing_label + '</li>')
     coverage = report.get("coverage", {})
     if not isinstance(coverage, dict) or len(coverage) > 8:
         raise ValueError("invalid handoff source coverage")
@@ -2292,6 +2302,15 @@ def markdown(report):
         lines.append(str(n) + ". **" + card["priority"] + " " +
                      _md(card["project"]) + "** · " + _md(card["kind"]) +
                      " · " + _md(card["next_step"]))
+        cautions = card.get("sample_only_cautions", [])
+        if (type(cautions) is not list or len(cautions) > 6
+                or (cautions and card.get("kind") != "blocked_queue_owner_review")
+                or any(type(value) is not str or not 0 < len(value) <= 100
+                       for value in cautions)):
+            raise ValueError("untrusted blocked-work Markdown cautions")
+        if cautions:
+            lines.append("   Alleen voorbeeldsignalen (niet volledig): " +
+                         _md("; ".join(cautions), 500))
         if card.get("issue_url"):
             lines.append("   Bestaand issue: " + card["issue_url"])
         if card.get("unverified_queue_source_url"):
