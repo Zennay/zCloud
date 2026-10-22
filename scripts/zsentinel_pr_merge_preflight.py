@@ -17,6 +17,11 @@ from zsentinel_pr_live_read import (
 )
 
 
+def _known(value):
+    """Render missing source facts as UNKNOWN without hiding a real False."""
+    return "UNKNOWN" if value is None else str(value)
+
+
 def _repository_default_branch(payload, full_name):
     """Read one canonical repository identity and its current default branch."""
     if not isinstance(payload, dict) or payload.get("full_name") != full_name:
@@ -355,8 +360,8 @@ def as_markdown(report):
         "- Repository default branch SHA: " + str(report.get("repository_default_branch_sha") or "UNKNOWN"),
         "- Default branch stable across reads: " + str(report.get("repository_default_branch_stable", False)),
         "- Default branch tip stable across reads: " + str(report.get("repository_default_branch_sha_stable", False)),
-        "- Base tip matches current default: " + str(report.get("base_tip_matches_default", "UNKNOWN")),
-        "- Base is current default: " + str(report.get("target_is_default_branch", "UNKNOWN")),
+        "- Base tip matches current default: " + _known(report.get("base_tip_matches_default")),
+        "- Base is current default: " + _known(report.get("target_is_default_branch")),
         "- Sampled checks: " + str(checks.get("sampled_count", "UNKNOWN")) +
         " of " + str(checks.get("provider_total_count", "UNKNOWN")),
         "- Sampled review states: " +
@@ -409,8 +414,8 @@ def as_html(report):
         ("Repository default branch SHA", report.get("repository_default_branch_sha") or "UNKNOWN"),
         ("Default branch stable across reads", report.get("repository_default_branch_stable", False)),
         ("Default branch tip stable across reads", report.get("repository_default_branch_sha_stable", False)),
-        ("Base tip matches current default", report.get("base_tip_matches_default", "UNKNOWN")),
-        ("Base is current default", report.get("target_is_default_branch", "UNKNOWN")),
+        ("Base tip matches current default", _known(report.get("base_tip_matches_default"))),
+        ("Base is current default", _known(report.get("target_is_default_branch"))),
         ("Reported merged", observed.get("reported_merged", "UNKNOWN")),
         ("Check sample", str(checks.get("sampled_count", "UNKNOWN")) + " / " +
          str(checks.get("provider_total_count", "UNKNOWN"))),
