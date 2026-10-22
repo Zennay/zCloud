@@ -242,6 +242,7 @@ def blocked_queue_panel(source):
             "sample_truncated": True, "invalid_group_rows": None,
             "work_items": [], "work_items_coverage": "not_observed",
             "work_items_truncated": True, "invalid_work_rows": None,
+            "worker_slot_source_covered": False,
             "claim_ownership_verified": False, "queue_write_authorized": False,
             "automatic_retry_authorized": False,
         }
@@ -338,6 +339,9 @@ def blocked_queue_panel(source):
     work_coverage = source.get("work_items_coverage", "not_observed")
     work_truncated = source.get("work_items_truncated", True)
     invalid_work = source.get("invalid_work_rows")
+    slot_source_covered = source.get("worker_slot_source_covered", False)
+    if type(slot_source_covered) is not bool:
+        raise ValueError("invalid worker-slot coverage source")
     if (type(work) is not list or len(work) > 24
             or work_coverage not in ("not_observed", "complete", "partial", "stale")
             or type(work_truncated) is not bool
@@ -370,6 +374,13 @@ def blocked_queue_panel(source):
                 or type(count) is not int or not 0 <= count <= 10**9
                 or type(row.get("eligible_observed")) is not bool
                 or type(row.get("claim_fields_present_observed")) is not bool
+                or row.get("worker_slot_source_covered") is not slot_source_covered
+                or (slot_source_covered and
+                    type(row.get("worker_slot_present_observed")) is not bool)
+                or (not slot_source_covered and
+                    row.get("worker_slot_present_observed") is not None)
+                or (row.get("worker_slot_present_observed") is True
+                    and not row["claim_fields_present_observed"])
                 or row.get("resume_authorized") is not False
                 or row.get("current_owner_verified") is not False
                 or row.get("automatic_retry_authorized") is not False):
@@ -381,7 +392,12 @@ def blocked_queue_panel(source):
             "</code></td><td>" + phrase(title, 180) + "</td><td>" +
             str(count) + "</td><td>" +
             ("JA · eigenaar controleren" if row["claim_fields_present_observed"]
-             else "Geen claimvelden gezien · eigenaar onbekend") +
+             else "Geen tijdstempels/slot gezien · eigenaar onbekend"
+             if slot_source_covered else "Worker-slot ONBEKEND; eigenaar controleren") +
+            "</td><td>" +
+            ("Bezet gezien" if row["worker_slot_present_observed"] is True
+             else "Leeg in bron" if row["worker_slot_present_observed"] is False
+             else "ONBEKEND") +
             "</td><td>" +
             ("Ja, bronvlag; GEEN hervatrecht" if row["eligible_observed"]
              else "Nee, bronvlag") + "</td></tr>")
@@ -398,7 +414,8 @@ def blocked_queue_panel(source):
         'actuele echte taak via bevoegde beheertoegang.</p>' +
         ('<div class="wrap"><table><thead><tr><th>Prioriteit</th><th>Project</th>'
          '<th>Opaak kenmerk</th><th>Taak</th><th>Claims</th>'
-         '<th>Claimvelden</th><th>Eligible?</th></tr></thead><tbody>' +
+         '<th>Claimvelden</th><th>Worker-slot aanwezig?</th>'
+         '<th>Eligible?</th></tr></thead><tbody>' +
          "".join(work_rows) + '</tbody></table></div>' if work_rows else '') +
         '<p class="muted">Een blocked status is geen mislukte job of '
         'automatische retry. Alleen bevoegde eigenaar kan na actuele '
