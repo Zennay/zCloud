@@ -199,6 +199,8 @@
     const assignment=target;
     const queueId=String(assignment?.queue_item?.queue_id||"");
     const slot=Number(assignment?.global_worker_slot||0);
+    const baseProjectId=String(assignment?.base_project_id||id.split("::w")[0]);
+    const workerSlot=Number(assignment?.worker_slot||1);
     const prompt=String(assignment?.prompt||"").trim();
     const route=location.pathname;
     const conversationId=conversation();
@@ -212,10 +214,14 @@
     if(!ready(current)||current.project_id!==id||
        String(current.queue_item?.queue_id||"")!==queueId||
        Number(current.global_worker_slot||0)!==slot||
+       String(current.base_project_id||id.split("::w")[0])!==baseProjectId||
+       Number(current.worker_slot||1)!==workerSlot||
        String(current.prompt||"").trim()!==prompt||
        !ready(target)||target.project_id!==id||
        String(target.queue_item?.queue_id||"")!==queueId||
        Number(target.global_worker_slot||0)!==slot||
+       String(target.base_project_id||id.split("::w")[0])!==baseProjectId||
+       Number(target.worker_slot||1)!==workerSlot||
        String(target.prompt||"").trim()!==prompt||
        location.pathname!==route||conversation()!==conversationId||
        generating()||sending||awaiting||resetRoute!==null||
