@@ -1784,7 +1784,8 @@ def main(argv=None):
             board["merge_first_attention"] = merge_first_attention(board)
         if args.format in ("workorders", "workorders-json", "workorders-html", "workorders-csv"):
             from zsentinel_pr_workorders import (
-                collect_workorders, render_markdown, render_html, render_csv)
+                collect_workorders, render_markdown, render_html, render_csv,
+                validate_coordination_receipt)
             workorder_bundle = collect_workorders(board)
             if args.format == "workorders":
                 rendered = render_markdown(workorder_bundle)
@@ -1793,6 +1794,9 @@ def main(argv=None):
             elif args.format == "workorders-csv":
                 rendered = render_csv(workorder_bundle)
             else:
+                # JSON is an operator export too: enforce the same checksum
+                # and collision-graph consistency as HTML/Markdown/CSV.
+                validate_coordination_receipt(workorder_bundle)
                 rendered = json.dumps(workorder_bundle, ensure_ascii=False, indent=2) + "\n"
                 if len(rendered.encode("utf-8")) > 512 * 1024:
                     raise ValueError("private workorder JSON exceeds 512 KiB")
