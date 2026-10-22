@@ -1,0 +1,32 @@
+name: Control-plane sequence gap offline reference
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/control_plane_sequence_gap_offline_20261009_w1.py'
+      - 'tests/test_control_plane_sequence_gap_offline_20261009_w1.py'
+      - 'docs/control-plane-sequence-gap-offline-20261009-w1.md'
+      - '.github/workflows/control-plane-sequence-gap-offline-20261009-w1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sequence-gap-offline-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+      - name: Run offline reference tests
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_sequence_gap_offline_20261009_w1.py' -v
