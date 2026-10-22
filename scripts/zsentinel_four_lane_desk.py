@@ -211,13 +211,13 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
     if local_config_mismatch:
         return {
             "code": "HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH",
-            "label": "Vierbaanprofiel of maximum van vier workers ontbreekt",
-            "next_step": "Laat de runtime-eigenaar profiel en ai_worker_cap=4 met de geladen serviceconfiguratie vergelijken; wijzig geen actieve claims.",
+            "label": "Vierbaanprofiel of actuele cap van vijf workers ontbreekt",
+            "next_step": "Laat de runtime-eigenaar profiel en ai_worker_cap=5 met de geladen serviceconfiguratie vergelijken; wijzig geen actieve claims.",
         }
     if local_config_unverified:
         return {
             "code": "HOLD_LOCAL_CONTRACT_UNVERIFIED",
-            "label": "Lokaal vier-workercontract niet betrouwbaar gelezen",
+            "label": "Lokaal workercontract niet betrouwbaar gelezen",
             "next_step": "Vraag de runtime-eigenaar om een geldig lokaal projectcontract en controleer de geladen serviceconfiguratie; geen nieuwe schrijver vrijgeven.",
         }
     if expired_local_leases:
@@ -317,7 +317,7 @@ def observe_local_contract(path):
         "status": "NOT_OBSERVED",
         "profile": "UNKNOWN",
         "worker_cap": None,
-        "required_worker_cap": 4,
+        "required_worker_cap": 5,
         "profile_deviation_reason": "LOCAL_CONTRACT_NOT_OBSERVED",
         "matches_proposed_profile": "NOT_INFERABLE",
         "loaded_runtime_profile": "NOT_VERIFIED",
@@ -349,16 +349,16 @@ def observe_local_contract(path):
             return packet
         packet["profile"] = profile
         # The correct lane name with a worker cap of one is not a
-        # four-worker contract. Preserve the distinction in every view.
+        # five-slot contract. Preserve the distinction in every view.
         if type(cap) is not int or not 0 <= cap <= 8:
             packet["status"] = "UNTRUSTED_SOURCE"
             packet["profile_deviation_reason"] = "INVALID_WORKER_CAP"
             return packet
         packet["worker_cap"] = cap
         packet["profile_deviation_reason"] = (
-            "MATCH_LOCAL_CONTRACT" if profile == "portfolio-recovery" and cap == 4
+            "MATCH_LOCAL_CONTRACT" if profile == "portfolio-recovery" and cap == 5
             else "LANE_PROFILE_MISMATCH" if profile != "portfolio-recovery"
-            else "FOUR_WORKER_CAP_MISMATCH"
+            else "FIVE_WORKER_CAP_MISMATCH"
         )
         packet["matches_proposed_profile"] = (
             "MATCH_LOCAL_FILE"
@@ -1121,7 +1121,7 @@ def html_view(data):
         warnings.append(
             "Het lokale projectcontract heeft profiel " + config["profile"]
             + " met worker-cap " + str(config["worker_cap"])
-            + " in plaats van portfolio-recovery én ai_worker_cap=4. "
+            + " in plaats van portfolio-recovery én ai_worker_cap=5. "
               "Dit is geen bewijs van het geladen serviceprofiel."
         )
     elif config["status"] != "OBSERVED_LOCAL_FILE":
