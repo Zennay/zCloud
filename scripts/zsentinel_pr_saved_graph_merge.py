@@ -599,7 +599,9 @@ def render_private_csv(report):
 
     row("source_summary", operator_notice=(
         "OBSERVED ONLY: read-only, non-atomic partial PR evidence; "
-        "owner, required CI, review, Git conflicts and release UNKNOWN."))
+        "owner, required CI, review, Git conflicts and release UNKNOWN. "
+        "PRs with unknown target branch: " +
+        str(report["prs_with_unknown_target_branch"]) + "."))
     for pr in report["prioritized_existing_prs"]:
         row("existing_pr_priority", pr_number=pr["pr_number"],
             pr_url=pr["url"], pr_head_sha=pr["head_sha_observed"],
