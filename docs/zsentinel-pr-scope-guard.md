@@ -3596,3 +3596,21 @@ worden niet in terminal-/HTML-tekst overgenomen.
 De waarneming is geen globale GitHub runnerinventaris en bewijst geen
 verplichte CI-success, actieve Notion-claim, runneruitval, restarttoestemming
 of production release. Herstel blijft onder de echte eigenaar van issue #1326.
+
+### Wachtrijdruk zonder verwarring tussen workflowrun en job
+
+De optionele runnerwachtrijkaart toont nu ook de door GitHub **gemelde
+aantallen workflowruns** per aangevraagde status (`queued`,
+`in_progress`) naast het aantal werkelijk bekeken runs. Deze telling
+wordt niet voorgesteld als het aantal afzonderlijke queued jobs of
+mislukte uitvoeringen. De CSV en private PR-eigenaarsoverdracht nemen
+dezelfde teller en de dekkingsgrens mee.
+
+Een directe read-only GitHub-broninspectie op 22 oktober leverde in een
+begrensd venster een statuslijst met `total_count=2500` queued
+workflowruns en een job in run 39830563978 met labels
+`[self-hosted,zcloud,vps]` en nog geen toegewezen runner. Deze momentopname
+is als diagnostische aanwijzing aan de bestaande P0-issue #1326
+toegevoegd; noch die teller noch de afwezige jobtoewijzing is bewijs
+voor een offline listener. De daadwerkelijke correctie vereist nog
+de bevoegde runnerbeheerder en live uitvoeringsbewijs.
