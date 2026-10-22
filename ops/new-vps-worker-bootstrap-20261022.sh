@@ -156,6 +156,41 @@ UNIT
   else
     echo "KEEP existing zennay-cloud.service (no overwrite)"
   fi
+  msg "Stage existing self-heal recovery unit and timer (do NOT activate)"
+  # Keep the historical self-heal disabled during migration. Its timer will
+  # only be armed after the authenticated fleet reports ten fresh heartbeats.
+  for unit in zcloud-self-heal.service zcloud-self-heal.timer; do
+    if [[ ! -e "/etc/systemd/system/$unit" ]]; then
+      install -o root -g root -m 0644 "$ROOT/deploy/$unit" "/etc/systemd/system/$unit"
+      echo "STAGED inactive $unit"
+    else
+      echo "KEEP existing $unit"
+    fi
+  done
+  if [[ ! -e /usr/local/sbin/zcloud-self-heal ]]; then
+    install -o root -g root -m 0755 "$ROOT/scripts/zcloud-self-heal.sh" /usr/local/sbin/zcloud-self-heal
+    echo "STAGED self-heal executable"
+  else
+    echo "KEEP existing self-heal executable"
+  fi
+  # New host uses UID 1003, not the previous VPS's historical UID 1000.
+  # Recovery must NEVER implicitly re-enable a copied Actions runner or
+  # unrelated project services before their independent cutover.
+  install -d -o root -g root -m 0755 /etc/systemd/system/zcloud-self-heal.service.d
+  override=/etc/systemd/system/zcloud-self-heal.service.d/20-new-vps-quarantine.conf
+  if [[ ! -e "$override" ]]; then
+    cat > "$override" <<OVERRIDE
+[Service]
+Environment=ZCLOUD_RUNTIME_USER=ubuntu
+Environment=ZCLOUD_RUNTIME_USER_UID=$(id -u ubuntu)
+Environment=ZCLOUD_HEAL_ACTIONS_RUNNER=false
+Environment=ZCLOUD_HEAL_PROJECT_RUNTIMES=false
+OVERRIDE
+    chmod 0644 "$override"
+    echo "STAGED new-VPS self-heal quarantine drop-in"
+  else
+    echo "KEEP existing self-heal override $override"
+  fi
   systemctl daemon-reload
   loginctl enable-linger "$ZUSER"
   systemctl --user -M ubuntu@ daemon-reload ||
