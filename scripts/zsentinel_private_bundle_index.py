@@ -501,6 +501,9 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
             "saved_individual_source_freshness_at_capture": snap["source_fresh"],
             "sampled_cards": snap["card_count"],
             "sample_truncated": snap["sample_truncated"],
+            "saved_pr_observations": [
+                item for _, item in sorted(snap["saved_pr_observations"].items())
+            ],
             "current_inventory_complete_verified": False,
             "projects": projects,
         })
@@ -560,7 +563,9 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
                 for name in sorted(set(old_fresh) | set(new_fresh))
                 if old_fresh.get(name) != new_fresh.get(name)
             },
-            "projects": projects, "closure_or_merge_inferred": False,
+            "projects": projects,
+            "saved_pr_observation_changes": saved_pr_changes(old, new),
+            "closure_or_merge_inferred": False,
         })
     report = {
         "schema": "zsentinel-saved-bundle-history-v1",
@@ -574,6 +579,7 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
         "issue_closure_verified": False,
         "current_claims_verified": False,
         "required_ci_verified": False,
+        "saved_pr_gate_observations_are_not_current": True,
         "independent_review_verified": False,
         "merge_authorized": False,
         "deploy_authorized": False,
