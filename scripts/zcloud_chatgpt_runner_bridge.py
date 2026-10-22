@@ -504,12 +504,17 @@ def _host_capacity_observation() -> dict[str, object]:
             })
         except (OSError, ValueError, TypeError, OverflowError, AttributeError, ZeroDivisionError) as exc:
             complete = False
-            if str(exc) in ("archive_mount_changed_during_observation", "archive_mount_path_not_directory"):
+            path_identity_lost = (
+                str(exc) in ("archive_mount_changed_during_observation", "archive_mount_path_not_directory")
+                or isinstance(exc, (FileNotFoundError, NotADirectoryError))
+            )
+            if path_identity_lost:
                 archive["mount_detected"] = None
+                archive["mount_detection_basis"] = "unknown"
                 archive["separate_filesystem"] = None
             evidence_warnings.append(
                 "archive_mount_changed_during_observation"
-                if str(exc) == "archive_mount_changed_during_observation"
+                if path_identity_lost
                 else "archive_mount_observation_unavailable"
             )
 
