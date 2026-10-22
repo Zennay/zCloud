@@ -1,5 +1,40 @@
 # zSentinel · Private Product Delivery Workbench
 
+## 22 oktober · Privé geschiedenis van meerdere herstelbundels
+
+De nieuwe [bundle history CLI](../scripts/zsentinel_private_bundle_index.py)
+maakt een **bruikbare offline index** van 2–24 eerder door de
+[operator bundle CLI](../scripts/zsentinel_operator_bundle.py)
+gemaakte privébundels. Je kunt historische herstelwerkbanken lokaal openen
+en per project vergelijken: waargenomen P0/P1-issues, nieuwe en niet opnieuw
+waargenomen issues, urgentieverhogingen binnen de sample en veranderde
+bestaande PR-kandidaten. Geen QA-tool, claim-engine of herstelscheduler.
+
+Gebruik een bestaande eigen 0700-map. Iedere oorspronkelijke bundel moet een
+complete receipt en 0600 artefacten bevatten. Alle bron- en hashcontroles
+gebeuren vóór het schrijven. Ontbrekende, gewijzigde, ongeldige of niet-privé
+bestanden worden geweigerd; de index wordt nooit overschreven.
+
+    python3 scripts/zsentinel_private_bundle_index.py \
+      --directory "$HOME/zsentinel-private" \
+      --bundle zsentinel-20261021-a \
+      --bundle zsentinel-20261022-b \
+      --name recovery-history-october
+
+Open vervolgens recovery-history-october.index.html in die privémap.
+De scriptvrije HTML koppelt lokaal door naar iedere oorspronkelijke
+interactieve desk.html en receipt.json. Identiteit en timestamps komen
+uit geverifieerde bevroren bundels, niet uit een nieuwe live read.
+
+**Interpretatiegrens:** een niet opnieuw waargenomen issue of PR kan door
+sampling, truncatie of bronproblemen ontbreken: dit bewijst **niet** dat
+iets gesloten, gemerged of eigenaarsvrij is. Een P0/P1-wijziging is een
+historische samplewijziging, geen actuele autorisatie. Geen netwerkverzoek,
+queue-/workerwrite, CI-workflow, PR-merge of deploy. Voor actuele besluiten
+blijven live claims, exacte HEAD, verplichte CI, onafhankelijke review
+en echte bevoegdheid noodzakelijk.
+
+
 ## 22 oktober · Eén project als veilig overdraagbaar herstelpakket
 
 In de bestaande interactieve offline `zsentinel_operator_workbench.py` kan de
