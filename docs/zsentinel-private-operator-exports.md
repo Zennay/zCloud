@@ -475,3 +475,4 @@ they are excluded from the product-issue count. The local work-packet preview
 refuses all three routes even if an operator explicitly selects them. Filtering
 or saving a private note does not establish ownership, change a claim, dispatch
 a job, approve billing, restart a runner, merge a PR or authorize a deployment.
+The cross-project next-problem shortlist uses the same separate runner/billing routes; it does not collapse either incident into a generic infrastructure code.
