@@ -3566,7 +3566,9 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
                     c,project_id,
                     phase=str(project.get('phase') or ''),
                     action=f"Operator terminally closed queue item {queue_id}",
-                    ci_status='cancelled',
+                    # The *queue item*, not the project's CI, was cancelled.
+                    # Do not misreport all project checks as cancelled.
+                    ci_status='',
                     blocker='',
                     next_gate=str(project.get('next_step') or ''),
                     source='portfolio_queue_drop',
