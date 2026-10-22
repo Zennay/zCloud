@@ -49,6 +49,8 @@ GATE_STEPS_NL = {
 MAX_PRS = 4
 NUMBER = re.compile(r"^[1-9][0-9]{0,8}$")
 OK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+# Owner attention only; this is not a required CI gate or proof of runner failure.
+QUEUED_CHECK_ATTENTION_AFTER_SECONDS = 30 * 60
 
 
 def _sha(value):
@@ -92,6 +94,25 @@ def _pending_review_requests(pr):
     if len(set(users)) != len(users) or len(set(groups)) != len(groups):
         raise ValueError("repeated pending review request")
     return sorted(users), sorted(groups)
+
+
+def _queued_age_from_github(check, now):
+    """Bounded read-only elapsed age; missing/future timestamps are unknown."""
+    if check.get("status") != "queued":
+        return None
+    raw = check.get("created_at")
+    if type(raw) is not str or len(raw) > 40:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        return None
+    seconds = (now - timestamp.astimezone(timezone.utc)).total_seconds()
+    if seconds < 0:
+        return None
+    return min(int(seconds), 365 * 24 * 3600)
 
 
 def _one(repo, number, token):
@@ -152,6 +173,9 @@ def _one(repo, number, token):
          for (app_id, name), row in latest_checks.items()),
         key=lambda item: (item["app_id"], item["name"])))
     actionable = []
+    observed_queue_time = datetime.now(timezone.utc)
+    queued_over_attention = 0
+    queued_age_unknown = 0
     for row in latest_checks.values():
         state, conclusion = row.get("status"), row.get("conclusion")
         if state == "completed":
@@ -162,6 +186,12 @@ def _one(repo, number, token):
             statuses["pending_observed"] += 1
         else:
             statuses["other_observed"] += 1
+        age = _queued_age_from_github(row, observed_queue_time)
+        if state == "queued":
+            if age is None:
+                queued_age_unknown += 1
+            elif age >= QUEUED_CHECK_ATTENTION_AFTER_SECONDS:
+                queued_over_attention += 1
         if ((state == "completed" and conclusion not in OK_CONCLUSIONS)
                 or state != "completed"):
             actionable.append({
@@ -175,6 +205,11 @@ def _one(repo, number, token):
                      "waiting", "requested") else "unknown",
                 "conclusion": conclusion if type(conclusion) is str and
                     len(conclusion) <= 40 else None,
+                # Observable GitHub age is not proof the runner is offline.
+                "queued_age_seconds_observed": age,
+                "queued_attention_30m": (
+                    age is not None and
+                    age >= QUEUED_CHECK_ATTENTION_AFTER_SECONDS),
             })
     actionable.sort(key=lambda item: (
         item["state"] != "completed", item["name"], item["check_run_id"]))
@@ -334,6 +369,8 @@ def _one(repo, number, token):
         "observed_checks_pending": statuses["pending_observed"],
         "observed_checks_not_successful": statuses["failure_observed"],
         "observed_checks_unknown": statuses["other_observed"],
+        "queued_check_attention_30m_observed": queued_over_attention,
+        "queued_check_age_unknown_observed": queued_age_unknown,
         "legacy_status_contexts_observed": len(latest_context),
         "legacy_status_evidence_sha256": legacy_fingerprint,
         "legacy_status_superseded_attempts_observed":
