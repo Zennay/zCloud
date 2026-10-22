@@ -17,7 +17,7 @@ import re
 import stat
 import sys
 
-from zsentinel_pr_scope_guard import github_json, REPO, SHA
+from zsentinel_pr_scope_guard import github_json, GitHubSourceError, REPO, SHA
 from zsentinel_private_report_writer import write_private_report
 
 SCHEMA = "zsentinel-current-pr-gate-observation-v1"
@@ -540,7 +540,7 @@ def _source_problem_kind(error):
             return "github_pr_or_source_missing"
         if code >= 500:
             return "github_remote_unavailable"
-    if isinstance(error, OSError):
+    if isinstance(error, (OSError, GitHubSourceError)):
         return "github_remote_unavailable"
     # Only our own known self-contained validation messages qualify as a
     # drift signal. Never print raw exception strings from a provider.
