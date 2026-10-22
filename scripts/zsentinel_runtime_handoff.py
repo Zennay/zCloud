@@ -769,6 +769,46 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
         cards.append(card)
     notion_owner_status = _notion_owner_status_summary(
         decision.get("notion_claims_observation"), sources.get("notion"), registry)
+    # Material owner work, not a recovery command: the bounded live Notion
+    # reader can now identify *observed* incomplete/expired claim clocks per
+    # project. Preserve priority for pinned incidents and existing PRs. Never
+    # suggest reclaim/retry, including when every Notion field is empty.
+    notion_clock_review_count = 0
+    notion_clock_review_truncated = False
+    if (notion_owner_status is not None
+            and notion_owner_status["coverage"] in
+            ("live_readonly_bounded", "live_readonly_incomplete")
+            and notion_owner_status["source_age_seconds"] is not None
+            and notion_owner_status["source_age_seconds"] <= 600):
+        affected = [
+            item for item in notion_owner_status["projects"]
+            if item["observed_claim_clock_recheck_min"] is not None
+            and item["observed_claim_clock_recheck_min"] > 0
+        ]
+        notion_clock_review_count = len(affected)
+        notion_clock_review_truncated = (
+            len(affected) > 6 or notion_owner_status["items_truncated"])
+        for item in affected[:6]:
+            project = item["project"]
+            count = item["observed_claim_clock_recheck_min"]
+            priority = "P1" if item["observed_in_progress_min"] else "P2"
+            action = (
+                "Notion toont minstens " + str(count) +
+                " onvolledige/verlopen/ongeldige claimklokken voor " +
+                project + " (minstens " +
+                str(item["observed_in_progress_min"]) +
+                " Claimed/Running-statusregels). Bevoegde project- en "
+                "queue-eigenaar verifieert bestaande PR, claimvenster en "
+                "werkerslot; NIET vrijgeven, overnemen, herstarten of retriggeren.")
+            card = _card(
+                priority, project, "notion_claim_clock_owner_review",
+                action, source="recent_readonly_notion_claim_fields_unverified")
+            card["notion_claim_clock_recheck_min"] = count
+            card["notion_work_status_in_progress_min"] = item["observed_in_progress_min"]
+            card["notion_observed_at_utc"] = notion_owner_status["observed_at_utc"]
+            card["notion_claim_owner_verified"] = False
+            card["queue_lease_same_work_verified"] = False
+            cards.append(card)
     pr_cards, pr_coverage = _observed_pr_owner_cards(pr_desk, registry)
     pr_change_source = decision.get("pr_gate_continuity")
     if pr_change_source is not None:
@@ -1535,6 +1575,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                   "routing_selection_owner_hold": 8,
                   "vps_capacity_owner_review": 5,
                   "vps_capacity_source_incomplete": 6,
+                  "notion_claim_clock_owner_review": 8,
                   "open_pr_owner_review": 7, "open_product_issue": 8}
     cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
                               c.get("review_by_utc", "9999"),
@@ -1594,6 +1635,13 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             "runtime_recovered_verified": False,
         },
         "notion_owner_status_review": notion_owner_status,
+        "notion_claim_clock_owner_review": {
+            "affected_project_groups_observed": notion_clock_review_count,
+            "owner_cards_sample_truncated": notion_clock_review_truncated,
+            "source_only_not_lease_proof": True,
+            "claim_authorized": False, "retry_authorized": False,
+            "dispatch_authorized": False,
+        },
         "current_queue_lease_owner_summary": current_queue,
         "blocked_queue_owner_summary": blocked_summary,
         "queue_claim_conflict_total_observed": conflict_total,
