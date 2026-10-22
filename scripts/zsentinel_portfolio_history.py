@@ -566,6 +566,19 @@ def append_csv(base, delta):
                    " (NOT A FIX OR MERGE)" if "live_issue_recheck_state" in c
                    else "SAMPLED CHANGE; NO ISSUE CLOSURE, CLAIM OR MERGE VERIFIED")
         writer.writerow(row)
+    for workorder in delta["operator_workorders"]["workorders"]:
+        row = [""] * 24
+        row[0] = "operator_" + workorder["kind"]
+        row[1] = workorder["repository"]
+        row[12] = workorder["issue_url"] or ""
+        row[15] = workorder["human_next_action_code"]
+        row[16] = workorder["human_next_action"]
+        row[17] = (
+            workorder["disposition"] + " · " +
+            workorder["priority_source"] + " · GitHub " +
+            workorder["live_github_issue_state"] + " · NOT EXECUTED"
+        )
+        writer.writerow(row)
     return base + sink.getvalue()
 
 
@@ -598,6 +611,17 @@ def as_delta_csv(delta):
             row.get("live_issue_recheck_observed_at_utc") or "",
             row.get("live_next_action_code", ""),
             row.get("live_issue_state_reason") or "",
+        ))
+    for workorder in delta["operator_workorders"]["workorders"]:
+        writer.writerow((
+            "operator_" + workorder["kind"],
+            workorder["repository"], workorder["issue_url"] or "",
+            workorder["change"], "", workorder["priority_rank_hint"],
+            workorder["priority_source"], "", workorder["human_next_action_code"],
+            workorder["human_next_action"], False, False,
+            workorder["live_github_issue_state"],
+            workorder["live_github_observed_at_utc"] or "",
+            workorder["human_next_action_code"], "",
         ))
     return stream.getvalue()
 
