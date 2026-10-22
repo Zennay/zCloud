@@ -514,6 +514,12 @@ never includes original titles/bodies, worker contact details or secrets,
 and every permission/CI/merge/deploy field is false. Empty source windows
 produce a provenance-only record, not a misleading empty file.
 This handoff does not dispatch a worker or claim an issue.
+The script-free HTML inbox now groups visible issue rows into navigable
+source-priority sections (explicit P0, explicit P1, title-only hints,
+explicit P2/P3 and unknown/conflicting). Each issue has the same
+three-line **problem / owner action / status** as the JSON, Markdown and
+private CSV; group links remain inside the original static file. The
+grouped 45-row display is not proof that no older incidents exist.
 The inbox is **read-only** and only accepts an
 explicit canonical `Zennay/<repo>` identity. It reads at most
 three pages of 30 **recently updated open issues** using the
