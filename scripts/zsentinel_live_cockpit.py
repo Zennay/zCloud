@@ -624,7 +624,7 @@ def main():
                         "additional_job_links": (
                             cloud_coverage.get("additional_job_links", [])
                             if isinstance(cloud_coverage.get("additional_job_links", []), list)
-                            else []
+                            else None
                         ),
                         "full_repo_ci_inventory": False,
                     }
