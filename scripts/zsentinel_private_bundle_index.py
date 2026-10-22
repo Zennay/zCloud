@@ -276,8 +276,8 @@ def compare(previous: dict, current: dict) -> str:
         "<th>Urgentie gestegen in sample</th><th>PR-kandidaten gewijzigd</th>"
         "<th>Queue, dekking en vervolgadvies</th></tr></thead><tbody>" +
         ("".join(rows) if rows else
-         "<tr><td colspan='7'>Geen verschil in de bewaarde issue-, PR- of "
-         "queue-/advieswaarnemingen</td></tr>") + "</tbody></table></section>"
+         "<tr><td colspan='7'>Geen projectverschil in de bewaarde issue-, PR- of "
+         "queue-/advieswaarnemingen; eventuele bronfreshness staat hierboven.</td></tr>") + "</tbody></table></section>"
     )
 
 
