@@ -484,6 +484,8 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
         codes.append("ZERO_WORKERS_IS_NOT_CLAIM_CLEARANCE")
     elif state == "current_worker_not_identified":
         codes.append("CURRENT_WORKER_NOT_IDENTIFIED")
+    if capacity.get("coverage") != "complete":
+        codes.append("CAPACITY_EVIDENCE_PARTIAL")
     severity = capacity.get("severity")
     if severity == "critical":
         codes.append("HOLD_DISK_WRITES_REQUEST_OWNER_INVENTORY")
