@@ -407,3 +407,17 @@ root/database capacity evidence. No file names or contents are read. The
 report does not prove any file is cold, private, unreferenced, encrypted or
 safe to transfer; it authorizes no copy, move, delete, service restart, queue
 write or claim change.
+
+
+The same live resource receipt now reports total and available memory,
+swap totals/used percentage, five-minute load per allowed CPU, and explicit
+root/database capacity bands plus `capacity_severity` and warning codes.
+Bands are advisory: `critical` when either measured filesystem is >=95%
+unavailable by the existing unprivileged-capacity metric, has <1 GiB free, or
+has >=95% of inodes unavailable; `high` at >=90%, <5 GiB, or >=90% inode
+unavailability. Swap >=90%, available RAM <=10%, and load >=2x allowed CPU
+count add warning codes. Root-critical capacity without a positively observed
+external archive mount adds `no_verified_external_archive_headroom`.
+None of these fields authorizes offload, cleanup, process termination, runner
+restart or claim release; pressure is a capacity signal, not a root-cause
+finding.

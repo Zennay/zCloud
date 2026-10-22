@@ -15,18 +15,25 @@ from pathlib import Path
 
 
 def _memory_values():
-    """Only kernel-provided scalar MiB data; never expose raw /proc content."""
+    """Read only bounded scalar memory/swap counters; never return raw proc data."""
+    required = {"MemTotal:", "MemAvailable:", "SwapTotal:", "SwapFree:"}
     seen = {}
     with open("/proc/meminfo", "r", encoding="ascii") as source:
         for line in source:
             fields = line.split()
-            if len(fields) == 3 and fields[0] in ("MemAvailable:", "SwapFree:"):
-                if fields[2] != "kB" or not fields[1].isascii() or not fields[1].isdigit():
-                    raise ValueError("invalid Linux memory counter")
-                seen[fields[0]] = int(fields[1]) / 1024
-    if set(seen) != {"MemAvailable:", "SwapFree:"}:
+            if not fields or fields[0] not in required:
+                continue
+            if (fields[0] in seen or len(fields) != 3 or fields[2] != "kB"
+                    or not fields[1].isascii() or not fields[1].isdigit()):
+                raise ValueError("invalid Linux memory counter")
+            seen[fields[0]] = int(fields[1]) / 1024
+    if set(seen) != required:
         raise ValueError("incomplete kernel memory counters")
-    return seen["MemAvailable:"], seen["SwapFree:"]
+    if (seen["MemTotal:"] <= 0 or seen["MemAvailable:"] > seen["MemTotal:"]
+            or seen["SwapFree:"] > seen["SwapTotal:"]):
+        raise ValueError("inconsistent kernel memory counters")
+    return (seen["MemAvailable:"], seen["MemTotal:"],
+            seen["SwapFree:"], seen["SwapTotal:"])
 
 
 
@@ -154,7 +161,11 @@ def observe_vps_capacity(database: Path, *, archive_target: Path | None = None):
     if type(cores) is not int or not 1 <= cores <= 128:
         raise ValueError("invalid CPU affinity")
     load = os.getloadavg()[1]
-    available, swap = _memory_values()
+    available, total_memory, swap, total_swap = _memory_values()
+    available_memory_percent = 100 * available / total_memory
+    swap_used_percent = (100 * (total_swap - swap) / total_swap
+                         if total_swap > 0 else None)
+    load_5m_per_core = load / cores
     if fs.f_blocks <= 0 or fs.f_frsize <= 0 or not 0 <= fs.f_bavail <= fs.f_blocks:
         raise ValueError("invalid database-mount capacity")
     free = fs.f_bavail * fs.f_frsize / (1024 ** 3)
@@ -213,7 +224,46 @@ def observe_vps_capacity(database: Path, *, archive_target: Path | None = None):
         raise ValueError("invalid VPS root mount observation")
     archive_capacity = _archive_mount_capacity(
         archive_target, root_identity.st_dev, db_stat.st_dev)
-    vals = (load, available, swap, free, unavailable_percent)
+    def disk_band(unavailable_pct, free_gib, inode_pct):
+        if (unavailable_pct >= 95 or free_gib < 1
+                or (inode_pct is not None and inode_pct >= 95)):
+            return "critical"
+        if (unavailable_pct >= 90 or free_gib < 5
+                or (inode_pct is not None and inode_pct >= 90)):
+            return "high"
+        return "normal"
+
+    root_band = disk_band(root_unavailable_pct, root_free, root_inode_pct)
+    database_band = disk_band(unavailable_percent, free, inode_unavailable_percent)
+    capacity_warnings = []
+    if root_band == "critical":
+        capacity_warnings.append("root_filesystem_critical")
+    elif root_band == "high":
+        capacity_warnings.append("root_filesystem_high")
+    if database_band == "critical":
+        capacity_warnings.append("database_mount_critical")
+    elif database_band == "high":
+        capacity_warnings.append("database_mount_high")
+    if swap_used_percent is not None and swap_used_percent >= 90:
+        capacity_warnings.append("swap_pressure_high")
+    if available_memory_percent <= 10:
+        capacity_warnings.append("memory_pressure_high")
+    if load_5m_per_core >= 2:
+        capacity_warnings.append("load_pressure_high")
+    archive_has_capacity = (
+        archive_capacity["state"] == "observed_external_mount"
+        and type(archive_capacity.get("free_disk_gib")) in (int, float)
+        and archive_capacity["free_disk_gib"] > 0
+    )
+    if root_band == "critical" and not archive_has_capacity:
+        capacity_warnings.append("no_verified_external_archive_headroom")
+    capacity_severity = (
+        "critical" if root_band == "critical" or database_band == "critical"
+        or (swap_used_percent is not None and swap_used_percent >= 98)
+        else "high" if capacity_warnings else "normal"
+    )
+    vals = (load, available, total_memory, swap, total_swap, free,
+            unavailable_percent, available_memory_percent, load_5m_per_core)
     if any(not math.isfinite(value) or value < 0 for value in vals):
         raise ValueError("invalid host resource observation")
     return {
@@ -222,8 +272,17 @@ def observe_vps_capacity(database: Path, *, archive_target: Path | None = None):
         "vps": {
             "cores": cores,
             "load_5m": round(load, 3),
+            "load_5m_per_core": round(load_5m_per_core, 3),
             "available_memory_mib": round(available, 1),
+            "total_memory_mib": round(total_memory, 1),
+            "available_memory_percent": round(available_memory_percent, 2),
             "available_swap_mib": round(swap, 1),
+            "total_swap_mib": round(total_swap, 1),
+            "swap_used_percent": round(swap_used_percent, 2) if swap_used_percent is not None else None,
+            "root_capacity_band": root_band,
+            "database_capacity_band": database_band,
+            "capacity_severity": capacity_severity,
+            "capacity_warnings": capacity_warnings,
             # Existing unprefixed capacity remains the database mount.
             "free_disk_gib": round(free, 3),
             "disk_unavailable_percent": round(unavailable_percent, 2),
