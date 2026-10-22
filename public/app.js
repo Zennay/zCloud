@@ -977,6 +977,12 @@ async function closeBlockedQueue(queueId,button){
       if(reason==='active-claim-or-lease'){
         throw new Error('Terminal closure refused: worker or lease remains bound. Contact its owner.');
       }
+      if(reason==='blocked-task-not-parked'){
+        throw new Error('Terminal closure refused: this blocked item is not safely parked and ineligible. The queue owner must correct the state.');
+      }
+      if(reason==='missing-project-receipt-context'){
+        throw new Error('Terminal closure refused: project registration is missing. Preserve this task and ask the project owner to restore its receipt context.');
+      }
       throw new Error(reason||'Could not close the parked task');
     }
     if(result.result?.dropped!==true||result.result?.status!=='dropped'||
