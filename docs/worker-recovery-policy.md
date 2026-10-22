@@ -1,3 +1,14 @@
+## 22 October 2026 — bounded HOLD overflow identifies hidden blockers
+
+The read-only exact-PR merge workorders still show at most twelve cards,
+including the non-optional authority/protection HOLD. When more blockers
+exist, the overflow card now reports the exact omitted-action count and a
+bounded sample (up to eight) of the **actual omitted action codes** in JSON,
+Markdown and offline HTML. It also explicitly marks the code sample as
+truncated if additional codes are hidden. An omitted action is neither
+resolved nor permission to merge, and the operator must inspect the
+full PR, current required CI, history, review threads and live owner.
+
 ## 22 October 2026 — no unbound check-run masquerading as exact-head CI
 
 The existing read-only `scripts/zsentinel_pr_live_read.py` source now
