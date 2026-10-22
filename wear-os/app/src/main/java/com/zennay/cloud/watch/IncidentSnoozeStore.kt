@@ -33,6 +33,14 @@ object IncidentSnoozeStore {
         notificationTag(alert) + ":" +
             (alert.episodeId?.let { "source:" + it } ?: "observed:" + legacyEpisodeKey(alert))
 
+    // A private opaque URI component gives each episode's notification action
+    // its own PendingIntent identity without putting the incident ID in the URI.
+    fun actionIdentity(alert: AlertItem): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(episodeKey(alert).toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+
     private fun preferenceKey(episode: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(episode.toByteArray(Charsets.UTF_8))
