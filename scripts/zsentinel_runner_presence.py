@@ -11,6 +11,8 @@ from pathlib import Path
 import os
 
 MAX_PROC_ENTRIES = 20000
+MAX_CGROUP_BYTES = 4096
+ZCLOUD_SERVICE_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
 
 NEXT_STEPS = {
     "PROCESS_ARGV0_SEEN_NOT_VERIFIED": (
@@ -68,6 +70,44 @@ def _classify_executable(executable):
     return (family, role) if family else None
 
 
+def _zcloud_service_cgroup_membership(process_dir):
+    """Return only whether a zCloud process belongs to its expected service cgroup.
+
+    Never export the raw cgroup path. Unknown/oversized/malformed procfs data
+    stays UNKNOWN and must not be interpreted as a service failure.
+    """
+    fd = None
+    try:
+        fd = os.open(
+            str(process_dir / "cgroup"),
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0),
+        )
+        raw = os.read(fd, MAX_CGROUP_BYTES + 1)
+    except OSError:
+        return "UNKNOWN"
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if not raw or len(raw) > MAX_CGROUP_BYTES:
+        return "UNKNOWN"
+    try:
+        text = raw.decode("ascii")
+    except UnicodeError:
+        return "UNKNOWN"
+    paths = []
+    for line in text.splitlines():
+        fields = line.split(":", 2)
+        if (len(fields) != 3 or not fields[0].isdigit()
+                or not fields[2].startswith("/")):
+            continue
+        paths.append(fields[2])
+    if not paths:
+        return "UNKNOWN"
+    if any(ZCLOUD_SERVICE_UNIT in path.strip("/").split("/") for path in paths):
+        return "EXPECTED_UNIT"
+    return "OTHER_UNIT"
+
+
 def observe_local_runners(proc_root="/proc"):
     """Observe limited local process state without querying GitHub or systemd.
 
@@ -89,6 +129,18 @@ def observe_local_runners(proc_root="/proc"):
         "runner_health": "NOT_INFERABLE",
         "restart_authorized": False,
         "source_warnings": [],
+        "zcloud_service_cgroup": {
+            "expected_unit": ZCLOUD_SERVICE_UNIT,
+            "status": "NOT_OBSERVED",
+            "processes_observed": 0,
+            "listener_in_expected_unit": 0,
+            "worker_in_expected_unit": 0,
+            "listener_outside_expected_unit": 0,
+            "worker_outside_expected_unit": 0,
+            "membership_unknown": 0,
+            "source_complete": False,
+            "restart_authorized": False,
+        },
         "families": seen,
     }
     try:
@@ -145,6 +197,17 @@ def observe_local_runners(proc_root="/proc"):
                     continue
                 family, role = signature
                 seen[family]["listeners" if role == "Runner.Listener" else "workers"] += 1
+                if family == "zCloud":
+                    service = observation["zcloud_service_cgroup"]
+                    service["processes_observed"] += 1
+                    role_key = "listener" if role == "Runner.Listener" else "worker"
+                    membership = _zcloud_service_cgroup_membership(process_dir)
+                    if membership == "EXPECTED_UNIT":
+                        service[f"{role_key}_in_expected_unit"] += 1
+                    elif membership == "OTHER_UNIT":
+                        service[f"{role_key}_outside_expected_unit"] += 1
+                    else:
+                        service["membership_unknown"] += 1
                 if lower_assurance:
                     seen[family]["argv0_only"] += 1
                     seen[family][
@@ -158,6 +221,29 @@ def observe_local_runners(proc_root="/proc"):
         )
     except OSError:
         observation["source_warnings"].append("procfs_enumeration_failed")
+    service = observation["zcloud_service_cgroup"]
+    if service["processes_observed"]:
+        service["source_complete"] = (
+            observation["source_complete"] and service["membership_unknown"] == 0
+        )
+        service["status"] = (
+            "OBSERVED_COMPLETE" if service["source_complete"] else "PARTIAL"
+        )
+    if service["status"] == "OBSERVED_COMPLETE":
+        listener_in = service["listener_in_expected_unit"]
+        listener_out = service["listener_outside_expected_unit"]
+        if listener_out and not listener_in and listener_out == seen["zCloud"]["listeners"]:
+            service["observation"] = "LISTENER_OUTSIDE_EXPECTED_SERVICE_CGROUP"
+        elif listener_out and listener_in:
+            service["observation"] = "MIXED_LISTENER_SERVICE_CGROUP_MEMBERSHIP"
+        elif listener_in:
+            service["observation"] = "EXPECTED_SERVICE_CGROUP_MATCHED"
+        else:
+            service["observation"] = "NO_LISTENER_IN_SNAPSHOT"
+    else:
+        service["observation"] = service["status"]
+    if service["processes_observed"] and not service["source_complete"]:
+        observation["source_warnings"].append("zcloud_service_cgroup_incomplete")
     for family, values in seen.items():
         # Only a process presence signal. Never label it "online" or "healthy".
         values["local_observation"] = (
@@ -181,6 +267,34 @@ def text_report(data):
                 f"worker {item['workers']}; {item['local_observation']}; "
                 f"vervolgstap: {item.get('recommended_next_step') or next_step_for(item['local_observation'])}"
             )
+    service = data.get("zcloud_service_cgroup")
+    if isinstance(service, dict):
+        if service.get("status") == "OBSERVED_COMPLETE":
+            lines.append(
+                "  zCloud service-cgroup (lokale proceskoppeling): "
+                f"listener in verwachte unit {service['listener_in_expected_unit']}; "
+                f"buiten unit {service['listener_outside_expected_unit']}; "
+                f"worker in unit {service['worker_in_expected_unit']}; "
+                f"buiten unit {service['worker_outside_expected_unit']}."
+            )
+            if service.get("observation") == "LISTENER_OUTSIDE_EXPECTED_SERVICE_CGROUP":
+                lines.append(
+                    "  HOLD: de waargenomen zCloud-listener valt buiten de verwachte "
+                    "systemd-service-cgroup; eigenaar moet unit/procesidentiteit en GitHub-job "
+                    "onafhankelijk vergelijken. Geen herstartautorisatie."
+                )
+            elif service.get("observation") == "MIXED_LISTENER_SERVICE_CGROUP_MEMBERSHIP":
+                lines.append(
+                    "  HOLD: zCloud-listeners hebben gemengde service-cgroup-lidmaatschappen; "
+                    "geen listener opruimen of herstarten op basis van deze observatie."
+                )
+        elif service.get("status") == "PARTIAL":
+            lines.append(
+                "  zCloud service-cgroup-koppeling gedeeltelijk/UNKNOWN; "
+                "geen conclusie over service-eigenaarschap."
+            )
+        else:
+            lines.append("  zCloud service-cgroup-koppeling niet waargenomen; status UNKNOWN.")
     if any(v["workers"] and not v["listeners"]
            for v in data["families"].values()):
         lines.append("  Worker zonder waargenomen listener: behoud bestaande job; "

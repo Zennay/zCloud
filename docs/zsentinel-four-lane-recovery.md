@@ -1400,3 +1400,14 @@ does not prove the live service loaded the contract, five slots are active, or
 resource admission permits five concurrent workers. Active claims, leases,
 runner assignment, required CI, independent review, branch protection and
 release authorization remain separate gates.
+
+
+### 22 October · reconcile the zCloud listener with its systemd cgroup
+
+The optional `--runner-processes` observation now reads each recognized zCloud runner process's bounded `/proc/<pid>/cgroup` metadata and compares path components with the expected `actions.runner.Zennay-zCloud.zcloud-vps-1.service` unit. It exports only counts and an enum, never the raw cgroup path, PID, command line, environment or executable path. A complete mismatch or mixed membership creates an explicit owner-review HOLD in the recovery action list; inaccessible, oversized or incomplete cgroup data remains `UNKNOWN`. This helps distinguish a listener process from membership in the expected systemd unit, but still cannot establish GitHub registration, runner labels, assigned job, or permission to restart.
+
+This source-only enhancement performs no service inspection through systemd, process control, queue/claim/SQLite writes, workflow dispatch or deployment.
+
+### 22 October · current contract cap supersedes the earlier four-worker note
+
+The earlier dated section describing `ai_worker_cap=4` records an intermediate configuration. The current `main` contract and this PR's four-lane desk now both use `lane_profile=portfolio-recovery` with `ai_worker_cap=5`; the desk requires that exact profile/cap pair for `MATCH_LOCAL_FILE`. Five is a configured maximum, not evidence that five workers are active or that resource, claim, runner, CI or release gates permit them to start.

@@ -80,6 +80,15 @@ def _runner_pressure_context(packet):
         return " zCloud-runnerbron ontbreekt."
     listeners = _number(cloud.get("listeners"))
     workers = _number(cloud.get("workers"))
+    service = proc.get("zcloud_service_cgroup")
+    if (listeners and isinstance(service, dict)
+            and service.get("status") == "OBSERVED_COMPLETE"
+            and _number(service.get("listener_in_expected_unit")) == 0
+            and _number(service.get("listener_outside_expected_unit")) == listeners):
+        return (
+            " De waargenomen zCloud-listener valt buiten de verwachte service-cgroup; "
+            "dit is alleen lokale procesidentiteit en autoriseert geen herstart."
+        )
     if listeners:
         return (
             " Er is lokaal een zCloud-listener gezien; dit bevestigt geen "
@@ -324,7 +333,29 @@ def suggested_actions(packet):
         families = local_proc.get("families") or {}
         cloud = families.get("zCloud", {}) if isinstance(families, dict) else {}
         listener_count = _number(cloud.get("listeners"))
-        if listener_count:
+        service = local_proc.get("zcloud_service_cgroup")
+        service_status = service.get("status") if isinstance(service, dict) else None
+        listener_in_unit = _number(service.get("listener_in_expected_unit")) if isinstance(service, dict) else 0
+        listener_outside_unit = _number(service.get("listener_outside_expected_unit")) if isinstance(service, dict) else 0
+        if (listener_count and service_status == "OBSERVED_COMPLETE"
+                and listener_in_unit == 0 and listener_outside_unit == listener_count):
+            result.append(action(
+                "zcloud-listener-service-cgroup-mismatch", "urgent",
+                "De waargenomen zCloud-listener valt buiten de verwachte systemd-service-cgroup.",
+                "Laat de bevoegde runtime-eigenaar de service-/cgroup-identiteit, GitHub-runnerregistratie "
+                "en een echte jobreceipt vergelijken. Deze lokale observatie autoriseert geen herstart.",
+                "HOLD_RUNNER_SERVICE_IDENTITY_RECONCILIATION",
+            ))
+        elif (listener_count and service_status == "OBSERVED_COMPLETE"
+                and listener_in_unit > 0 and listener_outside_unit > 0):
+            result.append(action(
+                "zcloud-listener-service-cgroup-mixed", "urgent",
+                "Zowel listeners binnen als buiten de verwachte zCloud-service-cgroup zijn waargenomen.",
+                "Laat de bevoegde runtime-eigenaar de afzonderlijke service-/cgroup-identiteiten en GitHub-jobreceipt "
+                "reconciliëren; beëindig geen proces en herstart de service niet.",
+                "HOLD_MULTIPLE_RUNNER_SERVICE_IDENTITIES",
+            ))
+        elif listener_count:
             result.append(action(
                 "zcloud-listener-presence", "review",
                 "Op de VPS is een zCloud Runner.Listener-proces waargenomen.",
