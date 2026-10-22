@@ -840,12 +840,12 @@ def render_history_package(snapshots: list[dict], index_name: str) -> bytes:
         "history.csv": render_csv_history(
             snapshots, index_name, machine_text=machine).encode("utf-8"),
         "README.txt": (
-            "Private zSentinel historical source sample, NOT a live inventory.\\n"
-            "Source bundle receipts were verified before this archive was made.\\n"
-            "Missing issues/PRs do NOT prove closed, merged or free ownership.\\n"
-            "HTML links to original local desk and receipt require those original\\n"
-            "private bundle files beside the extracted history.html.\\n"
-            "No worker claim, CI, review, merge, queue write or deployment authority.\\n"
+            "Private zSentinel historical source sample, NOT a live inventory.\n"
+            "Source bundle receipts were verified before this archive was made.\n"
+            "Missing issues/PRs do NOT prove closed, merged or free ownership.\n"
+            "HTML links to original local desk and receipt require those original\n"
+            "private bundle files beside the extracted history.html.\n"
+            "No worker claim, CI, review, merge, queue write or deployment authority.\n"
         ).encode("utf-8"),
     }
     if any(not value or len(value) > 1024 * 1024 for value in members.values()):
@@ -871,7 +871,7 @@ def render_history_package(snapshots: list[dict], index_name: str) -> bytes:
         "live_verified": False,
     }
     members["manifest.json"] = (
-        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\\n"
+        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
     out = BytesIO()
     with ZipFile(out, "w", compression=ZIP_DEFLATED,
