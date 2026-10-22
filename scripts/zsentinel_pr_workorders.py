@@ -436,6 +436,95 @@ def _collision_peer_receipts(view, selected_url, selected_head, repository,
     return result, partial
 
 
+
+def _coordination_groups(cards):
+    """Group selected PRs by pinned, observed file-scope collisions only.
+
+    Groups describe who should coordinate a human review, not merge waves.
+    The bounded source cannot prove that PRs outside this selection are free.
+    """
+    by_url = {card["url"]: card for card in cards}
+    if len(by_url) != len(cards):
+        raise ValueError("duplicate PR in coordination desk")
+    parent = {url: url for url in by_url}
+    edges = set()
+    missing_or_partial = False
+
+    def root(url):
+        while parent[url] != url:
+            url = parent[url]
+        return url
+
+    def join(a, b):
+        left, right = root(a), root(b)
+        if left != right:
+            parent[max(left, right)] = min(left, right)
+
+    for card in cards:
+        source = card["url"]
+        if (not card["source_current"] or card["peer_head_evidence_partial"]
+                or card["overlap_paths_hidden"]):
+            missing_or_partial = True
+        observed = []
+        for peer in card["peer_head_evidence"]:
+            observed.append((peer["url"], peer["head_sha_at_observation"]))
+        for scope in card["scope_path_conflicts"]:
+            observed.append((scope["peer_pr_url"], scope["peer_head_sha"]))
+        for url, sha in observed:
+            other = by_url.get(url)
+            if other is None:
+                missing_or_partial = True
+                continue
+            # Never join historical commits or a peer that moved since the
+            # collision sample. A changed HEAD is an operator recheck.
+            if (not card["source_current"] or not other["source_current"]
+                    or other["head_sha"] != sha or
+                    other["repository"] != card["repository"]):
+                missing_or_partial = True
+                continue
+            edge = tuple(sorted((source, url)))
+            edges.add(edge)
+            join(*edge)
+        for peer_url in card["related_prs"]:
+            # Unpinned overlap hints cannot be treated as exact collisions.
+            if peer_url not in [row[0] for row in observed]:
+                missing_or_partial = True
+
+    components = {}
+    for card in cards:
+        components.setdefault(root(card["url"]), []).append(card)
+    groups = []
+    for members in components.values():
+        urls = {member["url"] for member in members}
+        linked = [edge for edge in edges if set(edge) <= urls]
+        group = {
+            "group_number": len(groups) + 1,
+            "members": [{
+                "url": member["url"], "project": member["project"],
+                "number": member["number"],
+                "head_sha_at_observation": member["head_sha"],
+            } for member in members],
+            "observed_selected_scope_collisions": len(linked),
+            "owner_coordination_recommended": bool(linked),
+            "all_project_claims_verified": False,
+            "merge_authorized": False,
+        }
+        for member in members:
+            member["coordination_group_number"] = group["group_number"]
+            member["coordination_selected_peer_urls"] = sorted(
+                url for url in urls if url != member["url"])
+        groups.append(group)
+    return {
+        "groups": groups,
+        "selected_prs": len(cards),
+        "observed_selected_scope_collision_pairs": len(edges),
+        "source_partial_or_unpinned": missing_or_partial,
+        "selection_not_full_inventory": True,
+        "cross_group_independence_verified": False,
+        "claim_authorized": False, "merge_authorized": False,
+    }
+
+
 def collect_workorders(board):
     if (type(board) is not dict or board.get("schema") != BOARD
             or any(board.get(key) is not False for key in (
@@ -937,6 +1026,7 @@ def collect_workorders(board):
     cards.sort(key=lambda x: (
         WORKSTREAM_ORDER.index(x["workstream"]), x["rank"],
         x["project"], x["number"]))
+    coordination = _coordination_groups(cards)
     workstream_summary = {
         "counts": {key: sum(card["workstream"] == key for card in cards)
                    for key in WORKSTREAM_ORDER},
@@ -972,6 +1062,7 @@ def collect_workorders(board):
     receipt = {
         "schema": SCHEMA, "source_observed_at_utc": observed_at,
         "project_set": list(project_ids), "items": cards,
+        "selected_pr_coordination": coordination,
         "review_request_worklist_summary": review_summary,
         "workstream_summary": workstream_summary,
         "source_observation_stale": source_stale,
@@ -1009,6 +1100,7 @@ def render_csv(bundle):
         raise ValueError("invalid private owner CSV")
     fields = (
         "record_type", "project", "pr_number", "pr_url",
+        "coordination_group_number", "observed_selected_scope_peers",
         "attention_status", "attention_label", "workstream", "workstream_label",
         "operator_action_link", "operator_action_kind",
         "head_sha_at_observation", "target_branch_at_observation",
@@ -1056,6 +1148,8 @@ def render_csv(bundle):
         if card is not None:
             row.update({
                 "project": card["project"], "pr_number": card["number"],
+                "coordination_group_number": card["coordination_group_number"],
+                "observed_selected_scope_peers": len(card["coordination_selected_peer_urls"]),
                 "pr_url": _same_repo_url(card["url"], card["repository"]),
                 "head_sha_at_observation": card["head_sha"],
                 "target_branch_at_observation": card["base_ref"],
@@ -1339,6 +1433,40 @@ def render_html(bundle):
                  e(work["parallel_independent_review_actions"]) +
                  "</strong>. Gebaseerd op bronmomenten, niet op actuele eigenaarclaims; "
                  "geen automatische merge of workflowherstart.</p></section>")
+    coordination = bundle.get("selected_pr_coordination")
+    if (type(coordination) is not dict
+            or coordination.get("merge_authorized") is not False
+            or coordination.get("cross_group_independence_verified") is not False
+            or coordination.get("claim_authorized") is not False
+            or type(coordination.get("groups")) is not list
+            or len(coordination["groups"]) > MAX_PRS):
+        raise ValueError("missing bounded PR coordination groups")
+    parts.append("<section class=\"notice\" aria-label=\"PR scope coördinatie\">"
+                 "<h2>PR-coördinatie op basis van waargenomen bestandscope</h2>"
+                 "<p>Dit zijn GEEN onafhankelijke mergegolven of vrije claims. "
+                 "Overige PRs en branchregels kunnen buiten de bron liggen.</p><ol>")
+    for group in coordination["groups"]:
+        links = [
+            "<a href=\"#" + e(_article_anchor(
+                {"repository": member["url"].split("/pull/")[0]
+                 .removeprefix("https://github.com/"),
+                 "number": member["number"]})) + "\">" +
+            e(member["project"]) + " #" + e(member["number"]) + "</a>"
+            for member in group["members"]
+        ]
+        parts.append("<li>Groep " + e(group["group_number"]) + ": " +
+                     ", ".join(links) + " · " +
+                     e(group["observed_selected_scope_collisions"]) +
+                     " vastgepinde botsingsrelaties" +
+                     (" · <strong>eigenaren afstemmen</strong>"
+                      if group["owner_coordination_recommended"] else
+                      " · geen onderlinge botsing waargenomen, niet bewezen vrij")
+                     + "</li>")
+    parts.append("</ol>" +
+                 ("<p>Bron deels onvolledig of peer-HEAD niet gelijk: "
+                  "hercontrole noodzakelijk.</p>"
+                  if coordination["source_partial_or_unpinned"] else "") +
+                 "</section>")
     if bundle["items"]:
         change_labels = {
             "changed_gate_receipt": "Gatebewijs gewijzigd bij dezelfde HEAD",
@@ -1678,6 +1806,28 @@ def render_markdown(bundle):
         "Acties zijn adviezen uit begrensde GitHub-bronwaarnemingen; "
         "actieve claims, verplichte review en mergebevoegdheid blijven onbekend.",
         ""]
+    coordination = bundle.get("selected_pr_coordination")
+    if (type(coordination) is not dict or
+            coordination.get("cross_group_independence_verified") is not False):
+        raise ValueError("invalid owner coordination worklist")
+    lines += ["## Geselecteerde PR-coördinatie · geen mergegolven", ""]
+    for group in coordination["groups"]:
+        mentions = ", ".join(
+            "[" + member["project"] + " #" + str(member["number"]) + "](" +
+            member["url"] + ")" for member in group["members"])
+        lines.append("- Groep " + str(group["group_number"]) + ": " +
+                     mentions + " · " +
+                     str(group["observed_selected_scope_collisions"]) +
+                     " geobserveerde scopebotsingen; " +
+                     ("afstemmen met eigenaren" if group[
+                         "owner_coordination_recommended"] else
+                      "geen botsing in geselecteerde bron, niet bewezen vrij"))
+    lines += [
+        ("Bron onvolledig of peer-HEAD gewijzigd; aanvullende hercontrole nodig."
+         if coordination["source_partial_or_unpinned"] else
+         "Geselecteerde bron bevat geen bewijs over PRs buiten de steekproef."),
+        "Geen actieve claim, PR-onafhankelijkheid, merge of deploy geautoriseerd.", "",
+    ]
     change_counts = {
         "changed_gate_receipt": 0, "changed_or_uncertain_head": 0,
         "incomplete_gate_source": 0, "newly_selected_not_new_pr": 0,
