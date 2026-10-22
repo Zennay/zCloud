@@ -3825,7 +3825,7 @@ mutation, workflow dispatch, runner restart, or deploy is performed.
 
 Een anderszins geschikte wachtrijtaak met `active_owner=true` verdwijnt niet langer stilzwijgend uit de operatorweergave. De router emitteert `routing_owner_holds` als apart, begrensd JSON-contract met brondekking, telling, maximaal acht voorbeelden en expliciet `claim_authorized=false` en `dispatch_authorized=false`.
 
-- De tekstuitvoer en offline recovery-cockpit tonen een afzonderlijke **OWNER-HOLD**. Een voorbeeld bevat alleen de bestaande taak-ID, project-ID, prioriteit en reden; geen bestandspaden, queue-ID's of claimtokens.
+- De tekstuitvoer, offline recovery-cockpit en centrale private runtime-handoff tonen een afzonderlijke **OWNER-HOLD**. De handoff bevat een expliciete coverage/count-samenvatting; een voorbeeld bevat alleen de bestaande taak-ID, project-ID, prioriteit en reden, nooit bestandspaden of claimtokens.
 - De melding betekent uitsluitend dat de taakbron een actieve eigenaar rapporteert. Dit is op zichzelf **geen bewijs van een actuele lease of toestemming tot overname**.
 - Bij onvolledige of verouderde taak-/claiminventaris is de status `UNKNOWN`; een nulmeting wordt nooit als bewijs van vrije capaciteit gepresenteerd.
 - De taak wordt niet voorgesteld, geclaimd, gedispatcht of gewijzigd. De bevoegde eigenaar moet de actuele eigenaar/claim verifiëren en een overdracht afstemmen voordat de taak opnieuw wordt beoordeeld.
