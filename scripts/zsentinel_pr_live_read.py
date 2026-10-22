@@ -293,9 +293,30 @@ def _pr_summary(payload, full_name, number):
     base_sha = base.get("sha")
     if not isinstance(base_sha, str) or not SHA.fullmatch(base_sha):
         raise GitHubReadError("PR base SHA missing or invalid")
+    # GitHub returns pending user and team review requests separately from
+    # submitted reviews. Missing/noncanonical data is UNKNOWN, never zero.
+    # Keep only bounded counts; operator artifacts do not need reviewer PII.
+    pending_reviewers = payload.get("requested_reviewers")
+    pending_teams = payload.get("requested_teams")
+    pending_user_count = (
+        len(pending_reviewers) if isinstance(pending_reviewers, list)
+        and len(pending_reviewers) <= 100
+        and all(isinstance(user, dict) and isinstance(user.get("login"), str)
+                and re.fullmatch(r"[A-Za-z0-9-]{1,39}", user["login"])
+                for user in pending_reviewers) else None
+    )
+    pending_team_count = (
+        len(pending_teams) if isinstance(pending_teams, list)
+        and len(pending_teams) <= 100
+        and all(isinstance(team, dict) and isinstance(team.get("slug"), str)
+                and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", team["slug"])
+                for team in pending_teams) else None
+    )
     return {
         "number": number, "url": "https://github.com/" + full_name + "/pull/" + str(number),
         "observed_state": state, "observed_draft": draft,
+        "pending_reviewer_requests": pending_user_count,
+        "pending_team_review_requests": pending_team_count,
         "reported_merged": merged, "target_branch": base_ref,
         "base_repo_full_name": repo,
         "base_sha": base_sha,
