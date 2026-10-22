@@ -84,6 +84,23 @@ def read_private_previous(path: Path):
         raise ValueError("previous snapshot is not valid UTF-8 JSON") from None
 
 
+def _valid_base_ref(value):
+    if value is None:
+        return True
+    return bool(
+        type(value) is str and 1 <= len(value) <= 255
+        and value == value.strip() and not value.startswith("/")
+        and not value.endswith("/") and "//" not in value and ".." not in value
+        and "@{" not in value
+        and not any(not char.isprintable() or char.isspace()
+                    or char in ("~", "^", ":", "?", "*", "[", "\\")
+                    for char in value)
+        and not any(not part or part.startswith(".") or part.endswith(".")
+                    or part.lower().endswith(".lock")
+                    for part in value.split("/"))
+    )
+
+
 def _pins(view, repo):
     result = {}
     rows = view.get("sampled_open_pr_heads")
@@ -93,13 +110,15 @@ def _pins(view, repo):
         if type(row) is not dict:
             raise ValueError("PR source row invalid")
         number, head, base = row.get("number"), row.get("head_sha"), row.get("base_sha")
+        base_ref = row.get("base_ref")
         if (type(number) is not int or not 0 < number < 100000000
                 or type(head) is not str or SHA.fullmatch(head) is None
                 or type(base) is not str or SHA.fullmatch(base) is None
+                or not _valid_base_ref(base_ref)
                 or row.get("url") != f"https://github.com/{repo}/pull/{number}"
                 or number in result):
-            raise ValueError("PR source identity or SHA invalid")
-        result[number] = (head, base)
+            raise ValueError("PR source identity, target branch or SHA invalid")
+        result[number] = (head, base, base_ref)
     return result
 
 
@@ -254,6 +273,9 @@ def compare(previous, current):
                     "url": f"https://github.com/{repo}/pull/{number}",
                     "previous_head": old_pins[number][0],
                     "current_head": new_pins[number][0],
+                    "previous_base_ref": old_pins[number][2],
+                    "current_base_ref": new_pins[number][2],
+                    "base_ref_changed": old_pins[number][2] != new_pins[number][2],
                     "base_changed": old_pins[number][1] != new_pins[number][1],
                     "head_changed": old_pins[number][0] != new_pins[number][0],
                 })
@@ -393,9 +415,12 @@ def render_delta(delta, format="text"):
         for row in delta["projects"]:
             links = []
             for changed in row["head_or_base_changed_in_both_samples"]:
-                links.append("<li>HEAD/basis gewijzigd: " + link(changed["url"]) +
+                links.append("<li>HEAD/doelbranch/basis gewijzigd: " + link(changed["url"]) +
                              " (" + escape(changed["previous_head"][:12]) +
-                             " → " + escape(changed["current_head"][:12]) + ")</li>")
+                             " → " + escape(changed["current_head"][:12]) +
+                             "; doelbranch " +
+                             escape(changed["previous_base_ref"] or "ONBEKEND") + " → " +
+                             escape(changed["current_base_ref"] or "ONBEKEND") + ")</li>")
             for url in row["seen_only_in_current_sample_not_proven_new"]:
                 links.append("<li>Alleen huidige steekproef: " + link(url) +
                              " (niet bewezen nieuw)</li>")
@@ -517,8 +542,10 @@ def render_delta(delta, format="text"):
         else:
             lines.append("  Connectiegroep-verschillen ONBEKEND: bron onvolledig.")
         for item in row["head_or_base_changed_in_both_samples"]:
-            lines.append("  HEAD/basis: " + item["url"] + " " +
-                         item["previous_head"][:12] + " → " + item["current_head"][:12])
+            lines.append("  HEAD/doelbranch/basis: " + item["url"] + " " +
+                         item["previous_head"][:12] + " → " + item["current_head"][:12] +
+                         " · doelbranch " + (item["previous_base_ref"] or "ONBEKEND") +
+                         " → " + (item["current_base_ref"] or "ONBEKEND"))
         for url in row["seen_only_in_current_sample_not_proven_new"]:
             lines.append("  Alleen huidige steekproef, niet bewezen nieuw: " + url)
         for url in row["seen_only_in_previous_sample_not_proven_closed"]:
