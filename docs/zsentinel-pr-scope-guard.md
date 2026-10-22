@@ -3452,3 +3452,17 @@ verleent geen claim-, merge- of releaseautorisatie.
 
 Deze uitbreiding gebruikt uitsluitend reeds verzamelde bronvelden en introduceert
 geen extra GitHub-polling, CI-dispatch, queue-/claimwijziging of releaseactie.
+
+## 22 oktober · dekkingsreden volgt iedere PR-werkopdracht
+
+De private per-PR-werkopdracht neemt nu de bounded
+`source_coverage_reasons` van het projectboard over. Bij onvolledige PR-
+inventaris, instabiele bron of een afgekapt portfolio-overzicht staat dezelfde
+reden ook als `source_warning` in de JSON, offline HTML, Markdown en private
+CSV-export. Zo hoeft een eigenaar de waarschuwing niet terug te zoeken in een
+los projectkaartje om te begrijpen waarom overlapinformatie onvolledig is.
+
+Oudere bewaarde werkopdrachten zonder dit optionele veld blijven leesbaar.
+Nieuwe waarden worden begrensd en op een veilige reason-code-vorm gecontroleerd.
+De waarschuwing is alleen broncontext: bestaande owner/lease-, exact-HEAD-CI-,
+review-, branch-protection- en releasechecks blijven afzonderlijk vereist.
