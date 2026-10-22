@@ -765,6 +765,9 @@ def collect_workorders(board):
         # enough to avoid duplicating an already-pending review request.
         parallel_review = bool(
             pinned and not source_stale
+            and history_state not in (
+                "changed_or_uncertain_head", "incomplete_gate_source",
+                "newly_selected_not_new_pr")
             and live_gate.get("github_mergeable_boolean_observed") is True
             and live_gate.get("draft_at_read") is False
             and live_gate.get("check_page_complete") is True
