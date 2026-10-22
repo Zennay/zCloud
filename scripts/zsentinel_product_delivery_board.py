@@ -471,7 +471,35 @@ def markdown(data):
             "authority UNKNOWN.",
             "",
         ])
-    return "\\n".join(lines + ["", data["operator_note"], ""])
+    queue_handoffs = [
+        row for row in data["project_operations"]
+        if row["queue_observation"] is not None and (
+            row["queue_observation"]["high_claim_attempts"] > 0 or
+            row["queue_observation"]["expired_active_leases"] > 0
+        )
+    ]
+    lines.extend(["", "## Queue-only incident handoffs (human-only)", ""])
+    if not queue_handoffs:
+        lines.append(
+            "No queue-only handoff in this bounded sample; this does not prove "
+            "the queue is clear."
+        )
+    for row in queue_handoffs:
+        queue = row["queue_observation"]
+        lines.extend([
+            "Problem: " + safe(row["project"]) + " · queue active=" +
+            safe(queue["active_items"]) + ", high claim cycles=" +
+            safe(queue["high_claim_attempts"]) + ", expired leases=" +
+            safe(queue["expired_active_leases"]) + ".",
+            "Action: " + safe(row["recommended_next_step"]) +
+            " (human-only; no automatic retry or reclaim).",
+            "Status: HOLD · queue source UTC=" +
+            safe(row["queue_source_observed_at_utc"] or "UNKNOWN") +
+            " · source freshness=" + safe(handoff_freshness(data)) +
+            " · current lease owner and release authority UNKNOWN.",
+            "",
+        ])
+    return "\n".join(lines + ["", data["operator_note"], ""])
 
 
 def html(data):
@@ -525,6 +553,30 @@ def html(data):
             escape(handoff) + '</pre></details>' +
             '<details><summary>Evidence gaps</summary><ul>' + gaps +
             '</ul></details></article>')
+    queue_handoffs = []
+    for row in data["project_operations"]:
+        queue = row["queue_observation"]
+        if queue is None or not (
+            queue["high_claim_attempts"] > 0 or
+            queue["expired_active_leases"] > 0
+        ):
+            continue
+        handoff = "\n".join((
+            "Problem: {} · queue active={}, high claim cycles={}, expired leases={}.".format(
+                row["project"], queue["active_items"],
+                queue["high_claim_attempts"], queue["expired_active_leases"]),
+            "Action: {} (human-only; no automatic retry or reclaim).".format(
+                row["recommended_next_step"]),
+            "Status: HOLD · queue source UTC={} · source freshness={} · "
+            "current lease owner and release authority UNKNOWN.".format(
+                row["queue_source_observed_at_utc"] or "UNKNOWN",
+                handoff_freshness(data)),
+        ))
+        queue_handoffs.append(
+            '<article><h2>Queue incident · ' + escape(row["project"]) +
+            '</h2><details open><summary>Three-line incident handoff (copy manually)</summary><pre>' +
+            escape(handoff) + '</pre></details></article>'
+        )
     css = """
 :root{color-scheme:dark;background:#101722;color:#edf3fa;font:16px/1.5 system-ui,sans-serif}
 body{max-width:1140px;margin:auto;padding:clamp(14px,4vw,36px)}
@@ -552,7 +604,11 @@ table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;pa
             '<thead><tr><th>Project</th><th>P0</th><th>P1</th>'
             '<th>Claim cycles</th><th>Expired leases</th><th>Next step</th>'
             '</tr></thead><tbody>' + "".join(projects) + '</tbody></table></div>'
-            '<section class="board">' + "".join(rows) +
+            '<h2>Queue-only incident handoffs (human-only)</h2>' +
+            ('<section class="board">' + "".join(queue_handoffs) + '</section>'
+             if queue_handoffs else
+             '<p>No queue-only handoff in this bounded sample; this does not prove the queue is clear.</p>') +
+            '<h2>Issue incident handoffs</h2><section class="board">' + "".join(rows) +
             '</section><footer>Offline: no scripts, fetches, queue or lease writes.</footer>'
             '</body></html>')
 
