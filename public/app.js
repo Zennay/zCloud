@@ -996,6 +996,13 @@ async function closeBlockedQueue(queueId,button){
     }
     render();
     await refresh(true);
+    // The transaction may succeed while the separate post-commit scheduler
+    // refill fails. Do not misreport cancellation as failed or hide the
+    // pending admission follow-up from an authorized operator.
+    if(result.result?.queue_audit_deferred===true){
+      $('notice').hidden=false;
+      $('notice').textContent='The task was permanently closed, but the subsequent queue refill was deferred after an error. Ask the scheduler owner to inspect normal admission; do not repeat the close.';
+    }
   }catch(error){
     // Refuse to leave any old write affordance enabled when a source read fails.
     try{
