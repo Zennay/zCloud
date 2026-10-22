@@ -89,17 +89,39 @@ def pressure_findings(sample: dict) -> list[dict[str, str]]:
             "state=unknown" if state == "unknown" else "state=invalid"
         )
 
+    cpu_count = sample.get("cpu_count")
+    cpu_count_valid = type(cpu_count) is int and 1 <= cpu_count <= 4096
+    if not cpu_count_valid:
+        coverage_gaps.append("cpu_count")
+
+    load_1m = sample.get("load_1m")
+    load_is_number = (
+        type(load_1m) in (int, float) and
+        (type(load_1m) is int or math.isfinite(load_1m))
+    )
+    load_valid = load_is_number and 0 <= load_1m <= 1e6
+    if not load_valid:
+        coverage_gaps.append("load_1m")
+
     ratio = sample.get("load_per_cpu")
     ratio_is_number = (
         type(ratio) in (int, float) and
         (type(ratio) is int or math.isfinite(ratio))
     )
-    if not ratio_is_number or ratio < 0 or ratio > 1e6:
+    ratio_valid = ratio_is_number and 0 <= ratio <= 1e6
+    if not ratio_valid:
         coverage_gaps.append("load_per_cpu")
-    elif ratio >= 2.0:
+
+    ratio_consistent = (
+        ratio_valid and cpu_count_valid and load_valid and
+        abs(ratio - load_1m / cpu_count) <= 0.02
+    )
+    if ratio_valid and cpu_count_valid and load_valid and not ratio_consistent:
+        coverage_gaps.append("load_per_cpu_mismatch")
+    if ratio_consistent and ratio >= 2.0:
         findings.append({"code": "HOST_CPU_SATURATED", "severity": "block",
                          "detail": "One-minute runnable/I/O demand at least 2x logical CPU count; preserve active jobs."})
-    elif ratio >= 1.0:
+    elif ratio_consistent and ratio >= 1.0:
         findings.append({"code": "HOST_CPU_BUSY", "severity": "warn",
                          "detail": "One-minute demand at least logical CPU count; inspect concurrent workloads before release."})
 
@@ -128,7 +150,7 @@ def pressure_findings(sample: dict) -> list[dict[str, str]]:
         findings.append({
             "code": "HOST_PRESSURE_INCOMPLETE", "severity": "warn",
             "detail": "Incomplete host-pressure evidence (" +
-                      ", ".join(coverage_gaps[:4]) +
-                      "); missing or invalid counters are not zero pressure.",
+                      ", ".join(coverage_gaps) +
+                      "); missing, inconsistent or invalid counters are not zero pressure.",
         })
     return findings
