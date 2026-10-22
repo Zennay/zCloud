@@ -381,7 +381,7 @@ def cross_window_scope_conflicts(all_prs):
                     if len(examples) < MAX_SCOPE_PATH_EXAMPLES:
                         examples.append({
                             "left_path": ancestor, "right_path": right_path,
-                            "relation": "left_file_conflicts_with_right_descendant",
+                            "relation": "target_file_conflicts_with_descendant_path",
                         })
             if not pair_complete:
                 break
@@ -397,7 +397,7 @@ def cross_window_scope_conflicts(all_prs):
                         if len(examples) < MAX_SCOPE_PATH_EXAMPLES:
                             examples.append({
                                 "left_path": left_path, "right_path": ancestor,
-                                "relation": "right_file_conflicts_with_left_descendant",
+                                "relation": "changed_file_is_ancestor_of_target",
                             })
                 if not pair_complete:
                     break
