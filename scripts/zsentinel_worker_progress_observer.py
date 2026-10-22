@@ -197,7 +197,7 @@ def _active_queue_assignment(con, project, global_slot, now, queue_available):
     if not queue_available:
         return {**empty, "coverage": "queue_source_unavailable"}
     rows = con.execute(
-        "SELECT queue_id,status,claimed_at,claim_expires FROM portfolio_queue "
+        "SELECT queue_id,status,claimed_at,claim_expires,attempts FROM portfolio_queue "
         "WHERE project_id=? AND worker_slot=? "
         "AND status IN ('claimed','running','verifying') "
         "ORDER BY updated_at DESC LIMIT 2",
@@ -206,19 +206,21 @@ def _active_queue_assignment(con, project, global_slot, now, queue_available):
         return {**empty, "coverage": "multiple_active_claims_owner_review"}
     if not rows:
         return {**empty, "coverage": "no_active_claim_for_slot"}
-    queue_id, status, claimed_at, expires_at = rows[0]
+    queue_id, status, claimed_at, expires_at, attempts = rows[0]
     claim_start = _utc_datetime(claimed_at)
     claim_expires = _utc_datetime(expires_at)
     queue_id_valid = (
         type(queue_id) is str and 1 <= len(queue_id) <= 160
         and not any(ord(char) < 32 for char in queue_id)
     )
+    attempts_valid = type(attempts) is int and 0 <= attempts <= 1000000
     duration = (
         (claim_expires - claim_start).total_seconds()
         if claim_start is not None and claim_expires is not None else None
     )
     current = bool(
-        queue_id_valid and status in ("claimed", "running", "verifying")
+        queue_id_valid and attempts_valid
+        and status in ("claimed", "running", "verifying")
         and claim_start is not None and claim_expires is not None
         and claim_start <= now < claim_expires
         and duration is not None and 0 < duration <= 7 * 86400
@@ -229,8 +231,8 @@ def _active_queue_assignment(con, project, global_slot, now, queue_available):
         # new claim epoch. Queue ID + claimed_at distinguish slot reuse without
         # exposing either value in the operator artifact.
         fingerprint = hashlib.sha256("\\0".join((
-            project, str(global_slot), queue_id,
-            claim_start.isoformat(timespec="seconds"),
+            project, str(global_slot), queue_id, str(attempts),
+            claim_start.isoformat(timespec="microseconds"),
         )).encode("utf-8")).hexdigest()
     return {
         "coverage": ("bounded_current_claim" if current
