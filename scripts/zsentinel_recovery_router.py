@@ -1757,6 +1757,9 @@ def operator_text(result):
             lines.append("  Projectverdeling onvolledig; geen all-clear of dispatch.")
     work = blocked.get("work_items", [])
     coverage = blocked.get("work_items_coverage", "not_observed")
+    worker_slot_source = blocked.get("worker_slot_source_covered", False)
+    if type(worker_slot_source) is not bool:
+        raise ValueError("invalid blocked worker-slot source identity")
     if (type(work) is not list or len(work) > 24
             or coverage not in ("not_observed", "complete", "partial", "stale")):
         raise ValueError("invalid individual blocked-queue text source")
@@ -1782,6 +1785,13 @@ def operator_text(result):
                     or type(item.get("claim_attempts")) is not int
                     or not 0 <= item["claim_attempts"] <= 10**9
                     or type(item.get("claim_fields_present_observed")) is not bool
+                    or item.get("worker_slot_source_covered", False) is not worker_slot_source
+                    or (worker_slot_source and
+                        type(item.get("worker_slot_present_observed")) is not bool)
+                    or (not worker_slot_source and
+                        item.get("worker_slot_present_observed") is not None)
+                    or (item.get("worker_slot_present_observed") is True
+                        and item["claim_fields_present_observed"] is not True)
                     or item.get("resume_authorized") is not False
                     or item.get("current_owner_verified") is not False):
                 raise ValueError("untrusted blocked task human handoff")
@@ -1791,7 +1801,11 @@ def operator_text(result):
                 title + " · claimpogingen " + str(item["claim_attempts"]) +
                 (" · CLAIMVELDEN AANWEZIG; NIET HERVATTEN" if
                  item["claim_fields_present_observed"] else
-                 " · claimvelden niet gezien, eigenaar nog onbekend"))
+                 " · geen claimvelden gezien, eigenaar nog onbekend"
+                 if worker_slot_source else
+                 " · worker-slotbron ONBEKEND; eigenaar eerst controleren") +
+                (" · BEZET WORKER-SLOT, GEEN HERVATRECHT"
+                 if item.get("worker_slot_present_observed") is True else ""))
     lines.append("VPS resource admission: " + result["vps_resource_admission"]["state"] +
                  " / " + result["vps_resource_admission"]["reason"])
     triage = result["open_product_issue_triage"]
