@@ -1969,6 +1969,7 @@ def main(argv=None):
         or args.inbox_all_sampled_csv or args.project_id
         or args.incident_id or args.source_url or args.owner
         or args.fail_on_hold or args.max_age_minutes != 60
+        or args.format not in ("json", "markdown", "html", "csv")
     ):
         parser.error(
             "--portfolio-repo is standalone with required private --output"
