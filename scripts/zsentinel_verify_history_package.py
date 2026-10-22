@@ -531,6 +531,75 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
             lines.append("- Geen issueverwijzing in dit opgeslagen sample;"
                          " actuele backlog onbekend.")
         lines.append("")
+    # A concrete change feed helps an owner decide what to recheck first.
+    # It compares only the final two original saved samples; disappearance
+    # is never presented as resolved/merged, and no live state is queried.
+    transitions = report.get("sample_transitions", [])
+    if type(transitions) is not list or len(transitions) > 23:
+        raise ValueError("invalid historical transition inventory")
+    last_changes = [
+        row for row in transitions if
+        type(row) is dict and row.get("to_bundle") == latest["bundle"]
+    ]
+    if len(last_changes) != 1:
+        raise ValueError("missing final source-bound history transition")
+    previous = last_changes[0]
+    lines.extend([
+        "## Wat is veranderd sinds de vorige opgeslagen bundel?",
+        "",
+        "Vergelijking " + safe(previous["from_bundle"]) + " → " +
+            safe(previous["to_bundle"]) +
+            ". Afwezig uit een steekproef betekent NIET gesloten of gemerged.",
+        "",
+    ])
+    changed_projects = previous.get("projects")
+    if type(changed_projects) is not list or len(changed_projects) > 60:
+        raise ValueError("unbounded project history changes")
+    for changed in changed_projects:
+        if project is not None and changed["project"] != project:
+            continue
+        if changed["project"] not in projects and project is None:
+            # A project present only in the previous sample is historical,
+            # not a current confirmed issue or available worker claim.
+            pass
+        lines.extend([
+            "### " + safe(changed["project"]),
+            "",
+            "- Nieuw in sample: " +
+                safe(len(changed["newly_sampled_issue_ids"])) +
+                " issueverwijzingen; niet opnieuw gezien: " +
+                safe(len(changed["no_longer_sampled_issue_ids"])) + ".",
+            "- Verhoogde sampleprioriteit: " +
+                safe(len(changed["higher_sampled_priority_issue_ids"])) +
+                " issueverwijzingen.",
+            "- Nieuwe PR-kandidaten in sample: " +
+                safe(len(changed["newly_sampled_pr_candidates"])) +
+                "; niet opnieuw gezien: " +
+                safe(len(changed["no_longer_sampled_pr_candidates"])) + ".",
+            "- Queuewaarneming veranderd: " +
+                safe(changed["queue_observation_changed"]) +
+                "; claimcontext eerst/laatst: " +
+                safe(changed.get("claim_context_before")) + " → " +
+                safe(changed.get("claim_context_after")) + ".",
+        ])
+        increased = changed.get("higher_sampled_priority_issue_ids", [])
+        if type(increased) is not list or len(increased) > 60:
+            raise ValueError("invalid saved escalated issue list")
+        for issue in increased[:12]:
+            if type(issue) is not str or re.fullmatch(
+                    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}",
+                    issue) is None:
+                raise ValueError("invalid escalated source issue identity")
+            repository, number = issue.rsplit("#", 1)
+            lines.append("- Opgeslagen prioriteit verhoogd: " +
+                         safe(issue) + " — https://github.com/" +
+                         repository + "/issues/" + number)
+        lines.append("")
+    if project is not None and not any(
+            item["project"] == project for item in changed_projects):
+        lines.append("- Geen projectspecifieke wijziging in deze steekproeven.")
+        lines.append("")
+
     prs = latest.get("saved_pr_observations")
     if type(prs) is not list or len(prs) > 5:
         raise ValueError("unbounded saved merge-first PR observations")
