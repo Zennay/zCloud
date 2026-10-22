@@ -1284,14 +1284,15 @@ def plan(bundle, previous=None, now=None):
         if not isinstance(owner, str) or not 1 <= len(owner) <= 80 or any(ord(c) < 32 for c in owner):
             owner = "owner_confirmation_required"
         human = reason in ("github_job_unassigned", "github_hosted_billing_admission",
-                           "github_required_owner_approval", "github_job_unstarted")
+                           "github_required_owner_approval", "github_job_unstarted",
+                           "github_job_startup_failure")
         if reason == "github_job_unassigned":
             blocked_gates.add("self_hosted")
         if reason == "github_hosted_billing_admission":
             owner = "GitHub account billing owner"
         if reason == "github_required_owner_approval":
             owner = "authorized PR/release owner"
-        if reason == "github_job_unstarted":
+        if reason in ("github_job_unstarted", "github_job_startup_failure"):
             owner = "GitHub workflow/account owner"
         action = incident["next_action"]
         if reason == "github_hosted_billing_admission":
@@ -1301,6 +1302,9 @@ def plan(bundle, previous=None, now=None):
         elif reason == "github_job_unstarted":
             action = ("Inspect this exact GitHub job's platform/check-run annotations and billing "
                       "admission with the account owner; no blind retry or VPS restart.")
+        elif reason == "github_job_startup_failure":
+            action = ("Inspect this exact job's runner/bootstrap and admission evidence with the "
+                      "GitHub workflow owner; do not infer a code defect or restart/retry a runner.")
         blocking_ids.add(key)
         previous_status = prior_entry.get("status", "")
         incidents.append({
