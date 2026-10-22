@@ -1341,9 +1341,12 @@ def evaluate_recovery_case(data):
     project = data.get("selected_project")
     if type(project) is not str or (project != "all" and not CASE_PROJECT.fullmatch(project)):
         raise PolicyInputError("invalid recovery case project scope")
+    now_utc = datetime.now(UTC)
     generated = _timestamp(data.get("generated_at_utc"))
+    if generated > now_utc + timedelta(minutes=2):
+        raise PolicyInputError("recovery case timestamp is in the future")
     issues, recovery = data.get("issues"), data.get("queue_recovery")
-    case_old = datetime.now(UTC) - generated > timedelta(hours=6)
+    case_old = now_utc - generated > timedelta(hours=6)
     if (type(issues) is not list or len(issues) > 100 or type(recovery) is not dict
             or type(recovery.get("workorders")) is not list
             or len(recovery["workorders"]) > 64):
@@ -1358,11 +1361,13 @@ def evaluate_recovery_case(data):
     issue_source_at = issue_coverage.get("observed_at")
     if issue_source_at is not None:
         issue_source_at = _timestamp(issue_source_at)
-        if issue_source_at > generated + timedelta(minutes=2):
-            raise PolicyInputError("issue observation postdates recovery case")
+        if (issue_source_at > generated + timedelta(minutes=2)
+                or issue_source_at > now_utc + timedelta(minutes=2)):
+            raise PolicyInputError(
+                "issue observation is future-dated or postdates recovery case")
     issue_source_stale = (
         issue_source_at is None or case_old
-        or datetime.now(UTC) - issue_source_at > timedelta(hours=6)
+        or now_utc - issue_source_at > timedelta(hours=6)
     )
     issue_truncated = issue_coverage["sample_truncated"]
     seen = set()
@@ -1485,11 +1490,13 @@ def evaluate_recovery_case(data):
         # The export cannot contain a queue observation from after its own
         # generation clock. The source's stale hint can only increase caution:
         # its snapshot timestamp independently determines actual age.
-        if queue_observed > generated + timedelta(minutes=2):
-            raise PolicyInputError("queue observation postdates recovery case")
+        if (queue_observed > generated + timedelta(minutes=2)
+                or queue_observed > now_utc + timedelta(minutes=2)):
+            raise PolicyInputError(
+                "queue observation is future-dated or postdates recovery case")
         retry_stale = (
             retry_stale or case_old
-            or datetime.now(UTC) - queue_observed > timedelta(hours=6)
+            or now_utc - queue_observed > timedelta(hours=6)
         )
     if type(covered) is not bool or (not covered and recovery["workorders"]):
         raise PolicyInputError("contradictory queue recovery source coverage")
@@ -1556,7 +1563,7 @@ def evaluate_recovery_case(data):
     ))
     return {
         "schema_version": 1, "policy": "zsentinel-recovery-case-handoff-v1",
-        "evaluated_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "evaluated_at_utc": now_utc.isoformat().replace("+00:00", "Z"),
         "source_generated_at_utc": generated.isoformat().replace("+00:00", "Z"),
         "source_case_stale": case_old,
         "source_issues_observed_at_utc": (
