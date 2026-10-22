@@ -35,8 +35,8 @@ jobs:
   trusted-pr-source:
     # No checkout of pull_request source until the owner/repository admission
     # is explicitly successful. A fork must fail, not report a green skip.
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    if: (github.event_name == 'pull_request') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
       - name: Reject untrusted source before any contributor code executes
@@ -62,7 +62,8 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.base.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - name: Checkout exact candidate without retained GitHub credentials

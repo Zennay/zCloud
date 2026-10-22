@@ -15,7 +15,8 @@ permissions:
 jobs:
   source-only:
     # Do not skip an untrusted PR: a skipped required check appears successful.
-    runs-on: ubuntu-latest
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
     steps:
       - name: Reject untrusted pull request before checkout

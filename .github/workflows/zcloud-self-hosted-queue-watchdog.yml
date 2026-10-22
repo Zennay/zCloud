@@ -80,7 +80,7 @@ jobs:
                   if job.get("status") != "queued":
                       continue
                   labels={str(x).lower() for x in (job.get("labels") or [])}
-                  if "self-hosted" not in labels:
+                  if not {"self-hosted", "zcloud", "vps"}.issubset(labels):
                       continue
                   candidates.append({
                       "run_id":run["id"],
@@ -109,7 +109,7 @@ jobs:
               with open(summary,"a",encoding="utf-8") as output:
                   output.write("## zCloud queued self-hosted work (observation only)\n\n")
                   output.write(f"- Inspected queued runs: {len(observed)}; provider window complete: {str(evidence['coverage_complete']).lower()}\n")
-                  output.write(f"- Queued self-hosted jobs in sampled runs: {len(candidates)}\n")
+                  output.write(f"- Queued zCloud runner jobs (all required labels) in sampled runs: {len(candidates)}\n")
                   output.write(f"- Older than 3 minutes: {len(remaining)}\n")
                   output.write(f"- Uninspected queued runs (at least): {len(queued)-len(observed)}\n")
                   output.write("- No cancel, restart, dispatch or new claim authorized or performed.\n")

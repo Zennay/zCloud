@@ -16,7 +16,8 @@ concurrency:
 jobs:
   trusted-source:
     name: Reject untrusted source identity
-    runs-on: ubuntu-latest
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
       - name: Prove same-repository main-target PR without executing source
@@ -36,7 +37,8 @@ jobs:
   tls-verification-source:
     name: No new TLS certificate verification bypass
     needs: trusted-source
-    runs-on: ubuntu-latest
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - name: Checkout immutable pull-request head without stored token

@@ -1,0 +1,15 @@
+{
+  "target_hostname": "VM-7eb5ee16-2c71-440d-b7fd-8095d204e930",
+  "maximum_workers": 20,
+  "active_workers": 10,
+  "providers": {"chatgpt": 10, "claude": 0},
+  "projects": {
+    "zsentinel": 5,
+    "tuddy": 1,
+    "ftmo": 1,
+    "fuckball": 1,
+    "tradengine": 1,
+    "lightup": 1
+  },
+  "notes": "The user-requested breakdown totals nine. The tenth slot is assigned to zSentinel. This is a desired-state configuration; live operation requires Firefox sessions, registered endpoints and heartbeats."
+}
