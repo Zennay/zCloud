@@ -500,7 +500,7 @@ Elk exportformaat toont `source_record_count`, `selected_record_count`, `exclude
 
 The [source-bound product delivery board](zsentinel-product-delivery-board.md) is a deliberately non-authorizing, offline summary of existing P0/P1 issue discovery, queue retry pressure, recent PR-less branches, optional explicit Notion claims and exact-head PR observations. The new **Product Delivery Workbench** turns one saved JSON board into an interactive, still fully local operator workspace.
 
-Each issue card in both the Markdown and static, script-free HTML Product Delivery Board includes a **Three-line incident handoff**: `Problem`, a human-only `Action`, and `Status`. The status always says `HOLD`, preserves the observed project-source coverage, and keeps current claim, exact-HEAD CI, independent review and release authority explicitly `UNKNOWN`. This gives operators a concise portable escalation without turning an offline snapshot into a retry, claim, merge or deployment action.
+Each issue card in both the Markdown and static, script-free HTML Product Delivery Board includes a **Three-line incident handoff**: `Problem`, a human-only `Action`, and `Status`. The status always says `HOLD`, includes the board-generation UTC and per-source freshness labels alongside project-source coverage, and keeps current claim, exact-HEAD CI, independent review and release authority explicitly `UNKNOWN`. This gives operators a concise portable escalation without turning an offline snapshot into a retry, claim, merge or deployment action.
 
 ## 21 oktober · projectgerichte issue-/PR-botsingswerkbak uit privé bronmomenten
 
