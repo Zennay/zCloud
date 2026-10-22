@@ -14,7 +14,7 @@ import re
 import sqlite3
 import stat
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from zsentinel_recovery_router import utc_string
@@ -85,6 +85,8 @@ def _read_sqlite(path):
         # snapshot, and interleave each project's existing row order.
         #
         # At most 24 scoped LIMIT queries in total and 24*24 candidate rows.
+        # ORDER BY rowid uses the table's natural rowid b-tree, making each
+        # unchanged project's sample stable without a temp sort or global sort.
         # There is NO new unbounded global ORDER BY/temp-sort on the VPS root.
         # With >250 project groups the source stays explicitly partial;
         # absent projects must never be reported as healthy.
