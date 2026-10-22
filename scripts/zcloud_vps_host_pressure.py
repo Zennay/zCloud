@@ -4,6 +4,7 @@ This module makes no process/queue/service changes and grants no release authori
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -39,6 +40,22 @@ def _psi_avg10(resource: str, category: str) -> float | None:
     return None
 
 
+def _source_scope_fingerprint() -> str | None:
+    """Hash the local host/boot scope without exporting the raw identifiers."""
+    try:
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(
+            encoding="ascii").strip()
+        node = os.uname().nodename
+    except (OSError, AttributeError, UnicodeError):
+        return None
+    if (not isinstance(boot_id, str) or not 1 <= len(boot_id) <= 128
+            or not isinstance(node, str) or not 1 <= len(node) <= 255
+            or any(ord(char) < 32 for char in boot_id + node)):
+        return None
+    material = "zcloud-host-pressure-v1\\0" + node + "\\0" + boot_id
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
 def host_pressure_snapshot() -> dict:
     """Observe CPU demand and kernel PSI without guessing worker or runner state.
 
@@ -47,6 +64,7 @@ def host_pressure_snapshot() -> dict:
     """
     result = {
         "source": "local_procfs", "state": "unknown",
+        "source_scope_fingerprint": _source_scope_fingerprint(),
         "cpu_count": None, "load_1m": None, "load_per_cpu": None,
         "cpu_some_avg10_pct": _psi_avg10("cpu", "some"),
         "memory_full_avg10_pct": _psi_avg10("memory", "full"),
