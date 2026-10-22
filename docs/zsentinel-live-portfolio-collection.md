@@ -423,3 +423,17 @@ external archive mount adds `no_verified_external_archive_headroom`.
 None of these fields authorizes offload, cleanup, process termination, runner
 restart or claim release; pressure is a capacity signal, not a root-cause
 finding.
+
+
+### Capaciteitsmeting in de herstelcockpit
+
+When `--observe-vps-capacity` is enabled, the same-host read-only resource
+receipt is preserved in the decision JSON and rendered as a dedicated
+capacity panel in the HTML cockpit. It displays root and database filesystem
+headroom/bands, RAM and swap totals, five-minute load per allowed CPU, the
+explicit archive-mount state and warning codes. The router consumes the
+expanded receipt before recommending any new work: high/critical reported
+capacity, swap >=90%, available RAM <=10%, or filesystem headroom below 5 GiB
+keeps admission overloaded. A mounted archive is displayed as capacity evidence
+only; it never overrides root pressure or authorizes a copy, move, deletion,
+restart, queue write or claim change.

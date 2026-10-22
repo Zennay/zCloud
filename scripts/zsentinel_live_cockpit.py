@@ -561,6 +561,10 @@ def main():
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
         decision, ledger = plan(bundle, previous)
+        if "resources" in bundle:
+            # Preserve bounded same-host counters for human display/JSON;
+            # admission is independently computed by the fail-closed router.
+            decision["vps_resource_observation"] = bundle["resources"]
         decision["live_sources"] = provenance
         if pr_delivery is not None:
             decision["pr_delivery"] = pr_delivery

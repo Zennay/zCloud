@@ -6,6 +6,7 @@ trusts unvalidated markup, performs workflow actions or asserts live recovery.
 """
 from __future__ import annotations
 
+import math
 import re
 from html import escape
 from urllib.parse import urlsplit
@@ -480,6 +481,159 @@ def blocked_queue_panel(source):
             table + work_html +
             '<p class="muted">Dit zijn queue-rijen met status=blocked, geen bewezen fouten of '
             'retry-opdrachten. Geen claimvrijgave, automatische retry of dispatch.</p></section>')
+
+
+
+def capacity_observation_panel(observation, admission):
+    """Render only allowlisted scalar host-capacity data; never render raw paths."""
+    if observation is None:
+        return ""
+    if (type(observation) is not dict
+            or observation.get("source") != "trusted_readonly_vps_snapshot"
+            or type(observation.get("observed_at")) is not str
+            or len(observation["observed_at"]) > 45):
+        raise ValueError("untrusted VPS capacity observation")
+    metrics = observation.get("vps")
+    if type(metrics) is not dict:
+        raise ValueError("VPS capacity metrics missing")
+
+    def number(key, maximum, optional=False):
+        value = metrics.get(key)
+        if value is None and optional:
+            return None
+        if (type(value) not in (int, float) or not math.isfinite(value)
+                or not 0 <= value <= maximum):
+            raise ValueError("invalid VPS capacity field: " + key)
+        return value
+
+    cores = metrics.get("cores")
+    if type(cores) is not int or not 1 <= cores <= 128:
+        raise ValueError("invalid VPS capacity core count")
+    load = number("load_5m", 5000)
+    load_per_core = number("load_5m_per_core", 5000, optional=True)
+    available_memory = number("available_memory_mib", 1048576)
+    total_memory = number("total_memory_mib", 1048576)
+    available_memory_percent = number("available_memory_percent", 100)
+    available_swap = number("available_swap_mib", 1048576)
+    total_swap = number("total_swap_mib", 1048576)
+    swap_used = number("swap_used_percent", 100, optional=True)
+    database_free = number("free_disk_gib", 100000)
+    database_unavailable = number("disk_unavailable_percent", 100)
+    root_free = number("root_free_disk_gib", 100000)
+    root_unavailable = number("root_disk_unavailable_percent", 100)
+    root_inode_percent = number("root_inode_unavailable_percent", 100, optional=True)
+    database_inode_percent = number("inode_unavailable_percent", 100, optional=True)
+    if available_memory > total_memory or available_swap > total_swap:
+        raise ValueError("inconsistent VPS capacity totals")
+    if (total_memory <= 0 or available_memory_percent > 100 or
+            (total_swap == 0 and swap_used is not None) or
+            (total_swap > 0 and swap_used is None)):
+        raise ValueError("inconsistent VPS memory/swap percentages")
+    root_band = metrics.get("root_capacity_band")
+    database_band = metrics.get("database_capacity_band")
+    severity = metrics.get("capacity_severity")
+    if (root_band not in ("critical", "high", "normal")
+            or database_band not in ("critical", "high", "normal")
+            or severity not in ("critical", "high", "normal")):
+        raise ValueError("unrecognized VPS capacity severity")
+    warnings = metrics.get("capacity_warnings")
+    allowed_warnings = {
+        "root_filesystem_critical", "root_filesystem_high",
+        "database_mount_critical", "database_mount_high",
+        "swap_pressure_high", "memory_pressure_high", "load_pressure_high",
+        "no_verified_external_archive_headroom",
+    }
+    if (type(warnings) is not list or len(warnings) > 8
+            or any(type(item) is not str or item not in allowed_warnings for item in warnings)
+            or len(set(warnings)) != len(warnings)):
+        raise ValueError("invalid VPS capacity warning list")
+    archive = metrics.get("archive_target")
+    if (type(archive) is not dict
+            or archive.get("offload_authorized") is not False
+            or archive.get("mutation_performed") is not False
+            or archive.get("source_files_inspected") is not False
+            or archive.get("state") not in (
+                "not_requested", "unavailable", "observed_external_mount",
+                "same_as_root_filesystem", "mount_point_not_verified")):
+        raise ValueError("untrusted archive capacity detail")
+    archive_free = archive.get("free_disk_gib")
+    if archive_free is not None and (
+            type(archive_free) not in (int, float) or not math.isfinite(archive_free)
+            or not 0 <= archive_free <= 100000):
+        raise ValueError("invalid archive capacity value")
+    if (archive.get("state") == "observed_external_mount"
+            and (archive.get("mount_point_detected") is not True
+                 or archive.get("same_device_as_root") is not False
+                 or archive_free is None)):
+        raise ValueError("archive mount classification lacks capacity evidence")
+
+    def amount(value, unit):
+        return "onbekend" if value is None else f"{value:,.1f} {unit}".strip()
+
+    def percent(value):
+        return "onbekend" if value is None else f"{value:.1f}%"
+
+    archive_states = {
+        "not_requested": "niet aangevraagd",
+        "unavailable": "niet beschikbaar / bron onleesbaar",
+        "observed_external_mount": "externe mount waargenomen",
+        "same_as_root_filesystem": "zelfde filesystem als root; niet extern",
+        "mount_point_not_verified": "mountpoint niet bewezen",
+    }
+    archive_text = archive_states[archive["state"]]
+    if archive["state"] == "observed_external_mount":
+        archive_text += "; " + amount(archive_free, "GiB") + " vrij"
+        archive_text += "; zelfde device als databasemount: " + (
+            "ja" if archive.get("same_device_as_database") is True else
+            "nee" if archive.get("same_device_as_database") is False else "onbekend"
+        )
+    warning_labels = {
+        "root_filesystem_critical": "Systeemschijf kritiek",
+        "root_filesystem_high": "Systeemschijf krap",
+        "database_mount_critical": "Databasemount kritiek",
+        "database_mount_high": "Databasemount krap",
+        "swap_pressure_high": "Swap >=90% gebruikt",
+        "memory_pressure_high": "RAM beschikbaar <=10%",
+        "load_pressure_high": "Load >=2x toegestane CPU-capaciteit",
+        "no_verified_external_archive_headroom": "Geen externe archief-headroom bewezen",
+    }
+    warning_text = " · ".join(warning_labels[item] for item in warnings) or "Geen waarschuwingscodes"
+    admission_state = admission.get("state") if type(admission) is dict else "unknown"
+    admission_labels = {
+        "unavailable": "bron onbekend", "stale": "meting verouderd",
+        "overloaded": "geen nieuw werk toelaten",
+        "advisory_headroom": "drempels niet overschreden; geen startrecht",
+    }
+    css = "warn" if severity in ("critical", "high") else "read"
+    return (
+        '<section class="panel ' + css + '" aria-label="VPS capaciteitsmeting">'
+        '<h2>VPS-capaciteit · read-only meting</h2>'
+        '<p><strong>' + phrase(severity.upper(), 20) + '</strong> · ' +
+        phrase(admission_labels.get(admission_state, "toelating onbekend"), 70) +
+        ' · waargenomen ' + phrase(observation["observed_at"], 45) + '</p>'
+        '<div class="wrap"><table><thead><tr><th>Onderdeel</th><th>Waarneming</th><th>Band</th></tr></thead><tbody>'
+        '<tr><th>Systeemschijf</th><td>' + amount(root_free, "GiB") + ' vrij; ' +
+        percent(root_unavailable) + ' niet beschikbaar; inodes ' +
+        percent(root_inode_percent) + '</td><td>' +
+        phrase(root_band, 12) + '</td></tr>'
+        '<tr><th>Databasemount</th><td>' + amount(database_free, "GiB") + ' vrij; ' +
+        percent(database_unavailable) + ' niet beschikbaar; inodes ' +
+        percent(database_inode_percent) + '</td><td>' +
+        phrase(database_band, 12) + '</td></tr>'
+        '<tr><th>RAM</th><td>' + amount(available_memory, "MiB") + ' / ' +
+        amount(total_memory, "MiB") + ' beschikbaar (' +
+        percent(available_memory_percent) + ')</td><td>—</td></tr>'
+        '<tr><th>Swap</th><td>' + amount(available_swap, "MiB") + ' / ' +
+        amount(total_swap, "MiB") + ' vrij; ' + percent(swap_used) + ' gebruikt</td><td>—</td></tr>'
+        '<tr><th>Load (5 min)</th><td>' + amount(load, "") + ' totaal; ' +
+        amount(load_per_core, "per CPU") + '; ' + str(cores) + ' CPU(s)</td><td>—</td></tr>'
+        '<tr><th>Archiefdoel</th><td>' + phrase(archive_text, 220) + '</td><td>Geen offloadrecht</td></tr>'
+        '</tbody></table></div>'
+        '<p class="muted">Waarschuwingen: ' + phrase(warning_text, 420) + '</p>'
+        '<p class="muted">Alleen counters; geen bestandsnamen of inhoud. Dit paneel bewijst niet dat een bestand veilig verplaatst kan worden en verleent geen opruim-, offload-, herstart-, queue- of claimrechten.</p>'
+        '</section>'
+    )
+
 
 
 def html_view(decision, registry=None):
@@ -1117,6 +1271,20 @@ def html_view(decision, registry=None):
         "disk_unavailable_at_least_90_percent": "Schijf minstens 90% niet beschikbaar",
         "database_mount_inodes_unavailable_at_least_90_percent": "Minstens 90% inodes op databasemount niet beschikbaar",
         "root_filesystem_headroom_below_2_gib": "Systeemschijf heeft minder dan 2 GiB ruimte",
+        "root_filesystem_headroom_below_5_gib": "Systeemschijf heeft minder dan 5 GiB vrije ruimte",
+        "database_mount_headroom_below_5_gib": "Databasemount heeft minder dan 5 GiB vrije ruimte",
+        "swap_used_percent_at_least_90": "Swap is minstens 90% gebruikt",
+        "available_memory_percent_at_most_10": "Hoogstens 10% RAM beschikbaar",
+        "capacity_severity_high": "VPS-meting meldt hoge capaciteitsdruk",
+        "capacity_severity_critical": "VPS-meting meldt kritieke capaciteitsdruk",
+        "root_filesystem_critical": "Systeemschijf kritiek",
+        "root_filesystem_high": "Systeemschijf krap",
+        "database_mount_critical": "Databasemount kritiek",
+        "database_mount_high": "Databasemount krap",
+        "swap_pressure_high": "Swap minstens 90% gebruikt",
+        "memory_pressure_high": "RAM beschikbaar hoogstens 10%",
+        "load_pressure_high": "Load minstens 2x toegestane CPU-capaciteit",
+        "no_verified_external_archive_headroom": "Geen externe archief-headroom bewezen",
         "root_filesystem_unavailable_at_least_90_percent": "Systeemschijf minstens 90% niet beschikbaar",
         "root_filesystem_inodes_unavailable_at_least_90_percent": "Systeemschijf minstens 90% inodes niet beschikbaar",
         "root_filesystem_inode_capacity_unknown": "Inodes op systeemschijf niet betrouwbaar bekend; geen nieuw werk",
@@ -1145,6 +1313,8 @@ def html_view(decision, registry=None):
         "Geen lokale VPS-meting." if vps_origin == "unknown_not_sampled"
         else "Capaciteit komt uit apart aangeleverd bronbewijs."
     )
+    vps_resource_panel = capacity_observation_panel(
+        decision.get("vps_resource_observation"), capacity)
     watch = decision.get("watch_alert_candidates", [])
     if not isinstance(watch, list) or len(watch) > 5:
         raise ValueError("unbounded watch candidate feed")
@@ -1580,7 +1750,8 @@ def html_view(decision, registry=None):
             f'<p>VPS-capaciteitsadvies: <strong>{vps_state}</strong> · {vps_reason}. '
             f'{phrase(vps_disclosure, 180)} Geen VPS-startrecht.</p>'
             f'<p class="banner">{phrase(provenance, 420)} {phrase(warning, 600)}</p></header><main>'
-            f'<section><h2>Actuele blokkades ({len(incidents)})</h2>'
+            + vps_resource_panel
+            + f'<section><h2>Actuele blokkades ({len(incidents)})</h2>'
             + section(primary_incidents,
                       "Geen vers geverifieerde blokkades. Dat bewijst geen herstel.")
             + extra_incidents + '</section>'

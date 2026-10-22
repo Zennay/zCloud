@@ -393,40 +393,148 @@ def vps_capacity(bundle, now):
           or not math.isfinite(inode_pct) or not 0 <= inode_pct <= 100
           or abs(inode_pct - 100 * (1 - inode_available / inode_total)) > 0.015):
         raise ValueError("invalid same-database-mount inode capacity")
+    # Extended capacity fields are optional only for legacy receipts. When
+    # present, validate their schema and never let a reported warning promote
+    # an otherwise pressured host to advisory headroom.
+    extended_keys = ("capacity_severity", "capacity_warnings")
+    extended_present = [key in metrics for key in extended_keys]
+    if any(extended_present) and not all(extended_present):
+        raise ValueError("partial expanded VPS capacity receipt")
+    capacity_severity = metrics.get("capacity_severity")
+    capacity_warnings = metrics.get("capacity_warnings", [])
+    allowed_capacity_warnings = {
+        "root_filesystem_critical", "root_filesystem_high",
+        "database_mount_critical", "database_mount_high",
+        "swap_pressure_high", "memory_pressure_high", "load_pressure_high",
+        "no_verified_external_archive_headroom",
+    }
+    if extended_present[0]:
+        if (capacity_severity not in ("critical", "high", "normal")
+                or type(capacity_warnings) is not list or len(capacity_warnings) > 8
+                or any(type(item) is not str or item not in allowed_capacity_warnings
+                       for item in capacity_warnings)
+                or len(set(capacity_warnings)) != len(capacity_warnings)):
+            raise ValueError("invalid expanded VPS capacity receipt")
+        if ((capacity_severity == "normal" and capacity_warnings)
+                or (capacity_severity in ("high", "critical") and not capacity_warnings)):
+            raise ValueError("VPS capacity severity disagrees with warning receipt")
+    elif capacity_warnings:
+        raise ValueError("legacy VPS receipt cannot carry unbound capacity warnings")
+
+    optional_percentages = {}
+    for key in ("available_memory_percent", "swap_used_percent", "load_5m_per_core"):
+        value = metrics.get(key)
+        if value is not None and (
+                type(value) not in (int, float) or not math.isfinite(value)
+                or value < 0 or (key.endswith("_percent") and value > 100)
+                or (key == "load_5m_per_core" and value > 5000)):
+            raise ValueError(f"invalid expanded VPS metric: {key}")
+        optional_percentages[key] = value
+
+    band_keys = ("root_capacity_band", "database_capacity_band")
+    band_present = [key in metrics for key in band_keys]
+    if any(band_present) and not all(band_present):
+        raise ValueError("partial filesystem capacity-band receipt")
+    root_band = metrics.get("root_capacity_band")
+    database_band = metrics.get("database_capacity_band")
+    if any(band_present):
+        if (root_band not in ("critical", "high", "normal")
+                or database_band not in ("critical", "high", "normal")
+                or not all(root_present) or unavailable_disk_pct is None):
+            raise ValueError("filesystem capacity bands lack matching counters")
+
+        def derive_band(unavailable_pct, free_gib, inode_unavailable):
+            if (unavailable_pct >= 95 or free_gib < 1
+                    or (inode_unavailable is not None and inode_unavailable >= 95)):
+                return "critical"
+            if (unavailable_pct >= 90 or free_gib < 5
+                    or (inode_unavailable is not None and inode_unavailable >= 90)):
+                return "high"
+            return "normal"
+
+        if (root_band != derive_band(root_occupancy, root_disk, root_inode_pct)
+                or database_band != derive_band(
+                    unavailable_disk_pct, disk, inode_pct)):
+            raise ValueError("filesystem capacity bands disagree with pinned counters")
+    archive_receipt = metrics.get("archive_target")
+    if archive_receipt is not None:
+        if (type(archive_receipt) is not dict
+                or archive_receipt.get("offload_authorized") is not False
+                or archive_receipt.get("mutation_performed") is not False
+                or archive_receipt.get("source_files_inspected") is not False
+                or archive_receipt.get("state") not in (
+                    "not_requested", "unavailable", "observed_external_mount",
+                    "same_as_root_filesystem", "mount_point_not_verified")):
+            raise ValueError("untrusted archive capacity metadata")
+        if (archive_receipt.get("state") == "observed_external_mount"
+                and (archive_receipt.get("mount_point_detected") is not True
+                     or archive_receipt.get("same_device_as_root") is not False)):
+            raise ValueError("archive mount classification lacks separate-device evidence")
+
     overloaded = load > 1.5 * cores
     low_memory = memory < 1024
     low_swap = swap < 256
     low_disk = disk < 2
+    database_disk_below_5_gib = disk < 5
     almost_full_disk = unavailable_disk_pct is not None and unavailable_disk_pct >= 90
     root_low_disk = root_disk is not None and root_disk < 2
+    root_disk_below_5_gib = root_disk is not None and root_disk < 5
     root_almost_full = root_occupancy is not None and root_occupancy >= 90
     root_inode_pressure = (root_unknown is None and
                            root_inode_available is not None and
                            (root_inode_available == 0 or root_inode_pct >= 90))
     inode_pressure = inode_unknown is None and (inode_available == 0 or inode_pct >= 90)
-    if (overloaded or low_memory or low_swap or low_disk or almost_full_disk
-            or inode_pressure or root_low_disk or root_almost_full
-            or root_inode_pressure):
+    swap_pressure = optional_percentages["swap_used_percent"] is not None and optional_percentages["swap_used_percent"] >= 90
+    memory_pressure = optional_percentages["available_memory_percent"] is not None and optional_percentages["available_memory_percent"] <= 10
+    reported_pressure = capacity_severity in ("critical", "high")
+    overloaded = overloaded or reported_pressure
+    root_band_pressure = root_band in ("critical", "high")
+    database_band_pressure = database_band in ("critical", "high")
+    if (overloaded or low_memory or low_swap or low_disk or database_disk_below_5_gib
+            or almost_full_disk or inode_pressure or root_low_disk or root_disk_below_5_gib
+            or root_almost_full or root_inode_pressure or swap_pressure or memory_pressure
+            or root_band_pressure or database_band_pressure):
         reasons = []
         if overloaded:
-            reasons.append("load_above_conservative_capacity")
+            reasons.append("load_above_conservative_capacity" if load > 1.5 * cores
+                           else "capacity_severity_" + str(capacity_severity))
         if low_memory:
             reasons.append("memory_headroom_low")
+        elif memory_pressure:
+            reasons.append("available_memory_percent_at_most_10")
         if low_swap:
             reasons.append("swap_headroom_low")
+        elif swap_pressure:
+            reasons.append("swap_used_percent_at_least_90")
         if low_disk:
             reasons.append("disk_headroom_low")
+        elif database_disk_below_5_gib:
+            reasons.append("database_mount_headroom_below_5_gib")
         if almost_full_disk:
             reasons.append("disk_unavailable_at_least_90_percent")
         if inode_pressure:
             reasons.append("database_mount_inodes_unavailable_at_least_90_percent")
         if root_low_disk:
             reasons.append("root_filesystem_headroom_below_2_gib")
+        elif root_disk_below_5_gib:
+            reasons.append("root_filesystem_headroom_below_5_gib")
         if root_almost_full:
             reasons.append("root_filesystem_unavailable_at_least_90_percent")
         if root_inode_pressure:
             reasons.append("root_filesystem_inodes_unavailable_at_least_90_percent")
-        return {"state": "overloaded", "reason": ",".join(reasons)}
+        if reported_pressure:
+            for code in capacity_warnings:
+                if code not in reasons:
+                    reasons.append(code)
+        if root_band_pressure and "root_filesystem_" + str(root_band) not in reasons:
+            reasons.append("root_filesystem_" + str(root_band))
+        if database_band_pressure and "database_mount_" + str(database_band) not in reasons:
+            reasons.append("database_mount_" + str(database_band))
+        if swap_pressure and "swap_pressure_high" not in reasons:
+            reasons.append("swap_pressure_high")
+        if memory_pressure and "memory_pressure_high" not in reasons:
+            reasons.append("memory_pressure_high")
+        return {"state": "overloaded", "reason": ",".join(dict.fromkeys(reasons))}
     if root_unknown is not None:
         return {"state": "unavailable", "reason": root_unknown}
     if inode_unknown is not None:
