@@ -304,12 +304,12 @@ def compare(previous, current, now=None):
             "current_global_slot_observed": after["allocated"] if after is not None else None,
             "source_claim_lease_current_but_not_authority":
                 after["claim_lease_current_from_source"] if after is not None else False,
-            "claim_window_changed_observed": bool(
             "previous_progress_timestamp_in_claim_window": (
                 previous_progress_window if type(previous_progress_window) is bool else None),
             "current_progress_timestamp_in_claim_window": (
                 current_progress_window if type(current_progress_window) is bool else None),
             "progress_timestamp_window_observation": progress_window_observation,
+            "claim_window_changed_observed": bool(
                 before is not None and after is not None
                 and before["claim_window_fingerprint"] != after["claim_window_fingerprint"]
                 and (before["claim_window_fingerprint"] is not None
@@ -399,9 +399,9 @@ def human_text(report):
         str(data["running_without_new_events"]) +
         " toegewezen workers zonder eventtoename; " +
         str(data["claim_window_changes_requiring_owner_review"]) +
+        " gewijzigde claimvensters die een eigenaarcontrole vereisen; " +
         str(data["progress_timestamp_window_changes_observed"]) +
         " wijzigingen van progress-tijdstip in het claimvenster; " +
-        " gewijzigde claimvensters die een eigenaarcontrole vereisen; " +
         str(data["new_in_sample_not_new_claim"]) +
         " nieuw in steekproef (geen nieuwe claim), " +
         str(data["missing_in_sample_not_recovered"]) +
@@ -469,7 +469,7 @@ def private_markdown(report):
         "- Wijzigingen van progress-tijdstip binnen claimvenster: " +
         str(data["progress_timestamp_window_changes_observed"]),
         "",
-        "| Project | Worker-slot | Waarneming | Progress-tijdstip claimvenster | Bevoegde eigenaaractie |"
+        "| Project | Worker-slot | Waarneming | Progress-tijdstip claimvenster | Bevoegde eigenaaractie |",
         "| --- | ---: | --- | --- | --- |"
     ]
     for row in _owner_sort(rows):
