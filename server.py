@@ -3478,17 +3478,33 @@ def portfolio_queue_drop(queue_id,evidence=''):
         raise ValueError('queue_id is verplicht')
     ts=now()
     with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        # Terminal operator cancellation must not revoke a live worker lease.
+        # A queued/parked task is safe only after its claim identity is clear.
+        # The conditional UPDATE is the authority; a pre-read cannot race it.
         cur=c.execute("""UPDATE portfolio_queue
                          SET status='dropped',eligible=0,evidence=?,blocker=?,
                              worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                         WHERE queue_id=? AND status NOT IN ('done','dropped')""",
+                         WHERE queue_id=? AND status IN ('queued','blocked')
+                           AND worker_slot IS NULL AND claimed_at IS NULL
+                           AND claim_expires IS NULL""",
                       (str(evidence or '')[:4000],str(evidence or '')[:2000],ts,queue_id))
         dropped=bool(cur.rowcount)
-    # An intentional drop is terminal. A dependency hold uses the separate
-    # blocked state and can only return to the queue after an operator attests
-    # that the dependency has cleared.
-    audit=portfolio_queue_audit(refill=True)
-    return {'dropped':dropped,'queue_id':queue_id,'queue_audit':audit}
+        attention_resolved=False
+        if dropped:
+            # A terminally cancelled queue item cannot still demand that a
+            # human resume it; settle only its exact queue-bound Attention.
+            attention_resolved=bool(c.execute(
+                """UPDATE portfolio_attention
+                   SET status='resolved',resolved_at=?,updated_at=?
+                   WHERE attention_id=? AND status='open'""",
+                (ts,ts,'queue:'+queue_id),
+            ).rowcount)
+    # No-op/rejected drops must not trigger a queue refill or audit writer.
+    audit=portfolio_queue_audit(refill=True) if dropped else None
+    return {'dropped':dropped,'queue_id':queue_id,'queue_audit':audit,
+            'attention_resolved':attention_resolved,
+            'reason':None if dropped else 'active-claim-or-not-droppable'}
 
 
 def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_updated_at=None, expected_blocker=None, expected_evidence=None):
@@ -4886,7 +4902,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'ok':bool(item.get('updated')),'result':item,'time':now()},200 if item.get('updated') else 409)
                     if action=='drop':
                         item=portfolio_queue_drop(payload.get('queue_id'),payload.get('evidence') or '')
-                        return self.reply({'ok':True,'result':item,'time':now()})
+                        dropped=bool(item.get('dropped'))
+                        return self.reply({'ok':dropped,'result':item,'time':now()},200 if dropped else 409)
                     if action=='resume_blocked':
                         item=portfolio_queue_resume_blocked(
                             payload.get('queue_id'),
