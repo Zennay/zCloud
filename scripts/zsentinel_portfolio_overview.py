@@ -839,6 +839,36 @@ def main():
     window_lock = None
     ledger_lock = None
     try:
+        # One operator run may produce several private artifacts and update
+        # two local ledgers. Reject every path collision BEFORE the first
+        # SQLite/GitHub/Notion observation or sidecar write.
+        from zsentinel_private_path_admission import admit_private_paths
+        admit_private_paths(
+            destinations={
+                "output": args.output,
+                "disk_hotspots_output": args.disk_hotspots_output,
+                "desk_output": args.desk_output,
+                "action_output": args.action_output,
+                "owner_handoff_output": args.owner_handoff_output,
+                "owner_handoff_json_output": args.owner_handoff_json_output,
+                "owner_packet_output": args.owner_packet_output,
+                "state": args.state,
+                "window_state": args.window_state,
+            },
+            sources={
+                "registry": args.registry,
+                "database": args.database,
+                "worker_events_database": args.worker_events_database,
+                "notion_claims_export": args.notion_claims_export,
+                "queue_previous": args.queue_previous,
+                "worker_previous": args.worker_previous,
+                "disk_hotspots_previous": args.disk_hotspots_previous,
+                "disk_hotspots_root": args.disk_hotspots_root,
+                "archive_target": args.archive_target,
+                **{"compare_with_%d" % index: previous
+                   for index, previous in enumerate(args.compare_with or [])},
+            },
+        )
         if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
             raise ValueError("disk scan requires both root and private HTML output")
         if (args.archive_target is not None and args.disk_hotspots_root is None
