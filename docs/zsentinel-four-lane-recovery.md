@@ -1,3 +1,13 @@
+## 22 oktober 2026 · hostbrondekking als zelfstandige HTML-tabel
+
+De offline herstelcockpit toont nu een afzonderlijke tabel voor de vier vaste
+hostbronnen: RAM/swap, CPU-load, root-schijfruimte en Linux PSI. Elke bron krijgt
+de expliciete status Waargenomen, Gedeeltelijk of Onbekend. Zodra één bron
+onvolledig is, verschijnt een waarschuwing dat nieuwe workers op HOLD blijven;
+volledige hostbrondekking blijft nadrukkelijk geen bewijs van vrije cgroup-,
+claim- of runnercapaciteit. De bestaande PSI-meetwaardentabel blijft daarnaast
+beschikbaar.
+
 ## 22 oktober 2026 · lane-kaarten benoemen onvolledige hostbronnen
 
 De concrete toelichting op iedere wachtende lane bevat nu, naast de algemene
