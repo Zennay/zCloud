@@ -20,10 +20,13 @@ MAX_PROJECTS = 3
 MAX_ISSUES = 24
 MAX_PRS = 3
 SEVERITY = ("P0", "P1", "P2", "Unspecified")
-HUMAN_ONLY = frozenset({
-    "https://github.com/Zennay/zCloud/issues/1326",
-    "https://github.com/Zennay/zCloud/issues/1523",
-})
+HUMAN_ONLY_ROUTES = {
+    "https://github.com/Zennay/zCloud/issues/1326":
+        "authorized_zcloud_runner_owner_required",
+    "https://github.com/Zennay/zCloud/issues/1523":
+        "authorized_github_billing_owner_required",
+}
+HUMAN_ONLY = frozenset(HUMAN_ONLY_ROUTES)
 
 # One immutable, owner-safe action per canonical issue route. Saved portfolio
 # windows must regenerate this wording rather than carry old Notion owner
@@ -31,6 +34,10 @@ HUMAN_ONLY = frozenset({
 ISSUE_ROUTE_ACTIONS = {
     "authorized_infrastructure_owner_required":
         "Bevoegde infrastructuureigenaar nodig; geen runner-restart, betaling of claim.",
+    "authorized_zcloud_runner_owner_required":
+        "Bevoegde zCloud-runnerbeheerder verifieert registratie, labels, actuele job en Listener/Worker-status via toegestane bronnen; geen restart zolang actieve worker of identiteit onzeker is.",
+    "authorized_github_billing_owner_required":
+        "Bevoegde GitHub-accountbillingeigenaar controleert billing/spend-admission; geen betaalde retry, billingwijziging of runneractie.",
     "review_existing_pr_first":
         "Begin bij bestaande PR en controleer eigenaar, vereiste CI en actuele scope.",
     "check_assignee_and_current_claim":
@@ -101,7 +108,7 @@ def build_workboard(inbox, registry, token=None):
                 prs.append({"project_id": row["project"], "pr_number": reference["number"]})
                 seen_pr.add(key)
         if human_only:
-            route = "authorized_infrastructure_owner_required"
+            route = HUMAN_ONLY_ROUTES[row["url"]]
         elif matches:
             route = "review_existing_pr_first"
         elif row.get("has_assignee"):
