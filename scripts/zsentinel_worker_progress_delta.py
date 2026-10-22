@@ -360,7 +360,7 @@ def public_html(report):
         str(data["running_without_new_events"]) +
         '; gewijzigde claimvensters met eigenaarcontrole: ' +
         str(data["claim_window_changes_requiring_owner_review"]) +
-        '; nieuw in beperkte steekproef (geen nieuwe claim): '
+        '; nieuw in beperkte steekproef (geen nieuwe claim): ' +
         str(data["new_in_sample_not_new_claim"]) +
         '; verdwenen uit beperkte steekproef (geen herstel): ' +
         str(data["missing_in_sample_not_recovered"]) +
