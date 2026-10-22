@@ -9,6 +9,8 @@ import enhancements
 import project_runtime
 from scripts import worker_scaling_report
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
+from scripts.zcloud_product_delivery_policy import (is_new_product_delivery, product_queue_snapshot,
+    product_delivery_classification, portfolio_fair_candidate_window)
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -962,6 +964,38 @@ def dynamic_worker_settings():
         'policy':'per_worker_rate_limit_plus_memory_admission',
     }
 
+def _dynamic_worker_resize_guard_locked(connection, chatgpt_count, claude_count):
+    """Reject a resize that would abandon or change a live owner's provider.
+
+    Must be called inside the same SQLite write transaction as the settings
+    update. A task's status/slot and an in-flight browser command are ownership
+    evidence, not disposable capacity. The caller never revokes either.
+    """
+    total=chatgpt_count+claude_count
+    if total>MAX_CHATGPT_WORKERS:
+        raise ValueError('Totaal aantal browserworkers overschrijdt de uitvoerbare globale limiet')
+    rows=connection.execute(
+        """SELECT worker_slot FROM portfolio_queue
+           WHERE worker_slot IS NOT NULL
+             AND status IN ('claimed','running','verifying')"""
+    ).fetchall()
+    pending=connection.execute(
+        """SELECT s.slot AS worker_slot
+           FROM ai_global_slots s JOIN runner_commands cmd
+             ON cmd.project_id=s.project_id || '::w' || s.worker_slot
+           WHERE cmd.status='pending' AND cmd.action IN ('start','new_chat','push')"""
+    ).fetchall()
+    for row in [*rows,*pending]:
+        try:
+            slot=int(row['worker_slot'])
+        except (TypeError,ValueError):
+            raise ValueError('Workerlimiet wijzigen geweigerd: ongeldige actieve slotidentiteit')
+        if slot<1 or slot>total:
+            raise ValueError('Workerlimiet wijzigen geweigerd: actieve taak of browseroverdracht buiten nieuwe slots')
+        if (slot<=DYNAMIC_CHATGPT_WORKERS)!=(slot<=chatgpt_count):
+            raise ValueError('Workerlimiet wijzigen geweigerd: actieve taak of browseroverdracht wisselt van provider')
+
+
 def set_dynamic_worker_settings(payload,actor='dashboard'):
     global GLOBAL_CHATGPT_WORKER_LIMIT,DYNAMIC_CHATGPT_WORKERS,DYNAMIC_CLAUDE_WORKERS
     global DYNAMIC_CHATGPT_COOLDOWN_SECONDS,DYNAMIC_CLAUDE_COOLDOWN_SECONDS
@@ -987,6 +1021,10 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
     generation_ms=_dynamic_int(payload.get('generation_start_timeout_ms',DYNAMIC_WORKER_GENERATION_TIMEOUT_MS),'Generation timeout',10000,600000)
     scheduler_seconds=_dynamic_int(payload.get('scheduler_interval_seconds',AUTONOMY_TICK_SECONDS),'Scheduler interval',1,300)
     old=dynamic_worker_settings()
+    capacity_changed=(
+        chatgpt_count!=DYNAMIC_CHATGPT_WORKERS
+        or claude_count!=DYNAMIC_CLAUDE_WORKERS
+    )
     values={
         DYNAMIC_WORKER_SETTING_KEY:str(chatgpt_count+claude_count),
         DYNAMIC_WORKER_SETTING_KEYS['chatgpt_count']:str(chatgpt_count),
@@ -1000,6 +1038,13 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
         DYNAMIC_WORKER_SETTING_KEYS['scheduler_interval_seconds']:str(scheduler_seconds),
     }
     with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        # Admission is serialized with the settings writer, not a stale
+        # snapshot outside the transaction. Do not change settings on HOLD.
+        if chatgpt_count+claude_count>MAX_CHATGPT_WORKERS:
+            raise ValueError('Totaal aantal browserworkers overschrijdt de uitvoerbare globale limiet')
+        if capacity_changed:
+            _dynamic_worker_resize_guard_locked(c,chatgpt_count,claude_count)
         for key,value in values.items():
             c.execute(
                 "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
@@ -1016,8 +1061,8 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
             },
             'succeeded',connection=c,
         )
-        if chatgpt_count + claude_count == 0:
-            c.execute('DELETE FROM ai_global_slots')
+        # Do not delete owner mappings here. The subsequent bounded
+        # reconciliation prunes only unoccupied out-of-range slots.
     DYNAMIC_CHATGPT_WORKERS=chatgpt_count
     DYNAMIC_CLAUDE_WORKERS=claude_count
     GLOBAL_CHATGPT_WORKER_LIMIT=chatgpt_count+claude_count
@@ -1028,11 +1073,16 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
     DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS=heartbeat_ms
     DYNAMIC_WORKER_GENERATION_TIMEOUT_MS=generation_ms
     AUTONOMY_TICK_SECONDS=scheduler_seconds
-    allocation=reconcile_dynamic_worker_limit()
+    # An interval/cooldown edit is not permission to reassign a browser tab.
+    # Only an actual provider-capacity change requires the allocator. The
+    # ordinary scheduler remains responsible for independently due work.
+    allocation=(reconcile_dynamic_worker_limit() if capacity_changed
+                else portfolio_queue_allocation())
     settings=dynamic_worker_settings()
     settings['allocated_workers']=len(allocation.get('workers') or [])
     settings['allocation_keys']=list(allocation.get('keys') or [])
-    settings['reconciled']=True
+    settings['reconciled']=bool(capacity_changed)
+    settings['capacity_changed']=bool(capacity_changed)
     return settings
 
 def set_dynamic_worker_limit(value,actor='dashboard'):
@@ -2572,13 +2622,19 @@ def _portfolio_queue_row(row):
         return None
     item=dict(row)
     item['eligible']=bool(item.get('eligible'))
+    # Never turn an untrusted/legacy scheme into a clickable queue link.
+    item['source_url']=_safe_operator_source_url(item.get('source_url'))
+    # Bind read-only operator labels to the actual source JSON BEFORE the
+    # legacy API presentation mapping converts malformed JSON to {}.
+    if str(item.get('status') or '').lower() == 'queued':
+        (item['delivery_policy_disposition'], item['delivery_policy_reason'])=product_delivery_classification(item)
     metadata=_portfolio_queue_metadata(item)
     item['metadata']=metadata
     item.pop('metadata_json',None)
     item['execution_lane']=metadata.get('execution_lane') if isinstance(metadata.get('execution_lane'),dict) else None
     return item
 
-def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
+def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None,eligible_queue_ids=None):
     ts=ts or now()
     params=[]
     project_clause=''
@@ -2607,6 +2663,12 @@ def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
         claims_by_project.setdefault(str(row['project_id']),[]).append(_claim_payload(row))
     backlog_by_project={}
     for row in backlog:
+        # Only filter *queued* candidate rows for the product-delivery
+        # admission call. Claimed/running/verifying work keeps its protected
+        # owner scope in the derived lane graph.
+        if (eligible_queue_ids is not None and str(row['status']) == 'queued'
+                and str(row['queue_id']) not in eligible_queue_ids):
+            continue
         backlog_by_project.setdefault(str(row['project_id']),[]).append(dict(row))
     target_ids=ids or sorted(backlog_by_project)
     lanes=[]
@@ -2629,21 +2691,122 @@ def portfolio_execution_lanes(project_id=None):
     with connect() as c:
         return _portfolio_lane_snapshot_locked(c,ids,now())
 
-def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
-    rows=connection.execute(
-        """SELECT * FROM portfolio_queue
-           WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
-           ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-                    created_at,queue_id LIMIT 240"""
-    ).fetchall()
+def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None,candidate_cache=None):
+    # Sample at most four ordered source pages before creating a final
+    # bounded, cross-project candidate window. Stopping after the first 240
+    # admissible rows lets one noisy project's P0s hide unrelated projects
+    # even when those other projects have free lane/worker capacity. This
+    # selection never grants a claim or bypasses existing priority gates.
     preempted={str(value) for value in (preempted or set())}
-    rows=[row for row in rows if str(row['queue_id']) not in preempted]
+    # Build the expensive global/per-project source window once per
+    # allocation transaction. Every subsequent slot re-reads *live* unclaimed
+    # rows from SQLite and regenerates execution lanes, so claims, caps, and
+    # the queue's current owner state are never inferred from stale samples.
+    cached_ids=(candidate_cache.get('ids') if candidate_cache is not None else None)
+    if cached_ids is not None:
+        if cached_ids:
+            placeholders=','.join('?' for _ in cached_ids)
+            current=connection.execute(
+                """SELECT * FROM portfolio_queue
+                   WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                     AND claimed_at IS NULL AND claim_expires IS NULL
+                     AND queue_id IN (""" + placeholders + ")",
+                cached_ids,
+            ).fetchall()
+            by_id={str(row['queue_id']):row for row in current}
+            rows=[by_id[queue_id] for queue_id in cached_ids
+                  if queue_id in by_id and queue_id not in preempted]
+        else:
+            rows=[]
+    else:
+        rows=[]
+        for offset in (0,240,480,720):
+            page=connection.execute(
+                """SELECT * FROM portfolio_queue
+                   WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                     AND claimed_at IS NULL AND claim_expires IS NULL
+                   ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                                 WHEN 'P2' THEN 2 ELSE 3 END,
+                            created_at,queue_id LIMIT 240 OFFSET ?""",
+                (offset,),
+            ).fetchall()
+            # 17 Oct: skip fresh isolated QA; leave existing claimed/running work
+            # and task leases in place. Preserve original P0/P1 relative ordering.
+            rows.extend(
+                row for row in page
+                if str(row['queue_id']) not in preempted
+                and is_new_product_delivery(dict(row))
+            )
+            if len(page)<240:
+                break
+        # The global 960-row sample can itself be monopolised by one project's
+        # P0 backlog. Boundedly inspect a source slice for each *other* registered
+        # project before reducing the final window to 240 candidates. This cannot
+        # grant a new claim or bypass a project's ordinary execution mode.
+        observed_projects={str(row['project_id'] or '') for row in rows}
+        # Discover only projects that actually have a free queued record, rather
+        # than running an extra SELECT for every registered (possibly idle)
+        # project during each allocator pass.
+        pending_projects=connection.execute(
+            """SELECT DISTINCT project_id FROM portfolio_queue
+               WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                 AND claimed_at IS NULL AND claim_expires IS NULL
+               ORDER BY project_id LIMIT 24"""
+        ).fetchall()
+        for pending_project in pending_projects:
+            other_project=str(pending_project['project_id'] or '')
+            if other_project in observed_projects or other_project not in PROJECT_INDEX:
+                continue
+            # Older QA-only records can fill the first page for one project.
+            # Search up to four bounded 128-row pages to find actual product
+            # candidates rather than declaring that project empty after QA rows.
+            # No cursor or worker/lease state is persisted by these SELECTs.
+            matches=[]
+            for project_offset in (0,128,256,384):
+                project_page=connection.execute(
+                    """SELECT * FROM portfolio_queue
+                       WHERE project_id=? AND eligible=1 AND status='queued'
+                         AND worker_slot IS NULL AND claimed_at IS NULL
+                         AND claim_expires IS NULL
+                       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                                     WHEN 'P2' THEN 2 ELSE 3 END,
+                                created_at,queue_id LIMIT 128 OFFSET ?""",
+                    (other_project,project_offset),
+                ).fetchall()
+                matches.extend(
+                    row for row in project_page
+                    if str(row['queue_id']) not in preempted
+                    and is_new_product_delivery(dict(row))
+                )
+                if len(matches)>=8 or len(project_page)<128:
+                    break
+            if matches:
+                rows.extend(matches[:8])
+        # Cross-project additions may have higher urgency than older items in
+        # the global sample: restore the canonical SQL priority/creation ordering
+        # before selecting the final 240 candidate rows.
+        priority_order={'P0':0,'P1':1,'P2':2}
+        rows.sort(key=lambda row: (
+            priority_order.get(str(row['priority'] or ''),3),
+            str(row['created_at'] or ''),
+            str(row['queue_id'] or ''),
+        ))
+        # Reserve at most eight candidates per observed project before filling
+        # spare places globally. Final output keeps the source's priority order;
+        # normal lane ownership, hard caps, memory and manual-start gates still
+        # decide whether any of these rows can actually run.
+        rows=portfolio_fair_candidate_window(rows,limit=240,per_project_reserve=8)
+        if candidate_cache is not None:
+            candidate_cache['ids']=[str(row['queue_id']) for row in rows]
     if not rows:
         return []
     project_ids={str(row['project_id']) for row in rows}
     lane_map={
         str(lane.get('queue_id')):lane
-        for lane in _portfolio_lane_snapshot_locked(connection,project_ids,ts)
+        for lane in _portfolio_lane_snapshot_locked(
+            connection,project_ids,ts,
+            eligible_queue_ids={str(row['queue_id']) for row in rows},
+        )
         if lane.get('queue_id') and lane.get('status')=='queued'
     }
     return [(row,lane_map[str(row['queue_id'])]) for row in rows if str(row['queue_id']) in lane_map]
@@ -2658,56 +2821,58 @@ def _portfolio_lane_metadata(row,lane):
     }
     return json.dumps(metadata,ensure_ascii=False,separators=(',',':'))
 
-def _portfolio_requeue_conflicting_claimed_lanes_locked(connection,ts):
-    """Release only unstarted claimed rows whose derived write lane already conflicts."""
+def _portfolio_observe_conflicting_claimed_lanes_locked(connection):
+    """Read-only conflict inventory; never revoke another owner's active claim.
+
+    A 'claimed' queue row can already have a live worker or pending browser
+    handoff. Lane overlap is not evidence of permission to release its lease.
+    Only the authorized owner can reconcile conflicting active scopes.
+    """
     rows=connection.execute(
         """SELECT * FROM portfolio_queue
-           WHERE eligible=1 AND status IN ('claimed','running','verifying') AND worker_slot IS NOT NULL
+           WHERE status IN ('claimed','running','verifying') AND worker_slot IS NOT NULL
            ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'verifying' THEN 1 ELSE 2 END,
                     CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                     claimed_at,created_at,queue_id"""
     ).fetchall()
     accepted=[]
-    released=[]
+    conflicts=[]
+    unknown_projects=[]
     for row in rows:
         project_id=str(row['project_id'] or '')
         project=PROJECT_INDEX.get(project_id) or {}
         if not project:
+            # An old active worker can still exist even when its project
+            # registry entry vanished; never imply its scope is conflict-free.
+            unknown_projects.append({
+                'queue_id':str(row['queue_id']),
+                'project_id':project_id,
+                'reason':'active_claim_project_missing_from_registry',
+            })
             continue
         lane=classify_backlog_item(project,dict(row))
-        conflict=None
         for other in accepted:
             if other['project_id']!=project_id:
                 continue
             overlap=scopes_overlap(lane['scope'],other['scope'])
             if lane['lane_id']==other['lane_id'] or overlap['capabilities'] or overlap['files']:
-                conflict={
-                    'queue_id':other['queue_id'],
-                    'lane_id':other['lane_id'],
-                    'overlap':overlap,
-                }
+                conflicts.append({
+                    'queue_id':str(row['queue_id']),
+                    'project_id':project_id,
+                    'lane_id':lane['lane_id'],
+                    'conflicts_with_queue_id':other['queue_id'],
+                    'conflicts_with_lane_id':other['lane_id'],
+                })
                 break
-        if conflict and str(row['status'])=='claimed':
-            connection.execute(
-                """UPDATE portfolio_queue
-                   SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                   WHERE queue_id=? AND status='claimed'""",
-                (ts,row['queue_id']),
-            )
-            released.append({
-                'queue_id':str(row['queue_id']),
-                'project_id':project_id,
-                'lane_id':lane['lane_id'],
-                'conflict':conflict,
-            })
-            continue
+        # Even conflicting claimed/running/verifying rows remain occupied.
+        # Never change status, slot, claim timestamps or eligibility here.
         accepted.append({
             'queue_id':str(row['queue_id']),
             'project_id':project_id,
             'lane_id':lane['lane_id'],
             'scope':lane['scope'],
         })
-    return released
+    return {'conflicts':conflicts,'unclassified_active_claims':unknown_projects}
 
 def _portfolio_queue_execution_capable(title,completion_criteria=''):
     title_text=str(title or '').strip().lower()
@@ -2724,7 +2889,7 @@ def _portfolio_queue_execution_capable(title,completion_criteria=''):
         'implement','build','fix','change','write','deploy','merge','create','update','refactor',
         'execute','run','train','generate','migrate','configure','persist','experiment',
     )
-    has_execution=bool(re.search(r'\\b(?:'+('|'.join(execution_words))+r')\\b',combined)) or any(
+    has_execution=bool(re.search(r'\b(?:'+('|'.join(execution_words))+r')\b',combined)) or any(
         marker in combined for marker in ('material code','material config','material workflow','runtime state change')
     )
     if title_text.startswith(non_exec_prefixes) and not has_execution:
@@ -2732,6 +2897,32 @@ def _portfolio_queue_execution_capable(title,completion_criteria=''):
     if ('read-only evidence is recorded' in combined or 'read-only verification' in combined) and not has_execution:
         return False
     return True
+
+def _safe_operator_source_url(value):
+    """Only navigate to bounded HTTP(S) sources in operator-facing links.
+
+    HTML attribute escaping prevents markup injection, but cannot make
+    javascript:/data: URL schemes safe. Never mutate legacy stored evidence:
+    hide an unsafe link in a read model instead of rewriting the queue.
+    """
+    if value is None or value == '':
+        return ''
+    if not isinstance(value,str) or len(value)>4096:
+        return ''
+    if any(ord(ch)<33 or ord(ch)==127 or ch=='\\' for ch in value):
+        return ''
+    try:
+        parsed=urlparse(value)
+        if (parsed.scheme not in ('http','https')
+                or not parsed.netloc or parsed.hostname is None
+                or parsed.username is not None or parsed.password is not None):
+            return ''
+        # Force validation of malformed or overflowing URL ports.
+        _=parsed.port
+    except ValueError:
+        return ''
+    return value
+
 
 def portfolio_attention_items(include_resolved=False):
     with connect() as c:
@@ -2743,9 +2934,20 @@ def portfolio_attention_items(include_resolved=False):
             rows=c.execute("""SELECT * FROM portfolio_attention WHERE status='open'
                               ORDER BY CASE severity WHEN 'urgent' THEN 0 WHEN 'attention' THEN 1 ELSE 2 END,
                                        updated_at DESC, attention_id""").fetchall()
-    return [dict(row) for row in rows]
+    items=[]
+    for row in rows:
+        item=dict(row)
+        item['source_url']=_safe_operator_source_url(item.get('source_url'))
+        items.append(item)
+    return items
 
-def portfolio_attention_add(project_id,action,detail='',source_url='',severity='attention',attention_id=None):
+def _portfolio_attention_add_locked(connection,project_id,action,detail='',source_url='',
+                                    severity='attention',attention_id=None,ts=None):
+    """Create/reopen one project-bound attention on the caller's transaction.
+
+    Queue completion must atomically persist its required human escalation.
+    A duplicate ID owned by a different project fails the *whole* transaction.
+    """
     project_id=str(project_id or '').strip().lower()
     action=str(action or '').strip()
     if project_id not in PROJECT_INDEX:
@@ -2754,22 +2956,44 @@ def portfolio_attention_add(project_id,action,detail='',source_url='',severity='
         raise ValueError('action is verplicht')
     if severity not in ('urgent','attention','later'):
         severity='attention'
-    if not attention_id:
-        digest=hashlib.sha256((project_id+'\n'+action).encode()).hexdigest()[:16]
+    if attention_id is None:
+        digest=hashlib.sha256((project_id+'\\n'+action).encode()).hexdigest()[:16]
         attention_id=project_id+'-'+digest
-    attention_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(attention_id).strip())[:160]
-    ts=now()
-    with connect() as c:
-        c.execute("""INSERT INTO portfolio_attention(
-            attention_id,project_id,action,detail,severity,source_url,status,created_at,updated_at,resolved_at
-        ) VALUES(?,?,?,?,?,?, 'open',?,?,NULL)
-        ON CONFLICT(attention_id) DO UPDATE SET
-            project_id=excluded.project_id,action=excluded.action,detail=excluded.detail,
-            severity=excluded.severity,source_url=excluded.source_url,status='open',
-            updated_at=excluded.updated_at,resolved_at=NULL""",
-            (attention_id,project_id,action,str(detail or '')[:4000],severity,str(source_url or ''),ts,ts))
-        row=c.execute('SELECT * FROM portfolio_attention WHERE attention_id=?',(attention_id,)).fetchone()
+    if not isinstance(attention_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,160}',attention_id):
+        raise ValueError('Attention-ID moet een canonieke identiteit van 1-160 tekens zijn')
+    ts=ts or now()
+    write=connection.execute("""INSERT INTO portfolio_attention(
+        attention_id,project_id,action,detail,severity,source_url,status,created_at,updated_at,resolved_at
+    ) VALUES(?,?,?,?,?,?, 'open',?,?,NULL)
+    ON CONFLICT(attention_id) DO UPDATE SET
+        action=excluded.action,detail=excluded.detail,
+        severity=excluded.severity,source_url=excluded.source_url,status='open',
+        updated_at=excluded.updated_at,resolved_at=NULL
+    WHERE portfolio_attention.project_id=excluded.project_id""",
+        (attention_id,project_id,action,str(detail or '')[:4000],severity,
+         _safe_operator_source_url(source_url),ts,ts))
+    if write.rowcount!=1:
+        raise ValueError('Attention-ID behoort al bij een ander project; incident niet overschreven')
+    row=connection.execute('SELECT * FROM portfolio_attention WHERE attention_id=?',
+                           (attention_id,)).fetchone()
     return dict(row)
+
+
+def portfolio_attention_add(project_id,action,detail='',source_url='',severity='attention',attention_id=None):
+    with connect() as c:
+        return _portfolio_attention_add_locked(c,project_id,action,detail,source_url,
+                                               severity,attention_id)
+
+
+def _queue_attention_id(queue_id):
+    """Keep legacy short IDs; hash long canonical IDs instead of truncating."""
+    value=str(queue_id or '')
+    if not re.fullmatch(r'[A-Za-z0-9._:-]{1,160}',value):
+        raise ValueError('Ongeldige queue-identiteit voor menselijke escalatie')
+    if len('queue:'+value)<=160:
+        return 'queue:'+value
+    return 'queuehash:'+hashlib.sha256(value.encode('utf-8')).hexdigest()
+
 
 def portfolio_attention_resolve(attention_id):
     attention_id=str(attention_id or '').strip()
@@ -2816,6 +3040,108 @@ def portfolio_queue_items(include_done=False):
                                        created_at, queue_id""").fetchall()
     return [_portfolio_queue_row(row) for row in rows]
 
+def _portfolio_operator_project_fair_locked(c, rows, quota, where_sql, order_sql):
+    """Read-only project-fair slice of a single bounded status category.
+
+    A global top-N can be filled by one busy project even though other
+    projects have blocked owners or available P0 work. Reserve the first
+    observed row per distinct project, then fill from the original priority
+    list. No queue status, priority, lease or claim is changed.
+    """
+    selected=list(rows[:quota])
+    # The SQL LIMIT quota+1 is already an exact full observation when it
+    # returns <=quota rows. No project has been omitted in that category,
+    # so extra DISTINCT/per-project SQL scans add no operator information.
+    if len(rows)<=quota:
+        return selected
+    first_by_project={}
+    for row in selected:
+        first_by_project.setdefault(str(row['project_id'] or ''),row)
+    # Registry currently has a small fixed project set. Bound extra sqlite
+    # reads even if old data contains unexpectedly many project identifiers.
+    projects=c.execute(
+        'SELECT DISTINCT project_id FROM portfolio_queue WHERE ' +
+        where_sql+' ORDER BY project_id LIMIT 25'
+    ).fetchall()
+    for project_row in projects[:24]:
+        project_id=str(project_row['project_id'] or '')
+        if project_id in first_by_project:
+            continue
+        first=c.execute(
+            'SELECT * FROM portfolio_queue WHERE '+where_sql+
+            ' AND project_id=? '+order_sql+' LIMIT 1',
+            (project_id,),
+        ).fetchone()
+        if first is not None:
+            first_by_project[project_id]=first
+    # Preserve one real task from each known project. The rest of the budget
+    # retains original source order (bounded, read-only), never fabricated
+    # candidates or unowned extra queue data.
+    chosen=[]
+    chosen_ids=set()
+    for row in first_by_project.values():
+        if len(chosen)>=quota:
+            break
+        queue_id=str(row['queue_id'])
+        if queue_id not in chosen_ids:
+            chosen.append(row)
+            chosen_ids.add(queue_id)
+    for row in selected:
+        if len(chosen)>=quota:
+            break
+        queue_id=str(row['queue_id'])
+        if queue_id not in chosen_ids:
+            chosen.append(row)
+            chosen_ids.add(queue_id)
+    return chosen
+
+
+def portfolio_queue_operator_window(limit=2048):
+    """Read-only fair queue window for the private zSentinel operator.
+
+    Split the bounded window between *existing* active owners and queued
+    leads, and preserve project diversity inside each group. Neither the
+    source selection nor its owner workorders authorize a new worker claim.
+    An overflow of EITHER category always means unknown unseen rows.
+    """
+    if type(limit) is not int or not 2<=limit<=2048:
+        raise ValueError('Ongeldige operator-inbox bronlimiet')
+    active_quota=(limit+1)//2
+    queued_quota=limit-active_quota
+    active_where="status IN ('claimed','running','verifying')"
+    queued_where="status='queued'"
+    active_order="""ORDER BY CASE status WHEN 'running' THEN 0
+                           WHEN 'verifying' THEN 1 ELSE 2 END,
+                           CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                             WHEN 'P2' THEN 2 ELSE 3 END,
+                           created_at,queue_id"""
+    queued_order="""ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                             WHEN 'P2' THEN 2 ELSE 3 END,
+                           created_at,queue_id"""
+    active_sql='SELECT * FROM portfolio_queue WHERE '+active_where+' '+active_order+' LIMIT ?'
+    queued_sql='SELECT * FROM portfolio_queue WHERE '+queued_where+' '+queued_order+' LIMIT ?'
+    with connect() as c:
+        # +1 permits a precise overflow flag without reading the full queue.
+        active=c.execute(active_sql,(active_quota+1,)).fetchall()
+        queued=c.execute(queued_sql,(queued_quota+1,)).fetchall()
+        if len(active)<=active_quota and len(queued)>queued_quota:
+            queued_quota=limit-len(active)
+            queued=c.execute(queued_sql,(queued_quota+1,)).fetchall()
+        elif len(queued)<=queued_quota and len(active)>active_quota:
+            active_quota=limit-len(queued)
+            active=c.execute(active_sql,(active_quota+1,)).fetchall()
+        truncated=len(active)>active_quota or len(queued)>queued_quota
+        active_selected=_portfolio_operator_project_fair_locked(
+            c,active,active_quota,active_where,active_order,
+        )
+        queued_selected=_portfolio_operator_project_fair_locked(
+            c,queued,queued_quota,queued_where,queued_order,
+        )
+    selected=active_selected+queued_selected
+    # Fairness is observation-only; source tails remain unknown when capped.
+    return [_portfolio_queue_row(row) for row in selected],truncated
+
+
 def portfolio_queue_current_for_slot(global_slot):
     try: slot=int(global_slot)
     except Exception: return None
@@ -2823,8 +3149,15 @@ def portfolio_queue_current_for_slot(global_slot):
     with connect() as c:
         row=c.execute("""SELECT * FROM portfolio_queue
                          WHERE worker_slot=? AND status IN ('claimed','running','verifying')
-                           AND (claim_expires IS NULL OR claim_expires>?)
-                         ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+                           AND (status IN ('running','verifying')
+                                OR claim_expires IS NULL OR claim_expires>?)
+                         ORDER BY CASE status WHEN 'running' THEN 0
+                                              WHEN 'verifying' THEN 1 ELSE 2 END,
+                                  updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+    # The allocator retains and renews a running/verifying owner even when
+    # its clock-based lease is temporarily overdue. A separate read path
+    # must not declare that same protected browser assignment absent before
+    # the next scheduler reconciliation.
     return _portfolio_queue_row(row)
 
 def portfolio_queue_has_project_assignment(project_id):
@@ -2832,7 +3165,8 @@ def portfolio_queue_has_project_assignment(project_id):
     with connect() as c:
         row=c.execute("""SELECT 1 FROM portfolio_queue
                          WHERE project_id=? AND status IN ('claimed','running','verifying')
-                           AND (claim_expires IS NULL OR claim_expires>?) LIMIT 1""",(project_id,ts)).fetchone()
+                           AND (status IN ('running','verifying')
+                                OR claim_expires IS NULL OR claim_expires>?) LIMIT 1""",(project_id,ts)).fetchone()
     return bool(row)
 
 def portfolio_queue_has_eligible_work(exclude_queue_id=None):
@@ -2866,23 +3200,61 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
     if str((PROJECT_INDEX.get(project_id) or {}).get('queue_mode') or '').lower()=='human-gated':
         raise ValueError('Project is human-gated; gebruik Attention Needed in plaats van de workerqueue')
     if not _portfolio_queue_execution_capable(title,completion_criteria):
-        raise ValueError('Alleen uitvoerbare write/build/test/deploy taken mogen in de workerqueue')
-    if not queue_id:
+        raise ValueError('Alleen uitvoerbare productbouw-, integratie- en herstelopdrachten mogen in de workerqueue')
+    # Refuse new QA-only work *before* writing or modifying any queue row.
+    # Owner-controlled existing claimed/running/verifying rows are untouched,
+    # and genuine build/repair work keeps all its normal admission gates.
+    decision, reason = product_delivery_classification({
+        'status': 'queued',
+        'title': title,
+        'completion_criteria': str(completion_criteria or ''),
+    })
+    if decision != 'product':
+        raise ValueError('Nieuwe niet-product/QA-only wachtrijtaak geweigerd: '+reason)
+    # Only omitted IDs are generated. Explicit empty/falsy IDs are invalid,
+    # not an invitation to silently change the producer's task identity.
+    if queue_id is None:
         digest=hashlib.sha256((project_id+'\n'+title+'\n'+str(parent_queue_id or '')).encode()).hexdigest()[:16]
         queue_id=project_id+'-'+digest
-    queue_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(queue_id).strip())[:160]
+    # Explicit queue identities must remain canonical: two differently
+    # spelled producer IDs must never collapse into one persisted task.
+    if not isinstance(queue_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,160}',queue_id):
+        raise ValueError('Queue-ID moet een unieke canonieke identiteit van 1-160 tekens zijn')
+    safe_source=_safe_operator_source_url(source_url)
+    if source_url and not safe_source:
+        raise ValueError('Ongeldige taakbron: uitsluitend veilige http(s)-bronlinks toegestaan')
     ts=now()
     with connect() as c:
-        c.execute("""INSERT INTO portfolio_queue(
+        # A producer retry must never rewrite a different task, an actively
+        # owned task, an ineligible/human-held row or a completed receipt.
+        # Title and parent alone are not a complete task identity: changed
+        # requirements/source/priority must require a new authorized queue ID.
+        # SQLite verifies the full immutable request under the UPSERT lock.
+        inserted=c.execute("""INSERT INTO portfolio_queue(
             queue_id,project_id,title,priority,status,eligible,completion_criteria,source_url,
             created_at,updated_at,parent_queue_id
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(queue_id) DO UPDATE SET
-            project_id=excluded.project_id,title=excluded.title,priority=excluded.priority,
-            completion_criteria=excluded.completion_criteria,source_url=excluded.source_url,
-            updated_at=excluded.updated_at""",
+            -- An exact repeated producer request is a true no-op, including
+            -- timestamps. A changed priority, requirements or source is NOT
+            -- the same task even when its title and parent stayed unchanged.
+            updated_at=portfolio_queue.updated_at
+        WHERE portfolio_queue.status='queued' AND portfolio_queue.eligible=1
+          AND portfolio_queue.project_id=excluded.project_id
+          AND portfolio_queue.title=excluded.title
+          AND portfolio_queue.parent_queue_id IS excluded.parent_queue_id
+          AND portfolio_queue.priority=excluded.priority
+          AND portfolio_queue.completion_criteria=excluded.completion_criteria
+          AND portfolio_queue.source_url=excluded.source_url
+          AND portfolio_queue.worker_slot IS NULL
+          AND portfolio_queue.claimed_at IS NULL
+          AND portfolio_queue.claim_expires IS NULL""",
             (queue_id,project_id,title,priority,'queued',1,str(completion_criteria or ''),
-             str(source_url or ''),ts,ts,parent_queue_id))
+             safe_source,ts,ts,parent_queue_id))
+        if inserted.rowcount != 1:
+            # An existing claim or completed task is unchanged. A privileged
+            # owner must decide whether a new continuation ID is appropriate.
+            raise ValueError('Queue-ID is bezet of producerinhoud wijkt af; gebruik een nieuwe geautoriseerde taak-ID')
         row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(queue_id,)).fetchone()
     return _portfolio_queue_row(row)
 
@@ -2919,7 +3291,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
             'Fix blockers, broken workers and open issues across OTHER portfolio projects',
             'P1',
             'PRIORITY 1: pick the highest-impact unowned actionable blocker in one of the 13 real projects. '
-            'Fix the underlying failure with code, tests, runtime verification and scoped permissions. '
+            'Fix the underlying product failure with code, integration, build or direct functional inspection and scoped permissions. Do not write or run QA, regression or test suites; preserve existing mandatory CI and reviewer gates. '
             'Read current Notion HQ/handoff and GitHub issues, PRs, CI, worker claims and deployment evidence '
             'for the affected real project. Do not create a zSentinel product roadmap, '
             'zSentinel QA tasks or zSentinel feature PRs. Do not steal existing ownership or skip gates. '
@@ -2933,7 +3305,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         'Treat this assignment as a long-running implementation block: identify the highest-value safe unblocked roadmap area, '
         'then complete as many adjacent write-capable steps as can be safely finished in the same lane before yielding. '
         'Completion requires at least three material implementation actions across code/config/workflows/experiments/runtime state '
-        'OR one clearly large end-to-end implementation that spans multiple files/components, plus automated test/build/run evidence. '
+        'OR one clearly large end-to-end implementation that spans multiple files/components, plus build or direct functional inspection evidence. Do not write, extend or run QA, regression or test suites. Existing mandatory CI, security, authorization and release gates remain unchanged. '
         'A single tiny edit, one config tweak, one commit, read-only inspection, audit, status, checklist, documentation-only work, '
         'or evidence collection alone cannot complete this item. After every successful sub-step, immediately continue to the next '
         'safe adjacent roadmap step within the same assignment. Only return DONE when the work package is genuinely exhausted, '
@@ -2944,7 +3316,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
     if project_id=='ftmo':
         criteria += ' FTMO priority rule: keep advancing safe preregistered generations continuously; after one gate is proven, continue to the next safe write-capable generation step instead of yielding the lane to lower-priority projects.'
     if project_id=='zssh':
-        criteria += ' zSSH research-first rule: before architectural, security, authentication, permission, public-review, or UX decisions, research current primary sources and record dated source URLs plus the engineering decision in docs/research or an ADR; then implement and test the decision. Research-only is not completion, but coding without research evidence is also not completion. Optimize every continuation toward a ship-ready public plugin: universal HTTPS MCP endpoint, production OAuth, simple connect website, target pairing/revocation, explicit scoped sudo grants, plugin package/review materials, red-team gates, and production submission-readiness evidence.'
+        criteria += ' zSSH research-first rule: before architectural, security, authentication, permission, public-review, or UX decisions, research current primary sources and record dated source URLs plus the engineering decision in docs/research or an ADR; then implement and inspect the decision directly without new QA or test-suite runs. Research-only is not completion, but coding without research evidence is also not completion. Optimize every continuation toward a ship-ready public plugin: universal HTTPS MCP endpoint, production OAuth, simple connect website, target pairing/revocation, explicit scoped sudo grants, plugin package/review materials, red-team gates, and production submission-readiness evidence.'
     return portfolio_queue_enqueue(
         project_id,
         f'Execute substantial {name} roadmap work package',
@@ -2958,26 +3330,73 @@ def portfolio_queue_audit(refill=True):
     """Keep the execution queue write-only, broad enough, and separate from human gates."""
     removed=[]
     with connect() as c:
-        rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria FROM portfolio_queue
-                          WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchall()
+        # Only clean *unstarted*, unowned queue rows. Running/verifying
+        # work must remain under its current lease even when policy changes.
+        rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria,
+                                 priority,source_url FROM portfolio_queue
+                          WHERE eligible=1 AND status='queued'
+                            AND worker_slot IS NULL
+                            AND claimed_at IS NULL AND claim_expires IS NULL""").fetchall()
         for row in rows:
             project=PROJECT_INDEX.get(str(row['project_id'])) or {}
             human_gated=str(project.get('queue_mode') or '').lower()=='human-gated'
             if human_gated or not _portfolio_queue_execution_capable(row['title'],row['completion_criteria']):
-                c.execute("""UPDATE portfolio_queue SET status='dropped',eligible=0,worker_slot=NULL,
-                             claimed_at=NULL,claim_expires=NULL,blocker=?,updated_at=? WHERE queue_id=?""",
-                          ('queue-audit: non-executable or human-gated task',now(),row['queue_id']))
-                removed.append(str(row['queue_id']))
+                # A human-gated task may be retired from worker admission
+                # only together with a durable, project-bound human action.
+                # Per-row SAVEPOINT keeps an attention failure from silently
+                # retiring this row or cancelling independent cleanup work.
+                c.execute('SAVEPOINT portfolio_audit_item')
+                try:
+                    changed=c.execute("""UPDATE portfolio_queue
+                        SET status='dropped',eligible=0,blocker=?,updated_at=?
+                        WHERE queue_id=? AND eligible=1 AND status='queued'
+                          AND worker_slot IS NULL
+                          AND claimed_at IS NULL AND claim_expires IS NULL""",
+                        ('queue-audit: non-executable or human-gated task',now(),row['queue_id']))
+                    if changed.rowcount and human_gated:
+                        _portfolio_attention_add_locked(
+                            c,
+                            row['project_id'],
+                            str(project.get('name') or row['project_id'])+
+                                ': menselijke toestemming nodig vóór uitvoering',
+                            'Het bestaande human-gated werkpakket vraagt menselijke beoordeling; '
+                                'geen automatische workerclaim of vrijgave.',
+                            row['source_url'] or project.get('notion_url') or '',
+                            'urgent' if str(row['priority']).upper()=='P0' else 'attention',
+                            attention_id=_queue_attention_id(row['queue_id']),
+                        )
+                    c.execute('RELEASE SAVEPOINT portfolio_audit_item')
+                    if changed.rowcount:
+                        removed.append(str(row['queue_id']))
+                except (ValueError,sqlite3.Error):
+                    c.execute('ROLLBACK TO SAVEPOINT portfolio_audit_item')
+                    c.execute('RELEASE SAVEPOINT portfolio_audit_item')
+                    logging.warning('Human-gated queue retirement held: attention persistence refused')
     if not refill:
         with connect() as c:
             ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
             projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
         return {'ready':int(ready),'projects':int(projects),'removed':removed,'created':[],'time':now()}
-    # Keep at least one executable item available for every non-human-gated active project.
+    # Refill must observe the *same product admission policy* as the worker
+    # selector. Otherwise a project with only stale QA-only queued rows is
+    # incorrectly considered supplied and never receives a product ticket.
+    # Active claimed/running/verifying tasks ALWAYS remain represented, even
+    # when their title no longer passes today's producer policy.
     with connect() as c:
-        rows=c.execute("""SELECT DISTINCT project_id FROM portfolio_queue
-                          WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchall()
-        represented={str(row['project_id']) for row in rows}
+        rows=c.execute("""SELECT project_id,status,worker_slot,claimed_at,
+                                 claim_expires,title,completion_criteria,metadata_json
+                          FROM portfolio_queue
+                          WHERE (eligible=1 AND status='queued')
+                             OR status IN ('claimed','running','verifying')""").fetchall()
+        represented={
+            str(row['project_id']) for row in rows
+            if str(row['status']) in ('claimed','running','verifying')
+            or (str(row['status'])=='queued'
+                and row['worker_slot'] is None
+                and row['claimed_at'] is None
+                and row['claim_expires'] is None
+                and is_new_product_delivery(dict(row)))
+        }
     project_order=sorted(
         PROJECT_INDEX.values(),
         key=lambda p: ({'system':0,'high':1,'normal':2,'low':3,'background':4}.get(str(p.get('priority') or 'normal'),2), str(p.get('id') or ''))
@@ -3003,6 +3422,49 @@ def portfolio_queue_audit(refill=True):
                               WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
     return {'ready':int(ready),'projects':int(projects),'removed':removed,'created':created,'time':now()}
 
+def portfolio_queue_conflict_snapshot(limit=20):
+    """Read-only authenticated owner-conflict worklist; never revoke a lease.
+
+    The live database is source truth for *observed* active queue scopes,
+    but overlap is not proof of an abandoned claim or merge authorization.
+    """
+    if type(limit) is not int or not 1<=limit<=20:
+        raise ValueError('Ongeldige conflictweergavelimiet')
+    try:
+        with connect() as c:
+            observation=_portfolio_observe_conflicting_claimed_lanes_locked(c)
+        collisions=observation['conflicts']
+        unknowns=observation['unclassified_active_claims']
+        return {
+            'coverage':('active_project_scope_unknown_owner_review_required'
+                        if unknowns else 'observed_current_portfolio_queue_claims_only'),
+            'active_lane_conflicts_observed':len(collisions),
+            'conflicts':collisions[:limit],
+            'list_truncated':len(collisions)>limit,
+            'unclassified_active_claim_count':len(unknowns),
+            'unclassified_active_claims':unknowns[:limit],
+            'unclassified_list_truncated':len(unknowns)>limit,
+            'owner_review_required':True,
+            'reassign_or_release_authorized':False,
+            'worker_actions_performed':False,
+        }
+    except (sqlite3.Error, ValueError, TypeError, KeyError):
+        # A failed current observation cannot be interpreted as no conflict.
+        logging.warning('zSentinel active lane conflict observation unavailable')
+        return {
+            'coverage':'unavailable_not_a_zero_conflict_observation',
+            'active_lane_conflicts_observed':None,
+            'conflicts':[],
+            'list_truncated':None,
+            'unclassified_active_claim_count':None,
+            'unclassified_active_claims':[],
+            'unclassified_list_truncated':None,
+            'owner_review_required':True,
+            'reassign_or_release_authorized':False,
+            'worker_actions_performed':False,
+        }
+
+
 def portfolio_queue_health():
     with connect() as c:
         ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue
@@ -3012,11 +3474,75 @@ def portfolio_queue_health():
                               WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
         dropped=c.execute("SELECT COUNT(*) FROM portfolio_queue WHERE status='dropped'").fetchone()[0]
         attention=c.execute("SELECT COUNT(*) FROM portfolio_attention WHERE status='open'").fetchone()[0]
+        # A raw eligible count can be large while every fresh queued row is
+        # QA-only and therefore intentionally invisible to worker admission.
+        # Bounded source-only health must use the same product policy rather
+        # than declaring a false healthy queue on old QA backlog density.
+        bounded=c.execute("""SELECT status,worker_slot,claimed_at,claim_expires,
+                                    title,completion_criteria,metadata_json
+                             FROM portfolio_queue
+                             WHERE eligible=1
+                               AND status IN ('queued','claimed','running','verifying')
+                             ORDER BY CASE WHEN status IN ('claimed','running','verifying') THEN 0 ELSE 1 END,
+                                      CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                                           WHEN 'P2' THEN 2 ELSE 3 END,
+                                      created_at,queue_id LIMIT 1001""").fetchall()
+    observed=bounded[:1000]
+    product_ready=0
+    active_owners_observed=0
+    claimable_product_observed=0
+    queued_occupied_slot_observed=0
+    queued_residual_lease_observed=0
+    excluded_qa=0
+    excluded_invalid=0
+    for row in observed:
+        if str(row['status'])!='queued':
+            # Existing owned work counts as in progress; never reinterpret or
+            # release it based on a newer product-only intake policy.
+            product_ready+=1
+            active_owners_observed+=1
+            continue
+        if row['worker_slot'] is not None:
+            queued_occupied_slot_observed+=1
+            continue
+        if row['claimed_at'] is not None or row['claim_expires'] is not None:
+            queued_residual_lease_observed+=1
+            continue
+        decision=product_delivery_classification(dict(row))[0]
+        if decision=='product':
+            product_ready+=1
+            claimable_product_observed+=1
+        elif decision=='qa_only':
+            excluded_qa+=1
+        else:
+            excluded_invalid+=1
+    source_complete=len(bounded)<=1000
     target=max(6,max(1,int(GLOBAL_CHATGPT_WORKER_LIMIT))*PORTFOLIO_QUEUE_MIN_READY_PER_WORKER)
+    required=min(target,max(1,len([p for p in PROJECT_INDEX.values()
+                                   if str(p.get('queue_mode') or '').lower()!='human-gated'])))
     return {
         'ready':int(ready),'queued':int(queued),'projects':int(projects),'dropped':int(dropped),
         'attention':int(attention),'target_ready':int(target),
-        'healthy':int(ready)>=min(target,max(1,len([p for p in PROJECT_INDEX.values() if str(p.get('queue_mode') or '').lower()!='human-gated']))),
+        # Preserve historical raw counts for dashboards but base the health
+        # signal on actual policy-admissible work and unchanged active owners.
+        'healthy':int(product_ready)>=required,
+        'product_delivery_ready_observed':int(product_ready),
+        # Available *unclaimed* product work and already-active owner work
+        # are separate observations. Neither bypasses downstream lane, Notion,
+        # worker-capacity, lease or release authorization.
+        'product_delivery_unclaimed_candidates_observed':int(claimable_product_observed),
+        'product_delivery_active_owner_rows_observed':int(active_owners_observed),
+        'queued_worker_slot_occupied_observed':int(queued_occupied_slot_observed),
+        'queued_residual_lease_fields_observed':int(queued_residual_lease_observed),
+        'product_delivery_health_evidence':(
+            'observed_sufficient' if product_ready>=required else
+            'insufficient_complete' if source_complete else 'incomplete_unknown'
+        ),
+        'queued_qa_only_excluded_observed':int(excluded_qa),
+        'queued_invalid_excluded_observed':int(excluded_invalid),
+        'product_delivery_source_complete':source_complete,
+        'product_delivery_observation_limit':1000,
+        'product_delivery_missing_tail_may_exist':not source_complete,
         'notion_attention_url':PORTFOLIO_ATTENTION_NOTION_URL,
     }
 
@@ -3044,17 +3570,64 @@ def portfolio_queue_allocate():
     preempted=set()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
-        c.execute("""UPDATE portfolio_queue
-                     SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                     WHERE eligible=1 AND status IN ('claimed','running','verifying')
-                       AND claim_expires IS NOT NULL AND claim_expires<=?""",(ts,ts))
-        _portfolio_requeue_conflicting_claimed_lanes_locked(c,ts)
+        expired=c.execute(
+            """SELECT queue_id,status,project_id,worker_slot FROM portfolio_queue
+               WHERE status IN ('claimed','running','verifying')
+                 AND claim_expires IS NOT NULL AND claim_expires<=?""",
+            (ts,),
+        ).fetchall()
+        for previous in expired:
+            old_status=str(previous['status'] or '')
+            old_slot=int(previous['worker_slot'] or 0)
+            owner_key=prior_worker_by_slot.get(old_slot,'')
+            # An expired timestamp by itself is not evidence that a running
+            # worker has stopped. Protect running/verifying work and any
+            # demonstrably busy claimed browser until the current owner
+            # explicitly concludes or releases it. Renewal is a scheduler
+            # ownership hold, NOT proof of task progress or CI success.
+            owner_protected=(
+                old_status in ('running','verifying')
+                or bool(owner_key and owner_key in busy_worker_keys)
+                # The global-slot key may be unavailable during a Firefox
+                # mapping refresh. Protect a claimed slot if any real worker
+                # for that same project is busy rather than guessing it idle.
+                or (old_slot>0 and any(
+                    str(key).startswith(str(previous['project_id'] or '')+'::w')
+                    for key in busy_worker_keys
+                ))
+            )
+            if owner_protected:
+                c.execute(
+                    """UPDATE portfolio_queue SET claim_expires=?,updated_at=?
+                       WHERE queue_id=? AND status IN ('claimed','running','verifying')
+                         AND claim_expires IS NOT NULL AND claim_expires<=?""",
+                    (lease_until,ts,previous['queue_id'],ts),
+                )
+                logging.debug('Preserved expired active-owner lease for human-safe recovery: %s',
+                              previous['queue_id'])
+                continue
+            changed=c.execute(
+                """UPDATE portfolio_queue
+                   SET status='queued',worker_slot=NULL,claimed_at=NULL,
+                       claim_expires=NULL,updated_at=?
+                   WHERE queue_id=? AND status='claimed'
+                     AND claim_expires IS NOT NULL AND claim_expires<=?""",
+                (ts,previous['queue_id'],ts),
+            )
+            if changed.rowcount:
+                # An expired idle claim cannot be taken back in the same
+                # scheduler tick, before its old browser mapping has cleared.
+                preempted.add(str(previous['queue_id']))
+        owner_scope=_portfolio_observe_conflicting_claimed_lanes_locked(c)
+        if owner_scope['conflicts'] or owner_scope['unclassified_active_claims']:
+            logging.debug('Active owner lane overlap or unknown project scope retained: %d overlaps, %d unclassified',
+                          len(owner_scope['conflicts']),len(owner_scope['unclassified_active_claims']))
 
         occupied_rows=c.execute(
             """SELECT * FROM portfolio_queue
                WHERE worker_slot IS NOT NULL
                  AND status IN ('claimed','running','verifying')
-                 AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
+                 AND (claim_expires IS NULL OR claim_expires>?)
                ORDER BY worker_slot""",
             (ts,),
         ).fetchall()
@@ -3080,7 +3653,9 @@ def portfolio_queue_allocate():
                             else f'{row_project}::w{local_slot}')
                 status=str(occupied['status'] or '')
                 project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
-                if status=='verifying' or project_priority=='system':
+                # Running/verifying work is owned, not an idle slot to
+                # recycle. Only an unstarted claim may be considered.
+                if status!='claimed' or project_priority=='system':
                     continue
                 if worker_key in busy_worker_keys:
                     continue
@@ -3088,7 +3663,6 @@ def portfolio_queue_allocate():
                 if 0 < local_slot <= handoff_floor:
                     continue
                 relief_candidates.append((
-                    0 if status=='claimed' else 1,
                     -_portfolio_priority_rank(occupied['priority']),
                     -project_protection.get(project_priority,2),
                     str(occupied['updated_at'] or ''),
@@ -3101,7 +3675,7 @@ def portfolio_queue_allocate():
                     """UPDATE portfolio_queue
                        SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                        WHERE queue_id=? AND worker_slot=?
-                         AND status IN ('claimed','running')""",
+                         AND status='claimed'""",
                     (ts,relief_queue_id,relief_slot),
                 )
                 if relief_update.rowcount:
@@ -3119,7 +3693,12 @@ def portfolio_queue_allocate():
 
         # A Force Start only needs an allocation override when its project is not
         # already resident. Pick one queued force-intent candidate deterministically.
-        force_pairs=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+        # Cache the bounded source shortlist for this SQLite-locked pass.
+        # Only rows, not execution authority, are cached.
+        candidate_cache={}
+        force_pairs=_portfolio_eligible_lane_candidates_locked(
+            c,ts,preempted,candidate_cache=candidate_cache
+        )
         occupied_counts={}
         for occupied in occupied_rows:
             pid=str(occupied['project_id'] or '')
@@ -3177,7 +3756,9 @@ def portfolio_queue_allocate():
                 worker_key=(previous_key if previous_key.startswith(row_project+'::w')
                             else f'{row_project}::w{local_slot}')
                 project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
-                if row_project==force_project or project_priority=='system':
+                # Force Start must not revoke running or verifying tasks.
+                if (str(occupied['status'] or '')!='claimed'
+                        or row_project==force_project or project_priority=='system'):
                     continue
                 if worker_key in busy_worker_keys:
                     continue
@@ -3201,13 +3782,21 @@ def portfolio_queue_allocate():
         for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
             row=c.execute("""SELECT * FROM portfolio_queue
                              WHERE worker_slot=? AND status IN ('claimed','running','verifying')
-                               AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
+                               AND (claim_expires IS NULL OR claim_expires>?)
                              ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
             # Memory admission counts net-new browser slots, not queue-owner
             # turnover inside a slot that is already resident. Remember that the
             # slot was occupied before any priority/manual-start preemption below.
             slot_was_occupied = row is not None
-            lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+            # A running/verifying owner is never preemptible by this allocator.
+            # Skip candidate/expensive lane discovery for that pinned slot:
+            # its existing assignment is renewed below without a new claim.
+            if row and str(row['status']) in ('running','verifying'):
+                lane_candidates=[]
+            else:
+                lane_candidates=_portfolio_eligible_lane_candidates_locked(
+                    c,ts,preempted,candidate_cache=candidate_cache
+                )
             # Do not admit this forced queue item in the wrong global slot.
             if force_pair and force_preferred_slot and slot!=force_preferred_slot:
                 lane_candidates=[pair for pair in lane_candidates
@@ -3225,21 +3814,42 @@ def portfolio_queue_allocate():
             force_replacement=False
             if row and force_victim_slot==slot and force_pair:
                 previous_queue_id=str(row['queue_id'] or '')
-                c.execute(
+                release=c.execute(
                     """UPDATE portfolio_queue
                        SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                       WHERE queue_id=? AND status IN ('claimed','running','verifying')""",
-                    (ts,previous_queue_id),
+                       WHERE queue_id=? AND worker_slot=? AND status='claimed'
+                         AND eligible=1""",
+                    (ts,previous_queue_id,slot),
                 )
-                preempted.add(previous_queue_id)
-                row=None
-                force_replacement=True
-                lane_candidates=[
-                    pair for pair in _portfolio_eligible_lane_candidates_locked(c,ts,preempted)
-                    if str(pair[0]['queue_id'] or '')==force_queue_id
-                ]
+                if release.rowcount==1:
+                    preempted.add(previous_queue_id)
+                    row=None
+                    force_replacement=True
+                    lane_candidates=[
+                        pair for pair in _portfolio_eligible_lane_candidates_locked(c,ts,preempted,candidate_cache=candidate_cache)
+                        if str(pair[0]['queue_id'] or '')==force_queue_id
+                    ]
+                else:
+                    # No release actually occurred. Never treat the claimed
+                    # browser slot as empty or grant a replacement worker.
+                    force_victim_slot=None
             if row and str(row['status']) == 'claimed':
                 row_project=str(row['project_id'] or '')
+                previous_worker=prior_worker_by_slot.get(slot,'')
+                browser_worker=(previous_worker if previous_worker.startswith(row_project+'::w')
+                                else f'{row_project}::w{used_counts.get(row_project,0)+1}')
+                if browser_worker in busy_worker_keys:
+                    # Status can still say claimed after the browser accepted
+                    # work. A busy owner is not a free slot, regardless of
+                    # priority pressure or a new unrelated Force Start.
+                    c.execute(
+                        'UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
+                        (lease_until,ts,row['queue_id']),
+                    )
+                    row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',
+                                  (row['queue_id'],)).fetchone()
+                    selected.append(_portfolio_queue_row(row))
+                    continue
                 # Once a browser command is pending, the queue claim is part of an
                 # in-flight handoff. Rebalancing it before Firefox consumes that
                 # command makes the userscript correctly reject the send because its
@@ -3266,7 +3876,7 @@ def portfolio_queue_allocate():
                                  WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
                     preempted.add(str(row['queue_id']))
                     row=None
-                    lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                    lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted,candidate_cache=candidate_cache)
                 else:
                     manual_candidates=[
                         pair for pair in lane_candidates
@@ -3320,7 +3930,7 @@ def portfolio_queue_allocate():
                                      WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
                         preempted.add(str(row['queue_id']))
                         row=None
-                        lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                        lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted,candidate_cache=candidate_cache)
             if row:
                 c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
                           (lease_until,ts,row['queue_id']))
@@ -3414,22 +4024,31 @@ def portfolio_queue_allocate():
     return selected
 
 def portfolio_queue_drop(queue_id,evidence=''):
+    """Retire only an unclaimed queue item, never an active worker's task."""
     queue_id=str(queue_id or '').strip()
     if not queue_id:
         raise ValueError('queue_id is verplicht')
     ts=now()
     with connect() as c:
+        # A trusted management caller still cannot override an assigned
+        # worker's claim. Compare all ownership fields atomically at the write
+        # boundary; do not treat an expired time as consent to take it over.
         cur=c.execute("""UPDATE portfolio_queue
                          SET status='dropped',eligible=0,evidence=?,blocker=?,
                              worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                         WHERE queue_id=? AND status NOT IN ('done','dropped')""",
+                         WHERE queue_id=? AND status='queued'
+                           AND worker_slot IS NULL AND claimed_at IS NULL
+                           AND claim_expires IS NULL""",
                       (str(evidence or '')[:4000],str(evidence or '')[:2000],ts,queue_id))
         dropped=bool(cur.rowcount)
-    # A dropped item is intentionally retired, but an active project must not
-    # lose its runnable inventory until the next scheduler tick. Refill from
-    # the canonical project state immediately without resurrecting this queue_id.
+    if not dropped:
+        # No queue refilling, audit mutation or owner displacement on an
+        # unsuccessful drop, including claimed/running/verifying and unknown IDs.
+        return {'dropped':False,'queue_id':queue_id,
+                'reason':'unclaimed-queued-item-required'}
+    # Refill remains the ordinary authorized post-retirement continuation.
     audit=portfolio_queue_audit(refill=True)
-    return {'dropped':dropped,'queue_id':queue_id,'queue_audit':audit}
+    return {'dropped':True,'queue_id':queue_id,'queue_audit':audit}
 
 def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=None):
     result=str(result or '').strip().upper()
@@ -3439,6 +4058,7 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
     try: slot=int(global_slot)
     except Exception: raise ValueError('geldige global worker slot vereist')
     ts=now()
+    attention=None
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         row=c.execute("""SELECT * FROM portfolio_queue
@@ -3446,6 +4066,31 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                       (queue_id,slot)).fetchone()
         if not row:
             return {'updated':False,'reason':'assignment-mismatch'}
+        # Human escalation and the queue transition share this transaction.
+        # A rejected attention identity or SQLite failure rolls back both,
+        # so no claimed task disappears without its required operator action.
+        if result=='BLOCKED' and _blocker_needs_human(evidence):
+            # Preserve a bounded proposed next action for the human operator
+            # WITHOUT admitting it as runnable work. The authenticated
+            # Attention Needed UI displays escaped detail text to the owner.
+            attention_detail=str(evidence or '')[:3600]
+            if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
+                proposed_title=str(next_task['title']).strip().replace('\n',' ')
+                proposed_title=proposed_title.replace('\r',' ')[:200]
+                attention_detail=(
+                    'Voorgestelde vervolgstap na toestemming (NIET ingepland): '
+                    +proposed_title+'\n'+attention_detail
+                )[:4000]
+            attention=_portfolio_attention_add_locked(
+                c,
+                row['project_id'],
+                _attention_action_for_blocker(row['project_id'],row['title'],evidence),
+                attention_detail,
+                row['source_url'] or (PROJECT_INDEX.get(row['project_id']) or {}).get('notion_url') or '',
+                'urgent' if str(row['priority']).upper()=='P0' else 'attention',
+                attention_id=_queue_attention_id(queue_id),
+                ts=ts,
+            )
         if result=='DONE':
             c.execute("""UPDATE portfolio_queue SET status='done',eligible=0,evidence=?,blocker='',
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
@@ -3459,18 +4104,20 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             c.execute("""UPDATE portfolio_queue SET status='queued',eligible=1,evidence=?,
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
                       (str(evidence or '')[:4000],ts,queue_id))
-    attention=None
-    if result=='BLOCKED' and _blocker_needs_human(evidence):
-        attention=portfolio_attention_add(
-            row['project_id'],
-            _attention_action_for_blocker(row['project_id'],row['title'],evidence),
-            str(evidence or '')[:4000],
-            row['source_url'] or (PROJECT_INDEX.get(row['project_id']) or {}).get('notion_url') or '',
-            'urgent' if str(row['priority']).upper()=='P0' else 'attention',
-            attention_id='queue:'+queue_id,
-        )
     created=None
-    if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
+    # A queue state transition can succeed while its distinct follow-up
+    # producer or receipt write fails. Report that boundary explicitly, rather
+    # than claiming that the complete project handoff was delivered.
+    continuation_status='original_task_requeued' if result=='CONTINUE' else 'not_requested'
+    human_gate_active=bool(result=='BLOCKED' and attention)
+    if human_gate_active:
+        # A BLOCKED result requiring human authorization must not silently
+        # spawn dependent worker work. Existing independent queue items may
+        # still be scheduled normally; the source-bound attention remains
+        # the action needed to reopen this gate.
+        continuation_status='held_for_human'
+    elif isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
+        continuation_status='requested'
         try:
             child_criteria=str(next_task.get('completion_criteria') or '').strip()
             child_criteria += (
@@ -3478,7 +4125,7 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                 'Queue sizing rule: execute this as a substantial multi-step work package, not an isolated micro-task. '
                 'After each successful implementation step, continue into the next safe adjacent write-capable step in the same '
                 'project area. DONE requires at least three material implementation actions or one clearly large end-to-end change '
-                'spanning multiple files/components, plus automated test/build/run evidence, unless a real human/external gate stops progress.'
+                'spanning multiple files/components, plus a build or direct functional inspection. Do not write, extend or run QA, regression or test suites. Existing mandatory CI, independent review and release authorization remain intact unless a real human/external gate stops progress.'
             )
             created=portfolio_queue_enqueue(
                 next_task.get('project_id') or row['project_id'],
@@ -3488,15 +4135,20 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                 next_task.get('source_url') or '',
                 parent_queue_id=queue_id
             )
+            continuation_status='created' if created else 'not_created'
         except ValueError:
             created=None
+            continuation_status='rejected_by_producer_guard'
     elif result in ('DONE','BLOCKED'):
         try:
             created=portfolio_write_continuation(row['project_id'],queue_id)
+            continuation_status='created' if created else 'not_created'
         except ValueError:
             created=None
+            continuation_status='rejected_by_producer_guard'
     # Every material queue transition leaves an evidence-backed state receipt.
     # Rich CI/deploy paths may later supersede this with a more specific receipt.
+    receipt_saved=False
     try:
         next_gate=(
             (created or {}).get('title')
@@ -3504,14 +4156,16 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             else ''
         ) or (str(row['title']) if result=='CONTINUE' else '')
         project=PROJECT_INDEX.get(str(row['project_id'])) or {}
-        receipt_status={'DONE':'success','BLOCKED':'failure','CONTINUE':'in_progress'}[result]
+        # Queue DONE is not GitHub CI success, and BLOCKED is not evidence
+        # of a failed CI job. CI state is only established by independent
+        # exact-head workflow evidence, never by a worker result string.
         with connect() as c:
             project_runtime.record_receipt(
                 c,
                 str(row['project_id']),
                 phase=str(project.get('phase') or ''),
                 action=f"{row['title']} -> {result}",
-                ci_status=receipt_status,
+                ci_status='',
                 blocker=str(evidence or '') if result=='BLOCKED' else '',
                 next_gate=next_gate or str(project.get('next_step') or ''),
                 source='portfolio_queue:'+queue_id,
@@ -3520,12 +4174,26 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                     'result':result,
                     'priority':str(row['priority'] or ''),
                     'evidence':str(evidence or '')[:3500],
+                    'ci_evidence':'not_observed_by_queue_transition',
+                    'main_merge_evidence':'not_observed_by_queue_transition',
                 },
             )
+        receipt_saved=True
     except Exception:
         logging.exception('Could not persist project state receipt for %s',queue_id)
     audit=portfolio_queue_audit(refill=False)
-    return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created,'attention':attention,'queue_audit':audit}
+    return {
+        'updated':True,'queue_id':queue_id,'result':result,
+        'next_task':created,'attention':attention,'queue_audit':audit,
+        'continuation_status':continuation_status,
+        'state_receipt_saved':receipt_saved,
+        'ci_verified_by_queue_result':False,
+        'main_merge_verified_by_queue_result':False,
+        'handoff_complete':receipt_saved and continuation_status in (
+            'created','not_requested','original_task_requeued'
+        ),
+        'human_approval_required':human_gate_active,
+    }
 
 def portfolio_queue_allocation():
     active=[]
@@ -3585,7 +4253,11 @@ def portfolio_queue_allocation():
         'score':10000-_portfolio_priority_rank(item['priority'])*1000,
         'reason':'vps_queue:'+item['queue_id'],'desired_state':'queued',
         'queue_id':item['queue_id'],'priority':item['priority']
-    } for item in queued if item['status']=='queued' and item['eligible']]
+    } for item in queued
+      if item['status']=='queued' and item['eligible']
+      and item.get('worker_slot') is None
+      and item.get('claimed_at') is None and item.get('claim_expires') is None
+      and item.get('delivery_policy_disposition')=='product']
     return {
         'limit':GLOBAL_CHATGPT_WORKER_LIMIT,
         'workers':workers,
@@ -3609,23 +4281,35 @@ def portfolio_queue_allocation():
     }
 
 def reconcile_dynamic_worker_limit():
-    """Immediately converge SQLite queue claims and browser slot mapping to the dashboard limit."""
+    """Converge idle slot mapping without resetting active queue ownership.
+
+    Settings admission guards owner/provider continuity. Recheck the release
+    boundary under a fresh write lock: a concurrent claim must never become an
+    implicit queued task just because the capacity setting changed.
+    """
     limit=max(0,min(MAX_CHATGPT_WORKERS,int(GLOBAL_CHATGPT_WORKER_LIMIT)))
-    ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
-        if limit <= 0:
-            c.execute("""UPDATE portfolio_queue
-                         SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                         WHERE eligible=1 AND status IN ('claimed','running','verifying')
-                           AND worker_slot IS NOT NULL""",(ts,))
-            c.execute('DELETE FROM ai_global_slots')
-        else:
-            c.execute("""UPDATE portfolio_queue
-                         SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                         WHERE eligible=1 AND status IN ('claimed','running','verifying')
-                           AND worker_slot>?""",(ts,limit))
-            c.execute('DELETE FROM ai_global_slots WHERE slot>?',(limit,))
+        unsafe=c.execute(
+            """SELECT 1 FROM portfolio_queue
+               WHERE worker_slot IS NOT NULL AND worker_slot>?
+                 AND status IN ('claimed','running','verifying') LIMIT 1""",
+            (limit,),
+        ).fetchone()
+        if unsafe:
+            raise ValueError('Workerlimiet: actieve eigenaar buiten nieuwe capaciteit; geen automatische requeue')
+        pending=c.execute(
+            """SELECT 1 FROM ai_global_slots s JOIN runner_commands cmd
+                 ON cmd.project_id=s.project_id || '::w' || s.worker_slot
+               WHERE s.slot>? AND cmd.status='pending'
+                 AND cmd.action IN ('start','new_chat','push') LIMIT 1""",
+            (limit,),
+        ).fetchone()
+        if pending:
+            raise ValueError('Workerlimiet: open browseroverdracht buiten nieuwe capaciteit; geen mappingvrijgave')
+        # Only the empty high slots can disappear. Running/verifying and
+        # claimed rows retain status, lease and worker identity unchanged.
+        c.execute('DELETE FROM ai_global_slots WHERE slot>?',(limit,))
     portfolio_queue_allocate()
     allocation=portfolio_queue_allocation()
     _persist_global_worker_allocation(allocation)
@@ -4709,7 +5393,10 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'ok':bool(item.get('updated')),'result':item,'time':now()},200 if item.get('updated') else 409)
                     if action=='drop':
                         item=portfolio_queue_drop(payload.get('queue_id'),payload.get('evidence') or '')
-                        return self.reply({'ok':True,'result':item,'time':now()})
+                        return self.reply(
+                            {'ok':bool(item.get('dropped')),'result':item,'time':now()},
+                            200 if item.get('dropped') else 409,
+                        )
                     return self.reply({'error':'Ongeldige portfolio-queue actie'},400)
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
@@ -4864,8 +5551,33 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({'chatgpt_runners':runner_statuses(target_cfg=target_cfg),'chatgpt_firefox':firefox_runner_status(),'time':now()})
         if u.path=='/api/portfolio-queue':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            # Opt-in compact, authenticated read model for zSentinel's
+            # local/private operator inbox. Never return prompt/metadata,
+            # raw portfolio rows or worker/allocation state in this view.
+            # Same existing caller authorization; no new URL or writer.
+            inbox_mode=str(q.get('operator_inbox',['0'])[0]).lower() in ('1','true','yes')
+            if inbox_mode:
+                items,source_truncated=portfolio_queue_operator_window()
+                return self.reply({
+                    'backend':'sqlite',
+                    'operator_inbox_snapshot':True,
+                    'source_rows_visible':len(items),
+                    'source_rows_truncated':source_truncated,
+                    'source_rows_limit':2048,
+                    'delivery_policy':product_queue_snapshot(items),
+                    'time':now(),
+                })
             include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
-            return self.reply({'backend':'sqlite','items':portfolio_queue_items(include_done),'allocation':global_worker_allocation(),'time':now()})
+            items=portfolio_queue_items(include_done)
+            delivery_policy=product_queue_snapshot(items)
+            return self.reply({
+                'backend':'sqlite',
+                'items':items,
+                'delivery_policy':delivery_policy,
+                'active_lane_conflict_observation':portfolio_queue_conflict_snapshot(),
+                'allocation':global_worker_allocation(),
+                'time':now(),
+            })
         if u.path=='/api/portfolio-attention':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_resolved=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
