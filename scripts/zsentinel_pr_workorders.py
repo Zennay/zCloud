@@ -864,7 +864,8 @@ def render_csv(bundle):
         raise ValueError("invalid private owner CSV")
     fields = (
         "record_type", "project", "pr_number", "pr_url",
-        "attention_status", "attention_label",
+        "attention_status", "attention_label", "workstream", "workstream_label",
+        "operator_action_link",
         "head_sha_at_observation", "current_source_verified", "rank",
         "category", "blocker", "human_next_step", "source_observed_at_utc",
         "source_sha256", "link", "detail",
@@ -915,6 +916,9 @@ def render_csv(bundle):
                 "human_next_step": card["human_next_step"],
                 "attention_status": card["attention_status"],
                 "attention_label": card["attention_label"],
+                "workstream": card["workstream"],
+                "workstream_label": card["workstream_label"],
+                "operator_action_link": card["operator_action_link"],
                 "change_since_previous_observation":
                     card["change_since_previous_observation"],
                 "new_evidence_since_previous":
@@ -949,12 +953,24 @@ def render_csv(bundle):
         str(summary["no_open_review_request_observed_prs"]) +
         "; unknown PRs=" + str(summary["review_request_source_unknown_prs"]) +
         "; requests are NOT approvals"))
+    work = bundle.get("workstream_summary")
+    if (type(work) is not dict or work.get("all_actions_manual") is not True or
+            work.get("source_only_no_execution_authority") is not True):
+        raise ValueError("missing read-only operator work queue")
+    for key in WORKSTREAM_ORDER:
+        add("operator_workstream_overview",
+            workstream=key, workstream_label=WORKSTREAM_LABELS[key],
+            detail=str(work["counts"][key]) + " existing PRs in sampled workstream; "
+                   "not owner claim or permission to merge")
     for card in bundle["items"]:
         repo = card["repository"]
         pr_url = _same_repo_url(card["url"], repo)
         add("pr", card, link=pr_url + "/files", detail=(
             "CURRENT STATUS NOT VERIFIED" if not card["source_current"]
             else "EXACT HEAD AT SOURCE MOMENT; NOT MERGE AUTHORITY"))
+        add("operator_next_action", card, link=card["operator_action_link"],
+            detail="Human-only next step: " + card["human_next_step"] +
+                   "; source is not a claim or merge clearance")
         add("open_existing_checks", card, link=card["checks_url"],
             detail="Reopen GitHub PR Checks; verify required exact-head CI, do not retrigger")
         add("open_existing_review", card, link=card["review_url"],
