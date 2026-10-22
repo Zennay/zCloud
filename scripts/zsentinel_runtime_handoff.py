@@ -1214,10 +1214,12 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                           "GEEN automatische retry, vrijgave of overname.")
                 if title is not None:
                     action += " Voorbeeld uit beperkte bron: " + title + "."
+                # A blocked task is NOT necessarily a retry-churn defect.
+                # Linking every task to policy issue #677 made unrelated
+                # project blockers look as though that issue owned them.
                 card = _card(
                     pri, pid, "blocked_queue_owner_review", action,
-                    source="validated_readonly_blocked_queue_aggregate",
-                    ref="https://github.com/Zennay/zCloud/issues/677")
+                    source="validated_readonly_blocked_queue_aggregate")
                 if example:
                     target = example[0].get(
                         "canonical_github_source_link_unverified")
