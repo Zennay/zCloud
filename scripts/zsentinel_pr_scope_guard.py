@@ -1244,12 +1244,14 @@ def graph_operator_text(report):
             result.append(
                 "  PR #" + str(pr["number"]) + " · " +
                 str(pr["other_prs_with_shared_files_observed"]) +
-                " verbindingen | " + pr["url"] + " @ " + pr["head_sha"][:12])
+                " verbindingen | " + pr["url"] + " @ " + pr["head_sha"][:12] +
+                " · doelbranch " + pr["base_ref"])
         for file_row in cluster["shared_file_pr_matrix"]:
             result.append("  gedeeld bestand: " + file_row["path"])
             for pr in file_row["touching_prs"]:
                 result.append("    PR #" + str(pr["number"]) + " | " +
                               pr["url"] + " @ " + pr["head_sha"][:12] +
+                              " · doelbranch " + pr["base_ref"] +
                               " (bronbestandslijst " +
                               ("volledig" if pr["source_file_list_complete"] else "gedeeltelijk") +
                               ")")
@@ -1271,7 +1273,8 @@ def graph_operator_text(report):
             result.append(
                 "  PR #" + str(pr["number"]) + " · " +
                 str(pr["other_prs_with_scope_conflicts_observed"]) +
-                " scopeverbindingen | " + pr["url"] + " @ " + pr["head_sha"][:12])
+                " scopeverbindingen | " + pr["url"] + " @ " + pr["head_sha"][:12] +
+                " · doelbranch " + pr["base_ref"])
         for conflict in cluster["path_conflicts_sample"]:
             result.append(
                 "  PR #" + str(conflict["left_pr_number"]) + " ↔ PR #" +
@@ -1287,7 +1290,8 @@ def graph_operator_text(report):
         result.append("PR #" + str(a["number"]) + " ↔ PR #" + str(b["number"]) +
                       ": " + str(row["shared_file_count_observed"]) +
                       " gemeenschappelijke bestanden | " +
-                      a["url"] + " | " + b["url"])
+                      a["url"] + " (doelbranch " + a["base_ref"] + ") | " +
+                      b["url"] + " (doelbranch " + b["base_ref"] + ")")
         for file in row["shared_files"]:
             result.append("  " + file)
         if row["shared_files_truncated"]:
@@ -1297,7 +1301,8 @@ def graph_operator_text(report):
         result.append("BESTAND/MAP-CONFLICT PR #" + str(a["number"]) +
                       " ↔ PR #" + str(b["number"]) + ": " +
                       str(row["path_conflict_count_observed"]) +
-                      " padparen (geen mergeconflict- of eigenaarsbewijs)")
+                      " padparen (geen mergeconflict- of eigenaarsbewijs; doelbranches " +
+                      a["base_ref"] + " ↔ " + b["base_ref"] + ")")
         for conflict in row["path_conflicts"]:
             result.append("  " + conflict["left_path"] + " ↔ " +
                           conflict["right_path"] + " [" +
@@ -1324,7 +1329,8 @@ def graph_operator_text(report):
     if report["unpaired_open_prs_in_sample_not_claim_verified"]:
         result.append("PR's zonder gedeelde paden IN DEZE STEEKPROEF (geen eigenaarvrijgave):")
         for pr in report["unpaired_open_prs_in_sample_not_claim_verified"]:
-            result.append("  PR #" + str(pr["number"]) + " | " + pr["url"])
+            result.append("  PR #" + str(pr["number"]) + " | " + pr["url"] +
+                          " · doelbranch " + pr["base_ref"])
     if report["pr_file_lists_truncated"]:
         result.append("Onvolledige bestandlijsten: " +
                       ", ".join(str(n) for n in report["pr_file_lists_truncated"]))
