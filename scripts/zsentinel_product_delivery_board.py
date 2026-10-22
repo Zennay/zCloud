@@ -296,11 +296,25 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("board evaluation clock must be timezone-aware")
     now = now.astimezone(timezone.utc)
-    fresh = {name: (now - stamp <= timedelta(hours=hours))
-             for name, stamp in source_times.items()}
+    freshness_status = {}
+    fresh = {}
+    for name, stamp in source_times.items():
+        age = now - stamp
+        # Match the recovery policy's bounded clock-skew allowance. A source
+        # clock several minutes in the future is not fresh merely because its
+        # negative age compares below the maximum-age threshold.
+        status = (
+            "future_dated" if age < -timedelta(minutes=2)
+            else "stale" if age > timedelta(hours=hours)
+            else "fresh"
+        )
+        freshness_status[name] = status
+        fresh[name] = status == "fresh"
     for name in ("retry", "branches", "claims", "prs"):
         if name in fresh and abs(source_times[name] - observed) > timedelta(hours=6):
             fresh[name] = False
+            if freshness_status[name] != "future_dated":
+                freshness_status[name] = "outside_inbox_window"
     issues.sort(key=lambda x: (PRIORITY[x["priority"]],
                 -retry_by_project.get(x["project"], {}).get("high_claim_attempts", 0),
                 x["project"], x["issue"]))
@@ -414,6 +428,7 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         "observed_at_utc": now.isoformat(),
         "source_times_utc": {k: v.isoformat() for k, v in source_times.items()},
         "fresh": fresh,
+        "freshness_status": freshness_status,
         "coverage": {"projects": coverage, "inbox_truncated": inbox["truncated"],
                      "github_denial": inbox["stopped_after_rate_or_auth_denial"],
                      "retry": retry_meta, "branches": branch_meta,
@@ -436,6 +451,15 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
 
 def handoff_freshness(data):
     """Render saved-source freshness without implying that a snapshot is live."""
+    statuses = data.get("freshness_status")
+    if type(statuses) is dict and statuses:
+        allowed = {"fresh", "stale", "future_dated", "outside_inbox_window"}
+        return ", ".join(
+            "{}={}".format(name, state if state in allowed else "unknown")
+            for name, state in sorted(statuses.items())
+        )
+    # Backward-compatible rendering for snapshots produced before explicit
+    # freshness reasons were added.
     fresh = data.get("fresh")
     if type(fresh) is not dict or not fresh:
         return "unknown"
