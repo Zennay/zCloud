@@ -3525,6 +3525,13 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_up
                       (queue_id,)).fetchone()
         if not row:
             return {'resumed':False,'queue_id':queue_id,'reason':'not-blocked-or-already-resumed'}
+        # Refuse to requeue an inconsistent or legacy parked record while a
+        # worker identity, claim timestamp, or lease still exists. This rule
+        # applies even to older clients without optional version guards.
+        if (row['worker_slot'] is not None or row['claimed_at'] is not None
+                or row['claim_expires'] is not None):
+            return {'resumed':False,'queue_id':queue_id,
+                    'reason':'parked-task-still-bound-to-worker'}
         # Compare within the SAME BEGIN IMMEDIATE transaction that writes the
         # queued transition. A changed blocker/evidence must be reconfirmed,
         # even if a browser observed the prior state only milliseconds ago.
@@ -3548,7 +3555,9 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_up
         cur=c.execute("""UPDATE portfolio_queue
                          SET status='queued',eligible=1,evidence=?,blocker='',
                              worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                         WHERE queue_id=? AND status='blocked' AND eligible=0""",
+                         WHERE queue_id=? AND status='blocked' AND eligible=0
+                           AND worker_slot IS NULL AND claimed_at IS NULL
+                           AND claim_expires IS NULL""",
                       (receipt,ts,queue_id))
         if cur.rowcount!=1:
             return {'resumed':False,'queue_id':queue_id,'reason':'state-changed'}
