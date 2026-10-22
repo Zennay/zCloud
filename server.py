@@ -2876,15 +2876,20 @@ def _portfolio_queue_task_claim_guard(connection, project_id, queue_id, observed
     if not project_id or not queue_id:
         return {'source_available': True, 'state': 'unknown', 'lease_until': None}
     try:
-        claim = connection.execute(
-            'SELECT lease_until FROM task_claims WHERE project_id=? AND claim_key=?',
-            (str(project_id or ''), str(queue_id or '')),
-        ).fetchone()
+        claims = connection.execute(
+            'SELECT project_id,lease_until FROM task_claims WHERE claim_key=?',
+            (queue_id,),
+        ).fetchall()
     except sqlite3.Error:
         return {'source_available': False, 'state': 'source-unavailable', 'lease_until': None}
-    if claim is None:
+    if not claims:
         return {'source_available': True, 'state': 'none', 'lease_until': None}
-    lease_until = claim['lease_until']
+    if (len(claims) != 1 or
+            str(claims[0]['project_id'] or '') != project_id):
+        # queue_id is the claim key used by portfolio allocation. A claim with
+        # conflicting project identity is not proof that this task is unbound.
+        return {'source_available': True, 'state': 'unknown', 'lease_until': None}
+    lease_until = claims[0]['lease_until']
     return {
         'source_available': True,
         'state': _portfolio_task_claim_state(lease_until, observed_at),
@@ -2908,6 +2913,7 @@ def _portfolio_queue_task_claim_snapshot(connection, rows, observed_at=None):
         return states
     queue_ids = sorted({queue_id for _, queue_id in keys
                          if queue_id and queue_id == queue_id.strip()})
+    conflicted=set()
     try:
         for offset in range(0, len(queue_ids), 180):
             chunk = queue_ids[offset:offset + 180]
@@ -2919,19 +2925,28 @@ def _portfolio_queue_task_claim_snapshot(connection, rows, observed_at=None):
                 placeholders + ')', chunk,
             ).fetchall()
             for claim in claims:
-                key = (str(claim['project_id'] or ''),
-                       str(claim['claim_key'] or ''))
-                if key not in states or not key[0] or not key[1]:
-                    continue
-                lease_until = claim['lease_until']
-                states[key] = {
-                    'source_available': True,
-                    'state': _portfolio_task_claim_state(lease_until, observed_at),
-                    'lease_until': lease_until if isinstance(lease_until, str) else None,
-                }
+                claim_project=str(claim['project_id'] or '')
+                claim_key=str(claim['claim_key'] or '')
+                matching_keys=[key for key in states if key[1]==claim_key]
+                for key in matching_keys:
+                    if not key[0] or not key[1]:
+                        continue
+                    if key[0] != claim_project:
+                        conflicted.add(key)
+                        continue
+                    if key not in states:
+                        continue
+                    lease_until = claim['lease_until']
+                    states[key] = {
+                        'source_available': True,
+                        'state': _portfolio_task_claim_state(lease_until, observed_at),
+                        'lease_until': lease_until if isinstance(lease_until, str) else None,
+                    }
     except sqlite3.Error:
         return {key: {'source_available': False, 'state': 'source-unavailable',
                       'lease_until': None} for key in keys}
+    for key in conflicted:
+        states[key]={'source_available':True,'state':'unknown','lease_until':None}
     return states
 
 
