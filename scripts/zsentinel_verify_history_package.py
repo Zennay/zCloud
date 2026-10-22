@@ -366,6 +366,120 @@ def verify_against_original_bundles(
     }
 
 
+def private_owner_brief(report: dict, *, stale_after_hours: int = 6) -> str:
+    """Source-scoped human owner decisions from the latest saved history.
+
+    Not a current backlog, CI/review gate, claim inventory or release order.
+    """
+    if type(report.get("snapshots")) is not list or not report["snapshots"]:
+        raise ValueError("missing saved historical snapshots")
+    age = historical_source_age(report, stale_after_hours=stale_after_hours)
+    latest = max(
+        report["snapshots"],
+        key=lambda row: (row["saved_board_observed_at_utc"], row["bundle"]),
+    )
+    projects = {row["project"]: row for row in latest["projects"]}
+    attention = latest.get("historical_attention_order")
+    if type(attention) is not list or len(attention) > 40:
+        raise ValueError("invalid historical priority list")
+
+    def safe(value):
+        if value is None:
+            return "onbekend"
+        if type(value) is not str:
+            value = str(value)
+        value = value.replace("\r", " ").replace("\n", " ")[:400]
+        for char in ("\\", "`", "*", "_", "[", "]", "(", ")", "<", ">",
+                     "|", "#", "!"):
+            value = value.replace(char, "\\" + char)
+        return value
+
+    lines = [
+        "# zSentinel · privé eigenaarsoverdracht uit opgeslagen bron",
+        "",
+        "**HISTORISCHE STEEKPROEF — GEEN LIVE HERSTEL-/MERGEOPDRACHT.**",
+        "",
+        "Origineel opgeslagen bundelmoment: " +
+            safe(latest["saved_board_observed_at_utc"]) + ".",
+        "Historische bronleeftijd: " + safe(age["source_age_hours"]) +
+            " uur; status: " + safe(age["source_age_status"]) + ".",
+        "Bronbundel: `" + safe(latest["bundle"]) + "`.",
+        "Bronboard SHA-256: `" + safe(latest["board_sha256"]) + "`.",
+        "",
+        "## Historische projectprioriteiten",
+        "",
+        "Onderstaande volgorde volgt de opgeslagen P0-, verlopen lease- en",
+        "P1-steekproeven. Verkeerde of ontbrekende brondekking blijft onbekend.",
+        "",
+    ]
+    for rank, item in enumerate(attention[:24], start=1):
+        project = item["project"]
+        raw = projects.get(project)
+        if type(raw) is not dict:
+            raise ValueError("attention entry not bound to saved project")
+        op = raw.get("saved_project_operations") or {}
+        queue = op.get("queue_observation")
+        if type(queue) is not dict:
+            queue = None
+        lines.extend([
+            "### " + str(rank) + ". " + safe(project),
+            "",
+            "- P0/P1 in opgeslagen steekproef: " +
+                safe(item["sampled_p0"]) + " / " + safe(item["sampled_p1"]),
+            "- Verlopen leases bij opname: " +
+                safe(queue.get("expired_active_leases") if queue else None) +
+                "; hoge claimpogingen: " +
+                safe(queue.get("high_claim_attempts") if queue else None),
+            "- Dekking: " + safe(op.get("issue_coverage")) +
+                "; claimcontext bij opname: " +
+                safe(op.get("claim_context")),
+            "- Historisch eigenaaradvies: " +
+                safe(op.get("recommended_next_step")),
+            "- **Eigenaaractie vóór uitvoering:** controleer het huidige issue,"
+                " open PR's, exacte HEAD, actieve claims, verplichte CI, review"
+                " en bevoegdheid opnieuw.",
+            "",
+        ])
+    prs = latest.get("saved_pr_observations")
+    if type(prs) is not list or len(prs) > 5:
+        raise ValueError("unbounded saved merge-first PR observations")
+    lines.extend([
+        "## Historische merge-first kandidaten",
+        "",
+        "Opgenomen PR's waren waargenomen bij deze eerdere bron; niet",
+        "waargenomen PR's zijn onbekend, niet bewezen gesloten of gemerged.",
+        "",
+    ])
+    for pr in sorted(prs, key=lambda x: x["url"]):
+        lines.extend([
+            "- " + safe(pr["url"]) + " — HEAD `" +
+                safe(pr["head_sha"][:12]) + "`; check bij opname " +
+                safe(pr["observed_check_success"]) +
+                "; approvals bij opname " + safe(pr["observed_approvals"]) +
+                "; onbekende gates " + safe(len(pr["blocking_unknowns"])) + ".",
+        ])
+    if not prs:
+        lines.append("- Geen PR-gatewaarnemingen in deze begrensde bron.")
+    lines.extend([
+        "",
+        "## Vereiste actuele menselijke controle",
+        "",
+        "1. Haal actuele issues en PR-heads rechtstreeks uit GitHub.",
+        "2. Controleer huidige Notion/queue-claims en eigenaarschap.",
+        "3. Controleer exacte-head verplichte CI, onafhankelijke review en",
+        "   branch protection voordat een bevoegde merge mogelijk is.",
+        "4. Voor release: controleer aparte VPS-/apparaat-/securitygates.",
+        "",
+        "Deze overdracht claimt geen toestemming of live herstel.",
+        "Geen queueclaim, CI-dispatch, review, merge, restart of deploy.",
+        "",
+    ])
+    result = "\n".join(lines)
+    if not 1 <= len(result.encode("utf-8")) <= 1024 * 1024:
+        raise ValueError("private owner summary exceeds size limit")
+    return result
+
+
 def inspect_history_package(path: Path) -> dict:
     """Verify one existing private history package without changing it."""
     return inspect_history_bytes(private_archive_bytes(path))
@@ -461,6 +575,9 @@ def main(argv=None):
                              "bundles and compare saved content, not just ZIP hashes")
     parser.add_argument("--stale-after-hours", type=int, default=6,
                         help="Mark old observation time explicitly, 1–168 hours")
+    parser.add_argument("--owner-brief-output", type=Path,
+                        help="Create one owner-private Markdown worklist from "
+                             "verified saved source data; never print source notes")
     args = parser.parse_args(argv)
     try:
         archive = private_archive_bytes(args.source)
@@ -469,6 +586,8 @@ def main(argv=None):
             age_report = _json(saved.read("history.json"))
         result.update(historical_source_age(
             age_report, stale_after_hours=args.stale_after_hours))
+        if args.owner_brief_output is not None and args.extract_to is not None:
+            raise ValueError("create owner brief or extract files per operation")
         if args.verify_sources is not None:
             result.update(verify_against_original_bundles(
                 archive, args.verify_sources))
@@ -480,6 +599,16 @@ def main(argv=None):
                 archive, args.extract_to, stem)
             result["private_extracted_files"] = created
             result["private_extraction_only"] = True
+        if args.owner_brief_output is not None:
+            if args.owner_brief_output.suffix.lower() != ".md":
+                raise ValueError("private owner brief must end in .md")
+            if args.owner_brief_output.resolve() == args.source.resolve():
+                raise ValueError("cannot replace the source archive")
+            from zsentinel_product_delivery_board import write_create_only
+            write_create_only(args.owner_brief_output, private_owner_brief(
+                age_report, stale_after_hours=args.stale_after_hours))
+            result["owner_private_brief_written"] = True
+            result["owner_private_brief_only_from_saved_sources"] = True
     except (OSError, ValueError, KeyError, TypeError, UnicodeError,
             BadZipFile, OverflowError, csv.Error) as exc:
         print("History package inspection refused: " +
