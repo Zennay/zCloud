@@ -302,3 +302,22 @@ server-geverifieerde queue-ID/claim-epoch. De worker wordt niet vrijgegeven,
 herstart, geclaimd of herverdeeld. De bevoegde queue-/runtime-eigenaar
 controleert de echte lease en de oorspronkelijke PR voordat actie volgt.
 Geen QA-suite of workflowrerun is onderdeel van deze bronwijziging.
+
+
+## Geen taakcontinuïteit zonder twee vergelijkbare leasevensters
+
+De bestaande delta-CLI, historische tweevenstervergelijking en privé-HTML/
+Markdown-handoff weigeren nu **cross-task** event-/progresscursordelta's als
+een van beide momentopnames geen geldig queueclaimvenster heeft. Een wijziging
+van de private claimvingerafdruk behoudt de specifiekere bestaande melding.
+De delta-CLI zet de `event_cursor_advanced_observed`- en
+`explicit_progress_cursor_advanced_observed`-indicatoren voor zulke
+momentopnames op `false` en toont in plaats daarvan
+`claim_window_unavailable_requires_owner_recheck`. De historische
+weergave toont `UNKNOWN_no_current_queue_claim_window`; de privé-handoff
+meldt dat de cursorvergelijking is ingehouden.
+
+De claimvingerafdruk is slechts een privaat, temporeel leasevenster; het
+browser-event zelf draagt nog geen betrouwbare queue-ID. Zelfs twee gelijke
+vingerafdrukken zijn daarom **geen** productoplevering, geverifieerde
+claim-eigendom of toestemming om te herstellen of te deployen.
