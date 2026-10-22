@@ -887,12 +887,13 @@ def html_view(decision, registry=None):
         rows = discovery.get("coverage")
         windows = discovery.get("run_windows")
         if (not isinstance(rows, list) or len(rows) > 3
-                or windows != ["queued", "in_progress", "failure"]
+                or windows != ["queued", "in_progress", "waiting", "failure"]
                 or discovery.get("full_repo_ci_inventory") is not False):
             raise ValueError("noncanonical bounded GitHub workflow window receipt")
         labels = {
             "queued": "Wachtende workflow",
             "in_progress": "Al lopende workflow, maar job nog wachtend",
+            "waiting": "Goedkeuring/concurrency-wacht (geen runnerstoring bewezen)",
             "failure": "Afgeronde mislukte workflow",
         }
         cards = []
@@ -906,7 +907,7 @@ def html_view(decision, registry=None):
                 raise ValueError("invalid GitHub workflow window coverage")
             pid = phrase(row.get("project_id"), 80)
             incomplete = row.get("incomplete_windows", [])
-            if (not isinstance(incomplete, list) or len(incomplete) > 3
+            if (not isinstance(incomplete, list) or len(incomplete) > 4
                     or any(x not in labels for x in incomplete)
                     or len(set(incomplete)) != len(incomplete)
                     or (row["status"] == "selected_one_source_bound_job_partial_window"
@@ -929,7 +930,7 @@ def html_view(decision, registry=None):
                 "github_network_unavailable":
                     "Netwerkbron onbereikbaar; verdere verzoeken aan deze repository overgeslagen.",
             }
-            if (type(not_scanned) is not list or len(not_scanned) > 3
+            if (type(not_scanned) is not list or len(not_scanned) > 4
                     or any(x not in labels for x in not_scanned)
                     or len(set(not_scanned)) != len(not_scanned)
                     or any(x in incomplete for x in not_scanned)
@@ -989,7 +990,7 @@ def html_view(decision, registry=None):
                         or not 0 < primary_job <= 2**53 - 1
                         or type(primary_sha) is not str
                         or not re.fullmatch(r"[a-f0-9]{40}", primary_sha)
-                        or row.get("primary_job_status") not in ("queued", "completed")
+                        or row.get("primary_job_status") not in ("queued", "waiting", "pending", "completed")
                         or row.get("primary_runner_route") not in (
                             "self_hosted", "hosted_or_custom", "unknown")):
                     raise ValueError("untrusted selected GitHub job identity")
@@ -1018,7 +1019,7 @@ def html_view(decision, registry=None):
                             or job.get("action_authorized") is not False
                             or job.get("runner_route") not in (
                                 "self_hosted", "hosted_or_custom", "unknown")
-                            or job.get("job_status") not in ("queued", "completed")
+                            or job.get("job_status") not in ("queued", "waiting", "pending", "completed")
                             or job.get("source_window") not in labels):
                         raise ValueError("invalid extra GitHub job proof")
                     run_id, job_id = job.get("run_id"), job.get("job_id")
