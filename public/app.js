@@ -416,7 +416,7 @@ function downloadBlockedQueueHandoff(){
   if(!rows.length){window.alert('There are no selected dependency holds to export.');return}
   const freshness=claimChurnSnapshotFreshness();
   if(!window.confirm('Create a LOCAL PRIVATE read-only operator handoff for '+rows.length+
-    ' selected parked tasks? '+(freshness.state==='stale_observation'?'WARNING: source is '+Math.ceil(freshness.age_seconds/60)+' minutes old, NOT LIVE. ':'')+
+    ' selected parked tasks? '+(freshness.state!=='recent_observation'?'WARNING: source is '+freshness.state+', NOT CURRENT. ':'')+
     'This contains queue identifiers and source links. Review it before sharing. No claims or tasks will change.'))return;
   const selected=rows.slice(0,100);
   const packet={
@@ -524,9 +524,11 @@ function downloadClaimChurnHandoff(){
   const {matching}=claimChurnRows();
   if(!matching.length){window.alert('No repeated-claim work matches this selection.');return}
   const sample=matching.slice(0,100);
-  if(!window.confirm('Create a LOCAL PRIVATE read-only handoff for '+sample.length+' of '+matching.length+
-    ' observed claim-churn rows? This may include active worker identities. No claim or retry will be changed.'))return;
   const freshness=claimChurnSnapshotFreshness();
+  if(!window.confirm('Create a LOCAL PRIVATE read-only handoff for '+sample.length+' of '+matching.length+
+    ' observed claim-attempt rows? '+(freshness.state==='recent_observation'?'Source recently observed.':
+      'WARNING: source is '+freshness.state+'; current owner/lease status is UNKNOWN.')+
+    ' This may include active worker identities; no claim or retry will change.'))return;
   const payload={
     schema:'zsentinel.claim-churn.readonly-handoff.v1',
     created_at:new Date().toISOString(),
@@ -617,14 +619,18 @@ function claimChurnPanel(projectId=''){
     +(claimChurnAnomaliesOnly?'Show all claims':'Only owner/lease warnings')+'</button></div>');
   return '<section class="claim-churn-panel" aria-label="Claim churn">'
     +'<div class="claim-churn-head"><div><span class="eyebrow">REPEATED CLAIM ATTEMPTS</span>'
-    +'<h2>'+all.length+' active or queued task'+(all.length===1?'':'s')+' with ≥3 claims</h2>'
-    +'<p>Claim attempts are an allocation counter, not proof of failure. '+warnings+' observed owner/lease warnings require review; never reclaim automatically.</p>'
-    +'</div><a href="https://github.com/Zennay/zCloud/issues/677" target="_blank" rel="noopener noreferrer">Open #677 ↗</a></div>'
+    +'<h2>'+(freshness.state==='recent_observation'?'':'Last observed: ')+all.length+
+       ' queued or active task'+(all.length===1?'':'s')+' with ≥3 attempts</h2>'
+    +'<p>Claim attempts are an allocation counter, not proof of failure. '+warnings+
+      ' owner/lease warnings '+(freshness.state==='recent_observation'?'warrant owner review':
+      'were recorded historically; current owner/lease status is UNKNOWN')+
+      '. Never reclaim automatically.</p>'
+    +'</div><span class="reduced">Source links are tied to each task, never inferred from attempt count.</span></div>'
     +filters
     +(matching.length?'<div class="claim-churn-list">'+rows+'</div>'
       :'<p class="claim-churn-empty">'+(all.length?'No claim-churn tasks match this selection.':'No tasks with ≥3 recorded claims in the loaded active queue snapshot.')+'</p>')
     +'<div class="claim-churn-foot"><span>'+(observed?'Observed '+esc(observed):'Queue observation time unavailable')
-    +(freshness.state==='stale_observation'?' · STALE SOURCE ('+Math.ceil(freshness.age_seconds/60)+' min old; not live)':'')
+    +(freshness.state==='stale_observation'?' · STALE SOURCE ('+Math.ceil(freshness.age_seconds/60)+' min old; not live)':freshness.state==='unknown'?' · SOURCE UNKNOWN (invalid clock or time format; not live)':'')
     +' · '+Math.min(show,matching.length)+' of '+matching.length+' matching entries'
     +' · '+PORTFOLIO_QUEUE_SNAPSHOT.length+' rows in authorized queue snapshot</span>'
     +(projectId?'<button type="button" data-claim-churn-open>Open portfolio claim churn</button>'
