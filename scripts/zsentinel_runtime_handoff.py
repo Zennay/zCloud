@@ -378,6 +378,19 @@ def _notion_owner_status_summary(observed, source_mode, registry):
             raise ValueError("Notion project/portfolio lease totals disagree")
     elif project_windows is not None:
         raise ValueError("saved Notion source cannot assert live project claim windows")
+    running_clock = observed.get("active_project_in_progress_claim_clock_rechecks")
+    if mode[0] == "notion_readonly_data_source_pages":
+        if (type(running_clock) is not dict
+                or set(running_clock) != set(counts)
+                or any(type(n) is not int or n < 0
+                       or n > counts[pid] - verifying.get(pid, 0)
+                       or n > sum(
+                           value for kind, value in project_windows[pid].items()
+                           if kind != "time_window_present_not_owner_verified")
+                       for pid, n in running_clock.items())):
+            raise ValueError("Notion claimed/running anomaly counts inconsistent")
+    elif running_clock is not None:
+        raise ValueError("saved Notion snapshot cannot assert current work clocks")
     windows = observed.get("status_source_windows")
     status_windows = []
     if windows is not None:
@@ -426,11 +439,14 @@ def _notion_owner_status_summary(observed, source_mode, registry):
         uncertain = (sum(value for kind, value in clock_buckets.items()
                          if kind != "time_window_present_not_owner_verified")
                      if clock_buckets is not None else None)
+        running_uncertain = (
+            running_clock[pid] if running_clock is not None else None)
         known.append({
             "project": pid, "observed_unfinished_min": total,
             "observed_verifying_min": review,
             "observed_in_progress_min": in_progress,
             "observed_claim_clock_recheck_min": uncertain,
+            "observed_in_progress_claim_clock_recheck_min": running_uncertain,
             "claim_window_observation_counts": clock_buckets,
             "next_step": (
                 "Notion-claimklokken missen of verlopen: bevoegde eigenaar controleert "
@@ -447,7 +463,8 @@ def _notion_owner_status_summary(observed, source_mode, registry):
     # Flag substantive owner attention before the large Verifying backlog:
     # rows are incomplete positive observations, not eligible work slots.
     known.sort(key=lambda x: (
-        -bool(x["observed_claim_clock_recheck_min"]),
+        -bool(x["observed_in_progress_claim_clock_recheck_min"]),
+        -(x["observed_in_progress_claim_clock_recheck_min"] or 0),
         -(x["observed_claim_clock_recheck_min"] or 0),
         -x["observed_in_progress_min"],
         -x["observed_verifying_min"], x["project"]))
@@ -791,7 +808,12 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
         for item in affected[:6]:
             project = item["project"]
             count = item["observed_claim_clock_recheck_min"]
-            priority = "P1" if item["observed_in_progress_min"] else "P2"
+            # A P1 clock issue must belong to the SAME Claimed/Running
+            # status row. A healthy Running row elsewhere in the project does
+            # not make an old Verifying anomaly an active worker incident.
+            priority = (
+                "P1" if item["observed_in_progress_claim_clock_recheck_min"]
+                else "P2")
             action = (
                 "Notion " + project + ": " + str(count) +
                 " verdachte of ontbrekende claimklokken; " +
@@ -803,6 +825,8 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 action, source="recent_readonly_notion_claim_fields_unverified")
             card["notion_claim_clock_recheck_min"] = count
             card["notion_work_status_in_progress_min"] = item["observed_in_progress_min"]
+            card["notion_claimed_running_clock_recheck_min"] = (
+                item["observed_in_progress_claim_clock_recheck_min"])
             card["notion_observed_at_utc"] = notion_owner_status["observed_at_utc"]
             card["notion_claim_owner_verified"] = False
             card["queue_lease_same_work_verified"] = False
