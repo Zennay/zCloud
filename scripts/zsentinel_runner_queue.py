@@ -204,20 +204,53 @@ def unavailable(repo):
 
 
 def lines(receipt):
-    if receipt.get("schema") != SCHEMA or receipt.get("writes_performed") is not False:
+    if (receipt.get("schema") != SCHEMA or receipt.get("writes_performed") is not False
+            or type(receipt.get("repository")) is not str
+            or REPO.fullmatch(receipt["repository"]) is None):
         raise ValueError("invalid runner assignment source")
     result = ["Runnerwachtrij · " + receipt["repository"] +
               " · geen service-/workflowingreep"]
     if receipt.get("source_status") == "unavailable":
-        return result + ["GitHub Actions jobbron ONBEKEND; geen uitspraak over runnergezondheid."]
+        if receipt.get("workflow_wait_coverage", "unknown") != "unknown":
+            raise ValueError("unavailable source cannot assert workflow-wait coverage")
+        return result + ["GitHub Actions job- en workflowbron ONBEKEND; geen uitspraak over runnergezondheid."]
+    windows = receipt.get("run_windows")
+    if type(windows) is not list or len(windows) > len(STATUS_WINDOWS):
+        raise ValueError("invalid bounded runner windows")
     result.append("GitHub gemelde workflowruns (NIET hetzelfde als individuele jobs): " +
                   ", ".join(window["status_requested"] + "=" +
                             str(window["runs_reported_by_github"]) +
                             " · bekeken " + str(window["rows_observed"])
-                            for window in receipt["run_windows"]))
+                            for window in windows))
     result.append("Niet toegewezen queued jobs in begrensde bron: " +
                   str(receipt["unassigned_queued_jobs_observed"]) +
                   " (geen bewijs dat listener offline is).")
+    coverage = receipt.get("workflow_wait_coverage", "unknown")
+    waits = receipt.get("workflow_waits", [])
+    if (coverage not in ("bounded_observed", "partial_window", "unknown")
+            or type(waits) is not list or len(waits) > MAX_RUNS_PER_WINDOW):
+        raise ValueError("invalid bounded workflow-wait receipt")
+    if coverage == "unknown":
+        result.append("Workflowstatus waiting: ONBEKEND (niet opgevraagd of oude bron).")
+    else:
+        result.append("Workflowstatus waiting: " + str(len(waits)) +
+                      " exacte workflow(s) waargenomen; dekking=" + coverage +
+                      " (geen job-/runnerstoring bewezen).")
+    seen_wait_ids = set()
+    for wait in waits:
+        run_id, sha, url = wait.get("run_id"), wait.get("head_sha"), wait.get("url")
+        if (type(wait) is not dict
+                or type(run_id) is not int or not 1 <= run_id <= 2**53 - 1
+                or run_id in seen_wait_ids
+                or type(sha) is not str or SHA.fullmatch(sha) is None
+                or wait.get("workflow_status_observed") != "waiting"
+                or wait.get("action_authorized") is not False
+                or url != "https://github.com/" + receipt["repository"] +
+                    "/actions/runs/" + str(run_id)):
+            raise ValueError("untrusted exact workflow-wait link")
+        seen_wait_ids.add(run_id)
+        result.append("WORKFLOW WAIT (geen job/runnerbewijs) · HEAD " + sha[:12] +
+                      " · " + url + " · uitsluitend bevoegde eigenaar")
     for row in receipt["sampled_jobs"][:16]:
         age = row["job_age_seconds_observed"]
         result.append(
@@ -228,13 +261,12 @@ def lines(receipt):
             " · " + row["job_url"])
     if receipt.get("run_state_drift_observed"):
         result.append("BRON VERANDERD: run-/jobstatus verschoof tijdens opeenvolgende GitHub GETs.")
-    if any(not w["all_status_runs_sampled"] for w in receipt["run_windows"]) or any(
+    if any(not w["all_status_runs_sampled"] for w in windows) or any(
             not r["jobs_sample_complete"] for r in receipt["run_receipts"]):
         result.append("BRON ONVOLLEDIG: meer runs of jobs buiten de limiet.")
     result.append("Eigenaaractie: verifieer repo-/groeprechten en runnerlabels in GitHub; "
                   "inspecteer listener pas via geautoriseerde zSSH-route, zonder actieve jobs te raken.")
     return result
-
 
 def html(receipt):
     """Offline, script-free queue cards with canonical clickable GitHub job URLs."""
@@ -244,6 +276,14 @@ def html(receipt):
     if receipt.get("source_status") == "unavailable":
         return header + "<p>GitHub Actions-bron ONBEKEND; geen oordeel over runnergezondheid.</p></section>"
     rows = []
+    coverage = receipt.get("workflow_wait_coverage", "unknown")
+    for wait in receipt.get("workflow_waits", [])[:MAX_RUNS_PER_WINDOW]:
+        rows.append(
+            "<li><a rel='noopener noreferrer' href='" +
+            escape(wait["url"], quote=True) + "'>Workflow #" +
+            str(wait["run_id"]) + "</a> · WORKFLOW WAIT · HEAD " +
+            escape(wait["head_sha"][:12]) +
+            " · geen aangemaakte job/runnerstoring bewezen</li>")
     for job in receipt["sampled_jobs"][:64]:
         age = job["job_age_seconds_observed"]
         age_text = str(age // 60) + " minuten" if age is not None else "ONBEKEND"
@@ -269,7 +309,10 @@ def html(receipt):
         header + "<p>" + escape(windows_note) + "</p>"
         "<p>Niet toegewezen queued jobs in de begrensde bron: " +
         str(receipt["unassigned_queued_jobs_observed"]) +
-        " · geen bewijs van runneruitval.</p><ol>" +
+        " · geen bewijs van runneruitval.</p>" +
+        "<p>Workflowstatus waiting: " + escape(coverage) +
+        " · " + str(len(receipt.get("workflow_waits", []))) +
+        " exacte workflowlinks; workflow-wacht is geen runnerjob of runnerstoring.</p><ol>" +
         ("".join(rows) or "<li>Geen queued of lopende jobs gezien in deze bron.</li>") +
         "</ol>" +
         ("<p>ONVOLLEDIG: andere runs/jobs kunnen ontbreken.</p>" if partial else "") +
