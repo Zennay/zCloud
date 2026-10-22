@@ -307,13 +307,19 @@ def saved_pr_table(snapshot: dict) -> str:
     rows = []
     for url, item in sorted(items.items()):
         blockers = ", ".join(item["blocking_unknowns"]) or "geen in sample"
-        checks = "saved-success" if item["observed_check_success"] else "niet bewezen"
+        checks = ("ja, historisch" if item["observed_check_success"]
+                  else "nee / niet bewezen")
+        legacy = item["legacy_context_success"]
+        context = ("onbekend" if legacy is None else
+                   "ja, historisch" if legacy else "nee, historisch")
+        mergeable = "ja, historisch" if item["mergeable_observed"] else "nee, historisch"
         rows.append(
             "<tr><td><a href='" + escape(url, quote=True) +
             "' target='_blank' rel='noopener noreferrer'>" +
             escape(url.rsplit("/", 1)[-1]) + "</a></td><td><code>" +
             escape(item["head_sha"]) + "</code></td><td>" +
-            escape(checks) + "</td><td>" +
+            escape(checks) + "</td><td>" + escape(context) +
+            "</td><td>" + escape(mergeable) + "</td><td>" +
             str(item["observed_approvals"]) + "</td><td>" +
             escape(blockers) + "</td></tr>"
         )
@@ -323,7 +329,8 @@ def saved_pr_table(snapshot: dict) -> str:
         "approvals en blocking unknowns zijn historisch. Zelfs een opgeslagen "
         "success is geen huidige verplichte CI-, review- of mergevergunning.</p>"
         "<table><thead><tr><th>PR</th><th>HEAD bij opname</th>"
-        "<th>Check bij opname</th><th>Approvals bij opname</th>"
+        "<th>Check bij opname</th><th>Legacy context</th>"
+        "<th>Mergeable bij opname</th><th>Approvals bij opname</th>"
         "<th>Onbekende vereisten</th></tr></thead><tbody>" +
         "".join(rows) + "</tbody></table></details>"
     )
