@@ -1,3 +1,31 @@
+### 22 oktober · samenhangende privé-uitvoer zonder bestandsconflicten
+
+De live herstelcockpit en de portfolio-cockpit gebruiken nu één gedeelde
+**preflight voor alle expliciet gekozen bron-, rapport- en ledgersporen**:
+`scripts/zsentinel_private_path_admission.py`. Voor de eerste GitHub-/Notion-/
+SQLite-observatie of cursor-/ledgerlock controleren beide ingangen of twee
+uitvoerbestanden dezelfde uiteindelijke padnaam hebben, of een uitvoerpad
+samenvalt met een inputbestand, database, vorige snapshot, archiefmount of
+scandirectory. Deze check omvat onder andere de privé HTML/JSON/tekstexport,
+incident desk, diskrapport, owner handoff, agenda, merge-first briefing,
+portfolio CSV/JSON/ZIP, `--state` en `--window-state`.
+
+Voorheen waren enkele onafhankelijke guards onvolledig: zo werd een live
+`--agenda-output` niet met `--action-output` vergeleken en kon in de
+portfolio-cockpit een `--output` naar een `--queue-previous` of
+`--worker-previous` pad wijzen. Een latere create-only weigering kon dan
+reeds gemaakte eerdere privérapporten achterlaten. De nieuwe validatie
+**weigert de hele selectie vóór enige bronobservatie of eerste sidecar**,
+met uitsluitend logische veldnamen in de foutmelding. Dit voorkomt
+onnodige gedeeltelijke operator-overdrachten; het is geen transactiegarantie
+tegen echte schijf-/netwerkfouten tijdens een latere afzonderlijke schrijf.
+
+Alle privé schrijvers behouden `O_EXCL`, directory-inodecontrole,
+`O_NOFOLLOW` en mode 0600 waar van toepassing. De aanvullende preflight
+geeft geen eigenaarclaim, herstart-/merge-/deployrecht, runtimeherstel of
+toestemming om bestaande bronnen te overschrijven. Er zijn geen QA-suites
+geschreven, gestart of uitgebreid.
+
 ### 22 oktober · gecombineerde VPS-/archiefcapaciteit en expliciete PR-bronkeuze
 
 De bestaande **live cockpit** geeft de optionele `--archive-target` nu expliciet
