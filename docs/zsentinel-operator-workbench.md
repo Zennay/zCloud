@@ -154,3 +154,25 @@ or merges/releases source. Before acting, independently verify current
 claims and file ownership, required exact-head checks, submitted review,
 branch protection and authorized merge/deploy rights.
 
+## 22 October · collision receipt consistency at every output boundary
+
+The private PR workorder generator now validates the collision graph a second
+time at each HTML, Markdown and CSV render boundary. It recomputes the selected
+PR groups from the same bounded cards and rejects a group summary or per-card
+peer list that no longer matches the pinned observations. It also recomputes
+the receipt SHA-256 (excluding only the checksum field itself) and rejects a
+changed or malformed receipt before exporting it. The checksum is a
+consistency check, **not a digital signature, ownership proof or authorization**.
+
+Collision input is now bounded and structurally checked before grouping:
+selected PR URLs and all peer links must be canonical same-repository GitHub
+PR URLs; peer HEADs must be full hexadecimal commit SHAs; freshness and
+partial-coverage flags must be booleans; and peer/path-conflict lists have hard
+count limits. A stale/missing observation cannot be upgraded into a clean
+group by altering the saved group JSON. HTML external-peer navigation is
+therefore sourced only from the recomputed validated groups.
+
+This is an offline artifact-integrity improvement. It does not poll GitHub,
+verify live owner claims or branch protection, run checks, change queue state,
+dispatch workflows, or grant merge/release rights. Existing exact-head CI,
+independent review and authorized release gates remain required.
