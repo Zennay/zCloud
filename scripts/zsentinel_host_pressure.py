@@ -48,6 +48,7 @@ def observe_host_pressure():
         "host_memory_available_mib": None,
         "host_memory_available_percent": None,
         "swap_used_percent": None,
+        "swap_status": "UNKNOWN",
         "load_one_per_cpu": None,
         "pressure_hint": "UNKNOWN",
         "scope": "HOST_ONLY_CGROUP_AND_OTHER_WORK_NOT_OBSERVED",
@@ -85,7 +86,11 @@ def observe_host_pressure():
                 and isinstance(cpus, int) and 1 <= cpus <= 1024):
             raise ValueError("invalid host load or core count")
         memory_available_pct = 100.0 * available / total
-        swap_used_pct = 100.0 * (swap_total - swap_free) / swap_total if swap_total else 0.0
+        swap_status = "OBSERVED" if swap_total else "NO_SWAP_CONFIGURED"
+        swap_used_pct = (
+            100.0 * (swap_total - swap_free) / swap_total
+            if swap_total else None
+        )
         one_per_cpu = load / cpus
         root_disk = report["root_disk"]
         disk_high = root_disk.get("pressure_hint") == "HIGH"
@@ -111,7 +116,10 @@ def observe_host_pressure():
             "host_memory_total_mib": total // 1024,
             "host_memory_available_mib": available // 1024,
             "host_memory_available_percent": round(memory_available_pct, 1),
-            "swap_used_percent": round(swap_used_pct, 1),
+            "swap_used_percent": (
+                round(swap_used_pct, 1) if swap_used_pct is not None else None
+            ),
+            "swap_status": swap_status,
             "load_one_per_cpu": round(one_per_cpu, 2),
             "pressure_hint": hint,
         })
@@ -154,11 +162,18 @@ def pressure_sentence(report):
         if disk.get("status") == "ROOT_STATVFS_OBSERVED"
         else "root-schijfruimte ONBEKEND"
     )
+    swap_line = (
+        f"swap gebruikt {report['swap_used_percent']}%"
+        if report.get("swap_status") == "OBSERVED"
+        else "swap niet geconfigureerd"
+        if report.get("swap_status") == "NO_SWAP_CONFIGURED"
+        else "swapgebruik ONBEKEND"
+    )
     return (
         f"Hostdruk: {report['pressure_hint']}; "
         f"RAM beschikbaar {report['host_memory_available_mib']} MiB "
         f"({report['host_memory_available_percent']}%); "
-        f"swap gebruikt {report['swap_used_percent']}%; "
+        + swap_line + "; "
         f"load/CPU {report['load_one_per_cpu']}; {disk_line}. "
         + psi_sentence(report.get("psi")) + " "
         "Alleen hostbron; geen cgroup-, claim- of nieuwe-worker-toelating."
