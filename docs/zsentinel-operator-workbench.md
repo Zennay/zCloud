@@ -124,9 +124,14 @@ observed commit SHA values, observed pair count, and explicit
 `merge_authorized=false` / `all_project_claims_verified=false` flags.
 
 The script-free HTML workbench shows the groups before the individual PR
-cards; each item links directly to its existing card. The Markdown owner
-handoff lists the same coordination groups, and the CSV worklist includes
-`coordination_group_number` and `observed_selected_scope_peers` per
+cards; each item links directly to its existing card. Bounded **external
+peer-PR links** are shown separately when a selected PR has observed scope
+collisions or unpinned overlap hints with a PR outside the chosen selection.
+These links are navigation/recheck candidates, never live HEAD or owner proof;
+additional peers are explicitly capped and labelled as hidden. The Markdown
+owner handoff lists the same groups and external peer candidates, and the CSV
+worklist includes `coordination_group_number`,
+`observed_selected_scope_peers` and `external_peer_prs_to_recheck` per
 existing PR row for spreadsheet filtering. The source receipt SHA256 now
 covers the new groups, so a saved private workorder remains bound to
 the observed graph rather than an inferred live state.
