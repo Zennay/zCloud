@@ -1921,6 +1921,8 @@ def main(argv=None):
                         help="bounded read-only P0/P1-first recent issue inbox for one Zennay/<repo>")
     parser.add_argument("--inbox-page", type=int, default=1,
                         help="bounded issue inbox display page 1–5 (live inbox only)")
+    parser.add_argument("--inbox-all-sampled-csv", action="store_true",
+                        help="one-source-read private CSV containing all sampled issues, max 210")
     parser.add_argument("--template", choices=sorted(ACTIONS),
                         help="emit a fresh, fail-closed JSON request template")
     parser.add_argument("--project-id", help="project slug used by --template")
@@ -1966,6 +1968,13 @@ def main(argv=None):
             )
     if args.inbox_page != 1 and not args.live_inbox_repo:
         parser.error("--inbox-page requires --live-inbox-repo")
+    if args.inbox_all_sampled_csv and (
+            not args.live_inbox_repo or args.inbox_page != 1
+            or args.format != "csv" or not args.output):
+        parser.error(
+            "--inbox-all-sampled-csv requires --live-inbox-repo, "
+            "--format csv, private --output and default --inbox-page"
+        )
     if not 1 <= args.inbox_page <= 5:
         parser.error("--inbox-page must be between 1 and 5")
     if args.live_inbox_repo:
@@ -2043,11 +2052,14 @@ def main(argv=None):
             report = observe_repo_inbox(
                 args.live_inbox_repo, token=os.environ.get("GITHUB_TOKEN") or None,
                 display_page=args.inbox_page,
+                display_all_sample=args.inbox_all_sampled_csv,
             )
             output = (
                 issue_inbox_html(report) if args.format == "html"
                 else issue_inbox_markdown(report) if args.format == "markdown"
-                else issue_inbox_csv(report) if args.format == "csv"
+                else issue_inbox_csv(
+                    report, compact_all=args.inbox_all_sampled_csv
+                ) if args.format == "csv"
                 else json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
             )
             if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
