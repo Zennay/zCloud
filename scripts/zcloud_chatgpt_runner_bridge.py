@@ -350,6 +350,8 @@ def _host_capacity_observation() -> dict[str, object]:
                 or available_blocks > free_blocks):
             raise ValueError("invalid_root_filesystem_capacity")
         if (min(total_inodes, free_inodes, available_inodes) < 0
+                or (total_inodes == 0 and
+                    (free_inodes != 0 or available_inodes != 0))
                 or (total_inodes > 0 and
                     (free_inodes > total_inodes or available_inodes > free_inodes))):
             raise ValueError("invalid_root_inode_capacity")
@@ -405,10 +407,16 @@ def _host_capacity_observation() -> dict[str, object]:
                 evidence_warnings.append("archive_mount_same_filesystem_as_root")
             vfs = os.statvfs(ARCHIVE_MOUNT_PATH)
             block_size = int(vfs.f_frsize or vfs.f_bsize)
-            total_blocks, available_blocks = int(vfs.f_blocks), int(vfs.f_bavail)
-            if block_size <= 0 or total_blocks <= 0 or available_blocks > total_blocks:
+            archive_free_blocks, archive_available_blocks = (
+                int(vfs.f_bfree), int(vfs.f_bavail)
+            )
+            total_blocks = int(vfs.f_blocks)
+            if (block_size <= 0 or total_blocks <= 0
+                    or min(archive_free_blocks, archive_available_blocks) < 0
+                    or archive_free_blocks > total_blocks
+                    or archive_available_blocks > archive_free_blocks):
                 raise ValueError("invalid_archive_filesystem_capacity")
-            total, available = block_size * total_blocks, block_size * available_blocks
+            total, available = block_size * total_blocks, block_size * archive_available_blocks
             archive.update({
                 "total_bytes": total,
                 "available_bytes": available,
