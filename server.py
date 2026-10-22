@@ -3256,7 +3256,11 @@ def portfolio_queue_audit(refill=True):
         try:
             item=portfolio_write_continuation(project_id)
             if item:
-                created.append(item['queue_id'])
+                # Admission may have reused an identical queued task after the
+                # earlier represented-project snapshot. Do not invent a fresh
+                # queue creation in the audit report.
+                if item.get('enqueue_admission')=='created':
+                    created.append(item['queue_id'])
                 represented.add(project_id)
         except ValueError:
             continue
