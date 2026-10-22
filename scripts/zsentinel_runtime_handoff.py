@@ -1037,6 +1037,29 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             raise ValueError("invalid current queue observation timestamp") from exc
         if parsed.utcoffset() is None or parsed.utcoffset().total_seconds() != 0:
             raise ValueError("queue owner timestamp must be UTC")
+        queue_age = (datetime.now(timezone.utc) - parsed).total_seconds()
+        queue_fresh = -120 <= queue_age <= 600
+        if not queue_fresh:
+            # Saved read-only source is historical, not a new active owner
+            # lease incident. Keep the source clock but withhold current totals
+            # and per-project escalation until a fresh queue observation.
+            queue_coverage = "stale_or_future_reobservation_required"
+            current_queue.update({
+                "coverage": queue_coverage,
+                "inconsistent_windows": None,
+                "expired_leases": None,
+                "unverifiable_leases": None,
+                "group_sample_truncated": True,
+            })
+            stale = _card(
+                "P2", "cloud", "queue_source_refresh_required",
+                "Queuelease-bron is ouder dan tien minuten of heeft een "
+                "onbetrouwbare toekomstklok. Lees de huidige SQLite-queue "
+                "opnieuw in read-only modus vóór claim-/lease-escalatie.",
+                source="private_queue_pressure_stale_or_future")
+            stale["queue_observed_at_utc"] = parsed.isoformat(timespec="seconds")
+            stale["current_queue_owner_claim_verified"] = False
+            cards.append(stale)
         already = set()
         for row in groups:
             if (type(row) is not dict
@@ -1057,7 +1080,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                     raise ValueError("invalid current queue lease group")
                 if value:
                     kinds.append(str(value) + " " + label)
-            if not kinds:
+            if not kinds or not queue_fresh:
                 continue
             card = _card(
                 pri if pri in ("P0", "P1") else "P2",
@@ -1234,6 +1257,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                   "github_refresh_auth_owner_hold": 1,
                   "github_repository_access_owner_hold": 1,
                   "queue_current_owner_review": 2,
+                  "queue_source_refresh_required": 6,
                   "queue_lease_window_review": 3,
                   "incident_dependency_owner_hold": 4,
                   "routing_owner_hold": 4,
