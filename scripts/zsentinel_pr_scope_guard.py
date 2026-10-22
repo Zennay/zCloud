@@ -115,6 +115,8 @@ def coverage_recovery_steps(reasons):
     """
     if type(reasons) is not list:
         return ["Herlees de GitHub-PR-bron met bevoegde eigenaar; geen vrijgave."]
+    if not reasons:
+        return []  # A complete sample is not a source-recovery incident.
     codes = {
         value.split(":", 1)[-1] for value in reasons[:16]
         if type(value) is str and len(value) <= 140
