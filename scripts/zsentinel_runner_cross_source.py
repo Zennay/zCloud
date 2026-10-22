@@ -328,11 +328,44 @@ def combine(local, refreshed_projects):
                 "Self-hosted job ongeassignerd; lokale procesbron is onvoldoende volledig.",
                 "Bevoegd eigenaar inspecteert de runnerbron opnieuw zonder automatische herstart.",
                 local, pinned=pinned, source_freshness="bounded_recent")
+        service_props = (
+            service_observation.get("properties")
+            if service_observation.get("status") == "observed" else None)
+        if type(service_props) is dict and service_props.get("LoadState") == "not-found":
+            if local["listener_seen_in_process_sample"]:
+                return _action(
+                    "queued_unassigned_unit_missing_listener_present",
+                    "GitHub-job ongeassignerd; listenerproces gezien, maar de canonieke systemd-unit is niet gevonden.",
+                    "Bevoegd eigenaar controleert unitnaam, installatiepad en GitHub-repositoryregistratie. Geen herregistratie of serviceactie zonder expliciete eigenaarstoestemming.",
+                    local, pinned=pinned, source_freshness="bounded_recent")
+            return _action(
+                "queued_unassigned_service_unit_missing",
+                "GitHub-job ongeassignerd; de canonieke zCloud-runnerunit is niet gevonden en geen listener is waargenomen.",
+                "Bevoegd eigenaar controleert unitinstallatie, repository-/runnergroepstoegang en exacte labels. Geen automatische restart of re-registratie.",
+                local, pinned=pinned, source_freshness="bounded_recent")
+        if service_relationship == "unit_active_listener_not_observed":
+            return _action(
+                "queued_unassigned_unit_active_listener_missing",
+                "GitHub-job ongeassignerd; systemd rapporteert een actieve unit maar de volledige lokale processteekproef vindt geen listener.",
+                "Bevoegd eigenaar vergelijkt de unitstatus met het exacte runner-installatiepad en de verse procesbron; controleer daarna GitHub-registratie en toegang. Geen automatische restart.",
+                local, pinned=pinned, source_freshness="bounded_recent")
+        if service_relationship == "listener_observed_unit_not_active":
+            return _action(
+                "queued_unassigned_listener_unit_not_active",
+                "GitHub-job ongeassignerd; een listenerproces is waargenomen terwijl de canonieke unit niet actief is.",
+                "Bevoegd eigenaar verifieert proces-root, unitidentiteit en eventuele andere runnerinstallatie; onderbreek geen actieve worker en start niets automatisch.",
+                local, pinned=pinned, source_freshness="bounded_recent")
         if local["listener_seen_in_process_sample"]:
             return _action(
                 "queued_unassigned_listener_observed",
                 "Self-hosted job ongeassignerd; lokaal is een listenerproces gezien.",
                 "Runner-eigenaar onderzoekt GitHub-registratie, labels, runnergroep en repo-toegang.",
+                local, pinned=pinned, source_freshness="bounded_recent")
+        if service_relationship == "unit_not_active_listener_not_observed":
+            return _action(
+                "queued_unassigned_service_unit_not_active",
+                "GitHub-job ongeassignerd; systemd-unit is inactive/failed en er is geen listener in de volledige lokale processteekproef.",
+                "Bevoegd eigenaar inspecteert unitresultaat, registratie en toegang en bevestigt eerst dat geen actieve worker/release bestaat. Deze observatie autoriseert geen restart.",
                 local, pinned=pinned, source_freshness="bounded_recent")
         return _action(
             "queued_unassigned_no_listener_sampled",
