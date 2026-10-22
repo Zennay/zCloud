@@ -231,6 +231,35 @@ def browser_running() -> bool:
     return proc.returncode == 0
 
 
+def legacy_violentmonkey_only() -> bool:
+    """Detect the explicit, supported userscript-only Firefox owner.
+
+    This is a positive ownership marker, not permission to launch a new browser.
+    An unmarked standalone Firefox remains protected from takeover.
+    """
+    marker = Path("/home/ubuntu/.config/systemd/user/chatgpt-firefox.service.d/10-legacy-disabled.conf")
+    try:
+        info = marker.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
+            return False
+        value = marker.read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
+    return "violentmonkey only" in value and "execcondition=/bin/false" in value
+
+
+def fleet_writer_is_atomic() -> bool:
+    """Require the separately reviewed lease-safe writer before any mutation."""
+    source = (ROOT / "scripts/apply_worker_fleet.py").read_text(encoding="utf-8")
+    # PR #1595 performs its active-lease lookup *inside* BEGIN IMMEDIATE and
+    # includes claimed leases, runner commands and browser events.
+    return all(token in source for token in (
+        'conn.execute("BEGIN IMMEDIATE" if args.apply else "BEGIN")',
+        "'claimed','running','verifying'",
+        '"runner_commands"', '"runner_events"',
+    ))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true",
@@ -271,20 +300,22 @@ def main() -> int:
     if any(not (ext / name).is_file() for name in
            ("manifest.json", "background.js", "recovery.js", "worker-controller-v2.js")):
         raise Refused("complete Firefox worker extension source is missing")
-    if not (PROFILE / "prefs.js").is_file():
-        raise Refused("migrated Firefox worker profile missing; refusing blank login/session")
-    if not (PROFILE / "cookies.sqlite").is_file():
-        raise Refused("browser login cookies missing; verify the migrated profile")
-    if not SESSION_SOCKET.exists() or not Path("/home/ubuntu/.Xauthority").exists():
-        raise Refused("X11 :10 interactive session/Xauthority unavailable; do not launch headless")
+    # A pre-existing, authenticated userscript browser may run on a different
+    # display. Only *new* legacy-service launches require the fixed :10 Xorg.
     env = os.environ.copy()
     runtime_dir = f"/run/user/{ubuntu_uid}"
     env.update({"XDG_RUNTIME_DIR": runtime_dir,
                 "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime_dir}/bus"})
-    if system_state("chatgpt-firefox.service", user=True, env=env) != "loaded":
-        raise Refused("chatgpt-firefox user service not installed")
+    legacy_disabled = legacy_violentmonkey_only()
+    managed_unit_loaded = system_state("chatgpt-firefox.service", user=True, env=env) == "loaded"
     if system_state("zennay-cloud.service") != "loaded":
         raise Refused("zennay-cloud backend service not installed")
+    # The bootstrap may have found an older ubuntu user API unit. A second
+    # system-level server would run a competing SQLite scheduler on port 8765.
+    user_api_state = command("systemctl", "--user", "show", "zennay-cloud.service",
+                             "-p", "ActiveState", "--value", env=env)
+    if user_api_state in ("active", "activating", "reloading"):
+        raise Refused("competing ubuntu user zennay-cloud API/scheduler is already running")
     for timer in ("zcloud-firefox-supervisor.timer", "zcloud-self-heal.timer"):
         if system_state(timer) != "loaded":
             raise Refused(f"{timer} not installed; stop before activating")
@@ -296,19 +327,39 @@ def main() -> int:
         raise Refused("existing fleet writer reports unexpected capacity")
     managed = is_active("chatgpt-firefox.service", user=True, env=env)
     standalone = browser_running() and not managed
+    if legacy_disabled and managed:
+        raise Refused("userscript-only marker conflicts with active legacy Firefox service")
+    if standalone and not legacy_disabled:
+        raise Refused("unowned standalone Firefox is live; refusing a competing launch")
+    if not standalone:
+        if not (PROFILE / "prefs.js").is_file() or not (PROFILE / "cookies.sqlite").is_file():
+            raise Refused("managed Firefox profile/login missing; refusing a new blank session")
+    if not managed and not standalone:
+        if legacy_disabled:
+            raise Refused("userscript-only mode has no live Firefox; restore the existing browser, not legacy service")
+        if not managed_unit_loaded:
+            raise Refused("legacy Firefox unit is absent; restore the managed browser owner")
+        if not SESSION_SOCKET.exists() or not Path("/home/ubuntu/.Xauthority").is_file():
+            raise Refused("legacy service requires authorized X11 :10; do not launch headless")
     state = {
         "hostname": HOST, "mode": "apply" if args.apply else "preflight",
-        "desired": 10, "maximum": 20, "profile_present": True,
+        "desired": 10, "maximum": 20,
+        "managed_profile_present": (PROFILE / "prefs.js").is_file() and (PROFILE / "cookies.sqlite").is_file(),
         "extension_present": True, "browser_managed_active": managed,
         "standalone_browser_present": standalone,
+        "browser_owner": "userscript-only" if standalone else "managed-service",
         "backend_active": is_active("zennay-cloud.service"),
     }
-    if standalone:
-        raise Refused("standalone Firefox is live: preserve its tabs; owner must reconcile service")
     if not args.apply:
         print(json.dumps(state, sort_keys=True, indent=2))
         return 0
 
+    if os.environ.get("ZCLOUD_OLD_VPS_FENCED") != "yes":
+        raise Refused("old VPS scheduler/browser writers have not been explicitly fenced")
+    if os.environ.get("ZCLOUD_FINAL_DB_SYNCED") != "yes":
+        raise Refused("final consistent SQLite sync/reconciliation not attested")
+    if not fleet_writer_is_atomic():
+        raise Refused("atomic lease-safe fleet writer PR #1595 is not deployed")
     snapshot = backup()
     state["sqlite_backup"] = str(snapshot)
     if not state["backend_active"]:
@@ -319,12 +370,17 @@ def main() -> int:
     # apply_worker_fleet.py refuses live unexpired queue claims and wrong hosts.
     command(sys.executable, str(ROOT / "scripts/apply_worker_fleet.py"),
             "--apply", env=env, timeout=40)
-    # An already-managed browser retains its live tabs: never restart it.
-    if not managed:
-        command("systemctl", "--user", "enable", "--now",
-                "chatgpt-firefox.service", env=env, timeout=45)
-    if not is_active("chatgpt-firefox.service", user=True, env=env):
-        raise Refused("managed Firefox is not active; SQLite snapshot retained")
+    # Preserve the existing userscript-only browser; the legacy unit is
+    # intentionally disabled in that mode and must never be enabled here.
+    if standalone:
+        if not browser_running():
+            raise Refused("userscript Firefox disappeared; SQLite snapshot retained")
+    else:
+        if not managed:
+            command("systemctl", "--user", "enable", "--now",
+                    "chatgpt-firefox.service", env=env, timeout=45)
+        if not is_active("chatgpt-firefox.service", user=True, env=env):
+            raise Refused("managed Firefox is not active; SQLite snapshot retained")
     # Do not enable crash/self-heal timers until all ten browser sessions
     # have genuinely checked in: early watchdog recovery can destroy startup.
     start = datetime.now(timezone.utc)
