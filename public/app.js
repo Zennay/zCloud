@@ -328,14 +328,16 @@ function blockedQueueSourceUrl(raw){
 }
 function blockedQueueTime(value){
   const timestamp=typeof value==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(value)?Date.parse(value):NaN;
-  if(!Number.isFinite(timestamp))return '';
+  if(!Number.isFinite(timestamp)||timestamp>Date.now()+120000)return '';
   return new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',dateStyle:'medium',timeStyle:'short'}).format(new Date(timestamp));
 }
 function blockedQueueSelectedRows(items){
   const scoped=blockedQueueProject==='all'?items:items.filter(item=>String(item.project_id||'')===blockedQueueProject);
   const priorities=blockedQueueUrgentOnly?scoped.filter(item=>item.priority==='P0'||item.priority==='P1'):scoped;
-  const humanFiltered=blockedQueueHumanOnly&&Array.isArray(DATA.attention_needed)
-    ?priorities.filter(item=>DATA.attention_needed.some(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'))
+  const humanFiltered=blockedQueueHumanOnly
+    ?(Array.isArray(DATA.attention_needed)
+      ?priorities.filter(item=>DATA.attention_needed.some(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'))
+      :[])
     :priorities;
   const search=blockedQueueSearch.trim().toLocaleLowerCase();
   if(!search)return humanFiltered;
@@ -427,7 +429,7 @@ function blockedQueuePanel(){
         const context='<details class="blocked-queue-context" data-disclosure="block-'+esc(item.queue_id)+'">'
           +'<summary>Operator context and next step</summary>'
           +'<p><strong>Next step:</strong> '+esc(action)+'</p>'
-          +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state inconsistent: parked task is still eligible. Inspect source before acting.</p>':'')
+          +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state inconsistent: eligibility, worker slot or claim lease is not cleared. Inspect source before acting.</p>':'')
           +'<dl>'
           +'<div><dt>Queue update</dt><dd>'+esc(lastUpdated||'Unknown')+'</dd></div>'
           +'<div><dt>Original queue entry</dt><dd>'+esc(createdAt||'Unknown')+'</dd></div>'
@@ -446,8 +448,10 @@ function blockedQueuePanel(){
       }).join('')+'</div>'
       :'<p class="blocked-queue-state">'+(search
           ?'No parked tasks match this search in the loaded queue sample.'
-          :blockedQueueProject!=='all'||blockedQueueHumanOnly
-            ?'No parked tasks match the selected project, priority or human-attention filters in the loaded source sample.'
+          :blockedQueueHumanOnly&&!Array.isArray(DATA.attention_needed)
+            ?'Human Attention source unavailable; this filter cannot be evaluated. Clear filters to see all parked tasks.'
+            :blockedQueueProject!=='all'||blockedQueueHumanOnly
+              ?'No parked tasks match the selected project, priority or human-attention filters in the loaded source sample.'
             :blockedQueueUrgentOnly
               ?'No P0/P1 parked tasks were returned in this loaded queue sample.'
               :'No dependency-blocked tasks were returned in this queue sample.')
