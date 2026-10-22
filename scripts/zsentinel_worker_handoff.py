@@ -128,6 +128,28 @@ def compare_worker_snapshots(prior, current):
         elif after is None:
             label = "ontbreekt_in_recente_steekproef_niet_opgelost"
             next_step = "Verifieer met eigenaar of slot nog bestaat; GEEN herstelbewijs."
+        previous_claim_window = (
+            before.get("claim_window_fingerprint") if before is not None else None)
+        current_claim_window = (
+            after.get("claim_window_fingerprint") if after is not None else None)
+        claim_window_changed = bool(
+            before is not None and after is not None
+            and previous_claim_window != current_claim_window
+            and (previous_claim_window is not None or current_claim_window is not None)
+        )
+        if before is None:
+            label = "nieuw_in_beperkte_steekproef_niet_nieuwe_claim"
+            next_step = "Controleer actuele toewijzing en eigenaar voordat er iets verandert."
+        elif after is None:
+            label = "ontbreekt_in_recente_steekproef_niet_opgelost"
+            next_step = "Verifieer met eigenaar of slot nog bestaat; GEEN herstelbewijs."
+        elif claim_window_changed:
+            label = "queue_claimvenster_gewijzigd_cursorvergelijking_ingehouden"
+            next_step = (
+                "Het lokale queue-claimvenster veranderde; vergelijk events niet "
+                "alsof dit dezelfde taak is. Laat de bevoegde eigenaar claim en "
+                "productvoortgang handmatig verifiëren."
+            )
         elif state_before != state_now:
             label = "bronclassificatie_gewijzigd_herstel_niet_bewezen"
             next_step = "Controleer actuele claim-epoch en echte productvoortgang bij eigenaar."
@@ -135,12 +157,15 @@ def compare_worker_snapshots(prior, current):
             label = "opnieuw_waargenomen_geen_continuiteitsbewijs"
             next_step = "Observeer eigenaarclaim en productoutput apart; geen automatische overname."
         # A browser heartbeat can change recency classifications without
-        # creating a new progress event. Compare stable indexed event cursors
-        # only within the same selected worker slot. They remain unbound to
-        # any queue claim epoch and are NEVER proof of delivered code.
+        # creating a new progress event. Cursor deltas are meaningful only
+        # while the same observed queue claim window remains. Even then the
+        # event source lacks queue_id, so the correlation is temporal only.
         cursor_signal = "historic_event_cursor_unavailable"
         progress_signal = "historic_progress_cursor_unavailable"
-        if before is not None and after is not None:
+        if claim_window_changed:
+            cursor_signal = "claim_window_changed_cursor_comparison_withheld"
+            progress_signal = "claim_window_changed_cursor_comparison_withheld"
+        elif before is not None and after is not None:
             previous_id = before.get("latest_indexed_event_id")
             current_id = after.get("latest_indexed_event_id")
             if type(previous_id) is int and type(current_id) is int:
@@ -167,6 +192,11 @@ def compare_worker_snapshots(prior, current):
             "interpretation": label,
             "event_cursor_observation": cursor_signal,
             "progress_cursor_observation": progress_signal,
+            "claim_window_changed_observed": claim_window_changed,
+            "previous_claim_window_observed": previous_claim_window is not None,
+            "current_claim_window_observed": current_claim_window is not None,
+            "claim_window_correlation": (
+                after.get("claim_window_correlation") if after is not None else None),
             "safe_next_step": next_step,
             "owner_verified": False,
             "claim_epoch_bound": False,
