@@ -201,6 +201,25 @@ def compare_worker_snapshots(prior, current):
                     progress_signal = "no_new_indexed_progress_event_observed"
                 else:
                     progress_signal = "progress_cursor_regressed_owner_source_recheck"
+        previous_progress_window = (
+            before.get("progress_timestamp_in_current_claim_window")
+            if before is not None else None)
+        current_progress_window = (
+            after.get("progress_timestamp_in_current_claim_window")
+            if after is not None else None)
+        if before is None or after is None:
+            progress_window_observation = "not_comparable_missing_worker_card"
+        elif (type(previous_progress_window) is not bool
+              or type(current_progress_window) is not bool):
+            progress_window_observation = "unknown_legacy_or_claim_window"
+        elif previous_progress_window == current_progress_window:
+            progress_window_observation = ("unchanged_in_claim_window"
+                                           if current_progress_window
+                                           else "unchanged_outside_claim_window")
+        else:
+            progress_window_observation = ("changed_to_in_claim_window"
+                                           if current_progress_window
+                                           else "changed_outside_claim_window")
         changes.append({
             "project_id": key[0],
             "worker_slot": key[1],
@@ -209,6 +228,11 @@ def compare_worker_snapshots(prior, current):
             "interpretation": label,
             "event_cursor_observation": cursor_signal,
             "progress_cursor_observation": progress_signal,
+            "previous_progress_timestamp_in_claim_window": (
+                previous_progress_window if type(previous_progress_window) is bool else None),
+            "current_progress_timestamp_in_claim_window": (
+                current_progress_window if type(current_progress_window) is bool else None),
+            "progress_timestamp_window_observation": progress_window_observation,
             "claim_window_changed_observed": claim_window_changed,
             "previous_claim_window_observed": previous_claim_window is not None,
             "current_claim_window_observed": current_claim_window is not None,
@@ -262,6 +286,10 @@ def load_private_previous(path: Path):
     return parsed
 
 
+def _progress_window_label(value):
+    return "JA" if value is True else "NEE" if value is False else "ONBEKEND"
+
+
 def _continuity_html(transition):
     rows = []
     for row in transition["observations"]:
@@ -273,6 +301,10 @@ def _continuity_html(transition):
             " → nu: " + escape(row["current_classification"] or "ONBEKEND") +
             ". Eventcursor: " + escape(row["event_cursor_observation"]) +
             "; voortgangscursor: " + escape(row["progress_cursor_observation"]) +
+            "; progress-tijdstip claimvenster: " +
+            _progress_window_label(row.get("previous_progress_timestamp_in_claim_window")) +
+            " → " + _progress_window_label(row.get("current_progress_timestamp_in_claim_window")) +
+            " (" + escape(row["progress_timestamp_window_observation"]) + ")" +
             ". " + escape(row["safe_next_step"]) + "</li>"
         )
     return (
@@ -299,6 +331,10 @@ def _continuity_markdown(transition):
             (row["current_classification"] or "ONBEKEND") +
             "). Eventcursor: " + row["event_cursor_observation"] +
             "; voortgangscursor: " + row["progress_cursor_observation"] +
+            "; progress-tijdstip claimvenster: " +
+            _progress_window_label(row.get("previous_progress_timestamp_in_claim_window")) +
+            " → " + _progress_window_label(row.get("current_progress_timestamp_in_claim_window")) +
+            " (" + row["progress_timestamp_window_observation"] + ")" +
             ". " + row["safe_next_step"])
     return "\n".join(out)
 
@@ -377,6 +413,8 @@ def render_markdown(receipt, previous=None):
                 str(row["recent_block_events_after_prompt_in_sample"]) +
                 "; voortgangssignalen: " +
                 str(row["recent_progress_events_after_prompt_in_sample"]) +
+                "; progress-tijdstip in claimvenster: " +
+                _progress_window_label(row.get("progress_timestamp_in_current_claim_window")) +
                 ". Claim/recovery niet geverifieerd."
             )
     if previous is not None:
@@ -403,6 +441,9 @@ def render_markdown(receipt, previous=None):
                 str(age) + "s" if type(age) is int else "ONBEKEND") +
             "; progress-tijdsignaal: " + (
                 str(progress) + "s" if type(progress) is int else "ONBEKEND") + ".",
+            "- Progress-tijdstip binnen huidig claimvenster: " +
+            _progress_window_label(row.get("progress_timestamp_in_current_claim_window")) +
+            " (tijdvenster-only; geen claimepoch).",
             "- Indexed eventcursor: " +
             (str(row["latest_indexed_event_id"])
              if type(row.get("latest_indexed_event_id")) is int else "ONBEKEND") +
