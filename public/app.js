@@ -329,6 +329,7 @@ let blockedQueueHumanOnly=false;
 let blockedQueueRepeatClaimsOnly=false;
 let claimChurnVisible=12,claimChurnUrgentOnly=false,claimChurnStatus='all',claimChurnExpiredOnly=false;
 let claimChurnAnomaliesOnly=false;
+let ownerIntegrityVisible=12,ownerIntegrityUrgentOnly=false;
 let blockedQueueFilterTimer=null;
 let blockedQueueObservedAt='';
 function blockedQueueIsParked(item){
@@ -587,6 +588,147 @@ function claimChurnPanel(projectId=''){
     +(projectId?'':('<button type="button" data-claim-churn-export'+(matching.length?'':' disabled')+'>Export private handoff</button>'))
     +'</div></section>';
 }
+
+// Read-only owner-integrity incident desk. Churn (attempts >=3) is a
+// separate indicator, never a prerequisite for inspecting unsafe leases.
+function ownerIntegritySignals(item){
+  if(!item||!['queued','blocked','claimed','running','verifying'].includes(item.status))return [];
+  const issues=[];
+  const active=['claimed','running','verifying'].includes(item.status);
+  const hasClaim=item.worker_slot!=null||item.claimed_at!=null||item.claim_expires!=null;
+  if(!active){
+    if(hasClaim)issues.push({code:'parked_or_queued_claim_residue',
+      description:'Task is not active but still carries owner/lease fields.'});
+    if(item.status==='blocked'&&!blockedQueueIsParked(item))
+      issues.push({code:'blocked_not_safely_parked',
+        description:'Blocked task is not a free, ineligible parked item. No operator resume or close.'});
+    return issues;
+  }
+  if(!Number.isSafeInteger(item.worker_slot)||item.worker_slot<=0)
+    issues.push({code:'owner_slot_missing',description:'Active task has no valid worker-slot identity.'});
+  const start=typeof item.claimed_at==='string'?Date.parse(item.claimed_at):NaN;
+  const end=typeof item.claim_expires==='string'?Date.parse(item.claim_expires):NaN;
+  const observed=typeof blockedQueueObservedAt==='string'?Date.parse(blockedQueueObservedAt):NaN;
+  if(!Number.isFinite(start)||!Number.isFinite(end)){
+    issues.push({code:'lease_evidence_incomplete',
+      description:'Active owner has missing or unparseable claim time/lease expiry.'});
+  }else{
+    if(end<=start)issues.push({code:'lease_window_invalid',
+      description:'Recorded expiry is not later than the claim start.'});
+    if(Number.isFinite(observed)&&start>observed+120000)
+      issues.push({code:'claim_after_observation',
+        description:'Claim start is after the observation time; clocks or source may differ.'});
+    if(Number.isFinite(observed)&&end<=observed)
+      issues.push({code:'lease_expired_at_observation',
+        description:'Lease was expired at source observation; owner must verify before any action.'});
+  }
+  if(!Number.isFinite(observed))
+    issues.push({code:'source_clock_unknown',
+      description:'Queue source time cannot establish a valid owner/lease window.'});
+  return issues;
+}
+function ownerIntegrityRows(projectId=''){
+  const all=(Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)?PORTFOLIO_QUEUE_SNAPSHOT:[])
+    .filter(item=>item&&(!projectId||item.project_id===projectId))
+    .map(item=>({item,signals:ownerIntegritySignals(item)}))
+    .filter(row=>row.signals.length);
+  const rank={P0:0,P1:1,P2:2,P3:3};
+  all.sort((a,b)=>(rank[a.item.priority]??9)-(rank[b.item.priority]??9)
+    ||String(a.item.project_id||'').localeCompare(String(b.item.project_id||''))
+    ||String(a.item.queue_id||'').localeCompare(String(b.item.queue_id||'')));
+  return {all,matching:projectId||!ownerIntegrityUrgentOnly?all:
+    all.filter(row=>row.item.priority==='P0'||row.item.priority==='P1')};
+}
+function downloadOwnerIntegrityHandoff(){
+  if(!Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)||!blockedQueueTime(blockedQueueObservedAt)){
+    window.alert('Queue source or observation time unavailable. No owner report exported.');return;
+  }
+  const {matching}=ownerIntegrityRows();
+  if(!matching.length){window.alert('No source-observed owner or lease warnings selected.');return;}
+  const sample=matching.slice(0,100);
+  const freshness=claimChurnSnapshotFreshness();
+  const stale=freshness.state==='stale_observation';
+  if(!window.confirm('Export a LOCAL PRIVATE, READ-ONLY owner-integrity handoff for '+sample.length
+      +' of '+matching.length+' observed warnings? '
+      +(stale?'WARNING: the source is STALE; it is not current worker authority. ':'')
+      +'Includes private queue/worker identifiers and never grants permission to reassign work.'))return;
+  const packet={
+    schema:'zsentinel.owner-integrity.readonly-handoff.v1',
+    exported_at:new Date().toISOString(),
+    queue_observed_at:blockedQueueObservedAt,
+    source_freshness:freshness,
+    authority:'read-only observation only; verify current owner, never release, retry, drop, resume or reassign',
+    coverage:{sample_queue_rows:PORTFOLIO_QUEUE_SNAPSHOT.length,
+      observed_warnings:matching.length,exported:sample.length,
+      truncated:matching.length>sample.length,urgency_filter:ownerIntegrityUrgentOnly?'P0-P1':'all'},
+    tasks:sample.map(({item,signals})=>({
+      queue_id:String(item.queue_id||'').slice(0,160),
+      project_id:String(item.project_id||'').slice(0,80),
+      status:item.status,
+      priority:['P0','P1','P2','P3'].includes(item.priority)?item.priority:'UNKNOWN',
+      worker_slot:Number.isSafeInteger(item.worker_slot)&&item.worker_slot>0?item.worker_slot:null,
+      recorded_claim_attempts:Number.isSafeInteger(item.attempts)&&item.attempts>=0?item.attempts:null,
+      last_updated:typeof item.updated_at==='string'?item.updated_at.slice(0,80):null,
+      lease_expires:typeof item.claim_expires==='string'?item.claim_expires.slice(0,80):null,
+      warning_codes:signals.map(signal=>signal.code),
+      source_url:blockedQueueSourceUrl(item.source_url)||null,
+      owner_next_step:'Independently verify current source and owner before any recovery or release'
+    }))
+  };
+  // No untrusted titles, blocker text, evidence, free-form runtime logs or credentials.
+  const body=JSON.stringify(packet,null,2);
+  if(new TextEncoder().encode(body).length>100000){
+    window.alert('Report exceeds private 100 KB limit. Select only P0/P1 warnings.');return;
+  }
+  const url=URL.createObjectURL(new Blob([body],{type:'application/json;charset=utf-8'}));
+  const link=document.createElement('a');
+  link.href=url;link.download='zsentinel-owner-integrity-'+new Date().toISOString().slice(0,10)+'.json';
+  document.body.append(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function ownerIntegrityPanel(projectId=''){
+  if(!Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)){
+    return '<section class="owner-integrity-panel" aria-label="Queue owner integrity"><div class="owner-integrity-head">'
+      +'<div><span class="eyebrow">OWNER INTEGRITY · READ ONLY</span><h2>Queue source unavailable</h2>'
+      +'<p>Owner and lease warnings are unknown, never zero. No action is authorized.</p></div></div></section>';
+  }
+  const {all,matching}=ownerIntegrityRows(projectId);
+  const show=projectId?6:ownerIntegrityVisible;
+  const freshness=claimChurnSnapshotFreshness();
+  const records=matching.slice(0,show).map(({item,signals})=>{
+    const source=blockedQueueSourceUrl(item.source_url);
+    const name=DATA.projects.find(p=>p.id===item.project_id)?.name||item.project_id||'Unknown project';
+    return '<article class="owner-integrity-item"><div class="owner-integrity-item-top">'
+      +'<strong>'+esc(String(item.title||item.queue_id||'Unidentified queue task'))+'</strong>'
+      +'<span>'+esc(item.priority||'UNKNOWN')+' · '+esc(item.status)+'</span></div>'
+      +'<small>'+esc(name)+' · '+signals.length+' warning'+(signals.length===1?'':'s')
+      +' · '+(Number.isSafeInteger(item.attempts)?item.attempts+' observed claims':'claim count unknown')+'</small>'
+      +'<ul>'+signals.map(signal=>'<li><b>'+esc(signal.code.replaceAll('_',' '))+'</b>: '+esc(signal.description)+'</li>').join('')+'</ul>'
+      +(source?'<a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Inspect original GitHub issue/PR ↗</a>':'')
+      +'</article>';
+  }).join('');
+  return '<section class="owner-integrity-panel" aria-label="Queue owner integrity">'
+    +'<div class="owner-integrity-head"><div><span class="eyebrow">OWNER INTEGRITY · READ ONLY</span>'
+    +'<h2>'+all.length+' queue owner/lease warning'+(all.length===1?'':'s')+'</h2>'
+    +'<p>Every queue item is screened, including first claims. Warnings are observations, not permission to take over.</p>'
+    +'</div><a href="https://github.com/Zennay/zCloud/issues/677" target="_blank" rel="noopener noreferrer">Queue lifecycle issue #677 ↗</a></div>'
+    +(projectId?'':'<div class="owner-integrity-filters"><button type="button" data-owner-integrity-priority aria-pressed="'
+      +ownerIntegrityUrgentOnly+'">'+(ownerIntegrityUrgentOnly?'Show all priorities':'Only P0/P1')+'</button>'
+      +'<button type="button" data-owner-integrity-export'+(matching.length?'':' disabled')+'>Export private owner handoff</button></div>')
+    +(matching.length?'<div class="owner-integrity-items">'+records+'</div>'
+      :'<p class="owner-integrity-empty">'+(all.length?'No owner warnings for this filter.':
+      'No owner warnings observed in the loaded queue sample. This is not a full-database audit.')+'</p>')
+    +'<div class="owner-integrity-foot"><span>'
+    +(blockedQueueTime(blockedQueueObservedAt)?'Observed '+esc(blockedQueueTime(blockedQueueObservedAt)):'Observation time unknown')
+    +(freshness.state==='stale_observation'?' · STALE ('+Math.ceil(freshness.age_seconds/60)+' min)':'')
+    +' · '+Math.min(show,matching.length)+' of '+matching.length+' warnings'
+    +' · '+PORTFOLIO_QUEUE_SNAPSHOT.length+' sampled rows</span>'
+    +(projectId?'<button type="button" data-owner-integrity-open="'+esc(projectId)+'">Open portfolio owner integrity</button>'
+      :matching.length>show?'<button type="button" data-owner-integrity-more>Show next 12</button>'
+      :matching.length>12&&show>12?'<button type="button" data-owner-integrity-less>Show first 12</button>':'')
+    +'</div></section>';
+}
+
 function blockedQueuePanel(){
   const loaded=Array.isArray(BLOCKED_QUEUE);
   // Important claims must not disappear below the twelve-card preview.
