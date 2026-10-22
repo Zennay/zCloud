@@ -34,7 +34,10 @@ def github_reader(token):
     opener = build_opener(DenyRedirect())
 
     def read(path):
-        if not isinstance(path, str) or not path.startswith("/") or ".." in path:
+        if (not isinstance(path, str) or not path.startswith("/")
+                or any(segment in {".", ".."} for segment in path.split("/"))):
+            # GitHub compare uses a literal three-dot separator; reject traversal
+            # segments, not every path that happens to contain two dots.
             raise InvalidInventory("invalid_api_path")
         url = API + path
         request = Request(
