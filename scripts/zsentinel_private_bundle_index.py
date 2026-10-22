@@ -52,9 +52,10 @@ def load_snapshot(directory: Path, stem: str) -> dict:
     for card in cards:
         pid = card["project"]
         project = projects.setdefault(pid, {
-            "issues": {}, "priorities": Counter(), "prs": set(),
+            "issues": {}, "issue_priorities": {}, "priorities": Counter(), "prs": set(),
         })
         project["issues"][card["issue"]] = card["url"]
+        project["issue_priorities"][card["issue"]] = card["priority"]
         project["priorities"][card["priority"]] += 1
         project["prs"].update(card["open_pr_candidates"])
     return {
@@ -105,6 +106,20 @@ def project_table(snapshot: dict) -> str:
     )
 
 
+def pr_links(items: set[str]) -> str:
+    if not items:
+        return "geen"
+    urls = sorted(items)
+    links = [
+        "<a rel='noopener noreferrer' target='_blank' href='" +
+        escape(url, quote=True) + "'>" + escape(url.rsplit("/", 1)[-1]) +
+        "</a>" for url in urls[:MAX_LINKS]
+    ]
+    if len(urls) > MAX_LINKS:
+        links.append("+" + str(len(urls) - MAX_LINKS) + " niet getoond")
+    return ", ".join(links)
+
+
 def compare(previous: dict, current: dict) -> str:
     rows = []
     for project in sorted(set(previous["projects"]) | set(current["projects"])):
@@ -113,24 +128,41 @@ def compare(previous: dict, current: dict) -> str:
         newly = {key: after[key] for key in after.keys() - before.keys()}
         absent = {key: before[key] for key in before.keys() - after.keys()}
         continued = len(after.keys() & before.keys())
-        if not newly and not absent:
+        old_data = previous["projects"].get(project, {})
+        new_data = current["projects"].get(project, {})
+        new_prs = new_data.get("prs", set()) - old_data.get("prs", set())
+        missing_prs = old_data.get("prs", set()) - new_data.get("prs", set())
+        old_priority = old_data.get("issue_priorities", {})
+        new_priority = new_data.get("issue_priorities", {})
+        escalated = {
+            issue: after[issue] for issue in after.keys() & before.keys()
+            if PRIORITIES.index(new_priority[issue]) <
+               PRIORITIES.index(old_priority[issue])
+        }
+        if not newly and not absent and not new_prs and not missing_prs and not escalated:
             continue
         rows.append(
             "<tr><th scope='row'>" + escape(project) + "</th><td>" +
             str(len(newly)) + "<br>" + issue_links(newly) + "</td><td>" +
             str(len(absent)) + "<br>" + issue_links(absent) + "</td><td>" +
-            str(continued) + "</td></tr>"
+            str(continued) + "</td><td>" +
+            str(len(escalated)) + "<br>" + issue_links(escalated) + "</td><td>" +
+            "+" + str(len(new_prs)) + ": " + pr_links(new_prs) +
+            "<br>Niet opnieuw waargenomen " + str(len(missing_prs)) + ": " +
+            pr_links(missing_prs) + "</td></tr>"
         )
     return (
         "<section class='delta'><h3>" + escape(previous["stem"]) +
         " → " + escape(current["stem"]) + "</h3><p>Nieuwe / niet meer "
-        "waargenomen issues gelden uitsluitend binnen twee begrensde samples. "
-        "Niet meer waargenomen betekent <strong>niet</strong> gesloten.</p>"
-        "<table><thead><tr><th>Project</th><th>Nieuw waargenomen</th>"
-        "<th>Niet opnieuw waargenomen</th><th>In beide</th></tr></thead>"
-        "<tbody>" + ("".join(rows) if rows else
-                      "<tr><td colspan='4'>Geen verandering binnen de "
-                      "bewaarde issuekaarten</td></tr>") + "</tbody></table>"
+        "waargenomen issues en PR-kandidaten gelden uitsluitend binnen "
+        "twee begrensde samples. Niet opnieuw waargenomen betekent "
+        "<strong>niet</strong> gesloten, gemerged of eigenaarsvrij.</p>"
+        "<table><thead><tr><th>Project</th><th>Nieuw issue</th>"
+        "<th>Issue niet opnieuw gezien</th><th>In beide</th>"
+        "<th>Urgentie gestegen in sample</th><th>PR-kandidaten gewijzigd</th>"
+        "</tr></thead><tbody>" + ("".join(rows) if rows else
+                      "<tr><td colspan='6'>Geen verschil in de "
+                      "bewaarde issue- of PR-kaarten</td></tr>") + "</tbody></table>"
         "</section>"
     )
 
