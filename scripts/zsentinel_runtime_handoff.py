@@ -2128,6 +2128,48 @@ def _gate_owner_html_line(report):
 
 
 
+
+def _notion_clock_owner_overview(report):
+    """One safe, explicit coverage line for the project-owner work queue."""
+    source = report.get("notion_claim_clock_owner_review")
+    if source is None:
+        # Read-only saved reports from before this optional feature remain
+        # inspectable; missing source is UNKNOWN, not an empty workload.
+        return "Notion eigenaaracties: bron ONBEKEND (geen nulclaim)."
+    if (type(source) is not dict
+            or source.get("coverage") not in (
+                "not_observed_or_stale", "live_readonly_bounded",
+                "live_readonly_incomplete")
+            or source.get("source_only_not_lease_proof") is not True
+            or any(source.get(flag) is not False for flag in
+                   ("claim_authorized", "retry_authorized", "dispatch_authorized"))
+            or type(source.get("affected_project_groups_in_sample")) is not int
+            or not 0 <= source["affected_project_groups_in_sample"] <= 12
+            or type(source.get("owner_cards_shown")) is not int
+            or not 0 <= source["owner_cards_shown"] <= 6
+            or source["owner_cards_shown"] >
+               source["affected_project_groups_in_sample"]
+            or type(source.get("owner_cards_sample_truncated")) is not bool):
+        raise ValueError("invalid Notion owner workboard coverage")
+    if source["coverage"] == "not_observed_or_stale":
+        if source["affected_project_groups_in_sample"] or source["owner_cards_shown"]:
+            raise ValueError("unknown Notion owner source claims current groups")
+        return ("Notion eigenaaracties: bron ontbreekt of is verouderd; "
+                "aantal en eigenaarschap ONBEKEND, niet nul.")
+    notion = _notion_review_summary(report)
+    if notion is None or notion["coverage"] != source["coverage"]:
+        raise ValueError("Notion owner workboard has no matching source")
+    count = source["affected_project_groups_in_sample"]
+    if count > len(notion["projects"]):
+        raise ValueError("owner workboard exceeds bounded Notion projects")
+    return (str(count) + " projectgroepen met verdachte Notion-claimklokken "
+            "in de beperkte bron; " +
+            str(source["owner_cards_shown"]) +
+            " eigenaaracties werkelijk zichtbaar in de P0/PR-werkbak. " +
+            ("Overige groepen/acties ONBEKEND of afgekapte weergave. "
+             if source["owner_cards_sample_truncated"] else "") +
+            "GEEN queueclaim of hersteltoestemming.")
+
 def _notion_clock_card_detail(card, report):
     """Bind a suggested owner recheck to the original bounded Notion read."""
     if card.get("kind") != "notion_claim_clock_owner_review":
@@ -2426,6 +2468,8 @@ def handoff_html(report):
             escape(_gate_owner_html_line(report)) + '</p>' +
             '<p class="small muted">Project-gebalanceerde shortlist: ' +
             escape(_selection_owner_line(report)) + '</p>' +
+            '<p class="small muted">Notion claimklokken: ' +
+            escape(_notion_clock_owner_overview(report)) + '</p>' +
             ('<ol>' + ''.join(cards) + '</ol>' if cards else
              '<p>Geen actie in het onderzochte venster; geen compleet herstelbewijs.</p>') +
             ('<p>Werkbak afgekapt; extra items blijven buiten dit venster.</p>'
@@ -2588,6 +2632,7 @@ def markdown(report):
     else:
         raise ValueError("invalid routing gate coverage")
     lines.append("Project-gebalanceerde shortlist: " + _selection_owner_line(report))
+    lines.append("Notion claimklokken: " + _notion_clock_owner_overview(report))
     lines.append("")
     lines.append("## Prioritaire opvolging")
     for n, card in enumerate(report["priority_items"], 1):
