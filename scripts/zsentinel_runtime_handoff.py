@@ -1484,6 +1484,17 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                               c.get("review_by_utc", "9999"),
                               0 if c.get("existing_pr_urls") else 1,
                               c["project"], c.get("issue_url", ""), c["next_step"]))
+    # Source grouping happens before the GLOBAL 24-card owner window.
+    # Count only blocked groups actually rendered inside that window;
+    # other P0 incidents/merge-first work may legitimately take priority.
+    if blocked_summary["coverage"] == "bounded_current_readonly":
+        visible_blocked = sum(
+            row["kind"] == "blocked_queue_owner_review"
+            for row in cards[:MAX_ITEMS])
+        blocked_summary["priority_groups_shown"] = visible_blocked
+        blocked_summary["priority_groups_truncated"] = (
+            blocked_summary["priority_groups_truncated"] or
+            visible_blocked < blocked_summary["priority_groups_observed"])
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     return {
         "schema": SCHEMA,
@@ -1679,7 +1690,9 @@ def _blocked_queue_owner_note(report):
     total, groups = row.get("observed_blocked_count"), row.get("priority_groups_observed")
     if (type(total) is not int or not 0 <= total <= 10**9
             or type(groups) is not int or not 0 <= groups <= 250
-            or row["priority_groups_shown"] != min(8, groups)):
+            or row["priority_groups_shown"] > min(8, groups)
+            or (row["priority_groups_shown"] < groups
+                and row["priority_groups_truncated"] is not True)):
         raise ValueError("inconsistent current blocked-work overview")
     if type(row.get("active_queue_inventory_incomplete", False)) is not bool:
         raise ValueError("invalid active inventory coverage in blocked-work note")
