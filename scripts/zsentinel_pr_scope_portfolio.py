@@ -96,6 +96,19 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                              source["portable_path_alias_pairs_truncated"] or
                              source["portable_path_alias_examples_truncated"] or
                              len(source["shown_portable_path_alias_pairs"]) > MAX_VISIBLE_PAIRS)
+        # Portfolio display caps are a separate loss boundary from the
+        # lower-level graph's own collection caps. Surface each cap so JSON,
+        # operator text, HTML and exports cannot silently lose its reason.
+        coverage_reasons = list(source.get("source_coverage_reasons", []))
+        if len(source["shown_file_collision_pairs"]) > MAX_VISIBLE_PAIRS:
+            coverage_reasons.append("portfolio_shared_file_pairs_display_truncated")
+        if len(source["shown_path_scope_collision_pairs"]) > MAX_VISIBLE_PAIRS:
+            coverage_reasons.append("portfolio_path_scope_pairs_display_truncated")
+        if len(source["shown_portable_path_alias_pairs"]) > MAX_VISIBLE_PAIRS:
+            coverage_reasons.append("portfolio_path_alias_pairs_display_truncated")
+        coverage_reasons = list(dict.fromkeys(coverage_reasons))
+        if display_truncated and not coverage_reasons:
+            coverage_reasons.append("portfolio_collision_evidence_display_truncated")
         complete = source["pr_file_scope_sample_complete"] and not display_truncated
         items.append({
             "project": project,
@@ -103,7 +116,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "source_status": "complete_open_pr_sample_only"
                              if complete else "partial_open_pr_sample",
             "sample_complete": complete,
-            "source_coverage_reasons": source["source_coverage_reasons"],
+            "source_coverage_reasons": coverage_reasons,
             "open_pr_snapshot_stable": source["open_pr_snapshot_stable"],
             "sampled_open_pr_heads": source["inspected_pr_heads"],
             "source_sample_complete": source["pr_file_scope_sample_complete"],
