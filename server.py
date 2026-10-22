@@ -3495,9 +3495,15 @@ def portfolio_queue_recovery_inspect(queue_id):
     queue_id=str(queue_id or '').strip()
     if not queue_id or len(queue_id)>160:
         raise ValueError('Een geldige queue_id is vereist voor herstelinspectie')
-    with connect() as c:
-        # Read the queue row and its exact linked human Attention in one
-        # consistent SQLite read transaction; neither read changes state.
+    # Open a truly read-only SQLite URI: unlike the general connect()
+    # helper, an inspection must never create a missing DB or be able to
+    # write when the operator only asked to diagnose source state.
+    db_uri='file:'+quote(str(DB),safe='/')+'?mode=ro'
+    with closing(sqlite3.connect(db_uri,uri=True,timeout=2.0)) as c:
+        c.row_factory=sqlite3.Row
+        c.execute('PRAGMA query_only=ON')
+        # Read the queue row, human Attention and receipts from one
+        # consistent snapshot. An inspection never starts a writer.
         c.execute('BEGIN')
         row=c.execute("SELECT * FROM portfolio_queue WHERE queue_id=?",(queue_id,)).fetchone()
         attention=(c.execute(
