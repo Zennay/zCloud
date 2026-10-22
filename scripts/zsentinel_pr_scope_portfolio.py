@@ -1353,6 +1353,11 @@ def as_html(board):
                  if view.get("source_truncated")
                  else "volledige huidige open-PR-steekproef" if view["sample_complete"]
                  else "onvolledige open-PR-steekproef")
+        coverage_note = ("<p class='warning'><strong>Bronbeperkingen:</strong> " +
+                         escape(", ".join(view.get("source_coverage_reasons", []))) +
+                         ". Inspecteer ontbrekende PRs of padvoorbeelden bij de eigenaar; "
+                         "geen automatische claim- of mergevrijgave.</p>"
+                         if view.get("source_coverage_reasons") else "")
         unpaired = view["unpaired_open_prs_not_claim_verified"]
         duplicates = []
         for group in view["shown_duplicate_issue_groups"]:
@@ -1387,7 +1392,7 @@ def as_html(board):
         cards.append(
             "<section><h2>" + escape(view["project"]) + "</h2>"
             "<p><strong>" + escape(state) +
-            "</strong> · " + escape(view["repository"]) + "</p>" + source_note
+            "</strong> · " + escape(view["repository"]) + "</p>" + source_note + coverage_note +
             "<h3>Samenhangende PR-bestandsgroepen</h3>"
             "<p>Alleen geobserveerde bestanden, geen vrij eigenaarschap "
             "of mergevolgorde.</p><ol>" +
@@ -1415,7 +1420,7 @@ def as_html(board):
             "</ul>"
             "<h3>Geen gedeelde paden in de steekproef</h3><p>Niet automatisch "
             "claimbaar; controleer nog steeds leases en PR-loze branches.</p><ul>" +
-            (links or "<li>Geen andere PR's zichtbaar.</li>") +
+            (links or "<li>Geen vrijgegeven PR's uit deze steekproef vastgesteld.</li>") +
             "</ul></section>")
     gate_panel = ""
     if board.get("current_live_pr_gate_observation") is not None:
