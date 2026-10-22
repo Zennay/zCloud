@@ -259,6 +259,34 @@ def _title_issue_reference(payload, full_name, issue_number):
     return _body_issue_reference({"body": title}, full_name, issue_number)
 
 
+def _review_request_identities(payload):
+    """Canonical pending requests for an in-memory same-PR source comparison.
+
+    GitHub's requested reviewers are not submitted approvals. Never persist
+    identities or hashes of identities in reports; only expose bounded counts.
+    Partial, duplicate and malformed payloads are UNKNOWN, not zero requests.
+    """
+    if type(payload) is not dict:
+        return None
+    people, teams = payload.get("requested_reviewers"), payload.get("requested_teams")
+    if (type(people) is not list or type(teams) is not list
+            or len(people) > 100 or len(teams) > 100):
+        return None
+    def collect(rows, field, pattern):
+        admitted = []
+        for item in rows:
+            value = item.get(field) if type(item) is dict else None
+            if type(value) is not str or re.fullmatch(pattern, value) is None:
+                return None
+            admitted.append(value)
+        if len(set(admitted)) != len(admitted):
+            return None
+        return tuple(sorted(admitted))
+    users = collect(people, "login", r"[A-Za-z0-9-]{1,39}")
+    slugs = collect(teams, "slug", r"[A-Za-z0-9_-]{1,100}")
+    return (users, slugs) if users is not None and slugs is not None else None
+
+
 def _pr_summary(payload, full_name, number):
     if not isinstance(payload, dict) or (
         type(payload.get("number")) is not int or payload["number"] != number
@@ -293,25 +321,11 @@ def _pr_summary(payload, full_name, number):
     base_sha = base.get("sha")
     if not isinstance(base_sha, str) or not SHA.fullmatch(base_sha):
         raise GitHubReadError("PR base SHA missing or invalid")
-    # GitHub returns pending user and team review requests separately from
-    # submitted reviews. Missing/noncanonical data is UNKNOWN, never zero.
-    # Keep only bounded counts; operator artifacts do not need reviewer PII.
-    pending_reviewers = payload.get("requested_reviewers")
-    pending_teams = payload.get("requested_teams")
-    pending_user_count = (
-        len(pending_reviewers) if isinstance(pending_reviewers, list)
-        and len(pending_reviewers) <= 100
-        and all(isinstance(user, dict) and isinstance(user.get("login"), str)
-                and re.fullmatch(r"[A-Za-z0-9-]{1,39}", user["login"])
-                for user in pending_reviewers) else None
-    )
-    pending_team_count = (
-        len(pending_teams) if isinstance(pending_teams, list)
-        and len(pending_teams) <= 100
-        and all(isinstance(team, dict) and isinstance(team.get("slug"), str)
-                and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", team["slug"])
-                for team in pending_teams) else None
-    )
+    # Preserve only counts in durable observations; the caller can compare
+    # canonical reviewer sets in memory before admitting a stable snapshot.
+    requested = _review_request_identities(payload)
+    pending_user_count = len(requested[0]) if requested is not None else None
+    pending_team_count = len(requested[1]) if requested is not None else None
     return {
         "number": number, "url": "https://github.com/" + full_name + "/pull/" + str(number),
         "observed_state": state, "observed_draft": draft,
