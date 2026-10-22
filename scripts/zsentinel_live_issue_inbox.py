@@ -319,7 +319,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             item["priority_from_explicit_labels"]
             if item["priority_from_explicit_labels"] != "UNKNOWN"
             else "TITLE_HINT_" + item["unverified_title_prefix_hint"]
-            if item["unverified_title_prefix_hint"] != "NONE"
+            if item["triage_rank"] in (2, 3)
             else "UNKNOWN"
         )
         by_rank[label] = by_rank.get(label, 0) + 1
