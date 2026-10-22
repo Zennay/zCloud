@@ -117,8 +117,11 @@ jobs:
           set -e
           STATUS="$status" python3 - <<'PY'
           import json, os
+          from html import escape as html_escape
           from pathlib import Path
           temp = Path(os.environ["RUNNER_TEMP"])
+          def code(value):
+              return "<code>" + html_escape(str(value), quote=True) + "</code>"
           result = json.loads((temp / "zcloud-pr-ownership-result.json").read_text())
           branches = json.loads((temp / "zcloud-prless-branch-inventory.json").read_text())
           branch_ok = (
@@ -149,8 +152,8 @@ jobs:
           current_slice_exit = 0
           if result.get("policy") == "zcloud-deployops-pr-owner-collision-v1":
               lines.extend([
-                  f"Main snapshot SHA: `{result['main_sha']}`",
-                  f"Evidence fingerprint (unverified SHA-256): `{result['snapshot_sha256']}`",
+                  f"Main snapshot SHA: {code(result['main_sha'])}",
+                  f"Evidence fingerprint (unverified SHA-256): {code(result['snapshot_sha256'])}",
                   f"Open PRs checked: {result['prs_scanned']}",
                   f"Changed files checked: {result['files_scanned']}",
                   f"Stale-base PRs: {result['stale_base_count']}",
@@ -162,12 +165,12 @@ jobs:
                   f"Branches checked: {branches['branches_scanned']}",
                   f"Open PR heads checked for branch matching: {branches['open_prs_scanned']}",
                   f"PR-less branches: {branches['prless_branch_count']}",
-                  f"Branch inventory fingerprint (unverified SHA-256): `{branches['snapshot_sha256_unverified']}`",
+                  f"Branch inventory fingerprint (unverified SHA-256): {code(branches['snapshot_sha256_unverified'])}",
               ])
               for branch_row in branches["prless_branches"][:20]:
                   protection = "protected" if branch_row["protected"] else "not protected"
                   lines.append(
-                      f"- PR-less branch `{branch_row['name']}` @ `{branch_row['head_sha'][:12]}` ({protection})")
+                      f"- PR-less branch {code(branch_row['name'])} @ {code(branch_row['head_sha'][:12])} ({protection})")
               if branches["prless_branch_count"] > 20:
                   lines.append("Remaining PR-less branches are in the attached bounded JSON artifact.")
               for index, group in enumerate(result["conflict_groups"][:12], 1):
@@ -180,12 +183,12 @@ jobs:
                   lines.append("More conflict groups omitted; see bounded JSON output.")
               for row in result["hierarchy_collisions"][:10]:
                   lines.append(
-                      f"- File/map: `{row['ancestor']}` ↔ `{row['descendant']}`"
+                      f"- File/map: {code(row['ancestor'])} ↔ {code(row['descendant'])}"
                       f" ({row['pr_count']} PRs)")
               if result["hierarchy_collision_report_truncated"]:
                   lines.append("More file/map collisions omitted.")
               for row in result["collisions"][:20]:
-                  lines.append(f"- `{row['path']}`: " + ", ".join(
+                  lines.append(f"- {code(row['path'])}: " + ", ".join(
                       f"#{n}" for n in row["prs"][:20]))
           else:
               lines.append("Inventory was refused; no completeness or ownership claim.")
@@ -230,8 +233,8 @@ jobs:
                       lines.extend([
                           "## Current-slice branch ownership guard",
                           f"State: **{current['state'].upper()}**",
-                          f"Current branch: `{current['current_branch']}` @ `{current['current_head_sha'][:12]}`",
-                          f"Exact main SHA: `{current['main_sha']}`",
+                          f"Current branch: {code(current['current_branch'])} @ {code(current['current_head_sha'][:12])}",
+                          f"Exact main SHA: {code(current['main_sha'])}",
                           f"Recency window: {current['recent_window_days']} days",
                           f"Recent ahead PR-less owners: {current['recent_prless_ahead_owner_count']}",
                           f"Path overlaps: {current['overlap_count']}",
@@ -239,8 +242,8 @@ jobs:
                       ])
                       for overlap in current["overlaps"][:10]:
                           lines.append(
-                              f"- `{overlap['current_path']}` ↔ `{overlap['owner_path']}` "
-                              f"on `{overlap['owner_branch']}` ({overlap['relation']})")
+                              f"- {code(overlap['current_path'])} ↔ {code(overlap['owner_path'])} "
+                              f"on {code(overlap['owner_branch'])} ({code(overlap['relation'])})")
                       if current["overlaps_omitted"]:
                           lines.append("Additional overlaps omitted from the bounded preview.")
               except Exception:
