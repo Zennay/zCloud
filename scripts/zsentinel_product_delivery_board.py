@@ -311,7 +311,7 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         matching_prs = [pr_evidence[link] for link in row["open_pr_candidates"]
                         if fresh.get("prs") is True and link in pr_evidence]
         if claim_ids:
-            next_step = "Coordinate with the current claim holder, do not displace."
+            next_step = "Reconcile observed claim IDs with the live lease source before coordination; do not infer current ownership from the snapshot."
         elif matching_prs:
             next_step = "Inspect exact-head PR gates and unresolved release authorization."
         elif row["open_pr_candidates"]:
@@ -366,7 +366,7 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
                   and fresh.get("claims") else None)
         coverage_status = coverage.get(pid, "unavailable")
         if active:
-            action = "Preserve active owner; review claim-specific next steps."
+            action = "Reconcile observed claim IDs against the live lease source before coordination; do not infer current ownership from the snapshot."
         elif queue and queue["expired_active_leases"]:
             action = "Escalate expired leases to the authorized queue owner."
         elif queue and queue["high_claim_attempts"]:
