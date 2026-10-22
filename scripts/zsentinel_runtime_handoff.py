@@ -628,6 +628,66 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             card["blocked_required_gates"] = row["blocked_required_gates"][:]
             card["capacity_state"] = row["capacity_state"]
             cards.append(card)
+    # An active-owner guard is a visible handoff, never a suggestion or lease grant.
+    owner_report = decision.get("routing_owner_holds")
+    owner_coverage = "not_supplied"
+    owner_count = None
+    owner_truncated = False
+    owner_reasons = []
+    if owner_report is not None:
+        owner_examples = owner_report.get("examples") if type(owner_report) is dict else None
+        owner_coverage = owner_report.get("coverage") if type(owner_report) is dict else None
+        owner_reasons = owner_report.get("coverage_reasons") if type(owner_report) is dict else None
+        allowed_owner_reasons = {
+            "claim_inventory_not_complete", "task_inventory_not_complete",
+            "claim_observation_missing", "task_observation_missing",
+            "claim_observation_stale_or_future", "task_observation_stale_or_future",
+            "active_claim_scope_unknown",
+        }
+        if (type(owner_report) is not dict
+                or owner_coverage not in ("complete", "incomplete_or_stale")
+                or type(owner_reasons) is not list or len(owner_reasons) > 7
+                or any(reason not in allowed_owner_reasons for reason in owner_reasons)
+                or (owner_coverage == "complete" and owner_reasons)
+                or type(owner_report.get("count")) is not int
+                or not 0 <= owner_report["count"] <= 250
+                or type(owner_examples) is not list or len(owner_examples) > 8
+                or len(owner_examples) > owner_report["count"]
+                or owner_report.get("samples_truncated") is not (
+                    owner_report["count"] > len(owner_examples))
+                or owner_report.get("claim_authorized") is not False
+                or owner_report.get("dispatch_authorized") is not False):
+            raise ValueError("untrusted active-owner HOLD source")
+        owner_count = owner_report["count"] if owner_coverage == "complete" else None
+        owner_truncated = owner_report["samples_truncated"]
+        seen_owner_holds = set()
+        for row in owner_examples:
+            if (type(row) is not dict
+                    or row.get("reason") != "active_owner_protection"
+                    or row.get("claim_authorized") is not False
+                    or row.get("dispatch_authorized") is not False
+                    or row.get("priority") not in ("P0", "P1", "P2", "P3")
+                    or type(row.get("id")) is not str
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", row["id"])):
+                raise ValueError("invalid active-owner HOLD row")
+            project = _project(row.get("project_id"))
+            unique_key = (project, row["id"])
+            if unique_key in seen_owner_holds:
+                raise ValueError("duplicate active-owner HOLD row")
+            seen_owner_holds.add(unique_key)
+            source_priority = row["priority"]
+            priority = source_priority if source_priority in ("P0", "P1") else "P2"
+            card = _card(
+                priority, project, "routing_owner_hold",
+                "Taak " + row["id"] + " HOLD: de bron meldt een actieve eigenaar. " +
+                "Verifieer de actuele eigenaar/claim en stem overdracht af; " +
+                "niet overnemen, geen claim of dispatch.",
+                source="bounded_router_active_owner_hold")
+            card["source_priority"] = source_priority
+            card["owner_hold_reason"] = "active_owner_protection"
+            card["claim_authorized"] = False
+            card["dispatch_authorized"] = False
+            cards.append(card)
     # Tasks omitted from the fair five-slot shortlist remain owner-visible,
     # never assigned or treated as resolved by a prior proposal.
     selection_source = decision.get("routing_selection_holds")
@@ -1129,6 +1189,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                   "queue_current_owner_review": 2,
                   "queue_lease_window_review": 3,
                   "incident_dependency_owner_hold": 4,
+                  "routing_owner_hold": 4,
                   "routing_gate_owner_hold": 4,
                   "routing_selection_owner_hold": 8,
                   "vps_capacity_owner_review": 5,
@@ -1151,7 +1212,15 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                      "notion": _short(sources.get("notion"), 80)},
         "priority_items": cards[:MAX_ITEMS],
         "pr_gate_continuity": pr_change_source,
-        "routing_gate_owner_summary": {
+        "routing_owner_summary": {
+             "coverage": owner_coverage,
+             "held_count": owner_count,
+             "sample_truncated": owner_truncated,
+             "coverage_reasons": owner_reasons,
+             "claim_authorized": False,
+             "dispatch_authorized": False,
+         },
+         "routing_gate_owner_summary": {
             "coverage": gate_coverage,
             "held_count": gate_count,
             "sample_truncated": gate_truncated,
