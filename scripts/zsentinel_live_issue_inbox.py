@@ -8,8 +8,11 @@ are safe to merge. Neither titles nor issue bodies leave the in-memory read.
 """
 from __future__ import annotations
 
+import csv
 import html
+import io
 import re
+import unicodedata
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
@@ -578,6 +581,72 @@ def markdown(report):
         "",
     ])
     return "\n".join(lines)
+
+
+
+def workorders_csv(report):
+    """Private, bounded source-only operator handoff; not an execution queue."""
+    rows = io.StringIO(newline="")
+    writer = csv.writer(rows, lineterminator=chr(10))
+    headings = (
+        "observed_at_utc", "repository", "issue_url", "priority_source",
+        "unverified_title_hint", "source_window_drift",
+        "priority_label_conflict", "label_title_disagreement",
+        "operator_workstream", "problem", "human_action", "status",
+        "issue_updated_at_utc", "source_windows", "recent_window_complete",
+        "source_partial_or_unknown", "display_truncated",
+        "source_issues_seen", "issue_claim_verified", "required_ci_verified",
+        "merge_authorized", "deploy_authorized",
+    )
+    writer.writerow(headings)
+
+    def safe(value):
+        if isinstance(value, bool):
+            return str(value).lower()
+        if value is None:
+            return ""
+        field = str(value)
+        # CSV quoting alone does not prevent formula interpretation. Untrusted
+        # whitespace/format prefixes must not disguise a leading operator.
+        i = 0
+        while i < len(field) and (
+                field[i].isspace() or
+                unicodedata.category(field[i]) in ("Cf", "Zs", "Zl", "Zp")):
+            i += 1
+        if field[i:].startswith(("=", "+", "-", "@")):
+            return "'" + field
+        return field
+
+    for item in report["issues"]:
+        workflow = item["operator_workflow"]
+        writer.writerow([safe(value) for value in (
+            report["observed_at_utc"], report["repository"], item["url"],
+            item["priority_from_explicit_labels"],
+            item["unverified_title_prefix_hint"],
+            item["source_window_identity_drift"],
+            item["explicit_priority_label_conflict"],
+            item["explicit_label_title_disagreement"],
+            workflow["workstream"], workflow["problem"], workflow["action"],
+            workflow["status"], item["updated_at_utc"],
+            ";".join(item["inbox_source_windows"]),
+            report["recent_issue_window_complete"],
+            report["source_partial_or_unknown"], report["display_truncated"],
+            report["total_issues_seen"], False, False, False, False,
+        )])
+    if not report["issues"]:
+        # Preserve original source custody instead of an easily
+        # misinterpreted header-only CSV.
+        writer.writerow([safe(value) for value in (
+            report["observed_at_utc"], report["repository"], "", "UNKNOWN",
+            "NONE", False, False, "UNKNOWN", "metadata_only_no_issues",
+            "No issues observed in bounded sampled source",
+            "Refresh source and independently inspect current open issues",
+            "SOURCE SAMPLE EMPTY; absence of incidents NOT VERIFIED",
+            "", "", report["recent_issue_window_complete"],
+            report["source_partial_or_unknown"], False, 0,
+            False, False, False, False,
+        )])
+    return rows.getvalue()
 
 
 def html_view(report):
