@@ -21,6 +21,10 @@ The shared pure-SELECT read-models also now use this connection: `runner_targets
 
 A follow-up extends the same hard read-only connection to the remaining pure-SELECT helpers reached by worker and admin status views: `_worker_recovery_hold_until`, `_autonomy_runtime`, `_latest_autonomy_signal`, `_feature_flag_row` (when no caller transaction is supplied), `config_audit`, and `watch_last_run`. The existing feature-flag writes, runtime-hold updates, autonomy scheduler and configuration administration still use their separate writable paths. Only read helpers were changed; errors from these reads do not grant claim/release authority.
 
+The remaining read-only queue and worker polling paths now follow the same connection contract: `portfolio_attention_items`, `portfolio_execution_lanes`, `GET /api/runner-commands` (pending browser commands), `GET /api/activity` and `GET /api/host-history`. Their response shapes and existing access restrictions do not change. Browser polling no longer opens a write-capable SQLite connection merely to SELECT command/queue or activity rows.
+
+**Do not generalize to every GET endpoint:** `GET /api/snapshot` is a separate, legacy localhost-only command that intentionally persists monitor data; it is not a read-only diagnostic and is not covered here. Its method/authorization must be migrated with its callers if changed. Neither that stateful route nor `GET /api/resource-governor` is claimed fixed by this PR.
+
 The existing `GET /api/worker-scaling` report opens the telemetry database through SQLite `mode=ro`; it remains an observation-only report.
 
 **Scope boundary:** this document does not assert that every GET route in the server is read-only. On the current main branch, `GET /api/resource-governor` still calls the default cleanup-capable `resource_status(connection)`. Its separate non-mutating display option and route call are present in [PR #1549](https://github.com/Zennay/zCloud/pull/1549), which remains an independent, unmerged integration candidate. Do not treat that endpoint as fixed on main or live until its own required CI, review and release gates complete.
