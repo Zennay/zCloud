@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""Build an offline, private history of verified zSentinel operator bundles.
+
+The index compares bounded saved issue samples. It is not a live source, an
+ownership detector, evidence of closed issues, or release authorization.
+No network, worker, queue, CI, review or deploy operations are performed.
+"""
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+from datetime import datetime, timezone, timedelta
+from html import escape
+import hashlib
+from pathlib import Path
+import re
+import sys
+
+from zsentinel_operator_workbench import validated_view
+from zsentinel_product_delivery_board import write_create_only
+from zsentinel_verify_operator_bundle import (
+    BundleInvalid, MAX_PRODUCT, STEM, _decode_json,
+    _open_private_directory, _read_private, verify_bundle,
+)
+
+INDEX = re.compile(r"^[a-z][a-z0-9_-]{0,50}$")
+PRIORITIES = ("P0", "P1", "P2", "Unspecified")
+MAX_BUNDLES = 24
+MAX_LINKS = 12
+
+
+def load_snapshot(directory: Path, stem: str) -> dict:
+    """Read exactly the verified saved bundle, with no inferred live authority."""
+    proof = verify_bundle(directory, stem)
+    fd = _open_private_directory(directory)
+    try:
+        raw = _read_private(fd, stem + ".board.json", MAX_PRODUCT)
+    finally:
+        import os
+        os.close(fd)
+    if hashlib.sha256(raw).hexdigest() != proof["board_sha256"]:
+        raise BundleInvalid("verified board changed during index collection")
+    board = _decode_json(raw)
+    view = validated_view(board)
+    if view["observed_at_utc"] != board["observed_at_utc"]:
+        raise BundleInvalid("saved observation timestamp does not match")
+    observed = datetime.fromisoformat(
+        board["observed_at_utc"].replace("Z", "+00:00")
+    ).astimezone(timezone.utc)
+    cards = view["cards"]
+    projects = {}
+    for card in cards:
+        pid = card["project"]
+        project = projects.setdefault(pid, {
+            "issues": {}, "priorities": Counter(), "prs": set(),
+        })
+        project["issues"][card["issue"]] = card["url"]
+        project["priorities"][card["priority"]] += 1
+        project["prs"].update(card["open_pr_candidates"])
+    return {
+        "stem": stem, "observed": observed,
+        "source_times": board["source_times_utc"],
+        "source_fresh": board["fresh"],
+        "sha256": proof["board_sha256"],
+        "projects": projects,
+        "card_count": len(cards),
+        "sample_truncated": bool(
+            board.get("coverage", {}).get("cards_truncated", True)
+        ),
+        "inventory_complete_verified": False,
+    }
+
+
+def issue_links(items: dict, maximum=MAX_LINKS) -> str:
+    """All links originate from validated canonical GitHub issue identities."""
+    if not items:
+        return "<span>Geen in deze opgeslagen steekproef</span>"
+    subset = sorted(items.items())
+    links = [
+        "<a rel='noopener noreferrer' target='_blank' href='" +
+        escape(url, quote=True) + "'>" + escape(issue) + "</a>"
+        for issue, url in subset[:maximum]
+    ]
+    if len(subset) > maximum:
+        links.append("+" + str(len(subset) - maximum) + " niet getoond")
+    return ", ".join(links)
+
+
+def project_table(snapshot: dict) -> str:
+    rows = []
+    for pid, data in sorted(snapshot["projects"].items()):
+        counts = data["priorities"]
+        rows.append(
+            "<tr><th scope='row'>" + escape(pid) + "</th><td>" +
+            str(counts["P0"]) + "</td><td>" + str(counts["P1"]) +
+            "</td><td>" + str(len(data["issues"])) + "</td><td>" +
+            str(len(data["prs"])) + "</td></tr>"
+        )
+    return (
+        "<table><thead><tr><th>Project (sample)</th><th>P0</th><th>P1</th>"
+        "<th>Issues</th><th>PR-kandidaten</th></tr></thead><tbody>" +
+        ("".join(rows) if rows else
+         "<tr><td colspan='5'>Geen issues in de begrensde sample</td></tr>") +
+        "</tbody></table>"
+    )
+
+
+def compare(previous: dict, current: dict) -> str:
+    rows = []
+    for project in sorted(set(previous["projects"]) | set(current["projects"])):
+        before = previous["projects"].get(project, {}).get("issues", {})
+        after = current["projects"].get(project, {}).get("issues", {})
+        newly = {key: after[key] for key in after.keys() - before.keys()}
+        absent = {key: before[key] for key in before.keys() - after.keys()}
+        continued = len(after.keys() & before.keys())
+        if not newly and not absent:
+            continue
+        rows.append(
+            "<tr><th scope='row'>" + escape(project) + "</th><td>" +
+            str(len(newly)) + "<br>" + issue_links(newly) + "</td><td>" +
+            str(len(absent)) + "<br>" + issue_links(absent) + "</td><td>" +
+            str(continued) + "</td></tr>"
+        )
+    return (
+        "<section class='delta'><h3>" + escape(previous["stem"]) +
+        " → " + escape(current["stem"]) + "</h3><p>Nieuwe / niet meer "
+        "waargenomen issues gelden uitsluitend binnen twee begrensde samples. "
+        "Niet meer waargenomen betekent <strong>niet</strong> gesloten.</p>"
+        "<table><thead><tr><th>Project</th><th>Nieuw waargenomen</th>"
+        "<th>Niet opnieuw waargenomen</th><th>In beide</th></tr></thead>"
+        "<tbody>" + ("".join(rows) if rows else
+                      "<tr><td colspan='4'>Geen verandering binnen de "
+                      "bewaarde issuekaarten</td></tr>") + "</tbody></table>"
+        "</section>"
+    )
+
+
+def render(snapshots: list[dict], index_name: str) -> str:
+    now = datetime.now(timezone.utc)
+    # Explicit order by the saved UTC observation, not the caller's filename.
+    snapshots = sorted(snapshots, key=lambda s: (s["observed"], s["stem"]))
+    cards = []
+    for snap in reversed(snapshots):
+        age = now - snap["observed"]
+        old = age > timedelta(hours=24)
+        age_label = ("ouder dan 24 uur" if old else
+                     "maximaal 24 uur oud (niet live)")
+        companions = (
+            "<a href='" + escape(snap["stem"] + ".desk.html", quote=True) +
+            "'>Open interactieve werkbak</a> · <a href='" +
+            escape(snap["stem"] + ".receipt.json", quote=True) +
+            "'>Open receipt</a>"
+        )
+        freshness = ", ".join(
+            escape(name) + ": " + ("saved-fresh" if fresh else "saved-stale")
+            for name, fresh in sorted(snap["source_fresh"].items())
+        )
+        cards.append(
+            "<article><h3>" + escape(snap["stem"]) + "</h3><p><strong>" +
+            escape(snap["observed"].isoformat()) +
+            "</strong> · " + escape(age_label) + " · " +
+            str(snap["card_count"]) + " issuekaarten in sample · " +
+            ("sample gekort" if snap["sample_truncated"] else
+             "sample niet gekort (bron nog steeds begrensd)") +
+            "</p><p>" + companions + "</p>" + project_table(snap) +
+            "<details><summary>Bronidentiteit en historische bronklokken</summary>"
+            "<p>Board SHA-256: <code>" + snap["sha256"] +
+            "</code></p><p>" + freshness + "</p></details></article>"
+        )
+    deltas = [compare(a, b) for a, b in zip(snapshots, snapshots[1:])]
+    return (
+        "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta name='referrer' content='no-referrer'>"
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
+        "style-src 'unsafe-inline'\">"
+        "<title>zSentinel · Bewaarde herstelbundels</title><style>"
+        "body{font:16px/1.6 system-ui;margin:auto;max-width:1050px;"
+        "padding:2rem;background:#101827;color:#edf2fb}"
+        "article,.delta{border:1px solid #566273;border-radius:12px;"
+        "padding:1rem;margin:1rem 0;background:#1a2738}"
+        "table{width:100%;border-collapse:collapse;margin:1rem 0}"
+        "td,th{border-bottom:1px solid #475367;text-align:left;"
+        "vertical-align:top;padding:.6rem;overflow-wrap:anywhere}"
+        "a{color:#9ed3ff}code{overflow-wrap:anywhere}"
+        "summary{cursor:pointer}</style></head><body>"
+        "<h1>zSentinel · Bewaarde herstelbundels</h1>"
+        "<p><strong>Privé offline geschiedenis, geen live monitor.</strong> "
+        "Alle bundels zijn lokaal als volledig en byte-identiek geverifieerd. "
+        "Een vergelijking bewijst geen gesloten issue, huidige eigenaar, "
+        "bruikbare CI, onafhankelijke review, merge of productieherstel.</p>"
+        "<p>" + str(len(snapshots)) + " gekoppelde snapshots · index "
+        + escape(index_name) + " · gemaakt op " + escape(now.isoformat()) +
+        "</p><h2>Herstelwerkbanken, nieuwste eerst</h2>" +
+        "".join(cards) + "<h2>Verschillen tussen opeenvolgende samples</h2>" +
+        ("".join(deltas) if deltas else
+         "<p>Minimaal twee snapshots nodig voor verschillen.</p>") +
+        "<p>Geen queuewrites, browsernetwerk, claim, CI-trigger, "
+        "merge of deploy. Hercontroleer live GitHub en Notion vóór actie.</p>"
+        "</body></html>\n"
+    )
+
+
+def build_index(directory: Path, stems: list[str], name: str) -> dict:
+    if type(name) is not str or INDEX.fullmatch(name) is None:
+        raise ValueError("invalid private index name")
+    if not 2 <= len(stems) <= MAX_BUNDLES or len(set(stems)) != len(stems):
+        raise ValueError("supply 2–24 distinct saved bundles")
+    if name in stems:
+        raise ValueError("index stem must not match a bundled snapshot")
+    if any(type(stem) is not str or STEM.fullmatch(stem) is None for stem in stems):
+        raise ValueError("invalid source bundle stem")
+    snapshots = [load_snapshot(directory, stem) for stem in stems]
+    payload = render(snapshots, name)
+    filename = name + ".index.html"
+    write_create_only(directory / filename, payload)
+    return {
+        "file": filename, "snapshots_indexed": len(snapshots),
+        "private_offline_only": True,
+        "saved_bundle_integrity_verified": True,
+        "issue_closure_verified": False,
+        "live_status_verified": False,
+        "claim_authorized": False, "merge_authorized": False,
+        "deploy_authorized": False,
+    }
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--directory", type=Path, required=True,
+                        help="Existing user-owned 0700 directory with saved bundles")
+    parser.add_argument("--bundle", action="append", required=True,
+                        help="Saved bundle stem; repeat 2–24 times")
+    parser.add_argument("--name", required=True,
+                        help="New create-only index stem")
+    args = parser.parse_args(argv)
+    try:
+        result = build_index(args.directory, args.bundle, args.name)
+    except (OSError, BundleInvalid, ValueError, TypeError, KeyError) as exc:
+        print("zSentinel offline history refused: " +
+              (str(exc) if isinstance(exc, (BundleInvalid, ValueError))
+               else "private bundle read/write unavailable"), file=sys.stderr)
+        return 2
+    import json
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
