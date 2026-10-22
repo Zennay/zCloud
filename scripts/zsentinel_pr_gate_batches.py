@@ -524,6 +524,17 @@ def human(report, markdown=False):
                      (" · parallel: " + HUMAN_GATE_LABELS_NL[action["parallel_human_gate"]]
                       if action["parallel_human_gate"] else "") +
                      " · GEEN merge-/claimvrijgave")
+        for link in action["owner_check_links"]:
+            label = {
+                "failed_check": "Historische mislukte Check Run",
+                "long_running_check": "Historische langlopende Check Run",
+                "long_queued_check": "Historische lang queued Check Run",
+            }.get(link["kind"])
+            if label is None:
+                raise ValueError("unrecognized saved check action kind")
+            lines.append("  ↳ " + ("[" + label + "](" + link["url"] + ")"
+                                   if markdown else label + ": " + link["url"]) +
+                         " · HERLEES actuele HEAD voor actie")
     if report["owner_attention_queue_hidden_after_24"]:
         lines.append(str(report["owner_attention_queue_hidden_after_24"]) +
                      " extra bronitems buiten de compacte eigenaarselectie.")
@@ -605,6 +616,19 @@ def html(report):
             raise ValueError("unknown private owner attention lane")
         reason = escape(HUMAN_GATE_LABELS_NL.get(action["human_next_gate"],
                                                  "Herlees actuele GitHub-bron."))
+        check_links_html = []
+        for link in action["owner_check_links"]:
+            label = {
+                "failed_check": "Mislukte check",
+                "long_running_check": "Langlopende check",
+                "long_queued_check": "Lang queued check",
+            }.get(link["kind"])
+            if label is None:
+                raise ValueError("unrecognized saved CI check kind")
+            check_links_html.append(
+                "<li><a rel='noopener noreferrer' href='" +
+                escape(link["url"], quote=True) + "'>" + escape(label) +
+                "</a> · bron-HEAD opnieuw controleren vóór actie</li>")
         lane_items.append("<li><strong>" + escape(OWNER_LANES[lane]) + "</strong> · "
                           "<a rel='noopener noreferrer' href='" + ref + "'>" +
                           str(action["manifest_position"]) + ". " + ref + "</a>" +
@@ -612,6 +636,7 @@ def html(report):
                           (" · <em>Parallel: " +
                            escape(HUMAN_GATE_LABELS_NL[action["parallel_human_gate"]]) +
                            "</em>" if action["parallel_human_gate"] else "") +
+                          ("<ul>" + "".join(check_links_html) + "</ul>" if check_links_html else "") +
                           " <small>HISTORISCH / geen mergevrijgave</small></li>")
     lane_totals = " · ".join(escape(OWNER_LANES[lane]) + ": " +
                              str(report["owner_attention_lane_counts"][lane])
