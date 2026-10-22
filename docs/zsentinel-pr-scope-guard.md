@@ -783,6 +783,16 @@ JSON ontvangt `workstream`, `operator_primary_step`, `operator_action_link` per 
 
 Voor een concrete brongebonden operatorbundel: voer de bestaande `scripts/zsentinel_pr_scope_portfolio.py` uit met `--inspect-current-pr-gates`, de gewenste `--gate-pr project#nummer`, `--format workorders-html` (of `workorders`, `workorders-json`, `workorders-csv`) en een **nieuw** privé `--output`-pad. Geen QA-/regressie- of CI-rerun maakt deel uit van dit product.
 
+### 22 oktober · Falende GitHub-jobs en lang wachtende CI direct afhandelen
+
+De merge-first werkbank opent bij een daadwerkelijk op de exacte PR-HEAD waargenomen falende **Check Run** of `failure/error` legacy-statuscontext voortaan de bestaande **specifieke GitHub-job** in plaats van uitsluitend een algemene PR-checkslijst. De operatoractie blijft handmatig; de bron geeft geen bevoegdheid om een job opnieuw te starten, te annuleren of te mergen. Naast de primaire actie zijn de overige waargenomen checklinks beschikbaar.
+
+**Lang queued CI:** de bestaande read-only exacte-HEAD GitHub Check Runs worden gecontroleerd op `status=queued` en een geldig GitHub `created_at`-tijdstip. Na **30 minuten** kan een job in de menselijke werkvoorraad voor onderzoek naar runnerlabels, GitHub repository-/runnergroeptoegang en concurrency worden getoond. De bronlezer bewaart `queued_age_seconds_observed`, `queued_attention_30m`, het totale waargenomen aantal en het aantal `queued` jobs waarvan de leeftijd onbekend is. Alle aantallen zijn beperkte **momentopnames**, geen bewijs dat een self-hosted runner offline is of dat een PR automatisch gefaald heeft. Een ontbrekend, ongeldig of toekomstig tijdstip levert **ONBEKEND**, niet een verzonnen ouderdom. Alleen zichtbaar geselecteerde GitHub-checks leveren directe joblinks; verborgen extra's blijven expliciet als onvolledige dekking vermeld.
+
+De status verschijnt in de huidige PR-gate-CLI, portfolio-overzicht, read-only issuecockpit en privé werkorders (JSON, HTML, Markdown, CSV). De operatorwerkvoorraad brengt lang queued jobs naar voren als *onderzoek door eigenaar*, niet als automatische workflow-retry; bij een bestaande falende check heeft die concrete fout voorrang. Een ouder/onzeker PR-bronmoment wordt niet gepromoveerd tot vrije actie. Parallel review aanvragen terwijl CI loopt wordt niet geadviseerd bij een falende legacy-status of onbekende Check Run-toestand. De 30-minutengrens is een gebruikerssignaal en **geen nieuwe CI-/security-/branch-/reviewgate**.
+
+De bekende issue [#1326](https://github.com/Zennay/zCloud/issues/1326) beschrijft verschillende runnerlabel-/repositoryroutes en veranderende runnerstatussen; het product concludeert daarom bewust **niet** dat `zcloud-vps-1` offline is. Operatoren raadplegen eerst de betreffende GitHub-job en de huidige bevoegde eigenaar. Geen runnerwijziging, extra workflowdispatch, claim, SQLite-write, CI-bypass of deploy.
+
 ### Direct Dutch triage without exporting JSON
 
 The same bounded CLI supports `--format text` for an immediately readable
