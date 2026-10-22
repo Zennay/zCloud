@@ -1,0 +1,109 @@
+name: zCloud read-only workflow shell-expression ratchet
+
+on:
+  push:
+    branches:
+      - deployops/workflow-shell-expression-ratchet-20261015-w1
+    paths:
+      - scripts/zcloud_shell_expression_ratchet_20261015.py
+      - tests/test_zcloud_shell_expression_ratchet_20261015.py
+      - .github/workflows/zcloud-shell-expression-ratchet-20261015.yml
+      - docs/zcloud-shell-expression-ratchet-20261015.md
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '**/action.yml'
+      - '**/action.yaml'
+      - 'action.yml'
+      - 'action.yaml'
+      - scripts/zcloud_shell_expression_ratchet_20261015.py
+      - tests/test_zcloud_shell_expression_ratchet_20261015.py
+      - .github/workflows/zcloud-shell-expression-ratchet-20261015.yml
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-shell-expression-ratchet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-only:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable candidate without stored credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify exact head and current main
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git check-ref-format --branch "$EXPECTED_BRANCH"
+          test "$(git ls-remote --exit-code origin "refs/heads/$EXPECTED_BRANCH" | cut -f1)" = "$EXPECTED_HEAD"
+          git fetch --no-tags origin main
+          base_sha="$(git rev-parse origin/main)"
+          test "$base_sha" = "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
+          git merge-base --is-ancestor "$base_sha" "$EXPECTED_HEAD"
+          echo "BASE_SHA=$base_sha" >> "$GITHUB_ENV"
+      - name: Run adversarial offline source tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_shell_expression_ratchet_20261015
+          python3 -m py_compile scripts/zcloud_shell_expression_ratchet_20261015.py
+      - name: Refuse any new dangerous run expression relative to exact main
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_shell_expression_ratchet_20261015.py \
+            --base "$BASE_SHA" --head "$EXPECTED_HEAD" \
+            | tee shell-expression-evidence.json
+          # Two-point source freshness is a rejection gate, not an atomic snapshot.
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          test "$(git ls-remote --exit-code origin "refs/heads/$EXPECTED_BRANCH" | cut -f1)" = "$EXPECTED_HEAD"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          payload = json.loads(Path('shell-expression-evidence.json').read_text())
+          assert payload['schema'] == 'zcloud-shell-expression-ratchet-v1'
+          assert payload['inventory_complete'] is True
+          assert payload['base_sha'] == os.environ['BASE_SHA']
+          assert payload['head_sha'] == os.environ['EXPECTED_HEAD']
+          assert payload['baseline_risks'] == sum(item['risk_count'] for item in payload['baseline_risky_workflows'])
+          assert payload['candidate_risks'] == sum(item['risk_count'] for item in payload['candidate_risky_workflows'])
+          assert payload['baseline_risks'] == sum(item['count'] for item in payload['baseline_risk_kinds'])
+          assert payload['candidate_risks'] == sum(item['count'] for item in payload['candidate_risk_kinds'])
+          assert payload['new_risks'] == 0
+          assert payload['new_risk_kinds'] == []
+          assert payload['new_risky_workflows'] == []
+          assert payload['affected_workflows'] == []
+          assert payload['release_authorized'] is False
+          assert payload['deployment_authorized'] is False
+          assert payload['mutation_performed'] is False
+          # Show only redacted, bounded findings after passing exact-commit admission.
+          if os.environ.get('GITHUB_STEP_SUMMARY'):
+              from scripts.zcloud_shell_expression_ratchet_20261015 import markdown_summary
+              with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+                  summary.write(markdown_summary(payload))
+          print('ZCLOUD_SHELL_EXPRESSION_NO_NEW_DEBT_GREEN=1')
+          PY
