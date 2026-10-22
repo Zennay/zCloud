@@ -447,7 +447,24 @@ def human(report, markdown=False):
         "review, actieve ownerclaim en release zijn NIET geverifieerd.",
     ]
     lines.append("")
-    lines.append("## Eerst bekijken: menselijke merge-first werkbak" if markdown
+    lines.append("## Nu oppakken: brongebonden eigenaaracties" if markdown
+                 else "Nu oppakken: brongebonden eigenaaracties")
+    for lane in OWNER_LANE_ORDER:
+        lines.append("- " + OWNER_LANES[lane] + ": " +
+                     str(report["owner_attention_lane_counts"][lane]) + " waargenomen")
+    for action in report["owner_attention_queue_preview"]:
+        ref = ("[" + action["url"] + "](" + action["url"] + ")"
+               if markdown else action["url"])
+        lines.append("- " + str(action["manifest_position"]) + ". " + ref +
+                     " · " + OWNER_LANES[action["owner_lane"]] +
+                     " · " + HUMAN_GATE_LABELS_NL.get(action["human_next_gate"],
+                                                     "Herlees actuele GitHub-bron.") +
+                     " · GEEN merge-/claimvrijgave")
+    if report["owner_attention_queue_hidden_after_24"]:
+        lines.append(str(report["owner_attention_queue_hidden_after_24"]) +
+                     " extra bronitems buiten de compacte eigenaarselectie.")
+    lines.append("")
+    lines.append("## Oorspronkelijke manifestprioriteit: menselijke merge-first werkbak" if markdown
                  else "Eerst bekijken: menselijke merge-first werkbak")
     for action in report["manual_review_queue_preview"]:
         link = ("[" + action["url"] + "](" + action["url"] + ")"
@@ -516,6 +533,31 @@ def html(report):
                            escape(action.get("target_branch_observed") or "ONBEKEND") +
                            " · " + category + " · " + step +
                            " · HANDMATIG / GEEN MERGE</small></li>")
+    lane_items = []
+    for action in report["owner_attention_queue_preview"]:
+        ref = escape(action["url"], quote=True)
+        lane = action["owner_lane"]
+        if lane not in OWNER_LANES:
+            raise ValueError("unknown private owner attention lane")
+        reason = escape(HUMAN_GATE_LABELS_NL.get(action["human_next_gate"],
+                                                 "Herlees actuele GitHub-bron."))
+        lane_items.append("<li><strong>" + escape(OWNER_LANES[lane]) + "</strong> · "
+                          "<a rel='noopener noreferrer' href='" + ref + "'>" +
+                          str(action["manifest_position"]) + ". " + ref + "</a>" +
+                          " · " + reason +
+                          " <small>HISTORISCH / geen mergevrijgave</small></li>")
+    lane_totals = " · ".join(escape(OWNER_LANES[lane]) + ": " +
+                             str(report["owner_attention_lane_counts"][lane])
+                             for lane in OWNER_LANE_ORDER)
+    attention_section = (
+        "<section><h2>Nu oppakken: eigenaaracties</h2>"
+        "<p>Geprioriteerd op geobserveerde problemen: reparaties en brononderzoek "
+        "vóór passief CI-wachten. De oorspronkelijke P0/P1-manifestprioriteit "
+        "blijft hieronder zichtbaar; dit zijn historische, niet-autoriserende "
+        "suggesties. Controleer actuele claims en HEAD opnieuw.</p>"
+        "<p>" + lane_totals + "</p><ol>" + "".join(lane_items) + "</ol><p>" +
+        str(report["owner_attention_queue_hidden_after_24"]) +
+        " extra PRs buiten deze compacte eigenaarselectie.</p></section>")
     queue_section = ("<section><h2>Eerst bekijken: menselijke PR-werkbak</h2>"
                      "<p>Prioriteit volgt het originele reviewmanifest. "
                      "Controleer actuele HEAD, eigenaar en vereiste rules live.</p><ol>" +
@@ -548,7 +590,7 @@ def html(report):
             ' seconden · binnen tien minuten: ' +
             str(report["cross_batch_observation_within_10_minutes"]) +
             '</p><strong>GEEN merge-, claim-, deploy- of reviewvrijgave. '
-            'Bron is niet live.</strong></header>' + queue_section + "".join(cards) +
+            'Bron is niet live.</strong></header>' + attention_section + queue_section + "".join(cards) +
             '<p>Geen GitHub- of runtime-mutaties uitgevoerd.</p></html>\n')
 
 
