@@ -157,7 +157,7 @@ branch protection and authorized merge/deploy rights.
 ## 22 October · collision receipt consistency at every output boundary
 
 The private PR workorder generator now validates the collision graph a second
-time at each HTML, Markdown and CSV render boundary. It recomputes the selected
+time at each HTML, Markdown and CSV render boundary and immediately before the JSON export. It recomputes the selected
 PR groups from the same bounded cards and rejects a group summary or per-card
 peer list that no longer matches the pinned observations. It also recomputes
 the receipt SHA-256 (excluding only the checksum field itself) and rejects a
