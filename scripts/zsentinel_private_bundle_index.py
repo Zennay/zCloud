@@ -13,6 +13,8 @@ from datetime import datetime, timezone, timedelta
 from html import escape
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 import re
 import sys
@@ -310,6 +312,39 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
     return json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
 
 
+def newest_private_bundles(directory: Path, maximum: int) -> list[str]:
+    """Bounded local receipt discovery; never trust a directory entry as a claim."""
+    if type(maximum) is not int or not 2 <= maximum <= MAX_BUNDLES:
+        raise ValueError("latest bundle count must be between 2 and 24")
+    fd = _open_private_directory(directory)
+    candidates = []
+    try:
+        with os.scandir(fd) as entries:
+            for index, entry in enumerate(entries):
+                if index >= 512:
+                    raise ValueError("private directory listing exceeds 512 entries")
+                suffix = ".receipt.json"
+                if not entry.name.endswith(suffix):
+                    continue
+                stem = entry.name[:-len(suffix)]
+                if STEM.fullmatch(stem) is None:
+                    continue
+                info = entry.stat(follow_symlinks=False)
+                if (not stat.S_ISREG(info.st_mode)
+                        or info.st_uid != os.geteuid()
+                        or stat.S_IMODE(info.st_mode) != 0o600
+                        or info.st_nlink != 1):
+                    raise BundleInvalid("non-private candidate receipt in directory")
+                candidates.append((info.st_mtime_ns, stem))
+    finally:
+        os.close(fd)
+    if len(candidates) < maximum:
+        raise ValueError("fewer private bundle receipts than requested")
+    # Receipt modification time determines the discovery window, not the
+    # historical issue chronology. Every chosen bundle is verified below.
+    return [stem for _, stem in sorted(candidates, reverse=True)[:maximum]]
+
+
 def build_index(directory: Path, stems: list[str], name: str,
                 output_format: str = "html") -> dict:
     if type(name) is not str or INDEX.fullmatch(name) is None:
@@ -342,15 +377,21 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True,
                         help="Existing user-owned 0700 directory with saved bundles")
-    parser.add_argument("--bundle", action="append", required=True,
+    parser.add_argument("--bundle", action="append", default=[],
                         help="Saved bundle stem; repeat 2–24 times")
+    parser.add_argument("--latest", type=int,
+                        help="Discover newest 2–24 private receipts (mtime only; not live)")
     parser.add_argument("--name", required=True,
                         help="New create-only index stem")
     parser.add_argument("--format", choices=("html", "json"), default="html",
                         help="Script-free offline HTML or non-authorizing machine JSON")
     args = parser.parse_args(argv)
     try:
-        result = build_index(args.directory, args.bundle, args.name, args.format)
+        if args.latest is not None and args.bundle:
+            raise ValueError("choose explicit --bundle or --latest, not both")
+        stems = (newest_private_bundles(args.directory, args.latest)
+                 if args.latest is not None else args.bundle)
+        result = build_index(args.directory, stems, args.name, args.format)
     except (OSError, BundleInvalid, ValueError, TypeError, KeyError) as exc:
         print("zSentinel offline history refused: " +
               (str(exc) if isinstance(exc, (BundleInvalid, ValueError))
