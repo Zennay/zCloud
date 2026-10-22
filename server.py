@@ -5092,6 +5092,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not action_request_allowed(self):return self.reply({'error':'Acties zijn alleen toegestaan vanaf een vertrouwd beheer-IP'},403)
                 action=str(payload.get('action') or 'enqueue').lower()
                 try:
+                    if action=='inspect_blocked':
+                        # This POST shares the existing privileged operator
+                        # boundary but performs only one queue SELECT.
+                        item=portfolio_queue_recovery_inspect(payload.get('queue_id'))
+                        return self.reply({'ok':True,'result':item,'time':now()})
                     if action=='enqueue':
                         item=portfolio_queue_enqueue(
                             payload.get('project_id'),payload.get('title'),payload.get('priority') or 'P2',
