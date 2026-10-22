@@ -1654,7 +1654,7 @@ def graph_markdown(report):
                      " verschillende gedeelde paden.")
         for pr in cluster["participating_prs"]:
             lines.append("- [PR #" + str(pr["number"]) + "](" + pr["url"] +
-                         ") · HEAD " + pr["head_sha"][:12] + " · " +
+                         ") · HEAD " + pr["head_sha"][:12] + " · doelbranch " + pr["base_ref"] + " · " +
                          str(pr["other_prs_with_shared_files_observed"]) +
                          " directe bestandsverbindingen")
         for file_row in cluster["shared_file_pr_matrix"]:
@@ -1662,6 +1662,7 @@ def graph_markdown(report):
             for pr in file_row["touching_prs"]:
                 lines.append("    - [PR #" + str(pr["number"]) + "](" + pr["url"] +
                              ") · HEAD " + pr["head_sha"][:12] +
+                             " · doelbranch " + pr["base_ref"] +
                              (" · gedeeltelijke bronbestandslijst"
                               if not pr["source_file_list_complete"] else ""))
         if cluster["shared_files_sample_truncated"]:
@@ -1674,7 +1675,8 @@ def graph_markdown(report):
         lines.append("- [#" + str(left["number"]) + "](" + left["url"] +
                      ") ↔ [#" + str(right["number"]) + "](" + right["url"] +
                      "): " + str(row["shared_file_count_observed"]) +
-                     " waargenomen gedeelde bestanden")
+                     " waargenomen gedeelde bestanden (doelbranches " +
+                     left["base_ref"] + " ↔ " + right["base_ref"] + ")")
     if not report["shown_file_collision_pairs"]:
         lines.append("Geen gemeenschappelijke bestandsnamen waargenomen.")
     lines.extend(["", "## Bestand/map-ancestorconflicten", "",
@@ -1685,7 +1687,9 @@ def graph_markdown(report):
         left, right = row["left"], row["right"]
         lines.append("- [#" + str(left["number"]) + "](" + left["url"] +
                      ") ↔ [#" + str(right["number"]) + "](" + right["url"] +
-                     "): " + str(row["path_conflict_count_observed"]) + " padparen")
+                     "): " + str(row["path_conflict_count_observed"]) +
+                     " padparen (doelbranches " + left["base_ref"] + " ↔ " +
+                     right["base_ref"] + ")")
         for conflict in row["path_conflicts"]:
             lines.append("  - `" + conflict["left_path"].replace("`", "\\`") +
                          "` ↔ `" + conflict["right_path"].replace("`", "\\`") +
@@ -1711,7 +1715,8 @@ def graph_markdown(report):
                      " waargenomen padconflicten.")
         for pr in cluster["participating_prs"]:
             lines.append("- [PR #" + str(pr["number"]) + "](" + pr["url"] +
-                         ") · HEAD " + pr["head_sha"][:12] + " · " +
+                         ") · HEAD " + pr["head_sha"][:12] + " · doelbranch " +
+                         pr["base_ref"] + " · " +
                          str(pr["other_prs_with_scope_conflicts_observed"]) +
                          " directe scopeverbindingen")
         for conflict in cluster["path_conflicts_sample"]:
