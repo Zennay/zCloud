@@ -839,8 +839,8 @@ def render(report, fmt):
         "",
     ]
     lines.extend(["## Bestaande PR's om eerst te inspecteren", "",
-                  "Sortering: echte gedeelde bestanden, daarna tekstuele "
-                  "issue/PR-nummerhints; nooit merge- of claimvrijgave.", ""])
+                  "Sortering: exacte gedeelde bestanden, daarna bestand/map-scopeparen en "
+                  "daarna tekstuele issue/PR-nummerhints; nooit merge- of claimvrijgave.", ""])
     for item in report["prioritized_existing_prs"]:
         lines.append("- [PR #" + str(item["pr_number"]) + "](" + item["url"] +
                      ") · doelbranch " + str(item.get("base_ref_observed") or "ONBEKEND") +
@@ -1084,8 +1084,8 @@ def render(report, fmt):
         " · bron: " + escape(report["collection_mode"]) +
         "</p><aside>Geen atomische live bron, eigenaars- of mergevrijgave. "
         "Andere GitHub-pagina's blijven UNKNOWN.</aside>"
-        "<h2>Bestaande PRs om eerst te inspecteren</h2><p>Bestandsbotsingen "
-        "eerst, onzekere nummerhints daarna. GEEN vrijgave.</p><ol>" +
+        "<h2>Bestaande PRs om eerst te inspecteren</h2><p>Exacte bestandsbotsingen "
+        "eerst, daarna bestand/map-scopeparen en onzekere nummerhints. GEEN vrijgave.</p><ol>" +
         (shortlist_rows or "<li>Geen botsing in de gelezen vensters.</li>") +
         "</ol><p>" +
         ("WAARSCHUWING: sommige PR-bestandlijsten zijn gedeeltelijk."
