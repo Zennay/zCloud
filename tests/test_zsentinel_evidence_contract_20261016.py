@@ -1,0 +1,281 @@
+"""Adversarial zSentinel QA contract: identity isolation, strict schema and conflicting receipts."""
+from __future__ import annotations
+
+import importlib.util
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location(
+    "zsentinel_diagnose_contract", ROOT / "scripts" / "zsentinel_diagnose.py"
+)
+sentinel = importlib.util.module_from_spec(spec)
+assert spec and spec.loader
+spec.loader.exec_module(sentinel)
+
+NOW = datetime(2026, 10, 16, 22, 0, tzinfo=timezone.utc)
+HEAD = "b" * 40
+
+
+def timestamp(minutes: int = 0) -> str:
+    return (NOW + timedelta(minutes=minutes)).isoformat()
+
+
+def snapshot(project: dict, **overrides: object) -> dict:
+    return {"schema_version": 1, "observed_at": timestamp(-1),
+            "projects": [project], **overrides}
+
+
+def queued(**changes: object) -> dict:
+    evidence = {"job_status": "queued", "observed_at": timestamp(-1),
+                "queued_at": timestamp(-45), "runner_assigned": False,
+                "head_sha": HEAD}
+    evidence.update(changes)
+    return {"id": "cloud", "github": evidence}
+
+
+def failed(**changes: object) -> dict:
+    evidence = {"job_status": "completed", "observed_at": timestamp(-1),
+                "conclusion": "failure", "head_sha": HEAD}
+    evidence.update(changes)
+    return {"id": "cloud", "github": evidence}
+
+
+def inspect(project: dict) -> dict:
+    return sentinel.diagnose(snapshot(project), NOW)
+
+
+class ZSentinelEvidenceContractTests(unittest.TestCase):
+    def test_boolean_schema_version_not_alias_of_integer_one(self):
+        with self.assertRaisesRegex(ValueError, "schema_version"):
+            sentinel.diagnose(snapshot(queued(), schema_version=True), NOW)
+
+    def test_non_hashable_project_id_rejected_as_input_error(self):
+        for ident in ([], {}, {"nested": True}, 17, None):
+            with self.subTest(ident=repr(ident)):
+                with self.assertRaisesRegex(ValueError, "project identifiers"):
+                    sentinel.diagnose(snapshot({"id": ident}), NOW)
+
+    def test_project_identifier_is_ascii_slug_only(self):
+        for ident in ("clоud", "clöud", "Cloud", "-cloud", "cloud-", "cloud__x"):
+            with self.subTest(ident=ident):
+                with self.assertRaisesRegex(ValueError, "bounded slug"):
+                    inspect({"id": ident})
+        self.assertEqual("cloud-v2_qa", inspect({"id": "cloud-v2_qa"})["projects"][0]["project_id"])
+
+    def test_same_job_receipt_yields_stable_fingerprint(self):
+        one = inspect(queued(run_id=178, job_id=309))["incidents"][0]["incident_id"]
+        two = inspect(queued(run_id=178, job_id=309,
+                             observed_at=timestamp(-2)))["incidents"][0]["incident_id"]
+        self.assertEqual(one, two)
+
+    def test_distinct_run_or_job_do_not_suppress_each_other(self):
+        same_head_different_run = [
+            inspect(queued(run_id=100, job_id=300))["incidents"][0]["incident_id"],
+            inspect(queued(run_id=101, job_id=300))["incidents"][0]["incident_id"],
+            inspect(queued(run_id=100, job_id=301))["incidents"][0]["incident_id"],
+        ]
+        self.assertEqual(len(same_head_different_run), len(set(same_head_different_run)))
+
+    def test_distinct_failed_workflows_same_sha_not_deduplicated(self):
+        a = inspect(failed(run_id=200))["incidents"][0]["incident_id"]
+        b = inspect(failed(run_id=201))["incidents"][0]["incident_id"]
+        self.assertNotEqual(a, b)
+        self.assertEqual("github_workflow_failed", inspect(failed(run_id=200))["incidents"][0]["reason"])
+
+    def test_legacy_incident_fingerprint_unchanged_without_job_identity(self):
+        actual = inspect(queued())["incidents"][0]["incident_id"]
+        self.assertEqual(sentinel.incident_id("cloud", "github-unassigned", HEAD), actual)
+
+    def test_ids_fail_closed_for_boolean_negative_float_string_and_overflow(self):
+        for field in ("run_id", "job_id"):
+            for bad in (True, False, 0, -1, 1.0, "222", 2**63):
+                with self.subTest(field=field, bad=bad):
+                    with self.assertRaisesRegex(ValueError, field):
+                        inspect(queued(**{field: bad}))
+
+    def test_terminal_status_cannot_disagree_with_conclusion(self):
+        for status, conclusion in (("success", "failure"), ("failure", "success"),
+                                   ("cancelled", "failure")):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(ValueError, "contradictory terminal status"):
+                    inspect(failed(job_status=status, conclusion=conclusion))
+
+    def test_matching_legacy_terminal_status_still_classifies(self):
+        for status in ("failure", "success", "cancelled"):
+            item = inspect(failed(job_status=status, conclusion=status))["projects"][0]
+            self.assertEqual("stalled" if status == "failure" else "unknown", item["state"])
+
+    def test_new_identity_not_exposed_as_raw_payload(self):
+        item = inspect(queued(run_id=222, job_id=333))
+        blob = str(item)
+        self.assertNotIn("run_id", blob)
+        self.assertNotIn("job_id", blob)
+        self.assertFalse(item["mutations_performed"])
+        self.assertFalse(item["deploy_authorized"])
+
+    def test_wait_and_owner_gates_take_precedence_over_incident(self):
+        guarded = queued(run_id=900)
+        guarded["notion"] = {"human_gate": True}
+        self.assertEqual([], inspect(guarded)["incidents"])
+        guarded["notion"] = {}
+        guarded["github"]["active_owner_pr"] = True
+        self.assertEqual("owner_held", inspect(guarded)["projects"][0]["state"])
+
+
+    def test_stringified_safety_flags_are_rejected_before_any_diagnosis(self):
+        examples = (
+            ("notion", "human_gate"),
+            ("github", "active_owner_pr"),
+            ("github", "runner_assigned"),
+            ("runtime", "ownership_locked"),
+        )
+        for source, field in examples:
+            for bad in ("true", "false", "1", 1, 0, None):
+                with self.subTest(source=source, field=field, bad=bad):
+                    project = queued()
+                    project.setdefault(source, {})[field] = bad
+                    with self.assertRaisesRegex(ValueError, field):
+                        inspect(project)
+
+    def test_boolean_stop_gates_preempt_old_stalled_github_evidence(self):
+        for source, field, expected in (
+            ("notion", "human_gate", "intentional_wait"),
+            ("github", "active_owner_pr", "owner_held"),
+            ("runtime", "ownership_locked", "owner_held"),
+        ):
+            with self.subTest(field=field):
+                project = queued()
+                project.setdefault(source, {})[field] = True
+                report = inspect(project)
+                self.assertEqual(expected, report["projects"][0]["state"])
+                self.assertEqual([], report["incidents"])
+
+    def test_explicit_false_gates_keep_unassigned_job_detectable(self):
+        project = queued()
+        project["notion"] = {"human_gate": False, "posture": "Active"}
+        project["github"]["active_owner_pr"] = False
+        project["runtime"] = {"ownership_locked": False}
+        self.assertEqual("github_job_unassigned", inspect(project)["incidents"][0]["reason"])
+
+    def test_unrecognized_notion_posture_cannot_silently_drop_stop_gate(self):
+        for bad in (None, True, "unknown", "Human_Blocked", 1):
+            with self.subTest(bad=bad):
+                project = queued()
+                project["notion"] = {"posture": bad}
+                with self.assertRaisesRegex(ValueError, "notion.posture"):
+                    inspect(project)
+
+    def test_canonical_project_postures_preserve_intentional_waits(self):
+        for posture in ("Human-Blocked", "Paused", "Parked"):
+            with self.subTest(posture=posture):
+                project = queued()
+                project["notion"] = {"posture": posture}
+                self.assertEqual("intentional_wait", inspect(project)["projects"][0]["state"])
+
+
+    def test_same_runtime_claim_is_stably_deduplicated(self):
+        example = {"id": "cloud", "runtime": {"execution_state": "running",
+                   "heartbeat_at": timestamp(-25), "heartbeat_interval_seconds": 60,
+                   "claim_id": "queue-123:worker_1"}}
+        first = inspect(example)["incidents"][0]["incident_id"]
+        second = inspect(example)["incidents"][0]["incident_id"]
+        self.assertEqual(first, second)
+        self.assertNotIn("queue-123", str(inspect(example)))
+
+    def test_different_runtime_claims_produce_distinct_incidents(self):
+        keys = []
+        for claim in ("queue-123:worker_1", "queue-124:worker_1", "queue-123:worker_2"):
+            project = {"id": "cloud", "runtime": {"execution_state": "running",
+                       "heartbeat_at": timestamp(-25), "heartbeat_interval_seconds": 60,
+                       "claim_id": claim}}
+            keys.append(inspect(project)["incidents"][0]["incident_id"])
+        self.assertEqual(3, len(set(keys)))
+
+    def test_runtime_without_claim_remains_backward_compatible(self):
+        project = {"id": "cloud", "runtime": {"execution_state": "running",
+                   "heartbeat_at": timestamp(-25), "heartbeat_interval_seconds": 60}}
+        self.assertEqual(sentinel.incident_id("cloud", "runtime-no-progress"),
+                         inspect(project)["incidents"][0]["incident_id"])
+
+    def test_untrusted_runtime_claim_rejected_on_running_state(self):
+        for bad in ("", " ", "task id with spaces", "https://secret", "a" * 129,
+                    None, True, 12, {}, ["x"], "emoji-🔐", "foo\nbar"):
+            with self.subTest(bad=repr(bad)):
+                project = {"id": "cloud", "runtime": {"execution_state": "running",
+                           "heartbeat_at": timestamp(-25), "heartbeat_interval_seconds": 60,
+                           "claim_id": bad}}
+                with self.assertRaisesRegex(ValueError, "runtime.claim_id"):
+                    inspect(project)
+
+    def test_healthy_running_claim_never_counts_as_recovered(self):
+        project = {"id": "cloud", "runtime": {"execution_state": "running",
+                   "heartbeat_at": timestamp(-1), "heartbeat_interval_seconds": 60,
+                   "claim_id": "task-1"}}
+        report = inspect(project)
+        self.assertEqual("in_progress", report["projects"][0]["state"])
+        self.assertEqual([], report["incidents"])
+        self.assertFalse(report["deploy_authorized"])
+
+    def test_unhashable_github_status_rejected_with_sanitized_value_error(self):
+        for bad in ([], {}, ["queued"], {"value": "queued"}, 1, True):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaisesRegex(ValueError, "github.job_status"):
+                    inspect(queued(job_status=bad))
+
+    def test_unhashable_conclusions_cannot_crash_comparison(self):
+        for bad in ([], {}, ["failure"], 123, True, None):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaisesRegex(ValueError, "github.conclusion"):
+                    inspect(failed(conclusion=bad))
+
+    def test_falsy_nonstring_commit_identity_cannot_bypass_schema(self):
+        for bad in ([], {}, None, False, 0, ["a" * 40], "A" * 40, "abc"):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaisesRegex(ValueError, "github.head_sha"):
+                    inspect(queued(head_sha=bad))
+
+    def test_unknown_commit_remains_non_authorizing_legacy_diagnostic(self):
+        project = queued(head_sha="")
+        report = inspect(project)
+        self.assertEqual("github_job_unassigned", report["incidents"][0]["reason"])
+        self.assertFalse(report["deploy_authorized"])
+        self.assertFalse(report["mutations_performed"])
+
+    def test_nonstring_runtime_states_rejected(self):
+        for bad in ([], {}, True, 99):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaisesRegex(ValueError, "runtime.execution_state"):
+                    inspect({"id": "cloud", "runtime": {"execution_state": bad}})
+
+
+    def test_nonterminal_github_jobs_cannot_have_final_conclusions(self):
+        for status in ("queued", "waiting", "pending", "running", "in_progress"):
+            for final in ("success", "failure", "cancelled", "timed_out"):
+                with self.subTest(status=status, final=final):
+                    item = queued(job_status=status, conclusion=final)
+                    with self.assertRaisesRegex(ValueError, "nonterminal"):
+                        inspect(item)
+
+    def test_null_conclusion_is_allowed_for_running_jobs(self):
+        for status in ("running", "in_progress"):
+            item = queued(job_status=status, conclusion=None)
+            self.assertEqual("unknown", inspect(item)["projects"][0]["state"])
+
+    def test_queue_timestamp_after_observation_is_rejected(self):
+        entry = queued(observed_at=timestamp(-15), queued_at=timestamp(-1))
+        with self.assertRaisesRegex(ValueError, "queued_at"):
+            inspect(entry)
+
+    def test_valid_observed_queued_boundary_retains_no_false_incident(self):
+        entry = queued(observed_at=timestamp(-1), queued_at=timestamp(-30))
+        item = inspect(entry)["projects"][0]
+        self.assertEqual("stalled", item["state"])
+        entry["github"]["queued_at"] = timestamp(-29)
+        self.assertEqual("in_progress", inspect(entry)["projects"][0]["state"])
+
+
+
+if __name__ == "__main__":
+    unittest.main()
