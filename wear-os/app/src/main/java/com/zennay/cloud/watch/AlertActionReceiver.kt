@@ -26,7 +26,7 @@ class AlertActionReceiver : BroadcastReceiver() {
         if (intent.hasExtra(EXTRA_EPISODE_ID) &&
             (episodeId == null || !episodeId.matches(EPISODE_ID))) return
         val occurredAt = intent.getStringExtra(EXTRA_OCCURRED_AT)
-            ?.takeIf { it.length <= 64 && it.none(Char::isISOControl) }
+            ?.takeIf { it.length <= 64 && it.none { ch -> Character.isISOControl(ch) } }
 
         val alert = AlertItem(
             id = id,
