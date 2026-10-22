@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
+from html import escape
 import json
 from pathlib import Path
 import re
@@ -20,6 +21,46 @@ from zsentinel_product_delivery_board import (
 from zsentinel_operator_workbench import html_document, validated_view
 
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,50}$")
+
+def link_bundle_companions(desk: str, name: str, board_sha: str,
+                           owner_handoff: bool) -> str:
+    """Add local-only navigation to the finished desk, before receipt hashing.
+
+    No external request, code execution or source authorization is created.
+    The links deliberately use only the caller's restricted filename stem,
+    not absolute operator paths or raw issue/worker metadata.
+    """
+    if (type(desk) is not str or type(name) is not str
+            or NAME.fullmatch(name) is None or
+            type(board_sha) is not str or
+            re.fullmatch(r"[0-9a-f]{64}", board_sha) is None or
+            type(owner_handoff) is not bool):
+        raise ValueError("invalid private bundle navigation source")
+    closing = "</script></html>"
+    if desk.count(closing) != 1:
+        raise ValueError("operator desk HTML has no unique safe append boundary")
+    def local_link(ext: str, label: str) -> str:
+        filename = name + ext
+        return ("<li><a rel='noopener' href='" + escape(filename, quote=True) +
+                "'>" + escape(label) + "</a></li>")
+    links = (
+        local_link(".board.json", "Open oorspronkelijke bronkaart (JSON)") +
+        (local_link(".owner.md", "Open privé merge-first eigenaarsoverdracht")
+         if owner_handoff else "") +
+        local_link(".receipt.json", "Open brongebonden bundle receipt (JSON)")
+    )
+    nav = (
+        "</script><footer class='bundle-companions' role='contentinfo'>"
+        "<h2>Lokale bronbestanden van deze werkbak</h2>"
+        "<p>Alleen bestanden in dezelfde bestaande privémap; geen netwerk,"
+        " claim, review, CI, merge of deployment.</p>"
+        "<nav aria-label='Bijbehorende privé bronbestanden'><ul>" +
+        links + "</ul></nav><small>Oorspronkelijke board SHA-256: <code>" +
+        board_sha + "</code> · huidige GitHub-/Notion-staat niet bevestigd."
+        "</small></footer></html>"
+    )
+    return desk.replace(closing, nav)
+
 
 
 def build_bundle(*, inbox: Path, output_dir: Path, name: str,
@@ -69,6 +110,10 @@ def build_bundle(*, inbox: Path, output_dir: Path, name: str,
         from zsentinel_saved_issue_timeline import issue_worklist
         archived = issue_worklist(build_timeline(dossiers, minimum_sources=1))
     desk = html_document(admitted, board_sha, saved_pr_context=archived)
+    # Companion files are authored by this same create-only bundle and their
+    # relative names are source-independent. Include links before hashing the
+    # HTML into the receipt, so verification covers the visible navigation.
+    desk = link_bundle_companions(desk, name, board_sha, owner_handoff)
     owner_markdown = None
     owner_count = None
     if owner_handoff:
