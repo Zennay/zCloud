@@ -758,6 +758,19 @@ def output_text(report, markdown=False):
             link = ("[" + pr["url"] + "](" + pr["url"] + ")" if markdown else pr["url"])
             lines.append("  " + link + " · " + pr["file_scope_state"] +
                          " · " + pr["issue_link_source"])
+            for peer in pr.get("file_directory_conflict_peers", []):
+                other = ("[" + peer["url"] + "](" + peer["url"] + ")"
+                         if markdown else peer["url"])
+                lines.append(
+                    "    BESTAND/MAP-scope: " + other + " · waargenomen peer HEAD " +
+                    peer["head_sha_observed"][:12] +
+                    " · padparen " + str(peer["path_pairs_observed"]) +
+                    " · " + operator_inline(peer["own_path_sample"], markdown) +
+                    " ↔ " + operator_inline(peer["peer_path_sample"], markdown) +
+                    (" · extra voorbeelden verborgen" if peer["path_examples_truncated"] else "") +
+                    " · geen bewezen Git mergeconflict of eigenaarschap")
+            if pr.get("file_directory_conflict_peers_truncated"):
+                lines.append("    Bestand/map-PR-partners deels verborgen; bron incompleet.")
             for event in pr.get("historical_source_events", []):
                 lines.append("    HISTORISCH: " + event["text_nl"] +
                              (" · " + event["related_pr_url"] if event["related_pr_url"] else "") +
@@ -1004,6 +1017,18 @@ def output_html(report):
                 "<li><a rel='noopener noreferrer' href='" + escape(other, quote=True) +
                 "'>" + escape(other) + "</a></li>"
                 for other in pr["overlap_with_open_prs"])
+            ancestor_rivals = "".join(
+                "<li><a rel='noopener noreferrer' href='" +
+                escape(peer["url"], quote=True) + "'>" +
+                escape(peer["url"]) + "</a> · waargenomen HEAD " +
+                escape(peer["head_sha_observed"][:12]) +
+                " · ancestor-padparen " + str(peer["path_pairs_observed"]) +
+                " · <code>" + escape(peer["own_path_sample"]) +
+                "</code> ↔ <code>" + escape(peer["peer_path_sample"]) +
+                "</code>" +
+                (" · meer padvoorbeelden ontbreken" if peer["path_examples_truncated"] else "") +
+                " · géén bewezen Git mergeconflict, eigenaar of vrijgave</li>"
+                for peer in pr.get("file_directory_conflict_peers", []))
             live_gate = pr.get("live_exact_head_review_checks_observation")
             live_note = (
                 "<p><strong>ACTUELE PR-HEAD " +
@@ -1067,7 +1092,16 @@ def output_html(report):
                 ("<details><summary>Historische PR-verandering</summary><ul>" +
                  history_links + "</ul><p>Geen fix of release geverifieerd.</p></details>"
                  if history_links else "") +
-                ("<ul>" + rivals + "</ul>" if rivals else "") + "</li>")
+                ("<ul>" + rivals + "</ul>" if rivals else "") +
+                ("<details><summary>Bestand/map-conflictpartners (" +
+                 str(len(pr["file_directory_conflict_peers"])) +
+                 ")</summary><ul>" + ancestor_rivals +
+                 "</ul><p>Extra partnerkaarten ontbreken.</p></details>"
+                 if pr.get("file_directory_conflict_peers_truncated") else
+                 "<details><summary>Bestand/map-conflictpartners (" +
+                 str(len(pr["file_directory_conflict_peers"])) +
+                 ")</summary><ul>" + ancestor_rivals +
+                 "</ul></details>" if ancestor_rivals else "") + "</li>")
         card_anchor = ("issue-card-" + row["project"] + "-" +
                        row["issue"].rsplit("#", 1)[-1])
         cards.append(
@@ -1457,7 +1491,10 @@ def main(argv=None):
                 and not report["saved_gate_batch_reconciliation"]["saved_bundle_complete_and_recent"]):
             return 3
         return 2 if any(p["existing_prs"] and any(
-            ref["file_scope_state"] == "shared_file_paths_observed"
+            ref["file_scope_state"] in (
+                "shared_file_paths_observed",
+                "file_directory_ancestor_conflicts_observed")
+            or bool(ref.get("file_directory_conflict_peers"))
             for ref in p["existing_prs"]) for p in report["issues"]) else (
             3 if not pr_scope["source_coverage_complete"] else 0)
     except OSError:
