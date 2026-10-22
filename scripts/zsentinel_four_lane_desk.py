@@ -431,17 +431,20 @@ def observe_local_contract(path):
 def collect(database, maximum, include_runner_processes=False, contracts_file=None, include_host_pressure=True):
     """Capture one bounded, read-only SQLite snapshot without owner identities."""
     path = Path(database).absolute()
-    if not path.is_file():
-        raise ValueError("SQLite source unavailable")
+    # Reject a symlink at the supplied database path instead of silently
+    # following it to a different queue timeline or source file.
+    try:
+        source_before = path.lstat()
+    except OSError as exc:
+        raise ValueError("SQLite source unavailable") from exc
+    if stat.S_ISLNK(source_before.st_mode) or not stat.S_ISREG(source_before.st_mode):
+        raise ValueError("Regular non-symlink portfolio SQLite source required")
     contract_path = Path(contracts_file).absolute() if contracts_file else (
         path.parent / "project-contracts.json"
     )
     local_contract = observe_local_contract(contract_path)
     # Path equality alone would trust a restored/replaced SQLite DB as the
     # same timeline. Bind owner receipts to the actual local file identity.
-    source_before = path.stat()
-    if not stat.S_ISREG(source_before.st_mode):
-        raise ValueError("Regular portfolio SQLite source required")
     uri = path.as_uri() + "?mode=ro"
     db = sqlite3.connect(uri, uri=True, timeout=2)
     try:
@@ -784,9 +787,10 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             or missing_local_claim
         ),
     }
-    source_after = path.stat()
-    if ((source_before.st_dev, source_before.st_ino) !=
-            (source_after.st_dev, source_after.st_ino)
+    source_after = path.lstat()
+    if (stat.S_ISLNK(source_after.st_mode)
+            or (source_before.st_dev, source_before.st_ino) !=
+               (source_after.st_dev, source_after.st_ino)
             or not stat.S_ISREG(source_after.st_mode)):
         raise ValueError("Portfolio SQLite source changed during observation")
     packet["portfolio_source_key"] = hashlib.sha256(
