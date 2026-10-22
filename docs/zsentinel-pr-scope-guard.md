@@ -3555,20 +3555,25 @@ bestaande merge-HOLD van kracht.
 De bestaande `scripts/zsentinel_pr_scope_portfolio.py` ondersteunt nu
 `--inspect-runner-queue` voor **afzonderlijke, read-only GitHub Actions
 bronnen**. Per geregistreerd project worden maximaal twee workflowruns in
-status `queued` en twee in `in_progress` gelezen, met maximaal zestien
-jobs per run; de maximale nieuwe bronbelasting is zes GitHub GETs/project.
-De standaard blijft UIT. De operator kan dit combineren met bestaande
-`--inspect-current-pr-gates`, zonder extra workflow, testsuite, service
-of agent te starten.
+status `queued`, twee in `in_progress` en twee in `waiting` gelezen,
+met maximaal zestien jobs per niet-wachtende run; de maximale nieuwe
+bronbelasting is negen GitHub GETs/project. De standaard blijft UIT. De
+operator kan dit combineren met bestaande `--inspect-current-pr-gates`,
+zonder extra workflow, testsuite, service of agent te starten.
 
 Het bronmodel maakt onderscheid tussen `NO_ASSIGNMENT_OBSERVED`,
-`ASSIGNED_AT_READ` en `UNKNOWN`, met afzonderlijk de jobstatus,
-maximaal acht GitHub-runnerlabels, bronleeftijd en canonieke direct te openen
-Actions-joblinks. De bewijsverzameling is begrensd, niet-atomair en nooit
-hetzelfde als een volledige runner-inventaris. Een niet toegewezen job
-bewijst GEEN offline zCloud-listener; de eigenaar verifieert GitHub-repository/
-runnergroep/labels en, indien toegestaan en zonder actieve Runner.Worker te
-verstoren, de echte listener via zSSH.
+`ASSIGNED_AT_READ` en `UNKNOWN` voor **jobs**. Workflowstatus `waiting`
+staat apart als maximaal twee exacte run-/HEAD-links, omdat een omgeving-
+approval of concurrency-wacht kan bestaan voordat GitHub een job aanmaakt.
+De operator ziet de aparte wachtrijdekking (`bounded_observed`,
+`partial_window` of `unknown`), statusdrift en de canonieke workflowlinks.
+Dit is een bronmoment, geen bewijs dat iedere waiting-run uitsluitend op
+menselijke approval wacht, en zeker geen job-/runnerstoring. Jobkaarten
+behouden afzonderlijk de status, maximaal acht runnerlabels, bronleeftijd en
+canonieke Actions-joblinks. De steekproef is begrensd en niet-atomair; een
+niet toegewezen job bewijst GEEN offline zCloud-listener. De eigenaar
+verifieert GitHub-repository/runnergroep/labels en, indien toegestaan en
+zonder actieve Runner.Worker te verstoren, de echte listener via zSSH.
 
 JSON, operator-tekst, Markdown, offline scriptvrije HTML en private CSV
 bevatten de optionele diagnose. De individuele private PR-handoff neemt
@@ -3600,11 +3605,16 @@ of production release. Herstel blijft onder de echte eigenaar van issue #1326.
 ### Wachtrijdruk zonder verwarring tussen workflowrun en job
 
 De optionele runnerwachtrijkaart toont nu ook de door GitHub **gemelde
-aantallen workflowruns** per aangevraagde status (`queued`,
-`in_progress`) naast het aantal werkelijk bekeken runs. Deze telling
-wordt niet voorgesteld als het aantal afzonderlijke queued jobs of
-mislukte uitvoeringen. De CSV en private PR-eigenaarsoverdracht nemen
-dezelfde teller en de dekkingsgrens mee.
+aantallen workflowruns** per aangevraagde status (`queued`, `in_progress`,
+`waiting`) naast het aantal werkelijk bekeken runs. Deze telling wordt
+niet voorgesteld als het aantal afzonderlijke queued jobs of mislukte
+uitvoeringen. Workflowstatus `waiting` wordt apart getoond met maximaal
+twee exacte workflowlinks en SHA's, ook wanneer er geen job is aangemaakt.
+Een oude of ontbrekende receipt geeft expliciet `unknown`; een volledige
+bounded waiting-steekproef zonder resultaten betekent alleen dat op dit
+bronmoment geen workflow in die status is gezien. Statusdrift tussen de
+opeenvolgende GETs blijft zichtbaar. De CSV en private PR-eigenaarsoverdracht
+nemen dezelfde teller, workflowlinks en dekkingsgrens mee.
 
 Een directe read-only GitHub-broninspectie op 22 oktober leverde in een
 begrensd venster een statuslijst met `total_count=2500` queued
