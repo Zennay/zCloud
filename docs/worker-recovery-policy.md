@@ -506,7 +506,18 @@ python3 scripts/zsentinel_recovery_policy.py \\
 ```
 
 CSV requires `--output`, uses the existing create-only private 0600
-writer and includes at most 45 issue links. Columns carry the original
+writer and includes at most 45 issue links **per selected page**.
+Use `--inbox-page N` (1–5) with the same `--live-inbox-repo` command
+to select another page of the bounded P0-first issue sample, for example
+`--inbox-page 2 --format csv --output /your/private/issue-page-2.csv`.
+All four formats expose the selected page, number of sampled pages,
+omitted sampled issue count and explicit out-of-range source-page flag.
+Each page selection performs the same bounded source read with at most
+7 GETs, not an additional GitHub provider search in the same run. When
+run separately, page 2 is a **new observation time**, not an atomic
+continuation of page 1; compare original timestamps before interpreting
+cross-page changes. This pagination navigates only the sampled source
+(<=210 source rows), never claims an exhaustive GitHub backlog. Columns carry the original
 GitHub issue, unverified title hints, observed severity, source-window
 coverage, explicit human-only owner action code, and three short fields
 **problem / action / status**. CSV prefixes unsafe spreadsheet formulas,
