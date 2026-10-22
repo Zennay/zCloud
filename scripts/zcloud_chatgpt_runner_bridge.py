@@ -535,6 +535,7 @@ def runner_worker_snapshot() -> dict:
         capacity = _host_capacity_observation()
         state = "unavailable"
         return {
+            "schema": "zssh.runner-workers.v1",
             "state": state, "scan_coverage": "unavailable",
             "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "worker_process_band_observed": "unknown",
@@ -746,6 +747,7 @@ def runner_worker_snapshot() -> dict:
     )
     capacity = _host_capacity_observation()
     return {
+        "schema": "zssh.runner-workers.v1",
         "state": state,
         "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "scan_coverage": "partial" if partial else "bounded_proc_snapshot_complete",
