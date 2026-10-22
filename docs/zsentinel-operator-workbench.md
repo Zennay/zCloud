@@ -103,6 +103,10 @@ claim-, queue-, branch- of PR-signaal in die bundel;
 Ook `source_age_hours_by_kind`, de originele capture-freshnessvlaggen
 en `stale_or_not_fresh_at_capture_sources` worden teruggegeven. Een
 originele `fresh=false` wordt door een latere export nooit `fresh=true`.
+`missing_optional_source_names` en `saved_source_coverage_status` melden
+welke van de ondersteunde queue-, claim-, PR- of branchbronnen in de
+laatste opname ontbreken. Ontbrekend bronmateriaal is **onbekend**, niet
+nul issues, nul actieve leases of een geslaagde release.
 De standaardgrens is zes uur en is aanpasbaar met
 `--stale-after-hours 24` (1–168).
 Mogelijke toekomstige bronklokken (>2 minuten) worden
