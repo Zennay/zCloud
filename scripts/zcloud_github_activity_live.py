@@ -183,7 +183,10 @@ def read_live(registry: Path, project: str, kind: str = "activity") -> dict:
         while _RESERVATIONS and now-_RESERVATIONS[0][0] >= RATE_WINDOW_SECONDS:
             _RESERVATIONS.popleft()
         reserved = sum(cost for _, cost in _RESERVATIONS)
-        cost = 9 if kind == "activity" else 3
+        # Worst-case activity refresh: 5 PR pages + 2 Actions pages +
+        # 2 canonical-main commit pages + 1 branch-head page = 10 GETs.
+        # Reserve the full bounded cost before starting concurrent work.
+        cost = 10 if kind == "activity" else 3
         if reserved+cost > MAX_PROVIDER_REQUESTS_PER_HOUR:
             retry_after = max(60, int(
                 RATE_WINDOW_SECONDS-(now-_RESERVATIONS[0][0]))) if _RESERVATIONS else 3600
