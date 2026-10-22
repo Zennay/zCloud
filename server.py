@@ -3485,6 +3485,62 @@ def portfolio_queue_allocate():
                 new_workers_claimed += 1
     return selected
 
+def portfolio_queue_recovery_inspect(queue_id):
+    """Read-only operator diagnosis; never admission, clearance or a write permit.
+
+    Use the same authenticated portfolio queue endpoint and the current SQLite
+    source. This is an observation, NOT a substitute for the later transactional
+    source/owner checks in portfolio_queue_resume_blocked/portfolio_queue_drop.
+    """
+    queue_id=str(queue_id or '').strip()
+    if not queue_id or len(queue_id)>160:
+        raise ValueError('Een geldige queue_id is vereist voor herstelinspectie')
+    with connect() as c:
+        row=c.execute("SELECT * FROM portfolio_queue WHERE queue_id=?",(queue_id,)).fetchone()
+    ts=now()
+    if row is None:
+        return {'read_only':True,'observed_at':ts,'found':False,
+                'queue_id':queue_id,'resume_candidate':False,
+                'close_candidate':False,
+                'reason_codes':['task_not_found'],
+                'note':'No queue state changed; inspect the original source.'}
+    status=str(row['status'] or '')
+    project_id=str(row['project_id'] or '')
+    project=PROJECT_INDEX.get(project_id)
+    has_owner=any(row[name] is not None for name in ('worker_slot','claimed_at','claim_expires'))
+    eligible=int(row['eligible'] or 0)
+    reasons=[]
+    if status!='blocked':
+        reasons.append('task_not_blocked')
+    if status=='blocked' and eligible!=0:
+        reasons.append('blocked_task_eligible')
+    if has_owner:
+        reasons.append('claim_or_lease_still_bound')
+    if project is None:
+        reasons.append('project_registration_missing')
+    active=bool(project and str(project.get('status') or 'active')=='active')
+    human_gate=bool(project and str(project.get('queue_mode') or '').lower()=='human-gated')
+    if project and not active:
+        reasons.append('project_not_active')
+    if human_gate:
+        reasons.append('project_human_gated')
+    safely_parked=status=='blocked' and eligible==0 and not has_owner
+    close_candidate=bool(safely_parked and project is not None)
+    resume_candidate=bool(close_candidate and active and not human_gate)
+    if safely_parked:
+        reasons.append('operator_decision_and_fresh_source_required')
+    return {'read_only':True,'observed_at':ts,'found':True,
+            'queue_id':queue_id,'project_id':project_id,
+            'queue_status':status,'queue_updated_at':str(row['updated_at'] or ''),
+            'eligible':bool(eligible),'claim_or_lease_bound':has_owner,
+            'project_registered':project is not None,'project_active':active,
+            'project_human_gated':human_gate,
+            'resume_candidate':resume_candidate,'close_candidate':close_candidate,
+            'reason_codes':reasons,
+            'note':'Diagnostic snapshot only. A human dependency decision, new source read, '
+                   'full identity guard and existing transaction/permissions remain mandatory.'}
+
+
 def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
                          expected_status=None,expected_blocker=None,
                          expected_evidence=None,actor=None,
