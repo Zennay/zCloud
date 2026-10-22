@@ -4034,3 +4034,8 @@ succes geïnterpreteerd. De router onderscheidt expliciet:
 
 Hierdoor worden geldige GitHub-resultaten niet langer als een onbekende bron
 verworpen, terwijl geen enkele non-successconclusie stilzwijgend groen wordt.
+De offline HTML-cockpit gebruikt voor deze routes Nederlandse probleemtitels
+(bijvoorbeeld *jobconclusie verouderd*, *job neutraal/overgeslagen* en
+*startup mislukt*) en toont de bronlink alleen als de exacte run/job/SHA
+op basis van de canonieke projectregistratie kan worden bevestigd. De titel is
+triagehulp, geen conclusie dat de VPS of worker hersteld is.
