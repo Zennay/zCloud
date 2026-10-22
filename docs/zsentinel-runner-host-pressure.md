@@ -6,10 +6,24 @@ The existing `scripts/zsentinel_runner_triage.py` supports an opt-in
 `--observe-host-pressure` on the **intended vps-bb300bba host**. The
 same source-bounded owner workbench now shows (1) the existing exact GitHub
 run/job read, (2) the current `Runner.Listener`/`Runner.Worker` observation,
-and (3) the live host root-filesystem/inode/memory headroom. The host sample
+(3) the fixed zCloud runner systemd unit's selected state properties, and
+(4) the live host root-filesystem/inode/memory headroom. The host sample
 is strictly advisory and is recorded alongside the exact GitHub source. This
 helps operators triage P0 [zCloud issue #1326](https://github.com/Zennay/zCloud/issues/1326)
 without claiming the self-hosted runner is registered, healthy, idle or restarted.
+
+The local observer also runs a **read-only, three-second-bounded**
+`/usr/bin/systemctl show` for the single configured unit
+`actions.runner.Zennay-zCloud.zcloud-vps-1.service`. It requests only
+`LoadState`, `ActiveState`, `SubState`, `UnitFileState` and `Result`;
+output is capped at 4 KiB and checked against a fixed property/value allowlist.
+It does not invoke service actions, inspect the journal, read unit-file contents,
+or expose PIDs, command lines, registration credentials or environment files.
+If systemd is absent, denied or times out, the report says **UNKNOWN** and keeps
+the separate process observation. A unit reported active while the listener is
+missing (or vice versa) remains a discrepancy for the authorized owner, never
+an automatic restart decision. The HTML/text workbench labels this separately
+from GitHub registration and exact-job assignment.
 
 The new `zsentinel_runner_host_pressure.py` reader pins the root directory
 with `O_NOFOLLOW` and reads capacity through `fstatvfs`; it reuses
