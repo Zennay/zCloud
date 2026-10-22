@@ -532,8 +532,12 @@ def collect_workorders(board):
             raise ValueError("duplicate selected PR")
         seen.add(url)
         head, base = item.get("head_sha"), item.get("base_sha")
+        base_ref = item.get("base_ref")
         pinned = bool(type(head) is str and SHA.fullmatch(head) and
                       type(base) is str and SHA.fullmatch(base) and
+                      type(base_ref) is str and 1 <= len(base_ref) <= 255 and
+                      not any(not char.isprintable() or char.isspace()
+                              for char in base_ref) and
                       item.get("source_current_head_verified") is True)
         if not pinned and (head is not None or base is not None):
             raise ValueError("untrusted partial PR head/base receipt")
@@ -546,7 +550,8 @@ def collect_workorders(board):
         if pinned:
             if (live_gate.get("status") != "current_exact_pr_head_and_sample_match"
                     or live_gate.get("head_sha_observed") != head
-                    or live_gate.get("base_sha_observed") != base):
+                    or live_gate.get("base_sha_observed") != base
+                or live_gate.get("base_ref_observed") != base_ref):
                 raise ValueError("owner workorder exact-HEAD/base mismatch")
         elif live_gate.get("status") == "current_exact_pr_head_and_sample_match":
             raise ValueError("current gate receipt lost exact HEAD in workorder")
@@ -882,6 +887,7 @@ def collect_workorders(board):
             "pending_review_requests": requests,
             "head_sha": head if pinned else None,
             "base_sha": base if pinned else None,
+            "base_ref": base_ref if pinned else None,
             "category": _markdown(category), "blocker": _markdown(blocker),
             "human_next_step": _markdown(next_step),
             "source_current": pinned and not source_stale,
@@ -988,7 +994,8 @@ def render_csv(bundle):
         "record_type", "project", "pr_number", "pr_url",
         "attention_status", "attention_label", "workstream", "workstream_label",
         "operator_action_link", "operator_action_kind",
-        "head_sha_at_observation", "current_source_verified", "rank",
+        "head_sha_at_observation", "target_branch_at_observation",
+        "current_source_verified", "rank",
         "category", "blocker", "human_next_step", "operator_primary_step",
         "parallel_review_possible", "source_observed_at_utc",
         "source_sha256", "link", "detail",
@@ -1033,6 +1040,7 @@ def render_csv(bundle):
                 "project": card["project"], "pr_number": card["number"],
                 "pr_url": _same_repo_url(card["url"], card["repository"]),
                 "head_sha_at_observation": card["head_sha"],
+                "target_branch_at_observation": card["base_ref"],
                 "current_source_verified": bool(card["source_current"]),
                 "rank": card["rank"], "category": card["category"],
                 "blocker": card["blocker"],
@@ -1413,6 +1421,7 @@ def render_html(bundle):
              "<p>Reviewverzoeken: onbekend (geen betrouwbare exact-HEAD bron).</p>"),
             "<p class=\"meta\">Categorie: " + e(card["category"]) +
             " · HEAD bij observatie: <code>" + e(card["head_sha"] or "ONBEKEND") +
+            "</code><br>Doelbranch: <code>" + e(card["base_ref"] or "ONBEKEND") +
             "</code><br>Doelbasis: <code>" + e(card["base_sha"] or "ONBEKEND") +
             "</code> · <a target=\"_blank\" rel=\"noopener noreferrer\" "
             "href=\"" + e(files) + "\">Bestandswijzigingen</a></p>",
@@ -1693,6 +1702,7 @@ def render_markdown(bundle):
                 "[`" + card["head_sha"] + "`](" +
                 _commit_link(card, card["head_sha"]) + ")" if card["head_sha"]
                 else "ONBEKEND"),
+            "**Doelbranch:** " + (card["base_ref"] or "ONBEKEND"),
             "**Exact doelbranchbasis:** " + (
                 "[`" + card["base_sha"] + "`](" +
                 _commit_link(card, card["base_sha"]) + ")" if card["base_sha"]
