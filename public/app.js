@@ -485,10 +485,20 @@ function claimChurnNeedsOwnerReview(item){
     ||claimChurnLeaseStatus(item)==='unknown';
 }
 function claimChurnSnapshotFreshness(){
-  const observed=typeof blockedQueueObservedAt==='string'?Date.parse(blockedQueueObservedAt):NaN;
-  if(!Number.isFinite(observed)||observed>Date.now()+120000)return {state:'unknown',age_seconds:null};
+  // A browser may interpret locale-only dates in its own timezone. Only the
+  // backend's explicit RFC3339/ISO8601 timestamp is valid operator evidence.
+  // Treat missing timezone and implausible server clock as UNKNOWN.
+  const raw=blockedQueueObservedAt;
+  const valid=typeof raw==='string'&&
+    /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$/.test(raw);
+  const observed=valid?Date.parse(raw):NaN;
+  if(!Number.isFinite(observed))
+    return {state:'unknown',age_seconds:null,reason:'invalid-or-untimed-source'};
+  if(observed>Date.now()+120000)
+    return {state:'unknown',age_seconds:null,reason:'source-clock-ahead'};
   const age=Math.max(0,Math.floor((Date.now()-observed)/1000));
-  return {state:age>900?'stale_observation':'recent_observation',age_seconds:age};
+  return {state:age>900?'stale_observation':'recent_observation',
+    age_seconds:age,reason:age>900?'source-too-old':null};
 }
 function claimChurnRows(projectId=''){
   const statuses=new Set(['queued','claimed','running','verifying']);
@@ -865,7 +875,17 @@ function blockedQueuePanel(){
               ?'No P0/P1 parked tasks were returned in this loaded queue sample.'
               :'No dependency-blocked tasks were returned in this queue sample.')
         +' A failed read is never shown as zero.</p>';
-  const reloadControl='<div class="blocked-queue-state"><button type="button" data-blocked-reload'+(blockedQueueReloading?' disabled':'')+'>Refresh queue source</button> <span>Read-only refresh; no claim, retry or release.</span></div>';
+  const sourceWarning=freshness.reason==='source-clock-ahead'
+    ?'Source clock is over two minutes ahead; verify host time before trusting a recovery decision.'
+    :freshness.reason==='invalid-or-untimed-source'
+      ?'Source observation lacks a trusted timestamp and timezone; operator recovery is disabled.'
+      :freshness.reason==='source-too-old'
+        ?'Queue observation is over 15 minutes old; refresh it before operator recovery.'
+        :'Source read is recent, but never proves dependency clearance.';
+  const reloadControl='<div class="blocked-queue-state"><button type="button" data-blocked-reload'+
+    (blockedQueueReloading||blockedResumesPending.size?' disabled':'')+
+    '>Refresh queue source</button> <span role="status">'+esc(sourceWarning)+
+    ' Read-only refresh; no claim, retry or release.</span></div>';
   return '<section class="blocked-queue-panel"><div class="blocked-queue-head"><div><span class="eyebrow">DEPENDENCY HOLDS</span><h2>'+(loaded?(snapshotFresh?'':'Last observed: ')+total+' parked task'+(total===1?'':'s'):'Parked tasks')+'</h2><p>Only the dependent task is parked. Independent work can continue; resume requires an explicit operator note that the dependency is cleared.</p>'+claimStateSummary+'</div><span class="blocked-queue-count">'+(loaded?total:'—')+'</span></div>'
     +reloadControl
     +(loaded&&total?'<div class="blocked-queue-state"><label class="blocked-queue-project-label">Project <select data-blocked-project aria-label="Filter parked tasks by project">'+projectOptions+'</select></label>'
