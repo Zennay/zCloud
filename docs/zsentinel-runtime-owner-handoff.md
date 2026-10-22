@@ -741,3 +741,29 @@ geaggregeerde rootruimte, swappercentage en externe archief-headroom wanneer
 die expliciet beschikbaar is. De volledige reden-codes blijven in JSON.
 Opruimen, offload, restart, claimvrijgave, dispatch, merge en deploy blijven
 expliciet niet toegestaan.
+
+
+## 22 oktober · verouderde queue/workerbewijzen blokkeren actuele escalatie
+
+`build_handoff` valideert bestaande read-only workerrecibos via dezelfde
+worker-HTML-bronvalidator. De privé-P0/P1-actiekaarten tonen nu de bij de
+classificatie horende Nederlandse vervolgstap, het lokale workerslot en
+uitsluitend niet-identificerende lease-observatie. Geen queue-ID, leasehash,
+browser-/gespreks-URL of nieuwe uitvoerrechten zijn aan het operatorresultaat
+toegevoegd.
+
+Zowel worker- als actuele queuebronnen worden bij export opnieuw op bronleeftijd
+beoordeeld. Een UTC-moment ouder dan **600 seconden**, of meer dan **120 seconden
+vooruit**, wordt niet als actuele blokkade naar de eigenaarlijst geescaleerd.
+De oorspronkelijke afzonderlijke incidenten worden in plaats daarvan vervangen
+door één **P2 bronververskaart** (`worker_source_refresh_required` of
+`queue_source_refresh_required`). Een verouderd queuetotaal verschijnt niet
+onder `current_queue` alsof het actueel is; het tijdstip blijft voor
+bronreconciliatie zichtbaar, aantallen staan op ONBEKEND. De opgeslagen bron
+wordt niet gewijzigd. De bevoegde eigenaar kan een nieuwe begrensde
+`mode=ro` / `query_only` waarneming maken; géén cleanup, claimovername,
+retry, workflowdispatch of restart is toegestaan vanuit de kaart.
+
+De release blijft afhankelijk van exacte-head verplichte CI, onafhankelijke
+review, branch protection en eigenaarstoestemming. Er zijn geen QA- of
+testsuites geschreven of uitgevoerd.
