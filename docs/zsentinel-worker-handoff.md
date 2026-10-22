@@ -247,3 +247,27 @@ De handoff adviseert dan eerst opdrachtbron/toewijzing bij de
 bevoegde eigenaar te controleren. Het verschil is zichtbaar in
 JSON, tekst, Markdown en HTML; er is geen automatische herstelactie
 en geen muterende browser- of runtimeopvraag nodig.
+
+
+## 22 oktober · actuele queue-claimvenster versus oudere worker-events
+
+De read-only workerobserver valideert nu zowel `claimed_at` als `claim_expires`
+voordat hij een queueclaim als huidig beschrijft. Beide timestamps moeten geldige
+tijdzones hebben, het claimvenster moet de observatietijd omvatten en de
+waargenomen duur mag niet negatief of langer dan zeven dagen zijn. Een ontbrekende
+of ongeldige starttijd is dus geen geldige lease meer.
+
+Bij een geldige lease krijgen de huidige queue-rij en het project/worker-slot een
+niet-omkeerbare SHA-256-vensterfingerprint op basis van de queue-ID en
+`claimed_at`. De ruwe queue-ID, eigenaar en tijdstempels worden niet in het
+operatorrapport opgenomen. Voortgang, prompt- en browserblokkadesignalen uit
+eerdere claims worden niet aan het huidige claimvenster toegeschreven; de
+read-only HTML en tekst tonen welke events binnen/buiten het venster vallen.
+
+**Belangrijke grens:** `runner_events` bevat geen queue-ID. Dit is daarom
+uitsluitend tijdvenster-correlatie, expliciet `time_window_only_not_identity_bound`,
+en geen exacte claim-epoch-binding of herstelautorisatie. Bij een gewijzigd
+venster tussen twee snapshots weigeren `zsentinel_worker_progress_delta.py` en
+`zsentinel_worker_continuity.py` de cursorvergelijking als dezelfde taak en
+maken ze een afzonderlijke eigenaarcontrole zichtbaar. Productoplevering,
+claimovername, retry, restart en release blijven onbewezen en onbevoegd.
