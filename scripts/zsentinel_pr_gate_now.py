@@ -195,7 +195,7 @@ def _closed_pr_lifecycle(repo, number, first, token):
         # A GitHub merge commit can belong to a development/release branch.
         # Resolve the repository's *actual* default branch before claiming
         # delivery on main. Refuse missing/ambiguous repository metadata.
-        metadata = github_json(repo, "/", token)
+        metadata = github_json(repo, "", token)
         if (type(metadata) is not dict
                 or metadata.get("full_name") != repo
                 or type(metadata.get("default_branch")) is not str):
