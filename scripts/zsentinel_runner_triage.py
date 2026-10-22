@@ -67,21 +67,62 @@ def observe_discovered_job(token=None):
 
     discovery = None
     receipts = {}
-    try:
-        receipts, discovery = discover(REGISTRY, ["cloud"], token=token)
-    except (OSError, ValueError, TypeError):
-        # Do not turn an inaccessible source into an empty/healthy job inventory.
-        discovery = {
+    def unavailable_discovery():
+        return {
             "source": "github_canonical_readonly_bounded_discovery",
             "request_count": None,
             "coverage": [{
                 "project_id": "cloud", "status": "degraded_unavailable",
                 "authoritative_all_clear": False,
+                "additional_job_links": [],
             }],
             "full_repo_ci_inventory": False,
             "jobs_restarted": False,
             "runner_mutations": False,
         }
+
+    try:
+        receipts, discovery = discover(REGISTRY, ["cloud"], token=token)
+        if (type(receipts) is not dict or type(discovery) is not dict
+                or set(receipts) - {"cloud"}):
+            raise ValueError("malformed bounded discovery envelope")
+        coverage = discovery.get("coverage")
+        if type(coverage) is not list or len(coverage) != 1:
+            raise ValueError("missing or unbounded cloud discovery coverage")
+        row = coverage[0]
+        if (type(row) is not dict or row.get("project_id") != "cloud"
+                or row.get("status") not in (
+                    "selected_one_source_bound_job",
+                    "selected_one_source_bound_job_partial_window",
+                    "no_actionable_job_in_sampled_windows",
+                    "degraded_unavailable")
+                or type(row.get("additional_job_links", [])) is not list
+                or len(row.get("additional_job_links", [])) > 5):
+            raise ValueError("malformed cloud discovery coverage")
+        requests = discovery.get("request_count")
+        if requests is not None and (type(requests) is not int or not 0 <= requests <= 9):
+            raise ValueError("invalid bounded discovery request count")
+        if "cloud" in receipts:
+            pin = receipts["cloud"]
+            if (type(pin) is not dict
+                    or type(pin.get("run_id")) is not int
+                    or not 1 <= pin["run_id"] <= 2**53 - 1
+                    or type(pin.get("job_id")) is not int
+                    or not 1 <= pin["job_id"] <= 2**53 - 1
+                    or type(pin.get("head_sha")) is not str
+                    or not re.fullmatch(r"[a-f0-9]{40}", pin["head_sha"])
+                    or row["status"] not in (
+                        "selected_one_source_bound_job",
+                        "selected_one_source_bound_job_partial_window")):
+                raise ValueError("invalid exact cloud job receipt")
+        elif row["status"] in (
+                "selected_one_source_bound_job",
+                "selected_one_source_bound_job_partial_window"):
+            raise ValueError("selected cloud job lacks its exact receipt")
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        # Do not turn an inaccessible or malformed source into an empty/healthy inventory.
+        receipts = {}
+        discovery = unavailable_discovery()
 
     coverage = discovery.get("coverage")
     row = coverage[0] if isinstance(coverage, list) and coverage else {}
@@ -228,7 +269,7 @@ def main():
         write_private_output(args.output, raw, args.format)
         print("Private exact-runner report created (no workspace path or token printed).")
         return 0
-    except (OSError, ValueError, TypeError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
         # Never echo provider responses, bearer tokens or private paths.
         parser.exit(2, "zSentinel exact runner observation unavailable; no changes made.\n")
 
