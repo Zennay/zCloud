@@ -80,7 +80,9 @@ def render(report: dict) -> str:
             ("Schrijven toegestaan", "archive_write_authorized"),
             ("Overdracht uitgevoerd", "transfer_performed"))),
         ("Bescherming lopend werk", "worker_safety", (
-            ("Workerbewijs", "state"), ("Claimed queue rows", "queued_claims"),
+            ("Workerbewijs", "state"),
+            ("Actieve queue rows (claimed/running/verifying)", "active_queue_items"),
+            ("Claimed queue rows", "queued_claims"),
             ("Durable claims", "durable_claims"),
             ("Fresh generating slots", "fresh_generating_slots"),
             ("Event sample compleet", "events_sample_complete"),
