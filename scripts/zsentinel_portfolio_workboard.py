@@ -15,7 +15,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from zsentinel_issue_delivery import (
-    build_workboard, canonical_issue_action, render_html, render_markdown,
+    HUMAN_ONLY_ROUTE_CODES, build_workboard, canonical_issue_action,
+    render_html, render_markdown,
 )
 from zsentinel_issue_progress import load_private_prior, _source
 from zsentinel_product_issue_inbox import ROOT, canonical_projects, collect
@@ -202,8 +203,8 @@ def combine_workboards(snapshots, registry, now=None):
         pid: {
             "issues_sampled": sum(row["project_id"] == pid for row in ordered),
             "owner_only_sampled": sum(
-                row["project_id"] == pid and row.get("next_step") ==
-                "authorized_infrastructure_owner_required" for row in ordered),
+                row["project_id"] == pid and row.get("next_step") in
+                HUMAN_ONLY_ROUTE_CODES for row in ordered),
             "active_owner_verified": False,
         } for pid in projects
     }
@@ -221,10 +222,10 @@ def combine_workboards(snapshots, registry, now=None):
         "project_summary": counts,
         "issue_count": len(ordered),
         "product_issue_count": sum(
-            row.get("next_step") != "authorized_infrastructure_owner_required"
+            row.get("next_step") not in HUMAN_ONLY_ROUTE_CODES
             for row in ordered),
         "human_owner_issue_count": sum(
-            row.get("next_step") == "authorized_infrastructure_owner_required"
+            row.get("next_step") in HUMAN_ONLY_ROUTE_CODES
             for row in ordered),
         "items": ordered,
         "recent_open_product_prs": existing_prs,
