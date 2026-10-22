@@ -551,8 +551,8 @@ def render_private_csv(report):
         "record_type", "repository", "source_mode", "source_windows_utc",
         "group_number", "group_pr_count", "group_shared_files_observed",
         "filename", "file_cross_window", "file_pr_count", "pr_number",
-        "pr_url", "pr_head_sha", "pr_source_window", "related_pr_url",
-        "related_pr_head_sha", "related_pr_source_window", "pair_shared_files",
+        "pr_url", "pr_head_sha", "pr_base_ref", "pr_source_window", "related_pr_url",
+        "related_pr_head_sha", "related_pr_base_ref", "related_pr_source_window", "pair_shared_files",
         "cross_window_pairs_for_pr", "shared_files_for_pr",
         "unverified_issue_number", "unverified_issue_mentions_for_pr",
         "source_complete_for_all_open_prs", "claims_verified",
@@ -599,6 +599,7 @@ def render_private_csv(report):
     for pr in report["prioritized_existing_prs"]:
         row("existing_pr_priority", pr_number=pr["pr_number"],
             pr_url=pr["url"], pr_head_sha=pr["head_sha_observed"],
+            pr_base_ref=pr["base_ref_observed"],
             pr_source_window=pr["snapshot"],
             cross_window_pairs_for_pr=pr["cross_window_file_pair_count"],
             shared_files_for_pr=pr["cross_window_shared_file_count"],
@@ -615,7 +616,7 @@ def render_private_csv(report):
                                       else "false",
                     file_pr_count=file_row["participating_pr_count_observed"],
                     pr_number=pr["number"], pr_url=pr["url"],
-                    pr_head_sha=pr["head_sha"],
+                    pr_head_sha=pr["head_sha"], pr_base_ref=pr["base_ref"],
                     pr_source_window=pr["source_window"],
                     operator_notice="Shared filename only, not a proven git conflict.")
         if group["shared_file_samples_truncated"]:
@@ -626,10 +627,11 @@ def render_private_csv(report):
                 operator_notice="Additional shared filenames in this group are NOT shown.")
     for pair in report["shown_collision_pairs"]:
         row("cross_window_collision_pair", pr_url=pair["left_url"],
-            pr_head_sha=pair["left_head_sha"],
+            pr_head_sha=pair["left_head_sha"], pr_base_ref=pair["left_base_ref"],
             pr_source_window=pair["left_snapshot"],
             related_pr_url=pair["right_url"],
             related_pr_head_sha=pair["right_head_sha"],
+            related_pr_base_ref=pair["right_base_ref"],
             related_pr_source_window=pair["right_snapshot"],
             pair_shared_files=pair["shared_files_observed"],
             operator_notice="Same filename in both PRs, not a verified git conflict.")
@@ -638,6 +640,7 @@ def render_private_csv(report):
             row("unverified_issue_number_hint",
                 unverified_issue_number=group["number"],
                 pr_url=pr["url"], pr_head_sha=pr["head_sha"],
+                pr_base_ref=pr["base_ref"],
                 pr_source_window=pr["snapshot"],
                 operator_notice="Unverified text number; not issue identity, owner or fix.")
         if group["pr_list_truncated"]:
@@ -690,7 +693,8 @@ def render(report, fmt):
                   "issue/PR-nummerhints; nooit merge- of claimvrijgave.", ""])
     for item in report["prioritized_existing_prs"]:
         lines.append("- [PR #" + str(item["pr_number"]) + "](" + item["url"] +
-                     ") · " + str(item["cross_window_file_pair_count"]) +
+                     ") · doelbranch " + str(item.get("base_ref_observed") or "ONBEKEND") +
+                     " · " + str(item["cross_window_file_pair_count"]) +
                      " bestandspaar-botsingen / " +
                      str(item["cross_window_shared_file_count"]) +
                      " gedeelde bestanden · " +
@@ -719,6 +723,7 @@ def render(report, fmt):
             lines.append("- [PR #" + str(pr["number"]) + "](" + pr["url"] +
                          ") · venster " + str(pr["source_window"]) +
                          " · HEAD " + pr["head_sha"][:12] +
+                         " · doelbranch " + str(pr.get("base_ref") or "ONBEKEND") +
                          " · directe bestandspadverbindingen " +
                          str(pr["direct_filename_neighbors_observed"]))
         for file_row in group["shared_file_ownership_samples"]:
@@ -732,7 +737,8 @@ def render(report, fmt):
                 lines.append("    - [PR #" + str(related["number"]) +
                              "](" + related["url"] + ") · venster " +
                              str(related["source_window"]) + " · HEAD " +
-                             related["head_sha"][:12])
+                             related["head_sha"][:12] + " · doelbranch " +
+                             str(related.get("base_ref") or "ONBEKEND"))
         if group["shared_file_samples_truncated"]:
             lines.append("  - Aanvullende gedeelde bestanden niet getoond.")
     if not report["shown_connected_cross_window_groups"]:
@@ -744,7 +750,10 @@ def render(report, fmt):
         lines.append("- [PR](" + row["left_url"] + ") ↔ [PR](" +
                      row["right_url"] + ") · " +
                      str(row["shared_files_observed"]) +
-                     " gedeelde bestandspaden, bronmomenten " +
+                     " gedeelde bestandspaden, doelbranches " +
+                     str(row.get("left_base_ref") or "ONBEKEND") + " ↔ " +
+                     str(row.get("right_base_ref") or "ONBEKEND") +
+                     ", bronmomenten " +
                      str(row["left_snapshot"]) + "/" + str(row["right_snapshot"]))
         for name in row["shared_paths"]:
             lines.append("    - " + name.replace("\n", " "))
@@ -795,6 +804,8 @@ def render(report, fmt):
         "<a rel='noopener noreferrer' href='" +
         escape(item["right_url"], quote=True) + "'>PR</a></td><td>" +
         str(item["shared_files_observed"]) + "</td><td>" +
+        escape(item.get("left_base_ref") or "ONBEKEND") + " ↔ " +
+        escape(item.get("right_base_ref") or "ONBEKEND") + "</td><td>" +
         "<br>".join(escape(name) for name in item["shared_paths"]) +
         "</td></tr>"
         for item in report["shown_collision_pairs"])
@@ -803,9 +814,11 @@ def render(report, fmt):
         escape(item["url"], quote=True) + "'>PR #" +
         str(item["pr_number"]) + "</a> · " +
         str(item["cross_window_file_pair_count"]) +
-        " botsende PR-paren / " +
+        " · doelbranch " + escape(item.get("base_ref_observed") or "ONBEKEND") +
+        " · botsende PR-paren / " +
         str(item["cross_window_shared_file_count"]) +
-        " gedeelde bestanden · " +
+        " gedeelde bestanden · doelbranch " +
+        escape(item.get("base_ref_observed") or "ONBEKEND") + " · " +
         str(item["cross_window_number_hint_count"]) +
         " onzekere issue-/PR-nummers</li>"
         for item in report["prioritized_existing_prs"])
@@ -816,7 +829,8 @@ def render(report, fmt):
             escape(pr["url"], quote=True) + "'>PR #" +
             str(pr["number"]) + "</a> · venster " +
             str(pr["source_window"]) + " · HEAD " +
-            escape(pr["head_sha"][:12]) + " · " +
+            escape(pr["head_sha"][:12]) + " · doelbranch " +
+            escape(pr.get("base_ref") or "ONBEKEND") + " · " +
             str(pr["direct_filename_neighbors_observed"]) +
             " directe bestandsverbindingen</li>"
             for pr in group["participating_prs"])
@@ -829,7 +843,8 @@ def render(report, fmt):
                     escape(pr["url"], quote=True) + "'>PR #" +
                     str(pr["number"]) + "</a> · venster " +
                     str(pr["source_window"]) + " · HEAD " +
-                    escape(pr["head_sha"][:12]) + "</li>"
+                    escape(pr["head_sha"][:12]) + " · doelbranch " +
+                    escape(pr.get("base_ref") or "ONBEKEND") + "</li>"
                     for pr in file_row["prs"]) + "</ul></li>"
             for file_row in group["shared_file_ownership_samples"])
         cluster_rows.append(
