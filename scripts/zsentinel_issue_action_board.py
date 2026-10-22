@@ -158,7 +158,17 @@ def build(report):
             pending = bool(has_live_gate and (
                 live.get("observed_checks_pending", 0) > 0 or
                 live.get("legacy_status_pending_observed", 0) > 0))
-            overlap = p.get("file_scope_state") == "shared_file_paths_observed"
+            # Ancestor file/directory tree collisions are distinct from
+            # exact shared filenames, but require the SAME owner handoff.
+            # A conflict can be present even if an exact-filename scan is empty.
+            scope_peers = p.get("file_directory_conflict_peers", [])
+            if type(scope_peers) is not list or len(scope_peers) > 16:
+                raise ValueError("unbounded file/directory conflict peers")
+            overlap = (
+                p.get("file_scope_state") in (
+                    "shared_file_paths_observed",
+                    "file_directory_ancestor_conflicts_observed")
+                or bool(scope_peers))
             moved = p.get("historical_source_activity_observed") is True
             # Every existing candidate remains visible, not just the most
             # informative one. Gate observations never confer merge rights.
@@ -186,6 +196,8 @@ def build(report):
                 "url": url, "gate_state": candidate_state,
                 "source_head_observed": observed_head,
                 "file_overlap_observed": overlap,
+                "file_directory_overlap_observed": bool(scope_peers),
+                "file_directory_conflict_peer_count_observed": len(scope_peers),
                 "source_movement_observed": moved,
                 "merge_authorized": False,
                 "owner_verified": False,
