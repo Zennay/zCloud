@@ -677,6 +677,8 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 observed.get("observed_gate_families_changed", []))
             card["pr_continuity_transitions"] = list(
                 observed.get("observed_gate_transitions", []))
+            card["pr_continuity_metadata_transitions"] = list(
+                observed.get("observed_metadata_transitions", []))
             card["pr_continuity_owner_step"] = observed.get(
                 "observed_gate_owner_step")
     for item in incidents:
@@ -1100,6 +1102,12 @@ def _pr_continuity_label(card):
     labels = {
         "exact_head_changed_REINSPECT_GATE":
             "Sinds privé-bron: exacte HEAD gewijzigd, controleer CI/reviews opnieuw",
+        "same_head_target_base_changed_REINSPECT_GATE":
+            "Sinds privé-bron: doelbranch SHA gewijzigd, exacte CI en mergevoorwaarden herlezen",
+        "same_head_draft_changed_REVIEW_GATE":
+            "Sinds privé-bron: draftstatus gewijzigd, huidige onafhankelijke reviewroute bekijken",
+        "same_head_mergeability_hint_changed_RECHECK_RULES":
+            "Sinds privé-bron: GitHub mergeable-hint gewijzigd, protected-main regels controleren",
         "same_head_owner_step_changed_REVIEW_GATE":
             "Sinds privé-bron: eigenaaractie gewijzigd, huidige releasegate bekijken",
         "same_head_observed_ci_or_review_changed_REVIEW_GATE":
@@ -1130,6 +1138,11 @@ def _pr_continuity_label(card):
             or any(type(row) is not str or not 1 <= len(row) <= 150
                    or any(ord(ch) < 32 for ch in row) for row in transitions)):
         raise ValueError("untrusted observed current-vs-prior gate changes")
+    metadata_transitions = card.get("pr_continuity_metadata_transitions", [])
+    if (type(metadata_transitions) is not list or len(metadata_transitions) > 3
+            or any(type(t) is not str or not 1 <= len(t) <= 150
+                   or any(ord(ch) < 32 for ch in t) for t in metadata_transitions)):
+        raise ValueError("invalid owner PR metadata changes")
     next_step = card.get("pr_continuity_owner_step")
     if (next_step is not None
             and (type(next_step) is not str or not 1 <= len(next_step) <= 280
@@ -1138,6 +1151,8 @@ def _pr_continuity_label(card):
     return (labels[state] +
             (" · veranderd: " + ", ".join(names[f] for f in families)
              if families else "") +
+            (" · " + "; ".join(metadata_transitions)
+             if metadata_transitions else "") +
             (" · " + "; ".join(transitions) if transitions else "") +
             (" · eigenaaractie: " + next_step if next_step else ""))
 
