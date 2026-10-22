@@ -520,6 +520,12 @@ def render_delta(delta, format="text"):
                       else "ONVOLLEDIG: gesloten PR/botsing niet bewezen") +
                      ", gewijzigde HEAD/basis " +
                      str(len(row["head_or_base_changed_in_both_samples"])) +
+                     ", doelbranch onbekend " +
+                     (str(row["target_branch_identity_unknown_count"])
+                      if row["target_branch_identity_unknown_count"] is not None else "ONBEKEND") +
+                     ", doelbranch-retargets " +
+                     (str(row["target_branch_retarget_count"])
+                      if row["target_branch_retarget_count"] is not None else "ONBEKEND") +
                      ", huidige-steekproef-only " +
                      str(len(row["seen_only_in_current_sample_not_proven_new"])) +
                      ", vorige-steekproef-only " +
