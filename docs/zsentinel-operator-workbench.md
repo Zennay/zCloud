@@ -82,7 +82,9 @@ De index toont naast issuegekoppelde PR-kandidaten alle maximaal vijf
 oorspronkelijk geverifieerde pr_delivery_observations uit elke opgeslagen
 operatorboard, ook wanneer geen issuekaart naar die PR verwijst. Per
 historische waarneming zijn exacte 40-teken-HEAD, geobserveerde checkstatus,
-het aantal opgeslagen approvals en oorspronkelijke blocking_unknowns te zien.
+optionele legacy-contextstatus (onbekend blijft onbekend), geobserveerde
+mergeability, het aantal opgeslagen approvals en oorspronkelijke
+blocking_unknowns afzonderlijk te zien.
 Tussen opvolgende bundels verschijnen nieuwe of niet opnieuw waargenomen PR's,
 HEAD-wissels en wijzigingen in check-, review- en blockerwaarnemingen.
 HTML en JSON bewaren dezelfde broninformatie, zonder nieuwe API-opvraag.
