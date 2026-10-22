@@ -67,8 +67,10 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
                          source_read_admitted=True):
     """Annotate bounded missing cards with explicit read-only GitHub state.
 
-    On any source/admission error, stop additional network reads and retain an
-    UNKNOWN result. No automatic retries, concurrent probes, or guessed states.
+    On provider-wide admission/network or malformed-source errors, stop all
+    subsequent GETs. On one canonical repository 404, skip only later reads
+    for that repository while preserving independent source reads elsewhere.
+    Never retry, infer deletion, or guess the issue's state.
     """
     if type(max_reads) is not int or not 1 <= max_reads <= MAX_LIVE_RECHECKS:
         raise PolicyInputError("live recheck limit must be 1..6")
