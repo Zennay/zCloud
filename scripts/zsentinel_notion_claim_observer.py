@@ -12,7 +12,7 @@ import re
 import urllib.parse
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 UUID = re.compile(r"^(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$", re.I)
@@ -106,6 +106,48 @@ def _work_number(prop):
         value = value.get("number")
     return value if type(value) is int and 0 < value < 10**9 else None
 
+
+
+WORKERS = frozenset(("Worker 1", "Worker 2"))
+
+
+def _worker_name(prop):
+    """Expose the saved worker slot as metadata, never as a verified lease."""
+    if not isinstance(prop, dict) or prop.get("type") != "select":
+        raise ValueError("Notion Worker property is missing or incompatible")
+    selected = prop.get("select")
+    if selected is None:
+        return None
+    if not isinstance(selected, dict) or selected.get("name") not in WORKERS:
+        raise ValueError("Notion Worker selection is unknown")
+    return selected["name"]
+
+
+def _date_start(prop, field):
+    """Normalize a Notion date start while preserving unknown/empty values."""
+    if not isinstance(prop, dict) or prop.get("type") != "date":
+        raise ValueError("Notion " + field + " property is missing or incompatible")
+    value = prop.get("date")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("Notion " + field + " date is malformed")
+    start = value.get("start")
+    if type(start) is not str or not 1 <= len(start) <= 45:
+        raise ValueError("Notion " + field + " start is invalid")
+    if len(start) == 10:
+        try:
+            date.fromisoformat(start)
+        except ValueError:
+            raise ValueError("Notion " + field + " date is invalid") from None
+        return start
+    try:
+        parsed = datetime.fromisoformat(start.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("Notion " + field + " timestamp is invalid") from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("Notion " + field + " timestamp lacks timezone")
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def fair_active_samples(rows, limit=30):
@@ -236,10 +278,20 @@ def observe_claims(data_source_id, token, known_projects=None):
                 status_matched += 1
                 title = _text(props.get("Work item")) or "Onbenoemd actief werk"
                 number = _work_number(props.get("Work ID"))
+                worker = _worker_name(props.get("Worker"))
+                claimed_at = _date_start(props.get("Claimed At"), "Claimed At")
+                claim_expires = _date_start(props.get("Claim Expires"), "Claim Expires")
                 rows.append({
                     "work": ("PWQ-" + str(number) if number else "Werk-ID onbekend"),
                     "title": title, "status": state,
                     "project": _project_name(props.get("Project"), known_projects),
+                    "worker": worker,
+                    "claimed_at": claimed_at,
+                    "claim_expires": claim_expires,
+                    "claim_metadata_status": (
+                        "observed_fields_present" if worker and claimed_at and claim_expires
+                        else "partial_or_missing"
+                    ),
                 })
             more = data.get("has_more")
             if type(more) is not bool:
