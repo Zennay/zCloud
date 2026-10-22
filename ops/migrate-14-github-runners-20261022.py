@@ -43,11 +43,23 @@ assert len(RUNNERS) == 14 and len({r[0] for r in RUNNERS}) == 14
 
 def call(args: list[str], *, cwd: Path | None = None, user: str | None = None) -> str:
     command = ["runuser", "-u", user, "--", *args] if user else args
+    # gh api keeps GH_TOKEN in this Python process; unrelated runner/system
+    # subprocesses must not inherit it or other credentials from the operator.
+    child_env = os.environ.copy()
+    for key in tuple(child_env):
+        upper = key.upper()
+        if (key.upper() == "SSH_AUTH_SOCK"
+                or any(marker in upper for marker in (
+                    "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "PRIVATE_KEY", "ACCESS_KEY"
+                ))):
+            child_env.pop(key, None)
     # config.sh receives a short-lived registration token in argv. Treat any
     # config.sh/--token invocation as sensitive even when runuser wraps argv[0].
     sensitive = "--token" in command or any(Path(part).name == "config.sh" for part in command)
     try:
-        result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=150)
+        result = subprocess.run(
+            command, cwd=cwd, env=child_env, text=True, capture_output=True, timeout=150
+        )
     except subprocess.TimeoutExpired:
         # TimeoutExpired embeds the full command (including the token) in its
         # string form. Never let the outer HOLD handler print that object.
