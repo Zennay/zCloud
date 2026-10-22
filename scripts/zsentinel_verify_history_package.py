@@ -366,7 +366,8 @@ def verify_against_original_bundles(
     }
 
 
-def private_owner_brief(report: dict, *, stale_after_hours: int = 6) -> str:
+def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
+                        project: str | None = None) -> str:
     """Source-scoped human owner decisions from the latest saved history.
 
     Not a current backlog, CI/review gate, claim inventory or release order.
@@ -380,6 +381,12 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6) -> str:
     )
     projects = {row["project"]: row for row in latest["projects"]}
     attention = latest.get("historical_attention_order")
+    if project is not None:
+        if (type(project) is not str or re.fullmatch(
+                r"Zennay/[A-Za-z0-9_.-]{1,100}", project) is None
+                or project not in projects):
+            raise ValueError("selected project absent from latest saved source")
+        attention = [row for row in attention if row["project"] == project]
     if type(attention) is not list or len(attention) > 40:
         raise ValueError("invalid historical priority list")
 
@@ -405,6 +412,8 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6) -> str:
             " uur; status: " + safe(age["source_age_status"]) + ".",
         "Bronbundel: `" + safe(latest["bundle"]) + "`.",
         "Bronboard SHA-256: `" + safe(latest["board_sha256"]) + "`.",
+        "",
+        "Projectselectie: " + safe(project or "alle opgeslagen projecten") + ".",
         "",
         "## Historische projectprioriteiten",
         "",
@@ -443,6 +452,9 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6) -> str:
     prs = latest.get("saved_pr_observations")
     if type(prs) is not list or len(prs) > 5:
         raise ValueError("unbounded saved merge-first PR observations")
+    if project is not None:
+        prs = [pr for pr in prs
+               if pr["url"].startswith("https://github.com/" + project + "/pull/")]
     lines.extend([
         "## Historische merge-first kandidaten",
         "",
@@ -578,6 +590,9 @@ def main(argv=None):
     parser.add_argument("--owner-brief-output", type=Path,
                         help="Create one owner-private Markdown worklist from "
                              "verified saved source data; never print source notes")
+    parser.add_argument("--owner-brief-project",
+                        help="Restrict owner brief to one canonical Zennay/project "
+                             "seen in the latest original source sample")
     args = parser.parse_args(argv)
     try:
         archive = private_archive_bytes(args.source)
@@ -586,6 +601,8 @@ def main(argv=None):
             age_report = _json(saved.read("history.json"))
         result.update(historical_source_age(
             age_report, stale_after_hours=args.stale_after_hours))
+        if args.owner_brief_project is not None and args.owner_brief_output is None:
+            raise ValueError("project filter requires private owner brief output")
         if args.owner_brief_output is not None and args.extract_to is not None:
             raise ValueError("create owner brief or extract files per operation")
         if args.verify_sources is not None:
@@ -606,7 +623,8 @@ def main(argv=None):
                 raise ValueError("cannot replace the source archive")
             from zsentinel_product_delivery_board import write_create_only
             write_create_only(args.owner_brief_output, private_owner_brief(
-                age_report, stale_after_hours=args.stale_after_hours))
+                age_report, stale_after_hours=args.stale_after_hours,
+                project=args.owner_brief_project))
             result["owner_private_brief_written"] = True
             result["owner_private_brief_only_from_saved_sources"] = True
     except (OSError, ValueError, KeyError, TypeError, UnicodeError,
