@@ -3747,6 +3747,15 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
                 or row['claim_expires'] is not None):
             return {'dropped':False,'queue_id':queue_id,
                     'reason':'active-claim-or-lease','queue_audit':None}
+        task_claim=_portfolio_queue_task_claim_guard(
+            c,row['project_id'],queue_id,datetime.now(timezone.utc))
+        if not task_claim['source_available']:
+            return {'dropped':False,'queue_id':queue_id,
+                    'reason':'task-claim-source-unavailable','queue_audit':None}
+        if task_claim['state']!='none':
+            return {'dropped':False,'queue_id':queue_id,
+                    'reason':'task-claim-record-still-bound',
+                    'task_claim_state':task_claim['state'],'queue_audit':None}
         # A guarded close applies only to the SAME safely parked item.
         # Do not terminally close a malformed blocked/eligible row.
         if guarded and row['eligible']!=0:
@@ -3903,6 +3912,15 @@ def portfolio_queue_resume_blocked(queue_id, resolution_note, actor, expected_up
                 or row['claim_expires'] is not None):
             return {'resumed':False,'queue_id':queue_id,
                     'reason':'parked-task-still-bound-to-worker'}
+        task_claim=_portfolio_queue_task_claim_guard(
+            c,row['project_id'],queue_id,datetime.now(timezone.utc))
+        if not task_claim['source_available']:
+            return {'resumed':False,'queue_id':queue_id,
+                    'reason':'task-claim-source-unavailable'}
+        if task_claim['state']!='none':
+            return {'resumed':False,'queue_id':queue_id,
+                    'reason':'task-claim-record-still-bound',
+                    'task_claim_state':task_claim['state']}
         # Compare within the SAME BEGIN IMMEDIATE transaction that writes the
         # queued transition. A changed blocker/evidence must be reconfirmed,
         # even if a browser observed the prior state only milliseconds ago.
