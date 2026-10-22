@@ -104,7 +104,9 @@ The receipt also exposes a bounded `operator_action_codes` array for
 machine-readable handoffs. Stable codes distinguish unknown runner membership,
 process-name matches outside or mixed across the expected service unit, a
 zero-worker observation that is **not** claim clearance, and critical/high/
-unknown capacity evidence. Every receipt includes
+unknown capacity evidence. Partial coverage is reported separately with
+`CAPACITY_EVIDENCE_PARTIAL`, even when another field already indicates
+critical or high pressure. Every receipt includes
 `PRESERVE_ACTIVE_WORK`, `TAKEOVER_NOT_AUTHORIZED`, and
 `RESTART_NOT_AUTHORIZED`. `HOLD_DISK_WRITES_REQUEST_OWNER_INVENTORY` is
 advisory when root capacity is critical; it does not identify files or grant
