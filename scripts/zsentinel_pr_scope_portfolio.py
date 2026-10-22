@@ -899,7 +899,16 @@ def merge_first_attention(board):
             "human_next_step": (
                 GATE_LABELS.get(gate["human_next_gate_step"],
                                 "Bekijk GitHub-bewijs met de PR-eigenaar.")
-                if current else "Herlees de actuele PR bron, claim geen merge."),
+                if current else
+                "Doelbranch veranderde tussen bronlezingen (" +
+                str(gate.get("captured_base_ref")) + " → " +
+                str(gate.get("base_ref_observed")) +
+                "); lees HEAD, base.ref en base-SHA opnieuw. Geen merge."
+                if gate.get("captured_base_ref") and gate.get("base_ref_observed")
+                and gate.get("captured_base_ref") != gate.get("base_ref_observed") else
+                "Doelbranch niet betrouwbaar bevestigd; lees HEAD, base.ref en base-SHA opnieuw. Geen merge."
+                if gate.get("base_ref_stable_on_second_read") is not True else
+                "HEAD/base-SHA veranderde tussen bronlezingen; lees de actuele PR opnieuw. Geen merge."),
             "pending_review_requests": ({
                 "individuals": gate["pending_individual_review_requests_observed"],
                 "teams": gate["pending_team_review_requests_observed"],
