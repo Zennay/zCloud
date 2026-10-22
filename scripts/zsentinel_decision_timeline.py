@@ -199,6 +199,19 @@ def render_text(report):
         else:
             lines.append("  Status=blocked rijen: %d → %d (Δ %+d); verandering is geen bewijs van herstel." %
                          (blocked["from_total"], blocked["to_total"], blocked["delta"]))
+            persistent = blocked.get("observed_persistent_blocked_refs_total")
+            if persistent is None:
+                lines.append("    Dezelfde individuele blocked-taken: ONBEKEND; bron beperkt.")
+            else:
+                lines.append("    Dezelfde geblokkeerde taken in beide snapshots: %d (positief bewijs, géén herstel/claimtoestemming)." % persistent)
+                for row in blocked.get("observed_persistent_blocked_refs", []):
+                    lines.append("      %s %s privéref %s · claimvelden eerder=%s, later=%s; eigenaar controleert actuele status." % (
+                        row["priority"], row["project_id"], row["private_queue_ref"],
+                        row["claim_metadata_was_present"], row["claim_metadata_now_present"]))
+            absence = blocked.get("historical_blocked_absence_comparison")
+            if absence is not None:
+                lines.append("    Alleen bij beide VOLLEDIGE historische taakbronnen: nieuw als blocked %d, niet meer blocked %d. Geen bewezen fix." % (
+                    absence["newly_blocked_total"], absence["no_longer_blocked_total"]))
             if blocked["project_deltas"] is not None:
                 for group in blocked["project_deltas"]:
                     if group["blocked_rows_delta_not_resolution_proof"] != 0:
