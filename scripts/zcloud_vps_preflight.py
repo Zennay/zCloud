@@ -26,6 +26,27 @@ RUNNER_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
 TRAINING_FREE_RESERVE_BYTES = 10 * 1024 ** 3
 MAX_PREVIOUS_REPORT_AGE_SECONDS = 24 * 60 * 60
 
+# Only findings emitted by this observer can earn automatic disappearance
+# credit. Historical snapshots may contain syntactically valid but unknown
+# codes; preserve those as unverified instead of calling them resolved.
+KNOWN_FINDING_CODES = frozenset({
+    "ACTIVE_WORK_REQUIRES_DRAIN", "ARCHIVE_COLD_TIER_NOT_READY",
+    "ARCHIVE_WRITE_UNVERIFIED", "CHECKOUT_STATUS_UNAVAILABLE",
+    "CHECKOUT_UNAVAILABLE", "DISK_UNOBSERVABLE", "HOST_CPU_BUSY",
+    "HOST_CPU_SATURATED", "HOST_CPU_STALL", "HOST_IO_STALL",
+    "HOST_MEMORY_STALL", "HOST_PRESSURE_INCOMPLETE", "LOW_AVAILABLE_MEMORY",
+    "LOW_DISK", "MAIN_SHA_MISMATCH", "MEMORY_PRESSURE",
+    "MEMORY_UNOBSERVABLE", "NOT_MAIN", "REMOTE_MAIN_UNBOUND",
+    "RUNNER_LISTENER_DUPLICATED", "RUNNER_UNIT_AMBIGUOUS",
+    "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_TRANSITIONING",
+    "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_WORKER_PROCESS_OBSERVED",
+    "STORAGE_TRIAGE_PARTIAL", "SWAP_EXHAUSTED",
+    "SWAP_TELEMETRY_INCOMPLETE", "TRACKED_CHANGES",
+    "TRAINING_DISK_RESERVE_BELOW", "UNTRACKED_FILES",
+    "WORKER_EVIDENCE_INCOMPLETE", "WORKER_IDLE_NOT_PROVEN",
+    "ZCLOUD_RUNNER_MISSING",
+})
+
 
 def command(*argv: str, cwd: Path | None = None, timeout: int = 8) -> tuple[int, str]:
     try:
@@ -917,7 +938,13 @@ def compare_snapshot(path: Path, current: dict) -> dict:
     ram_codes = {"LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE"}
     disk_codes = {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW"}
     disappeared = set(old) - set(new)
+    unrecognized_baseline_findings = sorted(set(old) - KNOWN_FINDING_CODES)
+
     def reobserved(code: str) -> bool:
+        # A well-formed string is not proof that this observer knows what a
+        # historical signal meant. Unknown legacy/future codes stay unverified.
+        if code not in KNOWN_FINDING_CODES:
+            return False
         source = optional_sources.get(code)
         if source and current.get(source) is None:
             return False
@@ -969,6 +996,7 @@ def compare_snapshot(path: Path, current: dict) -> dict:
         "new_findings": sorted(set(new) - set(old)),
         "resolved_findings": confirmed_resolved,
         "recovery_unverified_findings": not_reobserved,
+        "unrecognized_baseline_findings": unrecognized_baseline_findings,
         "still_present": changed,
         "severity_changes": [
             {"code": code, "previous": old[code], "current": new[code]}
@@ -1075,6 +1103,7 @@ def render_html(report: dict) -> str:
             f'{item("New findings", shown(comparison["new_findings"]))}'
             f'{item("Confirmed resolved", shown(comparison["resolved_findings"]))}'
             f'{item("Recovery unverified", shown(comparison["recovery_unverified_findings"]))}'
+            f'{item("Unrecognized baseline codes (no automatic resolution credit)", shown(comparison.get("unrecognized_baseline_findings", ["unknown"])))}'
             f'{item("Still present", shown(comparison["still_present"]))}'
             f'{item("Severity changed", shown([x["code"] + ": " + x["previous"] + " → " + x["current"] for x in comparison["severity_changes"]]))}</dl>'
             '<p class="muted">An omitted/failed measurement never proves recovery. Previous report is locally supplied, not independent runtime attestation.</p></section>'
@@ -1469,6 +1498,7 @@ def render_report_to_stdout(report: dict, args: argparse.Namespace) -> None:
             print(f"New findings: {', '.join(change['new_findings']) or 'none'}")
             print(f"Confirmed resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
             print(f"Recovery unverified: {', '.join(change['recovery_unverified_findings']) or 'none'}")
+            print(f"Unrecognized baseline codes (no automatic resolution credit): {', '.join(change.get('unrecognized_baseline_findings', ['unknown'])) or 'none'}")
             trend = change["host_pressure_trend"]
             print(f"CPU / PSI trend: {trend['status']} · {trend['trend']} · coverage={trend.get('metrics_compared', 0)}/{trend.get('metrics_expected', len(trend.get('metrics', [])))} {trend.get('coverage', 'unknown')} · source gaps={', '.join(trend.get('source_gaps', [])) or 'none'} (operator snapshot comparison, not release clearance)")
             print(f"Still present: {', '.join(change['still_present']) or 'none'}")
