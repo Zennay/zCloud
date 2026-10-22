@@ -70,6 +70,11 @@ def _read_sqlite(path):
             "WHERE status='blocked' GROUP BY project_id,priority "
             "ORDER BY project_id,priority LIMIT ?", (MAX_BLOCKED_GROUPS + 1,)
         )]
+        # Optional schema coverage: a live worker slot is a claim even when
+        # both claim timestamps are absent. Never publish the slot number.
+        worker_slot_covered = "worker_slot" in fields
+        worker_slot_predicate = (
+            "worker_slot IS NOT NULL" if worker_slot_covered else "NULL")
         # Human-only P0/P1-first shortlist. Do NOT ORDER BY across a
         # potentially huge blocked queue: SQLite could spill its temp sort
         # onto the already pressured VPS root mount despite query_only=ON.
@@ -81,7 +86,9 @@ def _read_sqlite(path):
                 break
             blocked_work.extend(dict(row) for row in connection.execute(
                 "SELECT queue_id,project_id,priority,attempts,eligible,"
-                "updated_at,claimed_at,claim_expires,title FROM portfolio_queue "
+                "updated_at,claimed_at,claim_expires,title," +
+                worker_slot_predicate +
+                " AS worker_slot_present FROM portfolio_queue "
                 "WHERE status='blocked' AND priority=? LIMIT ?",
                 (priority, remaining)
             ))
@@ -101,7 +108,8 @@ def _read_sqlite(path):
          str(before.st_dev) + "\\0" + str(before.st_ino)).encode("utf-8")
     ).hexdigest()
     return rows, source_key, {"total_items": blocked_total,
-                              "groups": blocked_groups, "work": blocked_work}
+                              "groups": blocked_groups, "work": blocked_work,
+                              "worker_slot_source_covered": worker_slot_covered}
 
 
 def _stamp(value):
@@ -136,6 +144,9 @@ def _blocked_queue_observation(raw, observed_at):
     complete = (not truncated and invalid == 0
                 and sum(row["items"] for row in groups) == total)
     work_source = raw.get("work")
+    worker_slot_covered = raw.get("worker_slot_source_covered")
+    if type(worker_slot_covered) is not bool:
+        raise ValueError("worker slot source coverage missing")
     if type(work_source) is not list or len(work_source) > MAX_BLOCKED_WORK_ITEMS + 1:
         raise ValueError("invalid bounded blocked-work source")
     work = []
@@ -163,13 +174,22 @@ def _blocked_queue_observation(raw, observed_at):
                       if type(title) is str else "Unlabeled queue item")
         # Nonempty claim fields mean a blocked task is NOT automatically safe
         # to resume. Preserve the warning without copying owner identifiers.
-        claim_fields_present = any(row.get(key) is not None for key in
-                                   ("claimed_at", "claim_expires"))
+        worker_slot_present = row.get("worker_slot_present")
+        if worker_slot_covered and worker_slot_present not in (0, 1):
+            raise ValueError("malformed worker-slot presence observation")
+        if not worker_slot_covered and worker_slot_present is not None:
+            raise ValueError("unavailable worker slot cannot imply assignment")
+        claim_fields_present = (
+            any(row.get(key) is not None for key in ("claimed_at", "claim_expires"))
+            or worker_slot_present == 1)
         work.append({
             "queue_ref": queue_ref, "project_id": pid, "priority": priority,
             "title": title_text, "claim_attempts": attempts,
             "eligible_observed": bool(eligible),
             "claim_fields_present_observed": claim_fields_present,
+            "worker_slot_present_observed": (
+                bool(worker_slot_present) if worker_slot_covered else None),
+            "worker_slot_source_covered": worker_slot_covered,
             "current_owner_verified": False,
             "resume_authorized": False, "automatic_retry_authorized": False,
             "human_next_step": (
@@ -193,6 +213,7 @@ def _blocked_queue_observation(raw, observed_at):
         "work_items_coverage": "complete" if work_complete else "partial",
         "work_items_truncated": work_truncated or invalid_work > 0,
         "invalid_work_rows": invalid_work,
+        "worker_slot_source_covered": worker_slot_covered,
         "sample_truncated": truncated or invalid > 0,
         "invalid_group_rows": invalid,
         "claim_ownership_verified": False,
@@ -352,6 +373,7 @@ def explicitly_unobserved_queue():
             "project_groups": [],
             "work_items": [], "work_items_coverage": "not_observed",
             "work_items_truncated": True, "invalid_work_rows": None,
+            "worker_slot_source_covered": False,
             "sample_truncated": True,
             "invalid_group_rows": None,
             "claim_ownership_verified": False,
