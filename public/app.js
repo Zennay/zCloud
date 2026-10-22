@@ -1505,6 +1505,7 @@ function projectBlockedQueuePanel(project){
     const blocker=String(item.blocker||item.evidence||'No dependency evidence recorded').trim();
     const source=blockedQueueSourceUrl(item.source_url);
     const parked=blockedQueueIsParked(item);
+    const taskClaimNotice=blockedQueueTaskClaimNotice(item);
     const attention=Array.isArray(DATA.attention_needed)
       ?DATA.attention_needed.some(row=>row.attention_id==='queue:'+item.queue_id&&row.status!=='resolved')
       :null;
@@ -1514,15 +1515,16 @@ function projectBlockedQueuePanel(project){
       +'<strong>'+esc(String(item.title||'Untitled blocked task'))+'</strong>'
       +'<p>'+esc(blocker.length>220?blocker.slice(0,217)+'…':blocker)+'</p>'
       +blockedQueueChurnHint(item)
+      +taskClaimNotice
       +'<small>'+esc(attention===null?'Human Attention source unavailable':
         attention?'Human Attention linked':'No human Attention in loaded snapshot')+'</small>'
       +(source?'<div class="blocked-queue-links"><a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Open source issue / PR ↗</a></div>':'')
       +'</div><div class="blocked-queue-actions">'
       +'<button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'
-      +(parked?'':' disabled title="Current parked-task owner, claim timestamp or lease state inconsistent"')
+      +(parked?'':' disabled title="Current queue or separate task-claim state is unknown or bound"')
       +'>Confirm dependency cleared</button>'
       +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'
-      +(parked?'':' disabled title="Current parked-task owner, claim timestamp or lease state inconsistent"')
+      +(parked?'':' disabled title="Current queue or separate task-claim state is unknown or bound"')
       +'>Close permanently…</button>'
           +'<button type="button" class="blocked-queue-inspect" data-inspect-blocked="'+esc(item.queue_id)+'">Inspect current recovery conditions</button>'
       +'</div></article>';
