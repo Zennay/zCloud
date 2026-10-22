@@ -79,12 +79,15 @@ def compare_host_pressure(previous: object, current: object,
         result["status"] = "untrusted_source"
         result["source_gaps"] = ["previous_or_current_snapshot_shape"]
         return result
-    if (previous.get("source") != "local_procfs" or
-            current.get("source") != "local_procfs" or
-            previous.get("release_authorized") is not False or
-            current.get("release_authorized") is not False):
+    for label, sample in (("previous", previous), ("current", current)):
+        if sample.get("source") != "local_procfs":
+            result["source_gaps"].append(label + ".source")
+        if sample.get("release_authorized") is not False:
+            result["source_gaps"].append(label + ".release_authorized")
+        if sample.get("changes_host") is not False:
+            result["source_gaps"].append(label + ".changes_host")
+    if result["source_gaps"]:
         result["status"] = "untrusted_source"
-        result["source_gaps"] = ["source_identity_or_authority"]
         return result
     if not elapsed_valid:
         result["status"] = "stale_or_inverted_window"
