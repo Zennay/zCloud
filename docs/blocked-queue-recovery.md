@@ -419,3 +419,26 @@ claimlease of de door #677 vereiste rollback/owner-review over.
 Source branch ≠ main ≠ live. Bestaande exact-head CI,
 onafhankelijke review, mergebeveiliging en release-eigenaarschap blijven
 ongewijzigd. Er zijn geen QA-tests geschreven of uitgevoerd.
+
+### Lease-interpretatie op het geobserveerde bronmoment
+
+Voor `claimed`, `running` en `verifying` vergelijkt de read-only
+Claim Churn-kaart het geobserveerde `claim_expires` met de
+`time` die de geautoriseerde queue-GET zelf leverde:
+`expired-at-observation`, `valid-at-observation` of `unknown`.
+`queued` betekent `not-applicable`, omdat het geen actieve
+queueclaim is. Een verstreken lease is hoogstens een
+**triagesignaal**, geen toestemming om een worker te vervangen of
+stiekem werk opnieuw uit te geven. **Only expired leases** is een
+extra statusfilter, en de private claimchurn-export bewaart de
+waargenomen leasebeoordeling en vervaltijd zonder ruwe taakinhoud.
+
+Wanneer een nieuwe `/api/status`-verversing faalt, worden beide
+queuebronnen (de blocked-only kaart en de volledige actieve snapshot)
+expliciet ongeldig gemaakt en vervangen door een onbekende
+bronstatus. De browser laat dan geen oude queue als 'live' staan,
+en kan geen vervallen operatoractie op basis van die oude snapshot
+aanbieden. Een nieuwe succesvolle geautoriseerde queue-GET vult
+de informatie opnieuw. Er wordt geen actieve claim aangepast of
+herstart. Dit zijn codewijzigingen op de bestaande, nog niet
+gemergede product-PR; geen productie-installatie.
