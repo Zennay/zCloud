@@ -100,6 +100,20 @@ active work, reconcile with the authorized owner, and never infer takeover or re
 authority from process presence. It is a convenience summary of the enum fields, not
 an independent source of evidence.
 
+The receipt also exposes a bounded `operator_action_codes` array for
+machine-readable handoffs. Stable codes distinguish unknown runner membership,
+process-name matches outside or mixed across the expected service unit, a
+zero-worker observation that is **not** claim clearance, and critical/high/
+unknown capacity evidence. Every receipt includes
+`PRESERVE_ACTIVE_WORK`, `TAKEOVER_NOT_AUTHORIZED`, and
+`RESTART_NOT_AUTHORIZED`. `HOLD_DISK_WRITES_REQUEST_OWNER_INVENTORY` is
+advisory when root capacity is critical; it does not identify files or grant
+cleanup permission. `CAPACITY_THRESHOLDS_NOT_EXCEEDED_NOT_HEALTH_PROOF`
+explicitly prevents a normal capacity snapshot from being mistaken for a
+healthy runner or verified GitHub job assignment. These codes summarize the
+same bounded observation; they are not a task/claim inventory and never
+authorize mutation, takeover, service restart, release, or deployment.
+
 
 
 The `/zssh workers` receipt also includes `host_capacity_observation`. It
