@@ -1135,6 +1135,25 @@ def runtime_source_panel(decision):
                      or notion.get("live_claim_ownership_verified") is not False)):
             raise ValueError("saved Notion snapshot lacks unverified-origin guard")
         observed = _stamp(notion.get("observed_at"))
+        lease_terms = {
+            "missing_worker_or_lease_fields": "werkerslot/leasevelden ontbreken",
+            "date_only_not_a_lease": "alleen datum, geen lease",
+            "invalid_lease_timestamp": "ongeldige claimklok",
+            "invalid_lease_interval": "inconsistent of te lang leasevenster",
+            "future_claim_start": "claimstart in de toekomst",
+            "expired_claim_window": "leasevenster verlopen",
+            "time_window_present_not_owner_verified": "tijdvenster aanwezig, géén eigenaarbewijs",
+        }
+        current_source = expected == "claim_status_observed_no_file_ownership"
+        aggregate = notion.get("claim_window_observation_counts")
+        if current_source:
+            if (type(aggregate) is not dict or notion.get("claim_window_verified") is not False
+                    or any(k not in lease_terms or type(n) is not int or n < 1
+                           for k, n in aggregate.items())
+                    or sum(aggregate.values()) != notion["active_count"]):
+                raise ValueError("invalid private Notion lease window summary")
+        elif aggregate is not None:
+            raise ValueError("saved Notion source cannot assert lease clock coverage")
         labels = []
         for item in notion["items"]:
             if type(item) is not dict or item.get("status") not in (
@@ -1150,18 +1169,32 @@ def runtime_source_panel(decision):
                         or any(ord(char) < 32 or ord(char) == 127 for char in value)):
                     raise ValueError("unsafe private Notion status label")
                 parts.append(_operator_visible_label(value))
+            if current_source:
+                window = item.get("claim_window_observation")
+                if window not in lease_terms or item.get("claim_authorized") is not False:
+                    raise ValueError("invalid private Notion lease authority/classification")
+                parts.append(escape(lease_terms[window]))
             labels.append("<li>" + " · ".join(parts) + "</li>")
         caveat = ("HANDMATIG OPGESLAGEN · oorsprong en huidige claims onbekend"
                   if expected == "private_connector_snapshot_unverified_origin"
                   else ("ONVOLLEDIGE BRON · niet alle statuspagina's gezien"
                         if notion["coverage"] == "incomplete" else
                         "Live opgevraagde Notion werkstatus · geen bestands- of leaseclaim"))
+        lease_summary = ""
+        if current_source:
+            suspicious = sum(n for key, n in aggregate.items()
+                             if key != "time_window_present_not_owner_verified")
+            lease_summary = (
+                '<p><strong>Claimklokken:</strong> ' + str(suspicious) +
+                ' onvolledig/verlopen/toekomstig/inconsistent; ' +
+                str(aggregate.get("time_window_present_not_owner_verified", 0)) +
+                ' met tijdvenster maar géén bevoegdheidsbewijs.</p>')
         panels.append('<details><summary>Notion statusbron · ' +
                       str(notion["active_count"]) + ' waargenomen werkregels' +
                       (' · samples afgekapt' if notion["items_truncated"] else '') +
                       '</summary><p>Bronmoment: ' + escape(observed) +
                       ' · ' + escape(caveat) +
-                      '</p><ul>' + ''.join(labels) +
+                      '</p>' + lease_summary + '<ul>' + ''.join(labels) +
                       '</ul><p>Niet bevoegd om werk over te nemen, te hervatten of'
                       ' als voltooid te markeren.</p></details>')
     elif notion_status == "degraded_unavailable_no_claim_authority":
