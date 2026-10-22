@@ -364,8 +364,11 @@ def _checks_summary(payload, sha, full_name):
         if not isinstance(row, dict):
             raise GitHubReadError("invalid check-run row")
         source_sha = row.get("head_sha")
-        if source_sha is not None and source_sha != sha:
-            raise GitHubReadError("check-run does not belong to observed exact HEAD")
+        # The endpoint URL is SHA-scoped, but unbound individual rows are
+        # not independent evidence of the expected HEAD. Require the exact
+        # row identity instead of silently accepting missing provenance.
+        if type(source_sha) is not str or source_sha != sha:
+            raise GitHubReadError("check-run row lacks matching exact HEAD identity")
         status = row.get("status")
         conclusion = row.get("conclusion")
         check_id = row.get("id")
