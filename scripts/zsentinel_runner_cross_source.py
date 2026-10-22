@@ -80,6 +80,34 @@ def _validated_service_observation(local):
     }
 
 
+SYSTEMD_RELATIONSHIPS = {
+    "unknown_service_state", "unknown_partial_process_sample",
+    "unit_active_listener_not_observed", "listener_observed_unit_not_active",
+    "unit_active_listener_observed", "unit_not_active_listener_not_observed",
+    "unit_state_not_comparable",
+}
+
+
+def _service_process_relationship(local, service):
+    if service.get("status") != "observed":
+        return "unknown_service_state"
+    if local.get("process_inventory_complete") is not True:
+        return "unknown_partial_process_sample"
+    listeners = local.get("listener_processes_observed")
+    if type(listeners) is not int or not 0 <= listeners <= 20000:
+        return "unknown_partial_process_sample"
+    active = service["properties"]["ActiveState"]
+    if active == "active" and listeners == 0:
+        return "unit_active_listener_not_observed"
+    if active in ("inactive", "failed") and listeners > 0:
+        return "listener_observed_unit_not_active"
+    if active == "active" and listeners > 0:
+        return "unit_active_listener_observed"
+    if active in ("inactive", "failed") and listeners == 0:
+        return "unit_not_active_listener_not_observed"
+    return "unit_state_not_comparable"
+
+
 def _service_summary(service):
     if service.get("status") != "observed":
         return "ONBEKEND (" + service.get("reason", "not_observed") + ")"
@@ -106,6 +134,7 @@ def _utc_clock(value, field):
 def _action(stage, problem, next_action, local, *, pinned=None,
             source_freshness="unknown", job_status=None, job_conclusion=None):
     service_observation = _validated_service_observation(local)
+    service_relationship = _service_process_relationship(local, service_observation)
     status_line = "ALLEEN-LEZEN · GitHub-runner herstel NIET BEWEZEN · geen serviceactie"
     if job_status is not None:
         if type(job_status) is not str or job_status not in JOB_STATUSES:
@@ -131,6 +160,8 @@ def _action(stage, problem, next_action, local, *, pinned=None,
         "head_sha": (pinned["head_sha"] if pinned else None),
         "systemd_service_observation": service_observation,
         "systemd_service_summary": _service_summary(service_observation),
+        "systemd_process_relationship": service_relationship,
+        "local_listener_processes_observed": local["listener_processes_observed"],
         "registered_runner_verified": False,
         "job_resumed_verified": False,
         "restart_authorized": False,
@@ -409,6 +440,12 @@ def as_html(result):
         "systemd_service_observation": result.get("systemd_service_observation")
     })
     summary = _service_summary(service)
+    relationship = result.get("systemd_process_relationship", "unknown_service_state")
+    if relationship not in SYSTEMD_RELATIONSHIPS:
+        raise ValueError("invalid systemd/process relationship")
+    listener_count = result.get("local_listener_processes_observed")
+    if type(listener_count) is not int or not 0 <= listener_count <= 20000:
+        raise ValueError("invalid local listener count")
     return (
         '<section aria-label="zSentinel exacte runnerbron correlatie">'
         '<h2>P0 runner · exacte job plus lokale proces- en unitstatus</h2>'
@@ -416,7 +453,9 @@ def as_html(result):
         '<p><strong>ACTIE:</strong> ' + escape(result["next_action"]) + '</p>'
         '<p><strong>STATUS:</strong> ' + escape(result["status"]) + job_link + '</p>'
         '<p><strong>Systemd-unit (alleen lezen):</strong> ' + escape(summary) + '</p>'
-        '<p>Unitstatus en lokale processen bewijzen geen GitHub-registratie, veilige idle of herstelautorisatie.</p>'
+        '<p><strong>Unit/proces-relatie:</strong> ' + escape(relationship) +
+        ' · waargenomen listenerprocessen=' + str(listener_count) + '</p>'
+        '<p>Een overeenkomende unit en listener bewijzen geen GitHub-registratie, veilige idle of herstelautorisatie.</p>'
         '</section>'
     )
 
@@ -434,5 +473,7 @@ def as_text(result):
         (" · exact GitHub: " + result["exact_job_url"]
          if result.get("exact_job_url") else ""),
         "SYSTEMD-UNIT · alleen-lezen · " + _service_summary(service),
+        "UNIT/PROCES-RELATIE · " + result.get(
+            "systemd_process_relationship", "unknown_service_state"),
         "HERSTARTAUTORISATIE · nee",
     ))
