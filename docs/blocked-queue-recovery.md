@@ -351,3 +351,23 @@ niet als live of op `main` geleverd beschouwd totdat dezelfde
 oorspronkelijke CI-/review-/protected-main- en releasevoorwaarden zijn
 afgehandeld. Geen QA-suites, handmatige workflowtrigger, operatorresume,
 queue-/claim-/SQLite-write of VPS-servicehandeling.
+
+## 22 oktober · hoog aantal claimpogingen zonder automatische retry
+
+De Dependency Holds-werkbank en projectdetailkaarten signaleren nu
+`attempts >= 3` uitsluitend als **waargenomen herhaalde claims**,
+nooit als drie gefaalde runs of een vastgestelde retrybudgetschending.
+Bij deze taak verschijnt een brongebonden operatorhint en een directe
+link naar open [zCloud-issue #677](https://github.com/Zennay/zCloud/issues/677).
+De handmatige `Only repeated claims`-filter combineert met P0/P1,
+project, tekst en menselijke Attention; de afzonderlijke privé-JSON
+neemt de huidige filterselectie expliciet op. Een lege selectie
+betekent alleen nul matches in de geladen steekproef.
+`Clear filters` zet deze keuze ook terug.
+
+De onderliggende lifecycle-writer, `attempts`-kolom, SQLite,
+actieve claimlease, replay/retrybudget en `FAILED_RETRYABLE` /
+`NEEDS_AI`-contract zijn **niet** gewijzigd; #677 behoudt zijn
+eigen serialized runtime-owner- en migratievoorwaarden.
+De GitHub-bron op deze bestaande featurebranch is geen
+runtime-bewijs of mergeautorisatie.
