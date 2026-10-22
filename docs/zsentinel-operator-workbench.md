@@ -155,7 +155,7 @@ Mogelijke toekomstige bronklokken (>2 minuten) worden
 `future_clock_unknown`; oudere opnames heten
 `stale_historical_sample`; recente opnames blijven expliciet
 `recent_historical_sample_not_live`. Een nieuwe ZIP-aanmaak of
-bestandstijd maakt historische broninformatie nooit kunstmatig actueel.
+bestandstijd maakt historische broninformatie nooit kunstmatig actueel. De opgeslagen PR-tijdlijn gebruikt dezelfde tweeminutengrens: een bronklok die verder in de toekomst ligt wordt `clock-skew` en kan niet als `recent-snapshot` verschijnen.
 Dit beïnvloedt geen claims, watches, CI of releases.
 
 De uitvoer onderscheidt `original_private_bundle_files_reverified` van
