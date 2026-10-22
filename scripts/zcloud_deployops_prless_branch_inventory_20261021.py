@@ -170,7 +170,16 @@ def collect(read):
         "release_authorized": False,
         "deployment_authorized": False,
     }
-    canonical = json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    # Preserve a stable inventory-state fingerprint across identical branch
+    # snapshots; observation clocks describe freshness, not branch identity.
+    fingerprint_view = {
+        key: value for key, value in result.items()
+        if key not in {"snapshot_started_at_utc", "snapshot_completed_at_utc",
+                       "snapshot_duration_seconds"}
+    }
+    canonical = json.dumps(
+        fingerprint_view, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     result["snapshot_sha256_unverified"] = hashlib.sha256(canonical).hexdigest()
     rendered = json.dumps(result, sort_keys=True, separators=(",", ":"))
     if len(rendered.encode("utf-8")) > MAX_OUTPUT_BYTES:
