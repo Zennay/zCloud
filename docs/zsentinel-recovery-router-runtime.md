@@ -3900,11 +3900,17 @@ P2 en P3 geselecteerd. De bronvraag blijft één read-only
 
 Een volledige `ORDER BY` over een grote geblokkeerde wachtrij kan op
 een volle VPS onverwachte tijdelijke SQLite-sorteerbestanden vragen. De
-implementatie gebruikt daarom maximaal vier `WHERE priority=? LIMIT ?`
-prioriteitsvensters, **zonder onbegrensde SQL-sortering**. De werkbak
-belooft geen chronologisch/fair totaaloverzicht binnen een prioriteit:
-zichtbare taken zijn een beperkte bronsteekproef, tenzij de onafhankelijk
-getelde hoeveelheid geblokkeerde taken daadwerkelijk in het venster past.
+implementatie gebruikt daarom maximaal 24 `WHERE priority=? AND
+project_id=? LIMIT ?`-opvragingen. Projecten uit dezelfde reeds gelezen,
+begrensde project/prioriteit-aggregaten worden **round-robin** geselecteerd;
+daardoor kan één druk P0-project niet langer standaard het volledige
+werkvenster vullen. Maximaal 24×24 bronrijen worden voor deze
+prioriteitsgespreide steekproef ingelezen en er is geen nieuwe onbegrensde
+globale SQL-sortering. Bij meer dan 250 geobserveerde projectgroepen of
+meer dan 24 taken blijft dekking expliciet **onvolledig**. Deze
+beperkte bronweergave bewijst geen chronologisch of volledig overzicht.
+De eerste bronquery groepeert al op project/prioriteit; dat is geen
+belofte dat SQLite elders nooit tijdelijke data hoeft te gebruiken.
 
 Elke kaart toont alleen project, P-prioriteit, geschoonde titel,
 aantal eerdere **claimpogingen** (nooit foutenaantal), `eligible` als
@@ -3917,7 +3923,13 @@ verdacht claimveld in een verplichte eigenaarcontrole.
 
 De Nederlandse HTML-cockpit heeft nu een uitklapbare **Geblokkeerde taken
 · individuele P0/P1-eerst werkvolgorde**, naast de bestaande
-projectaggregaten. Bij >24 taken toont hij expliciet ONVOLLEDIG;
+projectaggregaten.
+Als een bronrecord een passende `https://github.com/Zennay/<repo>/issues/<n>`
+of `/pull/<n>`-URL bevat, toont de werkbak een klikbare bronverwijzing;
+alle andere URL's blijven onzichtbaar. Deze URL is uitsluitend
+**queue-aangeleverd en niet zelfstandig geverifieerd** en vormt nooit
+bewijs dat een issue nog open, gerelateerd of van de actuele eigenaar is.
+De CLI toont dezelfde verwijzing uitsluitend als navigatiehint. Bij >24 taken toont hij expliciet ONVOLLEDIG;
 oude snapshotformaten blijven leesbaar maar leveren
 `work_items_coverage=not_observed` in plaats van een vals lege lijst.
 Verouderde bronmomenten verbergen alle individuele taakdetails.
