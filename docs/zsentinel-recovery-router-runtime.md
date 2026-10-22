@@ -18,6 +18,12 @@ De uitvoerende schrijver verifieert de map-inode opnieuw; een preflight is
 geen tijdslot-, eigendoms- of filesystemracegarantie.
 Bestaande `--state`- en `--window-state`-ledgers mogen wél in hun
 eigen beheerpad blijven staan, nooit als alias van een ander rapport.
+Ook wanneer bestandsnamen verschillen, worden bestaande writer- en bronbestanden
+op apparaatnummer en inode vergeleken. Een schrijfbaar ledger dat een
+hardlink is naar bijvoorbeeld de wachtrij-SQLite of een vorige bronsnapshot
+wordt vóór verwerking geweigerd. Pad- en inodescheiding is een
+uitvoer-preflight, geen toestemming tot claimvrijgave of een garantie dat
+paden na het controleren niet kunnen veranderen.
 
 Voorheen waren enkele onafhankelijke guards onvolledig: zo werd een live
 `--agenda-output` niet met `--action-output` vergeleken en kon in de
