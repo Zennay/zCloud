@@ -903,6 +903,7 @@ def html_view(decision, registry=None):
                         "selected_one_source_bound_job",
                         "selected_one_source_bound_job_partial_window",
                         "no_actionable_job_in_sampled_windows",
+                        "approval_wait_workflow_no_job_selected",
                         "degraded_unavailable")):
                 raise ValueError("invalid GitHub workflow window coverage")
             pid = phrase(row.get("project_id"), 80)
@@ -949,6 +950,12 @@ def html_view(decision, registry=None):
             elif row["status"] == "degraded_unavailable":
                 description = ("GitHub-vensters niet voldoende onderzocht of bereikbaar; "
                                "andere jobs en runnergezondheid ONBEKEND.")
+            elif row["status"] == "approval_wait_workflow_no_job_selected":
+                description = ("Een of meer GitHub-workflows lijken op een approval-/"
+                               "concurrency-gate te wachten, maar geen exacte "
+                               "herstelbare job werd geselecteerd. De bevoegde "
+                               "workfloweigenaar controleert de gekoppelde runs; "
+                               "dit is GEEN bewezen runnerstoring.")
             else:
                 description = "Geen kandidaat in dit kleine venster; overige jobs ONBEKEND."
             if stop_reason is not None:
@@ -1089,7 +1096,7 @@ def html_view(decision, registry=None):
                                       '">Approval-workflow ' + str(rid) +
                                       '</a> · HEAD ' + sha[:12] + '</li>')
             if approval_links:
-                linked += ('<details><summary>Menselijke goedkeuringswacht (≥' +
+                linked += ('<details><summary>Mogelijke menselijke goedkeuringswacht (≥' +
                            str(count) + ')</summary><ul>' +
                            ''.join(approval_links) + '</ul><p class="small">'
                            'Workflowbron, geen job- of runnerstoringsbewijs. '
