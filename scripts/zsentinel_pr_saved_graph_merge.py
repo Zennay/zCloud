@@ -581,6 +581,9 @@ def combine_sources(sources, repository):
     (scope_rows, scope_pairs_observed, scope_scan_complete,
      scope_path_comparisons, scope_counts_by_pr, scope_pairs_truncated) = (
         cross_window_scope_conflicts(all_prs))
+    (alias_rows, alias_pairs_observed, alias_scan_complete,
+     alias_path_comparisons, alias_counts_by_pr, aliases_truncated) = (
+        cross_window_portable_aliases(all_prs))
     rows = []
     for (left, right), overlap_count in collisions[:MAX_PAIRS]:
         a, b = all_prs[left], all_prs[right]
@@ -612,6 +615,8 @@ def combine_sources(sources, repository):
             "cross_window_shared_file_count": 0,
             "cross_window_scope_pair_count": scope_counts_by_pr[number]["pair_count"],
             "cross_window_scope_path_conflict_count": scope_counts_by_pr[number]["path_conflict_count"],
+            "cross_window_alias_pair_count": alias_counts_by_pr[number]["pair_count"],
+            "cross_window_path_alias_count": alias_counts_by_pr[number]["path_alias_count"],
             "cross_window_number_hint_count": 0,
             "claim_authorized": False, "merge_authorized": False,
         }
@@ -627,11 +632,14 @@ def combine_sources(sources, repository):
         (row for row in by_pr.values()
          if row["cross_window_file_pair_count"]
             or row["cross_window_scope_pair_count"]
+            or row["cross_window_alias_pair_count"]
             or row["cross_window_number_hint_count"]),
         key=lambda row: (-row["cross_window_file_pair_count"],
                          -row["cross_window_scope_pair_count"],
                          -row["cross_window_shared_file_count"],
                          -row["cross_window_scope_path_conflict_count"],
+                         -row["cross_window_alias_pair_count"],
+                         -row["cross_window_path_alias_count"],
                          -row["cross_window_number_hint_count"],
                          row["pr_number"]))
 
@@ -657,6 +665,11 @@ def combine_sources(sources, repository):
         "cross_window_scope_scan_complete": scope_scan_complete,
         "cross_window_scope_path_comparisons": scope_path_comparisons,
         "cross_window_scope_conflicts_truncated": scope_pairs_truncated,
+        "cross_window_portable_alias_pairs_observed": alias_pairs_observed,
+        "shown_cross_window_portable_alias_pairs": alias_rows,
+        "cross_window_alias_scan_complete": alias_scan_complete,
+        "cross_window_alias_path_comparisons": alias_path_comparisons,
+        "cross_window_aliases_truncated": aliases_truncated,
         "connected_cross_window_groups_observed": len(clusters),
         "shown_connected_cross_window_groups": clusters[:MAX_CROSS_WINDOW_CLUSTERS],
         "connected_cross_window_groups_truncated":
