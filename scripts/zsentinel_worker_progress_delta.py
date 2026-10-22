@@ -357,7 +357,11 @@ def public_summary(report):
                 "claim_epoch_verified", "task_completion_verified",
                 "owner_claims_changed", "queue_write_authorized",
                 "restart_authorized", "automatic_followup_dispatched"))
-            or type(report.get("counts")) is not dict):
+            or type(report.get("counts")) is not dict
+            or type(report.get("items")) is not list
+            or len(report["items"]) > 2 * MAX_ENTRIES
+            or type(report.get("progress_timestamp_window_changes_observed")) is not int
+            or not 0 <= report["progress_timestamp_window_changes_observed"] <= len(report["items"])):
         raise ValueError("unsafe worker progress trend")
     return {
         "schema": "zsentinel-worker-progress-delta-public-v1",
@@ -371,6 +375,8 @@ def public_summary(report):
         "source_regressions": report["counts"]["indexed_source_reset_or_regression"],
         "claim_window_changes_requiring_owner_review":
             report["counts"]["claim_window_changed_requires_owner_recheck"],
+        "progress_timestamp_window_changes_observed":
+            report["progress_timestamp_window_changes_observed"],
         "new_in_sample_not_new_claim": report["new_worker_slots_unpaired"],
         "missing_in_sample_not_recovered": report["disappeared_worker_slots_unpaired"],
         "product_delivery_verified": False,
@@ -393,6 +399,8 @@ def human_text(report):
         str(data["running_without_new_events"]) +
         " toegewezen workers zonder eventtoename; " +
         str(data["claim_window_changes_requiring_owner_review"]) +
+        str(data["progress_timestamp_window_changes_observed"]) +
+        " wijzigingen van progress-tijdstip in het claimvenster; " +
         " gewijzigde claimvensters die een eigenaarcontrole vereisen; " +
         str(data["new_in_sample_not_new_claim"]) +
         " nieuw in steekproef (geen nieuwe claim), " +
@@ -418,6 +426,8 @@ def public_html(report):
         str(data["running_without_new_events"]) +
         '; gewijzigde claimvensters met eigenaarcontrole: ' +
         str(data["claim_window_changes_requiring_owner_review"]) +
+        "; wijzigingen van progress-tijdstip in claimvenster: " +
+        str(data["progress_timestamp_window_changes_observed"]) +
         '; nieuw in beperkte steekproef (geen nieuwe claim): ' +
         str(data["new_in_sample_not_new_claim"]) +
         '; verdwenen uit beperkte steekproef (geen herstel): ' +
@@ -456,9 +466,11 @@ def private_markdown(report):
         str(data["missing_in_sample_not_recovered"]),
         "- Gewijzigde claimvensters (cursorvergelijking geblokkeerd): " +
         str(data["claim_window_changes_requiring_owner_review"]),
+        "- Wijzigingen van progress-tijdstip binnen claimvenster: " +
+        str(data["progress_timestamp_window_changes_observed"]),
         "",
-        "| Project | Worker-slot | Waarneming | Bevoegde eigenaaractie |",
-        "| --- | ---: | --- | --- |",
+        "| Project | Worker-slot | Waarneming | Progress-tijdstip claimvenster | Bevoegde eigenaaractie |"
+        "| --- | ---: | --- | --- | --- |"
     ]
     for row in _owner_sort(rows):
         if (type(row) is not dict
@@ -469,6 +481,14 @@ def private_markdown(report):
                 or type(row.get("stage")) is not str
                 or row["stage"] not in report["counts"]
                 or type(row.get("owner_action")) is not str
+                or row.get("progress_timestamp_window_observation") not in (
+                    "not_comparable_missing_worker_card", "unknown_legacy_or_claim_window",
+                    "unchanged_in_claim_window", "unchanged_outside_claim_window",
+                    "changed_to_in_claim_window", "changed_outside_claim_window")
+                or (row.get("previous_progress_timestamp_in_claim_window") is not None
+                    and type(row.get("previous_progress_timestamp_in_claim_window")) is not bool)
+                or (row.get("current_progress_timestamp_in_claim_window") is not None
+                    and type(row.get("current_progress_timestamp_in_claim_window")) is not bool)
                 or not 1 <= len(row["owner_action"]) <= 220
                 or any(ord(c) < 32 or ord(c) == 127 for c in row["owner_action"])):
             raise ValueError("invalid private worker followup")
@@ -476,9 +496,12 @@ def private_markdown(report):
         # internally generated and project/slot identities are canonical.
         label = OPERATOR_LABELS[row["stage"]].replace("|", "\\|")
         action = row["owner_action"].replace("|", "\\|")
+        window = (_progress_window_label(row.get("previous_progress_timestamp_in_claim_window")) +
+                  " → " + _progress_window_label(row.get("current_progress_timestamp_in_claim_window")) +
+                  " (" + row["progress_timestamp_window_observation"] + ")").replace("|", "\\|")
         lines.append("| " + row["project_id"] + " | " +
                      str(row["worker_slot"]) + " | " + label +
-                     " | " + action + " |")
+                      " | " + window + " | " + action + " |")
     lines += ["", "**Vervolg:** bevestig bij de werkelijke eigenaar of dezelfde "
               "worker, taak, lease en codelevering nog bestaan. Geen automatische "
               "claim, retry, dispatch, restart, merge of deploy.", ""]
@@ -492,9 +515,21 @@ def private_html(report):
         stage = item["stage"]
         if stage not in OPERATOR_LABELS:
             raise ValueError("unknown operator worker stage")
+        if (item.get("progress_timestamp_window_observation") not in (
+                "not_comparable_missing_worker_card", "unknown_legacy_or_claim_window",
+                "unchanged_in_claim_window", "unchanged_outside_claim_window",
+                "changed_to_in_claim_window", "changed_outside_claim_window")
+                or (item.get("previous_progress_timestamp_in_claim_window") is not None
+                    and type(item.get("previous_progress_timestamp_in_claim_window")) is not bool)
+                or (item.get("current_progress_timestamp_in_claim_window") is not None
+                    and type(item.get("current_progress_timestamp_in_claim_window")) is not bool)):
+            raise ValueError("invalid progress timestamp window receipt")
         rows.append('<tr><td>' + escape(item["project_id"]) + '</td><td>' +
                     str(item["worker_slot"]) + '</td><td>' +
                     escape(OPERATOR_LABELS[stage]) + '</td><td>' +
+                    escape(_progress_window_label(item.get("previous_progress_timestamp_in_claim_window")) +
+                           " → " + _progress_window_label(item.get("current_progress_timestamp_in_claim_window")) +
+                           " (" + item["progress_timestamp_window_observation"] + ")") + '</td><td>' +
                     escape(item["owner_action"]) + '</td></tr>')
     return (
         '<!doctype html><html lang="nl"><meta charset="utf-8">'
@@ -509,7 +544,7 @@ def private_html(report):
         'td,th{border:1px solid #64748b;padding:.5rem}</style>'
         '<main><h1>zSentinel · Worker progress tussen twee waarnemingen</h1>' +
         public_html(report) + '<table><thead><tr><th>Project</th>'
-        '<th>Slot</th><th>Bronstatus</th><th>Benodigde eigenaaractie</th>'
+        '<th>Slot</th><th>Bronstatus</th><th>Progress-tijdstip claimvenster</th><th>Benodigde eigenaaractie</th>'
         '</tr></thead><tbody>' + "".join(rows) +
         '</tbody></table></main></html>'
     )
