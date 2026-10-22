@@ -115,8 +115,15 @@ def registry(path):
             raise ValueError("canonical registry changed during read")
     finally:
         os.close(fd)
+    def reject_nonfinite(value):
+        raise ValueError("non-finite canonical registry value")
+
     rows = json.loads(payload.decode("utf-8", errors="strict"),
-                      object_pairs_hook=unique)
+                      object_pairs_hook=unique,
+                      parse_constant=reject_nonfinite)
+    # Do not silently accept JSON escapes representing lone surrogates:
+    # the resulting project identity could never be a canonical UTF-8 path.
+    json.dumps(rows, ensure_ascii=False).encode("utf-8", errors="strict")
     if not isinstance(rows, list):
         raise ValueError("invalid canonical registry")
     result = {}
