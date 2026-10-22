@@ -553,10 +553,25 @@ def read_review_manifest(path: Path, batch: int = 1):
         os.close(fd)
     if len(raw) > REVIEW_MAX_BYTES:
         raise ValueError("review manifest exceeds one MiB")
+    def unique_fields(pairs):
+        obj = {}
+        for key, value in pairs:
+            if key in obj:
+                raise ValueError("duplicate review manifest JSON field")
+            obj[key] = value
+        return obj
+
+    def no_nonfinite(value):
+        raise ValueError("non-finite review manifest JSON number")
+
     try:
-        data = json.loads(raw.decode("utf-8", errors="strict"))
-    except (ValueError, UnicodeError):
-        raise ValueError("invalid UTF-8 JSON review manifest") from None
+        decoded = raw.decode("utf-8", errors="strict")
+        # Escaped lone surrogates also create non-UTF-8 source identities.
+        data = json.loads(decoded, object_pairs_hook=unique_fields,
+                          parse_constant=no_nonfinite)
+        json.dumps(data, ensure_ascii=False).encode("utf-8", errors="strict")
+    except (ValueError, UnicodeError, RecursionError):
+        raise ValueError("invalid or ambiguous UTF-8 JSON review manifest") from None
     if (type(data) is not dict or data.get("schema") != REVIEW_SCHEMA
             or data.get("claim_authorized") is not False
             or data.get("merge_authorized") is not False
