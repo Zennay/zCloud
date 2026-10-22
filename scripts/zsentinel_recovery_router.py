@@ -33,6 +33,9 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 SAFE_PATH = re.compile(r"^[a-zA-Z0-9_.@/+ -]{1,220}$")
 BRANCH_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,160}$")
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+CANONICAL_BLOCKED_SOURCE = re.compile(
+    r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/(?:issues|pull)/[1-9][0-9]{0,8}$"
+)
 
 
 def timestamp(value, name):
@@ -928,6 +931,11 @@ def _blocked_queue_summary(source, source_coverage):
         ref, pid, priority = (row.get("queue_ref"), row.get("project_id"),
                               row.get("priority"))
         title, attempts = row.get("title"), row.get("claim_attempts")
+        link = row.get("canonical_github_source_link_unverified")
+        if (link is not None and (
+                type(link) is not str or len(link) > 220
+                or CANONICAL_BLOCKED_SOURCE.fullmatch(link) is None)):
+            raise ValueError("untrusted blocked work source URL")
         if (type(ref) is not str or re.fullmatch(r"[0-9a-f]{16}", ref) is None
                 or ref in seen_work or type(pid) is not str
                 or SLUG.fullmatch(pid) is None or priority not in PRIORITY
@@ -952,6 +960,7 @@ def _blocked_queue_summary(source, source_coverage):
         safe_work.append({
             "queue_ref": ref, "project_id": pid, "priority": priority,
             "title": title, "claim_attempts": attempts,
+            "canonical_github_source_link_unverified": link,
             "eligible_observed": row["eligible_observed"],
             "claim_fields_present_observed": row["claim_fields_present_observed"],
             "worker_slot_present_observed": row.get("worker_slot_present_observed"),
@@ -1796,6 +1805,11 @@ def operator_text(result):
                     or item.get("current_owner_verified") is not False):
                 raise ValueError("untrusted blocked task human handoff")
             seen.add(ref)
+            link = item.get("canonical_github_source_link_unverified")
+            if (link is not None and (
+                    type(link) is not str or len(link) > 220
+                    or CANONICAL_BLOCKED_SOURCE.fullmatch(link) is None)):
+                raise ValueError("invalid blocked task CLI source link")
             lines.append(
                 "  - " + priority + " " + project + " #" + ref + " · " +
                 title + " · claimpogingen " + str(item["claim_attempts"]) +
@@ -1804,6 +1818,7 @@ def operator_text(result):
                  " · geen claimvelden gezien, eigenaar nog onbekend"
                  if worker_slot_source else
                  " · worker-slotbron ONBEKEND; eigenaar eerst controleren") +
+                (" · bronverwijzing NIET geverifieerd: " + link if link else "") +
                 (" · BEZET WORKER-SLOT, GEEN HERVATRECHT"
                  if item.get("worker_slot_present_observed") is True else ""))
     lines.append("VPS resource admission: " + result["vps_resource_admission"]["state"] +
