@@ -887,7 +887,7 @@ async function inspectBlockedQueue(queueId,button){
     const details=reasons.map(code=>'<li>'+esc(BLOCKED_INSPECT_REASON_TEXT[String(code)]||String(code))+'</li>').join('');
     region.innerHTML='<strong>Read-only recovery inspection · '+esc(blockedQueueTime(result.observed_at)||'time unknown')+'</strong>'
       +'<p>'+(changed?'<b>Source changed since the loaded card. Refresh before any operator decision.</b> '
-         :'Observed version matches the visible card; permissions and dependencies still require confirmation. ')
+         :'Observed status and update timestamp match the card, but the complete source may still differ; permissions and dependencies require separate confirmation. ')
       +esc(result.found?('Queue: '+String(result.queue_status||'unknown')+'. '
           +'Resume candidate: '+(result.resume_candidate===true?'yes':'no')+'. '
           +'Terminal-close candidate: '+(result.close_candidate===true?'yes':'no')+'.')
