@@ -193,8 +193,18 @@ def _operator_workflow(item):
         kind = "other_or_unknown"
         problem = "Open issue in bounded source with lower or unknown priority"
         action = "Inspect the source issue and existing repair PRs"
+    codes = {
+        "source_changed": "recheck_changed_issue_source_before_owner_action",
+        "conflicting_priority_labels": "reconcile_conflicting_priority_labels_with_issue_owner",
+        "label_source_unknown": "inspect_source_issue_labels_before_priority",
+        "label_title_conflict": "inspect_conflicting_priority_with_issue_owner",
+        "explicit_p0_p1": "inspect_current_issue_and_existing_repair_prs",
+        "title_hint_only": "confirm_title_priority_with_issue_owner",
+        "other_or_unknown": "inspect_current_issue_and_existing_repair_prs",
+    }
     return {
         "workstream": kind,
+        "human_action_code": codes[kind],
         "problem": problem,
         "action": action,
         "status": "SOURCE OBSERVED; owner/CI/merge/recovery NOT VERIFIED",
@@ -377,7 +387,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         issue["operator_workflow"] = _operator_workflow(issue)
         # Preserve the existing field for older source consumers, but make
         # it agree with the current (possibly drifted) source observation.
-        issue["owner_next_step"] = issue["operator_workflow"]["workstream"]
+        issue["owner_next_step"] = issue["operator_workflow"]["human_action_code"]
     issues.sort(key=lambda x: (
         x["triage_rank"],
         0 if x["no_github_issue_update_for_72h"] is True else 1,
@@ -592,7 +602,7 @@ def workorders_csv(report):
         "observed_at_utc", "repository", "issue_url", "priority_source",
         "unverified_title_hint", "source_window_drift",
         "priority_label_conflict", "label_title_disagreement",
-        "operator_workstream", "problem", "human_action", "status",
+        "operator_workstream", "owner_step_code", "problem", "human_action", "status",
         "issue_updated_at_utc", "source_windows", "recent_window_complete",
         "source_partial_or_unknown", "display_truncated",
         "source_issues_seen", "issue_claim_verified", "required_ci_verified",
@@ -626,7 +636,8 @@ def workorders_csv(report):
             item["source_window_identity_drift"],
             item["explicit_priority_label_conflict"],
             item["explicit_label_title_disagreement"],
-            workflow["workstream"], workflow["problem"], workflow["action"],
+            workflow["workstream"], workflow["human_action_code"],
+            workflow["problem"], workflow["action"],
             workflow["status"], item["updated_at_utc"],
             ";".join(item["inbox_source_windows"]),
             report["recent_issue_window_complete"],
@@ -639,6 +650,7 @@ def workorders_csv(report):
         writer.writerow([safe(value) for value in (
             report["observed_at_utc"], report["repository"], "", "UNKNOWN",
             "NONE", False, False, "UNKNOWN", "metadata_only_no_issues",
+            "inspect_source_before_owner_action",
             "No issues observed in bounded sampled source",
             "Refresh source and independently inspect current open issues",
             "SOURCE SAMPLE EMPTY; absence of incidents NOT VERIFIED",
