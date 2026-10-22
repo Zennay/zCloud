@@ -4849,7 +4849,8 @@ document.getElementById('previewProjectDeltaCsv').onclick=()=>{
  document.getElementById('downloadProjectDeltaCsv').disabled=!viewedProjectDeltaCsv;
  status.textContent=viewedProjectDeltaCsv?
   'Review both exact board SHAs and each project recovery delta. Missing is not resolved.':
-  'No validated project recovery differences available for export.';
+  'No validated project recovery differences available for export; this is not proof issues were resolved. '+
+   issueCoverageWarning(null);
 };
 document.getElementById('downloadProjectDeltaCsv').onclick=()=>{
  if(!viewedProjectDeltaCsv)return;
@@ -4870,7 +4871,8 @@ document.getElementById('previewDeltaCsv').onclick=()=>{
  document.getElementById('downloadDeltaCsv').disabled=!viewedDeltaCsv;
  status.textContent=viewedDeltaCsv?
   'Review both exact-source SHA values and every change row. Missing is not resolved.':
-  'No validated two-snapshot differences available for export.';
+  'No validated two-snapshot differences available for export; this is not proof issues were resolved. '+
+   issueCoverageWarning(null);
 };
 document.getElementById('downloadDeltaCsv').onclick=()=>{
  if(!viewedDeltaCsv)return;
@@ -4892,6 +4894,21 @@ function csvCell(value){
  const meaningful=cell.replace(/^[\\p{White_Space}\\p{Cf}\\p{Zs}\\p{Zl}\\p{Zp}]*/u,'');
  if(/^[=+@-]/.test(meaningful))cell="'"+cell;
  return '"'+cell.replace(/"/g,'""')+'"';
+}
+function issueCoverageWarning(project){
+ const coverage=board.coverage?.projects||{};
+ if(project){
+  const state=coverage[project]||'unavailable';
+  return 'Issue-source coverage for '+project+': '+state+' — '+
+   (issueCoverageNotes[state]||'Coverage is UNKNOWN; backlog completeness cannot be inferred.')+
+   ' Empty filtered results are not backlog clearance.';
+ }
+ const counts={partial:0,degraded:0,unavailable:0};
+ Object.values(coverage).forEach(state=>{if(Object.prototype.hasOwnProperty.call(counts,state))counts[state]++;});
+ return 'Portfolio issue-source coverage: '+Object.keys(coverage).length+
+  ' project(s); partial '+counts.partial+', degraded '+counts.degraded+
+  ', unavailable '+counts.unavailable+
+  '. No complete issue inventory is established.';
 }
 function csvSource(){
  const privateFields=document.getElementById('csvIncludePrivate').checked;
@@ -4927,9 +4944,11 @@ document.getElementById('previewCsv').onclick=()=>{
  document.getElementById('csvPanel').hidden=!viewedCsv;
  document.getElementById('csvContent').textContent=viewedCsv||'';
  document.getElementById('downloadCsv').disabled=!viewedCsv;
+ const selectedProject=document.getElementById('project').value;
  status.textContent=viewedCsv?
   'Review CSV columns, source and rows. No spreadsheet service was contacted.':
-  'No issues match the filters; no CSV generated.';
+  'No issues match the filters; no CSV generated. '+
+   issueCoverageWarning(selectedProject||null);
 };
 document.getElementById('downloadCsv').onclick=()=>{
  if(!viewedCsv)return;
@@ -5013,7 +5032,8 @@ document.getElementById('previewProjectRecoveryCsv').onclick=()=>{
   !viewedProjectRecoveryCsv;
  status.textContent=viewedProjectRecoveryCsv?
   'Review all bounded project-level recovery rows, source clocks and non-authorizing fields. Queue-only projects are included; no live source was contacted.':
-  'No project recovery rows exist in this saved board; no CSV generated.';
+  'No project recovery rows exist in this saved board; no CSV generated. '+
+   issueCoverageWarning(null);
 };
 document.getElementById('downloadProjectRecoveryCsv').onclick=()=>{
  if(!viewedProjectRecoveryCsv)return;
