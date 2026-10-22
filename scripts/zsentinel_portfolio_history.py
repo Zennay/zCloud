@@ -6,15 +6,20 @@ GitHub issue window is never proof of resolution or completed remediation.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import html
 import io
 import json
+import sys
+from pathlib import Path
 import re
 from datetime import datetime, timezone
 
 from zsentinel_live_issue_inbox import ISSUE, REPO
-from zsentinel_recovery_policy import PolicyInputError, _read_input
+from zsentinel_recovery_policy import (
+    MAX_OUTPUT_BYTES, PolicyInputError, _read_input, _emit_output,
+)
 
 MAX_DELTA_CARDS = 100
 UTC_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?Z\Z")
@@ -314,3 +319,86 @@ def append_csv(base, delta):
         row[17] = "SAMPLED CHANGE; NO ISSUE CLOSURE, CLAIM OR MERGE VERIFIED"
         writer.writerow(row)
     return base + sink.getvalue()
+
+
+def as_delta_csv(delta):
+    """Small human-only offline delta export, not a live issue inventory."""
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream, lineterminator="\n")
+    writer.writerow((
+        "row_kind", "repository", "issue_url", "change_type",
+        "prior_priority_rank", "current_priority_rank",
+        "source_transition", "human_source_action_code",
+        "issue_closure_verified", "actions_executed",
+    ))
+    for row in delta["repositories_compared"]:
+        writer.writerow((
+            "source", row["repository"], "", "", "", "",
+            row["source_transition"], row["human_source_action_code"],
+            False, False,
+        ))
+    for row in delta["changes"]:
+        writer.writerow((
+            "issue", row["repository"], row["url"], row["change"],
+            row["prior_priority_rank"], row["current_priority_rank"],
+            "", "", False, False,
+        ))
+    return stream.getvalue()
+
+
+def as_full_html(delta):
+    """Standalone offline HTML without script, storage, remote loads or writes."""
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta http-equiv='Content-Security-Policy' "
+        "content=\"default-src 'none'; style-src 'unsafe-inline'; "
+        "base-uri 'none'; form-action 'none';\">"
+        "<title>zSentinel · Offline issue changes</title>"
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:950px;"
+        "margin:auto;padding:2rem;color:#203047;background:#f7f9fc}"
+        "section{background:white;padding:1.25rem;border:1px solid #cbd5e1;"
+        "border-radius:.5rem}a{color:#13549b}li{margin:1rem 0;"
+        "overflow-wrap:anywhere}a:focus-visible{outline:3px solid #13549b}"
+        "</style></head><body><h1>zSentinel · Offline issue changes</h1>"
+        "<p>Both snapshots were supplied by an operator; no new GitHub read "
+        "or issue closure check occurred.</p>" + as_html(delta) +
+        "</body></html>\n"
+    )
+
+
+def main(argv=None):
+    """Compare two stored private JSON files when GitHub is unavailable."""
+    parser = argparse.ArgumentParser(
+        description="Offline, human-only two-snapshot zSentinel issue delta"
+    )
+    parser.add_argument("--previous", type=Path, required=True,
+                        help="earlier private raw source snapshot JSON")
+    parser.add_argument("--current", type=Path, required=True,
+                        help="later private raw source snapshot JSON")
+    parser.add_argument("--format", choices=("json", "markdown", "html", "csv"),
+                        default="html")
+    parser.add_argument("--output", type=Path, required=True,
+                        help="new private 0600 output, never overwritten")
+    args = parser.parse_args(argv)
+    try:
+        previous = load_previous_snapshot(args.previous)
+        current = load_previous_snapshot(args.current)
+        delta = compare_snapshots(previous, current)
+        output = (
+            as_full_html(delta) if args.format == "html" else
+            as_markdown(delta) if args.format == "markdown" else
+            as_delta_csv(delta) if args.format == "csv" else
+            json.dumps(delta, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        )
+        if not 1 <= len(output.encode("utf-8")) <= MAX_OUTPUT_BYTES:
+            raise PolicyInputError("offline issue delta exceeds 128 KiB")
+        _emit_output(output, args.output, args.format)
+        return 0
+    except (ValueError, OSError, UnicodeError, PolicyInputError) as exc:
+        print("zSentinel offline issue history: " + str(exc), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
