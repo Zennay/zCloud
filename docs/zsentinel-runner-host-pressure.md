@@ -1,0 +1,70 @@
+# zSentinel — self-hosted runner + host pressure operator workbench
+
+## What has changed
+
+The existing `scripts/zsentinel_runner_triage.py` supports an opt-in
+`--observe-host-pressure` on the **intended vps-bb300bba host**. The
+same source-bounded owner workbench now shows (1) the existing exact GitHub
+run/job read, (2) the current `Runner.Listener`/`Runner.Worker` observation,
+and (3) the live host root-filesystem/inode/memory headroom. The host sample
+is strictly advisory and is recorded alongside the exact GitHub source. This
+helps operators triage P0 [zCloud issue #1326](https://github.com/Zennay/zCloud/issues/1326)
+without claiming the self-hosted runner is registered, healthy, idle or restarted.
+
+The new `zsentinel_runner_host_pressure.py` reader pins the root directory
+with `O_NOFOLLOW` and reads capacity through `fstatvfs`; it reuses
+the existing bounded, read-only `/proc/meminfo` memory parser. No queue
+SQLite is required, and no secret files, command lines, external archive
+directory names, GitHub credentials, worker prompts or process IDs are copied
+into the headroom report.
+
+## Run only from the intended VPS (opt-in, no changes)
+
+Choose **one** existing exact GitHub job or bounded discovery. Examples:
+
+```sh
+# One limited existing-job discovery + private operator report.
+umask 077
+python3 scripts/zsentinel_runner_triage.py \
+  --discover --observe-host-pressure --format html \
+  --output /home/ubuntu/zennay-cloud/private/runner-owner-observation.html
+
+# Exact existing run/job on the same VPS. Use the real GitHub job SHA.
+python3 scripts/zsentinel_runner_triage.py \
+  --run-id EXISTING_RUN_ID --job-id EXISTING_JOB_ID \
+  --head-sha EXISTING_FULL_40_CHARACTER_HEAD \
+  --observe-host-pressure --format text
+```
+
+The HTML output path is an example and must be a **new** private, create-only
+file in an existing owner-private directory. The command does not configure,
+repair, enable or dispatch any runner, service, Actions job or database task.
+
+`--observe-host-pressure` is optional and backwards-compatible. If the
+local source is not available, the operator receives **UNKNOWN**, not a
+zero or healthy result. The tool captures each limited host sample at one
+UTC observation instant and never upgrades historical GitHub receipts to
+current runner health proof.
+
+## Actionable, not authorizing
+
+- Critical headroom: root space below 2 GiB, root usage at least 95%,
+  inode usage at least 95%, or available RAM below 512 MiB.
+- Constrained headroom: root space below 4 GiB, root usage at least 90%,
+  inode usage at least 90%, or available RAM below 1024 MiB.
+- The reported percentages are based on the current observed host only.
+  Root fullness alone does **not** prove why a runner is unavailable.
+- A separate GitHub Actions job may be unassigned because of required labels,
+  runner registration/group visibility, runner health, concurrency or
+  account billing; an empty process sample does **not** authorize a restart.
+- Only a qualified host/queue owner may decide on cleanup, job cancellation,
+  service restart or runner re-registration after checking actual running
+  jobs, release writers, disk/backup dependencies, branch protection and
+  required authorization.
+- Existing exact-head CI/reviews and deploy gates remain mandatory.
+  This is a source-only PR feature until merged; no live deployment is claimed.
+
+Implementation:
+`scripts/zsentinel_runner_host_pressure.py` and
+`scripts/zsentinel_runner_triage.py`. No QA test code, regression suite or
+CI workflow was added by this feature.
