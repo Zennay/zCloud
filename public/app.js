@@ -329,7 +329,7 @@ let blockedQueueHumanOnly=false;
 let blockedQueueRepeatClaimsOnly=false;
 let claimChurnVisible=12,claimChurnUrgentOnly=false,claimChurnStatus='all',claimChurnExpiredOnly=false;
 let claimChurnAnomaliesOnly=false;
-let ownerIntegrityVisible=12,ownerIntegrityUrgentOnly=false;
+let ownerIntegrityVisible=12,ownerIntegrityUrgentOnly=false,ownerIntegrityProject='all';
 let blockedQueueFilterTimer=null;
 let blockedQueueObservedAt='';
 function blockedQueueIsParked(item){
@@ -628,8 +628,9 @@ function ownerIntegritySignals(item){
   return issues;
 }
 function ownerIntegrityRows(projectId=''){
+  const scope=projectId||(ownerIntegrityProject==='all'?'':ownerIntegrityProject);
   const all=(Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)?PORTFOLIO_QUEUE_SNAPSHOT:[])
-    .filter(item=>item&&(!projectId||item.project_id===projectId))
+    .filter(item=>item&&(!scope||item.project_id===scope))
     .map(item=>({item,signals:ownerIntegritySignals(item)}))
     .filter(row=>row.signals.length);
   const rank={P0:0,P1:1,P2:2,P3:3};
@@ -660,7 +661,8 @@ function downloadOwnerIntegrityHandoff(){
     authority:'read-only observation only; verify current owner, never release, retry, drop, resume or reassign',
     coverage:{sample_queue_rows:PORTFOLIO_QUEUE_SNAPSHOT.length,
       observed_warnings:matching.length,exported:sample.length,
-      truncated:matching.length>sample.length,urgency_filter:ownerIntegrityUrgentOnly?'P0-P1':'all'},
+      truncated:matching.length>sample.length,urgency_filter:ownerIntegrityUrgentOnly?'P0-P1':'all',
+      selected_project:ownerIntegrityProject},
     tasks:sample.map(({item,signals})=>({
       queue_id:String(item.queue_id||'').slice(0,160),
       project_id:String(item.project_id||'').slice(0,80),
@@ -695,6 +697,13 @@ function ownerIntegrityPanel(projectId=''){
   const {all,matching}=ownerIntegrityRows(projectId);
   const show=projectId?6:ownerIntegrityVisible;
   const freshness=claimChurnSnapshotFreshness();
+  const projectIds=[...new Set(PORTFOLIO_QUEUE_SNAPSHOT
+    .filter(row=>row&&ownerIntegritySignals(row).length)
+    .map(row=>String(row.project_id||'')))].filter(Boolean).sort();
+  const projectOptions='<option value="all">All projects</option>'+projectIds.map(id=>{
+    const label=DATA.projects.find(p=>p.id===id)?.name||id;
+    return '<option value="'+esc(id)+'"'+(ownerIntegrityProject===id?' selected':'')+'>'+esc(label)+'</option>';
+  }).join('');
   const records=matching.slice(0,show).map(({item,signals})=>{
     const source=blockedQueueSourceUrl(item.source_url);
     const name=DATA.projects.find(p=>p.id===item.project_id)?.name||item.project_id||'Unknown project';
@@ -712,7 +721,7 @@ function ownerIntegrityPanel(projectId=''){
     +'<h2>'+all.length+' task'+(all.length===1?'':'s')+' requiring owner review</h2>'
     +'<p>Every queue item is screened, including first claims. Warnings are observations, not permission to take over.</p>'
     +'</div><a href="https://github.com/Zennay/zCloud/issues/677" target="_blank" rel="noopener noreferrer">Queue lifecycle issue #677 ↗</a></div>'
-    +(projectId?'':'<div class="owner-integrity-filters"><button type="button" data-owner-integrity-priority aria-pressed="'
+    +(projectId?'':'<div class="owner-integrity-filters"><label>Project <select data-owner-integrity-project aria-label="Filter owner-integrity warnings by project">'+projectOptions+'</select></label><button type="button" data-owner-integrity-priority aria-pressed="'
       +ownerIntegrityUrgentOnly+'">'+(ownerIntegrityUrgentOnly?'Show all priorities':'Only P0/P1')+'</button>'
       +'<button type="button" data-owner-integrity-export'+(matching.length?'':' disabled')+'>Export private owner handoff</button></div>')
     +(matching.length?'<div class="owner-integrity-items">'+records+'</div>'
@@ -1494,7 +1503,7 @@ document.addEventListener('click',async e=>{const activityRefresh=e.target.close
 const integrityExport=e.target.closest('[data-owner-integrity-export]');if(integrityExport){e.preventDefault();downloadOwnerIntegrityHandoff();return}
 const integrityMore=e.target.closest('[data-owner-integrity-more]');if(integrityMore){e.preventDefault();ownerIntegrityVisible+=12;render();return}
 const integrityLess=e.target.closest('[data-owner-integrity-less]');if(integrityLess){e.preventDefault();ownerIntegrityVisible=12;render();return}
-const integrityOpen=e.target.closest('[data-owner-integrity-open]');if(integrityOpen){e.preventDefault();ownerIntegrityVisible=12;location.hash='#overview';return}
+const integrityOpen=e.target.closest('[data-owner-integrity-open]');if(integrityOpen){e.preventDefault();ownerIntegrityProject=integrityOpen.dataset.ownerIntegrityOpen;ownerIntegrityUrgentOnly=false;ownerIntegrityVisible=12;location.hash='#overview';return}
 const churnAnomalies=e.target.closest('[data-claim-churn-anomalies]');if(churnAnomalies){e.preventDefault();claimChurnAnomaliesOnly=!claimChurnAnomaliesOnly;claimChurnVisible=12;render();return}const churnExpired=e.target.closest('[data-claim-churn-expired]');if(churnExpired){e.preventDefault();claimChurnExpiredOnly=!claimChurnExpiredOnly;claimChurnVisible=12;render();return}const churnExport=e.target.closest('[data-claim-churn-export]');if(churnExport){e.preventDefault();downloadClaimChurnHandoff();return}const churnMore=e.target.closest('[data-claim-churn-more]');if(churnMore){e.preventDefault();claimChurnVisible+=12;render();return}const churnLess=e.target.closest('[data-claim-churn-less]');if(churnLess){e.preventDefault();claimChurnVisible=12;render();return}const churnUrgent=e.target.closest('[data-claim-churn-priority]');if(churnUrgent){e.preventDefault();claimChurnUrgentOnly=!claimChurnUrgentOnly;claimChurnVisible=12;render();return}const churnOpen=e.target.closest('[data-claim-churn-open]');if(churnOpen){e.preventDefault();claimChurnVisible=12;location.hash='#overview';return}const closeBlocked=e.target.closest('[data-close-blocked]');if(closeBlocked){e.preventDefault();e.stopPropagation();await closeBlockedQueue(closeBlocked.dataset.closeBlocked,closeBlocked);return}const resumeBlocked=e.target.closest('[data-resume-blocked]');if(resumeBlocked){e.preventDefault();e.stopPropagation();await resumeBlockedQueue(resumeBlocked.dataset.resumeBlocked,resumeBlocked);return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
@@ -1517,3 +1526,4 @@ document.addEventListener('input',e=>{
 });
 document.addEventListener('change',async e=>{const projectSelector=e.target.closest?.('[data-global-worker-project]');if(projectSelector){const slot=Number(projectSelector.dataset.globalWorkerProject);GLOBAL_WORKER_PROJECT_REQUESTS[slot]=projectSelector.value;delete GLOBAL_WORKER_REQUEST_RESULTS[slot];render();return}const churnStatus=e.target.closest?.('[data-claim-churn-status]');if(churnStatus){claimChurnStatus=churnStatus.value;claimChurnVisible=12;render();return}const blockedProject=e.target.closest?.('[data-blocked-project]');if(blockedProject){blockedQueueProject=blockedProject.value;blockedQueueVisible=12;render();return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
 $('refresh').addEventListener('click',()=>refresh(true));window.addEventListener('hashchange',navigate);hydrate();navigate();const cachedStatus=loadCachedStatus();if(cachedStatus){DATA=cachedStatus;setConnection(false);$('notice').hidden=false;$('notice').textContent='Live connection is temporarily unavailable. Showing the last successful dashboard snapshot while reconnecting automatically.';$('syncTime').textContent='Last successful measurement '+clock(DATA.time)+' · reconnecting…';render()}refresh(true);setInterval(()=>{if(!document.hidden)refresh()},15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
+document.addEventListener('change',e=>{const selector=e.target.closest?.('[data-owner-integrity-project]');if(!selector)return;const wanted=String(selector.value||'all');if(wanted!=='all'&&!PORTFOLIO_QUEUE_SNAPSHOT?.some(row=>String(row?.project_id||'')===wanted&&ownerIntegritySignals(row).length))return;ownerIntegrityProject=wanted;ownerIntegrityVisible=12;render()});
