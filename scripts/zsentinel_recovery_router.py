@@ -296,6 +296,51 @@ def vps_capacity(bundle, now):
     inode_total = metrics.get("inode_total")
     inode_pct = metrics.get("inode_unavailable_percent")
     inode_source = metrics.get("inode_source")
+    root_keys = (
+        "root_free_disk_gib", "root_disk_unavailable_percent",
+        "root_inode_available", "root_inode_total",
+        "root_inode_unavailable_percent", "root_inode_source",
+        "root_mount_same_device_as_database",
+    )
+    root_present = [key in metrics for key in root_keys]
+    # Historical receipts do not prove that the runner OS mount had room.
+    # Keep their original overload evidence, but never infer new capacity.
+    if any(root_present) and not all(root_present):
+        raise ValueError("partial root filesystem capacity evidence")
+    root_unknown = None
+    root_disk = root_occupancy = root_inode_available = root_inode_pct = None
+    if not all(root_present):
+        root_unknown = "legacy_root_filesystem_capacity_not_observed"
+    else:
+        root_disk = metrics["root_free_disk_gib"]
+        root_occupancy = metrics["root_disk_unavailable_percent"]
+        if (type(root_disk) not in (int, float)
+                or not math.isfinite(root_disk) or not 0 <= root_disk <= 100000
+                or type(root_occupancy) not in (int, float)
+                or not math.isfinite(root_occupancy)
+                or not 0 <= root_occupancy <= 100
+                or type(metrics["root_mount_same_device_as_database"]) is not bool):
+            raise ValueError("invalid separate root mount telemetry")
+        root_inode_source = metrics["root_inode_source"]
+        root_inode_available = metrics["root_inode_available"]
+        root_inode_total = metrics["root_inode_total"]
+        root_inode_pct = metrics["root_inode_unavailable_percent"]
+        if root_inode_source == "unsupported_or_unknown_not_zero":
+            if any(value is not None for value in
+                   (root_inode_available, root_inode_total, root_inode_pct)):
+                raise ValueError("unavailable root inodes cannot carry counters")
+            root_unknown = "root_filesystem_inode_capacity_unknown"
+        elif (root_inode_source != "root_directory_fstatvfs"
+              or type(root_inode_available) is not int
+              or type(root_inode_total) is not int
+              or not 1 <= root_inode_total <= 10**15
+              or not 0 <= root_inode_available <= root_inode_total
+              or type(root_inode_pct) not in (int, float)
+              or not math.isfinite(root_inode_pct)
+              or not 0 <= root_inode_pct <= 100
+              or abs(root_inode_pct -
+                     100 * (1 - root_inode_available / root_inode_total)) > 0.015):
+            raise ValueError("invalid pinned root filesystem inode telemetry")
     if type(cores) is not int or not 1 <= cores <= 128:
         raise ValueError("invalid VPS vCPU capacity")
     for key, value, maximum in (
@@ -337,8 +382,15 @@ def vps_capacity(bundle, now):
     low_swap = swap < 256
     low_disk = disk < 2
     almost_full_disk = unavailable_disk_pct is not None and unavailable_disk_pct >= 90
+    root_low_disk = root_disk is not None and root_disk < 2
+    root_almost_full = root_occupancy is not None and root_occupancy >= 90
+    root_inode_pressure = (root_unknown is None and
+                           root_inode_available is not None and
+                           (root_inode_available == 0 or root_inode_pct >= 90))
     inode_pressure = inode_unknown is None and (inode_available == 0 or inode_pct >= 90)
-    if overloaded or low_memory or low_swap or low_disk or almost_full_disk or inode_pressure:
+    if (overloaded or low_memory or low_swap or low_disk or almost_full_disk
+            or inode_pressure or root_low_disk or root_almost_full
+            or root_inode_pressure):
         reasons = []
         if overloaded:
             reasons.append("load_above_conservative_capacity")
@@ -352,7 +404,15 @@ def vps_capacity(bundle, now):
             reasons.append("disk_unavailable_at_least_90_percent")
         if inode_pressure:
             reasons.append("database_mount_inodes_unavailable_at_least_90_percent")
+        if root_low_disk:
+            reasons.append("root_filesystem_headroom_below_2_gib")
+        if root_almost_full:
+            reasons.append("root_filesystem_unavailable_at_least_90_percent")
+        if root_inode_pressure:
+            reasons.append("root_filesystem_inodes_unavailable_at_least_90_percent")
         return {"state": "overloaded", "reason": ",".join(reasons)}
+    if root_unknown is not None:
+        return {"state": "unavailable", "reason": root_unknown}
     if inode_unknown is not None:
         return {"state": "unavailable", "reason": inode_unknown}
     if unavailable_disk_pct is None:
