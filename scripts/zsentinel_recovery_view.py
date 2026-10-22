@@ -374,7 +374,7 @@ def blocked_queue_panel(source):
                 or type(count) is not int or not 0 <= count <= 10**9
                 or type(row.get("eligible_observed")) is not bool
                 or type(row.get("claim_fields_present_observed")) is not bool
-                or row.get("worker_slot_source_covered") is not slot_source_covered
+                or row.get("worker_slot_source_covered", False) is not slot_source_covered
                 or (slot_source_covered and
                     type(row.get("worker_slot_present_observed")) is not bool)
                 or (not slot_source_covered and
