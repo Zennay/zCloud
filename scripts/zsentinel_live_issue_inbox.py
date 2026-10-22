@@ -155,6 +155,56 @@ def _safe_issue(item, repository, *, observed_at):
     }
 
 
+
+def _operator_workflow(item):
+    """One three-line, human-only owner route from source-admitted issue data.
+
+    Source classification cannot establish a lease, real worker outage,
+    approval, or effective severity outside the observed GitHub window.
+    """
+    if item["source_window_identity_drift"]:
+        kind = "source_changed"
+        problem = "GitHub issue evidence changed between sampled windows"
+        action = "Reopen the original issue and re-confirm priority and active owner"
+    elif item["explicit_priority_label_conflict"]:
+        kind = "conflicting_priority_labels"
+        problem = "Multiple GitHub priority labels conflict"
+        action = "Ask the issue owner to reconcile the original priority labels"
+    elif item["label_source_complete"] is False:
+        kind = "label_source_unknown"
+        problem = "GitHub priority labels were not completely observable"
+        action = "Inspect original issue labels before assigning a priority"
+    elif item["explicit_label_title_disagreement"] is True:
+        kind = "label_title_conflict"
+        problem = "Issue title and explicit GitHub priority label disagree"
+        action = "Ask the issue owner to reconcile title and priority label"
+    elif item["triage_rank"] in (0, 1):
+        kind = "explicit_p0_p1"
+        problem = "Open issue with source-observed P0/P1 priority label"
+        action = "Inspect this issue and existing repair PRs; verify active owner"
+    elif item["triage_rank"] in (2, 3):
+        kind = "title_hint_only"
+        problem = "Issue title suggests P0/P1; no matching label observed"
+        action = "Confirm priority with issue owner before promoting urgency"
+    else:
+        kind = "other_or_unknown"
+        problem = "Open issue in bounded source with lower or unknown priority"
+        action = "Inspect the source issue and existing repair PRs"
+    return {
+        "workstream": kind,
+        "problem": problem,
+        "action": action,
+        "status": "SOURCE OBSERVED; owner/CI/merge/recovery NOT VERIFIED",
+        "human_followup_only": True,
+        "issue_url": item["url"],
+        "owner_claim_verified": False,
+        "automatic_recovery_started": False,
+        "independent_review_verified": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+    }
+
+
 def observe_repo_inbox(repo_full_name, *, token=None):
     """Recent issue inventory plus bounded P0/P1 recall when recent window ends.
 
@@ -246,6 +296,9 @@ def observe_repo_inbox(repo_full_name, *, token=None):
                     # Drift means the original derived priority is no longer
                     # reliable and cannot remain prioritized as a P0.
                     existing["source_window_identity_drift"] = True
+                    existing["owner_next_step"] = (
+                        "recheck_changed_issue_source_before_owner_action"
+                    )
                     existing["explicit_label_title_disagreement"] = "UNKNOWN"
                     existing["priority_from_explicit_labels"] = "UNKNOWN"
                     existing["unverified_title_prefix_hint"] = "NONE"
@@ -317,12 +370,23 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             admit_rows(items, source)
 
     issues = list(collected.values())
+    for issue in issues:
+        issue["operator_workflow"] = _operator_workflow(issue)
+        # Preserve the existing field for older source consumers, but make
+        # it agree with the current (possibly drifted) source observation.
+        issue["owner_next_step"] = issue["operator_workflow"]["workstream"]
     issues.sort(key=lambda x: (
         x["triage_rank"],
         0 if x["no_github_issue_update_for_72h"] is True else 1,
         -(x["last_github_update_age_hours"] or 0),
     ))
     chosen = issues[:MAX_DISPLAY]
+    source_owner_workstreams = {}
+    for item in issues:
+        category = item["operator_workflow"]["workstream"]
+        source_owner_workstreams[category] = (
+            source_owner_workstreams.get(category, 0) + 1
+        )
     by_rank = {}
     for item in issues:
         label = (
@@ -380,6 +444,8 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         "get_attempts": attempts,
         "read_get_attempt_upper_bound": MAX_PAGES + 4,
         "priority_breakdown_in_source_window": by_rank,
+        "operator_workstreams_in_bounded_source": source_owner_workstreams,
+        "operator_workflows_are_human_only": True,
         "observed_label_title_disagreements": sum(
             item["explicit_label_title_disagreement"] is True
             for item in issues
@@ -440,6 +506,9 @@ def markdown(report):
         "- P0/P1 title matches are navigation-only, not verified priority",
         "- Explicit label/title contradictions: " +
         str(report["observed_label_title_disagreements"]),
+        "- Owner workstreams in bounded sample: " +
+        ", ".join(k + "=" + str(v) for k, v in
+                  report["operator_workstreams_in_bounded_source"].items()),
         "- Issues visible: " + str(report["total_issues_seen"]),
         "- Issues displayed: " + str(report["displayed_issues"]),
         "- Source partial/unknown: " + str(report["source_partial_or_unknown"]),
@@ -489,10 +558,14 @@ def markdown(report):
             str(row["source_window_identity_drift"]) +
             " · owner/repair/merge UNKNOWN"
         )
-        lines.append(
-            "  - Next: `" + row["followup_command"] + "` "
-            "(not executed)"
-        )
+        workflow = row["operator_workflow"]
+        lines.extend([
+            "  - **Problem:** " + workflow["problem"],
+            "  - **Action:** " + workflow["action"] +
+            " (open original issue; no automatic recovery)",
+            "  - **Status:** " + workflow["status"],
+            "  - Followup command: `" + row["followup_command"] + "` (not executed)",
+        ])
     if not report["issues"]:
         lines.append(
             "- No issues observed in this bounded source window. "
@@ -546,6 +619,10 @@ def html_view(report):
         esc(report["observed_label_title_disagreements"]) +
         " · reconcile with the issue owner; never silently promote a " +
         "title hint over a label.</p>",
+        "<p>Source owner routes: " +
+        esc(", ".join(k + "=" + str(v) for k, v in
+                      report["operator_workstreams_in_bounded_source"].items())) +
+        " · all human-only, all without verified ownership.</p>",
         "<p>Explicit P0/P1 with no issue update for 72h: " +
         esc(report["explicit_p0_p1_without_github_issue_update_72h"]) +
         " · this is NOT proof of stalled workers.</p>",
@@ -589,6 +666,7 @@ def html_view(report):
             )
         rows.append("</ul></section>")
     for item in report["issues"]:
+        workflow = item["operator_workflow"]
         rows.append(
             "<li><a rel='noopener noreferrer' href='" + esc(item["url"]) +
             "'>Issue #" + esc(item["number"]) + "</a>"
@@ -607,7 +685,10 @@ def html_view(report):
             esc(", ".join(item["inbox_source_windows"])) +
             " · source changed during read: " +
             esc(item["source_window_identity_drift"]) +
-            "<br><small>GitHub issue inactivity does NOT prove worker stall. "
+            "<p><strong>Problem:</strong> " + esc(workflow["problem"]) +
+            "<br><strong>Action:</strong> " + esc(workflow["action"]) +
+            "<br><strong>Status:</strong> " + esc(workflow["status"]) +
+            "</p><small>GitHub issue inactivity does NOT prove worker stall. "
             "Worker ownership, actual fix, required CI, "
             "protected-main merge and production: UNKNOWN.</small>"
             "<br><code>" + esc(item["followup_command"]) +
