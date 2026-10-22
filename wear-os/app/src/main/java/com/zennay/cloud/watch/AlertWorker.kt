@@ -57,102 +57,126 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             // notify. Timestamp changes within a service outage cannot spam.
             val currentEpisodes = urgent.map { IncidentSnoozeStore.episodeKey(it) }.toSet()
             delivered.retainAll(currentEpisodes)
+            val currentNotificationTags = urgent
+                .map { IncidentSnoozeStore.notificationTag(it) }.toSet()
+            val postedNotificationTags = prefs
+                .getStringSet("posted_notification_tags", emptySet())
+                .orEmpty().toMutableSet()
+            val manager = applicationContext.getSystemService(NotificationManager::class.java)
+
+            // Only a fresh current-blocker snapshot may retire a notification.
+            // If an incident resolved or no longer needs human action, remove
+            // its old OS notification rather than leaving stale urgency visible.
+            val resolvedTags = postedNotificationTags.filterNot { it in currentNotificationTags }
+            resolvedTags.forEach { manager.cancel(it, 0) }
+            postedNotificationTags.removeAll(resolvedTags.toSet())
+
             val permissionGranted = Build.VERSION.SDK_INT < 33 ||
                 applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                     PackageManager.PERMISSION_GRANTED
 
-            if (permissionGranted) {
-                val manager = applicationContext.getSystemService(NotificationManager::class.java)
-                // Notification channels and the channel-bound Builder exist only on API 26+.
-                // Keep the pre-O fallback so the existing minimum-device range does not crash.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    manager.createNotificationChannel(
-                        NotificationChannel(
-                            CHANNEL, "Critical project blockers",
-                            NotificationManager.IMPORTANCE_HIGH
+            try {
+                if (permissionGranted) {
+                    // Notification channels and the channel-bound Builder exist only on API 26+.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        manager.createNotificationChannel(
+                            NotificationChannel(
+                                CHANNEL, "Critical project blockers",
+                                NotificationManager.IMPORTANCE_HIGH
+                            )
                         )
-                    )
-                }
-                try {
-                    urgent.asSequence()
-                    .filter { IncidentSnoozeStore.episodeKey(it) !in delivered }
-                    // User snoozes an episode locally. This does not remove the
-                    // current incident from the read-only status page.
-                    .filter { IncidentSnoozeStore.remainingMillis(applicationContext, it) == 0L }
-                    .take(3)
-                    .forEach { alert ->
-                    // Each incident needs its OWN pending-intent identity.
-                    // requestCode=0 alone made all visible cards share the last
-                    // notification's target when FLAG_UPDATE_CURRENT was used.
-                    val project = IncidentSnoozeStore.projectKey(alert)
-                    val intent = Intent(applicationContext, MainActivity::class.java)
-                        .setAction(MainActivity.ACTION_OPEN_BLOCKER)
-                        .setData(Uri.parse("zcloud-watch://incident/" +
-                            Uri.encode(project) + "/" + Uri.encode(alert.id)))
-                        .putExtra(MainActivity.EXTRA_INCIDENT_ID, alert.id)
-                        .putExtra(MainActivity.EXTRA_PROJECT_ID, project)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    val pending = PendingIntent.getActivity(
-                        applicationContext, 0, intent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
-                    // Snoozing is a local preference only. A per-episode opaque
-                    // data URI prevents two blockers from sharing this action.
-                    val snoozeIntent = Intent(applicationContext, AlertActionReceiver::class.java)
-                        .setAction(AlertActionReceiver.ACTION_SNOOZE_BLOCKER)
-                        .setData(Uri.parse(
-                            "zcloud-watch://snooze/" + project + "/" +
-                                IncidentSnoozeStore.actionIdentity(alert)
-                        ))
-                        .putExtra(AlertActionReceiver.EXTRA_INCIDENT_ID, alert.id)
-                        .putExtra(AlertActionReceiver.EXTRA_PROJECT_ID, project)
-                        .apply {
-                            alert.episodeId?.let {
-                                putExtra(AlertActionReceiver.EXTRA_EPISODE_ID, it)
-                            }
-                            alert.occurredAt?.let {
-                                putExtra(AlertActionReceiver.EXTRA_OCCURRED_AT, it)
-                            }
-                        }
-                    val snoozePending = PendingIntent.getBroadcast(
-                        applicationContext, 0, snoozeIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
-                    // A bounded explicit owner action takes priority over a
-                    // generic incident summary on a very small notification face.
-                    val text = alert.action?.takeIf { it.isNotBlank() }
-                        ?: alert.message.ifBlank { "Open zCloud voor de oorzaak en vervolgstap." }
-                    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        Notification.Builder(applicationContext, CHANNEL)
-                    } else {
-                        Notification.Builder(applicationContext)
                     }
-                    val notification = builder
-                        .setSmallIcon(R.drawable.ic_launcher)
-                        .setContentTitle("${alert.project?.uppercase() ?: "zCloud"}: ${alert.title}")
-                        .setContentText(text)
-                        .setStyle(Notification.BigTextStyle().bigText(text))
-                        .setContentIntent(pending)
-                        .addAction(
-                            Notification.Action.Builder(
-                                R.drawable.ic_launcher, "Dempen 1 uur", snoozePending
-                            ).build()
-                        )
-                        .setAutoCancel(true)
-                        .setCategory(Notification.CATEGORY_ERROR)
-                        .build()
-                    // Use the stable string tag overload, not a potentially
-                    // colliding String.hashCode() notification integer.
-                    manager.notify(IncidentSnoozeStore.notificationTag(alert), 0, notification)
-                    // Mark only successfully posted alerts. The fourth blocked item
-                    // must still be eligible at the next scheduled poll.
-                    delivered += IncidentSnoozeStore.episodeKey(alert)
+                    urgent.asSequence()
+                        .filter { IncidentSnoozeStore.episodeKey(it) !in delivered }
+                        // User snoozes an episode locally. This does not remove
+                        // the current incident from the read-only status page.
+                        .filter { IncidentSnoozeStore.remainingMillis(applicationContext, it) == 0L }
+                        .take(3)
+                        .forEach { alert ->
+                            // Each incident needs its OWN PendingIntent identity.
+                            val project = IncidentSnoozeStore.projectKey(alert)
+                            val intent = Intent(applicationContext, MainActivity::class.java)
+                                .setAction(MainActivity.ACTION_OPEN_BLOCKER)
+                                .setData(Uri.parse(
+                                    "zcloud-watch://incident/" +
+                                        Uri.encode(project) + "/" + Uri.encode(alert.id)
+                                ))
+                                .putExtra(MainActivity.EXTRA_INCIDENT_ID, alert.id)
+                                .putExtra(MainActivity.EXTRA_PROJECT_ID, project)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                            val pending = PendingIntent.getActivity(
+                                applicationContext, 0, intent,
+                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                            )
+
+                            // Snooze is a local preference only. This opaque,
+                            // per-episode identity prevents action cross-talk.
+                            val snoozeIntent = Intent(
+                                applicationContext, AlertActionReceiver::class.java
+                            )
+                                .setAction(AlertActionReceiver.ACTION_SNOOZE_BLOCKER)
+                                .setData(Uri.parse(
+                                    "zcloud-watch://snooze/" + project + "/" +
+                                        IncidentSnoozeStore.actionIdentity(alert)
+                                ))
+                                .putExtra(AlertActionReceiver.EXTRA_INCIDENT_ID, alert.id)
+                                .putExtra(AlertActionReceiver.EXTRA_PROJECT_ID, project)
+                                .apply {
+                                    alert.episodeId?.let {
+                                        putExtra(AlertActionReceiver.EXTRA_EPISODE_ID, it)
+                                    }
+                                    alert.occurredAt?.let {
+                                        putExtra(AlertActionReceiver.EXTRA_OCCURRED_AT, it)
+                                    }
+                                }
+                            val snoozePending = PendingIntent.getBroadcast(
+                                applicationContext, 0, snoozeIntent,
+                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                            )
+
+                            val text = alert.action?.takeIf { it.isNotBlank() }
+                                ?: alert.message.ifBlank {
+                                    "Open zCloud voor de oorzaak en vervolgstap."
+                                }
+                            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                Notification.Builder(applicationContext, CHANNEL)
+                            } else {
+                                Notification.Builder(applicationContext)
+                            }
+                            val notification = builder
+                                .setSmallIcon(R.drawable.ic_launcher)
+                                .setContentTitle(
+                                    "${alert.project?.uppercase() ?: "zCloud"}: ${alert.title}"
+                                )
+                                .setContentText(text)
+                                .setStyle(Notification.BigTextStyle().bigText(text))
+                                .setContentIntent(pending)
+                                .addAction(
+                                    Notification.Action.Builder(
+                                        R.drawable.ic_launcher, "Dempen 1 uur", snoozePending
+                                    ).build()
+                                )
+                                .setAutoCancel(true)
+                                .setCategory(Notification.CATEGORY_ERROR)
+                                .build()
+
+                            val tag = IncidentSnoozeStore.notificationTag(alert)
+                            manager.notify(tag, 0, notification)
+                            // Persist only after posting succeeded.
+                            delivered += IncidentSnoozeStore.episodeKey(alert)
+                            postedNotificationTags += tag
+                        }
                 }
-                } finally {
-                    // Persist all earlier successfully posted receipts even if a
-                    // later notification fails and WorkManager retries this poll.
-                    prefs.edit().putStringSet("delivered_ids", delivered.toList().takeLast(200).toSet()).apply()
-                }
+            } finally {
+                // Preserve successful posts and remove resolved episodes even
+                // when permission is denied or a later notification fails.
+                prefs.edit()
+                    .putStringSet("delivered_ids", delivered.toList().takeLast(200).toSet())
+                    .putStringSet(
+                        "posted_notification_tags",
+                        postedNotificationTags.toList().takeLast(200).toSet()
+                    )
+                    .apply()
             }
         }
         Result.success()
