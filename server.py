@@ -3597,6 +3597,12 @@ def portfolio_queue_recovery_inspect(queue_id):
             "SELECT status,severity,updated_at FROM portfolio_attention WHERE attention_id=?",
             ('queue:'+queue_id,),
         ).fetchone() if row is not None else None)
+        task_claim=(
+            _portfolio_queue_task_claim_guard(
+                c,row['project_id'],queue_id,datetime.now(timezone.utc))
+            if row is not None else
+            {'source_available':True,'state':'none','lease_until':None}
+        )
         # Bounded, same-snapshot receipt discovery is advisory only. A reply
         # lost after COMMIT must be reconciled from durable source evidence,
         # never by blindly repeating a human operator action.
@@ -3647,6 +3653,15 @@ def portfolio_queue_recovery_inspect(queue_id):
         reasons.append('blocked_task_eligible')
     if has_owner:
         reasons.append('claim_or_lease_still_bound')
+    task_claim_bound=(not task_claim['source_available'] or task_claim['state']!='none')
+    if not task_claim['source_available']:
+        reasons.append('task_claim_source_unavailable')
+    elif task_claim['state']=='active':
+        reasons.append('task_claim_lease_still_bound')
+    elif task_claim['state']=='expired-record':
+        reasons.append('task_claim_record_still_present')
+    elif task_claim['state']=='unknown':
+        reasons.append('task_claim_lease_unknown')
     if project is None:
         reasons.append('project_registration_missing')
     active=bool(project and str(project.get('status') or 'active')=='active')
@@ -3655,7 +3670,8 @@ def portfolio_queue_recovery_inspect(queue_id):
         reasons.append('project_not_active')
     if human_gate:
         reasons.append('project_human_gated')
-    safely_parked=status=='blocked' and eligible==0 and not has_owner
+    safely_parked=(status=='blocked' and eligible==0 and not has_owner
+                   and task_claim['source_available'] and task_claim['state']=='none')
     close_candidate=bool(safely_parked and project is not None)
     resume_candidate=bool(close_candidate and active and not human_gate)
     if safely_parked:
@@ -3664,6 +3680,9 @@ def portfolio_queue_recovery_inspect(queue_id):
             'queue_id':queue_id,'project_id':project_id,
             'queue_status':status,'queue_updated_at':str(row['updated_at'] or ''),
             'eligible':bool(eligible),'claim_or_lease_bound':has_owner,
+            'task_claim_source_available':task_claim['source_available'],
+            'task_claim_state':task_claim['state'],
+            'task_claim_lease_until':task_claim['lease_until'],
             'project_registered':project is not None,'project_active':active,
             'project_human_gated':human_gate,
             'linked_attention_status':str(attention['status'] or '') if attention is not None else 'not_linked',
