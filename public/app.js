@@ -311,7 +311,7 @@ function attentionPanel(projectId=''){
     const detail=String(item.detail||'').trim();
     const attentionId=String(item.attention_id||'');
     const queueId=attentionId.startsWith('queue:')?attentionId.slice(6):'';
-    const taskAvailable=!!queueId&&Array.isArray(BLOCKED_QUEUE)&&BLOCKED_QUEUE.some(task=>String(task?.queue_id)===queueId&&blockedQueueIsParked(task));
+    const taskAvailable=!!queueId&&blockedQueueSourceIsFresh()&&Array.isArray(BLOCKED_QUEUE)&&BLOCKED_QUEUE.some(task=>String(task?.queue_id)===queueId&&blockedQueueIsParked(task));
     // Queue-bound Attention must be cleared by an attested resume of the original task.
     const control=queueId
       ?'<button type="button" data-resume-blocked="'+esc(queueId)+'"'+(taskAvailable?'':' disabled title="Read the parked queue before resuming"')+'>'+(taskAvailable?'Confirm & resume':'Parked task unavailable')+'</button>'
@@ -332,6 +332,12 @@ let claimChurnAnomaliesOnly=false;
 let ownerIntegrityVisible=12,ownerIntegrityUrgentOnly=false,ownerIntegrityProject='all';
 let blockedQueueFilterTimer=null;
 let blockedQueueObservedAt='';
+function blockedQueueSourceIsFresh(){
+  // An old/unknown queue read is an observation, never write admission.
+  // Rendering and confirmation handlers must both fail closed; the server
+  // independently rechecks the current queue and ownership transaction.
+  return claimChurnSnapshotFreshness().state==='recent_observation';
+}
 function blockedQueueIsParked(item){
   // The queue row and the separate task_claims lease must both prove clear.
   // Missing claim-source fields are UNKNOWN, never an implicit free claim.
@@ -801,14 +807,14 @@ function blockedQueuePanel(){
         const evidence=String(item.evidence||'').trim();
         const attention=Array.isArray(DATA.attention_needed)
           ?DATA.attention_needed.find(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'):null;
-        const eligibilityConflict=!blockedQueueIsParked(item);
+        const eligibilityConflict=!blockedQueueIsParked(item)||!blockedQueueSourceIsFresh();
         const taskClaimNotice=blockedQueueTaskClaimNotice(item);
         const action=attention?'Human action recorded — inspect its source and confirm the dependency has cleared.'
           :'Review the original dependency and its evidence. No automatic resolution is established.';
         const context='<details class="blocked-queue-context" data-disclosure="block-'+esc(item.queue_id)+'">'
           +'<summary>Operator context and next step</summary>'
           +'<p><strong>Next step:</strong> '+esc(action)+'</p>'
-          +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state or separate task-claim state is unknown/bound. Inspect source before acting.</p>':'')
+          +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state, separate task claim, or observation freshness is unknown/bound. Refresh and inspect the source before acting.</p>':'')
           +'<dl>'
           +'<div><dt>Queue update</dt><dd>'+esc(lastUpdated||'Unknown')+'</dd></div>'
           +'<div><dt>Original queue entry</dt><dd>'+esc(createdAt||'Unknown')+'</dd></div>'
@@ -826,8 +832,8 @@ function blockedQueuePanel(){
           +(sourceLink?'<div class="blocked-queue-links"><a href="'+esc(sourceLink)+'" target="_blank" rel="noopener noreferrer">Open '+(sourceLink.includes('/pull/')?'pull request':'source issue')+' ↗</a></div>':'')
           +context
           +'</div><div class="blocked-queue-actions">'
-          +'<button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Queue or separate task-claim state is unknown or bound"':'')+'>Resume after confirmation</button>'
-          +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Queue or separate task-claim state is unknown or bound"':'')+'>Close permanently…</button>'
+          +'<button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Queue, separate task claim, or observation freshness is unknown or bound"':'')+'>Resume after confirmation</button>'
+          +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Queue, separate task claim, or observation freshness is unknown or bound"':'')+'>Close permanently…</button>'
           +'<button type="button" class="blocked-queue-inspect" data-inspect-blocked="'+esc(item.queue_id)+'">Inspect current recovery conditions</button>'
           +'</div></article>';
       }).join('')+'</div>'
@@ -852,7 +858,7 @@ function blockedQueuePanel(){
       +'<button type="button" data-blocked-repeat-claims aria-pressed="'+blockedQueueRepeatClaimsOnly+'">'+(blockedQueueRepeatClaimsOnly?'Show all claims':'Only repeated claims')+'</button> '
       +(blockedQueueProject!=='all'||blockedQueueUrgentOnly||blockedQueueSearch||blockedQueueHumanOnly||blockedQueueRepeatClaimsOnly?'<button type="button" data-blocked-clear-filters>Clear filters</button>':'')
       +'<button type="button" data-blocked-export-handoff'+(count?'':' disabled')+' title="Private read-only local JSON handoff">Export selected handoff</button>'
-      +'<span role="status" aria-live="polite">Viewing '+count+' of '+total+' parked tasks from the loaded queue sample. '+(observation?'Observed '+esc(observation)+'.':'Queue observation time unavailable.')+(freshness.state==='stale_observation'?' STALE SNAPSHOT ('+Math.ceil(freshness.age_seconds/60)+' min old); use a fresh read before acting.':'')+'</span></div>':'')
+      +'<span role="status" aria-live="polite">Viewing '+count+' of '+total+' parked tasks from the loaded queue sample. '+(observation?'Observed '+esc(observation)+'.':'Queue observation time unavailable.')+(freshness.state==='stale_observation'?' STALE SNAPSHOT ('+Math.ceil(freshness.age_seconds/60)+' min old); controls disabled until refreshed.':freshness.state==='unknown'?' UNKNOWN SNAPSHOT; controls disabled until refreshed.':'')+'</span></div>':'')
     +body+(loaded&&count>12?'<div class="blocked-queue-state" aria-live="polite">Showing '+Math.min(blockedQueueVisible,count)+' of '+count+' parked tasks in the loaded queue sample. '
     +(blockedQueueVisible<count?'<button type="button" data-blocked-show-more>Show next 12</button>':'<button type="button" data-blocked-show-less>Show first 12</button>')
     +'</div>':'')+'</section>';
@@ -951,6 +957,7 @@ async function inspectBlockedQueue(queueId,button){
 
 async function resumeBlockedQueue(queueId,button){
   if(blockedResumesPending.has(queueId))return;
+  if(!blockedQueueSourceIsFresh()){window.alert('Queue observation is stale or unknown. Refresh the source before confirming any recovery.');return;}
   const item=(BLOCKED_QUEUE||[]).find(row=>String(row?.queue_id)===queueId&&blockedQueueIsParked(row));
   if(!item){window.alert('The parked task is no longer visible. Refresh the queue before acting.');return}
   const note=window.prompt('Confirm the dependency has genuinely cleared. Describe the resolution (at least 12 characters). This records your attestation; it does not independently verify the dependency.');
@@ -972,6 +979,10 @@ async function resumeBlockedQueue(queueId,button){
     PORTFOLIO_QUEUE_SNAPSHOT=current.items;
     BLOCKED_QUEUE_ERROR='';
     blockedQueueObservedAt=typeof current.time==='string'?current.time:'';
+    if(!blockedQueueSourceIsFresh()){
+      render();
+      throw new Error('Fresh queue observation time missing, stale, or future-dated. No task mutation sent.');
+    }
     const matches=freshItems.filter(row=>String(row.queue_id)===queueId&&blockedQueueIsParked(row));
     if(matches.length!==1||blockedResumeFingerprint(matches[0])!==blockedResumeFingerprint(item)){
       render();
@@ -1059,6 +1070,7 @@ async function resumeBlockedQueue(queueId,button){
 }
 async function closeBlockedQueue(queueId,button){
   if(blockedResumesPending.has(queueId))return;
+  if(!blockedQueueSourceIsFresh()){window.alert('Queue observation is stale or unknown. Refresh the source before confirming permanent closure.');return;}
   const item=(BLOCKED_QUEUE||[]).find(row=>String(row?.queue_id)===queueId&&blockedQueueIsParked(row));
   if(!item){window.alert('This task is not safely parked. Read the queue again before any terminal action.');return}
   const note=window.prompt('This PERMANENTLY CLOSES the selected blocked task; it does not prove the dependency cleared. Describe why the original work is no longer required and where any unfinished work is tracked (at least 12 characters).');
@@ -1077,6 +1089,10 @@ async function closeBlockedQueue(queueId,button){
     PORTFOLIO_QUEUE_SNAPSHOT=current.items;
     BLOCKED_QUEUE_ERROR='';
     blockedQueueObservedAt=typeof current.time==='string'?current.time:'';
+    if(!blockedQueueSourceIsFresh()){
+      render();
+      throw new Error('Fresh queue observation time missing, stale, or future-dated. No task mutation sent.');
+    }
     const matches=BLOCKED_QUEUE.filter(row=>String(row.queue_id)===queueId&&blockedQueueIsParked(row));
     if(matches.length!==1||blockedResumeFingerprint(matches[0])!==blockedResumeFingerprint(item)){
       render();
