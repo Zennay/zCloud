@@ -61,7 +61,8 @@ def _gate_cards(head, checks, reviews, stable, default_branch=None,
     base_tip_gate = (
         "NOT_APPLICABLE" if head and default_branch and
         head["target_branch"] != default_branch else
-        "UNKNOWN" if not default_branch_sha_stable or not default_branch_sha else
+        "UNKNOWN" if not default_branch_stable or not default_branch_sha_stable
+        or not default_branch_sha else
         "OBSERVED_CURRENT" if base_tip_matches_default is True else "HOLD"
     )
     return [
