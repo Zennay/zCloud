@@ -111,8 +111,14 @@ gelezen, onveranderde invoer staat in JSON, de standaard console,
 de private Markdown-overdracht en de offline HTML-werkbak.
 Dit is **herleidbaarheid van operator-aangeleverde bytes**, geen digitale
 handtekening, onafhankelijke hostmeting of vrijgave van herstel.
-Een ongeldige of veranderde baseline faalt gesloten; geen stilzwijgend
-verdwenen blocker krijgt op basis daarvan herstelkrediet.
+
+Ook een syntactisch geldige bevindingcode is niet automatisch een bekende
+bevinding. Alleen codes die deze observer daadwerkelijk uitgeeft kunnen
+`resolved_findings` krijgen. Onbekende historische of toekomstige codes
+blijven in `recovery_unverified_findings` en verschijnen afzonderlijk als
+`unrecognized_baseline_findings` in JSON, console, Markdown en HTML.
+Hierdoor kan een oud of extern toegevoegd code-label niet als opgelost
+worden gepresenteerd enkel omdat het in de huidige meting niet voorkomt.
 
 Voorbeeld (uitsluitend privé, alleen lezen):
 
