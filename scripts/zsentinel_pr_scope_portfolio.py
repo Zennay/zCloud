@@ -1711,6 +1711,9 @@ def as_private_csv(board):
                  if triage_status == "unavailable" else
                  "Queued jobs with no assignment observed: " +
                  str(triage["unassigned_queued_jobs_observed"]) +
+                 "; workflow-wait coverage=" +
+                 str(triage.get("workflow_wait_coverage", "unknown")) +
+                 " (waiting runs=" + str(len(triage.get("workflow_waits", []))) + ")" +
                  "; GitHub-reported workflow run totals (not jobs): " +
                  ", ".join(window["status_requested"] + "=" +
                            str(window["runs_reported_by_github"]) +
