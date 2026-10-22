@@ -62,7 +62,10 @@ def source_freshness(source_snapshots, *, stale_after_hours=6, evaluated_at=None
         if observed.tzinfo is None or observed.utcoffset() is None:
             raise ValueError("Source timestamp lacks timezone")
         age_seconds = (now - observed.astimezone(timezone.utc)).total_seconds()
-        if age_seconds < -300:
+        if age_seconds < -120:
+            # Match the two-minute future-clock tolerance used by the live
+            # recovery policy and product-delivery board. A negative age is
+            # not evidence that an archive is current.
             result["status"] = "clock-skew"
             return result
         age_seconds = max(0.0, age_seconds)
