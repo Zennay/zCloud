@@ -313,8 +313,8 @@ def observe_claims(data_source_id, token, known_projects=None):
                 worker = _worker_name(props.get("Worker"))
                 claimed_at = _date_start(props.get("Claimed At"), "Claimed At")
                 claim_expires = _date_start(props.get("Claim Expires"), "Claim Expires")
-                window = classify_notional_claim_window(
-                    worker, claimed_at, claim_expires, datetime.now(timezone.utc))
+                # Notion pages arrive sequentially. Do not evaluate identical
+                # lease clocks against drifting row-by-row read times.
                 rows.append({
                     "work": ("PWQ-" + str(number) if number else "Werk-ID onbekend"),
                     "title": title, "status": state,
@@ -326,7 +326,6 @@ def observe_claims(data_source_id, token, known_projects=None):
                         "observed_fields_present" if worker and claimed_at and claim_expires
                         else "partial_or_missing"
                     ),
-                    "claim_window_observation": window,
                     "claim_authorized": False,
                 })
             more = data.get("has_more")
@@ -351,6 +350,14 @@ def observe_claims(data_source_id, token, known_projects=None):
             "read_only": True,
             "claim_scope_verified": False,
         })
+    # Pin one post-read UTC clock for every lease classification and the
+    # published source timestamp. A slow page series cannot make two rows
+    # with the same expiry appear to have different claim-window states.
+    observation_time = datetime.now(timezone.utc)
+    for item in rows:
+        item["claim_window_observation"] = classify_notional_claim_window(
+            item["worker"], item["claimed_at"], item["claim_expires"],
+            observation_time)
     # Histograms cover all read rows, not just visible sample rows.
     window_counts = {}
     project_windows = {}
@@ -368,7 +375,7 @@ def observe_claims(data_source_id, token, known_projects=None):
             verifying_counts[label] = verifying_counts.get(label, 0) + 1
     return {
         "source": "notion_readonly_data_source_pages",
-        "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "observed_at": observation_time.isoformat().replace("+00:00", "Z"),
         "coverage": "incomplete" if incomplete else "current_pages_only",
         "active_count": len(rows),
         # Claimed/Running/Verifying are possible work-occupancy signals,
