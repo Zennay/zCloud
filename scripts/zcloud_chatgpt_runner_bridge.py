@@ -239,6 +239,7 @@ def _host_capacity_observation() -> dict[str, object]:
     result: dict[str, object] = {
         "state": "partial",
         "coverage": "partial",
+        "severity": "unknown",
         "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "load_average": {"1m": None, "5m": None, "15m": None, "cpu_count": None,
                          "max_load_per_cpu": None},
@@ -388,15 +389,26 @@ def _host_capacity_observation() -> dict[str, object]:
         warnings.append("memory_pressure_high")
     if type(load.get("max_load_per_cpu")) in (int, float) and load["max_load_per_cpu"] >= 2:
         warnings.append("load_pressure_high")
+    archive_available = archive.get("available_bytes")
+    archive_has_capacity = type(archive_available) is int and archive_available > 0
     if "root_filesystem_critical" in warnings and archive.get("mount_detected") is False:
         warnings.append("archive_mount_not_detected")
+    elif ("root_filesystem_critical" in warnings and archive.get("mount_detected") is True
+          and not archive_has_capacity):
+        warnings.append("archive_mount_no_available_space")
 
     if "root_filesystem_critical" in warnings:
-        if archive.get("mount_detected") is True and type(archive.get("available_bytes")) is int:
+        if archive.get("mount_detected") is True and archive_has_capacity:
             summary = (
-                "Root filesystem critically full and the configured archive mount reports capacity. "
+                "Root filesystem critically full and the configured archive mount reports available capacity. "
                 "Verify file provenance, encryption/retention policy and active handles before owner-approved "
                 "offload; no deletion, move or restart is authorized by this snapshot."
+            )
+        elif archive.get("mount_detected") is True:
+            summary = (
+                "Root filesystem critically full, but the configured archive mount reports no available capacity. "
+                "Preserve active work and obtain an authorized storage inventory; no deletion, move or restart "
+                "is authorized by this snapshot."
             )
         else:
             summary = (
@@ -417,9 +429,15 @@ def _host_capacity_observation() -> dict[str, object]:
         summary = (
             "Capacity evidence is partial or unavailable. Preserve active work and do not infer service health."
         )
+    severity = (
+        "critical" if "root_filesystem_critical" in warnings else
+        "high" if warnings else
+        "normal" if complete else "unknown"
+    )
     result.update({
         "state": "observed" if complete else "partial",
         "coverage": "complete" if complete else "partial",
+        "severity": severity,
         "warnings": warnings,
         "operator_summary": summary,
     })

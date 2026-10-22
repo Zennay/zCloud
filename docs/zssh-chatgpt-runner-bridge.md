@@ -112,8 +112,13 @@ directory or symlink.
 
 Warnings use conservative fixed thresholds (root filesystem >=95% used, swap
 >=90% used, available RAM <=10%, or maximum load average >=2x detected CPU
-count). Partial or unreadable fields stay unknown. The summary may recommend
-an owner-approved inventory/offload when root capacity is critical; it never
+count). Machine-readable severity is `critical` for a critically full root
+filesystem, `high` for other threshold warnings, `normal` when complete data
+has no threshold warning, and `unknown` when the snapshot is partial. A
+configured archive mount counts as a possible capacity destination only when
+it is a real mount point and reports strictly positive available bytes.
+Partial or unreadable fields stay unknown. The summary may recommend an
+owner-approved inventory/offload when root capacity is critical; it never
 identifies files to delete or move and does not establish encryption, retention,
 open-file, runner-health, registration, job-assignment, or causal evidence.
 The receipt always keeps cleanup, offload, restart and mutation authorization
