@@ -2639,7 +2639,12 @@ def portfolio_execution_lanes(project_id=None):
 def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
     rows=connection.execute(
         """SELECT * FROM portfolio_queue
-           WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+           WHERE eligible=1 AND status='queued'
+             AND worker_slot IS NULL AND claimed_at IS NULL AND claim_expires IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM task_claims
+               WHERE task_claims.claim_key=portfolio_queue.queue_id
+             )
            ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                     created_at,queue_id LIMIT 240"""
     ).fetchall()
@@ -2695,19 +2700,27 @@ def _portfolio_requeue_conflicting_claimed_lanes_locked(connection,ts):
                 }
                 break
         if conflict and str(row['status'])=='claimed':
-            connection.execute(
+            retired=connection.execute(
                 """UPDATE portfolio_queue
                    SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                   WHERE queue_id=? AND status='claimed'""",
+                   WHERE queue_id=? AND status='claimed'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_claims
+                       WHERE task_claims.claim_key=portfolio_queue.queue_id
+                     )""",
                 (ts,row['queue_id']),
             )
-            released.append({
-                'queue_id':str(row['queue_id']),
-                'project_id':project_id,
-                'lane_id':lane['lane_id'],
-                'conflict':conflict,
-            })
-            continue
+            if retired.rowcount==1:
+                released.append({
+                    'queue_id':str(row['queue_id']),
+                    'project_id':project_id,
+                    'lane_id':lane['lane_id'],
+                    'conflict':conflict,
+                })
+                continue
+            # A conflicting lane which still has an independent owner claim
+            # remains resident. Keep it in the accepted occupancy set rather
+            # than claiming an absent release or enabling a second writer.
         accepted.append({
             'queue_id':str(row['queue_id']),
             'project_id':project_id,
