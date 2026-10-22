@@ -171,6 +171,10 @@ def coverage_recovery_steps(reasons):
     if not actions:
         actions.append(
             "Controleer de originele GitHub-bronnen; deze waarneming is geen bewijs van eigenaarschap of mergevrijgave.")
+    if len(actions) > 5:
+        omitted_actions = len(actions) - 4
+        actions = actions[:4] + [
+            f"{omitted_actions} aanvullende eigenaaractie(s) niet getoond; inspecteer de volledige actuele bron."]
     return actions[:5]
 
 
