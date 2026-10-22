@@ -597,3 +597,18 @@ Deze identiteit bevestigt alleen welke lokale databasebron is gelezen. Ze bewijs
 geen actuele Notion-/externe claim, owner-vacancy, mergebevoegdheid of
 recovery-toestemming; leaseverloop blijft uitsluitend een signaal voor handmatige
 eigenaarcontrole.
+
+
+## P0/P1 issue activity age in the issue-first recovery inbox
+
+The issue-first board now preserves GitHub's canonical `updated_at` timestamp for each P0/P1 issue returned by the bounded issue inventory and adds a last-activity hint to its HTML and text cards plus JSON output. The issue-inventory observation timestamp is captured once and shared by the inbox classification. This makes the age visible at generation time instead of leaving an old open issue visually indistinguishable from a recently active one.
+
+Bands are intentionally descriptive, not ownership or severity overrides:
+
+- `RECENT`: last issue activity observed less than 24 hours ago.
+- `AGING`: at least 24 hours but less than 7 days.
+- `STALE`: 7 days or more since issue activity.
+- `UNKNOWN`: no valid timezone-aware canonical `updated_at` timestamp was available, including issues inferred only from a selected PR's text.
+- `CLOCK_SKEW_OR_FUTURE`: the issue timestamp is more than two minutes after the inbox's observation clock.
+
+The aggregate counts apply only to the bounded observed issue window, not the entire GitHub backlog. GitHub `updated_at` can reflect comments or metadata edits; a `STALE` label does **not** prove that a worker is inactive, a fix is missing, or a dependency remains unresolved. It never changes P0/P1 ordering, assigns an owner, grants a claim, or authorizes merge/deploy. Existing PR reuse and exact-head CI/review/claim gates remain unchanged. No QA/regression suite was added or run for this change.
