@@ -27,6 +27,7 @@ TARGET = ROOT / "zennay-cloud/history.db"
 REQUIRED = frozenset({
     "portfolio_queue", "runner_targets", "runner_workers",
     "task_claims", "runtime_settings", "ai_global_slots",
+    "runner_commands", "runner_events",
 })
 
 
@@ -86,12 +87,12 @@ def inspect(path: Path, uid: int) -> dict:
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )}
             if not REQUIRED.issubset(found):
-                raise Refused("required queue/worker/claim tables missing")
+                raise Refused("required queue/worker/claim/command/event tables missing")
             counts = {name: conn.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
                       for name in sorted(REQUIRED)}
             unresolved = conn.execute(
                 "SELECT count(*) FROM portfolio_queue "
-                "WHERE status IN ('running','verifying')"
+                "WHERE status IN ('claimed','running','verifying')"
             ).fetchone()[0]
             project_leases = conn.execute(
                 "SELECT count(*) FROM task_claims "
