@@ -244,6 +244,38 @@ def _operator_step_for_sample(item, old, changed_fields):
             "de PR-eigenaar; het gewijzigde bronvenster geeft geen mergevrijgave.")
 
 
+
+def _pr_metadata_changes(item, old):
+    """Only compare concrete values on the SAME exact PR source HEAD."""
+    current, prior = item["metadata"], old["metadata"]
+    if (current is None or prior is None
+            or len(current) != 4 or len(prior) != 4):
+        raise ValueError("missing exact PR metadata for continuity")
+    changes = []
+    if current[0] != prior[0]:
+        changes.append("target_base_sha_changed")
+    if current[1] != prior[1]:
+        changes.append("draft_state_changed")
+    if current[2:] != prior[2:]:
+        changes.append("github_mergeability_hint_changed")
+    return changes
+
+
+def _metadata_transition(item, old, names):
+    current, prior = item["metadata"], old["metadata"]
+    result = []
+    if "target_base_sha_changed" in names:
+        result.append("PR-basis SHA: " + prior[0][:12] + " → " + current[0][:12])
+    if "draft_state_changed" in names:
+        result.append("draftstatus: " + ("draft" if prior[1] else "reviewklaar") +
+                      " → " + ("draft" if current[1] else "reviewklaar"))
+    if "github_mergeability_hint_changed" in names:
+        def hint(row):
+            return "onbekend" if not row[2] else "mergeable" if row[3] else "niet mergeable"
+        result.append("GitHub mergeable-hint: " + hint(prior) + " → " + hint(current))
+    return result
+
+
 def compare(current, previous, previous_sha256, now=None):
     """Summarize only observed gate changes in two private PR report windows."""
     if type(previous_sha256) is not str or not FINGERPRINT.fullmatch(previous_sha256):
@@ -272,6 +304,12 @@ def compare(current, previous, previous_sha256, now=None):
             state = "partial_exact_source_NO_GATE_DELTA"
         elif item["head"] != old["head"]:
             state = "exact_head_changed_REINSPECT_GATE"
+        elif item["metadata"][0] != old["metadata"][0]:
+            state = "same_head_target_base_changed_REINSPECT_GATE"
+        elif item["metadata"][1] != old["metadata"][1]:
+            state = "same_head_draft_changed_REVIEW_GATE"
+        elif item["metadata"][2:] != old["metadata"][2:]:
+            state = "same_head_mergeability_hint_changed_RECHECK_RULES"
         elif item["step"] != old["step"]:
             state = "same_head_owner_step_changed_REVIEW_GATE"
         elif item["gates"] != old["gates"]:
@@ -287,6 +325,11 @@ def compare(current, previous, previous_sha256, now=None):
             if (comparable_clock and old is not None
                 and item["coverage"] == EXACT and old["coverage"] == EXACT
                 and item["head"] == old["head"]) else [])
+        metadata_fields_changed = (
+            _pr_metadata_changes(item, old)
+            if (comparable_clock and old is not None
+                and item["coverage"] == EXACT and old["coverage"] == EXACT
+                and item["head"] == old["head"]) else [])
         changes.append({
             "pr_url": url,
             "state": state,
@@ -294,6 +337,10 @@ def compare(current, previous, previous_sha256, now=None):
             "previous_head_sha": old["head"] if old else None,
             "observed_next_step": item["step"],
             "previous_next_step": old["step"] if old else None,
+            "observed_metadata_changed": metadata_fields_changed,
+            "observed_metadata_transitions": (
+                _metadata_transition(item, old, metadata_fields_changed)
+                if metadata_fields_changed else []),
             "observed_gate_families_changed": gate_fields_changed,
             "observed_gate_sample_changed": bool(gate_fields_changed),
             "observed_gate_transitions": (
@@ -305,10 +352,16 @@ def compare(current, previous, previous_sha256, now=None):
             "gate_changed_proven": state in (
                 "exact_head_changed_REINSPECT_GATE",
                 "same_head_owner_step_changed_REVIEW_GATE",
-                "same_head_observed_ci_or_review_changed_REVIEW_GATE"),
+                "same_head_observed_ci_or_review_changed_REVIEW_GATE",
+                "same_head_target_base_changed_REINSPECT_GATE",
+                "same_head_draft_changed_REVIEW_GATE",
+                "same_head_mergeability_hint_changed_RECHECK_RULES"),
             "merge_verified": False, "owner_verified": False,
         })
     rank = {"exact_head_changed_REINSPECT_GATE": 0,
+            "same_head_target_base_changed_REINSPECT_GATE": 0,
+            "same_head_draft_changed_REVIEW_GATE": 1,
+            "same_head_mergeability_hint_changed_RECHECK_RULES": 1,
             "same_head_observed_ci_or_review_changed_REVIEW_GATE": 1,
             "same_head_owner_step_changed_REVIEW_GATE": 1,
             "partial_exact_source_NO_GATE_DELTA": 2,
