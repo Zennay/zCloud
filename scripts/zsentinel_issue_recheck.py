@@ -129,6 +129,18 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
         item["live_issue_recheck_observed_at_utc"] = summary["observed_at_utc"]
         item["live_issue_state_reason"] = summary["reported_state_reason"]
         item["live_issue_priority_label"] = summary["priority_from_explicit_labels"]
+        if state == "closed" and item["live_issue_state_reason"] == "not_planned":
+            item["live_next_action_code"] = "inspect_not_planned_closure_decision"
+            item["live_next_action"] = (
+                "GitHub closed this as not planned; inspect the recorded owner "
+                "decision and do not infer a shipped fix, merge or deploy."
+            )
+        elif state == "closed" and item["live_issue_state_reason"] != "completed":
+            item["live_next_action_code"] = "inspect_unclassified_closure_reason"
+            item["live_next_action"] = (
+                "GitHub reports CLOSED without an explicit completed reason; "
+                "inspect closure history and independently verify any product fix."
+            )
         observed_open += int(state == "open")
         observed_closed += int(state == "closed")
 
