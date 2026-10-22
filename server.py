@@ -2595,7 +2595,17 @@ def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
         params.extend(ids)
     backlog=connection.execute(
         """SELECT * FROM portfolio_queue
-           WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""" + project_clause +
+           WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')
+             AND (
+               status<>'queued'
+               OR (
+                 worker_slot IS NULL AND claimed_at IS NULL AND claim_expires IS NULL
+                 AND NOT EXISTS (
+                   SELECT 1 FROM task_claims
+                   WHERE task_claims.claim_key=portfolio_queue.queue_id
+                 )
+               )
+             )""" + project_clause +
         """ ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                     created_at,queue_id""",
         params,
