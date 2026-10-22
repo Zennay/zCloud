@@ -145,6 +145,13 @@ def compare_worker_snapshots(prior, current):
         elif after is None:
             label = "ontbreekt_in_recente_steekproef_niet_opgelost"
             next_step = "Verifieer met eigenaar of slot nog bestaat; GEEN herstelbewijs."
+        elif (before is not None and after is not None
+              and (previous_claim_window is None or current_claim_window is None)):
+            label = "queue_claimvenster_ontbreekt_cursorvergelijking_ingehouden"
+            next_step = (
+                "Zonder twee geldige queueclaimvensters bewijzen twee browsercursors "
+                "geen voortgang van dezelfde taak; controleer lease en eigenaar."
+            )
         elif claim_window_changed:
             label = "queue_claimvenster_gewijzigd_cursorvergelijking_ingehouden"
             next_step = (
@@ -167,6 +174,10 @@ def compare_worker_snapshots(prior, current):
         if claim_window_changed:
             cursor_signal = "claim_window_changed_cursor_comparison_withheld"
             progress_signal = "claim_window_changed_cursor_comparison_withheld"
+        elif (before is not None and after is not None
+              and (previous_claim_window is None or current_claim_window is None)):
+            cursor_signal = "claim_window_unavailable_cursor_comparison_withheld"
+            progress_signal = "claim_window_unavailable_cursor_comparison_withheld"
         elif before is not None and after is not None:
             previous_id = before.get("latest_indexed_event_id")
             current_id = after.get("latest_indexed_event_id")
