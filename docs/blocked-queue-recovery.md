@@ -222,3 +222,30 @@ moeten als één geautoriseerde productrelease** worden geleverd:
 een oude server kan de nieuwe guards niet afdwingen.
 Geen onafhankelijke dependency-resolutie wordt beweerd,
 en de operatorbevoegdheden veranderen niet.
+
+## 22 oktober · brongebonden zoekwerkbank en hervat-freshness
+
+De **Dependency Holds**-werkbank heeft naast de bestaande projectkeuze
+en P0/P1-filter nu een lokale zoekbalk over titel, project, prioriteit
+en vastgelegde afhankelijkheid. De UI geeft het **gefilterde aantal**
+apart van het totaal uit de geladen queuebron, bewaart de focus tijdens
+typen, en biedt **Clear filters**. Een nulresultaat is een lege
+zoekselectie binnen de ontvangen steekproef, **niet** het bewijs dat er
+elders geen geblokkeerde taken zijn. Er zijn geen aanvullende
+bevoorrechte API-verzoeken nodig. De bron blijft alleen-lezen totdat
+dezelfde geautoriseerde operator expliciet een individuele taak
+bevestigt.
+
+De pre-POST vergelijking van een geparkeerde taak gebruikt nu tevens
+`updated_at`, `worker_slot`, `claim_owner` en `claim_expires`.
+Bij een wijziging tussen de eerste bevestiging en de verse
+queue-observatie wordt de hervatting afgebroken en een nieuwe
+menselijke bevestiging gevraagd; de transactionele bronversiecontrole
+van de backend blijft daarnaast verplicht. Dit is geen toestemming
+om een active claim over te nemen.
+
+De HTML-pins voor `app.js` en `style.css` moeten bij elke nieuwe
+wijziging aan die assets opnieuw worden ververst. Een commit op deze
+featurebranch is geen productie-installatie: pas na exacte-HEAD
+verplichte CI, onafhankelijke review, branch protection en toestemming
+van de release-eigenaar mag worden gemerged of geactiveerd.
