@@ -59,11 +59,13 @@ def observe_host_pressure():
         raise ValueError("invalid root capacity counters")
     # Keep the severity strictly about the measured host headroom.
     # It cannot establish which process filled disk or stalled a runner.
+    critical_inodes = inode_pct is not None and inode_pct >= 95
+    constrained_inodes = inode_pct is not None and inode_pct >= 90
     pressure = ("critical_headroom_observed"
-                if free_gib < 2 or unavailable_pct >= 95
+                if free_gib < 2 or unavailable_pct >= 95 or critical_inodes
                 or mem_available_mib < 512 else
                 "constrained_headroom_observed"
-                if free_gib < 4 or unavailable_pct >= 90
+                if free_gib < 4 or unavailable_pct >= 90 or constrained_inodes
                 or mem_available_mib < 1024 else
                 "no_critical_pressure_in_this_sample")
     return {
@@ -129,9 +131,17 @@ def owner_summary(observation):
     inode_label = (
         " · inodes niet beschikbaar"
         if inodes is None else " · inodes bezet " + str(inodes) + "%")
+    guidance = (
+        "Hosteigenaar controleert volumes, bezette ruimte en bestaande jobs "
+        "vóór een eventueel herstel; GEEN cleanup, jobstop of herstart vanuit deze kaart."
+        if observation["pressure_observation"] == "critical_headroom_observed"
+        else "Gebruik actuele GitHub runner-/jobidentiteit voor vervolgcontrole; "
+             "dit is geen veilige-idle verklaring."
+    )
     return (
         "Hostdruk (" + observation["pressure_observation"] + "): "
         + str(root_free) + " GiB vrij, schijf bezet " + str(root_used)
         + "%, geheugen vrij " + str(memory) + " MiB" + inode_label
-        + ". Alleen bronwaarneming: oorzaak, runner-idle en herstart NIET bewezen."
+        + ". " + guidance
+        + " Oorzaak, registratie en runner-herstel zijn NIET bewezen."
     )
