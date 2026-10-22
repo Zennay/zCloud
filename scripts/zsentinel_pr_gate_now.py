@@ -49,6 +49,10 @@ GATE_STEPS_NL = {
         "Vraag onafhankelijke review op de actuele HEAD aan; bestaande CI mag parallel doorlopen.",
     "verify_required_rules_ownership_and_release_separately":
         "Branchregels, eigenaar en release apart verifiëren; nog geen mergevrijgave.",
+    "verify_runtime_after_confirmed_default_branch_merge":
+        "GitHub bevestigt merge op de default branch; verifieer live deployment en runtime afzonderlijk.",
+    "owner_review_closed_pr_without_default_delivery":
+        "Geen GitHub default-branch merge; eigenaar onderzoekt sluiten, heropenen of nieuwe opvolging.",
 }
 MAX_PRS = 4
 NUMBER = re.compile(r"^[1-9][0-9]{0,8}$")
@@ -208,6 +212,9 @@ def _closed_pr_lifecycle(repo, number, first, token):
         "url": "https://github.com/" + repo + "/pull/" + str(number),
         "repository": repo, "number": number,
         "status": status,
+        "human_next_gate_step": ("verify_runtime_after_confirmed_default_branch_merge"
+                                 if status == "github_confirmed_merged_on_default_branch"
+                                 else "owner_review_closed_pr_without_default_delivery"),
         "head_sha_observed": head,
         "base_ref_observed": target_ref,
         "default_branch_ref_observed": default_branch,
