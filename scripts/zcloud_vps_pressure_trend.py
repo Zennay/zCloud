@@ -55,7 +55,7 @@ def compare_host_pressure(previous: object, current: object,
     elapsed_valid = (
         type(elapsed_seconds) in (int, float) and
         (type(elapsed_seconds) is int or math.isfinite(elapsed_seconds)) and
-        0 <= elapsed_seconds <= 3600
+        0 < elapsed_seconds <= 3600
     )
     result = {
         "status": "unavailable",
