@@ -493,6 +493,13 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
         "target_branch_identity_complete": all(
             row["target_branch_identity_known"] for row in all_rows),
         "unavailable_or_drifted_prs": unavailable,
+        "github_default_branch_merges_in_saved_snapshot": sum(
+            row["github_lifecycle_status_observed"] == MERGED_DEFAULT
+            for _, row in all_rows),
+        "github_closed_without_default_merge_in_saved_snapshot": sum(
+            row["github_lifecycle_status_observed"] in (MERGED_OTHER, CLOSED_UNMERGED)
+            for _, row in all_rows),
+        "default_branch_merge_is_not_live_verification": True,
         "stale_over_15_minutes_prs": stale,
         "saved_historic_gate_category_counts": category_counts,
         "cross_batch_observation_spread_seconds": spread,
@@ -540,6 +547,11 @@ def human(report, markdown=False):
         "/" + str(report["total_batches"]),
         "Ontbrekende batches: " + (", ".join(map(str, report["missing_batches"])) or "geen"),
         "Onbereikbare of veranderde HEADs: " + str(report["unavailable_or_drifted_prs"]),
+        "Door GitHub bevestigd op default branch in opgeslagen bron: " +
+        str(report["github_default_branch_merges_in_saved_snapshot"]) +
+        " PRs; live deployment NIET geverifieerd.",
+        "Gesloten zonder default-branch merge (opgeslagen bron): " +
+        str(report["github_closed_without_default_merge_in_saved_snapshot"]),
         "PRs met onbekende doelbranch: " + str(report["prs_with_unknown_target_branch"]),
         "Doelbranchidentiteit volledig: " + str(report["target_branch_identity_complete"]),
         "Verouderde (>15 min) opgeslagen PR-waarnemingen: " + str(report["stale_over_15_minutes_prs"]),
@@ -572,6 +584,15 @@ def human(report, markdown=False):
         if action["source_problem_kind"]:
             lines.append("  ↳ Bronmelding: " +
                          SOURCE_PROBLEMS_NL[action["source_problem_kind"]])
+        if action["github_lifecycle_status_observed"] is not None:
+            lines.append(
+                "  ↳ GitHub-lifecycle (historisch): " +
+                action["github_lifecycle_status_observed"] +
+                (" · mergecommit " + action["github_merge_commit_sha_observed"]
+                 if action["github_merge_commit_sha_observed"] else "") +
+                " · default branch " +
+                str(action["github_default_branch_ref_observed"] or "ONBEKEND") +
+                " · live/on-going tip NIET geverifieerd")
         for link in action["owner_check_links"]:
             label = {
                 "failed_check": "Historische mislukte Check Run",
@@ -643,6 +664,10 @@ def html(report):
                str(report["total_batches"]) + " · PRs " +
                str(report["observed_prs"]) + "/" + str(report["total_manifest_prs"]) +
                " · niet waargenomen " + str(report["unavailable_or_drifted_prs"]) +
+               " · GitHub default-branch merges " +
+               str(report["github_default_branch_merges_in_saved_snapshot"]) +
+               " · gesloten zonder default merge " +
+               str(report["github_closed_without_default_merge_in_saved_snapshot"]) +
                " · verouderd " + str(report["stale_over_15_minutes_prs"]))
     missing = ", ".join(map(str, report["missing_batches"])) or "geen"
     queue_items = []
@@ -666,6 +691,16 @@ def html(report):
                                                  "Herlees actuele GitHub-bron."))
         source_hint = (escape(SOURCE_PROBLEMS_NL[action["source_problem_kind"]])
                        if action["source_problem_kind"] else "")
+        lifecycle_hint = (
+            "<span>GitHub-lifecycle: " +
+            escape(action["github_lifecycle_status_observed"]) +
+            (" · mergecommit <code>" +
+             escape(action["github_merge_commit_sha_observed"]) + "</code>"
+             if action["github_merge_commit_sha_observed"] else "") +
+            " · default: " +
+            escape(action["github_default_branch_ref_observed"] or "ONBEKEND") +
+            " · live runtime onbekend</span>"
+            if action["github_lifecycle_status_observed"] else "")
         check_links_html = []
         for link in action["owner_check_links"]:
             label = {
@@ -685,7 +720,8 @@ def html(report):
                           " · " + reason +
                           (" · <em>Bronmelding: " + source_hint + "</em>"
                            if source_hint else "") +
-                          (" · <em>Parallel: " +
+                          ("<p>" + lifecycle_hint + "</p>" if lifecycle_hint else "") +
+                          (" · <em>Parallel: "
                            escape(HUMAN_GATE_LABELS_NL[action["parallel_human_gate"]]) +
                            "</em>" if action["parallel_human_gate"] else "") +
                           ("<ul>" + "".join(check_links_html) + "</ul>" if check_links_html else "") +
