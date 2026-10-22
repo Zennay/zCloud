@@ -389,7 +389,7 @@ def suggested_actions(packet):
                 "procesaanwezigheid is geen bewijs van geslaagde CI.",
                 "GITHUB_RUNNER_ASSIGNMENT_NOT_OBSERVED",
             ))
-        elif worker_count > 0 and not worker_mismatch:
+        elif not listener_count and worker_count > 0 and not worker_mismatch:
             result.append(action(
                 "zcloud-worker-without-listener-observation",
                 "urgent" if local_proc.get("source_complete") is True else "review",
