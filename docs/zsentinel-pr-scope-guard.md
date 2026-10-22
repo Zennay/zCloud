@@ -2914,3 +2914,11 @@ niet wordt verward met bewezen Git-mergeconflict.
 Geen van deze velden is branch-protectionbewijs, eigenaarschap, claimvrijgave,
 reviewapproval of merge-/deployautorisatie. Bestaande verplichte CI en
 onafhankelijke review blijven afzonderlijke gates.
+
+
+Bij een instabiele PR-bron tonen de operatorwerkbak en private handoff ook
+de gevangen doelbranch naast de tweede waarneming. Branch-stabiliteit staat
+los van HEAD/base-SHA-stabiliteit: een stabiele `base.ref` wordt niet ten
+onrechte als veranderde branch gelabeld wanneer alleen de commitbron verschoof.
+De vervolgstap benoemt branch-retargeting expliciet wanneer de twee branchnamen
+verschillen; elke vorm van brononzekerheid blijft een menselijke HOLD.
