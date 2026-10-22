@@ -1399,12 +1399,14 @@ def render_html(bundle):
         url = _same_repo_url(card["url"], repo)
         files = url + "/files"
         branch_observation = ""
-        if not card["base_ref_stable_on_second_read"]:
+        if ((not card["source_current"] or not card["base_ref_stable_on_second_read"])
+                and (card["captured_base_ref"] or card["observed_base_ref"])):
             branch_observation = (
                 "<br>Doelbranch capture → tweede read: <code>" +
                 e(card["captured_base_ref"] or "ONBEKEND") + "</code> → <code>" +
                 e(card["observed_base_ref"] or "ONBEKEND") +
-                "</code> · stabiel: nee")
+                "</code> · branch stabiel: " +
+                ("ja" if card["base_ref_stable_on_second_read"] else "nee"))
         parts += [
             "<article id=\"" + e(_article_anchor(card)) + "\"><h2>" +
             e(card["project"]) + " · <a target=\"_blank\" "
@@ -1744,12 +1746,14 @@ def render_markdown(bundle):
             "4. Bewaar de bestaande workerclaim; neem geen werk van een andere eigenaar over.",
             "",
         ]
-        if (not card["base_ref_stable_on_second_read"] and
+        if ((not card["source_current"] or not card["base_ref_stable_on_second_read"]) and
                 (card["captured_base_ref"] or card["observed_base_ref"])):
             lines.append("**Doelbranch capture → tweede read:** " +
                          (card["captured_base_ref"] or "ONBEKEND") + " → " +
                          (card["observed_base_ref"] or "ONBEKEND") +
-                         " (bronidentiteit niet stabiel; niet mergeklaar).")
+                         " (doelbranch stabiel: " +
+                         ("ja" if card["base_ref_stable_on_second_read"] else "nee") +
+                         "; volledige PR-bron niet mergeklaar).")
         if card["historical_next_step"]:
             lines.append("**Historische vervolgstap:** " +
                          card["historical_next_step"] +
