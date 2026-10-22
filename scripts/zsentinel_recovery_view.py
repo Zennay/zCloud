@@ -1117,17 +1117,42 @@ def html_view(decision, registry=None):
                 or len(notion["items"]) > 30
                 or type(notion.get("items_truncated")) is not bool):
             raise ValueError("invalid Notion claim visibility snapshot")
+        claim_windows = {
+            "missing_worker_or_lease_fields": "Geen volledige worker-/leasevelden",
+            "date_only_not_a_lease": "Datum zonder tijd is geen lease",
+            "invalid_lease_timestamp": "Ongeldige leaseklok",
+            "invalid_lease_interval": "Ongeldig of te lang leasevenster",
+            "future_claim_start": "Claimstart ligt in de toekomst",
+            "expired_claim_window": "Leasevenster volgens Notion verlopen",
+            "time_window_present_not_owner_verified": "Tijdvenster aanwezig; eigenaar NIET geverifieerd",
+        }
+        window_totals = notion.get("claim_window_observation_counts")
+        live_notion = notion["source"] == "notion_readonly_data_source_pages"
+        if live_notion:
+            if (type(window_totals) is not dict or notion.get("claim_window_verified") is not False
+                    or any(key not in claim_windows or type(count) is not int
+                           or count < 1 for key, count in window_totals.items())
+                    or sum(window_totals.values()) != notion["active_count"]):
+                raise ValueError("invalid Notion observed lease window totals")
+        elif window_totals is not None:
+            raise ValueError("saved Notion snapshot cannot claim live lease windows")
         rows = []
         for item in notion["items"]:
             if (not isinstance(item, dict)
                     or item.get("status") not in ("Claimed", "Running", "Verifying")):
                 raise ValueError("invalid Notion active/verification status")
-            metadata_fields = ("worker", "claimed_at", "claim_expires", "claim_metadata_status")
+            metadata_fields = ("worker", "claimed_at", "claim_expires",
+                               "claim_metadata_status", "claim_window_observation",
+                               "claim_authorized")
             if any(field in item for field in metadata_fields):
                 worker = item.get("worker")
                 claimed_at = item.get("claimed_at")
                 claim_expires = item.get("claim_expires")
                 metadata_status = item.get("claim_metadata_status")
+                window = item.get("claim_window_observation")
+                if (live_notion and
+                        (window not in claim_windows or item.get("claim_authorized") is not False)):
+                    raise ValueError("Notion lease status cannot authorize a claim")
                 if (worker is not None and worker not in ("Worker 1", "Worker 2")
                         or any(value is not None and
                                (type(value) is not str or not 1 <= len(value) <= 45
@@ -1149,7 +1174,9 @@ def html_view(decision, registry=None):
                     if metadata_status == "observed_fields_present"
                     else "worker-/leasevelden gedeeltelijk of ontbrekend"
                 )
-                metadata_html = '<br><span class="muted small">' + phrase(" · ".join(details), 230) + '</span>'
+                if live_notion:
+                    details.append(claim_windows[window])
+                metadata_html = '<br><span class="muted small">' + phrase(" · ".join(details), 300) + '</span>'
             else:
                 metadata_html = '<br><span class="muted small">Worker-/leasemetadata niet opgenomen in deze momentopname.</span>'
             rows.append('<li class="word"><strong>' + phrase(item.get("work"), 35) +
@@ -1213,10 +1240,22 @@ def html_view(decision, registry=None):
                            '</summary><ul>' + ''.join(descriptions) +
                            '</ul><p>Geen autorisatie voor herstel, taakclaim, '
                            'runner of release.</p></details>')
+        window_counts_html = ""
+        if live_notion:
+            observed_parts = [
+                '<li>' + phrase(claim_windows[status], 90) +
+                ': ' + str(window_totals[status]) + ' werkregels</li>'
+                for status in claim_windows if status in window_totals
+            ]
+            window_counts_html = (
+                '<details><summary>Notion-leasevelden · géén bewezen actuele claims</summary>'
+                '<ul>' + ''.join(observed_parts) +
+                '</ul><p>Ook een actueel ogend tijdvenster is geen eigenaarbewijs, '
+                'queueclaim of toestemming tot herverdeling.</p></details>')
         notion_panel = (
             '<p>' + phrase(caveat, 80) + ' · onafgeronde werkregels: ' +
             str(notion["active_count"]) + ' · geen bestandsscope, claimvrijgave of dispatch.</p>' +
-            window_html +
+            window_html + window_counts_html +
             ('<ul>' + ''.join(rows) + '</ul>' if rows else
              '<p class="empty">Geen actieve regels in deze waarneming; geen bewijs van vrije scope.</p>') +
             ('<p>Voorbeelden afgekapt na 30; zichtbaar per waargenomen '
