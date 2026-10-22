@@ -10,7 +10,7 @@ import math
 import os
 import socket
 import stat
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from zsentinel_local_runner_observer import HOST
 from zsentinel_vps_resource_observer import _memory_values
@@ -121,8 +121,9 @@ def owner_summary(observation):
     if not isinstance(stamp, str) or not 1 <= len(stamp) <= 45:
         raise ValueError("missing bounded host observation time")
     instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-    if instant.tzinfo is None or instant.utcoffset() is None:
-        raise ValueError("invalid host sample timezone")
+    if instant.tzinfo is None or instant.utcoffset() != timedelta(0):
+        raise ValueError("host sample must carry an explicit UTC timestamp")
+    source_stamp = instant.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     for key in ("root_available_gib", "root_unavailable_percent",
                 "mem_available_mib", "mem_total_mib",
                 "swap_free_mib", "swap_total_mib"):
@@ -178,6 +179,7 @@ def owner_summary(observation):
         "Hostdruk (" + observation["pressure_observation"] + "): "
         + str(root_free) + " GiB vrij, schijf bezet " + str(root_used)
         + "%, geheugen vrij " + str(memory) + " MiB" + inode_label + swap_label
+        + " · bronmoment UTC=" + source_stamp
         + ". " + guidance
         + " Oorzaak, registratie en runner-herstel zijn NIET bewezen."
     )
