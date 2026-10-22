@@ -94,7 +94,8 @@ PY
   fi
 
   msg "Install service definitions but keep them OFF"
-  install -d -o "$ZUSER" -g "$ZUSER" -m 0750 "$ZHOME/.local/bin" "$ZHOME/.config/systemd/user"
+  install -d -o "$ZUSER" -g "$ZUSER" -m 0750 "$ZHOME/.local" "$ZHOME/.local/bin" \
+    "$ZHOME/.config" "$ZHOME/.config/systemd" "$ZHOME/.config/systemd/user"
   for name in chatgpt-firefox-prestart.sh; do
     target="$ZHOME/.local/bin/$name"
     if [[ ! -e "$target" ]]; then
@@ -115,7 +116,9 @@ PY
   else
     echo "KEEP existing $USER_UNIT"
   fi
-  if ! systemctl cat zennay-cloud.service >/dev/null 2>&1; then
+  if systemctl --user -M ubuntu@ cat zennay-cloud.service >/dev/null 2>&1; then
+    echo "PREEXISTING ubuntu user zennay-cloud.service: not creating a competing system unit."
+  elif ! systemctl cat zennay-cloud.service >/dev/null 2>&1; then
     cat > "$SYSTEM_UNIT" <<'UNIT'
 [Unit]
 Description=zCloud control-plane API (new VPS)
@@ -163,6 +166,14 @@ fi
   die "reconcile/final-sync the DB first; set ZCLOUD_FINAL_DB_SYNCED=yes only after verifying"
 [[ -f "$TARGET_DB" ]] || die "target history.db missing; run prepare first"
 [[ -f "$USER_UNIT" ]] || die "worker service not installed; run prepare first"
+systemctl cat zennay-cloud.service >/dev/null 2>&1 ||
+  die "system zennay-cloud.service not installed; reconcile any existing ubuntu user unit first"
+while read -r unit _; do
+  [[ -n "$unit" ]] || continue
+  if systemctl is-active --quiet "$unit"; then
+    die "already-active GitHub runner on new VPS: $unit; avoid cloned identity collisions"
+  fi
+done < <(systemctl list-unit-files --no-legend 'actions.runner.*.service' 2>/dev/null || true)
 ! systemctl is-active --quiet zennay-cloud.service ||
   die "zCloud service is already running; refuse to rewrite active queue state"
 ! systemctl --user -M ubuntu@ is-active --quiet chatgpt-firefox.service ||
