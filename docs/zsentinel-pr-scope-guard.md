@@ -1,5 +1,63 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · directe foutlinks en bronoorzaken in bestaande herstelwerkbak
+
+De **bestaande** merge-first PR-gate- en portfoliowerkbakken blijven read-only,
+maar maken nu twee onduidelijke situaties daadwerkelijk opvolgbaar.
+
+### Directe GitHub-joblinks voor de bevoegde eigenaar
+
+`scripts/zsentinel_pr_gate_now.py --format markdown` vermeldt voortaan,
+naast de actuele HEAD en volgende eigenaaractie, expliciete canonieke
+GitHub-Check-Run-links voor de aangetroffen **mislukte**, **queued ≥30 min**
+en **in_progress ≥60 min** checks. Een falende legacy-commitstatus krijgt
+een aparte exacte-HEAD-commitchecklink. Namen en provider-supplied URLs
+worden niet als vrije Markdown-links overgenomen; alleen gebonden numerieke
+Check Run IDs worden verwerkt. De uitvoer blijft begrensd en meldt extra
+verborgen checks. Een link is nooit een autorisatie om de workflow opnieuw
+te starten of werkclaims over te nemen.
+
+`scripts/zsentinel_pr_gate_batches.py` neemt deze brongebonden
+links alleen over als de opgeslagen receipt een specifieke PR én exacte HEAD
+bevriest. De HTML en Markdown eigenaarwerkbak maken de oorspronkelijke
+Check Run bereikbaar vanuit de geprioriteerde reparatiekaart. **Elke link
+blijft historisch** en vereist een actuele bronread voordat een herstelbesluit
+mag worden genomen. Ongeldige repo/checkidentiteiten worden geweigerd.
+
+### Veilige bronfoutclassificatie in plaats van één onduidelijke HOLD
+
+De live broncollector onderscheidt nu zonder ruwe HTTP- of exceptionstrings:
+
+- ontbreken/weigeren van GitHub-toegang (401/403);
+- GitHub-rate limiting (429);
+- niet-gevonden PR of API-bron (404/410);
+- netwerk-/GitHub-serverprobleem;
+- aantoonbaar wisselende HEAD/basis, conceptstatus of reviewaanvraag
+  gedurende de read;
+- overige onvolledige of onbruikbare brondata (ONBEKEND).
+
+De categorie wordt zichtbaar in actuele HTML, tekst en Markdown;
+bovendien volgt hij via bestaande **historische batchrapporten** naar de
+multi-PR eigenaarwerkbak en via het **portfolio-sourceboard** naar de
+incidentweergave. Er wordt **geen** onbereikbaar PR als gemerged, hersteld,
+claimvrij of gesloten bestempeld. De tool bewaart geen geheime responsebody,
+token of auth-header in de rapportage.
+
+Uitvoervoorbeeld (privé `0600` create-only bestand via bestaande writer):
+
+```bash
+python3 scripts/zsentinel_pr_gate_now.py \
+  --pr 'Zennay/zCloud#1567' \
+  --format markdown \
+  --output /eigen/private/actuele-pr-gates.md
+```
+
+Deze implementatie maakt P0-runnertriage of GitHub-rechten nog niet
+automatisch hersteld. Bestaande claim- en producteigenaren, verplicht
+exact-HEAD CI-bewijs, onafhankelijke review, protected main en release gates
+zijn ongewijzigd. Geen QA-suite, service-restart, workflowretrigger,
+queuewrite, force merge of live deploy.
+
 ## 22 oktober · actieve CI-wacht en parallel review zichtbaar in PR-geschiedenis
 
 De eerdere live exact-HEAD PR-collector had al brongebonden operatoracties
