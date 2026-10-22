@@ -213,6 +213,12 @@ def observe_portfolio(repositories, *, token=None, view="all"):
              if issue["triage_rank"] == priority])
         for repo in repositories for priority in VIEWS[view]
     ) + len(selected)
+    source_gap = (
+        stopped_for_provider or any(
+            item["source_partial_or_unknown"] for item in recorded
+        )
+    )
+    display_gap = source_sampled > len(selected)
     return {
         "schema_version": 1,
         "policy": "zsentinel-portfolio-github-issue-desk-v1",
@@ -234,11 +240,9 @@ def observe_portfolio(repositories, *, token=None, view="all"):
         "omitted_due_to_display_limit": eligible_count - len(selected),
         "filtered_out_by_view": source_sampled - eligible_count,
         "omitted_sampled_issues": source_sampled - len(selected),
-        "partial_or_unknown": (
-            stopped_for_provider or any(
-                item["source_partial_or_unknown"] for item in recorded
-            ) or source_sampled > len(selected)
-        ),
+        "source_partial_or_unknown": source_gap,
+        "display_partial": display_gap,
+        "partial_or_unknown": source_gap or display_gap,
         "all_repositories_covered": not stopped_for_provider,
         "source_sample_is_not_complete_backlog_proof": True,
         "active_worker_ownership_verified": False,
@@ -273,7 +277,12 @@ def as_markdown(result):
         "- Not selected by current display view: " +
         str(result["filtered_out_by_view"]),
         "- Omitted sampled cards: " + str(result["omitted_sampled_issues"]),
-        "- Source partial or unknown: " + str(result["partial_or_unknown"]),
+        "- GitHub source partial or unknown: " +
+        str(result["source_partial_or_unknown"]),
+        "- Display filter/cap omitted source cards: " +
+        str(result["display_partial"]),
+        "- Combined report partial or unknown: " +
+        str(result["partial_or_unknown"]),
         "- Repositories sampled sequentially; not one atomic GitHub snapshot.",
         "- No active ownership or exact-HEAD GitHub release authorization verified.",
         "", "## GitHub source coverage", "",
@@ -330,7 +339,9 @@ def as_html(result):
         esc(result["total_sampled_issues"]) + " · displayed: " +
         esc(result["total_displayed_issues"]) + " · omitted: " +
         esc(result["omitted_sampled_issues"]) +
-        " · partial/unknown: " + esc(result["partial_or_unknown"]) +
+        " · GitHub source gap: " +
+        esc(result["source_partial_or_unknown"]) +
+        " · omitted sampled cards: " + esc(result["display_partial"]) +
         "</p><p>View " + esc(result["display_view"]) +
         " · source labels P0/P1: " +
         esc(result["source_priority_counts"]["label_p0"]) + "/" +
