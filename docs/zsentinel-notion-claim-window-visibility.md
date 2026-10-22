@@ -37,3 +37,20 @@ Implementation: `scripts/zsentinel_notion_claim_observer.py`, `scripts/zsentinel
 The live adapter now also computes `active_project_claim_window_counts` per canonical project label. Each project's seven-class histogram sums to its observed unfinished-work count; project distributions must reconcile exactly with the global histogram. The owner handoff (private HTML and Markdown) highlights the number of missing/invalid/expired/future claim clocks **per project**. The default offline cockpit prioritizes up to twelve projects by observed clock uncertainty. This grouping comes from **all read records**, not the 30 displayed examples; both project paging and the operator's project shortlist remain bounded. Unknown or unregistered project labels are never mapped to an assumed owner.
 
 Rows without live claim-clock provenance are refused by the offline card renderer. These are read-only owner recheck hints: **no file ownership, queue takeover, worker restart, dispatch, merge or deployment permissions result from any of these categories.**
+
+## Owner-first recovery workboard
+
+A multi-page Notion read now uses **one pinned UTC observation instant** for all its lease-window classifications and its published timestamp. Identical lease windows therefore cannot receive inconsistent classifications solely because they appeared on different sequential pages.
+
+The existing `zsentinel_runtime_handoff.py` now turns the **per-project observed anomaly histogram** into bounded non-executable owner actions, while preserving the priority of exact P0 incidents and existing product PRs:
+
+- Prioritize projects by the number of observed missing/invalid/expired/future clock fields (not merely by a large historical `Verifying` backlog).
+- An observed `Claimed/Running` work-status signal makes the owner's clock recheck **P1 advisory**; exclusively `Verifying` work remains **P2 advisory**. Neither classification claims a running worker, active file owner, verified lease, or failed queue retry.
+- Offer at most six project-scoped owner-review cards, with bounded per-project counts and the Notion observation instant. Revalidate each card against the parent private source when rendered to offline HTML or Markdown.
+- **Count only cards actually visible after the shared 24-card P0/PR-priority limit.** If older incidents, PRs or other blockers take those slots, the source explicitly says cards are truncated instead of incorrectly claiming they were displayed.
+- Historical/manual Notion connector snapshots and stale/absent live sources cannot create *current* owner action cards. Missing source means **UNKNOWN**, never zero or safe-to-dispatch.
+- Use the existing issue/PR and queue owner paths for authorized changes. Never release Notion or SQLite claims, restart a runner, dispatch work, edit a billing gate or merge/deploy based on these advisory clock indicators.
+
+The new project-owner workboard is accessible through the pre-existing `--read-notion-claims` live refresh and existing optional private `--owner-handoff-output` / incident-desk output, without any new API budget, daemon, scheduler, test suite, DB migration, or write permission.
+
+**Release:** This documentation and source are on the existing PR #1563 until exact-head mandatory CI, independent review, branch protection and authorization permit merging; a branch commit is not a main-branch release.
