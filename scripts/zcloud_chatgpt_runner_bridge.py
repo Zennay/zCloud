@@ -454,6 +454,48 @@ def _worker_age_bands(ages: list[int | None]) -> dict[str, int]:
     }
 
 
+def _worker_operator_action_codes(state: str, service_cgroup: dict,
+                                  capacity: dict) -> list[str]:
+    """Stable advisory codes for downstream operators; never grant authority."""
+    codes = [
+        "PRESERVE_ACTIVE_WORK",
+        "TAKEOVER_NOT_AUTHORIZED",
+        "RESTART_NOT_AUTHORIZED",
+    ]
+    coverage = service_cgroup.get("membership_coverage")
+    summary = service_cgroup.get("observation_summary")
+    if coverage != "complete_for_comm_matched_processes":
+        codes.append("RUNNER_MEMBERSHIP_UNKNOWN")
+    if summary in (
+        "listener_outside_expected_unit_comm_only",
+        "mixed_listener_unit_membership_comm_only",
+        "worker_outside_expected_unit_comm_only",
+        "mixed_worker_unit_membership_comm_only",
+    ):
+        codes.append("OWNER_RECONCILIATION_REQUIRED")
+    elif summary == "no_runner_processes_observed":
+        codes.append("NO_PROCESS_MATCH_IS_NOT_REGISTRATION_PROOF")
+    elif summary in (
+        "listener_in_expected_unit_comm_only",
+        "worker_in_expected_unit_comm_only",
+    ):
+        codes.append("REGISTRATION_AND_JOB_ASSIGNMENT_UNVERIFIED")
+    if state == "no_other_worker_observed_not_clearance":
+        codes.append("ZERO_WORKERS_IS_NOT_CLAIM_CLEARANCE")
+    elif state == "current_worker_not_identified":
+        codes.append("CURRENT_WORKER_NOT_IDENTIFIED")
+    severity = capacity.get("severity")
+    if severity == "critical":
+        codes.append("HOLD_DISK_WRITES_REQUEST_OWNER_INVENTORY")
+    elif severity == "high":
+        codes.append("RECONCILE_RESOURCE_PRESSURE_BEFORE_NEW_WORK")
+    elif severity != "normal":
+        codes.append("CAPACITY_EVIDENCE_UNKNOWN")
+    else:
+        codes.append("CAPACITY_THRESHOLDS_NOT_EXCEEDED_NOT_HEALTH_PROOF")
+    return codes
+
+
 def runner_worker_snapshot() -> dict:
     """Privacy-preserving local occupancy hint, not a task/claim inventory."""
     try:
@@ -465,8 +507,11 @@ def runner_worker_snapshot() -> dict:
                 or not 1 <= ticks_per_second <= 1_000_000):
             raise ValueError("invalid_proc_clock")
     except (OSError, UnicodeError, ValueError, IndexError, TypeError):
+        service_cgroup = _empty_service_cgroup_observation("unavailable")
+        capacity = _host_capacity_observation()
+        state = "unavailable"
         return {
-            "state": "unavailable", "scan_coverage": "unavailable",
+            "state": state, "scan_coverage": "unavailable",
             "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "worker_process_band_observed": "unknown",
             "other_worker_process_band": "unknown",
@@ -478,8 +523,9 @@ def runner_worker_snapshot() -> dict:
             "safe_to_take_over": False,
             "release_authorized": False,
             "mutation_performed": False,
-            "runner_service_cgroup": _empty_service_cgroup_observation("unavailable"),
-            "host_capacity_observation": _host_capacity_observation(),
+            "runner_service_cgroup": service_cgroup,
+            "host_capacity_observation": capacity,
+            "operator_action_codes": _worker_operator_action_codes(state, service_cgroup, capacity),
         }
 
     service_cgroup = _empty_service_cgroup_observation("not_observed")
@@ -646,6 +692,7 @@ def runner_worker_snapshot() -> dict:
         "multiple_other_workers_observed" if self_worker_excluded else
         "current_worker_not_identified"
     )
+    capacity = _host_capacity_observation()
     return {
         "state": state,
         "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -656,7 +703,8 @@ def runner_worker_snapshot() -> dict:
         "listener_process_band_observed": _occupancy_band(listener_count, partial),
         "worker_age_bands_observed": _worker_age_bands(worker_ages),
         "runner_service_cgroup": service_cgroup,
-        "host_capacity_observation": _host_capacity_observation(),
+        "host_capacity_observation": capacity,
+        "operator_action_codes": _worker_operator_action_codes(state, service_cgroup, capacity),
         "claim_ownership_verified": False,
         "project_attribution_verified": False,
         "safe_to_take_over": False,
