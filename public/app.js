@@ -385,13 +385,16 @@ function downloadBlockedQueueHandoff(){
   const rows=blockedQueueSelectedRows(BLOCKED_QUEUE.filter(row=>row&&row.status==='blocked')
     .sort((a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9)));
   if(!rows.length){window.alert('There are no selected dependency holds to export.');return}
+  const freshness=claimChurnSnapshotFreshness();
   if(!window.confirm('Create a LOCAL PRIVATE read-only operator handoff for '+rows.length+
-    ' selected parked tasks? This contains queue identifiers and source links. Review it before sharing. No claims or tasks will change.'))return;
+    ' selected parked tasks? '+(freshness.state==='stale_observation'?'WARNING: source is '+Math.ceil(freshness.age_seconds/60)+' minutes old, NOT LIVE. ':'')+
+    'This contains queue identifiers and source links. Review it before sharing. No claims or tasks will change.'))return;
   const selected=rows.slice(0,100);
   const packet={
     schema:'zsentinel.dependency-holds.local-handoff.v1',
     exported_at:new Date().toISOString(),
     queue_observed_at:blockedQueueObservedAt,
+    source_freshness:freshness,
     authority:'read-only local snapshot; not a claim, dependency clearance, retry or release permission',
     coverage:{sample_blocked_total:BLOCKED_QUEUE.length,selected_count:rows.length,
       exported_count:selected.length,truncated:rows.length>selected.length,
@@ -593,6 +596,7 @@ function blockedQueuePanel(){
     (a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9)):[];
   const total=items.length;
   const observation=blockedQueueTime(blockedQueueObservedAt);
+  const freshness=claimChurnSnapshotFreshness();
   const projectIds=[...new Set(items.map(item=>String(item.project_id||'')))].filter(Boolean).sort();
   if(loaded&&blockedQueueProject!=='all'&&!projectIds.includes(blockedQueueProject)){
     blockedQueueProject='all';
@@ -667,7 +671,7 @@ function blockedQueuePanel(){
       +'<button type="button" data-blocked-repeat-claims aria-pressed="'+blockedQueueRepeatClaimsOnly+'">'+(blockedQueueRepeatClaimsOnly?'Show all claims':'Only repeated claims')+'</button> '
       +(blockedQueueProject!=='all'||blockedQueueUrgentOnly||blockedQueueSearch||blockedQueueHumanOnly||blockedQueueRepeatClaimsOnly?'<button type="button" data-blocked-clear-filters>Clear filters</button>':'')
       +'<button type="button" data-blocked-export-handoff'+(count?'':' disabled')+' title="Private read-only local JSON handoff">Export selected handoff</button>'
-      +'<span role="status" aria-live="polite">Viewing '+count+' of '+total+' parked tasks from the loaded queue sample. '+(observation?'Observed '+esc(observation)+'.':'Queue observation time unavailable.')+'</span></div>':'')
+      +'<span role="status" aria-live="polite">Viewing '+count+' of '+total+' parked tasks from the loaded queue sample. '+(observation?'Observed '+esc(observation)+'.':'Queue observation time unavailable.')+(freshness.state==='stale_observation'?' STALE SNAPSHOT ('+Math.ceil(freshness.age_seconds/60)+' min old); use a fresh read before acting.':'')+'</span></div>':'')
     +body+(loaded&&count>12?'<div class="blocked-queue-state" aria-live="polite">Showing '+Math.min(blockedQueueVisible,count)+' of '+count+' parked tasks in the loaded queue sample. '
     +(blockedQueueVisible<count?'<button type="button" data-blocked-show-more>Show next 12</button>':'<button type="button" data-blocked-show-less>Show first 12</button>')
     +'</div>':'')+'</section>';
