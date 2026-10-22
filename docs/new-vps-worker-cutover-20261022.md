@@ -1,8 +1,8 @@
 ## 22 October 2026 · bounded display discovery and auth-file admission
 
-The read-only display-discovery helper now bounds `/proc` traversal, each process environment read, total environment bytes and retained DISPLAY/XAUTHORITY candidates. It binds each accepted environment snapshot to the same PID/start-time and process-directory identity before and after the read; inaccessible, oversized, or changing evidence is reported as PARTIAL/UNKNOWN rather than used to claim that no Ubuntu display exists. Raw environment bytes are never printed. Xauthority candidates must be stable, owner-owned, private regular files; symlinks and group/world-readable files are rejected, and the candidate is rechecked before each display probe.
+The read-only display-discovery helper now bounds `/proc` traversal, each process environment read, total environment bytes and retained DISPLAY/XAUTHORITY candidates. It binds each accepted environment snapshot to the same PID/start-time and process-directory identity before and after the read; inaccessible, oversized, or changing evidence is reported as PARTIAL/UNKNOWN rather than used to claim that no Ubuntu display exists. Raw environment bytes are never printed. Xauthority candidates must be stable, owner-owned, private regular files; symlinks and group/world-readable files are rejected, and the candidate is rechecked before each display probe. The final display/auth search also marks its result PARTIAL/UNKNOWN if socket/auth directories or the eight-by-eight probe window truncate candidate coverage; a capped search can never be reported as proof that no authorized display exists.
 
-Source commit: [cd5125f](https://github.com/Zennay/zCloud/commit/cd5125f7468344d830b8ef8376b4bd414857f37d). No QA suite was written or run, and no VPS command was executed.
+Source commits: [a2e1fd6](https://github.com/Zennay/zCloud/commit/a2e1fd6932d64b5f437cc2cc0690909996ae184b) and [8bb24f9](https://github.com/Zennay/zCloud/commit/8bb24f9278466afd7d5c5a4378ef62694ee97e32). No QA suite was written or run, and no VPS command was executed.
 
 # New VPS zCloud workers — staged cutover (22 October 2026)
 
