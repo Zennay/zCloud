@@ -48,7 +48,7 @@ EVIDENCE_FIELDS = frozenset({
     "escalation_reason", "permission_required", "irreversible_risk",
     "safe_routes_exhausted", "capacity", "exact_head",
     "required_ci", "independent_review", "branch_protection",
-    "pr_state", "pr_target_branch", "pr_mergeable", "owner_authorized",
+    "pr_state", "pr_target_branch", "pr_base_sync", "pr_mergeable", "owner_authorized",
     "root_cause_confirmed", "unresolved_review_threads", "merged_main",
     "post_merge_health", "release_approval", "runtime_owner_authorized",
     "runner_state", "running_jobs", "human_approval",
@@ -63,6 +63,7 @@ ENUMS = {
     "branch_protection": {"satisfied", "blocked", "unknown"},
     "pr_state": {"open", "draft", "closed", "unknown"},
     "pr_target_branch": {"main", "other", "unknown"},
+    "pr_base_sync": {"current", "stale", "unknown"},
     "pr_mergeable": {"yes", "no", "unknown"},
     "merged_main": {"verified", "no", "unknown"},
     "post_merge_health": {"healthy", "failed", "unknown"},
@@ -328,6 +329,10 @@ def recommended_next_step_code(action, blockers):
         return "resolve_claim_with_owner"
     if codes & {"competing_incident_routes", "competing_incident_actions", "competing_blocked_task_routes"}:
         return "choose_one_incident_route"
+    if "pr_base_stale" in codes:
+        return "reconcile_pr_base_with_current_main"
+    if "pr_base_sync_unknown" in codes:
+        return "refresh_exact_pr_state_and_base"
     if codes & {"pr_not_open", "pr_not_main", "pr_mergeability_not_confirmed"}:
         return "refresh_exact_pr_state_and_base"
     if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
@@ -402,6 +407,10 @@ def recommended_next_step(action, blockers, required_evidence):
         return "Ask the current owner to confirm or release the exact claim; do not preempt, reassign, or mutate the queue."
     if codes & {"competing_incident_routes", "competing_incident_actions", "competing_blocked_task_routes"}:
         return "Ask the authorized owner to choose one recovery route for this incident before reviewing route-specific gates."
+    if "pr_base_stale" in codes:
+        return "Reconcile the PR base with the current main commit without force-push or bypass, then refresh the exact HEAD, required CI, review and branch-protection evidence before reconsidering merge."
+    if "pr_base_sync_unknown" in codes:
+        return "Fetch the current default-branch HEAD and the PR base SHA from the same live GitHub source window; until they match, keep merge on HOLD."
     if codes & {"pr_not_open", "pr_not_main", "pr_mergeability_not_confirmed"}:
         return "Read the current GitHub PR state, default-branch target and mergeability for the exact HEAD; closed, draft, non-main or unknown PRs cannot be proposed for normal merge."
     if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
@@ -820,6 +829,11 @@ def evaluate(data, max_age_minutes, *, now=None):
         require(value("pr_target_branch") == "main",
                 "pr_not_main", "The PR must target protected main.",
                 ("evidence.pr_target_branch",))
+        base_sync = value("pr_base_sync")
+        require(base_sync == "current",
+                "pr_base_stale" if base_sync == "stale" else "pr_base_sync_unknown",
+                "The PR base SHA must match the current default-branch HEAD; stale or unknown base history is a merge HOLD.",
+                ("evidence.pr_base_sync",))
         require(value("pr_mergeable") == "yes",
                 "pr_mergeability_not_confirmed",
                 "Exact-head GitHub mergeability must be affirmative, not stale or unknown.",
