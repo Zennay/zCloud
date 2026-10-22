@@ -307,7 +307,8 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
         "manual_review_queue_hidden_after_24": max(0, len(manual_queue) - len(first_actions)),
         "all_saved_batches_present": not missing,
         "all_observations_present_and_recent": (
-            not missing and not unavailable and not stale and source_window_coherent),
+            not missing and not unavailable and not stale and source_window_coherent
+            and all(row["target_branch_identity_known"] for row in all_rows)),
         "saved_historical_receipts_only": True,
         "live_github_state_verified": False,
         "current_heads_revalidated": False,
