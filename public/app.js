@@ -332,6 +332,9 @@ let claimChurnAnomaliesOnly=false;
 let ownerIntegrityVisible=12,ownerIntegrityUrgentOnly=false,ownerIntegrityProject='all';
 let blockedQueueFilterTimer=null;
 let blockedQueueObservedAt='';
+// A delayed dashboard history response must never replace a newer queue view.
+// Changes to recovery/write state also invalidate older read completions.
+let blockedQueueObservationVersion=0;
 function blockedQueueSourceIsFresh(){
   // An old/unknown queue read is an observation, never write admission.
   // Rendering and confirmation handlers must both fail closed; the server
@@ -867,8 +870,9 @@ function blockedQueuePanel(){
 }
 let blockedQueueReloading=false;
 async function reloadBlockedQueueSnapshot(button){
-  if(blockedQueueReloading)return;
+  if(blockedQueueReloading||blockedResumesPending.size)return;
   blockedQueueReloading=true;
+  ++blockedQueueObservationVersion;
   const label=button.textContent;
   button.disabled=true;
   button.textContent='Refreshing queue…';
@@ -891,6 +895,7 @@ async function reloadBlockedQueueSnapshot(button){
     blockedQueueObservedAt='';
     BLOCKED_QUEUE_ERROR='Queue refresh unavailable: '+String(error?.message||error).slice(0,180)+'. No operator action is permitted.';
   }finally{
+    ++blockedQueueObservationVersion;
     blockedQueueReloading=false;
     button.textContent=label;
     button.disabled=false;
@@ -999,6 +1004,7 @@ async function resumeBlockedQueue(queueId,button){
   if(note.trim().length<12){window.alert('Add a concrete resolution note of at least 12 characters.');return}
   if(!window.confirm('Return “'+String(item.title||queueId)+'” to normal queue selection? The scheduler still applies its normal capacity and claim checks.'))return;
   blockedResumesPending.add(queueId);
+  ++blockedQueueObservationVersion;
   const previous=button.textContent;
   let writeMayHaveReachedServer=false,serverExplicitlyRefused=false;
   button.disabled=true;
@@ -1098,6 +1104,7 @@ async function resumeBlockedQueue(queueId,button){
       :(error?.message||'Could not safely resume the parked task.'));
   }finally{
     blockedResumesPending.delete(queueId);
+    ++blockedQueueObservationVersion;
     button.disabled=false;
     button.textContent=previous;
   }
@@ -1112,6 +1119,7 @@ async function closeBlockedQueue(queueId,button){
   if(note.trim().length<12){window.alert('Record a concrete terminal closure reason of at least 12 characters.');return}
   if(!window.confirm('PERMANENTLY close “'+String(item.title||queueId)+'”? This will mark the exact queue item dropped and resolve only its linked human Attention. It will NOT cancel other tasks or bypass project gates.'))return;
   blockedResumesPending.add(queueId);
+  ++blockedQueueObservationVersion;
   const old=button.textContent;
   let writeMayHaveReachedServer=false,serverExplicitlyRefused=false;
   button.disabled=true;
@@ -1220,6 +1228,7 @@ async function closeBlockedQueue(queueId,button){
       :(error?.message||'Could not safely close the parked task.'));
   }finally{
     blockedResumesPending.delete(queueId);
+    ++blockedQueueObservationVersion;
     button.disabled=false;
     button.textContent=old;
   }
@@ -1669,6 +1678,7 @@ function paintCharts(){if(route==='overview')chart('progressChart',DATA.projects
 function render(){if(!DATA)return;const focused=document.activeElement;const restore=focused?.dataset.range?'[data-range="'+focused.dataset.range+'"]':focused?.id==='activityFilter'?'#activityFilter':null;const openDisclosures=[...document.querySelectorAll('details[data-disclosure][open]')].map(el=>el.dataset.disclosure);const selectedProject=document.activeElement?.dataset.globalWorkerProject;syncNav();let title='Overview',html;if(route==='activity'){html=activityPage();title='Activity'}else if(route==='infrastructure'){html=infrastructure();title='Infrastructure'}else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p){html=detail(p);title=p.name}else{html='<div class="empty">This project was not found. <a href="#overview">Back to overview</a></div>';title='Unknown project'}}else html=overview();$('crumb').textContent=title;document.title='zCloud — '+title;$('view').innerHTML=html;[...document.querySelectorAll('details[data-disclosure]')].forEach(el=>{if(openDisclosures.includes(el.dataset.disclosure))el.open=true});paintCharts();hydrate();document.querySelectorAll('[data-global-worker-project]').forEach(el=>{const slot=Number(el.dataset.globalWorkerProject);const w=(WORKER_DEBUG?.workers||[]).find(x=>Number(x.global_slot)===slot);el.value=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:(w?.project||'')});if(selectedProject)document.querySelector('[data-global-worker-project="'+selectedProject+'"]')?.focus({preventScroll:true});if(restore)document.querySelector(restore)?.focus({preventScroll:true})}
 async function loadExtras(){
   const version=++routeVersion;
+  const queueObservationVersion=blockedQueueObservationVersion;
   const queueIndex=2+DATA.projects.length;
   const results=await Promise.allSettled([
     api('/api/activity'),api('/api/host-history'),
@@ -1678,6 +1688,11 @@ async function loadExtras(){
   if(version!==routeVersion)return;
   const historyResults=results.slice(0,queueIndex);
   const queueResult=results[queueIndex];
+  // Other history or host calls can keep Promise.allSettled pending while a
+  // focused queue refresh or operator decision has already superseded it.
+  // Keep such old responses out of the queue/Attention control surface.
+  if(queueObservationVersion===blockedQueueObservationVersion&&
+     !blockedQueueReloading&&!blockedResumesPending.size){
   if(queueResult?.status==='fulfilled'&&Array.isArray(queueResult.value?.items)){
     BLOCKED_QUEUE=queueResult.value.items.filter(item=>item&&item.status==='blocked');
     PORTFOLIO_QUEUE_SNAPSHOT=queueResult.value.items;
@@ -1688,6 +1703,7 @@ async function loadExtras(){
     PORTFOLIO_QUEUE_SNAPSHOT=null;
     blockedQueueObservedAt='';
     BLOCKED_QUEUE_ERROR='Parked queue unavailable; access/read failure does not mean there are no blockers.';
+  }
   }
   const fails=historyResults.filter(r=>r.status==='rejected').length;
   if(historyResults[0].status==='fulfilled'&&Array.isArray(historyResults[0].value)&&
@@ -1705,6 +1721,7 @@ async function refresh(initial=false){if(busy)return false;busy=true;$('refresh'
     PORTFOLIO_QUEUE_SNAPSHOT=null;
     BLOCKED_QUEUE_ERROR='Queue observation unavailable after a failed refresh; no recovery action can use this snapshot.';
     blockedQueueObservedAt='';
+    ++blockedQueueObservationVersion;
     setConnection(false);$('notice').hidden=false;$('notice').textContent=DATA?'Connection lost. The last loaded data remains visible; we will retry automatically.':'The VPS is temporarily unreachable. Try again or wait for the next refresh.';if(!DATA)$('view').innerHTML='<div class="loading">Not connected to zCloud yet.<button class="error-action" data-retry>Try again</button></div>';else render();return false}finally{busy=false;$('refresh').disabled=false}}
 function navigate(){const hash=location.hash.slice(1)||'overview';const [path,query]=hash.split('?');route=path;if(route!=='overview')mobileWorkersActive=false;if(scrollToWorkersOnOverview)mobileWorkersActive=true;filter=new URLSearchParams(query||'').get('project')||'';routeVersion++;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'});if(route==='overview'&&scrollToWorkersOnOverview){scrollToWorkersOnOverview=false;window.requestAnimationFrame(()=>{const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}})}}
 let draggedProject=null;
