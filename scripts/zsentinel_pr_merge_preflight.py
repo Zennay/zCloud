@@ -514,6 +514,9 @@ def as_markdown(report):
         "- Source status: " + report["status"],
         "- Exact HEAD (only after stable re-read): " +
         (observed.get("exact_head_sha") or "UNKNOWN"),
+        "- Open exact-HEAD GitHub checks (navigation only): " +
+        (observed.get("exact_head_checks_url") or "UNKNOWN"
+         if report.get("source_stable_between_reads") else "UNKNOWN"),
         "- GitHub merged hint: " + str(observed.get("reported_merged", "UNKNOWN")),
         "- Base branch: " + str(observed.get("target_branch", "UNKNOWN")),
         "- PR base SHA: " + str(observed.get("base_sha", "UNKNOWN")),
@@ -621,6 +624,9 @@ def as_html(report):
         "<section><h2>Live PR identity</h2><p><a href='" + esc(report["url"]) +
         "'>Open current PR</a></p><dl>",
     ]
+    if report.get("source_stable_between_reads") and observed.get("exact_head_checks_url"):
+        parts.append("<p><a href='" + esc(observed["exact_head_checks_url"]) +
+                     "'>Inspect GitHub checks for this exact HEAD (read-only)</a></p>")
     parts.extend("<dt>" + esc(k) + "</dt><dd>" + esc(v) + "</dd>" for k, v in details)
     parts.extend(["</dl></section><section><h2>Operator action</h2><p>",
                   esc(report["next_human_step"]), "</p></section>",
