@@ -194,6 +194,13 @@ PR references are rejected as ambiguous evidence rather than presented as
 existing fixes. Neither a matching repository nor an imported PR link proves
 current PR ownership, green checks or merge eligibility.
 
+The recovery-case generation clock, issue observation clock and covered
+queue observation clock are checked against one captured evaluation time.
+A case timestamp more than two minutes in the future is rejected; issue/queue
+observations more than two minutes in the future or more than two minutes after
+the case generation time are also rejected. This prevents a future-dated export
+from making old issue or queue snapshots appear fresh.
+ 
 A covered queue sample must have a valid UTC observation timestamp no later
 than two minutes after the export was generated. The importer independently
 marks queue evidence **STALE** once the queue observation or overall recovery
