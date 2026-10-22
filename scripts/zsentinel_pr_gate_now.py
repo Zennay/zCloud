@@ -653,6 +653,37 @@ def html_gate_summary(source: dict) -> str:
     def h(value):
         return escape(str(value), quote=True)
 
+    # A saved private merge-first manifest can contain many PRs. Make the
+    # selected four-item GitHub read window and saved source identity visible;
+    # otherwise a standalone HTML report looks like it reviewed the portfolio.
+    if "source_review_manifest_sha256" in source:
+        digest = source["source_review_manifest_sha256"]
+        board_digest = source.get("source_review_board_sha256")
+        if (type(digest) is not str or re.fullmatch(r"[a-f0-9]{64}", digest) is None
+                or type(board_digest) is not str
+                or re.fullmatch(r"[a-f0-9]{64}", board_digest) is None):
+            raise ValueError("invalid saved review manifest provenance")
+        index = source.get("source_review_batch_index")
+        total = source.get("source_review_batches_total")
+        candidates = source.get("source_review_pr_count")
+        if (any(type(n) is not int or n <= 0 for n in (index, total, candidates))
+                or index > total):
+            raise ValueError("invalid saved review batch provenance")
+        provenance = (
+            "<section class='provenance'><h2>Bron en batchafbakening</h2>"
+            "<p>Opgeslagen werkbak, <strong>batch " + str(index) + " van " +
+            str(total) + "</strong> · kandidaat-PRs in opgeslagen bron: " +
+            str(candidates) + ". Deze pagina bevat alleen de geselecteerde "
+            "huidige vier of minder exacte-HEAD reads.</p>"
+            "<p>Privé reviewmanifest SHA256: <code>" + h(digest) + "</code><br>"
+            "Oorspronkelijk board SHA256: <code>" + h(board_digest) +
+            "</code></p><p>Vervolg voor ontbrekende batches: afzonderlijk "
+            "ophalen. Oude opgeslagen boarddata bewijst geen actuele "
+            "claim, brancheigendom of mergevrijgave.</p></section>")
+    else:
+        provenance = ("<section class='provenance'><h2>Directe PR-selectie</h2>"
+                      "<p>Maximaal vier actuele PR-observaties; geen compleet "
+                      "portfolio, geen Notion-claimcontrole.</p></section>")
     cards = []
     for item in source["items"]:
         repository, number = item.get("repository"), item.get("number")
@@ -757,6 +788,7 @@ def html_gate_summary(source: dict) -> str:
         ".metrics{display:flex;flex-wrap:wrap;gap:.5rem}"
         ".metrics span{padding:.5rem .7rem;border:1px solid #4a6075;border-radius:.5rem}"
         ".metrics strong{font-size:1.3rem}.action{background:#263e4e;padding:.8rem;border-radius:.5rem}"
+        ".provenance{border-left:4px solid #7fbcff;padding:.7rem 1rem;background:#1b2a3a}"
         ".warning{color:#ffe39d}.muted,footer{color:#b5c5d3}li{margin:.3rem 0}"
         "@media print{body{background:#fff;color:#111}article{background:#fff;border-color:#888}"
         "a,.warning,.muted{color:#222}}</style></head><body><header>"
@@ -765,7 +797,7 @@ def html_gate_summary(source: dict) -> str:
         "</p><p><strong>Read-only eigenaarwerkbak.</strong> Lange queued of lopende checks zijn "
         "uitsluitend signalen, geen bewijs van runneruitval. Onafhankelijke review, exact-head "
         "verplichte CI, eigenaarschap en branch protection blijven altijd vereist.</p></header>" +
-        "".join(cards) +
+        provenance + "".join(cards) +
         "<footer>Geen CI-herstart, queueclaim, PR-merge of live deployment uitgevoerd. "
         "GitHub kan na dit bronmoment veranderen.</footer></body></html>\n")
 
