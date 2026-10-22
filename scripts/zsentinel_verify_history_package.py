@@ -236,6 +236,91 @@ def inspect_history_bytes(archive: bytes) -> dict:
     }
 
 
+def verify_against_original_bundles(
+        archive: bytes, originals_directory: Path) -> dict:
+    """Recompute history from complete *original* verified private bundles.
+
+    This upgrades portable package checksum matching into local original-
+    source matching, but it is not an authenticated external timestamp,
+    current GitHub/Notion status, ownership proof or release authorization.
+    """
+    inspect_history_bytes(archive)
+    from zsentinel_private_bundle_index import load_snapshot, render_machine
+
+    with ZipFile(BytesIO(archive)) as package:
+        report = _json(package.read("history.json"))
+    if type(report.get("index_name")) is not str or not re.fullmatch(
+            r"[a-z][a-z0-9_-]{0,50}", report["index_name"]):
+        raise ValueError("invalid private history index identity")
+    sources = report.get("snapshots")
+    if type(sources) is not list or not 2 <= len(sources) <= 24:
+        raise ValueError("invalid private history source inventory")
+
+    stems = []
+    seen = set()
+    source_hashes = {}
+    for row in sources:
+        if type(row) is not dict:
+            raise ValueError("malformed saved history source")
+        stem, digest = row.get("bundle"), row.get("board_sha256")
+        if (type(stem) is not str or not re.fullmatch(
+                r"[a-z][a-z0-9_-]{0,50}", stem)
+                or stem in seen or type(digest) is not str
+                or HEX.fullmatch(digest) is None):
+            raise ValueError("invalid original bundle identifier")
+        stems.append(stem)
+        seen.add(stem)
+        source_hashes[stem] = digest
+
+    # load_snapshot calls the existing complete bundle verifier and compares
+    # the original board bytes to its own receipt (including 0600/0700
+    # permissions, no-follow paths, HTML/owner source hash binding).
+    originals = [load_snapshot(originals_directory, stem) for stem in stems]
+    if any(snap["sha256"] != source_hashes[snap["stem"]]
+           for snap in originals):
+        raise ValueError("original private board SHA differs from package")
+
+    rebuilt = _json(render_machine(
+        originals, report["index_name"]).encode("utf-8"))
+    # Created-at index and computed ages cannot be reproduced later.
+    # Everything that was actually captured from original saved source
+    # bundles, including claims/queue, prior PRs and sample transitions,
+    # must otherwise match the submitted handoff exactly.
+    def invariant_snapshots(value):
+        rows = value.get("snapshots")
+        if type(rows) is not list:
+            raise ValueError("history is missing source snapshots")
+        result = []
+        for row in rows:
+            if type(row) is not dict:
+                raise ValueError("malformed source snapshot")
+            item = dict(row)
+            item.pop("snapshot_age_seconds_at_index", None)
+            item.pop("future_timestamp_suspected", None)
+            result.append(item)
+        return result
+
+    if (invariant_snapshots(report) != invariant_snapshots(rebuilt)
+            or report.get("sample_transitions") !=
+               rebuilt.get("sample_transitions")):
+        raise ValueError("historical content differs from original saved sources")
+
+    return {
+        "original_private_bundle_files_reverified": True,
+        "original_private_bundle_count": len(originals),
+        "original_bundle_board_sha256": source_hashes,
+        "historical_snapshot_content_matches_originals": True,
+        "historical_transition_content_matches_originals": True,
+        "local_receipt_consistency_only": True,
+        "independent_origin_authenticity_verified": False,
+        "current_github_or_notion_verified": False,
+        "claim_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "live_verified": False,
+    }
+
+
 def inspect_history_package(path: Path) -> dict:
     """Verify one existing private history package without changing it."""
     return inspect_history_bytes(private_archive_bytes(path))
@@ -324,12 +409,20 @@ def main(argv=None):
     parser.add_argument("--source", required=True, type=Path,
                         help="Existing privately stored .index.zip package")
     parser.add_argument("--extract-to", type=Path,
-                        help="Optional existing owned 0700 folder for five "
+                        help="Optional existing owned 0700 folder for versioned "
                              "create-only private companion files")
+    parser.add_argument("--verify-sources", type=Path,
+                        help="Recheck the complete original private operator "
+                             "bundles and compare saved content, not just ZIP hashes")
     args = parser.parse_args(argv)
     try:
         archive = private_archive_bytes(args.source)
         result = inspect_history_bytes(archive)
+        if args.verify_sources is not None:
+            result.update(verify_against_original_bundles(
+                archive, args.verify_sources))
+        else:
+            result["original_private_bundle_files_reverified"] = False
         if args.extract_to is not None:
             stem = args.source.name[:-len(".index.zip")]
             created = extract_verified_history(
