@@ -235,7 +235,7 @@ def compare_snapshots(previous, current):
         "PERSISTENT_P0_P1_WITHOUT_GITHUB_ISSUE_UPDATE",
         "NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED",
     )}
-    return {
+    report = {
         "schema_version": 1,
         "policy": "zsentinel-portfolio-visible-issue-delta-v1",
         "previous_observed_at_utc": previous["generated_at_utc"],
@@ -259,6 +259,164 @@ def compare_snapshots(previous, current):
         "omitted_change_cards": max(0, len(changes) - MAX_DELTA_CARDS),
         "changes": changes[:MAX_DELTA_CARDS],
     }
+    report["operator_workorders"] = _operator_workorders(report)
+    return report
+
+
+def _operator_workorders(delta):
+    """Make one P0-first human work queue from already observed source cards.
+
+    Workorders do not fetch GitHub or authorize queue, worker or release work.
+    Historic priorities are hints; no source sample is a full backlog.
+    """
+    work = []
+    for row in delta["changes"]:
+        rank = (row["current_priority_rank"]
+                if row["current_priority_rank"] is not None
+                else row["prior_priority_rank"])
+        current = row["current_priority_rank"] is not None
+        live = row.get("live_issue_recheck_state")
+        priority_source = ("CURRENT_BOUNDED_SAMPLE" if current
+                           else "HISTORICAL_BOUNDED_SAMPLE")
+        work.append({
+            "kind": "issue",
+            "repository": row["repository"],
+            "issue_url": row["url"],
+            "issue_number": row["number"],
+            "change": row["change"],
+            "priority_rank_hint": rank,
+            "priority_source": priority_source,
+            "live_github_issue_state": live or "NOT_LIVE_CHECKED",
+            "live_github_observed_at_utc": row.get(
+                "live_issue_recheck_observed_at_utc"),
+            "human_next_action_code": row.get(
+                "live_next_action_code", row["human_followup_code"]),
+            "human_next_action": row.get(
+                "live_next_action", row["human_followup"]),
+            "disposition": "HUMAN_REVIEW_REQUIRED",
+            "active_claim_verified": False,
+            "fix_merged_main_verified": False,
+            "deployment_verified": False,
+            "action_executed": False,
+        })
+    # Real observed current P0/P1 first, then historical urgency hints.
+    work.sort(key=lambda row: (
+        row["priority_rank_hint"],
+        row["priority_source"] != "CURRENT_BOUNDED_SAMPLE",
+        row["repository"], row["issue_number"],
+    ))
+    for row in delta["repositories_compared"]:
+        if row["source_transition"] == "SOURCE_READABLE_IN_BOTH_SNAPSHOTS":
+            continue
+        work.append({
+            "kind": "source_coverage",
+            "repository": row["repository"],
+            "issue_url": None,
+            "issue_number": None,
+            "change": row["source_transition"],
+            "priority_rank_hint": None,
+            "priority_source": "SOURCE_COVERAGE_NOT_ISSUE_PRIORITY",
+            "live_github_issue_state": "UNKNOWN",
+            "live_github_observed_at_utc": None,
+            "human_next_action_code": row["human_source_action_code"],
+            "human_next_action": (
+                "Recheck the source owner and access before interpreting "
+                "missing sampled GitHub issues for this repository."
+            ),
+            "disposition": "HUMAN_REVIEW_REQUIRED",
+            "active_claim_verified": False,
+            "fix_merged_main_verified": False,
+            "deployment_verified": False,
+            "action_executed": False,
+        })
+    counts = {}
+    for name in delta["repositories_compared"]:
+        counts[name["repository"]] = {
+            "issue_workorders": sum(
+                row["repository"] == name["repository"]
+                for row in work if row["kind"] == "issue"
+            ),
+            "source_coverage_workorders": sum(
+                row["repository"] == name["repository"]
+                for row in work if row["kind"] == "source_coverage"
+            ),
+        }
+    return {
+        "schema_version": 1,
+        "policy": "zsentinel-portfolio-human-workorders-v1",
+        "sampled_only": True,
+        "not_complete_backlog_proof": True,
+        "operator_attention_requires_live_owner_verification": True,
+        "priority_is_only_source_sample_or_historical_hint": True,
+        "release_authorized": False,
+        "actions_executed": False,
+        "count": len(work),
+        "hidden_historical_changes_not_classified": delta["omitted_change_cards"],
+        "by_repository": counts,
+        "workorders": work,
+    }
+
+
+def _operator_markdown(delta):
+    handoff = delta["operator_workorders"]
+    rows = [
+        "", "## Human operator workorders · source P0/P1 first", "",
+        "Advisory only. No ownership, required CI, merge or production state "
+        "is established from these sampled observations.",
+        "",
+        "- Human workorders: " + str(handoff["count"]),
+        "- Unclassified hidden history changes: " +
+        str(handoff["hidden_historical_changes_not_classified"]),
+    ]
+    for item in handoff["workorders"]:
+        ref = ("[" + item["repository"] + " #" + str(item["issue_number"]) +
+               "](" + item["issue_url"] + ")" if item["issue_url"] else
+               item["repository"] + " · SOURCE COVERAGE")
+        rows.append(
+            "- " + ref + " · " + item["change"] +
+            " · priority evidence " + item["priority_source"] +
+            " · GitHub detail " + item["live_github_issue_state"] +
+            " · **Human next:** " + item["human_next_action"] +
+            " (" + item["human_next_action_code"] + ") · NOT EXECUTED"
+        )
+    if not handoff["workorders"]:
+        rows.append(
+            "No changed source cards selected; this is NOT proof of a clear backlog."
+        )
+    return "\n".join(rows) + "\n"
+
+
+def _operator_html(delta):
+    esc = lambda item: html.escape(str(item), quote=True)
+    handoff = delta["operator_workorders"]
+    rows = [
+        "<section><h2>Human operator workorders · P0/P1 source first</h2>",
+        "<p>Advisory only: verify active owner, required CI, merge and runtime "
+        "independently. A missing or closed sampled issue is not shipped proof.</p>",
+        "<p>Workorders: " + esc(handoff["count"]) + " · hidden changes not "
+        "classified: " + esc(handoff["hidden_historical_changes_not_classified"]) +
+        "</p><ol>",
+    ]
+    for item in handoff["workorders"]:
+        label = esc(item["repository"]) + (
+            " #" + esc(item["issue_number"]) if item["issue_url"] else
+            " · source coverage"
+        )
+        link = (
+            "<a target='_blank' rel='noopener noreferrer' href='" +
+            esc(item["issue_url"]) + "'>" + label + "</a>"
+            if item["issue_url"] else label
+        )
+        rows.append(
+            "<li>" + link + " · " + esc(item["change"]) +
+            " · " + esc(item["priority_source"]) +
+            " · GitHub detail " + esc(item["live_github_issue_state"]) +
+            " · <strong>Human next:</strong> " + esc(item["human_next_action"]) +
+            " <code>" + esc(item["human_next_action_code"]) +
+            "</code> · NOT EXECUTED</li>"
+        )
+    rows.append("</ol></section>")
+    return "\n".join(rows)
 
 
 def as_markdown(delta):
@@ -312,6 +470,7 @@ def as_markdown(delta):
         )
     if not delta["changes"]:
         rows.append("No comparable changed cards; this does not prove a clear backlog.")
+    rows.append(_operator_markdown(delta))
     return "\n".join(rows) + "\n"
 
 
@@ -363,6 +522,7 @@ def as_html(delta):
             " · NOT EXECUTED</li>"
         )
     rows.append("</ol></section>")
+    rows.append(_operator_html(delta))
     return "\n".join(rows)
 
 
