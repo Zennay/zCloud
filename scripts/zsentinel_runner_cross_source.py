@@ -551,8 +551,8 @@ def as_html(result):
         "systemd_service_observation": result.get("systemd_service_observation")
     })
     summary = _service_summary(service)
-    relationship = result.get("systemd_process_relationship", "unknown_service_state")
-    if relationship not in SYSTEMD_RELATIONSHIPS:
+    reported_relationship = result.get("systemd_process_relationship", "unknown_service_state")
+    if reported_relationship not in SYSTEMD_RELATIONSHIPS:
         raise ValueError("invalid systemd/process relationship")
     listener_count = result.get("local_listener_processes_observed")
     if type(listener_count) is not int or not 0 <= listener_count <= 20000:
@@ -563,6 +563,12 @@ def as_html(result):
             or type(truncated) is not bool
             or (truncated and coverage != "partial")):
         raise ValueError("invalid process inventory coverage")
+    # Re-evaluate at render time: a report rendered later must not display the
+    # earlier unit/process relation after its systemd receipt has gone stale.
+    relationship = _service_process_relationship({
+        "process_inventory_complete": coverage == "bounded_sample",
+        "listener_processes_observed": listener_count,
+    }, service)
     truncation_note = " · 20.000-PID-limiet bereikt" if truncated else ""
     return (
         '<section aria-label="zSentinel exacte runnerbron correlatie">'
@@ -588,8 +594,8 @@ def as_text(result):
     service = _validated_service_observation({
         "systemd_service_observation": result.get("systemd_service_observation")
     })
-    relationship = result.get("systemd_process_relationship", "unknown_service_state")
-    if relationship not in SYSTEMD_RELATIONSHIPS:
+    reported_relationship = result.get("systemd_process_relationship", "unknown_service_state")
+    if reported_relationship not in SYSTEMD_RELATIONSHIPS:
         raise ValueError("invalid systemd/process relationship")
     listener_count = result.get("local_listener_processes_observed")
     if type(listener_count) is not int or not 0 <= listener_count <= 20000:
@@ -600,6 +606,10 @@ def as_text(result):
             or type(truncated) is not bool
             or (truncated and coverage != "partial")):
         raise ValueError("invalid process inventory coverage")
+    relationship = _service_process_relationship({
+        "process_inventory_complete": coverage == "bounded_sample",
+        "listener_processes_observed": listener_count,
+    }, service)
     truncation_note = " · 20.000-PID-limiet bereikt" if truncated else ""
     return "\n".join((
         "OWNER-ROUTE · " + result["stage"],
@@ -609,8 +619,7 @@ def as_text(result):
         (" · exact GitHub: " + result["exact_job_url"]
          if result.get("exact_job_url") else ""),
         "SYSTEMD-UNIT · alleen-lezen · " + _service_summary(service),
-        "UNIT/PROCES-RELATIE · " + result.get(
-            "systemd_process_relationship", "unknown_service_state"),
+        "UNIT/PROCES-RELATIE · " + relationship,
         "PROCESSTEEKPROEF · " + coverage + truncation_note,
         "HERSTARTAUTORISATIE · nee",
     ))
