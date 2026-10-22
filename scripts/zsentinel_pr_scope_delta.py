@@ -18,6 +18,7 @@ BOARD = "zsentinel-portfolio-pr-collision-board-v1"
 SHA = re.compile(r"^[a-f0-9]{40}$")
 MAX_BYTES = 2 * 1024 * 1024
 MAX_AGE_SECONDS = 7 * 86400
+MAX_SAMPLED_PRS = 48  # Three explicitly requested contiguous 16-PR pages.
 
 
 def _clock(value):
@@ -107,7 +108,7 @@ def _valid_base_ref(value):
 def _pins(view, repo):
     result = {}
     rows = view.get("sampled_open_pr_heads")
-    if type(rows) is not list or len(rows) > 16:
+    if type(rows) is not list or len(rows) > MAX_SAMPLED_PRS:
         raise ValueError("PR source identities invalid")
     for row in rows:
         if type(row) is not dict:
