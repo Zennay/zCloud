@@ -124,14 +124,20 @@ def issue_links(items: dict, maximum=MAX_LINKS) -> str:
     return ", ".join(links)
 
 
-def queue_summary(queue: dict | None) -> str:
-    """Render observed aggregates only; missing/stale sources are not zero."""
+def queue_summary(queue: dict | None, *, source_fresh=None) -> str:
+    """Never present a historical, stale queue snapshot as live queue state."""
     if queue is None:
-        return "geen verse queuebron"
+        return "queuebron ONBEKEND (geen geldige telling)"
+    quality = (
+        "bij opname vers, NU historisch" if source_fresh is True
+        else "bij opname VEROUDERD" if source_fresh is False
+        else "bronfreshness ONBEKEND"
+    )
     return (
-        "actief " + str(queue["active_items"]) +
-        " · hoge pogingen " + str(queue["high_claim_attempts"]) +
-        " · verlopen leases " + str(queue["expired_active_leases"])
+        quality + " · steekproef actief " + str(queue["active_items"]) +
+        " · hoge claimpogingen " + str(queue["high_claim_attempts"]) +
+        " · verlopen leases " + str(queue["expired_active_leases"]) +
+        " · niet geschikt voor huidige claim-/herstelbesluiten"
     )
 
 
@@ -147,7 +153,9 @@ def project_table(snapshot: dict) -> str:
             "bron P0 " + str(source_counts.get("P0", "onbekend")) +
             " / P1 " + str(source_counts.get("P1", "onbekend"))
         )
-        queue_text = queue_summary(queue)
+        queue_text = queue_summary(
+            queue, source_fresh=snapshot.get("source_fresh", {}).get("retry"),
+        )
         # Issue and PR pointers are canonical URLs admitted by the saved
         # product board. Make the historical project actionable to inspect,
         # not actionable to claim, retry or merge.
@@ -274,8 +282,11 @@ def compare(previous: dict, current: dict) -> str:
             op_changes.append("Dekking: " + str(old_coverage or "niet waargenomen") +
                               " → " + str(new_coverage or "niet waargenomen"))
         if old_queue != new_queue:
-            op_changes.append("Queue: " + queue_summary(old_queue) +
-                              " → " + queue_summary(new_queue))
+            op_changes.append(
+                "Queue: " + queue_summary(
+                    old_queue, source_fresh=old_fresh.get("retry")) +
+                " → " + queue_summary(
+                    new_queue, source_fresh=new_fresh.get("retry")))
         if old_clock != new_clock and (old_clock is not None or new_clock is not None):
             op_changes.append("Queuebronklok: " + str(old_clock or "geen verse bron") +
                               " → " + str(new_clock or "geen verse bron"))
