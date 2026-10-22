@@ -4039,3 +4039,14 @@ De offline HTML-cockpit gebruikt voor deze routes Nederlandse probleemtitels
 *startup mislukt*) en toont de bronlink alleen als de exacte run/job/SHA
 op basis van de canonieke projectregistratie kan worden bevestigd. De titel is
 triagehulp, geen conclusie dat de VPS of worker hersteld is.
+
+### 22 oktober · Notion-claimobservatie met worker- en leasevelden
+
+De optionele live Notion-reader toont nu naast Work ID/status/project ook de
+getypeerde `Worker`, `Claimed At` en `Claim Expires`-velden van hetzelfde
+bronrecord. De offline cockpit markeert deze expliciet als **waargenomen
+metadata, geen geverifieerde lease**; ontbrekende velden blijven gedeeltelijk/
+onbekend. Er wordt geen expiry-beslissing afgeleid, geen claim vrijgegeven en
+een handmatig opgeslagen connector-snapshot zonder deze velden wordt niet als
+live leasebron voorgesteld. De bestaande `claim_scope_verified=false`,
+`can_dispatch=false` en `can_release_claim=false` blijven verplicht.
