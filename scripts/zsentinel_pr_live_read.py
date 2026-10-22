@@ -1399,6 +1399,11 @@ def owner_html(report):
             " · reported merged: " + esc(row.get("reported_merged", "UNKNOWN")) +
             " · target: " + esc(row.get("target_branch", "UNKNOWN")) +
             "</dd>",
+            "<dt>Source repository/ref</dt><dd>" +
+            esc(row.get("head_repo_full_name", "UNKNOWN")) + "/" +
+            esc(row.get("head_ref", "UNKNOWN")) +
+            " · base repository: " + esc(row.get("base_repo_full_name", "UNKNOWN")) +
+            "</dd>",
             "<dt>Reference origin</dt><dd>" +
             esc(row["candidate_origin"]) + " · " +
             esc(row["source_relationship"]) +
@@ -1679,6 +1684,9 @@ def markdown(report):
             "- PR changed files: " + row.get("pr_files_url", "UNKNOWN"),
             "- Observed state: " + row.get("observed_state", "UNKNOWN"),
             "- Observed target branch: " + row.get("target_branch", "UNKNOWN"),
+            "- Source repository/ref: " + row.get("head_repo_full_name", "UNKNOWN") +
+            "/" + row.get("head_ref", "UNKNOWN"),
+            "- Base repository: " + row.get("base_repo_full_name", "UNKNOWN"),
             "- Candidate origin: " + row["candidate_origin"],
             "- Source-observed relationship: " + row["source_relationship"],
             "- Current PR body issue text: " +
