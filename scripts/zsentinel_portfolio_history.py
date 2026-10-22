@@ -35,7 +35,7 @@ def _timestamp(raw):
 
 
 def _validate_snapshot(report):
-    if not isinstance(report, dict) or report.get("schema_version") != 1 or (
+    if not isinstance(report, dict) or type(report.get("schema_version")) is not int or report["schema_version"] != 1 or (
         report.get("policy") != "zsentinel-portfolio-github-issue-desk-v1"
     ):
         raise PolicyInputError("previous report is not a portfolio issue desk snapshot")
@@ -74,7 +74,7 @@ def _validate_snapshot(report):
             item.get("repository"), item.get("number"),
             item.get("url"), item.get("priority_rank"),
         )
-        if (repo not in state_by_repo or state_by_repo[repo] not in
+        if (type(repo) is not str or repo not in state_by_repo or state_by_repo[repo] not in
                 ("SAMPLED", "INCOMPLETE") or type(num) is not int or num < 1
                 or type(rank) is not int or rank not in range(7)
                 or not isinstance(url, str)):
@@ -257,6 +257,6 @@ def append_csv(base, delta):
         row[0] = "delta_" + c["change"].lower()
         row[1] = c["repository"]
         row[12] = c["url"]
-        row[18] = "SAMPLED CHANGE; NO ISSUE CLOSURE, CLAIM OR MERGE VERIFIED"
+        row[17] = "SAMPLED CHANGE; NO ISSUE CLOSURE, CLAIM OR MERGE VERIFIED"
         writer.writerow(row)
     return base + sink.getvalue()
