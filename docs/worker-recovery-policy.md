@@ -392,13 +392,14 @@ tracking scripts or external style resources are included.
 
 Each candidate has a bounded current PR GET,
 a sample of at most 30 exact-HEAD check runs, at most 30 reviews, and a
-second PR GET to detect an intervening HEAD/target/state change:
+second PR GET to detect an intervening HEAD/base-commit/target/state
+change:
 **at most 13 GETs in total** (one original-issue read plus four per
 referenced PR). The review sample is bound to the first PR GET's exact HEAD
 and separates review states on that HEAD from older/different commits and
 reviews without a valid commit binding. This is source-freshness evidence only:
 it does not infer reviewer independence, latest-effective approval, resolved
-threads or merge authority. If an initial PR read or the final HEAD/state re-read fails, the
+threads or merge authority. If an initial PR read or the final HEAD/base/state re-read fails, the
 candidate remains `UNKNOWN_PROVIDER`, not absent or merged. If the core
 PR source remains readable but a **secondary** check-run/review endpoint
 fails without an account-admission denial, the second PR read still
