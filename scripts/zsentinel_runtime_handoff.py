@@ -1387,7 +1387,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                   "github_refresh_auth_owner_hold": 1,
                   "github_repository_access_owner_hold": 1,
                   "queue_current_owner_review": 2,
-                  "blocked_queue_owner_review": 2,
+                  "blocked_queue_owner_review": 9,
                   "queue_source_refresh_required": 6,
                   "queue_lease_window_review": 3,
                   "incident_dependency_owner_hold": 4,
