@@ -15,12 +15,22 @@ MAX_NEXT = 8
 ISSUE_URL = re.compile(r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
 PR_URL = re.compile(r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}$")
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
-# Explicitly known owner-only infrastructure gates must never monopolize the
-# product implementation shortlist or masquerade as free worker tasks.
-OWNER_GATED_ISSUES = frozenset({
-    "https://github.com/Zennay/zCloud/issues/1326",  # VPS runner listener
-    "https://github.com/Zennay/zCloud/issues/1523",  # GitHub account billing
-})
+# Explicitly known owner-only gates must never monopolize the product
+# shortlist or masquerade as free worker tasks. Keep distinct owner routes.
+OWNER_GATED_ISSUE_ROUTES = {
+    "https://github.com/Zennay/zCloud/issues/1326": (
+        "authorized_zcloud_runner_owner_required",
+        "Bevoegde zCloud-runnerbeheerder verifieert registratie, labels en "
+        "actieve Listener/Worker-status; geen restart bij onzekere identiteit "
+        "of actieve job.",
+    ),
+    "https://github.com/Zennay/zCloud/issues/1523": (
+        "authorized_github_billing_owner_required",
+        "Bevoegde GitHub-accountbillingeigenaar controleert spend/admission; "
+        "geen betaalde retry, billingwijziging of runneractie.",
+    ),
+}
+OWNER_GATED_ISSUES = frozenset(OWNER_GATED_ISSUE_ROUTES)
 
 
 def next_problems(summary, decision, selected):
@@ -76,13 +86,14 @@ def next_problems(summary, decision, selected):
                 raise ValueError("invalid candidate PR reference")
             seen.add(url)
             if url in OWNER_GATED_ISSUES:
+                route, action = OWNER_GATED_ISSUE_ROUTES[url]
                 held_issues.append({
                     "project_id": pid,
                     "priority": tier,
                     "title": issue.get("title", "")[:180],
                     "issue_url": url,
-                    "next_step": "authorized_infrastructure_owner_required",
-                    "action": "Bevoegde runner- of billing-eigenaar nodig; geen worker-retry, betaling of productclaim.",
+                    "next_step": route,
+                    "action": action,
                     "dispatch_authorized": False,
                 })
                 continue
