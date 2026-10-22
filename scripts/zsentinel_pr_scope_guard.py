@@ -1858,7 +1858,10 @@ def as_markdown(report):
         lines.append("- `" + name.replace("`", "\\`") + "`")
     lines.extend(["", "## Waargenomen gedeelde paden", ""])
     if not report["observed_overlaps"]:
-        lines.append("Geen overeenkomende paden gezien; dit is GEEN vrijgave.")
+        lines.append("Geen exacte Git-pad-overlap; " +
+                     ("mogelijke aliases staan hieronder; geen vrijgave."
+                      if report["observed_portable_path_aliases"] else
+                      "geen alias waargenomen in de steekproef; geen vrijgave."))
     for hit in report["observed_overlaps"]:
         relations = "; ".join(
             item["changed_path"] + " [" + item["relation"] + "]"
