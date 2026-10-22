@@ -22,6 +22,24 @@ from zsentinel_recovery_policy import (
 )
 
 MAX_DELTA_CARDS = 100
+CHANGE_FOLLOWUP = {
+    "NEWLY_OBSERVED_NOT_PROVEN_NEW": (
+        "inspect_existing_prs_and_current_worker_claims",
+        "Inspect the existing issue and linked product PRs; confirm current owner and exact-head gates.",
+    ),
+    "OBSERVED_PRIORITY_CHANGE": (
+        "verify_current_priority_labels_and_owner",
+        "Check current GitHub priority labels and the existing product owner before reordering work.",
+    ),
+    "PERSISTENT_P0_P1_WITHOUT_GITHUB_ISSUE_UPDATE": (
+        "inspect_current_owner_progress_and_pr_ci",
+        "Check current worker activity, the open product PR and its CI before diagnosing a stall.",
+    ),
+    "NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED": (
+        "recheck_exact_issue_state_before_closure",
+        "Check the original GitHub issue directly; a bounded sample cannot prove issue closure.",
+    ),
+}
 UTC_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?Z\Z")
 VALID_STATES = frozenset((
     "SAMPLED", "INCOMPLETE", "SOURCE_UNAVAILABLE",
@@ -182,8 +200,11 @@ def compare_snapshots(previous, current):
                 kind = "PERSISTENT_P0_P1_WITHOUT_GITHUB_ISSUE_UPDATE"
             else:
                 continue
+            action_code, action = CHANGE_FOLLOWUP[kind]
             changes.append({
                 **item, "change": kind,
+                "human_followup_code": action_code,
+                "human_followup": action,
                 "prior_priority_rank": before[url]["priority_rank"]
                 if url in before else None,
                 "current_priority_rank": item["priority_rank"],
@@ -191,8 +212,12 @@ def compare_snapshots(previous, current):
             })
         for url, item in before.items():
             if url not in after:
+                kind = "NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED"
+                action_code, action = CHANGE_FOLLOWUP[kind]
                 changes.append({
-                    **item, "change": "NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED",
+                    **item, "change": kind,
+                    "human_followup_code": action_code,
+                    "human_followup": action,
                     "prior_priority_rank": item["priority_rank"],
                     "current_priority_rank": None,
                     "closure_verified": False, "action_executed": False,
@@ -261,7 +286,9 @@ def as_markdown(delta):
             "](" + change["url"] + ") · " + change["change"] +
             " · prior rank " + str(change["prior_priority_rank"]) +
             " → current rank " + str(change["current_priority_rank"]) +
-            " · **HUMAN FOLLOW-UP ONLY**"
+            " · **Human next:** " + change["human_followup"] +
+            " · code: " + change["human_followup_code"] +
+            " · **NOT EXECUTED**"
         )
     if not delta["changes"]:
         rows.append("No comparable changed cards; this does not prove a clear backlog.")
@@ -294,7 +321,8 @@ def as_html(delta):
             esc(c["url"]) + "'>" + esc(c["repository"]) + " #" +
             esc(c["number"]) + "</a> · " + esc(c["change"]) +
             " · prior rank " + esc(c["prior_priority_rank"]) + " → current " +
-            esc(c["current_priority_rank"]) + " · HUMAN FOLLOW-UP ONLY</li>"
+            esc(c["current_priority_rank"]) + " · human next: " +
+            esc(c["human_followup"]) + " · NOT EXECUTED</li>"
         )
     rows.append("</ol></section>")
     return "\n".join(rows)
@@ -316,6 +344,8 @@ def append_csv(base, delta):
         row[0] = "delta_" + c["change"].lower()
         row[1] = c["repository"]
         row[12] = c["url"]
+        row[15] = c["human_followup_code"]
+        row[16] = c["human_followup"]
         row[17] = "SAMPLED CHANGE; NO ISSUE CLOSURE, CLAIM OR MERGE VERIFIED"
         writer.writerow(row)
     return base + sink.getvalue()
@@ -329,19 +359,21 @@ def as_delta_csv(delta):
         "row_kind", "repository", "issue_url", "change_type",
         "prior_priority_rank", "current_priority_rank",
         "source_transition", "human_source_action_code",
+        "human_issue_action_code", "human_issue_followup",
         "issue_closure_verified", "actions_executed",
     ))
     for row in delta["repositories_compared"]:
         writer.writerow((
             "source", row["repository"], "", "", "", "",
             row["source_transition"], row["human_source_action_code"],
-            False, False,
+            "", "", False, False,
         ))
     for row in delta["changes"]:
         writer.writerow((
             "issue", row["repository"], row["url"], row["change"],
             row["prior_priority_rank"], row["current_priority_rank"],
-            "", "", False, False,
+            "", "", row["human_followup_code"], row["human_followup"],
+            False, False,
         ))
     return stream.getvalue()
 
