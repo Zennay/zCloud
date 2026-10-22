@@ -15,48 +15,16 @@ from pathlib import Path
 from zsentinel_product_issue_inbox import ROOT, QA, canonical_projects, collect, observed_time
 from zsentinel_pr_delivery import NEXT_ACTION_NL, observe_prs, _classic_status_display
 from zsentinel_issue_progress import load_private_prior, progress_since
+from zsentinel_owner_routes import (
+    HUMAN_ONLY_ROUTES, HUMAN_ONLY_ROUTE_CODES, ISSUE_ROUTE_ACTIONS,
+    canonical_issue_action,
+)
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 24
 MAX_PRS = 3
 SEVERITY = ("P0", "P1", "P2", "Unspecified")
-HUMAN_ONLY_ROUTES = {
-    "https://github.com/Zennay/zCloud/issues/1326":
-        "authorized_zcloud_runner_owner_required",
-    "https://github.com/Zennay/zCloud/issues/1523":
-        "authorized_github_billing_owner_required",
-}
 HUMAN_ONLY = frozenset(HUMAN_ONLY_ROUTES)
-# All human-gated routes are excluded from autonomous product work packets and
-# counted separately in portfolio summaries, including legacy infrastructure.
-HUMAN_ONLY_ROUTE_CODES = frozenset(HUMAN_ONLY_ROUTES.values()) | frozenset((
-    "authorized_infrastructure_owner_required",
-))
-
-# One immutable, owner-safe action per canonical issue route. Saved portfolio
-# windows must regenerate this wording rather than carry old Notion owner
-# warnings into a later combined operator run.
-ISSUE_ROUTE_ACTIONS = {
-    "authorized_infrastructure_owner_required":
-        "Bevoegde infrastructuureigenaar nodig; geen runner-restart, betaling of claim.",
-    "authorized_zcloud_runner_owner_required":
-        "Bevoegde zCloud-runnerbeheerder verifieert registratie, labels, actuele job en Listener/Worker-status via toegestane bronnen; geen restart zolang actieve worker of identiteit onzeker is.",
-    "authorized_github_billing_owner_required":
-        "Bevoegde GitHub-accountbillingeigenaar controleert billing/spend-admission; geen betaalde retry, billingwijziging of runneractie.",
-    "review_existing_pr_first":
-        "Begin bij bestaande PR en controleer eigenaar, vereiste CI en actuele scope.",
-    "check_assignee_and_current_claim":
-        "GitHub heeft een assignee; controleer daarnaast actuele queueclaim, PR's en bestanden.",
-    "verify_ownership_and_scope":
-        "Controleer actuele claims, branches en bestandscope vóór zelfstandige productimplementatie.",
-}
-
-
-def canonical_issue_action(route):
-    if type(route) is not str or route not in ISSUE_ROUTE_ACTIONS:
-        raise ValueError("unknown canonical issue action route")
-    return ISSUE_ROUTE_ACTIONS[route]
-
 
 def build_workboard(inbox, registry, token=None):
     """Select previously referenced PRs first, never mint owner authority."""
