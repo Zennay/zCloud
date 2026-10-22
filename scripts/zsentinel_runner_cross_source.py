@@ -154,6 +154,9 @@ def _action(stage, problem, next_action, local, *, pinned=None,
             source_freshness="unknown", job_status=None, job_conclusion=None):
     service_observation = _validated_service_observation(local)
     service_relationship = _service_process_relationship(local, service_observation)
+    process_truncated = local.get("process_inventory_truncated", False)
+    if type(process_truncated) is not bool:
+        raise ValueError("invalid process inventory truncation flag")
     status_line = "ALLEEN-LEZEN · GitHub-runner herstel NIET BEWEZEN · geen serviceactie"
     if job_status is not None:
         if type(job_status) is not str or job_status not in JOB_STATUSES:
@@ -173,6 +176,7 @@ def _action(stage, problem, next_action, local, *, pinned=None,
         "observed_job_conclusion": job_conclusion,
         "local_proc_coverage": (
             "bounded_sample" if local["process_inventory_complete"] else "partial"),
+        "local_process_inventory_truncated": process_truncated,
         "source_freshness": source_freshness,
         "exact_zcloud_job_selected": pinned is not None,
         "exact_job_url": (pinned["url"] if pinned else None),
@@ -553,6 +557,13 @@ def as_html(result):
     listener_count = result.get("local_listener_processes_observed")
     if type(listener_count) is not int or not 0 <= listener_count <= 20000:
         raise ValueError("invalid local listener count")
+    coverage = result.get("local_proc_coverage")
+    truncated = result.get("local_process_inventory_truncated", False)
+    if (coverage not in ("bounded_sample", "partial")
+            or type(truncated) is not bool
+            or (truncated and coverage != "partial")):
+        raise ValueError("invalid process inventory coverage")
+    truncation_note = " · 20.000-PID-limiet bereikt" if truncated else ""
     return (
         '<section aria-label="zSentinel exacte runnerbron correlatie">'
         '<h2>P0 runner · exacte job plus lokale proces- en unitstatus</h2>'
@@ -562,7 +573,8 @@ def as_html(result):
         '<p><strong>STATUS:</strong> ' + escape(result["status"]) + job_link + '</p>'
         '<p><strong>Systemd-unit (alleen lezen):</strong> ' + escape(summary) + '</p>'
         '<p><strong>Unit/proces-relatie:</strong> ' + escape(relationship) +
-        ' · waargenomen listenerprocessen=' + str(listener_count) + '</p>'
+        ' · waargenomen listenerprocessen=' + str(listener_count) +
+        ' · procesdekking=' + escape(coverage) + escape(truncation_note) + '</p>'
         '<p>Een overeenkomende unit en listener bewijzen geen GitHub-registratie, veilige idle of herstelautorisatie.</p>'
         '</section>'
     )
@@ -582,6 +594,13 @@ def as_text(result):
     listener_count = result.get("local_listener_processes_observed")
     if type(listener_count) is not int or not 0 <= listener_count <= 20000:
         raise ValueError("invalid local listener count")
+    coverage = result.get("local_proc_coverage")
+    truncated = result.get("local_process_inventory_truncated", False)
+    if (coverage not in ("bounded_sample", "partial")
+            or type(truncated) is not bool
+            or (truncated and coverage != "partial")):
+        raise ValueError("invalid process inventory coverage")
+    truncation_note = " · 20.000-PID-limiet bereikt" if truncated else ""
     return "\n".join((
         "OWNER-ROUTE · " + result["stage"],
         "RUNNER · " + result["problem"],
@@ -592,5 +611,6 @@ def as_text(result):
         "SYSTEMD-UNIT · alleen-lezen · " + _service_summary(service),
         "UNIT/PROCES-RELATIE · " + result.get(
             "systemd_process_relationship", "unknown_service_state"),
+        "PROCESSTEEKPROEF · " + coverage + truncation_note,
         "HERSTARTAUTORISATIE · nee",
     ))
