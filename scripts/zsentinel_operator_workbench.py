@@ -4850,7 +4850,7 @@ document.getElementById('downloadDeltaCsv').onclick=()=>{
 };
 // A reviewed, local-only export. It must never be mistaken for fresh claims.
 function csvCell(value){
- let cell=String(value??'').replace(/[\\x00-\\x1f\\x7f]/g,' ').trim();
+ let cell=String(value??'').replace(/[\\x00-\\x1f\\x7f]/g,' ');
  // CSV quoting is not formula protection. Ignore leading Unicode whitespace
  // and invisible format controls for detection only; preserve source evidence.
  const meaningful=cell.replace(/^[\\p{White_Space}\\p{Cf}\\p{Zs}\\p{Zl}\\p{Zp}]*/u,'');
