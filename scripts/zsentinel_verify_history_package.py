@@ -236,6 +236,51 @@ def inspect_history_bytes(archive: bytes) -> dict:
     }
 
 
+def historical_source_age(report: dict, *, as_of=None,
+                          stale_after_hours: int = 6) -> dict:
+    """Tell the operator how old source observations really are.
+
+    Do not compare against ZIP creation time or local file mtime. A historical
+    saved source is NEVER promoted to active/live authority by this function.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    if type(stale_after_hours) is not int or not 1 <= stale_after_hours <= 168:
+        raise ValueError("invalid historical source age threshold")
+    observed_at = as_of or datetime.now(timezone.utc)
+    if observed_at.tzinfo is None:
+        raise ValueError("historical age clock must be timezone-aware")
+    observed_at = observed_at.astimezone(timezone.utc)
+    snapshots = report.get("snapshots")
+    if type(snapshots) is not list or not 2 <= len(snapshots) <= 24:
+        raise ValueError("invalid history source series")
+    stamps = []
+    for row in snapshots:
+        text = row.get("saved_board_observed_at_utc")
+        if type(text) is not str or len(text) > 50:
+            raise ValueError("invalid original source time")
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            raise ValueError("original source time is not UTC-aware")
+        stamps.append(stamp.astimezone(timezone.utc))
+    newest = max(stamps)
+    oldest = min(stamps)
+    age = (observed_at - newest).total_seconds()
+    future = newest > observed_at + timedelta(minutes=2)
+    return {
+        "source_observation_oldest_utc": oldest.isoformat(),
+        "source_observation_newest_utc": newest.isoformat(),
+        "source_age_hours": round(age / 3600, 2),
+        "stale_after_hours": stale_after_hours,
+        "source_age_status": ("future_clock_unknown" if future
+                              else "stale_historical_sample"
+                              if age > stale_after_hours * 3600
+                              else "recent_historical_sample_not_live"),
+        "historical_even_when_recent": True,
+        "source_is_live_verified": False,
+    }
+
+
 def verify_against_original_bundles(
         archive: bytes, originals_directory: Path) -> dict:
     """Recompute history from complete *original* verified private bundles.
@@ -414,10 +459,16 @@ def main(argv=None):
     parser.add_argument("--verify-sources", type=Path,
                         help="Recheck the complete original private operator "
                              "bundles and compare saved content, not just ZIP hashes")
+    parser.add_argument("--stale-after-hours", type=int, default=6,
+                        help="Mark old observation time explicitly, 1–168 hours")
     args = parser.parse_args(argv)
     try:
         archive = private_archive_bytes(args.source)
         result = inspect_history_bytes(archive)
+        with ZipFile(BytesIO(archive)) as saved:
+            age_report = _json(saved.read("history.json"))
+        result.update(historical_source_age(
+            age_report, stale_after_hours=args.stale_after_hours))
         if args.verify_sources is not None:
             result.update(verify_against_original_bundles(
                 archive, args.verify_sources))
