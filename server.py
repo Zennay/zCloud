@@ -3069,10 +3069,18 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
                     existing['completion_criteria']==criteria and
                     existing['source_url']==source):
                 return _portfolio_queue_row(existing)
+            # Queued does not mean untouched: a worker may previously have
+            # claimed it and returned CONTINUE. Rewriting its source after any
+            # receipt or attempt would disconnect that evidence from the work.
+            if (int(existing['attempts'] or 0)!=0 or
+                    str(existing['evidence'] or '').strip() or
+                    str(existing['blocker'] or '').strip()):
+                raise ValueError('Queue-taak heeft claim- of voortgangshistorie; wijzig de originele taak niet')
             c.execute("""UPDATE portfolio_queue
                          SET title=?,priority=?,completion_criteria=?,source_url=?,updated_at=?
                          WHERE queue_id=? AND project_id=? AND status='queued' AND eligible=1
-                           AND worker_slot IS NULL AND claimed_at IS NULL AND claim_expires IS NULL""",
+                           AND worker_slot IS NULL AND claimed_at IS NULL AND claim_expires IS NULL
+                           AND attempts=0 AND evidence='' AND blocker=''""",
                       (title,priority,criteria,source,ts,queue_id,project_id))
             if c.execute('SELECT changes()').fetchone()[0]!=1:
                 raise ValueError('Queue-admission status veranderde; enqueue geweigerd')
