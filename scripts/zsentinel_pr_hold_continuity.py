@@ -139,8 +139,21 @@ def _rows(source):
         # Only a FULL exact-head PR observation can prove which bounded
         # CI/status/review fields came from this source snapshot.
         gates = _gate_sample(row, head) if coverage == EXACT else None
+        metadata = None
+        if coverage == EXACT:
+            base = row.get("base_sha")
+            draft = row.get("draft")
+            mergeable_known = row.get("mergeable_known")
+            mergeable = row.get("mergeable")
+            if (type(base) is not str or not HEAD.fullmatch(base)
+                    or type(draft) is not bool
+                    or type(mergeable_known) is not bool
+                    or type(mergeable) is not bool):
+                raise ValueError("invalid bounded PR draft/base/mergeability metadata")
+            metadata = (base, draft, mergeable_known, mergeable)
         rows[url] = {"url": url, "head": head, "step": action,
-                     "coverage": coverage, "gates": gates}
+                     "coverage": coverage, "gates": gates,
+                     "metadata": metadata}
     return _clock(source.get("observed_at_utc")), rows
 
 
