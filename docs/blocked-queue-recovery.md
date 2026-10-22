@@ -941,3 +941,53 @@ overwrite, release or restart another owner's work.
 This is a branch-level product source repair in PR #1565. It does not
 authorize new workers, a release, queue mutation on the VPS, CI bypass,
 or any recovery without existing operator permission and mandatory gates.
+
+
+## Scheduler admission: separate task-claim ownership
+
+The allocator previously reset expired queue leases and selected new worker
+slots from queue status alone. But the independently persisted `task_claims`
+record can remain live (or expired-but-still-recorded) after the queue clock
+expires, and a row may still be `queued` while its separate owner lease
+remains bound.
+
+The existing runtime now preserves that source boundary in the **same**
+`BEGIN IMMEDIATE` allocation transaction:
+
+- Expired queue-lease reclamation excludes any queue ID still present in
+  `task_claims`, regardless of the separate lease timestamp.
+- Candidate discovery excludes queued rows with leftover worker slot,
+  `claimed_at`, `claim_expires`, or an independent task-claim record. This
+  prevents owner-bound rows from filling the bounded discovery window ahead
+  of actually claim-clear tasks. Work must still pass lane, CPU, human
+  authorization and project-capacity checks.
+- The exact final `status='claimed'` UPDATE repeats both owner-field
+  and independent claim-record conditions. If ownership changed since the
+  candidate snapshot, it does not increment attempts or allocate that slot;
+  the row is skipped, **not** forcibly released.
+- Critical-memory relief, explicit Force Start replacement, manual/external
+  gate transitions, priority/diversity preemption and conflicting-write-lane
+  release all refuse to discard an independent claim. A failed Force Start
+  victim release preserves the original occupant and does **not** start a
+  replacement in that physical browser slot. These rules do not grant new
+  Force Start or service rights.
+
+The dashboard status contract exposes `owner_clear_queued`,
+`owner_held_queued`, and `owner_effective_ready` from a single database
+read. The former means only **source claim fields are clear**; it does not
+prove that a worker can run the task, that a dependency is resolved, or that
+release authorization exists. The existing `healthy` queue indicator now
+excludes independently owner-held queued rows rather than treating them as
+allocatable work. The dependency-hold dashboard labels these aggregate
+counts as a separate status snapshot, marks old data as historical, and
+offers no new task takeover action. The browser entrypoint cache key for
+`app.js` is kept in sync with the actual Git content blob.
+
+When the independent claim source cannot be read, the owner-protecting SQL
+predicate is not safely satisfied and allocation cannot be used to infer
+claim-free ownership. An owner must reconcile the record through the
+existing authorized process. No claim deletion, timeout shortcut, runner
+restart, lease release, CI bypass or production mutation is introduced.
+
+All changes are confined to existing PR #1565 pending exact-head CI,
+independent review, branch protection, authorized merge and live proof.
