@@ -621,6 +621,11 @@ def main():
                             if value in ("queued", "in_progress", "failure")
                         ] if isinstance(not_scanned_windows, list) else [],
                         "request_count": discovery_source.get("request_count"),
+                        "additional_job_links": (
+                            cloud_coverage.get("additional_job_links", [])
+                            if isinstance(cloud_coverage.get("additional_job_links", []), list)
+                            else []
+                        ),
                         "full_repo_ci_inventory": False,
                     }
                 except (OSError, ValueError, TypeError):
@@ -683,12 +688,18 @@ def main():
                     "<main>", "<main>" + runner_process_html(
                         decision["local_runner_processes"]), 1)
                 if "runner_cross_source" in decision:
-                    from zsentinel_runner_cross_source import as_html as runner_cross_source_html
+                    from zsentinel_runner_cross_source import (
+                        as_html as runner_cross_source_html, additional_jobs_html,
+                    )
                     if rendered.count("<main>") != 1:
                         raise ValueError("incompatible exact runner correlation view")
+                    discovery_view = decision.get("runner_cross_source_discovery", {})
+                    extra_jobs = additional_jobs_html(
+                        discovery_view.get("additional_job_links", [])
+                        if isinstance(discovery_view, dict) else [])
                     rendered = rendered.replace(
                         "<main>", "<main>" + runner_cross_source_html(
-                            decision["runner_cross_source"]), 1)
+                            decision["runner_cross_source"]) + extra_jobs, 1)
                 elif "runner_cross_source_unavailable" in decision:
                     if rendered.count("<main>") != 1:
                         raise ValueError("incompatible unavailable runner correlation view")
