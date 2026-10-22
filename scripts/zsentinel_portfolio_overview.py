@@ -1041,6 +1041,11 @@ def main():
             args.state and args.state.exists()) else None
         decision, state = plan(bundle, old)
         decision["live_sources"] = provenance
+        if "resources" in bundle:
+            # Portfolio HTML and the source-bound private owner handoff must
+            # see the same actual host/archive scalars used for admission.
+            # The observer emits aggregate counters only, never mount paths.
+            decision["vps_resource_observation"] = bundle["resources"]
         if "worker_progress_observation" in bundle:
             decision["worker_progress_observation"] = bundle["worker_progress_observation"]
         if "notion_claims_observation" in bundle:
