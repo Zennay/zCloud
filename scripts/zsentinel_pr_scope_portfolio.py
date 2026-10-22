@@ -1637,7 +1637,10 @@ def as_private_csv(board):
             "source_complete_for_sample": "true" if view["sample_complete"] else "false",
         }
         emit("project_summary", project, repo, source_status, **summary,
-             operator_notice="Partial non-atomic PR observations; claims and release rules UNKNOWN.")
+             operator_notice=(
+                 "Incomplete source evidence: " +
+                 ",".join(view.get("source_coverage_reasons", [])) +
+                 "; claims, review and release rules UNKNOWN."))
         if source_status == "unavailable":
             continue
         for group in view["linked_pr_collision_clusters"]:
