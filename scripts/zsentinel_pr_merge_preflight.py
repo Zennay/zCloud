@@ -47,7 +47,8 @@ def _repository_default_branch_sha(payload, branch):
 
 def _gate_cards(head, checks, reviews, stable, default_branch=None,
                 default_branch_stable=False, default_branch_sha=None,
-                default_branch_sha_stable=False, base_tip_matches_default=None):
+                default_branch_sha_stable=False, base_tip_matches_default=None,
+                mergeability_hint_stable=False):
     """Operator workorders; read-only samples never satisfy release gates."""
     state = ("OBSERVED" if stable else "UNKNOWN")
     sample = ("UNKNOWN" if checks is None else
@@ -70,6 +71,14 @@ def _gate_cards(head, checks, reviews, stable, default_branch=None,
         or not default_branch_sha else
         "OBSERVED_CURRENT" if base_tip_matches_default is True else "HOLD"
     )
+    mergeability_hint = (
+        head.get("mergeable_hint") if isinstance(head, dict) else None
+    )
+    mergeability_gate = (
+        "UNKNOWN" if not mergeability_hint_stable or mergeability_hint is None else
+        "OBSERVED_CONFLICT_HINT" if mergeability_hint is False else
+        "OBSERVED_MERGEABLE_HINT"
+    )
     return [
         {"gate": "exact_head", "state": state,
          "next": "Reconfirm current exact SHA at the time of authorized merge."},
@@ -79,6 +88,8 @@ def _gate_cards(head, checks, reviews, stable, default_branch=None,
                  ") and independently confirm intended release scope."},
         {"gate": "base_tip_current", "state": base_tip_gate,
          "next": "Compare the PR base SHA with the stable default-branch tip; if stale, update the existing branch and resolve conflicts without force or gate bypass."},
+        {"gate": "mergeability_hint", "state": mergeability_gate,
+         "next": "GitHub's mergeability value is an asynchronous hint only. If false, inspect conflicts with the existing branch owner; true never replaces exact-head CI, independent review, branch protection or owner approval."},
         {"gate": "head_check_sample", "state": sample,
          "next": "Resolve visible failures and pending jobs; independently determine mandatory checks."},
         {"gate": "all_required_ci", "state": "UNKNOWN",
@@ -153,6 +164,22 @@ def _parallel_owner_actions(report):
             "The PR is still draft.",
             "Ask its current owner to mark ready only after review preparation.",
             "DRAFT")
+    mergeability_hint = observed.get("mergeable_hint")
+    if report.get("mergeability_hint_stable") is not True:
+        add("refresh_mergeability_hint",
+            "GitHub's mergeability hint changed between the two PR reads.",
+            "Refresh the current PR metadata and inspect conflicts; do not infer mergeability from a moving hint.",
+            "MERGEABILITY_HINT_UNSTABLE")
+    elif mergeability_hint is False:
+        add("inspect_merge_conflict_hint",
+            "GitHub reports mergeable=false for the observed PR.",
+            "Inspect the actual conflicting paths and resolve them with the existing branch owner; never force-push or bypass required gates.",
+            "GITHUB_MERGEABLE_FALSE_HINT")
+    elif mergeability_hint is None:
+        add("refresh_mergeability_hint",
+            "GitHub did not provide a mergeability hint.",
+            "Re-read current PR metadata and inspect conflicts; a missing hint is not evidence of mergeability.",
+            "MERGEABILITY_UNKNOWN")
     if checks is None:
         add("recover_head_check_source",
             "Exact-head check source is unavailable.",
@@ -377,11 +404,17 @@ def observe_exact_pr(pr_url, *, token=None):
         next_step = "Verify all required CI, independent review, open threads, protection and live owner claims."
         status = "HUMAN_GATES_UNVERIFIED"
 
+    # GitHub may recompute mergeability asynchronously. Keep its hint separate
+    # from stable PR identity and expose drift as UNKNOWN instead of hiding it.
+    mergeability_hint_stable = (
+        first.get("mergeable_hint") == second.get("mergeable_hint")
+    )
     report = {
         "schema_version": 1, "policy": "zsentinel-exact-pr-preflight-v1",
         "url": pr_url, "observed_at_utc": utc(),
         "observed": first, "status": status,
         "source_stable_between_reads": True,
+        "mergeability_hint_stable": mergeability_hint_stable,
         "repository_default_branch": default_branch,
         "repository_default_branch_stable": default_branch_stable,
         "repository_default_branch_sha": default_branch_sha,
@@ -403,6 +436,7 @@ def observe_exact_pr(pr_url, *, token=None):
             first["base_sha"] == default_branch_sha
             if first["target_branch"] == default_branch and
             default_branch_sha is not None and default_branch_sha_stable else None,
+            mergeability_hint_stable=mergeability_hint_stable,
         ),
         "next_human_step": next_step,
         "required_ci_verified": False, "independent_review_verified": False,
