@@ -3537,13 +3537,16 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
         # Retain the original dependency evidence in the terminal record.
         # Overwriting it with just a dismissal note would erase why this
         # task had been parked in the first place.
-        prior_blocker=str(row['blocker'] or '')[:1000]
-        prior_evidence=str(row['evidence'] or '')[:1400]
+        # Full values remain in the atomic project receipt below. The queue
+        # evidence field is shorter, so put the operator decision FIRST to
+        # prevent a long historical blocker from truncating the close reason.
+        prior_blocker=str(row['blocker'] or '')[:2000]
+        prior_evidence=str(row['evidence'] or '')[:4000]
         proof=(
+            f'Operator {actor or "legacy-authorized-client"} closed task: {note}\n'
             f'Previous queue status: {row["status"]}\n'
             f'Previous blocker: {prior_blocker}\n'
-            f'Previous evidence: {prior_evidence}\n'
-            f'Operator {actor or "legacy-authorized-client"} closed task: {note}'
+            f'Previous evidence: {prior_evidence}'
         )[:4000]
         # Terminal operator cancellation must not revoke a live worker lease.
         # The conditional UPDATE remains authoritative after the transaction read.
@@ -3575,6 +3578,8 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
                     observed_at=ts,
                     evidence={'queue_id':queue_id,'operator_actor':actor,
                               'previous_status':str(row['status']),
+                              'previous_updated_at':str(row['updated_at'] or ''),
+                              'original_source_url':str(row['source_url'] or '')[:500],
                               'previous_blocker':prior_blocker,
                               'previous_evidence':prior_evidence,
                               'terminal_resolution_note':note,
