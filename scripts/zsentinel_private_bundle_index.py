@@ -457,6 +457,73 @@ def historical_merge_attention(snap: dict) -> str:
             "".join(lines) + "</ul>")
 
 
+
+def saved_evidence_freshness_html(snap: dict, now: datetime) -> str:
+    """First-screen operator warning based on captured source clocks.
+
+    The board timestamp can be fresh when the GitHub or queue feed is old.
+    Display each source separately, preserving originally not-fresh evidence
+    and UNKNOWN optional sources without refreshing any external data.
+    """
+    source_times = snap["source_times"]
+    captured_flags = snap["source_fresh"]
+    supported = ("inbox", "retry", "claims", "prs", "branches")
+    labels = {"inbox": "GitHub-issue-inbox", "retry": "Wachtrij",
+              "claims": "Operator-claims", "prs": "Bestaande PR-gates",
+              "branches": "PR-loze branches"}
+    if (type(source_times) is not dict or
+            type(captured_flags) is not dict or
+            set(source_times) != set(captured_flags) or
+            "inbox" not in source_times or
+            not set(source_times) <= set(supported)):
+        raise ValueError("historical source clock evidence inconsistent")
+    items = []
+    stale = []
+    for kind in supported:
+        if kind not in source_times:
+            stale.append(kind + " ontbreekt")
+            items.append("<li><strong>" + labels[kind] +
+                         "</strong>: niet opgenomen (onbekend)</li>")
+            continue
+        stamp = datetime.fromisoformat(
+            source_times[kind].replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            raise ValueError("historical source clock has no timezone")
+        age = now - stamp.astimezone(timezone.utc)
+        minutes = int(age.total_seconds() // 60)
+        clock_wrong = age < -timedelta(minutes=2)
+        not_fresh = captured_flags[kind] is not True
+        outdated = age > timedelta(hours=6)
+        state = ("toekomstige klok/onbekend" if clock_wrong else
+                 "onvers bij opname" if not_fresh else
+                 "ouder dan 6 uur" if outdated else
+                 "recent opgenomen, niet live")
+        if clock_wrong or not_fresh or outdated:
+            stale.append(kind + ": " + state)
+        items.append(
+            "<li><strong>" + labels[kind] + "</strong>: " + escape(state) +
+            " · origineel UTC <code>" + escape(stamp.isoformat()) +
+            "</code> · leeftijd " +
+            (escape(str(minutes)) + " minuten" if not clock_wrong
+             else "onbekend") + "</li>"
+        )
+    status = ("<strong>Bronnen onvolledig of verouderd.</strong> " +
+              str(len(stale)) + " aandachtspunt(en)." if stale else
+              "<strong>Bronnen bij opname recent.</strong> " +
+              "Blijft historische steekproef, niet live.")
+    return ("<section class='evidence-notice' aria-label='Bronactualiteit'>"
+            "<h2>Actualiteit van oorspronkelijke bronnen</h2><p>" +
+            status + " Boardtijd: <code>" +
+            escape(snap["observed"].isoformat()) +
+            "</code>. Aanmaaktijd van dit HTML-overzicht zegt niets over "
+            "de actualiteit van een bron.</p>"
+            "<details open><summary>Bron voor bron (ontbrekend = onbekend)"
+            "</summary><ul>" + "".join(items) +
+            "</ul></details><p>Hercontroleer echte GitHub-issues, open PR's,"
+            " actuele queueclaims en vereiste CI/review voordat je handelt."
+            "</p></section>")
+
+
 def historical_attention_html(snap: dict) -> str:
     """A first-screen handoff drawn only from the most recent saved board."""
     rows = []
@@ -495,15 +562,15 @@ def render(snapshots: list[dict], index_name: str) -> str:
     snapshots = sorted(snapshots, key=lambda s: (s["observed"], s["stem"]))
     cards = []
     for snap in reversed(snapshots):
-        age = now - snap["observed"]
-        if age < -timedelta(minutes=5):
-            age_label = "waarneming >5 min in toekomst (mogelijke klokdrift; niet live)"
-        elif age < timedelta(0):
-            age_label = "tijdstempel iets in toekomst (niet live)"
-        elif age > timedelta(hours=24):
-            age_label = "ouder dan 24 uur"
+        board_age = now - snap["observed"]
+        if board_age < -timedelta(minutes=5):
+            age_label = "boardtijd >5 min in toekomst (klok onbekend)"
+        elif board_age < timedelta(0):
+            age_label = "boardtijd iets in toekomst (niet live)"
+        elif board_age > timedelta(hours=24):
+            age_label = "board ouder dan 24 uur; bronleeftijd hieronder"
         else:
-            age_label = "maximaal 24 uur oud (niet live)"
+            age_label = "board maximaal 24 uur oud; bronleeftijd hieronder"
         companions = (
             "<a href='" + escape(snap["stem"] + ".desk.html", quote=True) +
             "'>Open interactieve werkbak</a> · <a href='" +
@@ -521,8 +588,9 @@ def render(snapshots: list[dict], index_name: str) -> str:
             str(snap["card_count"]) + " issuekaarten in sample · " +
             ("sample gekort" if snap["sample_truncated"] else
              "sample niet gekort (bron nog steeds begrensd)") +
-            "</p><p>" + companions + "</p>" + project_table(snap) +
-            saved_pr_table(snap) +
+            "</p><p>" + companions + "</p>" +
+            saved_evidence_freshness_html(snap, now) +
+            project_table(snap) + saved_pr_table(snap) +
             "<details><summary>Bronidentiteit en historische bronklokken</summary>"
             "<p>Board SHA-256: <code>" + snap["sha256"] +
             "</code></p><p>" + freshness + "</p></details></article>"
@@ -544,6 +612,10 @@ def render(snapshots: list[dict], index_name: str) -> str:
         "td,th{border-bottom:1px solid #475367;text-align:left;"
         "vertical-align:top;padding:.6rem;overflow-wrap:anywhere}"
         "a{color:#9ed3ff}code{overflow-wrap:anywhere}"
+        ".evidence-notice{border-left:5px solid #f0c36d;"
+        "background:#362a1c;padding:.8rem 1rem;margin:1rem 0}"
+        ".evidence-notice h2{font-size:1.2rem;margin:.2rem 0}"
+        ".evidence-notice li{margin:.2rem 0;overflow-wrap:anywhere}"
         "summary{cursor:pointer}</style></head><body>"
         "<h1>zSentinel · Bewaarde herstelbundels</h1>"
         "<p><strong>Privé offline geschiedenis, geen live monitor.</strong> "
@@ -552,7 +624,8 @@ def render(snapshots: list[dict], index_name: str) -> str:
         "bruikbare CI, onafhankelijke review, merge of productieherstel.</p>"
         "<p>" + str(len(snapshots)) + " gekoppelde snapshots · index "
         + escape(index_name) + " · gemaakt op " + escape(now.isoformat()) +
-        "</p>" + historical_attention_html(snapshots[-1]) +
+        "</p>" + saved_evidence_freshness_html(snapshots[-1], now) +
+        historical_attention_html(snapshots[-1]) +
         "<h2>Herstelwerkbanken, nieuwste eerst</h2>" +
         "".join(cards) + "<h2>Verschillen tussen opeenvolgende samples</h2>" +
         ("".join(deltas) if deltas else
