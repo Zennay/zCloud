@@ -272,7 +272,9 @@ def observe_portfolio(repositories, *, token=None, view="all"):
         "source_partial_or_unknown": source_gap,
         "display_partial": display_gap,
         "partial_or_unknown": source_gap or display_gap,
-        "all_repositories_covered": not stopped_for_provider,
+        "all_repositories_covered": all(
+            item["observed_at_utc"] is not None for item in recorded
+        ),
         "source_sample_is_not_complete_backlog_proof": True,
         "active_worker_ownership_verified": False,
         "required_ci_verified": False,
@@ -292,6 +294,10 @@ def as_markdown(result):
         "- Observed at: " + result["generated_at_utc"],
         "- Repositories read: " + str(result["read_count"]) + "/" +
         str(result["requested_count"]),
+        "- Repositories not observed because of a local source failure: " +
+        str(result["repository_local_source_gaps"]),
+        "- All requested repositories observed: " +
+        str(result["all_repositories_covered"]),
         "- Sampled across observed sources: " + str(result["total_sampled_issues"]),
         "- Selected display view: " + result["display_view"],
         "- Explicit P0 labels in sampled sources: " +
@@ -327,7 +333,9 @@ def as_markdown(result):
                 str(r["source_priority_counts"]["label_p0"]) + "/" +
                 str(r["source_priority_counts"]["label_p1"])
                 if r["source_priority_counts"] is not None else "UNKNOWN"
-            ) + " · next: " + r["human_source_followup_code"]
+            ) + " · source failure scope: " +
+            (r["source_error_scope"] or "none") +
+            " · next: " + r["human_source_followup_code"]
         )
         rows.append("  - Human follow-up: " + r["human_source_followup"] +
                     " (not executed)")
@@ -364,7 +372,9 @@ def as_html(result):
         "</head><body><header><h1>zSentinel — portfolio issue workorders</h1>",
         "<p><strong>Advisory only.</strong> GitHub issues were sampled sequentially, not atomically. No worker claim, CI, independent review, merge or deployment was verified.</p>",
         "<p>Repositories read: " + esc(result["read_count"]) + "/" +
-        esc(result["requested_count"]) + " · sampled: " +
+        esc(result["requested_count"]) +
+        " · local repo source gaps: " +
+        esc(result["repository_local_source_gaps"]) + " · sampled: " +
         esc(result["total_sampled_issues"]) + " · displayed: " +
         esc(result["total_displayed_issues"]) + " · omitted: " +
         esc(result["omitted_sampled_issues"]) +
@@ -388,6 +398,8 @@ def as_html(result):
             esc(r["state"]) + " · observed " +
             esc(r["observed_at_utc"] or "UNKNOWN") + " · sampled " +
             esc(r["sampled_count"] if r["sampled_count"] is not None else "UNKNOWN") +
+            " · source failure scope: " +
+            esc(r["source_error_scope"] or "none") +
             " · complete recent window: " + esc(r["recent_window_complete"]) +
             " · sampled label P0/P1: " +
             (esc(r["source_priority_counts"]["label_p0"]) + "/" +
@@ -454,7 +466,7 @@ def as_csv(result):
         "source_state", "sampled_issue_count", "source_partial_unknown",
         "display_view", "source_label_p0", "source_label_p1",
         "source_followup_code", "source_followup_executed",
-        "issue_url", "priority_label", "title_hint_unverified",
+        "source_error_scope", "issue_url", "priority_label", "title_hint_unverified",
         "human_action_code", "human_next_action", "status",
         "single_issue_live_pr_review_command", "command_executed",
         "active_claim_verified", "required_ci_verified",
@@ -483,7 +495,7 @@ def as_csv(result):
             r["source_priority_counts"]["label_p0"] if r["source_priority_counts"] else None,
             r["source_priority_counts"]["label_p1"] if r["source_priority_counts"] else None,
             r["human_source_followup_code"], False,
-            "", "", "", "", "",
+            r["source_error_scope"], "", "", "", "", "",
             "SOURCE COVERAGE IS NOT LIVE OWNER AUTHORITY",
             "", False, False, False, False, False,
         )])
@@ -495,7 +507,8 @@ def as_csv(result):
             r["source_partial_or_unknown"], result["display_view"],
             r["source_priority_counts"]["label_p0"],
             r["source_priority_counts"]["label_p1"],
-            r["human_source_followup_code"], False, issue["url"],
+            r["human_source_followup_code"], False,
+            r["source_error_scope"], issue["url"],
             issue["explicit_priority"], issue["title_hint_unverified"],
             issue["human_action_code"], issue["human_next_action"],
             issue["status"], issue["single_issue_live_pr_review_command"],
