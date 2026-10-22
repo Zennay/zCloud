@@ -173,7 +173,7 @@ group by altering the saved group JSON. HTML external-peer navigation is
 therefore sourced only from the recomputed validated groups. The CSV column
 `external_peer_prs_to_recheck` now carries the bounded canonical URL list, and
 `external_peer_prs_to_recheck_count` carries its separate count (rather than
-placing a count under a URL-list field name). The HTML coordination panel also links each external peer back to the selected PR that surfaced the hint, with an explicit cap and visible notice when provenance rows are hidden.
+placing a count under a URL-list field name). The HTML coordination panel also links each external peer back to the selected PR that surfaced the hint, with an explicit cap and visible notice when provenance rows are hidden. Incomplete evidence is also marked per coordination group and exposed as `coordination_group_source_partial` in each CSV PR row, so one partial group does not have to be mistaken for a portfolio-wide blocker (or vice versa).
 
 This is an offline artifact-integrity improvement. It does not poll GitHub,
 verify live owner claims or branch protection, run checks, change queue state,
