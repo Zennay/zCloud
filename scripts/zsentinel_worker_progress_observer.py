@@ -1005,6 +1005,10 @@ def worker_progress_html(source):
         if any(value is not None and (type(value) is not int or value < 0)
                for value in (age, progress)):
             raise ValueError("invalid source age")
+        for clock_field in ("event_timestamp_status", "progress_timestamp_status"):
+            if row.get(clock_field, "UNKNOWN") not in (
+                    "OBSERVED", "FUTURE", "UNKNOWN", "NOT_OBSERVED"):
+                raise ValueError("invalid event timestamp quality")
         legacy_row = "timeline" not in row and legacy_snapshot
         timeline = row.get("timeline") if not legacy_row else {
             "timeline_scope": "legacy_snapshot_no_event_chronology",
@@ -1169,6 +1173,8 @@ def worker_progress_html(source):
              else 'ONBEKEND') +
             ' · Eventleeftijd: ' +
             (str(age) + ' sec' if age is not None else 'ONBEKEND') +
+            ' · Eventklok: ' + escape(row.get('event_timestamp_status', 'UNKNOWN')) +
+            ' · Voortgangsklok: ' + escape(row.get('progress_timestamp_status', 'UNKNOWN')) +
             ' · Laatste bronvoortgang: ' +
             (str(progress) + ' sec' if progress is not None else 'ONBEKEND') +
             ' · Laatste indexcursor/progress-eventcursor: ' +
