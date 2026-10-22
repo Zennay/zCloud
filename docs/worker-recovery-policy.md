@@ -987,10 +987,14 @@ Gebruik `GITHUB_TOKEN` alleen voor normale leesrechten op private repos;
 de token wordt niet in de uitvoer gezet.
 
 De nieuwe `scripts/zsentinel_pr_merge_preflight.py` valideert een exacte
-`Zennay/<repo>/pull/<positief-nummer>` URL, gebruikt maximaal vier
-**read-only** GitHub API GETs (PR → HEAD-checks → reviews → dezelfde PR),
-en verifieert vóór het tonen van een stabiele exact-HEAD dat de laatste
-PR-status, base, draft, merged en SHA niet zijn veranderd. De check- en
+`Zennay/<repo>/pull/<positief-nummer>` URL, gebruikt maximaal zes
+**read-only** GitHub API GETs (PR → repository-default-branch → HEAD-checks →
+reviews → repository-default-branch opnieuw → dezelfde PR). Het vergelijkt
+de default branch vóór/na de observatie en geeft `DEFAULT_BRANCH_SOURCE_UNKNOWN`
+als die bron ontbreekt of verandert; `BASE_NOT_DEFAULT` markeert een PR die
+niet naar de waargenomen standaardbranch wijst. PR-status, base, draft,
+merged en SHA worden eveneens opnieuw gelezen vóór de stabiele exact-HEAD
+wordt getoond. De check- en
 reviewpagina zijn **beperkte samples**; zelfs volledig geslaagde zichtbare
 checks bewijzen niet welke CI branch protection verplicht stelt. Reviewstatus,
 onopgeloste threads, owner claims en release-autorisatie blijven apart
