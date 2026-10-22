@@ -77,21 +77,36 @@ def _collect(registry: Path, project: str, kind: str) -> tuple[dict, str, float]
 def _valid_receipt(receipt: object, kind: str) -> bool:
     if not isinstance(receipt, dict):
         return False
+    coverage = receipt.get("coverage")
+    if not isinstance(coverage, list) or not coverage:
+        return False
     if kind == "activity":
-        return (receipt.get("schema") == "zcloud-github-activity-readonly-v1"
-                and receipt.get("feed_complete") is False
-                and receipt.get("authorizes_repair") is False
-                and receipt.get("authorizes_merge") is False
-                and receipt.get("authorizes_deploy") is False
-                and isinstance(receipt.get("coverage"), list)
-                and isinstance(receipt.get("events"), list))
-    return (receipt.get("schema") == "zsentinel-product-issue-inbox-v1"
-            and receipt.get("actions_authorized") is False
-            and receipt.get("queue_ownership_known") is False
-            and receipt.get("active_claims_verified") is False
-            and receipt.get("fully_synchronized") is False
-            and isinstance(receipt.get("coverage"), list)
-            and isinstance(receipt.get("items"), list))
+        return (
+            receipt.get("schema") == "zcloud-github-activity-readonly-v1"
+            and receipt.get("feed_complete") is False
+            and receipt.get("authorizes_repair") is False
+            and receipt.get("authorizes_merge") is False
+            and receipt.get("authorizes_deploy") is False
+            and isinstance(receipt.get("events"), list)
+            and any(
+                isinstance(row, dict)
+                and row.get("status") in {"partial_sources", "partial_error"}
+                and isinstance(row.get("synced_at"), str)
+                for row in coverage
+            )
+        )
+    return (
+        receipt.get("schema") == "zsentinel-product-issue-inbox-v1"
+        and receipt.get("actions_authorized") is False
+        and receipt.get("queue_ownership_known") is False
+        and receipt.get("active_claims_verified") is False
+        and receipt.get("fully_synchronized") is False
+        and isinstance(receipt.get("items"), list)
+        and any(
+            isinstance(row, dict) and row.get("status") in {"partial", "degraded"}
+            for row in coverage
+        )
+    )
 
 
 def read_live(registry: Path, project: str, kind: str = "activity") -> dict:
