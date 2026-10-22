@@ -2993,6 +2993,16 @@ historisch jobbewijs en worden niet als actuele listenerstoring geïnterpreteerd
 De drie tekstregels bevatten de waargenomen jobstatus/conclusie; JSON houdt
 deze velden afzonderlijk vast.
 
+De cross-source-correlator maakt nu ook de overige terminale uitkomsten
+operationeel onderscheidbaar: `startup_failure` gaat naar de GitHub
+workflow/account-eigenaar voor bootstrap/admission-onderzoek; `cancelled`
+naar controle van cancellation actor/concurrency; `stale` vereist een verse
+exacte-head run/job-waarneming; `neutral` en `skipped` zijn geen groene
+verplichte CI. Een afgeronde job zonder herkende conclusie blijft UNKNOWN.
+Alle routes zijn alleen-lezen en weigeren een automatische retry, runner-
+restart, claimwijziging of mergeconclusie. Een historische `success` is
+evenmin bewijs van de huidige listenergezondheid.
+
 De private HTML toont maximaal vijf aanvullende, canonieke exacte joblinks
 uit dezelfde discovery-steekproef (run/job/SHA/status/route gevalideerd).
 Deze extra jobs blijven observation-only, zonder dispatch- of herstelknoppen;
