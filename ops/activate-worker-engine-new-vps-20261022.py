@@ -341,6 +341,7 @@ def main() -> int:
         "extension_present": True, "browser_managed_active": managed,
         "standalone_browser_present": standalone,
         "backend_active": is_active("zennay-cloud.service"),
+        "user_backend_active": is_active("zennay-cloud.service", user=True, env=env),
         "cutover_gate": cutover_gate,
     }
     if standalone:
@@ -355,8 +356,8 @@ def main() -> int:
         raise Refused("final consistent SQLite handoff must be confirmed before --apply")
     if not isinstance(cutover_gate, dict) or cutover_gate.get("clear") is not True:
         raise Refused("atomic fleet cutover gate absent or blocked; integrate guarded writer first")
-    if state["backend_active"]:
-        raise Refused("zCloud backend already active; do not rewrite live scheduler state")
+    if state["backend_active"] or state["user_backend_active"]:
+        raise Refused("zCloud system/user backend already active; refuse duplicate scheduler")
 
     snapshot = backup()
     state["sqlite_backup"] = str(snapshot)
