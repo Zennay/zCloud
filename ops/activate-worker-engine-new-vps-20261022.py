@@ -316,7 +316,7 @@ def main() -> int:
         raise Refused("chatgpt-firefox user service not installed")
     if system_state("zennay-cloud.service") != "loaded":
         raise Refused("zennay-cloud backend service not installed")
-    for timer in ("zcloud-self-heal.timer",)
+    for timer in ("zcloud-self-heal.timer",):
         if system_state(timer) != "loaded":
             raise Refused(f"{timer} not installed; stop before activating")
     # Check the current capacity, contracts, schema and nonexpired claims first.
@@ -446,7 +446,7 @@ def main() -> int:
     )
     # Arm existing recovery timers only after browser and slot proof. Never
     # stop/restart a live browser or queue worker as part of fleet activation.
-    for timer in ("zcloud-self-heal.timer",)
+    for timer in ("zcloud-self-heal.timer",):
         command("sudo", "-n", "systemctl", "enable", "--now", timer, timeout=25)
         if not is_active(timer):
             raise Refused(f"{timer} failed to become active")
