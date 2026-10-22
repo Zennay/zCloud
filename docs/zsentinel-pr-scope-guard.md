@@ -3466,3 +3466,16 @@ Oudere bewaarde werkopdrachten zonder dit optionele veld blijven leesbaar.
 Nieuwe waarden worden begrensd en op een veilige reason-code-vorm gecontroleerd.
 De waarschuwing is alleen broncontext: bestaande owner/lease-, exact-HEAD-CI-,
 review-, branch-protection- en releasechecks blijven afzonderlijk vereist.
+
+## 22 oktober · één gedeelde Nederlandstalige bronbeperkingsuitleg
+
+Dezelfde machineleesbare reden-codes behouden hun stabiele JSON-identiteit,
+maar tekst, Markdown, offline HTML, CSV-waarschuwingen en per-PR-werkopdrachten
+gebruiken nu één gedeelde vertaling naar mensentaal. Redenen uit historische
+snapshotvergelijkingen behouden bovendien de aanduiding `vorige snapshot` of
+`huidige snapshot`. Onbekende toekomstige codes vallen veilig terug op een
+zichtbare generieke uitleg; de broncode zelf blijft beschikbaar in de
+gestructureerde brondata.
+
+Hierdoor krijgt de eigenaar zowel de concrete reden als het juiste meetmoment,
+zonder extra bronverzoeken of impliciete claim-/merge-/releasebesluiten.
