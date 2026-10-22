@@ -209,9 +209,19 @@ def observe_discovered_job(token=None, host_pressure=False):
             combined["problem"] = (
                 "GitHub-workflow wacht op toestemming/concurrency; "
                 "er is geen exacte runnerjob als herstelkandidaat.")
-            combined["next_action"] = (
-                "Bevoegde workflow-eigenaar controleert de gekoppelde "
-                "approval-run; geen runnerrestart of automatische goedkeuring.")
+            approval_links = row.get("approval_wait_workflows", [])
+            if approval_links and row.get("approval_links_coverage") == "bounded_observed":
+                # CLI is a three-line handoff, not only an HTML dashboard.
+                # Include the EXACT validated workflow URL so the authorized
+                # owner can act without guessing a missing job identifier.
+                combined["next_action"] = (
+                    "Controleer de exacte workflow met bevoegde eigenaar: " +
+                    approval_links[0]["url"] +
+                    " · geen runnerrestart of automatische goedkeuring.")
+            else:
+                combined["next_action"] = (
+                    "Bevoegde workflow-eigenaar controleert approval/concurrency "
+                    "via actuele GitHub-bron; geen runnerrestart of goedkeuring.")
         report = {
             "schema": "zsentinel-single-exact-runner-workbench-v1",
             "runner": combined,
