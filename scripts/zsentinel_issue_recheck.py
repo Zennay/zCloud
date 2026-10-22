@@ -122,6 +122,8 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
                 "/repos/" + item["repository"] + "/issues/" + str(item["number"]),
                 token=token,
             )
+            if type(payload) is not dict or payload.get("html_url") != item["url"]:
+                raise GitHubReadError("GitHub issue detail canonical URL mismatch")
             summary = _issue_summary(payload, item["repository"], item["number"])
         except GitHubReadError as exc:
             # The existing GitHub reader distinguishes a canonical 404 from
