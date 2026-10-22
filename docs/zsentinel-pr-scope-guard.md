@@ -2888,3 +2888,29 @@ Ook wanneer de steekproef geen botsing toont, staan de daadwerkelijk bekeken
 PR-identiteiten met HEAD, doelbranch en bestandlijstdekking expliciet in
 operator-tekst, Markdown, offline HTML en private CSV. Die lijst blijft een
 begrensde observatie en noemt geen PR claimvrij of mergeklaar.
+
+
+
+## 22 oktober · doelbranch als onderdeel van PR-bronidentiteit
+
+De branchnaam van de PR-doelbasis is nu naast de base-commit-SHA onderdeel van
+de exacte gatewaarneming. De live collector valideert `base.ref` en leest die
+bij de tweede PR-opvraag opnieuw; een retarget tijdens het verzamelen maakt de
+waarneming onzeker, ook wanneer beide branches toevallig naar dezelfde commit
+wijzen. De scope-inventaris, gatecollector en merge-first werkbak moeten op
+dezelfde HEAD, base-SHA én doelbranch uitkomen voordat een kaart als bronvast
+wordt getoond.
+
+De doelbranch wordt meegenomen in de operatorwerkopdracht, private CSV,
+historische gatevergelijking, opgeslagen gatebatches en de samengevoegde
+cross-window botsingsgrafiek. Bij historische snapshots zonder branchveld
+blijft de branchidentiteit **ONBEKEND**; zulke oude snapshots kunnen niet
+worden aangemerkt als dezelfde stabiele gatewaarneming. De scope-delta toont
+een ontbrekende doelbranch expliciet in plaats van die als ongewijzigd te
+behandelen. De botsingsgrafiek vermeldt de doelbranch van beide PR's naast
+gedeelde paden, zodat een gedeeld bestand op verschillende release-targets
+niet wordt verward met bewezen Git-mergeconflict.
+
+Geen van deze velden is branch-protectionbewijs, eigenaarschap, claimvrijgave,
+reviewapproval of merge-/deployautorisatie. Bestaande verplichte CI en
+onafhankelijke review blijven afzonderlijke gates.
