@@ -908,8 +908,8 @@ def render(report, fmt):
         ("<li>Meer groepen buiten de begrensde weergave.</li>"
          if report["connected_cross_window_groups_truncated"] else "") +
         "</ol>"
-        "<table><thead><tr><th>Open bron-PRs</th><th>Gedeelde paden</th>"
-        "<th>Doelbranches</th><th>Geobserveerde bestanden</th></tr></thead><tbody>" +
+        "<table><thead><tr><th>Open bron-PRs</th><th>Gedeelde bestanden</th>"
+        "<th>Doelbranches</th><th>Voorbeeldpaden</th></tr></thead><tbody>" +
         (rows or "<tr><td colspan='4'>Geen botsing gezien, geen vrijgave.</td></tr>") +
         "</tbody></table><h2>Zelfde nummer in PR-titel of body over vensters</h2>"
         "<p>Niet geverifieerd als bestaand issue of bewezen fix. Controleer GitHub.</p>"
