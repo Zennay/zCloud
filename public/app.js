@@ -380,10 +380,12 @@ function blockedQueueTime(value){
 function blockedQueueChurnHint(item){
   const attempts=Number.isSafeInteger(item?.attempts)&&item.attempts>=3?item.attempts:0;
   if(!attempts)return '';
-  // Attempts are claim events, NOT proof of errors or a retry budget violation.
+  // Attempt counts are observations for THIS task, not proven #677 incidents
+  // and never permission to retry, release a lease or reassign a worker.
+  const source=blockedQueueSourceUrl(item.source_url);
   return '<p class="blocked-queue-churn" role="note"><strong>'+attempts+
-    ' recorded claims</strong> · repeated allocation observed; inspect the source, no automatic retry. '
-    +'<a href="https://github.com/Zennay/zCloud/issues/677" target="_blank" rel="noopener noreferrer">Churn issue #677 ↗</a></p>';
+    ' recorded claim attempts</strong> · not proven failures or a known retry defect. '
+    +(source?'<a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Open this task’s source ↗</a>':'No canonical issue/PR is linked.')+'</p>';
 }
 function blockedQueueSelectedRows(items){
   const scoped=blockedQueueProject==='all'?items:items.filter(item=>String(item.project_id||'')===blockedQueueProject);
@@ -552,11 +554,11 @@ function downloadClaimChurnHandoff(){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function claimChurnPanel(projectId=''){
-  // #677: most repeated claims are still queued or running; the BLOCKED-only
-  // worklist cannot explain them. Use the same already-authorized queue GET.
+  // Repeated allocation does not automatically attribute a task to issue #677.
+  // Use a bounded per-task source view, not an invented portfolio-level link.
   if(!Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)){
     return '<section class="claim-churn-panel" aria-label="Claim churn">'
-      +'<div class="claim-churn-head"><div><span class="eyebrow">CLAIM CHURN · ISSUE #677</span>'
+      +'<div class="claim-churn-head"><div><span class="eyebrow">REPEATED CLAIM ATTEMPTS</span>'
       +'<h2>Active queue source unavailable</h2><p>Cannot determine claim-attempt history. No task is modified.</p></div></div></section>';
   }
   const {all,matching}=claimChurnRows(projectId);
@@ -564,6 +566,8 @@ function claimChurnPanel(projectId=''){
   const observed=blockedQueueTime(blockedQueueObservedAt);
   const freshness=claimChurnSnapshotFreshness();
   const warnings=all.filter(claimChurnNeedsOwnerReview).length;
+  const sourceQualifier=freshness.state==='recent_observation'?'Current queue observation':
+    'Historical queue observation · current claim state UNKNOWN';
   const rows=matching.slice(0,show).map(item=>{
     const owned=['claimed','running','verifying'].includes(item.status);
     const slot=Number.isSafeInteger(item.worker_slot)&&item.worker_slot>0
@@ -586,8 +590,8 @@ function claimChurnPanel(projectId=''){
       +' · '+esc(owned||integrity==='unexpected-claim-fields'?slot:'No recorded queue claim')
       +' · '+esc(DATA.projects.find(p=>p.id===item.project_id)?.name||item.project_id||'Unknown project')+'</p>'
       +'<div class="claim-churn-lease '+(anomaly?'is-expired':'')+'">'+esc(ownerCopy||leaseCopy)+'</div>'
-      +'<small>Last queue update '+esc(blockedQueueTime(item.updated_at)||'unknown')
-      +' · Claim events are not proven failures. No retry or reassignment is offered.</small>'
+      +'<small>'+esc(sourceQualifier)+' · Last queue update '+esc(blockedQueueTime(item.updated_at)||'unknown')
+      +' · Attempts are not proven failures or issue #677 attribution. No retry or reassignment is offered.</small>'
       +(source?'<div class="claim-churn-source"><a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Open canonical issue or PR ↗</a></div>':'')
       +'</article>';
   }).join('');
@@ -602,7 +606,7 @@ function claimChurnPanel(projectId=''){
     +'<button type="button" data-claim-churn-anomalies aria-pressed="'+claimChurnAnomaliesOnly+'">'
     +(claimChurnAnomaliesOnly?'Show all claims':'Only owner/lease warnings')+'</button></div>');
   return '<section class="claim-churn-panel" aria-label="Claim churn">'
-    +'<div class="claim-churn-head"><div><span class="eyebrow">CLAIM CHURN · ISSUE #677</span>'
+    +'<div class="claim-churn-head"><div><span class="eyebrow">REPEATED CLAIM ATTEMPTS</span>'
     +'<h2>'+all.length+' active or queued task'+(all.length===1?'':'s')+' with ≥3 claims</h2>'
     +'<p>Claim attempts are an allocation counter, not proof of failure. '+warnings+' observed owner/lease warnings require review; never reclaim automatically.</p>'
     +'</div><a href="https://github.com/Zennay/zCloud/issues/677" target="_blank" rel="noopener noreferrer">Open #677 ↗</a></div>'
