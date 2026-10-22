@@ -357,23 +357,60 @@ def _checks_summary(payload, sha, full_name):
     }
 
 
-def _review_summary(rows):
+def _review_summary(rows, exact_head_sha=None):
     if not isinstance(rows, list) or len(rows) > MAX_LIST_PAGE:
         raise GitHubReadError("bounded PR review sample invalid")
+    if exact_head_sha is not None and (
+            not isinstance(exact_head_sha, str) or not SHA.fullmatch(exact_head_sha)):
+        raise GitHubReadError("review binding HEAD missing or invalid")
+    valid_states = (
+        "APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"
+    )
     states = {}
+    exact_head_states = {}
+    other_head_states = {}
+    unbound_states = {}
+    exact_head_count = other_head_count = unbound_count = 0
     for row in rows:
         if not isinstance(row, dict):
             raise GitHubReadError("invalid review entry")
         state = row.get("state")
-        if isinstance(state, str) and state in (
-            "APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"
-        ):
-            states[state] = states.get(state, 0) + 1
-    return {
+        valid_state = state if isinstance(state, str) and state in valid_states else None
+        if valid_state is not None:
+            states[valid_state] = states.get(valid_state, 0) + 1
+        if exact_head_sha is None:
+            continue
+        commit_id = row.get("commit_id")
+        if not isinstance(commit_id, str) or not SHA.fullmatch(commit_id):
+            unbound_count += 1
+            if valid_state is not None:
+                unbound_states[valid_state] = unbound_states.get(valid_state, 0) + 1
+        elif commit_id == exact_head_sha:
+            exact_head_count += 1
+            if valid_state is not None:
+                exact_head_states[valid_state] = exact_head_states.get(valid_state, 0) + 1
+        else:
+            other_head_count += 1
+            if valid_state is not None:
+                other_head_states[valid_state] = other_head_states.get(valid_state, 0) + 1
+    result = {
         "sampled_count": len(rows), "may_be_truncated": len(rows) == MAX_LIST_PAGE,
         "observed_review_states": states,
         "independent_review_verdict": "UNKNOWN",
+        "review_binding_sha": exact_head_sha,
+        "exact_head_review_count": exact_head_count if exact_head_sha is not None else None,
+        "other_head_review_count": other_head_count if exact_head_sha is not None else None,
+        "unbound_review_count": unbound_count if exact_head_sha is not None else None,
+        "observed_review_states_exact_head": exact_head_states if exact_head_sha is not None else None,
+        "observed_review_states_other_heads": other_head_states if exact_head_sha is not None else None,
+        "observed_review_states_unbound": unbound_states if exact_head_sha is not None else None,
+        "exact_head_review_coverage": (
+            "NOT_REQUESTED" if exact_head_sha is None else
+            "PARTIAL" if unbound_count or len(rows) == MAX_LIST_PAGE else
+            "OBSERVED"
+        ),
     }
+    return result
 
 
 def _discover_sampled_open_prs(issue_url, *, token=None):
@@ -952,7 +989,7 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
                     reviews = _review_summary(_limited_json(
                         api + "/pulls/" + str(number) +
                         "/reviews?per_page=" + str(MAX_LIST_PAGE), token=token
-                    ))
+                    ), before["exact_head_sha"])
                 except GitHubReadError as exc:
                     source_gaps.append("reviews: " + str(exc))
                     if "authentication, quota or provider admission" in str(exc):
