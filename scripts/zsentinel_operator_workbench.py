@@ -4759,6 +4759,7 @@ function deltaCsvSource(){
   'issue','original_issue_url','priority_previous','priority_current',
   'project_previous','project_current','changed_source_fields',
   'previous_project_coverage','current_project_coverage',
+  'previous_project_coverage_note','current_project_coverage_note',
   'previous_snapshot_partial_or_denied','current_snapshot_partial_or_denied',
   'not_observed_proves_resolved','claim_authorized','merge_authorized','deploy_authorized'];
  const oldPartial=baseline.coverage.inbox_truncated||
@@ -4775,6 +4776,7 @@ function deltaCsvSource(){
    change.changedFields?.join(' | ')||'',
    baseline.coverage.projects[projectBefore]||'unavailable',
    board.coverage.projects[projectAfter]||'unavailable',
+   before?.issue_coverage_note||'UNKNOWN',after?.issue_coverage_note||'UNKNOWN',
    String(oldPartial),String(newPartial),'false','false','false','false'];
  });
  if(!rows.length)return null;
@@ -4785,6 +4787,7 @@ function projectDeltaCsvSource(){
  const cols=['previous_board_sha256','current_board_sha256',
   'previous_observed_at_utc','current_observed_at_utc','change_kind',
   'project','changed_source_fields','previous_project_coverage','current_project_coverage',
+  'previous_project_coverage_note','current_project_coverage_note',
   'previous_claim_context','current_claim_context',
   'previous_recommended_next_step','current_recommended_next_step',
   'previous_queue_observation_present','current_queue_observation_present',
@@ -4810,6 +4813,7 @@ function projectDeltaCsvSource(){
   return [baseline.sha,boardSha,baseline.observed_at_utc,board.observed_at_utc,
    change.kind,change.project,change.changedFields?.join(' | ')||'',
    before?.issue_coverage||'',after?.issue_coverage||'',
+   before?.issue_coverage_note||'UNKNOWN',after?.issue_coverage_note||'UNKNOWN',
    before?.claim_context||'',after?.claim_context||'',
    before?.recommended_next_step||'',after?.recommended_next_step||'',
    String(Boolean(before?.queue_observation)),String(Boolean(after?.queue_observation)),
@@ -4882,7 +4886,7 @@ function csvSource(){
   'issue','original_issue_url','issue_title','observed_pr_candidates',
   'observed_evidence_gaps','recommended_next_step','human_disposition',
   'private_followup_status','human_review_date_utc','snapshot_project_coverage',
-  'snapshot_inbox_truncated','snapshot_cards_truncated','snapshot_github_denial',
+  'snapshot_project_coverage_note','snapshot_inbox_truncated','snapshot_cards_truncated','snapshot_github_denial',
   'claim_authorized','merge_authorized','deploy_authorized',
   ...(privateFields?['private_contact_label','private_operator_note']:[])];
  const rows=filtered().map(c=>{
@@ -4892,7 +4896,7 @@ function csvSource(){
    c.recommended_next_step,v?.decision||'investigate',
    manualGateDecisions.has(v?.decision)?v?.followup_status||'open':'not-configured',
    manualGateDecisions.has(v?.decision)?v?.due||'':'',
-   board.coverage.projects[c.project]||'unavailable',
+   board.coverage.projects[c.project]||'unavailable',c.issue_coverage_note,
    String(board.coverage.inbox_truncated),
    String(board.coverage.cards_truncated),String(board.coverage.github_denial),
    'false','false','false',...(privateFields?[v?.owner||'',v?.note||'']:[])];
