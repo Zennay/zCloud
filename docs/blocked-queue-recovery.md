@@ -889,7 +889,11 @@ It applies these rules:
   An unchanged duplicate still returns the original without a write.
 - A duplicate whose requested fields already match is **idempotent**:
   it returns the existing task without changing `updated_at` or creating
-  artificial activity/churn.
+  artificial activity/churn. The API result exposes
+  `enqueue_admission=existing_unchanged`, not an invented new task.
+  Successfully created rows expose `created`; updates to an untouched queued
+  item expose `updated_unclaimed`. These response markers are advisory
+  descriptions of the completed transaction, never scheduling permission.
 - Explicit queue identifiers must be 1–160 characters of canonical ASCII
   `[A-Za-z0-9._:-]`. The server rejects whitespace, Unicode/confusable
   aliases, invalid punctuation and overlong identifiers instead of silently
