@@ -5004,7 +5004,11 @@ class Handler(BaseHTTPRequestHandler):
                 incidents=enhancements.incident_center(DB,runners,data=data)
                 return self.reply({**public_status(data),'chatgpt_runner':runner_status(target_cfg=target_cfg),'chatgpt_runners':runners,'chatgpt_firefox':firefox_runner_status(),'dynamic_workers':dynamic_worker_settings(),'incidents':incidents})
             if u.path=='/api/v1/watch':return self.reply(watch_summary(data))
-            if u.path=='/api/v1/alerts':return self.reply({'time':data['time'],'alerts':enhancements.list_alerts(DB,20,True)})
+            if u.path=='/api/v1/alerts':
+                alerts, source = enhancements.list_alerts(DB,20,True,with_source_status=True)
+                return self.reply({'time':data['time'],'alerts':alerts,
+                                   'alerts_source_status':source,
+                                   'alerts_source_complete':source=='observed'})
             if u.path=='/api/alerts':return self.reply(enhancements.list_alerts(DB,20,False))
             if u.path=='/api/resources':return self.reply(enhancements.resource_snapshot())
             if u.path=='/api/v1/watch/project':
