@@ -74,6 +74,9 @@ def _validate_snapshot(report):
             item.get("repository"), item.get("number"),
             item.get("url"), item.get("priority_rank"),
         )
+        issue_updated = item.get("issue_updated_at_utc")
+        if issue_updated is not None:
+            _timestamp(issue_updated)
         if (type(repo) is not str or repo not in state_by_repo or state_by_repo[repo] not in
                 ("SAMPLED", "INCOMPLETE") or type(num) is not int or num < 1
                 or type(rank) is not int or rank not in range(7)
@@ -85,7 +88,8 @@ def _validate_snapshot(report):
         if url in unique:
             raise PolicyInputError("duplicate issue in source snapshot")
         unique[url] = {"repository": repo, "number": num,
-                       "url": url, "priority_rank": rank}
+                       "url": url, "priority_rank": rank,
+                       "issue_updated_at_utc": issue_updated}
     return _timestamp(report.get("generated_at_utc")), repositories, state_by_repo, unique
 
 
@@ -144,6 +148,11 @@ def compare_snapshots(previous, current):
                 kind = "NEWLY_OBSERVED_NOT_PROVEN_NEW"
             elif before[url]["priority_rank"] != item["priority_rank"]:
                 kind = "OBSERVED_PRIORITY_CHANGE"
+            elif (item["priority_rank"] in (0, 1)
+                  and before[url]["issue_updated_at_utc"] is not None
+                  and before[url]["issue_updated_at_utc"] == item["issue_updated_at_utc"]
+                  and (after_at - before_at).total_seconds() >= 6 * 3600):
+                kind = "PERSISTENT_P0_P1_WITHOUT_GITHUB_ISSUE_UPDATE"
             else:
                 continue
             changes.append({
@@ -170,6 +179,7 @@ def compare_snapshots(previous, current):
     ))
     counts = {name: sum(c["change"] == name for c in changes) for name in (
         "NEWLY_OBSERVED_NOT_PROVEN_NEW", "OBSERVED_PRIORITY_CHANGE",
+        "PERSISTENT_P0_P1_WITHOUT_GITHUB_ISSUE_UPDATE",
         "NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED",
     )}
     return {
