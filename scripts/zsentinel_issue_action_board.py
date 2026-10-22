@@ -317,6 +317,8 @@ def build(report):
                 "source_head_observed": linked["source_head_observed"],
                 "source_head_receipts_consistent": True,
                 "any_file_overlap_observed": False,
+                "any_file_directory_overlap_observed": False,
+                "file_directory_conflict_peers_observed_max": 0,
                 "any_historical_movement_observed": False,
                 "fixes_all_linked_issues_verified": False,
                 "current_owner_verified": False,
@@ -335,6 +337,11 @@ def build(report):
             if linked["gate_state"] not in group["gate_states_observed_in_source"]:
                 group["gate_states_observed_in_source"].append(linked["gate_state"])
             group["any_file_overlap_observed"] |= linked["file_overlap_observed"]
+            group["any_file_directory_overlap_observed"] |= linked[
+                "file_directory_overlap_observed"]
+            group["file_directory_conflict_peers_observed_max"] = max(
+                group["file_directory_conflict_peers_observed_max"],
+                linked["file_directory_conflict_peer_count_observed"])
             group["any_historical_movement_observed"] |= linked["source_movement_observed"]
             if pr_url == card["candidate_existing_pr_url"]:
                 group["primary_issue_urls_in_source"].append(card["issue_url"])
@@ -384,6 +391,8 @@ def build(report):
             group["source_head_receipts_consistent"] is not True for group in pr_groups),
         "pr_groups_with_unknown_head": sum(
             group["source_head_observed"] is None for group in pr_groups),
+        "pr_groups_with_observed_file_directory_collision": sum(
+            group["any_file_directory_overlap_observed"] for group in pr_groups),
         "observed_action_counts": dict(sorted(totals.items())),
         "cards": cards,
         "current_claims_verified": False,
@@ -566,6 +575,8 @@ def render_merge_first_csv(board, max_rows=20):
         "pr_url", "observed_pr_head", "observed_pr_gate",
         "related_issue_count_observed", "related_issue_urls_visible",
         "human_action_category", "human_next_step",
+        "file_directory_scope_collision_observed",
+        "file_directory_scope_peer_count_observed",
         "issue_activity_signal", "issue_updated_at",
         "issue_source_observed_at_utc", "pr_source_observed_at_utc",
         "issue_coverage", "pr_coverage",
@@ -614,6 +625,8 @@ def render_merge_first_csv(board, max_rows=20):
             group["linked_issue_count_observed"],
             " | ".join(matches),
             "existing_pr_owner_review", group["human_next_gate_step"],
+            "YES" if group["any_file_directory_overlap_observed"] else "NO",
+            group["file_directory_conflict_peers_observed_max"],
             "", "", board.get("observed_issue_source_at_utc"),
             board.get("observed_pr_source_at_utc"),
             "sample_complete" if issue_scope_complete else "partial",
@@ -639,6 +652,10 @@ def render_merge_first_csv(board, max_rows=20):
             " | ".join(item["url"] for item in
                        card["all_existing_pr_candidates_in_sample"]),
             card["category"], card["human_next_step_nl"],
+            "YES" if any(pr["file_directory_overlap_observed"] for pr in
+                         card["all_existing_pr_candidates_in_sample"]) else "NO",
+            max((pr["file_directory_conflict_peer_count_observed"]
+                 for pr in card["all_existing_pr_candidates_in_sample"]), default=0),
             card["activity_signal"], card["issue_updated_at"],
             board.get("observed_issue_source_at_utc"),
             board.get("observed_pr_source_at_utc"),
