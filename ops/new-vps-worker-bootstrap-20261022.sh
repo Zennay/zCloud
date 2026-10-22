@@ -56,7 +56,7 @@ if [[ "$ACTION" == prepare ]]; then
     bin="${spec%%:*}"; package="${spec#*:}"
     command -v "$bin" >/dev/null 2>&1 || missing+=("$package")
   done
-  if (("${#missing[@]}" > 0)); then
+  if ((${#missing[@]} > 0)); then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y "${missing[@]}"
