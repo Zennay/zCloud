@@ -793,13 +793,11 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             count = item["observed_claim_clock_recheck_min"]
             priority = "P1" if item["observed_in_progress_min"] else "P2"
             action = (
-                "Notion toont minstens " + str(count) +
-                " onvolledige/verlopen/ongeldige claimklokken voor " +
-                project + " (minstens " +
+                "Notion " + project + ": " + str(count) +
+                " verdachte of ontbrekende claimklokken; " +
                 str(item["observed_in_progress_min"]) +
-                " Claimed/Running-statusregels). Bevoegde project- en "
-                "queue-eigenaar verifieert bestaande PR, claimvenster en "
-                "werkerslot; NIET vrijgeven, overnemen, herstarten of retriggeren.")
+                " Claimed/Running-statusregels. Eigenaar checkt originele "
+                "queuelease en PR; GEEN claim, vrijgave, retry of herstart.")
             card = _card(
                 priority, project, "notion_claim_clock_owner_review",
                 action, source="recent_readonly_notion_claim_fields_unverified")
@@ -1636,7 +1634,15 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
         },
         "notion_owner_status_review": notion_owner_status,
         "notion_claim_clock_owner_review": {
-            "affected_project_groups_observed": notion_clock_review_count,
+            "affected_project_groups_in_sample": notion_clock_review_count,
+            "coverage": (
+                notion_owner_status["coverage"]
+                if notion_owner_status is not None
+                and notion_owner_status["coverage"] in
+                ("live_readonly_bounded", "live_readonly_incomplete")
+                and notion_owner_status["source_age_seconds"] is not None
+                and notion_owner_status["source_age_seconds"] <= 600
+                else "not_observed_or_stale"),
             "owner_cards_sample_truncated": notion_clock_review_truncated,
             "source_only_not_lease_proof": True,
             "claim_authorized": False, "retry_authorized": False,
