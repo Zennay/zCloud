@@ -316,7 +316,7 @@ def _validate(data):
 def recommended_next_step_code(action, blockers):
     """Stable machine-readable routing hint, not permission to execute the route."""
     codes = {item["code"] for item in blockers}
-    if codes & {"source_stale", "source_not_verified", "source_future_dated"} or any(
+    if codes & {"source_stale", "source_not_verified", "source_future_dated", "task_claim_source_unknown"} or any(
         code.endswith(("_missing", "_after_receipt", "_stale"))
         and code.startswith(("blocked_source_observed_at_utc",
                              "queue_lease_observed_at_utc",
@@ -324,7 +324,7 @@ def recommended_next_step_code(action, blockers):
         for code in codes
     ):
         return "refresh_source"
-    if codes & {"claim_not_clear", "claim_state_unknown"}:
+    if codes & {"claim_not_clear", "claim_state_unknown", "queue_lease_not_clear", "task_claim_not_clear"}:
         if codes & {"owner_missing", "human_owner_missing"}:
             return "identify_claim_owner"
         return "resolve_claim_with_owner"
@@ -398,7 +398,15 @@ def recommended_next_step_code(action, blockers):
 def recommended_next_step(action, blockers, required_evidence):
     """Give a deterministic safe handoff; never turn policy output into execution."""
     codes = {item["code"] for item in blockers}
-    if codes & {"source_stale", "source_not_verified", "source_future_dated"} or any(
+    if action == "assign_independent_work" and "task_claim_source_unknown" in codes:
+        return "Re-read the independent task's separate task-claim source and queue lease; do not admit work while the claim source is unavailable."
+    if action == "assign_independent_work" and any(
+        code.endswith(("_missing", "_after_receipt", "_stale"))
+        and code.startswith(("queue_lease_observed_at_utc", "task_claim_observed_at_utc"))
+        for code in codes
+    ):
+        return "Reobserve the independent task's queue lease and separate task claim at current source time; a fresh wrapper receipt cannot refresh older evidence."
+    if codes & {"source_stale", "source_not_verified", "source_future_dated", "task_claim_source_unknown"} or any(
         code.endswith(("_missing", "_after_receipt", "_stale"))
         and code.startswith(("blocked_source_observed_at_utc",
                              "queue_lease_observed_at_utc",
@@ -406,7 +414,7 @@ def recommended_next_step(action, blockers, required_evidence):
         for code in codes
     ):
         return "Reobserve the exact blocked row, queue lease and separate task claims at current source time; a fresh wrapper receipt cannot refresh older evidence."
-    if codes & {"claim_not_clear", "claim_state_unknown"}:
+    if codes & {"claim_not_clear", "claim_state_unknown", "queue_lease_not_clear", "task_claim_not_clear"}:
         if codes & {"owner_missing", "human_owner_missing"}:
             return "Identify the current claim owner from live source evidence; do not preempt, reassign, or mutate the queue."
         return "Ask the current owner to confirm or release the exact claim; do not preempt, reassign, or mutate the queue."
@@ -516,36 +524,42 @@ def evaluate(data, max_age_minutes, *, now=None):
     # used to justify an ownership-changing route. A missing/old/future-
     # relative source clock is a HOLD; these remain supplied observations,
     # not independent proof and never authorize a queue action.
-    if action in {"park_blocker", "resume_blocked", "close_blocked"}:
+    snapshot_sources = ()
+    if action == "assign_independent_work":
+        snapshot_sources = (
+            ("queue_lease_observed_at_utc", "queue lease"),
+            ("task_claim_observed_at_utc", "separate task claim"),
+        )
+    elif action in {"park_blocker", "resume_blocked", "close_blocked"}:
         snapshot_sources = (
             ("blocked_source_observed_at_utc", "blocked row"),
             ("queue_lease_observed_at_utc", "queue lease"),
             ("task_claim_observed_at_utc", "separate task claim"),
         )
-        for field, label in snapshot_sources:
-            supplied = value(field)
-            if supplied is None:
-                source_clocks[field] = {"status": "missing", "age_seconds": None}
-                require(False, field + "_missing",
-                        "Current " + label + " source observation clock is missing.",
-                        ("evidence." + field,))
-                continue
-            snapshot_at = _timestamp(supplied)
-            clock_age_seconds = max(0, int((now - snapshot_at).total_seconds()))
-            clock_status = ("after_receipt" if snapshot_at > observed + timedelta(minutes=2)
-                            else "stale" if now - snapshot_at > timedelta(minutes=max_age_minutes)
-                            else "within_configured_window")
-            source_clocks[field] = {
-                "status": clock_status, "age_seconds": clock_age_seconds,
-            }
-            require(snapshot_at <= observed + timedelta(minutes=2),
-                    field + "_after_receipt",
-                    "The " + label + " observation postdates the reported source receipt.",
-                    ("evidence." + field, "observed_at_utc"))
-            require(now - snapshot_at <= timedelta(minutes=max_age_minutes),
-                    field + "_stale",
-                    "The " + label + " observation exceeds the configured source freshness window.",
+    for field, label in snapshot_sources:
+        supplied = value(field)
+        if supplied is None:
+            source_clocks[field] = {"status": "missing", "age_seconds": None}
+            require(False, field + "_missing",
+                    "Current " + label + " source observation clock is missing.",
                     ("evidence." + field,))
+            continue
+        snapshot_at = _timestamp(supplied)
+        clock_age_seconds = max(0, int((now - snapshot_at).total_seconds()))
+        clock_status = ("after_receipt" if snapshot_at > observed + timedelta(minutes=2)
+                        else "stale" if now - snapshot_at > timedelta(minutes=max_age_minutes)
+                        else "within_configured_window")
+        source_clocks[field] = {
+            "status": clock_status, "age_seconds": clock_age_seconds,
+        }
+        require(snapshot_at <= observed + timedelta(minutes=2),
+                field + "_after_receipt",
+                "The " + label + " observation postdates the reported source receipt.",
+                ("evidence." + field, "observed_at_utc"))
+        require(now - snapshot_at <= timedelta(minutes=max_age_minutes),
+                field + "_stale",
+                "The " + label + " observation exceeds the configured source freshness window.",
+                ("evidence." + field,))
     # Approval booleans alone cannot identify the person accountable for an
     # execution-impacting recommendation. A missing named owner is always HOLD.
     if action in {
@@ -608,6 +622,18 @@ def evaluate(data, max_age_minutes, *, now=None):
         require(value("scope_disjoint") is True,
                 "scope_overlap_unknown", "Disjointness from active work must be positively established.",
                 ("evidence.scope_disjoint",))
+        require(value("queue_lease_state") == "clear",
+                "queue_lease_not_clear",
+                "The independent task's queue slot, claim timestamp and lease must all be clear.",
+                ("evidence.queue_lease_state",))
+        require(value("task_claim_source_available") is True,
+                "task_claim_source_unknown",
+                "The separate task-claim source must be readable before admitting independent work.",
+                ("evidence.task_claim_source_available",))
+        require(value("task_claim_state") == "none",
+                "task_claim_not_clear",
+                "The separate task-claim source must explicitly show no owner.",
+                ("evidence.task_claim_state",))
         require(value("active_claim") == "none",
                 "claim_not_clear", "An active or unknown claim must not be displaced.",
                 ("evidence.active_claim",))
