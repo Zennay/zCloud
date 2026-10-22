@@ -184,9 +184,11 @@ commands but no longer controls whether this safety input is collected.
   authorization to add workers. Current RAM, swap, CPU, PSI and root-disk
   pressure are advisory evidence, not proof of cgroup headroom or runner
   assignment.
-- `host_admission` explains the visible result in text/JSON; offline HTML
-  reuses each lane's concrete HOLD label and the existing host-pressure
-  section.
+- `host_admission` and the canonical `admission_summary.held_by_host_pressure`
+  explain the result in text/JSON; offline HTML reuses each lane's concrete
+  HOLD label and the existing host-pressure section. The older
+  `held_by_optional_host_pressure` JSON key remains only as a compatibility
+  alias; host-pressure admission is no longer optional.
 
 No new processes, worker claims, governor writes, service actions,
 CI triggers or QA suites. This is a read-only, **conservative** owner
