@@ -501,9 +501,14 @@ repository issues listing that also contains PRs. It independently
 rejects any PR-shaped result, validates every retained issue URL and
 repository, and displays at most 45 links. Maximum network cost:
 **7 GitHub Search GETs**, each capped at 2 MiB. The normal recent
-inventory has at most 3 pages. Only if recent coverage is truncated or
-GitHub flags incomplete results does zSentinel make up to four additional
-issue-only searches, **one 30-row page per source**: `label:P0,...`
+inventory has at most 3 pages. If a Search page ends early while
+GitHub still reports unseen issues, the inbox continues bounded pagination
+instead of treating that short page as proof the inventory is complete.
+Only if recent coverage is truncated, GitHub flags incomplete results,
+the reported total changes, duplicate recent issue records imply moving
+page boundaries, or invalid issue rows prevent complete admission does
+zSentinel make up to four additional issue-only searches,
+**one 30-row page per source**: `label:P0,...`
 and `label:P1,...` (explicit label variants including `priority:P0`
 and `priority/P0`), followed by `P0 in:title` and `P1 in:title`.
 Each labeled search hit is checked against the actual returned issue's
@@ -526,6 +531,12 @@ repeated issue has inconsistent timestamps or priority signals, the
 issue's derived urgency is set to UNKNOWN and a source-drift warning
 is shown; when the repository's reported issue count changes across
 recent pages, overall coverage is also marked partial/UNKNOWN.
+The outputs also expose `recent_rows_read`,
+`recent_duplicate_issue_records`, and `recent_issue_window_complete`.
+This completeness signal requires a finished, stable, fully admitted
+recent window; it remains false when repeated GitHub results or malformed
+issue rows may have displaced other open incidents. All recovery searches
+remain within the original absolute 7-GET limit.
 Incomplete search, truncated display, inaccessible source or changing
 issue records never prove the absence of P0 incidents or permit
 duplicate repair PR creation.
@@ -535,6 +546,9 @@ Only explicit `P0`–`P3` or `priority:p0`–`priority:p3`
 priority; conflicts become UNKNOWN. An issue title beginning with
 `P0:` or `P1:` may appear as a clearly unverified,
 secondary **navigation hint**, not a verified priority or authority.
+An explicitly labelled P2/P3 issue remains in its labelled priority group
+even when its title contradictorily begins with P0/P1. Incomplete or
+malformed label sets never promote a title hint into prioritized triage.
 The original issue title/body, user names, private label names and
 tokens are never exported; the operator receives canonical issue
 links, observed priority labels (not the original label text), limited
