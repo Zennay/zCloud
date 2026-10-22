@@ -95,10 +95,16 @@ zijn uitgesloten van deze reproduceerbare vergelijking.
 Een mismatch of ontbrekend origineel weigert de uitpakactie zonder
 bestaande bestanden te wijzigen.
 
-Ook de <b>echte opgeslagen bronleeftijd</b> wordt nu bij iedere inspectie
-apart weergegeven: oudste/nieuwste oorspronkelijke UTC-waarneming,
-`source_age_hours` en `source_age_status`. De standaardgrens is zes uur
-en is aanpasbaar met `--stale-after-hours 24` (1–168).
+De inspectie beoordeelt nu de **oudste onderliggende bronklok van de
+meest recente opgeslagen bundel**, niet alleen de aanmaaktijd van het
+overzicht. `source_age_hours` komt van het oudste gebruikte inbox-,
+claim-, queue-, branch- of PR-signaal in die bundel;
+`latest_board_age_hours` is apart zichtbaar.
+Ook `source_age_hours_by_kind`, de originele capture-freshnessvlaggen
+en `stale_or_not_fresh_at_capture_sources` worden teruggegeven. Een
+originele `fresh=false` wordt door een latere export nooit `fresh=true`.
+De standaardgrens is zes uur en is aanpasbaar met
+`--stale-after-hours 24` (1–168).
 Mogelijke toekomstige bronklokken (>2 minuten) worden
 `future_clock_unknown`; oudere opnames heten
 `stale_historical_sample`; recente opnames blijven expliciet
@@ -139,11 +145,16 @@ python3 scripts/zsentinel_verify_history_package.py \
 ```
 
 Voor een **projectspecifieke** overdracht, zonder andere projectkaarten of
-PR-gegevens in de eigenaarbriefing, voeg toe:
-`--owner-brief-project Zennay/Supa`.
-De gekozen projectnaam moet canoniek zijn en aantoonbaar in de laatste
-opgeslagen bron voorkomen. Een ontbrekend project wordt niet als nul
-backlog beschouwd maar expliciet geweigerd. Ook zonder de optionele
+PR-gegevens in de eigenaarbriefing, voeg de **interne project-ID** toe:
+`--owner-brief-project supa` (of `zcloud`, volgens de daadwerkelijk
+opgeslagen projectnamen). Deze ID is niet hetzelfde als een GitHub-repo
+zoals `Zennay/Supa`. Een onbekende project-ID wordt niet als nul backlog
+beschouwd maar expliciet geweigerd. Het projectspecifieke overzicht toont
+de oorspronkelijke canonieke issue-URL's en uitsluitend PR's die exact in
+de bewaarde `sampled_pr_candidate_urls` van dat project voorkomen.
+Een ander project in dezelfde GitHub-repository geeft **geen** extra
+PR-rechten of toegang tot diens historische handoff. Een ontbrekende
+PR-koppeling blijft onbekend, niet bewezen vrij/afgehandeld. Ook zonder de optionele
 volledige oorspronkelijke-broncontrole wordt alle meegeleverde ZIP-inhoud
 gecontroleerd, maar het ontvangstbewijs geeft dan alleen interne
 consistentie, niet origineel bronbewijs.
