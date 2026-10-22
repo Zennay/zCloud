@@ -1020,8 +1020,12 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
                     before["observed_state"] != after["observed_state"] or
                     before["reported_merged"] != after["reported_merged"] or
                     before["observed_draft"] != after["observed_draft"] or
-                    before["target_branch"] != after["target_branch"]):
-                raise GitHubReadError("PR changed during live read; no stable exact HEAD")
+                    before["target_branch"] != after["target_branch"] or
+                    before["base_sha"] != after["base_sha"]):
+                raise GitHubReadError(
+                    "PR HEAD, base commit or release state changed during live read; "
+                    "no stable source binding"
+                )
             base.update(before)
             base["observed_at_utc"] = utc()
             base["status"] = "LIVE_PARTIAL_READ"
