@@ -361,12 +361,17 @@ def observe_claims(data_source_id, token, known_projects=None):
     # Histograms cover all read rows, not just visible sample rows.
     window_counts = {}
     project_windows = {}
+    project_running_clock_problems = {}
     for item in rows:
         cls = item["claim_window_observation"]
         project = item["project"]
         window_counts[cls] = window_counts.get(cls, 0) + 1
         bucket = project_windows.setdefault(project, {})
         bucket[cls] = bucket.get(cls, 0) + 1
+        if (item["status"] in ("Claimed", "Running")
+                and cls != "time_window_present_not_owner_verified"):
+            project_running_clock_problems[project] = (
+                project_running_clock_problems.get(project, 0) + 1)
     counts, verifying_counts = {}, {}
     for row in rows:
         label = row["project"]
@@ -388,6 +393,10 @@ def observe_claims(data_source_id, token, known_projects=None):
         "active_project_claim_window_counts": {
             project: dict(sorted(bucket.items()))
             for project, bucket in sorted(project_windows.items())
+        },
+        "active_project_in_progress_claim_clock_rechecks": {
+            project: project_running_clock_problems.get(project, 0)
+            for project in sorted(project_windows)
         },
         "claim_window_verified": False,
         "status_source_windows": status_source_windows,
