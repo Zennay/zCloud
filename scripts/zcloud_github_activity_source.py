@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -29,6 +30,7 @@ MAX_EVENTS = 200
 MAX_PR_PAGES = 5
 MAX_CI_PAGES = 2
 MAX_COMMIT_PAGES = 2
+MAX_BRANCH_PAGES = 1
 
 
 def utc_now() -> dt.datetime:
@@ -163,8 +165,9 @@ def bounded_events(
         "github_branches": "not_synchronized",
         "github_main_commits": "unavailable",
         "local_vps": "not_observed",
-        "pages": {"pulls": 0, "actions": 0, "commits": 0},
-        "page_limit_reached": {"pulls": False, "actions": False, "commits": False},
+        "pages": {"pulls": 0, "actions": 0, "commits": 0, "branches": 0},
+        "page_limit_reached": {"pulls": False, "actions": False, "commits": False,
+                               "branches": False},
         "errors": errors,
     }
 
@@ -236,7 +239,6 @@ def bounded_events(
                 coverage["page_limit_reached"]["pulls"] = True
         coverage["github_pr"] = ("bounded_truncated" if coverage["page_limit_reached"]["pulls"]
                                  else "bounded_window")
-        coverage["github_branches"] = "observed_pr_heads_only"
     except ValueError as error:
         errors.append(str(error))
         # Partial pages cannot be treated as complete coverage.
@@ -319,12 +321,69 @@ def bounded_events(
         if coverage["pages"]["commits"]:
             coverage["github_main_commits"] = "partial"
 
+    try:
+        # The GitHub branches endpoint is name-ordered, not activity-ordered.
+        # Read one bounded page and disclose truncation instead of implying a
+        # complete branch inventory when the repository has 100+ branches.
+        main_shas = {
+            item["sha"] for item in events
+            if item.get("kind") == "main_commit" and isinstance(item.get("sha"), str)
+        }
+        for page in range(1, MAX_BRANCH_PAGES + 1):
+            rows = reader.get(repo, "branches", {
+                "per_page": 100, "page": page,
+            })["data"]
+            if not isinstance(rows, list):
+                raise ValueError("github_branches_invalid")
+            for branch in rows:
+                if not isinstance(branch, dict):
+                    raise ValueError("github_branches_invalid")
+                name = branch.get("name")
+                commit = branch.get("commit")
+                sha = commit.get("sha") if isinstance(commit, dict) else None
+                details = commit.get("commit") if isinstance(commit, dict) else None
+                committer = details.get("committer") if isinstance(details, dict) else None
+                if (not isinstance(name, str) or not 1 <= len(name) <= 255
+                        or not isinstance(sha, str) or not SHA_RE.fullmatch(sha)
+                        or not isinstance(committer, dict)):
+                    raise ValueError("github_branches_invalid")
+                # Branch refs can contain untrusted/private names. Export only
+                # a stable digest, immutable commit SHA and canonical commit URL.
+                branch_key = hashlib.sha256(
+                    name.encode("utf-8", errors="surrogatepass")
+                ).hexdigest()[:20]
+                # A tip already observed in main history is not counted twice
+                # as both a branch event and a main commit.
+                if sha in main_shas:
+                    continue
+                add(
+                    "branch_tip_commit", branch_key + ":" + sha,
+                    committer.get("date"),
+                    branch_ref_hash=branch_key, sha=sha, main_merged=False,
+                    url=f"https://github.com/{repo}/commit/{sha}",
+                    deploy_verified=False, worker_resumed=False,
+                )
+            coverage["pages"]["branches"] = page
+            if len(rows) < 100:
+                break
+            if page == MAX_BRANCH_PAGES:
+                coverage["page_limit_reached"]["branches"] = True
+        coverage["github_branches"] = (
+            "bounded_truncated" if coverage["page_limit_reached"]["branches"]
+            else "bounded_window"
+        )
+    except ValueError as error:
+        errors.append(str(error))
+        coverage["github_branches"] = (
+            "partial" if coverage["pages"]["branches"] else "unavailable"
+        )
+
     # Distinguish a GitHub-reported merge target from a main-history commit.
     # These are different observations and must never count twice as shipped.
     coverage["github_pr_target_is_reported"] = True
 
     if not errors:
-        coverage["status"] = "partial_sources"  # GitHub branch coverage absent.
+        coverage["status"] = "partial_sources"  # Local runtime and full history are outside this snapshot.
         coverage["synced_at"] = stamp(observed)
     elif any(coverage[source] != "unavailable" for source in ("github_pr", "github_ci", "github_main_commits")):
         coverage["status"] = "partial_error"
@@ -423,17 +482,19 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
     # Actions can outnumber PRs and main commits. Interleave all three
     # bounded source types within each project before the output cap.
     # A short operator view must never hide all PRs behind recent CI runs.
-    buckets = {(project, kind): [] for project in selected for kind in ("pr", "ci", "commit")}
+    buckets = {(project, kind): [] for project in selected
+               for kind in ("pr", "ci", "commit", "branch")}
     for item in events:
         category = ("ci" if item["kind"] == "ci_run" else
-                    "commit" if item["kind"] == "main_commit" else "pr")
+                    "commit" if item["kind"] == "main_commit" else
+                    "branch" if item["kind"] == "branch_tip_commit" else "pr")
         buckets[(item["project"], category)].append(item)
     fair = []
     positions = {key: 0 for key in buckets}
     while len(fair) < max_events:
         advanced = False
         for project in selected:
-            for category in ("pr", "ci", "commit"):
+            for category in ("pr", "ci", "commit", "branch"):
                 key = (project, category)
                 index = positions[key]
                 if index >= len(buckets[key]):
@@ -457,7 +518,7 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
         "previous_snapshot_compared": prior is not None,
         "truncated": len(events) > max_events,
         "coverage": coverage,
-        "feed_complete": False,  # no branch/backfill/runtime proof
+        "feed_complete": False,  # no historical backfill or local runtime proof
         "authorizes_repair": False,
         "authorizes_merge": False,
         "authorizes_deploy": False,
