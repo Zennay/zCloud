@@ -793,3 +793,20 @@ Nederlandstalige statusregel, zodat verborgen werk niet verdwijnt zodra
 `priority_items` de bestaande limiet bereikt. Labels zijn brongebonden,
 geen vrijgave voor herverdeling. De bron blijft read-only; geen extra SQLite-
 GET, queue-write, retry, workerrestart of deployment.
+
+
+## Navigatie naar een geblokkeerd issue of een bestaande PR
+
+Wanneer de geblokkeerde queue een canonieke `Zennay/*/issues/*`- of
+`Zennay/*/pull/*`-bronlink bevat, toont de offline HTML en Markdown-handoff
+deze bij maximaal één voorbeeld per getoonde P0/P1-groep. De link draagt
+expliciet **Bronlink uit queue (NIET geverifieerd)**; dit is alleen
+navigatie, geen betrouwbare status, open PR-claim, huidige eigenaar of
+bevoegdheid om te mergen. Niet-canonieke links worden niet aangeboden.
+Geblokkeerde werkpakketten blijven op HOLD totdat de echte eigenaar,
+originele queuelease en bestaande PR-gates afzonderlijk bevestigd zijn.
+
+De kaarten komen onder huidige, exacte PR-/productissue-eigenaaracties in
+de sortering, zodat de geblokkeerde-queuecategorie bestaand mergebaar werk
+niet wegdrukt. Bij bronafkapping blijft de aparte groepssamenvatting
+zichtbaar in HTML en Markdown, ook als de werkbak zelf zijn limiet bereikt.
