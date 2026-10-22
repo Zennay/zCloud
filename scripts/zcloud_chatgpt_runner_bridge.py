@@ -325,8 +325,24 @@ def _archive_bulk_storage_gate(archive: dict[str, object]) -> dict[str, object]:
             "capacity_candidate_not_training_authorization",
             "VERIFY_PHYSICAL_DRIVE_AND_TRAINING_PATH_WITH_OWNER",
         )
+    messages = {
+        "mount_missing": "The configured archive is not mounted; request owner inspection before using it for large files.",
+        "mount_unknown": "The archive mount source is not reliable; re-observe it without moving data.",
+        "root_filesystem_shared": "The archive shares the root filesystem; it cannot isolate large files from the system disk.",
+        "filesystem_identity_unknown": "Filesystem independence is unverified; do not infer external storage.",
+        "read_only_mount": "The separate archive mount is read-only and cannot receive large files.",
+        "mount_writability_unknown": "Archive mount writability is unverified; do not plan an offload.",
+        "free_space_unknown": "Archive free-space evidence is missing or invalid; do not infer capacity.",
+        "below_30_gib": "The archive has less than 30 GiB free; request an owner-approved larger destination.",
+        "capacity_candidate_not_training_authorization": (
+            "The archive has at least 30 GiB and is a separate non-read-only filesystem, "
+            "but its physical drive, training output path and application-user write access "
+            "are not verified. Do not start training or move data from this hint."
+        ),
+    }
     return {
         "state": state,
+        "operator_summary": messages[state],
         "minimum_free_bytes": BULK_ARCHIVE_MIN_FREE_BYTES,
         "minimum_free_gib": 30,
         "available_bytes_observed": (
@@ -780,6 +796,26 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
         codes.append("ZERO_WORKERS_IS_NOT_CLAIM_CLEARANCE")
     if capacity.get("coverage") != "complete":
         codes.append("CAPACITY_EVIDENCE_PARTIAL")
+    bulk = capacity.get("bulk_storage_advisory")
+    if isinstance(bulk, dict):
+        state_to_code = {
+            "mount_missing": "ARCHIVE_BULK_MOUNT_MISSING",
+            "mount_unknown": "ARCHIVE_BULK_MOUNT_EVIDENCE_UNKNOWN",
+            "root_filesystem_shared": "ARCHIVE_BULK_NOT_SEPARATE_FROM_ROOT",
+            "filesystem_identity_unknown": "ARCHIVE_BULK_FILESYSTEM_EVIDENCE_UNKNOWN",
+            "read_only_mount": "ARCHIVE_BULK_READ_ONLY",
+            "mount_writability_unknown": "ARCHIVE_BULK_WRITE_STATUS_UNKNOWN",
+            "free_space_unknown": "ARCHIVE_BULK_CAPACITY_UNKNOWN",
+            "below_30_gib": "ARCHIVE_BULK_BELOW_30_GIB",
+            "capacity_candidate_not_training_authorization": (
+                "ARCHIVE_BULK_CAPACITY_CANDIDATE_REQUIRES_EXTERNAL_PROOF"
+            ),
+        }
+        codes.append(state_to_code.get(
+            bulk.get("state"), "ARCHIVE_BULK_GATE_UNKNOWN"
+        ))
+    else:
+        codes.append("ARCHIVE_BULK_GATE_UNKNOWN")
     evidence_warnings = capacity.get("evidence_warnings", [])
     if isinstance(evidence_warnings, list):
         if any(reason in evidence_warnings for reason in (
