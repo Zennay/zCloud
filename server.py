@@ -3134,9 +3134,26 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
     }
     priority=priority_by_project.get(project_id,'P3')
     if parent_queue_id is None:
+        # COUNT(*)+1 alone may reuse an old auto-refill parent after rows are
+        # removed or records have migrated. With immutable blocked/finished
+        # queue identities, that collision must not stall the project forever.
+        # Select a bounded, unused parent WITHOUT mutating any existing row.
         with connect() as c:
-            sequence=c.execute('SELECT COUNT(*) FROM portfolio_queue WHERE project_id=?',(project_id,)).fetchone()[0]+1
-        parent_queue_id=f'auto-refill-{project_id}-{sequence}'
+            first=c.execute(
+                'SELECT COUNT(*) FROM portfolio_queue WHERE project_id=?',
+                (project_id,),
+            ).fetchone()[0]+1
+            for sequence in range(first,first+128):
+                candidate=f'auto-refill-{project_id}-{sequence}'
+                taken=c.execute(
+                    'SELECT 1 FROM portfolio_queue WHERE project_id=? AND parent_queue_id=? LIMIT 1',
+                    (project_id,candidate),
+                ).fetchone()
+                if not taken:
+                    parent_queue_id=candidate
+                    break
+            else:
+                raise ValueError('Geen vrije auto-refill parent binnen de begrensde wachtrijruimte')
     if project_id=='zsentinel':
         # A role can be queue-addressable without becoming a roadmap/project.
         # The generic per-project continuation would accidentally make workers
