@@ -25,7 +25,7 @@ from zsentinel_pr_scope_guard import (
 
 from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
 from zsentinel_pr_gate_continuity import compare_gate_episodes, render_gate_episodes
-from zsentinel_pr_gate_now import SOURCE_PROBLEMS_NL
+from zsentinel_pr_gate_now import SOURCE_PROBLEMS_NL, _source_problem_kind
 from zsentinel_private_report_writer import write_private_report
 
 MAX_PROJECTS = 3
@@ -48,9 +48,10 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
         # another: fail closed for this source, continue independent projects.
         try:
             source = observe_conflict_graph(repo, token=token, limit=max_prs)
-        except (ValueError, OSError):
+        except (ValueError, OSError) as error:
             items.append({
                 "project": project,
+                "source_problem_kind": _source_problem_kind(error),
                 "repository": repo,
                 "source_status": "unavailable",
                 "sample_complete": False,
@@ -533,7 +534,10 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
 
 def summary_lines(view):
     if view["source_status"] == "unavailable":
-        return ["Bron ONBESCHIKBAAR: geen oordeel over open PR's of overlap."]
+        problem = SOURCE_PROBLEMS_NL.get(
+            view.get("source_problem_kind"), "GitHub-bron onbeschikbaar of ongeldig.")
+        return ["Bron ONBESCHIKBAAR: geen oordeel over open PR's of overlap.",
+                "Eigenaaractie: " + problem]
     result = [
         "Open PR's bekeken: " + str(view["inspected_open_prs"]) +
         " / waargenomen " + str(view["observed_open_prs"]),
@@ -1260,6 +1264,12 @@ def as_html(board):
             else:
                 rows = ["<tr><td colspan='3'>Geen overlap zichtbaar in de "
                         "gelezen steekproef; afwezigheid is geen vrijgave.</td></tr>"]
+        source_note = (
+            "<p class='warning'><strong>Eigenaaractie:</strong> " +
+            escape(SOURCE_PROBLEMS_NL.get(
+                view.get("source_problem_kind"),
+                "GitHub-bron ontbreekt of is ongeldig: herlees bij bevoegde eigenaar.")) +
+            "</p>" if view["source_status"] == "unavailable" else "")
         state = ("Bron onbeschikbaar" if view["source_status"] == "unavailable"
                  else "bronoverlap > uitvoerlimiet; open PR's zelf voor overige botsingen"
                  if view.get("source_truncated")
@@ -1299,7 +1309,7 @@ def as_html(board):
         cards.append(
             "<section><h2>" + escape(view["project"]) + "</h2>"
             "<p><strong>" + escape(state) +
-            "</strong> · " + escape(view["repository"]) + "</p>"
+            "</strong> · " + escape(view["repository"]) + "</p>" + source_note
             "<h3>Samenhangende PR-bestandsgroepen</h3>"
             "<p>Alleen geobserveerde bestanden, geen vrij eigenaarschap "
             "of mergevolgorde.</p><ol>" +
