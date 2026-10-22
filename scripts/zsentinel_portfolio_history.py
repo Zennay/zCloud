@@ -17,7 +17,7 @@ from zsentinel_live_issue_inbox import ISSUE, REPO
 from zsentinel_recovery_policy import PolicyInputError, _read_input
 
 MAX_DELTA_CARDS = 100
-UTC_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?Z\\Z")
+UTC_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?Z\Z")
 VALID_STATES = frozenset((
     "SAMPLED", "INCOMPLETE", "SOURCE_UNAVAILABLE",
     "NOT_READ_AFTER_SOURCE_ERROR",
