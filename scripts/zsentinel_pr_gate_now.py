@@ -509,7 +509,7 @@ def _one(repo, number, token):
 # user-provided descriptions. They point the operator toward a real owner
 # action without claiming that an inaccessible PR was closed or merged.
 SOURCE_PROBLEMS_NL = {
-    "github_authentication_or_access": "GitHub-toegang ontbreekt of is geweigerd; laat bevoegde eigenaar rechten controleren.",
+    "github_authentication_or_access": "GitHub antwoordde met 401/403: controleer rechten, policies en eventuele secundaire API-limieten bij de eigenaar.",
     "github_rate_limited": "GitHub heeft verzoeken begrensd; hervat volgens providerlimiet, zonder CI-herstart.",
     "github_remote_unavailable": "GitHub gaf een server-/netwerkfout; bron later opnieuw lezen.",
     "github_pr_or_source_missing": "PR of noodzakelijke GitHub-bron is niet gevonden; controleer bestaande referentie en toegang.",
@@ -522,7 +522,17 @@ def _source_problem_kind(error):
     """Map recognized GitHub failures to safe operator categories only."""
     code = getattr(error, "code", None)
     if type(code) is int:
-        if code in (401, 403):
+        if code == 401:
+            return "github_authentication_or_access"
+        if code == 403:
+            # GitHub also returns 403 for exhausted primary/secondary API
+            # quotas. Only a provider header may positively identify a
+            # throttle; otherwise leave access-vs-quota ambiguous.
+            headers = getattr(error, "headers", None)
+            remaining = headers.get("x-ratelimit-remaining") if headers is not None else None
+            retry_after = headers.get("retry-after") if headers is not None else None
+            if remaining == "0" or (type(retry_after) is str and retry_after.strip()):
+                return "github_rate_limited"
             return "github_authentication_or_access"
         if code == 429:
             return "github_rate_limited"
