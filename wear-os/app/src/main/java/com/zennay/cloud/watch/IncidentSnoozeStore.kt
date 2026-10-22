@@ -12,6 +12,10 @@ import java.security.MessageDigest
  * No project/incident titles, secrets, or alert contents are persisted here.
  */
 object IncidentSnoozeStore {
+    // Serialize the worker's read→notify→receipt sequence against local snooze
+    // actions, so a tap cannot lose a race and be re-notified after one hour.
+    internal val deliveryLock = Any()
+
     private const val PREFS = "zennay_blocker_snoozes"
     private const val PREFIX = "until_"
     private const val DURATION_MS = 60L * 60 * 1000
@@ -59,7 +63,7 @@ object IncidentSnoozeStore {
         return if (left in 1L..DURATION_MS) left else 0L
     }
 
-    fun snoozeForOneHour(context: Context, alert: AlertItem) {
+    fun snoozeForOneHour(context: Context, alert: AlertItem) = synchronized(deliveryLock) {
         require(alert.id.isNotBlank() && alert.id.length <= 256) { "Invalid incident ID" }
         val appContext = context.applicationContext
         val now = System.currentTimeMillis()
@@ -87,7 +91,7 @@ object IncidentSnoozeStore {
             ?.cancel(notificationTag(alert), 0)
     }
 
-    fun resume(context: Context, alert: AlertItem) {
+    fun resume(context: Context, alert: AlertItem) = synchronized(deliveryLock) {
         val appContext = context.applicationContext
         appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
