@@ -1,5 +1,49 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · cross-platform padaliaswaarschuwingen in de bestaande PR-scopewerkbak
+
+De bestaande PR-scopecollector maakt nu een **afzonderlijke, begrensde
+NFC/casefold-aliaswaarneming** naast de bestaande exacte Git-pad- en
+bestand/map-ancestorrelaties. Daarmee worden twee verschillende Git-paden
+zoals `src/Config.py` en `src/config.py`, of canoniek-equivalente Unicode
+bestandsnamen, zichtbaar als potentiële aliassen op case-insensitive of
+Unicode-normaliserende ontwikkelaarsbesturingssystemen.
+
+Dit is bewust een heuristiek, niet de bewering dat elk filesystem die paden
+gelijk behandelt. Aliasrelaties worden niet als echte Git-mergeconflicten,
+actieve owners of mergegolven geteld. De collector bewaart maximaal 80
+PR-paren en acht padvoorbeelden per paar; totale waargenomen aantallen en
+afkappingsvlaggen blijven apart zichtbaar. Als het aliasbewijs of een ander
+scopevenster is afgekapt, wordt de volledige PR-scope-steekproef niet als
+compleet aangemerkt. Een aliaswaarschuwing krijgt de normale botsings-exitcode
+`2`, zodat een CLI-consument de mogelijke botsing niet als een schone
+scope leest.
+
+Dezelfde observatie verschijnt in:
+- de directe scope-CLI tekst, JSON, Markdown, HTML en private create-only CSV;
+- het portfolio-overzicht in tekst, Markdown, HTML en private CSV;
+- de bestaande merge-first eigenaarwerkbak als een HEAD-gebonden menselijke
+  waarschuwing, met peer-PR en peer-HEAD, zonder de alias als Git-conflict te
+  behandelen.
+
+Voor een nieuwe, read-only momentopname:
+
+```sh
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project zcloud --audit-open-prs --format html
+
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project zcloud --format html
+```
+
+De eerste opdracht toont de begrensde PR-grafiek; de tweede brengt dezelfde
+aliaswaarschuwingen naar de projectbrede conflictbalie. De bron blijft een
+GitHub-PR-steekproef: Notion-claims, PR-loze branches, workerbestandsleases,
+branch protection en release-eigenaarschap worden hiermee niet geverifieerd.
+Er is geen QA-suite geschreven of uitgevoerd, geen CI handmatig gestart en
+geen claim, queue, runner, merge of deployment aangepast.
+
+
 ## 22 oktober · sluiting, merge en live-oplevering zijn drie verschillende feiten
 
 De bestaande `scripts/zsentinel_pr_gate_now.py` en
