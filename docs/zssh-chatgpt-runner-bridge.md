@@ -179,3 +179,8 @@ main; unrelated runners and the existing zSSH MCP path are unaffected.
 The `/zssh workers` capacity receipt treats the configured `/home/ubuntu/VPS-Archief` path as an expected mount, not merely a directory. If the path is not a detected mount, or its mount/capacity cannot be observed, the receipt sets `coverage=partial`, includes an `evidence_warnings` reason (`archive_mount_not_detected` or `archive_mount_observation_unavailable`), and emits `ARCHIVE_MOUNT_UNAVAILABLE_NO_OFFLOAD`. A detected mount with no reported free capacity emits `ARCHIVE_MOUNT_NO_CAPACITY_NO_OFFLOAD`.
 
 These are **evidence/offload constraints**, separate from the resource-pressure `warnings` and `severity` fields. Missing archive storage does not itself claim high CPU/RAM/disk pressure, and it never authorizes moving or deleting files. If root storage is critical, preserve active work and obtain an owner-authorized storage inventory; do not treat the mere existence of the archive directory as proof that external storage is mounted.
+
+
+## zSentinel process identity and PID reuse
+
+The current `Runner.Worker` is identified through the bounded parent chain and excluded from the other-worker count using the pair `PID + /proc/<pid>/stat start_ticks`, not PID alone. This prevents a process that reuses the same PID between ancestry discovery and the inventory scan from being silently treated as the current worker. The public receipt exposes only the basis label `pid_and_start_ticks` or `unknown`; it never returns raw PIDs or start ticks. A missing self-identity remains unknown and does not authorize takeover.
