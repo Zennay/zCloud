@@ -207,7 +207,7 @@ def refresh(bundle, registry, token=None):
                         updated["no_job_steps"] = len(steps) == 0
                     else:
                         raise ValueError("github_job_steps_evidence_invalid")
-                if (conclusion in ("failure", "timed_out", "action_required", "startup_failure")
+                if (conclusion in ("failure", "timed_out", "action_required")
                         and updated.get("no_job_steps") is True
                         and not runner_id):
                     # This is NOT a billing verdict. Platform annotations
