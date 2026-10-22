@@ -1165,6 +1165,8 @@ def html_view(decision, registry=None):
             metadata_fields = ("worker", "claimed_at", "claim_expires",
                                "claim_metadata_status", "claim_window_observation",
                                "claim_authorized")
+            if live_notion and any(field not in item for field in metadata_fields):
+                raise ValueError("live Notion row lost claim-clock provenance")
             if any(field in item for field in metadata_fields):
                 worker = item.get("worker")
                 claimed_at = item.get("claimed_at")
