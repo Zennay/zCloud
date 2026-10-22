@@ -14,7 +14,7 @@ import re
 from zsentinel_pr_scope_guard import github_json, REPO, SHA
 
 SCHEMA = "zsentinel-github-runner-queue-observation-v1"
-STATUS_WINDOWS = ("queued", "in_progress")
+STATUS_WINDOWS = ("queued", "in_progress", "waiting")
 MAX_RUNS_PER_WINDOW = 2
 MAX_JOBS_PER_RUN = 16
 JOBS_PAGE_SIZE = 50
@@ -41,6 +41,8 @@ def collect(repo, token=None):
     now = datetime.now(timezone.utc)
     selected = []
     seen_ids = set()
+    workflow_waits = []
+    seen_wait_ids = set()
     run_state_drift = False
     windows = []
     for status in STATUS_WINDOWS:
@@ -56,26 +58,41 @@ def collect(repo, token=None):
             "status_requested": status,
             "runs_reported_by_github": result["total_count"],
             "rows_observed": len(rows),
-            "all_status_runs_sampled": result["total_count"] == len(rows)
-                and len(rows) < MAX_RUNS_PER_WINDOW,
+            "all_status_runs_sampled": result["total_count"] == len(rows),
         })
         for row in rows:
             if (type(row) is not dict or type(row.get("id")) is not int
                     or row["id"] <= 0 or type(row.get("head_sha")) is not str
                     or SHA.fullmatch(row["head_sha"]) is None):
                 raise ValueError("invalid GitHub Actions run identity")
-            # Queued/in-progress windows are sequential GETs. A run finishing
-            # or moving between windows is normal. Keep the other read-only
-            # observations, but mark the inventory as drifted/incomplete.
-            if row.get("status") not in (
-                    "queued", "in_progress", "requested", "waiting", "pending"):
+            # Each window is a sequential observation, not a snapshot.
+            # Keep workflow-level waiting separate from individual jobs: an
+            # approval/concurrency wait may create no job at all.
+            if row.get("status") != status:
                 run_state_drift = True
                 continue
             if row["id"] in seen_ids:
                 run_state_drift = True
+                if status == "waiting" and row["id"] not in seen_wait_ids:
+                    workflow_waits.append({
+                        "run_id": row["id"], "head_sha": row["head_sha"],
+                        "url": "https://github.com/" + repo + "/actions/runs/" + str(row["id"]),
+                        "workflow_status_observed": "waiting",
+                        "action_authorized": False,
+                    })
+                    seen_wait_ids.add(row["id"])
                 continue
             seen_ids.add(row["id"])
-            selected.append(row)
+            if status == "waiting":
+                workflow_waits.append({
+                    "run_id": row["id"], "head_sha": row["head_sha"],
+                    "url": "https://github.com/" + repo + "/actions/runs/" + str(row["id"]),
+                    "workflow_status_observed": "waiting",
+                    "action_authorized": False,
+                })
+                seen_wait_ids.add(row["id"])
+                continue
+            selected.append({**row, "_source_window_requested": status})
     jobs = []
     run_receipts = []
     for run in selected:
@@ -92,6 +109,8 @@ def collect(repo, token=None):
             "run_url": "https://github.com/" + repo + "/actions/runs/" + str(run_id),
             "run_id": run_id,
             "head_sha_at_read": run["head_sha"],
+            "workflow_status_observed": run.get("status"),
+            "source_window_requested": run.get("_source_window_requested"),
             "workflow_age_seconds_observed": _age(run.get("created_at"), now),
             "jobs_sample_complete": (
                 data["total_count"] == len(rows) and
@@ -143,6 +162,11 @@ def collect(repo, token=None):
         "observed_at_utc": now.isoformat(),
         "source": "bounded_read_only_github_actions_runs_and_jobs",
         "run_windows": windows, "run_receipts": run_receipts,
+        "workflow_waits": workflow_waits,
+        "workflow_wait_coverage": (
+            "bounded_observed" if next(
+                w for w in windows if w["status_requested"] == "waiting"
+            )["all_status_runs_sampled"] else "partial_window"),
         "run_state_drift_observed": run_state_drift,
         "sampled_jobs": jobs,
         "unassigned_queued_jobs_observed": sum(
@@ -167,6 +191,7 @@ def unavailable(repo):
         "source": "github_actions_source_unavailable",
         "source_status": "unavailable", "sampled_jobs": [],
         "run_windows": [], "run_receipts": [],
+        "workflow_waits": [], "workflow_wait_coverage": "unknown",
         "run_state_drift_observed": False,
         "unassigned_queued_jobs_observed": None,
         "observed_pending_jobs": None,
