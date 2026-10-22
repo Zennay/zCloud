@@ -462,15 +462,47 @@ def _coordination_groups(cards):
             parent[max(left, right)] = min(left, right)
 
     for card in cards:
-        source = card["url"]
+        if type(card) is not dict:
+            raise ValueError("invalid selected PR coordination card")
+        repository = card.get("repository")
+        source = _same_repo_url(card.get("url"), repository)
+        if (type(card.get("source_current")) is not bool
+                or type(card.get("peer_head_evidence_partial")) is not bool
+                or type(card.get("overlap_paths_hidden")) is not bool):
+            raise ValueError("invalid PR coordination freshness flags")
+        peer_rows = card.get("peer_head_evidence")
+        scope_rows = card.get("scope_path_conflicts")
+        related_rows = card.get("related_prs")
+        if (type(peer_rows) is not list or len(peer_rows) > 200
+                or type(scope_rows) is not list or len(scope_rows) > 80
+                or type(related_rows) is not list or len(related_rows) > 200):
+            raise ValueError("unbounded PR coordination evidence")
+        if card["source_current"] and (
+                type(card.get("head_sha")) is not str
+                or SHA.fullmatch(card["head_sha"]) is None):
+            raise ValueError("current PR card has no pinned HEAD")
         if (not card["source_current"] or card["peer_head_evidence_partial"]
                 or card["overlap_paths_hidden"]):
             missing_or_partial = True
         observed = []
-        for peer in card["peer_head_evidence"]:
-            observed.append((peer["url"], peer["head_sha_at_observation"]))
-        for scope in card["scope_path_conflicts"]:
-            observed.append((scope["peer_pr_url"], scope["peer_head_sha"]))
+        for peer in peer_rows:
+            if type(peer) is not dict:
+                raise ValueError("invalid pinned peer evidence")
+            peer_url = _same_repo_url(peer.get("url"), repository)
+            peer_sha = peer.get("head_sha_at_observation")
+            if type(peer_sha) is not str or SHA.fullmatch(peer_sha) is None:
+                raise ValueError("invalid pinned peer HEAD")
+            observed.append((peer_url, peer_sha))
+        for scope in scope_rows:
+            if type(scope) is not dict:
+                raise ValueError("invalid file/directory scope evidence")
+            peer_url = _same_repo_url(scope.get("peer_pr_url"), repository)
+            peer_sha = scope.get("peer_head_sha")
+            if type(peer_sha) is not str or SHA.fullmatch(peer_sha) is None:
+                raise ValueError("invalid file/directory peer HEAD")
+            observed.append((peer_url, peer_sha))
+        for related_url in related_rows:
+            _same_repo_url(related_url, repository)
         for url, sha in observed:
             other = by_url.get(url)
             if other is None:
@@ -534,6 +566,44 @@ def _coordination_groups(cards):
         "cross_group_independence_verified": False,
         "claim_authorized": False, "merge_authorized": False,
     }
+
+
+def _validate_coordination_receipt(bundle):
+    """Reject altered workorder hashes and collision groups that drift from cards.
+
+    SHA-256 here is a consistency checksum, not a signature or authorization.
+    """
+    if type(bundle) is not dict or bundle.get("schema") != SCHEMA:
+        raise ValueError("invalid private PR workorder receipt")
+    digest = bundle.get("source_digest_sha256")
+    if type(digest) is not str or re.fullmatch(r"[a-f0-9]{64}", digest) is None:
+        raise ValueError("missing private PR workorder checksum")
+    unsigned = dict(bundle)
+    unsigned.pop("source_digest_sha256", None)
+    try:
+        actual = _digest(unsigned)
+    except (TypeError, ValueError):
+        raise ValueError("unserializable private PR workorder receipt") from None
+    if actual != digest:
+        raise ValueError("private PR workorder checksum mismatch")
+    items = bundle.get("items")
+    if (type(items) is not list or len(items) > MAX_PRS
+            or any(type(card) is not dict for card in items)):
+        raise ValueError("invalid bounded PR workorder cards")
+    copies = [dict(card) for card in items]
+    try:
+        expected = _coordination_groups(copies)
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("malformed PR coordination evidence") from None
+    if bundle.get("selected_pr_coordination") != expected:
+        raise ValueError("PR coordination receipt differs from selected cards")
+    for original, computed in zip(items, copies):
+        for key in ("coordination_group_number",
+                    "coordination_selected_peer_urls",
+                    "coordination_external_peer_urls"):
+            if original.get(key) != computed.get(key):
+                raise ValueError("per-PR coordination metadata mismatch")
+    return expected
 
 
 def collect_workorders(board):
@@ -1109,6 +1179,7 @@ def render_csv(bundle):
                 "claim_authorized", "merge_authorized",
                 "deploy_authorized", "writes_performed"))):
         raise ValueError("invalid private owner CSV")
+    _validate_coordination_receipt(bundle)
     fields = (
         "record_type", "project", "pr_number", "pr_url",
         "coordination_group_number", "observed_selected_scope_peers",
@@ -1360,6 +1431,7 @@ def render_html(bundle):
                 "claim_authorized", "merge_authorized",
                 "deploy_authorized", "writes_performed"))):
         raise ValueError("invalid private owner desk")
+    _validate_coordination_receipt(bundle)
     def e(value):
         return escape(str(value), quote=True)
 
@@ -1773,6 +1845,7 @@ def render_markdown(bundle):
                 "claim_authorized", "merge_authorized",
                 "deploy_authorized", "writes_performed"))):
         raise ValueError("invalid owner workorder bundle")
+    _validate_coordination_receipt(bundle)
     lines = [
         "# zSentinel · privé-werkopdrachten bestaande product-PRs",
         "",
