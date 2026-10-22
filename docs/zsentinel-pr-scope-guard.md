@@ -3524,3 +3524,28 @@ volledigheid; er wordt geen voltooid bronvenster verzonnen.
 Ook bij volledig open-PR-venster blijven padlimieten, review/CI,
 claim-/workerbezit, PR-loze branches, branch protection en
 release-eigenaar apart onbekend totdat de bevoegde actor ze vaststelt.
+
+## 22 oktober · herstelroute voor afgekapt conflictbewijs (read-only)
+
+De volledige PR-bron is voortaan alleen 'volledig' als niet alleen de
+open-PR-paginering en gewijzigde bestanden, maar ook de gepresenteerde
+gedeelde-bestandsvoorbeelden en bestand/map-clusters niet zijn afgekapt.
+Een botsingspaar met meer gedeelde paden dan de voorbeeldlimiet of een
+scope-cluster buiten de clusterlimiet levert een aparte
+`source_coverage_reasons`-melding. De operator ziet de bronreden
+consistent in JSON, tekst, Markdown, offline HTML en private CSV.
+
+De operator krijgt nu bovendien maximaal vijf **concrete handmatige
+leesacties** (`source_recovery_steps`) afhankelijk van het werkelijke
+brongat: bijvoorbeeld de read-only PR-scan uitbreiden met
+`--max-prs 16 --pages 3`, een driftende HEAD opnieuw lezen,
+PR-bestandslijsten controleren of de daadwerkelijke Github Files changed
+van de betrokken PRs openen. De stappen worden opgenomen in
+portfolio-overzichten én de geselecteerde individuele PR-werkopdrachten,
+inclusief de offline HTML en private CSV-regels
+`source_recovery_action`. Er wordt geen GitHub-rerun, PR-edit, workerclaim,
+servicewijziging, merge of deploy uitgevoerd.
+
+Een volledige GitHub-PR-scan is onafhankelijk van Notion-/workerclaims en
+branch protection. Bij ontbreken van CI/review/eigenaarschap blijft de
+bestaande merge-HOLD van kracht.
