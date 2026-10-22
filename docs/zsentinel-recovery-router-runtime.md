@@ -4288,6 +4288,11 @@ human-gated zCloud-issues nu naar verschillende eigenaarsacties:
   bronnen. Geen restart zolang actieve worker of runner-identiteit onzeker is.
 - **#1523 — GitHub billing:** bevoegde accountbilling-eigenaar controleert
   spend/admission. Geen betaalde retry, billingwijziging of runneractie.
+- **#1342 — claim-bound progress event history:** de bevoegde geserialiseerde
+  Worker-v2/backend-runtime-eigenaar bepaalt de scope en het releasevenster
+  voor eventhistorie die voortgang aan de actuele queueclaim bindt. De route
+  benoemt de eigenaar en gewenste beoordeling; zij start geen overlappende
+  wijziging aan `server.py`, SQLite-schema, Firefox-extensie of userscript.
 
 De routes worden uit de canonieke issue-URL gekozen, niet uit de issue-titel of
 een bewaarde eerdere tekst. Bestaande open PR's blijven eerste navigatiestap
