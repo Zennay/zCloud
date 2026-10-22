@@ -135,9 +135,23 @@ def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES,
             return payload
     except HTTPError as exc:
         # Never print provider error bodies: a private error could echo secrets.
-        if exc.code in (401, 403, 429):
+        if exc.code == 401:
+            raise GitHubReadError("GitHub authentication unavailable") from exc
+        if exc.code == 429:
+            raise GitHubReadError("GitHub rate limit confirmed") from exc
+        if exc.code == 403:
+            # A 403 can be limited to one private/inaccessible repository.
+            # Only confirmed primary/secondary cooldown signals stop portfolio reads.
+            remaining = (exc.headers.get("X-RateLimit-Remaining")
+                         if exc.headers is not None else None)
+            retry_after = (exc.headers.get("Retry-After")
+                           if exc.headers is not None else None)
+            if remaining == "0" or retry_after is not None:
+                raise GitHubReadError(
+                    "GitHub authentication, quota or provider admission unavailable"
+                ) from exc
             raise GitHubReadError(
-                "GitHub authentication, quota or provider admission unavailable"
+                "GitHub repository inaccessible or not found; access denied or secondary limit unknown"
             ) from exc
         if exc.code == 404:
             raise GitHubReadError(
