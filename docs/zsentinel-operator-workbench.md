@@ -4452,9 +4452,11 @@ als goedkeuring voor een merge, productie-release of actieve claim.
 
 ## 22 oktober · issue-onafhankelijke projectherstel-CSV
 
-De offline `scripts/zsentinel_operator_workbench.py` heeft naast de gefilterde
-issue-CSV nu een afzonderlijke **Preview project recovery CSV** in het
-projectherstelpaneel. Deze export gebruikt uitsluitend de reeds gevalideerde
+De offline `scripts/zsentinel_operator_workbench.py` toont in het
+projectherstelpaneel ook een inklapbaar overzicht van de onafhankelijke bron-
+freshnessvlaggen en UTC-klokken (inbox, retry/queue, branches en PRs), zonder
+die als live status te presenteren. Naast de gefilterde issue-CSV is er een
+afzonderlijke **Preview project recovery CSV**. Deze export gebruikt uitsluitend de reeds gevalideerde
 `project_operations` uit hetzelfde privé-board. Daardoor blijven ook
 projecten zichtbaar wanneer de begrensde GitHub-issuesample nul kaarten bevat
 maar de opgeslagen queue-observatie wel druk toont.
