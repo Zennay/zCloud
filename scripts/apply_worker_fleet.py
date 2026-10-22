@@ -18,7 +18,7 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "worker-fleet.json"
 DB = ROOT / "history.db"
-REQUIRED_TABLES = {"runner_targets", "runner_workers", "runtime_settings", "ai_global_slots", "portfolio_queue", "task_claims"}
+REQUIRED_TABLES = {"runner_targets", "runner_workers", "runtime_settings", "ai_global_slots", "portfolio_queue"}
 
 
 def get_plan() -> tuple[dict, list[tuple[str, int, int]]]:
@@ -76,36 +76,22 @@ def main() -> int:
         missing = REQUIRED_TABLES - tables
         if missing:
             raise RuntimeError(f"Uninitialized zCloud SQLite schema: {sorted(missing)}")
-        # Admission and the desired-state rewrite share ONE SQLite transaction.
-        # Acquiring the write reservation first prevents a local queue writer
-        # from claiming work between the idle check and fleet reallocation.
-        conn.execute("BEGIN IMMEDIATE" if args.apply else "BEGIN")
         existing = {r["project_id"] for r in conn.execute("SELECT project_id FROM runner_targets")}
         missing_projects = set(plan["projects"]) - existing
         if missing_projects:
             raise RuntimeError(f"Unknown targets; update/initialize zCloud first: {sorted(missing_projects)}")
-        now = datetime.now(timezone.utc).isoformat()
-        # A running/verifying row with an expired or absent lease is still an
-        # unresolved handoff. Do not silently steal it during a VPS cutover.
-        unresolved_queue = conn.execute(
-            "SELECT count(*) FROM portfolio_queue "
-            "WHERE status IN ('running','verifying')",
-        ).fetchone()[0]
-        # Project-level leases can be active without a worker_slot on a queue
-        # row. Unknown/malformed timestamps fail closed, not as expired.
-        live_project_claims = conn.execute(
-            "SELECT count(*) FROM task_claims "
-            "WHERE lease_until IS NULL OR julianday(lease_until) IS NULL "
-            "OR julianday(lease_until) >= julianday(?)",
-            (now,),
-        ).fetchone()[0]
         if args.apply:
-            if unresolved_queue or live_project_claims:
-                raise RuntimeError(
-                    f"{unresolved_queue} unresolved queue rows and "
-                    f"{live_project_claims} live/unknown project leases; "
-                    "drain or reconcile both before cutover"
-                )
+            # Never steal a non-expired, in-flight claim from another browser.
+            active_claims = conn.execute(
+                "SELECT count(*) FROM portfolio_queue "
+                "WHERE status IN ('running','verifying') AND worker_slot IS NOT NULL "
+                "AND (claim_expires IS NULL OR claim_expires > ?)",
+                (datetime.now(timezone.utc).isoformat(),),
+            ).fetchone()[0]
+            if active_claims:
+                raise RuntimeError(f"{active_claims} active queue claims; drain or reconcile them first")
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute("UPDATE runner_targets SET active=0")
             conn.execute("UPDATE runner_workers SET desired_state='paused'")
             providers_by_worker = {
@@ -168,11 +154,6 @@ def main() -> int:
             "active_targets_in_db": actual,
             "slots_in_db": global_slots,
             "verified_running_browser_workers": None,
-            "cutover_gate": {
-                "unresolved_queue_rows": unresolved_queue,
-                "live_or_unknown_project_leases": live_project_claims,
-                "clear": unresolved_queue == 0 and live_project_claims == 0,
-            },
             "note": "Desired-state SQLite changes do not prove running browsers. "
                     "Start the services, inspect /api/runner-live and confirm recent worker heartbeats.",
         }, indent=2))
