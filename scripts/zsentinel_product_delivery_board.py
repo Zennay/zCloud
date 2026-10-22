@@ -24,6 +24,11 @@ PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ISSUE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$")
 URL = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[1-9][0-9]{0,8}$")
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
+ISSUE_COVERAGE_NOTES = {
+    "partial": "GitHub issue coverage is PARTIAL; issues outside the observed window remain unknown.",
+    "degraded": "GitHub issue source is DEGRADED; prioritization may omit current issues.",
+    "unavailable": "GitHub issue source is UNAVAILABLE; an empty issue list does not mean no issues exist.",
+}
 MAX_INPUT = 2 * 1024 * 1024
 MAX_OUTPUT_BYTES = 6 * 1024 * 1024
 
@@ -320,8 +325,12 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         gaps = []
         if fresh.get("inbox") is not True:
             gaps.append("Issue evidence is stale; verify GitHub before deciding.")
-        if coverage[pid] != "partial" or inbox["truncated"]:
-            gaps.append("The GitHub issue window is bounded/incomplete.")
+        # All admitted source statuses are partial/degraded/unavailable. In
+        # particular, PARTIAL must not be treated as complete coverage.
+        coverage_note = ISSUE_COVERAGE_NOTES[coverage[pid]]
+        gaps.append(coverage_note)
+        if inbox["truncated"]:
+            gaps.append("The issue inbox is truncated; omitted issues remain unknown.")
         if claim_ids is None:
             gaps.append("Fresh active-claim snapshot unavailable; never infer free ownership.")
         else:
@@ -337,6 +346,7 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         cards.append({**row, "queue": queue, "observed_claim_ids": claim_ids,
                       "pr_delivery_candidates": matching_prs,
                       "project_issue_coverage": coverage[pid],
+                      "project_issue_coverage_note": coverage_note,
                       "recommended_next_step": next_step, "evidence_gaps": gaps,
                       "claim_authorized": False, "merge_authorized": False,
                       "deploy_authorized": False})
@@ -364,12 +374,17 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
             action = "Review P0 issue and current owner/PR state."
         else:
             action = "Review live claims and existing PRs before action."
+        coverage_status = coverage.get(pid, "unavailable")
+        coverage_note = ISSUE_COVERAGE_NOTES.get(
+            coverage_status,
+            "No issue coverage row was observed for this project; backlog status is unknown.")
         project_operations.append({
             "project": pid, "issue_counts_in_sample": issue_totals.get(pid, {
                 "P0": 0, "P1": 0, "P2": 0, "Unspecified": 0}),
             "queue_observation": queue,
             "observed_claim_ids": active,
-            "issue_coverage": coverage.get(pid, "unavailable"),
+            "issue_coverage": coverage_status,
+            "issue_coverage_note": coverage_note,
             "recommended_next_step": action,
             "is_complete_inventory": False,
             "action_authorized": False,
@@ -465,8 +480,8 @@ def markdown(data):
     if not data["pr_delivery_observations"]:
         lines.append("No fresh PR exact-head observation supplied or accepted.")
     lines.extend(["", "## Project-wide queue and ownership context",
-                  "| Project | P0 | P1 | High claim cycles | Expired leases | Operator next step |",
-                  "|---|---:|---:|---:|---:|---|"])
+                  "| Project | P0 | P1 | High claim cycles | Expired leases | Issue source coverage | Operator next step |",
+                  "|---|---:|---:|---:|---:|---|---|"])
     for row in data["project_operations"]:
         queue = row["queue_observation"] or {}
         lines.append("| " + " | ".join(map(safe, (
@@ -474,6 +489,7 @@ def markdown(data):
             row["issue_counts_in_sample"]["P1"],
             queue.get("high_claim_attempts", "unknown"),
             queue.get("expired_active_leases", "unknown"),
+            row["issue_coverage"] + ": " + row["issue_coverage_note"],
             row["recommended_next_step"],
         ))) + " |")
     lines.extend(["", "## Three-line incident handoffs (human-only)", ""])
@@ -488,7 +504,8 @@ def markdown(data):
             " (human-only; no automatic claim, retry or merge).",
             "Status: HOLD · board UTC=" + safe(data["observed_at_utc"]) +
             " · source freshness=" + safe(handoff_freshness(data)) +
-            " · coverage=" + safe(row["issue_coverage"]) +
+            " · coverage=" + safe(row["issue_coverage"]) + " — " +
+            safe(row["issue_coverage_note"]) +
             " · current claim, exact-head CI, independent review and release " +
             "authority UNKNOWN.",
             "",
@@ -540,6 +557,7 @@ def html(data):
             str(entry["issue_counts_in_sample"]["P1"]) + "</td><td>" +
             escape(str(queue.get("high_claim_attempts", "unknown"))) + "</td><td>" +
             escape(str(queue.get("expired_active_leases", "unknown"))) + "</td><td>" +
+            escape(entry["issue_coverage"] + " — " + entry["issue_coverage_note"]) + "</td><td>" +
             escape(entry["recommended_next_step"]) + "</td></tr>")
     rows = []
     for row in data["cards"]:
@@ -555,11 +573,11 @@ def html(data):
                 row["priority"], row["project"], row["issue"], row["title"]),
             "Action: {} (human-only; no automatic claim, retry or merge).".format(
                 row["recommended_next_step"]),
-            "Status: HOLD · board UTC={} · source freshness={} · coverage={} · "
+            "Status: HOLD · board UTC={} · source freshness={} · coverage={} — {} · "
             "current claim, exact-head CI, independent review and release "
             "authority UNKNOWN.".format(
                 data["observed_at_utc"], handoff_freshness(data),
-                row["issue_coverage"]),
+                row["issue_coverage"], row["project_issue_coverage_note"]),
         ))
         rows.append('<article><small>' + escape(row["priority"]) + " · " +
             escape(row["project"]) + " · " + escape(row["issue"]) +
@@ -616,7 +634,7 @@ table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;pa
             "".join(pr_rows) + '</tbody></table></div>'
             '<h2>Project-wide operations</h2><div class="scroll"><table>'
             '<thead><tr><th>Project</th><th>P0</th><th>P1</th>'
-            '<th>Claim cycles</th><th>Expired leases</th><th>Next step</th>'
+            '<th>Claim cycles</th><th>Expired leases</th><th>Issue source coverage</th><th>Next step</th>'
             '</tr></thead><tbody>' + "".join(projects) + '</tbody></table></div>'
             '<h2>Queue-only incident handoffs (human-only)</h2>' +
             ('<section class="board">' + "".join(queue_handoffs) + '</section>'
