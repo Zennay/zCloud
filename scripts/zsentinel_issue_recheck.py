@@ -64,7 +64,7 @@ def _utc():
 
 
 def recheck_missing_live(report, *, token=None, max_reads=3,
-                         source_read_admitted=True):
+                         source_read_admitted=False):
     """Annotate bounded missing cards with explicit read-only GitHub state.
 
     On provider-wide admission/network or malformed-source errors, stop all
@@ -76,6 +76,8 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
         raise PolicyInputError("live recheck limit must be 1..6")
     if type(source_read_admitted) is not bool:
         raise PolicyInputError("source read admission must be explicit boolean")
+    # Importers must explicitly establish this snapshot's admission state.
+    # The default is NO reads, even with a well-formed historical delta.
     if type(report) is not dict or report.get("policy") != (
         "zsentinel-portfolio-visible-issue-delta-v1"
     ):
