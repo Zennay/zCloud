@@ -258,6 +258,10 @@ def discover(registry, selected, token=None):
                     "project_id": pid, "repository": canonical_repository,
                     "approval_wait_workflows": approval_wait_runs,
                     "approval_wait_workflows_sampled": len(approval_wait_runs),
+                    # No exact job was selected in this bounded sample. An
+                    # explicitly empty list is different from a missing or
+                    # corrupt optional job-link source in the operator UI.
+                    "additional_job_links": [],
                     "status": (
                         "degraded_unavailable" if incomplete_windows
                         else "approval_wait_workflow_no_job_selected"
