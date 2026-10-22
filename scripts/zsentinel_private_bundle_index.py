@@ -388,6 +388,62 @@ def saved_pr_changes_html(previous: dict, current: dict) -> str:
     )
 
 
+def saved_attention(snap: dict) -> list[dict]:
+    """Sort bounded saved project observations, never allocate or claim work."""
+    result = []
+    for project, data in snap["projects"].items():
+        queue = (data.get("operations") or {}).get("queue_observation")
+        expired = queue["expired_active_leases"] if queue is not None else None
+        attempts = queue["high_claim_attempts"] if queue is not None else None
+        counts = data["priorities"]
+        result.append({
+            "project": project,
+            "sampled_p0": counts["P0"], "sampled_p1": counts["P1"],
+            "sampled_expired_active_leases": expired,
+            "sampled_high_claim_attempts": attempts,
+            "saved_queue_present": queue is not None,
+            "historical_only": True,
+            "live_owner_verified": False,
+            "needs_live_claim_and_ci_check": True,
+        })
+    return sorted(
+        result,
+        key=lambda row: (-row["sampled_p0"], -(row["sampled_expired_active_leases"] or 0),
+                         -row["sampled_p1"], -(row["sampled_high_claim_attempts"] or 0),
+                         row["project"]),
+    )
+
+
+def historical_attention_html(snap: dict) -> str:
+    """A first-screen handoff drawn only from the most recent saved board."""
+    rows = []
+    for item in saved_attention(snap):
+        expired = item["sampled_expired_active_leases"]
+        churn = item["sampled_high_claim_attempts"]
+        rows.append(
+            "<tr><th scope='row'>" + escape(item["project"]) + "</th><td>" +
+            str(item["sampled_p0"]) + " / " + str(item["sampled_p1"]) +
+            "</td><td>" + ("onbekend" if expired is None else str(expired)) +
+            "</td><td>" + ("onbekend" if churn is None else str(churn)) +
+            "</td></tr>"
+        )
+    return (
+        "<section class='delta'><h2>Historische herstelprioriteiten</h2>"
+        "<p><strong>Geen live prioritering of opdracht.</strong> De meest recente "
+        "bewaarde bordwaarneming " + escape(snap["stem"]) + " van " +
+        escape(snap["observed"].isoformat()) + " is gesorteerd op P0-kaarten, "
+        "waargenomen verlopen leases, P1-kaarten en hoge claimpogingen. "
+        "Ontbrekende retrybron wordt nooit nul. Kijk actuele issues, "
+        "leases, owners en CI na voordat je iets claimt of vrijgeeft.</p>"
+        "<table><thead><tr><th>Project</th><th>Sample P0/P1</th>"
+        "<th>Expired leases bij opname</th><th>Hoge claimpogingen</th>"
+        "</tr></thead><tbody>" +
+        ("".join(rows) if rows else
+         "<tr><td colspan='4'>Geen projecten in de opgeslagen steekproef</td></tr>") +
+        "</tbody></table></section>"
+    )
+
+
 def render(snapshots: list[dict], index_name: str) -> str:
     now = datetime.now(timezone.utc)
     # Explicit order by the saved UTC observation, not the caller's filename.
@@ -451,7 +507,8 @@ def render(snapshots: list[dict], index_name: str) -> str:
         "bruikbare CI, onafhankelijke review, merge of productieherstel.</p>"
         "<p>" + str(len(snapshots)) + " gekoppelde snapshots · index "
         + escape(index_name) + " · gemaakt op " + escape(now.isoformat()) +
-        "</p><h2>Herstelwerkbanken, nieuwste eerst</h2>" +
+        "</p>" + historical_attention_html(snapshots[-1]) +
+        "<h2>Herstelwerkbanken, nieuwste eerst</h2>" +
         "".join(cards) + "<h2>Verschillen tussen opeenvolgende samples</h2>" +
         ("".join(deltas) if deltas else
          "<p>Minimaal twee snapshots nodig voor verschillen.</p>") +
@@ -506,6 +563,7 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
             ],
             "current_inventory_complete_verified": False,
             "projects": projects,
+            "historical_attention_order": saved_attention(snap),
         })
     transitions = []
     for old, new in zip(ordered, ordered[1:]):
