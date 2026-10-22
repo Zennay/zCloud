@@ -1,0 +1,20 @@
+name: Operator preflight document contract
+on:
+  pull_request:
+    paths:
+      - 'docs/control-plane-operator-preflight-denial-20261009-w1.md'
+      - 'tests/test_control_plane_operator_preflight_document_20261009_w1.py'
+      - '.github/workflows/control-plane-operator-preflight-document-20261009-w1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-document-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check immutable contract content
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_operator_preflight_document_20261009_w1.py' -v
