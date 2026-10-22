@@ -206,6 +206,41 @@ for(const delta of queue.adjacent_comparisons){
   else blockedDetails.append(el("p",null,"Geen geaggregeerde status=blocked-wijziging; dit is geen herstelbewijs."));
  }
  $("queueDeltas").append(blockedDetails);
+ const persistentDetails=el("details");
+ persistentDetails.append(el("summary",null,
+  label+" · dezelfde concrete blocked-taken (positieve observaties)"));
+ if(!blocked||blocked.observed_persistent_blocked_refs_total===null){
+  persistentDetails.append(el("p",null,
+   "ONBEKEND: individuele bronnen zijn afwezig of niet vergelijkbaar. "
+   +"Geen afwezigheidsclaim."));
+ }else{
+  const count=blocked.observed_persistent_blocked_refs_total;
+  persistentDetails.append(el("p",null,
+   count+" dezelfde privétaakreferenties in beide waarnemingen. "
+   +"Dit bewijst geen actuele eigenaar, vrijgave of herstel."));
+  if(count){
+   const list=el("ol");
+   for(const ref of blocked.observed_persistent_blocked_refs){
+    list.append(el("li",null,ref.priority+" · "+ref.project_id+
+     " · privéref "+ref.private_queue_ref+
+     " · claimvelden "+(ref.claim_metadata_was_present?"aanwezig":"niet gezien")+
+     " → "+(ref.claim_metadata_now_present?"aanwezig":"niet gezien")+
+     " · actuele taak en eigenaar afzonderlijk controleren."));
+   }
+   persistentDetails.append(list);
+  }
+  if(blocked.historical_blocked_absence_comparison){
+   const change=blocked.historical_blocked_absence_comparison;
+   persistentDetails.append(el("p",null,
+    "Twee VOLLEDIGE taakbronnen: nieuw in blocked="+change.newly_blocked_total+
+    ", niet meer in blocked="+change.no_longer_blocked_total+
+    ". Niet meer geblokkeerd is NIET bewezen opgelost of gemerged."));
+  }else{
+   persistentDetails.append(el("p",null,
+    "Ten minste één beperkte taaksteekproef: nieuw/verdwenen ONBEKEND."));
+  }
+ }
+ $("queueDeltas").append(persistentDetails);
  const details=el("details");
  details.append(el("summary",null,label+" · per project en prioriteit"));
  if(delta.project_deltas===null){
@@ -309,6 +344,25 @@ function queueMarkdown(){
       group.blocked_rows_delta_not_resolution_proof+
       " · bevoegde eigenaar controleert actuele rij.");
     }
+   }
+  }
+  if(blocked){
+   const persistent=blocked.observed_persistent_blocked_refs_total;
+   out.push("- Zelfde concrete blocked-taakrefs in beide bronmomenten: "+
+    (persistent===null?"ONBEKEND":persistent)+
+    " (positieve waarneming; GEEN herstelbewijs of claimtoestemming).");
+   for(const ref of blocked.observed_persistent_blocked_refs||[]){
+    out.push("  - "+ref.priority+" "+ref.project_id+" privéref "+ref.private_queue_ref+
+     " · claimvelden eerder="+ref.claim_metadata_was_present+
+     ", later="+ref.claim_metadata_now_present+
+     " · bevoegde eigenaar controleert echte actuele queue.");
+   }
+   const absence=blocked.historical_blocked_absence_comparison;
+   if(absence){
+    out.push("- Alleen bij twee complete snapshots: nieuw geblokkeerd "+
+     absence.newly_blocked_total+", niet meer blocked "+
+     absence.no_longer_blocked_total+
+     " · geen bewezen reparatie.");
    }
   }
   if(row.deltas===null){
