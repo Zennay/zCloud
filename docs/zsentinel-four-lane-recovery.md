@@ -1,3 +1,30 @@
+## 22 oktober 2026 · P0-eigenaarwerk blijft zichtbaar, ook zonder nieuwe wachtrijtaak
+
+De bestaande vier-lane cockpit had een functionele volgordefout: de
+`owner_review_shortlist` nam de volgorde van de lokaal ingelezen
+projectregels over, ondanks het label 'P0 eerst'. Bij een maximum van zes
+konden wachtende P1-projecten dus een echt P0-project uit het zicht duwen.
+Ook een reeds `running`/ `claimed` P0-project zonder nieuw wachtwerk
+werd niet opgenomen, terwijl de volledige CSV het wel als `P0_ACTIVE_OWNER`
+classificeerde.
+
+Nu gebruiken de privé HTML-, tekst-, Markdown- en JSON-eigenaaroverdrachten
+dezelfde deterministische bronvolgorde als de volledige CSV:
+`P0_QUEUED` → `P0_ACTIVE_OWNER` → `P1_QUEUED` →
+`P1_ACTIVE_OWNER`. Binnen een groep komt het grootste waargenomen
+P0-/P1-volume eerst; gelijke scores zijn alfabetisch stabiel. De
+maximaal zes zichtbare kaarten bevatten nu ook afzonderlijke aantallen
+actief P0/P1 en tonen de categorie `owner_review_kind` in JSON.
+De volledige CSV kent dezelfde P0/P1-prioriteit voor actieve-only regels,
+in plaats van die als `UNKNOWN` aan te duiden.
+
+Een actieve-only kaart is expliciet **eigenaarrecheck**, geen vrij
+werkpakket. Geen actieve lease of worker wordt geclaimd, onderbroken,
+opnieuw ingepland of overgenomen. Alle gegevens blijven één beperkte
+lokale queue-steekproef; ontbrekende projectdekking en afgekapt
+shortlistmateriaal blijven **ONVOLLEDIG**. Geen live GitHub/Notion-
+bevestiging, reviewergoedkeuring, CI-mergeautoriteit of deploybewijs.
+
 # zSentinel · four-lane recovery admission
 
 ## 22 October · portable portfolio owner-actions CSV from one local snapshot
