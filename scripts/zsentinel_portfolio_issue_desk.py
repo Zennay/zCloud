@@ -35,10 +35,10 @@ ALL_RANKS = range(7)
 
 
 def _repository_local_unavailable(error):
-    """Only a canonical not-found/inaccessible source is scoped to one repo.
+    """Scope canonical not-found and unconfirmed repository 403s to one repo.
 
-    Authentication, quota, network or malformed response ambiguity remains
-    provider-wide UNKNOWN, so no additional requests follow those errors.
+    Confirmed authentication/global cooldown, network and malformed-response
+    ambiguity remain provider-wide UNKNOWN and stop further portfolio reads.
     """
     return isinstance(error, str) and (
         "inaccessible or not found" in error
@@ -85,9 +85,9 @@ def observe_portfolio(repositories, *, token=None, view="all"):
                 name, token=token, display_all_sample=True,
             )
         except GitHubReadError as exc:
-            # A 404-style repository-local failure must not hide the next
-            # independent project's issues. Authorization/quota/network
-            # uncertainty is still global and ends provider reads.
+            # A 404 or non-global 403 must not hide the next independent
+            # project. Confirmed auth/global cooldown and network uncertainty
+            # still stop provider reads; no provider error body is exposed.
             local_error = _repository_local_unavailable(str(exc))
             recorded.append({
                 "repository": name, "state": "SOURCE_UNAVAILABLE",
