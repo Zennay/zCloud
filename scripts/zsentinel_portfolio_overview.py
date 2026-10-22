@@ -283,6 +283,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         for workflow in approval:
             if (type(workflow) is not dict or
                     workflow.get("action_authorized") is not False or
+                    workflow.get("workflow_status_observed") != "waiting" or
                     type(workflow.get("run_id")) is not int or
                     not 0 < workflow["run_id"] <= 2**53-1 or
                     workflow["run_id"] in seen_approval or
