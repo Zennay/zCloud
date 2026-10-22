@@ -36,6 +36,47 @@ ATTENTION_LABELS = {
     "await_required_gates": "Wacht op verplichte gates en onafhankelijke review",
 }
 
+# Existing GitHub/portfolio blocker categories, not new CI or review gates.
+# One human owner work list is more useful than treating every open PR as
+# another CI wait. These are read-only suggested action buckets.
+WORKSTREAM_LABELS = {
+    "owner_action_now": "Eigenaar kan bestaand probleem nu aanpakken",
+    "inspect_changed_source": "Nieuwe bron of wijziging onderzoeken",
+    "existing_external_wait": "Bestaande CI of onafhankelijke review afwachten",
+    "protected_merge_handoff": "Bestaande branchregels en releasebevoegdheid controleren",
+    "defer_unchanged_hold": "Ongewijzigde HOLD parkeren; ander werk kiezen",
+}
+WORKSTREAM_ORDER = tuple(WORKSTREAM_LABELS)
+OWNER_BLOCKERS = frozenset({
+    "failed_checks_or_legacy_context", "github_merge_conflict_observed",
+    "review_changes_requested", "draft_pr_needs_owner",
+    "independent_review_not_seen",
+})
+EXTERNAL_WAIT_BLOCKERS = frozenset({
+    "checks_still_running", "check_source_not_terminal",
+    "independent_review_requested_waiting",
+})
+RELEASE_BLOCKERS = frozenset({"branch_rules_ownership_and_release_not_verified"})
+
+
+def _operator_workstream(blocker, pinned, source_stale, history_state, defer_repeat):
+    """Actionable source interpretation, never admission or merge permission."""
+    if defer_repeat:
+        return "defer_unchanged_hold"
+    if (source_stale or not pinned or history_state in (
+            "changed_or_uncertain_head", "incomplete_gate_source",
+            "newly_selected_not_new_pr")):
+        return "inspect_changed_source"
+    if blocker in OWNER_BLOCKERS:
+        return "owner_action_now"
+    if blocker in EXTERNAL_WAIT_BLOCKERS:
+        return "existing_external_wait"
+    if blocker in RELEASE_BLOCKERS:
+        return "protected_merge_handoff"
+    # Incomplete GitHub sources, missing checks or unknown mergeability are
+    # investigative work, not proof that anyone can safely merge.
+    return "inspect_changed_source"
+
 
 def _timestamp(value):
     if type(value) is not str or len(value) > 48:
@@ -713,9 +754,18 @@ def collect_workorders(board):
             attention_status = "inspect_changed_evidence"
         else:
             attention_status = "await_required_gates"
+        workstream = _operator_workstream(
+            item.get("blocker"), pinned, source_stale, history_state, defer_repeat)
         cards.append({
             "attention_status": attention_status,
             "attention_label": ATTENTION_LABELS[attention_status],
+            "workstream": workstream,
+            "workstream_label": WORKSTREAM_LABELS[workstream],
+            "operator_action_link": (
+                url + "/checks" if item.get("blocker") in (
+                    "failed_checks_or_legacy_context",
+                    "checks_still_running", "check_source_not_terminal")
+                else url),
             "project": project, "repository": repo, "number": num,
             "url": url, "files_url": url + "/files",
             "checks_url": url + "/checks", "review_url": url,
@@ -749,7 +799,18 @@ def collect_workorders(board):
             "owner_claim_verified": False, "required_checks_verified": False,
             "merge_authorized": False, "deploy_authorized": False,
         })
-    cards.sort(key=lambda x: (x["rank"], x["project"], x["number"]))
+    # Action-first within existing bounded selected PRs. A human can address
+    # a concrete owner fix without repeatedly reopening an unchanged CI hold.
+    cards.sort(key=lambda x: (
+        WORKSTREAM_ORDER.index(x["workstream"]), x["rank"],
+        x["project"], x["number"]))
+    workstream_summary = {
+        "counts": {key: sum(card["workstream"] == key for card in cards)
+                   for key in WORKSTREAM_ORDER},
+        "selected_pr_count": len(cards),
+        "all_actions_manual": True,
+        "source_only_no_execution_authority": True,
+    }
     review_summary = {
         "pending_review_requested_prs": sum(
             bool(card["pending_review_requests"] and
@@ -767,6 +828,7 @@ def collect_workorders(board):
         "schema": SCHEMA, "source_observed_at_utc": observed_at,
         "project_set": list(project_ids), "items": cards,
         "review_request_worklist_summary": review_summary,
+        "workstream_summary": workstream_summary,
         "source_observation_stale": source_stale,
         "source_freshness_budget_seconds": SOURCE_FRESHNESS_SECONDS,
         "historical_comparison_status": history_status,
