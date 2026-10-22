@@ -1,5 +1,33 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · CI-stilstand is nu uitvoerbaar eigenaarwerk, geen blind wachten
+
+Een samenhangende correctie verbindt de nieuwe **actuele exact-head
+gatecollector** en de **opgeslagen multi-PR eigenaarwerkbak**:
+
+- Bij exact-head bronbewijs dat expliciet
+  `owner_triage_observed_slow_current_head_checks` vraagt, verdwijnt een
+  PR niet meer ten onrechte in de passieve 'CI wacht'-bak. Hij verschijnt
+  onder de aparte **CI-/runnertoewijzing onderzoeken**-categorie, zonder
+  automatisch te herstarten of runnerfalen te claimen.
+- Wanneer de actuele collector nog geen onafhankelijke review ziet en
+  `request_independent_current_head_review` als concrete actie teruggeeft,
+  blijft dit een **reviewaanvraag voor de bevoegde eigenaar**, ook wanneer
+  andere checks nog queued zijn.
+- Een apart gevalideerde `parallel_independent_review_step` uit de
+  actuele gatebron blijft behouden in opgeslagen rapporten en wordt nu ook
+  zichtbaar in de HTML- en teksteigenaarselecties. Daardoor verdwijnt
+  parallel uitvoerbaar werk niet meer door historische batchreconciliatie.
+- De oorspronkelijke bronmanifestvolgorde en de afzonderlijke P0/P1-prioriteit
+  blijven ongewijzigd; de werkbak groepeert alleen het uitgevoerde
+  **menselijke vervolgwerk**. Verouderde en onvolledige bronnen eisen nog
+  steeds een nieuwe GitHub-/Notion-read.
+
+Geen nieuwe releasegates, reviews, automatiseringsrechten, GitHub-writes,
+testwerk of workflow-herstarts. Dit is bronlogica op de bestaande PR:
+pas na actuele exact-HEAD verplichte CI, echte onafhankelijke review,
+branch protection en bevoegde releasebeslissing kan iets naar `main`.
+
 ## 22 oktober · portable exacte-HEAD Markdown eigenaarsoverdracht
 
 De bestaande read-only huidige PR-gatecollector heeft een vierde, makkelijk
