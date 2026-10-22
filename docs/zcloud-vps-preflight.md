@@ -140,8 +140,10 @@ python3 scripts/zcloud_vps_preflight.py --host-pressure --previous-report /secur
 Het nieuwe `host_pressure_trend`-object vergelijkt CPU-vraag per core,
 CPU-some-PSI en geheugen-/I/O-full-PSI. Alleen eindige, begrensde cijfers uit
 twee expliciete `local_procfs`-bronrecords met hetzelfde aantal CPU's worden
-gebruikt; de ruwe load, CPU-count en afgeleide load-per-CPU moeten onderling
-consistent zijn. De totale trend wordt alleen als rising/falling/stable/mixed
+gebruikt; beide records moeten ook expliciet `release_authorized=false` en
+`changes_host=false` aangeven. Ontbrekende of afwijkende bronvelden worden
+per opname benoemd en leveren `untrusted_source` op. De ruwe load, CPU-count
+en afgeleide load-per-CPU moeten onderling consistent zijn. De totale trend wordt alleen als rising/falling/stable/mixed
 samengevat wanneer **alle vier metrics** geldig zijn en beide snapshotstatussen
 `observed` zijn. Bij gedeeltelijke overlap blijven beschikbare deltas per
 metric zichtbaar, maar de geaggregeerde trend blijft `unknown`; het rapport
