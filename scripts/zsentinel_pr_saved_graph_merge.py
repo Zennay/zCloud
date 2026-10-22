@@ -817,8 +817,7 @@ def render(report, fmt):
         " · doelbranch " + escape(item.get("base_ref_observed") or "ONBEKEND") +
         " · botsende PR-paren / " +
         str(item["cross_window_shared_file_count"]) +
-        " gedeelde bestanden · doelbranch " +
-        escape(item.get("base_ref_observed") or "ONBEKEND") + " · " +
+        " gedeelde bestanden · " +
         str(item["cross_window_number_hint_count"]) +
         " onzekere issue-/PR-nummers</li>"
         for item in report["prioritized_existing_prs"])
@@ -910,8 +909,8 @@ def render(report, fmt):
          if report["connected_cross_window_groups_truncated"] else "") +
         "</ol>"
         "<table><thead><tr><th>Open bron-PRs</th><th>Gedeelde paden</th>"
-        "<th>Geobserveerde bestanden</th></tr></thead><tbody>" +
-        (rows or "<tr><td colspan='3'>Geen botsing gezien, geen vrijgave.</td></tr>") +
+        "<th>Doelbranches</th><th>Geobserveerde bestanden</th></tr></thead><tbody>" +
+        (rows or "<tr><td colspan='4'>Geen botsing gezien, geen vrijgave.</td></tr>") +
         "</tbody></table><h2>Zelfde nummer in PR-titel of body over vensters</h2>"
         "<p>Niet geverifieerd als bestaand issue of bewezen fix. Controleer GitHub.</p>"
         "<ul>" + (issue_rows or "<li>Geen nieuwe nummeroverlap in deze "
