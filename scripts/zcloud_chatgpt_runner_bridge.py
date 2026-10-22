@@ -234,6 +234,60 @@ def _read_bounded_proc_file(path: str, limit: int) -> bytes | None:
     return raw
 
 
+MAX_PROC_MOUNTINFO_BYTES = 65536
+_MOUNTINFO_OCTAL_ESCAPE = re.compile(r"\\([0-7]{3})")
+_MOUNTINFO_ALLOWED_ESCAPES = frozenset({"040", "011", "012", "134"})
+
+
+def _decode_mountinfo_path(value: str) -> str | None:
+    """Decode Linux mountinfo's documented path escapes; reject ambiguous syntax."""
+    if re.search(r"\\(?![0-7]{3})", value):
+        return None
+
+    def decode(match: re.Match[str]) -> str:
+        code = match.group(1)
+        if code not in _MOUNTINFO_ALLOWED_ESCAPES:
+            raise ValueError("unsupported_mountinfo_escape")
+        return chr(int(code, 8))
+
+    try:
+        return _MOUNTINFO_OCTAL_ESCAPE.sub(decode, value)
+    except ValueError:
+        return None
+
+
+def _mountinfo_target_state(path: str) -> str:
+    """Return mounted/not_mounted/ambiguous/unknown from a bounded kernel snapshot."""
+    raw = _read_bounded_proc_file("/proc/self/mountinfo", MAX_PROC_MOUNTINFO_BYTES)
+    if raw is None:
+        return "unknown"
+    try:
+        text = raw.decode("ascii")
+    except UnicodeError:
+        return "unknown"
+
+    target = os.path.normpath(os.path.abspath(path))
+    matches = 0
+    for line in text.splitlines():
+        fields = line.split()
+        if not fields:
+            return "unknown"
+        try:
+            separator = fields.index("-")
+        except ValueError:
+            return "unknown"
+        if separator < 6 or len(fields) < separator + 4:
+            return "unknown"
+        mount_point = _decode_mountinfo_path(fields[4])
+        if mount_point is None or not mount_point.startswith("/"):
+            return "unknown"
+        if os.path.normpath(mount_point) == target:
+            matches += 1
+            if matches > 1:
+                return "ambiguous"
+    return "mounted" if matches == 1 else "not_mounted"
+
+
 def _host_capacity_observation() -> dict[str, object]:
     """Bounded resource pressure hints; never infer cause or authorize cleanup."""
     result: dict[str, object] = {
@@ -254,6 +308,7 @@ def _host_capacity_observation() -> dict[str, object]:
         "swap": {"configured": None, "total_bytes": None, "free_bytes": None,
                  "used_percent": None},
         "archive_mount": {"configured": True, "mount_detected": None,
+                          "mount_detection_basis": "unknown", "separate_filesystem": None,
                           "total_bytes": None, "available_bytes": None,
                           "available_percent": None},
         "warnings": [],
@@ -385,21 +440,34 @@ def _host_capacity_observation() -> dict[str, object]:
         complete = False
         evidence_warnings.append("root_filesystem_capacity_observation_unavailable")
 
-    try:
-        mount_info = os.lstat(ARCHIVE_MOUNT_PATH)
-        if not stat.S_ISDIR(mount_info.st_mode):
-            raise ValueError("archive_mount_path_not_directory")
-        mounted = os.path.ismount(ARCHIVE_MOUNT_PATH)
-        archive = result["archive_mount"]
-        archive["mount_detected"] = mounted
-        if not mounted:
-            # The configured archive path may merely be a directory on root.
-            # Do not report complete capacity evidence or imply offload is safe.
-            complete = False
-            evidence_warnings.append("archive_mount_not_detected")
-        else:
-            root_device = os.stat("/").st_dev
-            archive_device = os.stat(ARCHIVE_MOUNT_PATH).st_dev
+    archive = result["archive_mount"]
+    mount_state = _mountinfo_target_state(ARCHIVE_MOUNT_PATH)
+    archive["mount_detection_basis"] = {
+        "mounted": "proc_self_mountinfo_exact_target",
+        "not_mounted": "proc_self_mountinfo_no_exact_target",
+        "ambiguous": "proc_self_mountinfo_ambiguous_target",
+    }.get(mount_state, "unknown")
+
+    if mount_state == "not_mounted":
+        archive["mount_detected"] = False
+        complete = False
+        evidence_warnings.append("archive_mount_not_detected")
+    elif mount_state == "ambiguous":
+        archive["mount_detected"] = None
+        complete = False
+        evidence_warnings.append("archive_mount_ambiguous_multiple_entries")
+    elif mount_state != "mounted":
+        archive["mount_detected"] = None
+        complete = False
+        evidence_warnings.append("archive_mount_observation_unavailable")
+    else:
+        archive["mount_detected"] = True
+        try:
+            archive_stat_before = os.stat(ARCHIVE_MOUNT_PATH, follow_symlinks=False)
+            if not stat.S_ISDIR(archive_stat_before.st_mode):
+                raise ValueError("archive_mount_path_not_directory")
+            root_device = os.stat("/", follow_symlinks=True).st_dev
+            archive_device = archive_stat_before.st_dev
             separate_filesystem = root_device != archive_device
             archive["separate_filesystem"] = separate_filesystem
             if not separate_filesystem:
@@ -417,14 +485,33 @@ def _host_capacity_observation() -> dict[str, object]:
                     or archive_available_blocks > archive_free_blocks):
                 raise ValueError("invalid_archive_filesystem_capacity")
             total, available = block_size * total_blocks, block_size * archive_available_blocks
+
+            # Recheck both mount membership and path identity around the path-based
+            # statvfs call; a changed target must not be credited as archive capacity.
+            archive_stat_after = os.stat(ARCHIVE_MOUNT_PATH, follow_symlinks=False)
+            if (
+                not stat.S_ISDIR(archive_stat_after.st_mode)
+                or (archive_stat_before.st_dev, archive_stat_before.st_ino)
+                != (archive_stat_after.st_dev, archive_stat_after.st_ino)
+                or _mountinfo_target_state(ARCHIVE_MOUNT_PATH) != "mounted"
+            ):
+                raise ValueError("archive_mount_changed_during_observation")
+
             archive.update({
                 "total_bytes": total,
                 "available_bytes": available,
                 "available_percent": round(100 * available / total, 1),
             })
-    except (OSError, ValueError, TypeError, OverflowError, AttributeError, ZeroDivisionError):
-        complete = False
-        evidence_warnings.append("archive_mount_observation_unavailable")
+        except (OSError, ValueError, TypeError, OverflowError, AttributeError, ZeroDivisionError) as exc:
+            complete = False
+            if str(exc) in ("archive_mount_changed_during_observation", "archive_mount_path_not_directory"):
+                archive["mount_detected"] = None
+                archive["separate_filesystem"] = None
+            evidence_warnings.append(
+                "archive_mount_changed_during_observation"
+                if str(exc) == "archive_mount_changed_during_observation"
+                else "archive_mount_observation_unavailable"
+            )
 
     root = result["root_filesystem"]
     memory = result["memory"]
@@ -591,8 +678,12 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
         codes.append("CAPACITY_EVIDENCE_PARTIAL")
     evidence_warnings = capacity.get("evidence_warnings", [])
     if isinstance(evidence_warnings, list):
-        if ("archive_mount_not_detected" in evidence_warnings
-                or "archive_mount_observation_unavailable" in evidence_warnings):
+        if any(reason in evidence_warnings for reason in (
+            "archive_mount_not_detected",
+            "archive_mount_observation_unavailable",
+            "archive_mount_ambiguous_multiple_entries",
+            "archive_mount_changed_during_observation",
+        )):
             codes.append("ARCHIVE_MOUNT_UNAVAILABLE_NO_OFFLOAD")
         if "archive_mount_same_filesystem_as_root" in evidence_warnings:
             codes.append("ARCHIVE_MOUNT_NOT_SEPARATE_FROM_ROOT_NO_OFFLOAD")
