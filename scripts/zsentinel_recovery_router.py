@@ -734,6 +734,7 @@ def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None)
     seen = set()
     branch_suppressed = []
     dependency_holds = []
+    owner_holds = []
     gate_holds = []
     for task in tasks:
         if not isinstance(task, dict):
@@ -755,9 +756,20 @@ def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None)
                 or len(set(deps)) != len(deps)):
             raise ValueError("invalid, duplicate or noncanonical incident dependencies")
         scopes = admit_paths(task) if task.get("state") == "queued" else None
-        if (not complete or task.get("state") != "queued" or task.get("eligible") is not True
-                or task.get("human_gate") is not False or task.get("qa_only") is not False
-                or task.get("active_owner") is not False or scopes is None):
+        if (not complete or task.get("state") != "queued"
+                or task.get("eligible") is not True
+                or task.get("human_gate") is not False
+                or task.get("qa_only") is not False or scopes is None):
+            continue
+        if task.get("active_owner") is True:
+            # Keep protected work visible without making it available for takeover.
+            owner_holds.append({
+                "id": ident, "project_id": pid, "priority": tier,
+                "reason": "active_owner_protection",
+                "claim_authorized": False, "dispatch_authorized": False,
+            })
+            continue
+        if task.get("active_owner") is not False:
             continue
         unresolved = [dep for dep in deps if dep not in reconciled_dependencies
                       or dep in blocked["ids"]]
@@ -869,8 +881,10 @@ def eligible_tasks(bundle, blocked, now, capacity, reconciled_dependencies=None)
         disjoint.append(candidate)
     gate_holds.sort(key=lambda item: (
         PRIORITY[item["priority"]], item["project_id"], item["id"], item["reason"]))
+    owner_holds.sort(key=lambda item: (
+        PRIORITY[item["priority"]], item["project_id"], item["id"]))
     return (disjoint, complete, branch_ownership, branch_suppressed,
-            dependency_holds, gate_holds, selection_holds,
+            dependency_holds, owner_holds, gate_holds, selection_holds,
             sorted(coverage_reasons))
 
 
@@ -1571,7 +1585,7 @@ def plan(bundle, previous=None, now=None):
         if entry["status"] == "exact_job_completed_source_reconciled"
     }
     (routes, routing_inventory_complete, branches, branch_suppressed,
-     dependency_holds, gate_holds, selection_holds,
+     dependency_holds, owner_holds, gate_holds, selection_holds,
      routing_coverage_reasons) = eligible_tasks(
         bundle, blocked, now, capacity, exact_reconciled_dependencies)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
@@ -1658,6 +1672,16 @@ def plan(bundle, previous=None, now=None):
             "samples_truncated": len(dependency_holds) > 8,
             "exact_reconciliation_required": True,
             "claim_authorized": False,
+        },
+        "routing_owner_holds": {
+            # A source-reported owner guard remains visible but never grants takeover.
+            "coverage": "complete" if routing_inventory_complete else "incomplete_or_stale",
+            "coverage_reasons": routing_coverage_reasons,
+            "count": len(owner_holds),
+            "examples": owner_holds[:8],
+            "samples_truncated": len(owner_holds) > 8,
+            "claim_authorized": False,
+            "dispatch_authorized": False,
         },
         "routing_gate_holds": {
             # These are tasks that passed claim/dependency/branch admission but
@@ -1783,6 +1807,49 @@ def operator_text(result):
                          "owner must inspect current source.")
         if holds["samples_truncated"]:
             lines.append("Further incident dependency HOLD examples omitted.")
+    owner_report = result.get("routing_owner_holds")
+    if owner_report is None:
+        owner_report = {
+            "coverage": "incomplete_or_stale", "coverage_reasons": [],
+            "count": 0, "examples": [], "samples_truncated": False,
+            "claim_authorized": False, "dispatch_authorized": False,
+        }
+    owner_examples = owner_report.get("examples") if type(owner_report) is dict else None
+    owner_coverage = owner_report.get("coverage") if type(owner_report) is dict else None
+    owner_reasons = owner_report.get("coverage_reasons") if type(owner_report) is dict else None
+    if (type(owner_report) is not dict
+            or owner_coverage not in ("complete", "incomplete_or_stale")
+            or type(owner_reasons) is not list or len(owner_reasons) > 7
+            or any(reason not in allowed_coverage_reasons for reason in owner_reasons)
+            or (owner_coverage == "complete" and owner_reasons)
+            or type(owner_report.get("count")) is not int
+            or not 0 <= owner_report["count"] <= MAX_TASKS
+            or type(owner_examples) is not list or len(owner_examples) > 8
+            or len(owner_examples) > owner_report["count"]
+            or owner_report.get("samples_truncated") is not (
+                owner_report["count"] > len(owner_examples))
+            or owner_report.get("claim_authorized") is not False
+            or owner_report.get("dispatch_authorized") is not False):
+        raise ValueError("untrusted active-owner hold report")
+    if owner_coverage == "complete":
+        lines.append("Queued tasks protected by a reported active owner: " +
+                     str(owner_report["count"]) + " (no claim/dispatch)")
+    else:
+        lines.append("Active-owner holds: UNKNOWN — task/claim inventory incomplete or stale; do not infer that ownership is free.")
+    for item in owner_examples:
+        if (type(item) is not dict
+                or type(item.get("id")) is not str or not SLUG.fullmatch(item["id"])
+                or type(item.get("project_id")) is not str or not SLUG.fullmatch(item["project_id"])
+                or item.get("priority") not in PRIORITY
+                or item.get("reason") != "active_owner_protection"
+                or item.get("claim_authorized") is not False
+                or item.get("dispatch_authorized") is not False):
+            raise ValueError("invalid active-owner hold example")
+        lines.append("- OWNER-HOLD " + item["priority"] + " " +
+                     item["project_id"] + "/" + item["id"] +
+                     " · verify the current owner/claim and coordinate handoff; do not take over.")
+    if owner_report["samples_truncated"]:
+        lines.append("Further active-owner HOLD examples omitted; source count retained.")
     gate_report = result.get("routing_gate_holds")
     if gate_report is None:
         gate_report = {
