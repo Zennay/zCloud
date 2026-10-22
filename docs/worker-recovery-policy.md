@@ -1007,6 +1007,13 @@ CI/review UNKNOWN. De uitvoer heeft altijd
 `active_claim_verified=false`, `branch_protection_verified=false` en
 `deployed=false`: alleen brontriage, geen toestemming.
 
+De output bevat daarnaast acht concrete, per-gate operator-kaarten in JSON,
+Markdown en offline HTML: exacte HEAD, open/non-draft/default-branch,
+zichtbare checks, alle verplichte CI, onafhankelijke reviews en threads,
+branch protection, actieve ownerclaims, en post-merge/main/live bewijs.
+Alle ontbrekende live autorisaties blijven expliciet UNKNOWN/HOLD; een
+geslaagde bronobservatie vormt nooit zelf een merge- of deploytoestemming.
+
 Ook de reeds bestaande policy-acties `retry_ci`, `assign_independent_work`,
 `park_blocker`, `merge_pr`, `deploy` en `restart_runner` houden nu
 expliciet op een **ontbrekende benoemde owner**. Een ingevulde
