@@ -3844,3 +3844,45 @@ Exact-source incident note imports bind to the SHA-256 of the optional
 operational sources; older notes require explicit human carry and recheck.
 For a compact runnable recipe, see
 [private runtime incident desk](zsentinel-private-runtime-incident-desk.md).
+
+
+## 22 oktober · rootdisk en databasevolume onafhankelijk meten voor veilige runner-admission
+
+**P0 #1326 kapaciteitsrisico:** op de VPS kan `/home/ubuntu/VPS-Archief`
+een grote aparte schijf zijn terwijl de rootdisk van de runner bijna vol
+staat. De bestaande optionele `zsentinel_vps_resource_observer.py
+--database <queue.db>` las tot nu toe vrije GiB, schijfbezetting en inodes
+alleen via de descriptor van de **database-mount**. Dat is nuttig voor
+SQLite, maar kan niet bewijzen dat de VPS **systeemschijf** voldoende ruimte
+heeft om workerprocessen, logs of tijdelijke GitHub-runnerbestanden aan te
+maken.
+
+De observator levert daarom óók, onder expliciete afzonderlijke
+`vps.root_*`-velden, een alleen-lezen `O_NOFOLLOW`/`O_DIRECTORY`
+geopende en via `fstatvfs` gepinde rootmountmeting:
+`root_free_disk_gib`, `root_disk_unavailable_percent`,
+`root_inode_available`, `root_inode_total`,
+`root_inode_unavailable_percent`, `root_inode_source` en
+`root_mount_same_device_as_database`. De bestaande ongewijzigde
+`free_disk_gib` en `disk_unavailable_percent` blijven voor
+achterwaartse compatibiliteit **database-mountgegevens**; zij worden
+niet achteraf mislabeled als rootdiskbewijs.
+
+De herstelrouter controleert beide mounts afzonderlijk en wijst
+**advies voor nieuw self-hosted werk** conservatief af zodra de
+systeemschijf minder dan 2 GiB vrije ruimte, minstens 90% niet-beschikbare
+ruimte of minstens 90% onbeschikbare inodes heeft. Tegensprekende of
+gedeeltelijke metingen worden geweigerd. Filesystems zonder bruikbare
+inodeteller blijven `unavailable`, niet nul of OK. Oude receipts zonder
+`root_*` blijven raadpleegbaar en kunnen een reeds waargenomen
+overbelasting melden, maar leiden bij verder normale waarden tot
+`legacy_root_filesystem_capacity_not_observed`: **geen valse
+advisory_headroom**. Nederlandse herstelcockpit vertaalt de nieuwe
+grondcodes naar mensentaal en bewaart een begrensde meervoudige reden.
+
+Geen rootbestand wordt inhoudelijk gelezen of gewijzigd, geen SQLite
+query/claim, queueverschuiving, service- of runnerrestart, nieuwe
+workflowdispatch, facturatie, schoonmaakactie of deployment. Ook
+`advisory_headroom` blijft uitsluitend bronadvies en verleent geen
+eigenaars-, CI-, review- of releasebevoegdheid. Voor productie-impact zijn
+nog de bestaande PR-mergegates en een bevoegde VPS runtime-owner nodig.
