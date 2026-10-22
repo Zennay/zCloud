@@ -994,7 +994,9 @@ de default branch vóór/na de observatie en geeft `DEFAULT_BRANCH_SOURCE_UNKNOW
 als die bron ontbreekt of verandert; `BASE_NOT_DEFAULT` markeert een PR die
 niet naar de waargenomen standaardbranch wijst. PR-status, base, draft,
 merged en SHA worden eveneens opnieuw gelezen vóór de stabiele exact-HEAD
-wordt getoond. De check- en
+wordt getoond. De check-run samenvatting scheidt potentieel blokkerende
+terminale non-success (failure/cancelled/stale/unknown), neutral/skipped en
+pending; neutral/skipped zijn uitdrukkelijk géén succesbewijs. De check- en
 reviewpagina zijn **beperkte samples**; zelfs volledig geslaagde zichtbare
 checks bewijzen niet welke CI branch protection verplicht stelt. Reviewstatus,
 onopgeloste threads, owner claims en release-autorisatie blijven apart
