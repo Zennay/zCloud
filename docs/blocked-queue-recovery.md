@@ -801,7 +801,7 @@ the current owner must reconcile/release the stale record first. No recovery
 path prunes, releases, or overwrites a task claim.
 
 The dashboard disables resume/close controls unless both the queue row and
-the separate task-claim source prove the task unbound. The private handoff
-includes this limited claim-state evidence without exposing owner IDs. This
-is still only a read-only observation; the actual writes recheck the claim
+the separate task-claim source prove the task unbound. Hold cards and the
+private handoff show claim state and observed lease expiry without exposing
+owner IDs. This is still only a read-only observation; the actual writes recheck the claim
 inside the same `BEGIN IMMEDIATE` transaction as the guarded state change.
