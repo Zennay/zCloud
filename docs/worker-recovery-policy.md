@@ -493,7 +493,28 @@ python3 scripts/zsentinel_recovery_policy.py \
 ```
 
 Also available as `--format markdown` or `--format json` for
-portable owner handoffs. The inbox is **read-only** and only accepts an
+portable owner handoffs. A private **source-ranked human workorders CSV**
+can now be created from the same live bounded issue observation:
+
+```sh
+umask 077
+mkdir -p -m 700 "$HOME/.local/share/zsentinel"
+python3 scripts/zsentinel_recovery_policy.py \\
+  --live-inbox-repo Zennay/zCloud \\
+  --format csv \\
+  --output "$HOME/.local/share/zsentinel/issues-$(date -u +%Y%m%dT%H%M%S)-$.csv"
+```
+
+CSV requires `--output`, uses the existing create-only private 0600
+writer and includes at most 45 issue links. Columns carry the original
+GitHub issue, unverified title hints, observed severity, source-window
+coverage, explicit human-only owner action code, and three short fields
+**problem / action / status**. CSV prefixes unsafe spreadsheet formulas,
+never includes original titles/bodies, worker contact details or secrets,
+and every permission/CI/merge/deploy field is false. Empty source windows
+produce a provenance-only record, not a misleading empty file.
+This handoff does not dispatch a worker or claim an issue.
+The inbox is **read-only** and only accepts an
 explicit canonical `Zennay/<repo>` identity. It reads at most
 three pages of 30 **recently updated open issues** using the
 official GitHub **issue-only search** (`is:issue is:open`), not the
@@ -552,7 +573,10 @@ malformed label sets never promote a title hint into prioritized triage.
 A mismatched title/explicit label now creates an operator-visible
 `explicit_label_title_disagreement` and a human-only
 `inspect_conflicting_priority_with_issue_owner` follow-up across JSON,
-Markdown and offline HTML. The source-window summary reports the number
+Markdown, HTML and CSV. Each source-admitted issue also carries a
+three-line `operator_workflow` (problem, action, status) and an
+`owner_next_step` code. Inconsistent source snapshots are routed to
+reinspection rather than retaining stale human instructions. The source-window summary reports the number
 of observed contradictions. If two sampled versions of the same issue
 disagree, the prior contradiction becomes UNKNOWN rather than falsely
 preserving a stable owner action; only the original issue owner can
