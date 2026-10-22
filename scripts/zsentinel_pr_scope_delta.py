@@ -348,6 +348,12 @@ def compare(previous, current):
             "both_snapshots_stable": stable,
             "complete_open_pr_inventory_comparable": both_complete,
             "head_or_base_changed_in_both_samples": head_changes if stable else [],
+            "target_branch_identity_unknown_count": (
+                sum(item["target_branch_identity_unknown"] for item in head_changes)
+                if stable else None),
+            "target_branch_retarget_count": (
+                sum(item["base_ref_changed"] and not item["target_branch_identity_unknown"]
+                    for item in head_changes) if stable else None),
             "seen_only_in_current_sample_not_proven_new": (
                 [f"https://github.com/{repo}/pull/{n}"
                  for n in sorted(new_pins.keys() - old_pins.keys())] if stable else []),
