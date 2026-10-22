@@ -129,6 +129,7 @@ def observe_local_runners(proc_root="/proc"):
         "runner_health": "NOT_INFERABLE",
         "restart_authorized": False,
         "source_warnings": [],
+        "unclassified_runner_processes_observed": 0,
         "zcloud_service_cgroup": {
             "expected_unit": ZCLOUD_SERVICE_UNIT,
             "status": "NOT_OBSERVED",
@@ -152,6 +153,7 @@ def observe_local_runners(proc_root="/proc"):
         observation["source_available"] = True
         encountered = 0
         denied = 0
+        unclassified_runner_processes = 0
         with os.scandir(root) as iterator:
             for item in iterator:
                 if not item.name.isdecimal():
@@ -188,9 +190,15 @@ def observe_local_runners(proc_root="/proc"):
                         signature = _classify_executable(
                             argv0.decode("utf-8", errors="replace")
                         )
-                        if signature is not None and signature[1] != name:
-                            signature = None
-                        lower_assurance = signature is not None
+                        if signature is None or signature[1] != name:
+                            # The kernel identifies a runner process, but the
+                            # bounded argv0 fallback cannot bind it to a known
+                            # runner family/role. Keep the source incomplete;
+                            # otherwise an unknown zCloud listener could be
+                            # misreported as absent.
+                            unclassified_runner_processes += 1
+                            continue
+                        lower_assurance = True
                     except (OSError, UnicodeError):
                         denied += 1
                         continue
@@ -221,8 +229,12 @@ def observe_local_runners(proc_root="/proc"):
                     ] += 1
         if denied:
             observation["source_warnings"].append("procfs_processes_inaccessible")
+        if unclassified_runner_processes:
+            observation["source_warnings"].append("procfs_runner_process_unclassified")
+        observation["unclassified_runner_processes_observed"] = unclassified_runner_processes
         observation["source_complete"] = (
             encountered <= MAX_PROC_ENTRIES and denied == 0
+            and unclassified_runner_processes == 0
         )
     except OSError:
         observation["source_warnings"].append("procfs_enumeration_failed")
@@ -267,6 +279,13 @@ def observe_local_runners(proc_root="/proc"):
 
 def text_report(data):
     lines = ["Lokale GitHub-runnerprocessen (alleen /proc):"]
+    unclassified = data.get("unclassified_runner_processes_observed", 0)
+    if type(unclassified) is int and unclassified > 0:
+        lines.append(
+            "  Niet aan een bekende runnerfamilie te koppelen runnerprocessen: "
+            + str(min(unclassified, MAX_PROC_ENTRIES))
+            + " · bron onvolledig; afwezigheid van een listener niet bewezen."
+        )
     for family, item in sorted(data["families"].items()):
         if item["listeners"] or item["workers"]:
             lines.append(
