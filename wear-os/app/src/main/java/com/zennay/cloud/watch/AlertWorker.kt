@@ -10,6 +10,7 @@ import android.content.Intent
 import android.net.Uri
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.zennay.cloud.watch.data.AlertItem
@@ -23,8 +24,15 @@ import com.zennay.cloud.watch.data.ZennayCloudRepository
 class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result = try {
         val snapshot = ZennayCloudRepository().loadHome()
-        // Do not broadcast stale historical alerts as if they were current.
-        if (snapshot.stale || !snapshot.currentBlockerFeedAvailable) return Result.success()
+        // Keep last-known blocker notifications visible, but mark their source
+        // state as unknown instead of letting stale alerts look current.
+        if (snapshot.stale || !snapshot.currentBlockerFeedAvailable) {
+            synchronized(IncidentSnoozeStore.deliveryLock) {
+                val manager = applicationContext.getSystemService(NotificationManager::class.java)
+                markNotificationsSourceUnconfirmed(manager)
+            }
+            return Result.success()
+        }
 
         // Keep the local read→notify→receipt operation atomic with respect
         // to the notification action receiver and in-app snooze/resume taps.
@@ -69,9 +77,31 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             // Do not persist raw incident IDs merely to remember OS notification tags.
             manager.activeNotifications.forEach { posted ->
                 val tag = posted.tag
-                if (posted.notification.channelId == CHANNEL &&
-                    tag != null && tag !in currentNotificationTags) {
+                if (posted.notification.channelId != CHANNEL || tag == null) return@forEach
+                if (tag !in currentNotificationTags) {
                     manager.cancel(tag, posted.id)
+                } else if (isSourceUnavailableNotice(posted.notification)) {
+                    // A fresh authoritative source restores the last-known
+                    // content silently. Resolved episodes are cancelled above.
+                    val extras = posted.notification.extras
+                    val title = extras.getCharSequence(EXTRA_ORIGINAL_TITLE)
+                        ?: "zCloud: blocker"
+                    val text = extras.getCharSequence(EXTRA_ORIGINAL_TEXT)
+                        ?: "Open zCloud om de actuele status te controleren."
+                    val bigText = extras.getCharSequence(EXTRA_ORIGINAL_BIG_TEXT) ?: text
+                    val restored = Notification.Builder.recoverBuilder(
+                        applicationContext, posted.notification
+                    )
+                        .setContentTitle(title)
+                        .setContentText(text)
+                        .setStyle(Notification.BigTextStyle().bigText(bigText))
+                        .setOnlyAlertOnce(true)
+                        .setSilent(true)
+                        .addExtras(Bundle().apply {
+                            putBoolean(EXTRA_SOURCE_UNAVAILABLE, false)
+                        })
+                        .build()
+                    manager.notify(tag, posted.id, restored)
                 }
             }
 
@@ -183,11 +213,49 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
         Result.retry()
     }
 
+    private fun markNotificationsSourceUnconfirmed(manager: NotificationManager) {
+        val message = "De actuele incidentbron is verouderd of ontbreekt. Dit is de laatst bekende melding, geen bevestiging dat de blokkade nog actief is. Open zCloud om de status te vernieuwen."
+        manager.activeNotifications.forEach { posted ->
+            if (posted.notification.channelId != CHANNEL || posted.tag == null ||
+                isSourceUnavailableNotice(posted.notification)) return@forEach
+            val original = posted.notification.extras
+            val originalTitle = original.getCharSequence(Notification.EXTRA_TITLE)
+            val originalText = original.getCharSequence(Notification.EXTRA_TEXT)
+            val originalBigText = original.getCharSequence(Notification.EXTRA_BIG_TEXT)
+            val extras = Bundle().apply {
+                putBoolean(EXTRA_SOURCE_UNAVAILABLE, true)
+                originalTitle?.let { putCharSequence(EXTRA_ORIGINAL_TITLE, it) }
+                originalText?.let { putCharSequence(EXTRA_ORIGINAL_TEXT, it) }
+                originalBigText?.let { putCharSequence(EXTRA_ORIGINAL_BIG_TEXT, it) }
+            }
+            val notice = Notification.Builder.recoverBuilder(
+                applicationContext, posted.notification
+            )
+                .setContentTitle("Blokkadestatus onbekend")
+                .setContentText("Laatst bekende melding; status niet bevestigd. Open zCloud om te vernieuwen.")
+                .setStyle(Notification.BigTextStyle().bigText(message))
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
+                .addExtras(extras)
+                .build()
+            manager.notify(posted.tag, posted.id, notice)
+        }
+    }
+
+    private fun isSourceUnavailableNotice(notification: Notification): Boolean =
+        notification.extras?.getBoolean(EXTRA_SOURCE_UNAVAILABLE, false) == true
+
     private fun AlertItem.isUrgent() =
         severity.equals("high", true) ||
         severity.equals("critical", true) ||
         severity.equals("error", true) ||
         severity.equals("needs_attention", true)
 
-    companion object { const val CHANNEL = "zennay_blockers_v2" }
+    companion object {
+        const val CHANNEL = "zennay_blockers_v2"
+        private const val EXTRA_SOURCE_UNAVAILABLE = "com.zennay.cloud.watch.source_unavailable"
+        private const val EXTRA_ORIGINAL_TITLE = "com.zennay.cloud.watch.original_title"
+        private const val EXTRA_ORIGINAL_TEXT = "com.zennay.cloud.watch.original_text"
+        private const val EXTRA_ORIGINAL_BIG_TEXT = "com.zennay.cloud.watch.original_big_text"
+    }
 }
