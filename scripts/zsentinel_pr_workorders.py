@@ -611,10 +611,21 @@ def collect_workorders(board):
                  "https://github.com/" + repo + "/commit/" + head + "/checks"))
             if not canonical:
                 raise ValueError("noncanonical direct check link")
+            queued_age = job.get("queued_age_seconds_observed")
+            queued_flag = job.get("queued_attention_30m", False)
+            if queued_age is not None and (
+                type(queued_age) is not int or not 0 <= queued_age <= 365 * 86400
+                or job["kind"] != "check_run" or job["state"] != "queued"):
+                raise ValueError("invalid queued Check Run age evidence")
+            if type(queued_flag) is not bool or (
+                queued_flag != (queued_age is not None and queued_age >= 1800)):
+                raise ValueError("inconsistent aged queue observation")
             links.append({
                 "name": _markdown(job["name"]),
                 "state": _markdown(str(job.get("state", "unknown"))),
                 "url": job["url"], "kind": job["kind"],
+                "queued_age_seconds_observed": queued_age,
+                "queued_attention_30m": queued_flag,
             })
         num = int(PR.fullmatch(url).group(2))
         if item.get("number") != num:
@@ -796,6 +807,26 @@ def collect_workorders(board):
             failing_jobs[0] if item.get("blocker") ==
             "failed_checks_or_legacy_context" and
             pinned and not source_stale and failing_jobs else None)
+        overdue_queued_jobs = ([
+            {"name": job["name"], "url": job["url"],
+             "queued_minutes_at_read": job["queued_age_seconds_observed"] // 60}
+            for job in links if job["queued_attention_30m"]
+        ] if pinned and not source_stale and
+            live_gate.get("check_page_complete") is True else [])
+        overdue_queued_jobs.sort(
+            key=lambda job: (-job["queued_minutes_at_read"], job["name"]))
+        old_queued_action = bool(
+            overdue_queued_jobs and not direct_failure and
+            not parallel_review and
+            item.get("blocker") == "checks_still_running" and
+            live_gate.get("observed_legacy_failure_or_error") == 0)
+        if old_queued_action:
+            workstream = "owner_action_now"
+            attention_status = "inspect_changed_evidence"
+            notes.append(
+                "Een exacte-HEAD GitHub-job staat minimaal 30 minuten queued. "
+                "Controleer runnerlabels en repositorytoegang met de eigenaar; "
+                "dit is geen bewijs van runneruitval en geen reden tot CI-rerun.")
         if parallel_review:
             attention_status = "parallel_review_while_ci"
             notes.append(
@@ -807,11 +838,16 @@ def collect_workorders(board):
             "Open de bestaande falende exacte-HEAD job: " +
             direct_failure["name"] + " (PR-eigenaar onderzoekt de oorzaak)."
             if direct_failure else
+            "Onderzoek de lang queued exacte-HEAD job: " +
+            overdue_queued_jobs[0]["name"] +
+            " (controleer runnerroute; geen automatische herstart)."
+            if old_queued_action else
             "Vraag onafhankelijke review aan bij huidige PR terwijl de "
             "bestaande CI loopt (alleen bevoegde eigenaar, HEAD herlezen)."
             if parallel_review else _markdown(next_step))
         primary_link = (
             direct_failure["url"] if direct_failure else
+            overdue_queued_jobs[0]["url"] if old_queued_action else
             url if parallel_review else
             url + "/checks" if item.get("blocker") in (
                 "failed_checks_or_legacy_context",
@@ -825,12 +861,17 @@ def collect_workorders(board):
             "operator_primary_step": _markdown(primary_step),
             "operator_action_kind": (
                 "inspect_failing_exact_head_job" if direct_failure else
+                "investigate_aged_queued_job" if old_queued_action else
                 "request_parallel_independent_review" if parallel_review else
                 "inspect_existing_checks" if item.get("blocker") in (
                     "failed_checks_or_legacy_context",
                     "checks_still_running", "check_source_not_terminal") else
                 "inspect_existing_pr"),
             "operator_action_authorized": False,
+            "aged_queued_job_attention": overdue_queued_jobs[:8],
+            "aged_queued_job_attention_hidden": (
+                max(0, live_gate.get("queued_check_attention_30m_observed", 0) -
+                       len(overdue_queued_jobs)) if pinned else None),
             "parallel_review_request_possible_at_observation": parallel_review,
             "project": project, "repository": repo, "number": num,
             "url": url, "files_url": url + "/files",
@@ -879,6 +920,9 @@ def collect_workorders(board):
             for card in cards),
         "parallel_independent_review_actions": sum(
             card["operator_action_kind"] == "request_parallel_independent_review"
+            for card in cards),
+        "aged_queued_job_investigation_actions": sum(
+            card["operator_action_kind"] == "investigate_aged_queued_job"
             for card in cards),
         "all_actions_manual": True,
         "source_only_no_execution_authority": True,
