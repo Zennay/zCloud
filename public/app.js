@@ -879,6 +879,10 @@ async function resumeBlockedQueue(queueId,button){
     const response=await fetch('/api/portfolio-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       action:'resume_blocked',queue_id:queueId,resolution_note:note.trim(),
       expected_updated_at:expectedVersion,
+      expected_project_id:String(matches[0].project_id||''),
+      expected_title:String(matches[0].title||''),
+      expected_priority:String(matches[0].priority||''),
+      expected_source_url:String(matches[0].source_url||''),
       expected_blocker:String(matches[0].blocker||''),
       expected_evidence:String(matches[0].evidence||'')
     }),signal:AbortSignal.timeout(10000)});
