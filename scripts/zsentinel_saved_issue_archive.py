@@ -156,9 +156,9 @@ def _validate_receipt(report, manifest):
                 raise ValueError("Noncanonical saved PR HEAD")
             spans = pr.get("issue_ref_observed_in_snapshots")
             if (type(spans) is not list or not spans or len(spans) > len(snapshots)
-                    or sorted(set(spans)) != spans or
-                    any(type(n) is not int or not 1 <= n <= len(snapshots)
-                        for n in spans)
+                    or any(type(n) is not int or not 1 <= n <= len(snapshots)
+                           for n in spans)
+                    or sorted(set(spans)) != spans
                     or pr.get("issue_ref_last_seen_snapshot") != spans[-1]
                     or pr.get("issue_ref_absent_in_last_snapshot") is not
                     (spans[-1] != len(snapshots))):
