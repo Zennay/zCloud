@@ -312,9 +312,15 @@ def text_summary(report):
         if (type(families) is not list or len(families) > 3
                 or any(f not in labels for f in families)):
             raise ValueError("invalid observed PR gate family changes")
+        transitions = row.get("observed_gate_transitions", [])
+        if (type(transitions) is not list or len(transitions) > 14
+                or any(type(x) is not str or not 1 <= len(x) <= 150
+                       or any(ord(ch) < 32 for ch in x) for x in transitions)):
+            raise ValueError("invalid observed PR gate change details")
         lines.append(row["pr_url"] + " · " + description +
                      (" · geobserveerd: " + ", ".join(labels[x] for x in families)
-                      if families else ""))
+                      if families else "") +
+                     (" · " + "; ".join(transitions) if transitions else ""))
     for url in report["previously_sampled_not_current_NOT_MERGED"]:
         lines.append(url + " · niet meer in beperkte steekproef, NIET bewezen gemerged")
     if not report["current_prs"] and not report["previously_sampled_not_current_NOT_MERGED"]:
@@ -359,13 +365,19 @@ def html_panel(report):
                 or len(set(families)) != len(families)
                 or any(field not in labels for field in families)):
             raise ValueError("invalid bounded PR gate differences")
+        transitions = item.get("observed_gate_transitions", [])
+        if (type(transitions) is not list or len(transitions) > 14
+                or any(type(v) is not str or not 1 <= len(v) <= 150
+                       or any(ord(ch) < 32 for ch in v) for v in transitions)):
+            raise ValueError("invalid PR observed state transitions")
         delta = (" · gewijzigd: " + ", ".join(labels[x] for x in families)
                  if families else "")
+        detail = (" · " + "; ".join(transitions) if transitions else "")
         cards.append(
             '<li><a target="_blank" rel="noopener noreferrer" href="' +
             escape(item["pr_url"], quote=True) + '">' +
             escape(item["pr_url"].rsplit("/", 1)[-1]) + '</a> · ' +
-            escape(descriptions[state] + delta) + ' · HEAD ' +
+            escape(descriptions[state] + delta + detail) + ' · HEAD ' +
             escape(head[:12] if head else "ONBEKEND") + '</li>')
     previously_missing = report["previously_sampled_not_current_NOT_MERGED"]
     if not isinstance(previously_missing, list) or len(previously_missing) > MAX_ROWS:
