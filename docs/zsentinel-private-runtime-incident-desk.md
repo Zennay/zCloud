@@ -550,3 +550,28 @@ de bestaande private HTML/Markdown/CSV-eigenaarshandoff en de
 afzonderlijke actiebriefing. De prioritering betreft **alleen de al
 geobserveerde bestaande PR**; er wordt geen claim overgenomen, geen
 nieuwe PR aangemaakt en geen runner of production service gestart.
+
+
+### Draft-/doelbranchwijzigingen zonder nieuwe commit (22 oktober)
+
+Een bestaande PR kan van `draft=true` naar reviewklaar gaan, of de
+doelbranch-HEAD kan veranderen, terwijl de **source HEAD gelijk blijft**.
+zSentinel vergelijkt nu ook `base_sha`, draftstatus en de door GitHub
+waargenomen mergeable-indicatie. Dit gebeurt uitsluitend met de al
+opgehaalde exacte PR-metadata, **zonder extra GET**.
+
+De overgang wordt apart zichtbaar als:
+`same_head_target_base_changed_REINSPECT_GATE`,
+`same_head_draft_changed_REVIEW_GATE` of
+`same_head_mergeability_hint_changed_RECHECK_RULES`.
+De privé-overdracht toont de concrete voor→na-bronwaarden en geeft de
+bevoegde eigenaar de volgende actie (PR-basis/CI controleren,
+onafhankelijke review volgen of branch-protection/mergeconflicten
+handmatig beoordelen). Verschillen in check-runs of reviews worden
+daarnaast afzonderlijk weergegeven.
+
+Een `mergeable=true`-hint is **nooit** voldoende om te mergen.
+Er volgt geen automatische GitHub-merge, CI-rerun, reviewerapproval,
+claimverplaatsing of live deploy. Wanneer een eerdere PR alleen met
+onvolledige metadata gezien werd, is de verandering ONBEKEND in plaats
+van een verzonnen draft- of mergegereedheidsovergang.
