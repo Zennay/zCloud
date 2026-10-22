@@ -1,3 +1,40 @@
+## 22 October 2026 — source-stable reviewer follow-up in existing PR #1562
+
+The standalone `--live-pr-url` operator route now snapshots pending GitHub
+individual/team reviewer requests alongside existing PR, check and review
+evidence. The live PR's **actual head repository and branch**, both requested
+reviewer sets (not just their counts), and requested team sets must remain
+identical between the two GitHub PR reads. If they change, the entire
+observation becomes `SOURCE_UNKNOWN` and the operator is sent back to GitHub.
+This prevents a swapped reviewer with the same count from becoming an
+incorrect "follow up with existing reviewers" instruction. Reviewer
+identities exist only transiently in memory; JSON, Markdown and HTML contain
+neither identities nor reversible or stable reviewer hashes.
+
+The read-only preflight now emits a structured `review_request_followup`
+state: `PENDING_REQUESTS_OBSERVED`, `NO_REVIEW_REQUESTS_OBSERVED`,
+`REVIEW_SUBMISSIONS_OBSERVED` or `UNKNOWN`. Every case remains
+`independent_review_verified=false` and `external_action_executed=false`.
+The standalone static HTML presents one review-coordination panel with a
+direct PR conversation and changed-files link, and the current exact-HEAD
+GitHub checks link; Markdown carries the same next step. It neither requests
+a reviewer nor merges or dispatches CI. If the GitHub source is missing,
+the operator is told to inspect the existing request state, **not** to
+create duplicate review requests.
+
+Use the existing read-only CLI without changing a live queue or worker:
+
+```bash
+python3 scripts/zsentinel_recovery_policy.py \
+  --live-pr-url https://github.com/Zennay/zCloud/pull/1562 \
+  --format html --output "$HOME/zsentinel-private/pr-1562-review.html"
+```
+
+The private target file is create-only (0600) in an owner-controlled directory.
+This output never proves current required CI, independent approval, protected
+main, branch ownership or release authorization. Exact source commit on the
+open PR is not a merge or live deployment.
+
 ## 22 October 2026 — pending review requests are not missing approvals
 
 The existing source-bound exact-PR merge preflight now records separate, bounded
