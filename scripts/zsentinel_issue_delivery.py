@@ -16,8 +16,7 @@ from zsentinel_product_issue_inbox import ROOT, QA, canonical_projects, collect,
 from zsentinel_pr_delivery import NEXT_ACTION_NL, observe_prs, _classic_status_display
 from zsentinel_issue_progress import load_private_prior, progress_since
 from zsentinel_owner_routes import (
-    HUMAN_ONLY_ROUTES, HUMAN_ONLY_ROUTE_CODES, ISSUE_ROUTE_ACTIONS,
-    canonical_issue_action,
+    HUMAN_ONLY_ROUTES, HUMAN_ONLY_ROUTE_CODES, canonical_issue_action,
 )
 
 MAX_PROJECTS = 3
