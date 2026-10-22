@@ -127,7 +127,7 @@ def validate_receipts(receipts: dict, now: datetime, findings: list[str]) -> Non
         "database: final consistent backup digest missing",
     )
     require(
-        isinstance(db.get("source_tables"), int)
+        type(db.get("source_tables")) is int
         and db.get("source_tables") > 0
         and db.get("source_tables") == db.get("target_tables"),
         "database: source/target schema table proof missing or mismatched",
@@ -201,13 +201,19 @@ def validate_receipts(receipts: dict, now: datetime, findings: list[str]) -> Non
         url = item.get("url")
         if not isinstance(url, str):
             continue
-        parsed = urlsplit(url)
-        if (parsed.scheme == "https" and parsed.hostname
+        try:
+            parsed = urlsplit(url)
+            hostname = parsed.hostname
+        except ValueError:
+            continue
+        route_name = item.get("name")
+        if (isinstance(route_name, str)
+            and parsed.scheme == "https" and hostname
             and item.get("tls_verified") is True
             and item.get("authentication_verified") is True
             and item.get("new_vps_origin_verified") is True
             and fresh(item.get("checked_at"), 60, now)):
-            passing_routes.add(item.get("name"))
+            passing_routes.add(route_name)
     require(all(route in passing_routes for route in REQUIRED_PUBLIC_ROUTES),
             "public: fresh authenticated HTTPS zCloud and zSSH receipts missing")
 
@@ -246,6 +252,7 @@ def main() -> int:
     args = parser.parse_args()
     now = datetime.now(timezone.utc)
     findings: list[str] = []
+    mounted = False
     hostname = socket.gethostname()
     if hostname != NEW_HOST:
         findings.append("host: running on wrong VPS")
@@ -256,6 +263,8 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         findings.append("storage: local mount inspection unavailable (" + type(exc).__name__ + ")")
     try:
+        if args.receipts.stat().st_size > 262144:
+            raise ValueError("manifest exceeds 256 KiB")
         data = json.loads(args.receipts.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("manifest must be a JSON object")
