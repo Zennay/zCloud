@@ -29,7 +29,8 @@ def _utc():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def recheck_missing_live(report, *, token=None, max_reads=3):
+def recheck_missing_live(report, *, token=None, max_reads=3,
+                         source_read_admitted=True):
     """Annotate bounded missing cards with explicit read-only GitHub state.
 
     On any source/admission error, stop additional network reads and retain an
@@ -37,6 +38,8 @@ def recheck_missing_live(report, *, token=None, max_reads=3):
     """
     if type(max_reads) is not int or not 1 <= max_reads <= MAX_LIVE_RECHECKS:
         raise PolicyInputError("live recheck limit must be 1..6")
+    if type(source_read_admitted) is not bool:
+        raise PolicyInputError("source read admission must be explicit boolean")
     if type(report) is not dict or report.get("policy") != (
         "zsentinel-portfolio-visible-issue-delta-v1"
     ):
@@ -64,6 +67,9 @@ def recheck_missing_live(report, *, token=None, max_reads=3):
         item["live_issue_state_reason"] = None
         item["live_issue_priority_label"] = None
         item["live_issue_closed_does_not_prove_fix_merged"] = True
+        if not source_read_admitted:
+            item["live_issue_recheck_state"] = "NOT_CHECKED_PRIOR_PROVIDER_STOP"
+            continue
         if stopped:
             item["live_issue_recheck_state"] = "NOT_CHECKED_AFTER_SOURCE_ERROR"
             continue
@@ -107,6 +113,7 @@ def recheck_missing_live(report, *, token=None, max_reads=3):
         "closed_at_recheck": observed_closed,
         "source_errors": source_errors,
         "provider_reads_stopped_after_error": stopped,
+        "prior_provider_stop_suppressed_reads": not source_read_admitted,
         "not_displayed_cards_not_checked": report.get("omitted_change_cards", 0),
         "sample_absence_never_proves_closure": True,
         "github_closed_not_proof_of_fix_or_main": True,
