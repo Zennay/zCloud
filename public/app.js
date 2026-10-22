@@ -295,7 +295,7 @@ function attentionPanel(projectId=''){
     const detail=String(item.detail||'').trim();
     const attentionId=String(item.attention_id||'');
     const queueId=attentionId.startsWith('queue:')?attentionId.slice(6):'';
-    const taskAvailable=!!queueId&&Array.isArray(BLOCKED_QUEUE)&&BLOCKED_QUEUE.some(task=>task&&String(task.queue_id)===queueId&&task.status==='blocked');
+    const taskAvailable=!!queueId&&Array.isArray(BLOCKED_QUEUE)&&BLOCKED_QUEUE.some(task=>String(task?.queue_id)===queueId&&blockedQueueIsParked(task));
     // Queue-bound Attention must be cleared by an attested resume of the original task.
     const control=queueId
       ?'<button type="button" data-resume-blocked="'+esc(queueId)+'"'+(taskAvailable?'':' disabled title="Read the parked queue before resuming"')+'>'+(taskAvailable?'Confirm & resume':'Parked task unavailable')+'</button>'
@@ -311,6 +311,10 @@ let blockedQueueProject='all';
 let blockedQueueSearch='';
 let blockedQueueFilterTimer=null;
 let blockedQueueObservedAt='';
+function blockedQueueIsParked(item){
+  return !!item&&item.status==='blocked'&&(item.eligible===false||item.eligible===0)
+    &&item.worker_slot==null&&item.claim_expires==null;
+}
 function blockedQueueSourceUrl(raw){
   // Queue evidence can contain user-supplied URLs. Only link exact GitHub
   // issues/PRs owned by this portfolio; never render arbitrary href schemes.
@@ -370,7 +374,7 @@ function blockedQueuePanel(){
         const evidence=String(item.evidence||'').trim();
         const attention=Array.isArray(DATA.attention_needed)
           ?DATA.attention_needed.find(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'):null;
-        const eligibilityConflict=item.eligible!==false&&item.eligible!==0;
+        const eligibilityConflict=!blockedQueueIsParked(item);
         const action=attention?'Human action recorded — inspect its source and confirm the dependency has cleared.'
           :'Review the original dependency and its evidence. No automatic resolution is established.';
         const context='<details class="blocked-queue-context" data-disclosure="block-'+esc(item.queue_id)+'">'
@@ -427,7 +431,7 @@ function blockedResumeFingerprint(item){
 }
 async function resumeBlockedQueue(queueId,button){
   if(blockedResumesPending.has(queueId))return;
-  const item=(BLOCKED_QUEUE||[]).find(row=>String(row?.queue_id)===queueId&&row.status==='blocked');
+  const item=(BLOCKED_QUEUE||[]).find(row=>String(row?.queue_id)===queueId&&blockedQueueIsParked(row));
   if(!item){window.alert('The parked task is no longer visible. Refresh the queue before acting.');return}
   const note=window.prompt('Confirm the dependency has genuinely cleared. Describe the resolution (at least 12 characters). This records your attestation; it does not independently verify the dependency.');
   if(note==null)return;
@@ -446,7 +450,7 @@ async function resumeBlockedQueue(queueId,button){
     BLOCKED_QUEUE=freshItems;
     BLOCKED_QUEUE_ERROR='';
     blockedQueueObservedAt=typeof current.time==='string'?current.time:'';
-    const matches=freshItems.filter(row=>String(row.queue_id)===queueId);
+    const matches=freshItems.filter(row=>String(row.queue_id)===queueId&&blockedQueueIsParked(row));
     if(matches.length!==1||blockedResumeFingerprint(matches[0])!==blockedResumeFingerprint(item)){
       render();
       throw new Error('The dependency or task state changed since confirmation. Review the refreshed card and confirm again.');
