@@ -310,6 +310,12 @@ def main() -> int:
     managed_unit_loaded = system_state("chatgpt-firefox.service", user=True, env=env) == "loaded"
     if system_state("zennay-cloud.service") != "loaded":
         raise Refused("zennay-cloud backend service not installed")
+    # The bootstrap may have found an older ubuntu user API unit. A second
+    # system-level server would run a competing SQLite scheduler on port 8765.
+    user_api_state = command("systemctl", "--user", "show", "zennay-cloud.service",
+                             "-p", "ActiveState", "--value", env=env)
+    if user_api_state in ("active", "activating", "reloading"):
+        raise Refused("competing ubuntu user zennay-cloud API/scheduler is already running")
     for timer in ("zcloud-firefox-supervisor.timer", "zcloud-self-heal.timer"):
         if system_state(timer) != "loaded":
             raise Refused(f"{timer} not installed; stop before activating")
