@@ -294,6 +294,10 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
         "included_batches": sorted(batches),
         "missing_batches": missing,
         "observed_prs": len(all_rows),
+        "prs_with_unknown_target_branch": sum(
+            not row["target_branch_identity_known"] for row in all_rows),
+        "target_branch_identity_complete": all(
+            row["target_branch_identity_known"] for row in all_rows),
         "unavailable_or_drifted_prs": unavailable,
         "stale_over_15_minutes_prs": stale,
         "saved_historic_gate_category_counts": category_counts,
@@ -338,6 +342,8 @@ def human(report, markdown=False):
         "/" + str(report["total_batches"]),
         "Ontbrekende batches: " + (", ".join(map(str, report["missing_batches"])) or "geen"),
         "Onbereikbare of veranderde HEADs: " + str(report["unavailable_or_drifted_prs"]),
+        "PRs met onbekende doelbranch: " + str(report["prs_with_unknown_target_branch"]),
+        "Doelbranchidentiteit volledig: " + str(report["target_branch_identity_complete"]),
         "Verouderde (>15 min) opgeslagen PR-waarnemingen: " + str(report["stale_over_15_minutes_prs"]),
         "Tijdverschil tussen bronbatches: " +
             str(report["cross_batch_observation_spread_seconds"]) +
@@ -441,6 +447,10 @@ def html(report):
             'a{overflow-wrap:anywhere}li{margin:.9rem 0}small{color:#41546a}'
             '</style><header><h1>zSentinel · opgeslagen PR-gates</h1><p>' +
             escape(summary) + '</p><p>Ontbrekende batches: ' + escape(missing) +
+            '</p><p>PRs met onbekende doelbranch: ' +
+            str(report["prs_with_unknown_target_branch"]) +
+            ' · doelbranchidentiteit volledig: ' +
+            str(report["target_branch_identity_complete"]) +
             '</p><p>Historische gates: ' + cats +
             '</p><p>Tijdverschil tussen bronbatches: ' +
             str(report["cross_batch_observation_spread_seconds"]) +
