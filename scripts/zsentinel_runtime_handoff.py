@@ -1218,6 +1218,17 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                     pri, pid, "blocked_queue_owner_review", action,
                     source="validated_readonly_blocked_queue_aggregate",
                     ref="https://github.com/Zennay/zCloud/issues/677")
+                if example:
+                    target = example[0].get(
+                        "canonical_github_source_link_unverified")
+                    if target is not None:
+                        if (type(target) is not str
+                                or not (SAFE_ISSUE.fullmatch(target)
+                                        or SAFE_PR.fullmatch(target))):
+                            raise ValueError("untrusted blocked work source link")
+                        # Operator navigation only; queue-supplied links do
+                        # NOT prove an issue owner, open PR or authorization.
+                        card["unverified_queue_source_url"] = target
                 card["blocked_items_observed"] = count
                 card["queue_priority_observed"] = pri
                 card["queue_observed_at_utc"] = parsed.isoformat(timespec="seconds")
@@ -1911,6 +1922,17 @@ def handoff_html(report):
                 or item.get("merge_authorized") is not False
                 or item.get("deploy_authorized") is not False):
             raise ValueError("authorizing handoff item rejected")
+        source_url = item.get("unverified_queue_source_url")
+        if source_url is not None and (
+                item.get("kind") != "blocked_queue_owner_review"
+                or type(source_url) is not str
+                or not (SAFE_ISSUE.fullmatch(source_url)
+                        or SAFE_PR.fullmatch(source_url))):
+            raise ValueError("untrusted queue navigation source")
+        queue_link = (
+            ' <a href="' + escape(source_url, quote=True) +
+            '" target="_blank" rel="noopener noreferrer">Bronlink uit queue '
+            '(NIET geverifieerd)</a>' if source_url is not None else '')
         url = item.get("issue_url")
         link = (' <a href="' + escape(url, quote=True) +
                 '" target="_blank" rel="noopener noreferrer">Bestaand issue</a>'
@@ -2002,7 +2024,7 @@ def handoff_html(report):
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
                      escape(_short(item.get("next_step"))) + due_label + pr_label +
-                     link + pr_links + verified_links + linked_labels +
+                     link + queue_link + pr_links + verified_links + linked_labels +
                      missing_label + '</li>')
     coverage = report.get("coverage", {})
     if not isinstance(coverage, dict) or len(coverage) > 8:
@@ -2241,6 +2263,15 @@ def markdown(report):
                      " · " + _md(card["next_step"]))
         if card.get("issue_url"):
             lines.append("   Bestaand issue: " + card["issue_url"])
+        if card.get("unverified_queue_source_url"):
+            source_url = card["unverified_queue_source_url"]
+            if (card.get("kind") != "blocked_queue_owner_review"
+                    or type(source_url) is not str
+                    or not (SAFE_ISSUE.fullmatch(source_url)
+                            or SAFE_PR.fullmatch(source_url))):
+                raise ValueError("untrusted Markdown blocked task source link")
+            lines.append("   Queue-bronlink (NIET geverifieerd als eigenaar of "
+                         "huidige PR): " + source_url)
         if card.get("review_by_utc"):
             lines.append("   Uiterlijk beoordelen (UTC): " + _md(card["review_by_utc"], 40))
             if card.get("review_overdue_at_export") is True:
