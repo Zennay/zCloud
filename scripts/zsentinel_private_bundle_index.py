@@ -556,12 +556,41 @@ def historical_attention_html(snap: dict) -> str:
     for item in saved_attention(snap):
         expired = item["sampled_expired_active_leases"]
         churn = item["sampled_high_claim_attempts"]
+        project = snap["projects"][item["project"]]
+        operations = project.get("operations") or {}
+        issues = sorted(project["issues"].items(), key=lambda pair: (
+            PRIORITIES.index(project["issue_priorities"][pair[0]]), pair[0]))
+        top_issues = ", ".join(
+            "<a rel='noopener noreferrer' target='_blank' href='" +
+            escape(url, quote=True) + "'>" +
+            escape(project["issue_priorities"][issue]) + " " +
+            escape(issue) + "</a>"
+            for issue, url in issues[:3]
+        )
+        prs = sorted(project["prs"])
+        pr_first = ", ".join(
+            "<a rel='noopener noreferrer' target='_blank' href='" +
+            escape(url, quote=True) + "'>PR #" +
+            escape(url.rsplit("/", 1)[-1]) + "</a>"
+            for url in prs[:2]
+        )
+        next_step = operations.get("recommended_next_step")
         rows.append(
             "<tr><th scope='row'>" + escape(item["project"]) + "</th><td>" +
             str(item["sampled_p0"]) + " / " + str(item["sampled_p1"]) +
             "</td><td>" + ("onbekend" if expired is None else str(expired)) +
             "</td><td>" + ("onbekend" if churn is None else str(churn)) +
-            "</td><td>" + escape(item["priority_counts_from"]) + "</td></tr>"
+            "</td><td>" + escape(item["priority_counts_from"]) + "</td><td>" +
+            (top_issues or "Geen opgeslagen issuekaart; actuele status onbekend") +
+            ("<br>+" + str(len(issues) - 3) + " overige issuekaarten"
+             if len(issues) > 3 else "") +
+            "<br>PR-kandidaten: " +
+            (pr_first or "geen opgeslagen; onbekend") +
+            ("<br>+" + str(len(prs) - 2) + " overige PR-kandidaten"
+             if len(prs) > 2 else "") +
+            "</td><td>" +
+            escape(str(next_step or "Verifieer actuele eigenaar en bronstatus")) +
+            "</td></tr>"
         )
     return (
         "<section class='delta'><h2>Historische herstelprioriteiten</h2>"
@@ -574,10 +603,11 @@ def historical_attention_html(snap: dict) -> str:
         "leases, owners en CI na voordat je iets claimt of vrijgeeft.</p>"
         "<table><thead><tr><th>Project</th><th>Sample P0/P1</th>"
         "<th>Expired leases bij opname</th><th>Hoge claimpogingen</th>"
-        "<th>Telbasis</th>"
+        "<th>Telbasis</th><th>Opgeslagen bronlinks, geen vrijgave</th>"
+        "<th>Historische eigenaaractie</th>"
         "</tr></thead><tbody>" +
         ("".join(rows) if rows else
-         "<tr><td colspan='5'>Geen projecten in de opgeslagen steekproef</td></tr>") +
+         "<tr><td colspan='7'>Geen projecten in de opgeslagen steekproef</td></tr>") +
         "</tbody></table>" + historical_merge_attention(snap) + "</section>"
     )
 
