@@ -975,7 +975,7 @@ async function requireBlockedRecoveryPreflight(queueId,original,action){
   return state;
 }
 async function inspectBlockedQueue(queueId,button){
-  if(blockedResumesPending.has(queueId))return;
+  if(blockedQueueReloading||blockedResumesPending.size)return;
   const card=button.closest('.blocked-queue-item');
   if(!card){window.alert('Original queue card unavailable. No action performed.');return;}
   const old=button.textContent;
@@ -1036,7 +1036,12 @@ async function inspectBlockedQueue(queueId,button){
 }
 
 async function resumeBlockedQueue(queueId,button){
-  if(blockedResumesPending.has(queueId))return;
+  // Keep operator confirmations serialized across queue rows: a second write
+  // must not reuse a view that another in-flight decision is changing.
+  if(blockedQueueReloading||blockedResumesPending.size){
+    window.alert('A queue refresh or recovery decision is still in progress. Wait for the current result before selecting another task.');
+    return;
+  }
   if(!blockedQueueSourceIsFresh()){window.alert('Queue observation is stale or unknown. Refresh the source before confirming any recovery.');return;}
   const item=(BLOCKED_QUEUE||[]).find(row=>String(row?.queue_id)===queueId&&blockedQueueIsParked(row));
   if(!item){window.alert('The parked task is no longer visible. Refresh the queue before acting.');return}
@@ -1154,7 +1159,10 @@ async function resumeBlockedQueue(queueId,button){
   }
 }
 async function closeBlockedQueue(queueId,button){
-  if(blockedResumesPending.has(queueId))return;
+  if(blockedQueueReloading||blockedResumesPending.size){
+    window.alert('A queue refresh or recovery decision is still in progress. Wait for the current result before selecting another task.');
+    return;
+  }
   if(!blockedQueueSourceIsFresh()){window.alert('Queue observation is stale or unknown. Refresh the source before confirming permanent closure.');return;}
   const item=(BLOCKED_QUEUE||[]).find(row=>String(row?.queue_id)===queueId&&blockedQueueIsParked(row));
   if(!item){window.alert('This task is not safely parked. Read the queue again before any terminal action.');return}
