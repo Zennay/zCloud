@@ -918,6 +918,10 @@ It applies these rules:
   Successfully created rows expose `created`; updates to an untouched queued
   item expose `updated_unclaimed`. These response markers are advisory
   descriptions of the completed transaction, never scheduling permission.
+  Automatic portfolio refill now includes only genuinely `created` task IDs
+  in its `created` list; if another caller already inserted the identical
+  candidate, the preserved existing entry is counted as represented work,
+  not falsely reported as a second creation.
   The worker-completion state receipt additionally carries the bounded
   `next_task_queue_id` and `next_task_enqueue_admission` when a follow-up
   was admitted. This distinguishes an existing unchanged task from new
