@@ -40,6 +40,7 @@ def _unknown_blocked_queue(coverage="not_supplied"):
         "sampled_at_utc": None, "total_items_observed": None,
         "project_groups_complete": False, "project_groups": [],
         "source_fresh_when_saved": False, "claim_authorized": False,
+        "blocked_task_refs": [], "blocked_task_refs_coverage": "not_observed",
     }
 
 
@@ -102,6 +103,42 @@ def _observed_blocked_queue(queue, sampled, source_fresh_when_saved):
              and coverage in ("complete", "partial"))
     effective_coverage = ("stale" if coverage == "stale" else
                           coverage if fresh else "incomplete")
+    # Preserve bounded positive task observations across saved windows.
+    # Unobserved tasks in truncated windows are NOT evidence of recovery.
+    items = raw.get("work_items", [])
+    item_coverage = raw.get("work_items_coverage", "not_observed")
+    if (type(items) is not list or len(items) > 24
+            or item_coverage not in ("not_observed", "complete", "partial", "stale")):
+        raise ValueError("invalid historical blocked task sample")
+    if item_coverage in ("not_observed", "stale") and items:
+        raise ValueError("unknown/stale blocked task source has positive rows")
+    refs = []
+    seen_refs = set()
+    for row in items:
+        if type(row) is not dict:
+            raise ValueError("invalid saved blocked task receipt")
+        ref, pid, priority = (row.get("queue_ref"), row.get("project_id"),
+                              row.get("priority"))
+        if (type(ref) is not str or re.fullmatch(r"[a-f0-9]{16}", ref) is None
+                or ref in seen_refs or type(pid) is not str
+                or PROJECT_ID.fullmatch(pid) is None or priority not in PRIORITIES
+                or row.get("claim_authorized") is True
+                or row.get("resume_authorized") is not False
+                or row.get("automatic_retry_authorized") is not False
+                or type(row.get("claim_fields_present_observed")) is not bool):
+            raise ValueError("untrusted historical blocked task evidence")
+        seen_refs.add(ref)
+        refs.append({
+            "queue_ref": ref, "project_id": pid, "priority": priority,
+            "claim_fields_present_observed": row["claim_fields_present_observed"],
+            "same_ref_not_owner_or_recovery_proof": True,
+        })
+    if item_coverage == "complete":
+        if (coverage != "complete" or len(refs) != raw["total_items_observed"]
+                or raw.get("work_items_truncated") is not False):
+            raise ValueError("complete blocked task history contradicts aggregate")
+    elif item_coverage == "partial" and len(refs) > raw["total_items_observed"]:
+        raise ValueError("partial blocked task sample exceeds blocked count")
     return {
         "coverage": effective_coverage, "aggregate_coverage": raw["aggregate_coverage"],
         "source_coverage": raw["source_coverage"],
@@ -110,6 +147,8 @@ def _observed_blocked_queue(queue, sampled, source_fresh_when_saved):
         "project_groups_complete": coverage == "complete" and fresh,
         "project_groups": groups if fresh else [],
         "source_fresh_when_saved": fresh,
+        "blocked_task_refs": refs if fresh else [],
+        "blocked_task_refs_coverage": item_coverage if fresh else "stale",
         "claim_authorized": False,
     }
 
