@@ -430,6 +430,9 @@ def compare_gate_episodes(previous, current):
             "previous_base_ref": old.get("base_ref_observed") if
                 _valid_base_ref(old.get("base_ref_observed")) else None,
             "current_base_ref": None,
+            "target_branch_changed": None,
+            "target_branch_identity_unknown": not _valid_base_ref(
+                old.get("base_ref_observed")),
             "observed_changed_non_green_checks": [],
             "observed_changed_non_green_checks_hidden": 0,
             "observed_changed_gate_evidence_categories": [],
