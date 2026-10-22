@@ -279,12 +279,14 @@ def main() -> int:
     uid = require_host()
     real_directory(HOME, uid)
     real_directory(ROOT, uid)
+    if not (ROOT / "server.py").is_file() or not (ROOT / "scripts/apply_worker_fleet.py").is_file():
+        refuse("canonical zCloud checkout is incomplete")
     real_private_file(SOURCE, uid)
     no_sidecars(SOURCE)
     no_sidecars(TARGET)
     if TARGET.exists():
         real_private_file(TARGET, uid)
-    if SOURCE.samefile(TARGET) if TARGET.exists() else False:
+    if TARGET.exists() and SOURCE.samefile(TARGET):
         refuse("source and target refer to the same file")
     local_writer_gate()
     digest = file_hash(SOURCE)
