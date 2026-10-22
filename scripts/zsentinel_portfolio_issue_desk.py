@@ -27,6 +27,17 @@ from zsentinel_recovery_policy import (
 MAX_REPOS = 6
 MAX_GLOBAL_CARDS = 120
 ALL_RANKS = range(7)
+
+
+def _repository_local_unavailable(error):
+    """Only a canonical not-found/inaccessible source is scoped to one repo.
+
+    Authentication, quota, network or malformed response ambiguity remains
+    provider-wide UNKNOWN, so no additional requests follow those errors.
+    """
+    return isinstance(error, str) and (
+        "inaccessible or not found" in error
+    )
 VIEWS = {
     "all": frozenset(ALL_RANKS),
     "explicit-critical": frozenset((0, 1)),
@@ -46,6 +57,7 @@ def observe_portfolio(repositories, *, token=None, view="all"):
     recorded = []
     ranked = {}
     stopped_for_provider = False
+    repository_local_gaps = 0
     all_priority_counts = {
         "label_p0": 0, "label_p1": 0,
         "unverified_title_hint": 0, "p2_p3": 0, "unknown": 0,
@@ -58,6 +70,7 @@ def observe_portfolio(repositories, *, token=None, view="all"):
                 "recent_window_complete": False, "source_partial_or_unknown": True,
                 "provider_issue_count": None, "get_attempts": 0,
                 "source_error": "previous_repo_source_unavailable",
+                "source_error_scope": "provider_or_unknown",
                 "unknown_issue_absence": True,
                 "source_priority_counts": None,
             })
@@ -66,11 +79,11 @@ def observe_portfolio(repositories, *, token=None, view="all"):
             source = observe_repo_inbox(
                 name, token=token, display_all_sample=True,
             )
-        except GitHubReadError:
-            # A provider authorization/rate-limit error may be raised
-            # *before* the first source page is returned. Preserve prior
-            # projects in the private handoff, stop future API calls, and
-            # never classify the unread repository as having no incidents.
+        except GitHubReadError as exc:
+            # A 404-style repository-local failure must not hide the next
+            # independent project's issues. Authorization/quota/network
+            # uncertainty is still global and ends provider reads.
+            local_error = _repository_local_unavailable(str(exc))
             recorded.append({
                 "repository": name, "state": "SOURCE_UNAVAILABLE",
                 "observed_at_utc": None, "sampled_count": None,
@@ -78,11 +91,17 @@ def observe_portfolio(repositories, *, token=None, view="all"):
                 "source_partial_or_unknown": True,
                 "provider_issue_count": None,
                 "get_attempts": None,
-                "source_error": "github_source_read_failed",
+                "source_error": "github_repository_unavailable" if local_error
+                else "github_source_read_failed",
+                "source_error_scope": "repository_only" if local_error
+                else "provider_or_unknown",
                 "unknown_issue_absence": True,
                 "source_priority_counts": None,
             })
-            stopped_for_provider = True
+            if local_error:
+                repository_local_gaps += 1
+            else:
+                stopped_for_provider = True
             continue
         error = source["source_error"]
         rank_totals = {
@@ -108,7 +127,13 @@ def observe_portfolio(repositories, *, token=None, view="all"):
             "source_partial_or_unknown": source["source_partial_or_unknown"],
             "provider_issue_count": source["provider_total_issue_count_at_observation"],
             "get_attempts": source["get_attempts"],
-            "source_error": "github_source_read_failed" if error else None,
+            "source_error": "github_repository_unavailable"
+            if _repository_local_unavailable(error) else
+            "github_source_read_failed" if error else None,
+            "source_error_scope": (
+                "repository_only" if _repository_local_unavailable(error) else
+                "provider_or_unknown" if error else None
+            ),
             "unknown_issue_absence": True,
             "source_priority_counts": rank_totals,
         })
@@ -120,9 +145,12 @@ def observe_portfolio(repositories, *, token=None, view="all"):
             ]
         ranked[name] = rows
         if error:
-            # Fail closed rather than hammering an account for which GitHub
-            # may have refused credentials, quota or external admission.
-            stopped_for_provider = True
+            # A repository-specific 404 impacts only this one project.
+            # Provider-wide or ambiguous failures stop further reads.
+            if _repository_local_unavailable(error):
+                repository_local_gaps += 1
+            else:
+                stopped_for_provider = True
 
     # A project without readable GitHub source is a real operator
     # dependency, not an empty or lower-priority incident backlog.
@@ -229,6 +257,7 @@ def observe_portfolio(repositories, *, token=None, view="all"):
         "requested_count": len(repositories),
         "read_count": sum(x["observed_at_utc"] is not None for x in recorded),
         "provider_stopped_early": stopped_for_provider,
+        "repository_local_source_gaps": repository_local_gaps,
         "bounded_get_attempts": actual_gets,
         "bounded_get_attempts_unknown": not attempts_known,
         "bounded_get_ceiling": 7 * len(repositories),
