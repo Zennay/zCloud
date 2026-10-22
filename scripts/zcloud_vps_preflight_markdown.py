@@ -119,6 +119,7 @@ def render(report: dict) -> str:
         for key, label in (("new_findings", "Nieuw"),
                            ("resolved_findings", "Verdwenen in bron"),
                            ("recovery_unverified_findings", "Herstel niet geverifieerd"),
+                           ("unrecognized_baseline_findings", "Onbekende baselinecodes (geen automatisch herstelbewijs)"),
                            ("still_present", "Nog aanwezig")):
             lines.append("- " + label + ": " + _md(", ".join(comparison.get(key, [])) or "geen"))
         trend = comparison.get("host_pressure_trend")
