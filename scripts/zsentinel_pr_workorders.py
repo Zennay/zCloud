@@ -1446,6 +1446,17 @@ def render_markdown(bundle):
         "Een aangevraagde review is nooit een onafhankelijke goedkeuring.",
         "",
     ]
+    work = bundle.get("workstream_summary")
+    if (type(work) is not dict or work.get("all_actions_manual") is not True or
+            work.get("source_only_no_execution_authority") is not True):
+        raise ValueError("missing operator action queue")
+    lines += ["## Werkvoorraad: eerst uitvoerbare acties"]
+    for key in WORKSTREAM_ORDER:
+        lines.append("- " + WORKSTREAM_LABELS[key] + ": **" +
+                     str(work["counts"][key]) + "** bestaande PRs")
+    lines += ["Acties zijn adviezen uit begrensde GitHub-bronwaarnemingen; "
+              "actieve claims, verplichte review en mergebevoegdheid blijven onbekend.",
+              ""]
     change_counts = {
         "changed_gate_receipt": 0, "changed_or_uncertain_head": 0,
         "incomplete_gate_source": 0, "newly_selected_not_new_pr": 0,
@@ -1474,6 +1485,9 @@ def render_markdown(bundle):
             "",
             "**Huidige blokkade:** " + card["blocker"],
             "**Eerstvolgende menselijke actie:** " + card["human_next_step"],
+            "**Werkstroom:** " + card["workstream_label"] +
+            " (uitvoeren alleen na eigenaarstoestemming)",
+            "**Open menselijke actie bij GitHub:** " + card["operator_action_link"],
             "**Open huidige GitHub-checks:** " + card["checks_url"],
             "**Open PR/reviews:** " + card["review_url"],
             "**Aangevraagde onafhankelijke reviews op bronmoment:** " +
