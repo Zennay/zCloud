@@ -370,7 +370,7 @@ def cross_window_scope_conflicts(all_prs):
         left_paths, right_paths = set(left["files"]), set(right["files"])
         count, examples = 0, []
         pair_complete = True
-        for right_path in right["files"]:
+        for right_path in sorted(right["files"]):
             for ancestor in ancestors[right_num][right_path]:
                 if comparisons >= MAX_SCOPE_PATH_COMPARISONS:
                     pair_complete = scan_complete = False
@@ -386,7 +386,7 @@ def cross_window_scope_conflicts(all_prs):
             if not pair_complete:
                 break
         if pair_complete:
-            for left_path in left["files"]:
+            for left_path in sorted(left["files"]):
                 for ancestor in ancestors[left_num][left_path]:
                     if comparisons >= MAX_SCOPE_PATH_COMPARISONS:
                         pair_complete = scan_complete = False
@@ -667,7 +667,7 @@ def render_private_csv(report):
         "filename", "file_cross_window", "file_pr_count", "pr_number",
         "pr_url", "pr_head_sha", "pr_base_ref", "pr_source_window", "related_pr_url",
         "related_pr_head_sha", "related_pr_base_ref", "related_pr_source_window", "pair_shared_files",
-        "scope_conflicts_for_pr", "scope_conflict_pairs_observed", "scope_conflict_relation",
+        "scope_conflicts_for_pr", "scope_conflict_paths_for_pr", "scope_conflict_pairs_observed", "scope_conflict_relation",
         "scope_conflict_left_path", "scope_conflict_right_path",
         "cross_window_pairs_for_pr", "shared_files_for_pr",
         "unverified_issue_number", "unverified_issue_mentions_for_pr",
@@ -722,6 +722,7 @@ def render_private_csv(report):
             cross_window_pairs_for_pr=pr["cross_window_file_pair_count"],
             shared_files_for_pr=pr["cross_window_shared_file_count"],
             scope_conflicts_for_pr=pr["cross_window_scope_pair_count"],
+            scope_conflict_paths_for_pr=pr["cross_window_scope_path_conflict_count"],
             unverified_issue_mentions_for_pr=pr["cross_window_number_hint_count"],
             operator_notice="PR to inspect, not a claim or integration order.")
     for group in report["shown_connected_cross_window_groups"]:
@@ -848,7 +849,8 @@ def render(report, fmt):
                      str(item["cross_window_shared_file_count"]) +
                      " gedeelde bestanden · " +
                      str(item["cross_window_scope_pair_count"]) +
-                     " bestand/map-scopeparen · " +
+                     " bestand/map-scopeparen / " +
+                     str(item["cross_window_scope_path_conflict_count"]) + " padparen · " +
                      str(item["cross_window_number_hint_count"]) +
                      " ongeverifieerde issue-/PR-nummerhints")
     if not report["prioritized_existing_prs"]:
@@ -1002,7 +1004,8 @@ def render(report, fmt):
         " · botsende PR-paren / " +
         str(item["cross_window_shared_file_count"]) +
         " gedeelde bestanden · " +
-        str(item["cross_window_scope_pair_count"]) + " bestand/map-scopeparen · " +
+        str(item["cross_window_scope_pair_count"]) + " bestand/map-scopeparen / " +
+        str(item["cross_window_scope_path_conflict_count"]) + " padparen · " +
         str(item["cross_window_number_hint_count"]) +
         " onzekere issue-/PR-nummers</li>"
         for item in report["prioritized_existing_prs"])
