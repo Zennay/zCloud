@@ -238,9 +238,10 @@ def lines(receipt):
                       " (geen job-/runnerstoring bewezen).")
     seen_wait_ids = set()
     for wait in waits:
+        if type(wait) is not dict:
+            raise ValueError("invalid workflow-wait row")
         run_id, sha, url = wait.get("run_id"), wait.get("head_sha"), wait.get("url")
-        if (type(wait) is not dict
-                or type(run_id) is not int or not 1 <= run_id <= 2**53 - 1
+        if (type(run_id) is not int or not 1 <= run_id <= 2**53 - 1
                 or run_id in seen_wait_ids
                 or type(sha) is not str or SHA.fullmatch(sha) is None
                 or wait.get("workflow_status_observed") != "waiting"
