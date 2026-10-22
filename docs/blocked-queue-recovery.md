@@ -318,3 +318,36 @@ Een inconsistente geparkeerde rij met `eligible=true`, een worker-slot
 of een resterende lease krijgt geen hervatknop; de concrete
 inconsistentie staat bij de operatorcontext. De server blijft de
 uiteindelijke autorisatie en transactie bewaken.
+
+## 22 oktober · projectpagina's, portfoliosignalen en veilige Attention-links
+
+De bestaande `public/app.js`-client toont de geobserveerde blocked
+queue nu ook op **iedere afzonderlijke projectdetailpagina**. Maximaal
+zes taakrijen per project zijn direct zichtbaar, oplopend op P0/P1;
+daarna brengt **Open project holds in portfolio workbench** de operator
+naar het portfolio, met precies dat project geselecteerd. De detailrij
+biedt de oorspronkelijke blocker, brongebonden GitHub-issue/PR,
+geobserveerde bron-/updateklok en bekende human-Attention-koppeling.
+De bestaande `resume_blocked`-actie blijft dezelfde geauthenticeerde,
+gecontroleerde backendtransactie. Ontbrekende queuebron is expliciet
+`unavailable`, niet nul. Een rij met nog actieve lease of worker-slot
+heeft geen beschikbare hervatknop.
+
+De portfolioprojectkaarten tonen bij geparkeerde taakrijen nu ook het
+**aantal parked** en het deel **P0/P1**. Alleen het reeds geladen
+queuevenster wordt geteld; dit is geen volledig databasebewijs en geen
+extra providerverzoek. De dashboard-`index.html` pin is gelijk aan de
+bijbehorende `app.js`- en `style.css`-blob op deze branch.
+
+Daarnaast wordt een ontbrekend `attention_needed`-veld nu als
+**Human-action source unavailable** weergegeven, in plaats van de
+onjuiste claim **Nothing needs you**. Bij Attention-bronlinks worden
+alleen HTTPS-URLs zonder userinfo/afwijkende poort als klikbaar gerenderd;
+`javascript:`, `file:` en andere onveilige URI-schema's kunnen niet
+als operatorlink vanuit de kaart worden geopend.
+
+Alle onderdelen zijn bronwijzigingen op bestaande PR #1565 en worden
+niet als live of op `main` geleverd beschouwd totdat dezelfde
+oorspronkelijke CI-/review-/protected-main- en releasevoorwaarden zijn
+afgehandeld. Geen QA-suites, handmatige workflowtrigger, operatorresume,
+queue-/claim-/SQLite-write of VPS-servicehandeling.
