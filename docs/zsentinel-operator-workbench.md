@@ -4201,3 +4201,37 @@ bounded board produces **zero owner rows**; the report no longer substitutes
 `metadata_only_no_owner_rows` row when the bounded selection is empty, rather
 than a header-only export with no custody evidence. Empty output is not proof of
 an empty live backlog, a closed issue, or merge clearance.
+
+
+### Verify a saved one-shot operator bundle before sharing it
+
+The `scripts/zsentinel_operator_bundle.py` tool publishes its receipt **last**.
+Operators can verify an existing saved bundle without re-fetching a provider,
+modifying any file, or requiring the original saved inbox ZIP/JSON inputs:
+
+```sh
+python3 scripts/zsentinel_verify_operator_bundle.py \\
+  --directory "$HOME/.local/share/zsentinel" \\
+  --name my-bundle \\
+  --format markdown
+```
+
+The bundle's original stem is the same `--name` passed when creating it.
+The verifier opens its user-owned private (0700) directory and the exact
+create-only, regular, single-link 0600 files through descriptor-bound,
+non-following reads. It refuses missing, replaced, oversized, non-private or
+changed files, duplicate JSON keys, non-finite values and receipt entries
+with unexpected names, roles or hashes. It requires exact saved SHA-256
+and byte lengths for the original JSON board, offline HTML desk and optional
+P0-first Markdown owner handoff, and checks the same original board SHA-256
+is present in the accompanying HTML and owner brief.
+
+On success it prints a bounded local integrity receipt with
+`integrity_verified=true`, artifact count, exact board digest and
+`current_github_or_worker_state_verified=false`. No private file contents,
+original source records, filesystem paths or actor identifiers are printed.
+This is a checksum comparison against a **local, unsigned receipt**, not a
+cryptographic signature, source authenticity claim, proof of unchanged live
+GitHub/Notion state, or an approval for CI/claim/retry/merge/deploy. For a
+new current decision, independently re-read the actual exact-head GitHub
+checks, reviews and active owner lease through approved tools.
