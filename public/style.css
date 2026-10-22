@@ -96,6 +96,41 @@
   .blocked-project-panel .blocked-queue-head{gap:10px}
   .blocked-project-panel .blocked-queue-state button{flex:1 1 100%}
 }
+
+/* #677 read-only queue-wide churn inbox; no worker control actions. */
+.claim-churn-panel{border:1px solid #726048;background:linear-gradient(180deg,#252017,#17161b);border-radius:13px;padding:18px 20px;margin:0 0 22px}
+.claim-churn-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.claim-churn-head h2{font-size:18px;margin:4px 0;color:#f3e6d3}
+.claim-churn-head p{font-size:12px;line-height:1.6;color:#c3b9aa;max-width:70ch;margin:5px 0}
+.claim-churn-head>a,.claim-churn-source a{color:#f4c889;text-decoration:underline;text-underline-offset:3px;font-size:12px;font-weight:700}
+.claim-churn-head>a{white-space:nowrap}
+.claim-churn-head a:focus-visible,.claim-churn-source a:focus-visible{outline:2px solid #ffda9d;outline-offset:3px}
+.claim-churn-filters{display:flex;flex-wrap:wrap;align-items:center;gap:11px;margin:14px 0 10px}
+.claim-churn-filters label{font-size:12px;font-weight:600;color:#efdabf;display:inline-flex;align-items:center;gap:8px}
+.claim-churn-filters select{max-width:70vw;border:1px solid #766044;border-radius:8px;background:#292318;color:#f9eddc;padding:7px 9px;min-height:38px}
+.claim-churn-filters button,.claim-churn-foot button{border:1px solid #8b754f;border-radius:8px;background:#35291b;color:#ffddb0;min-height:38px;padding:8px 12px;font-size:12px;cursor:pointer}
+.claim-churn-filters button[aria-pressed="true"],.claim-churn-filters button:hover,.claim-churn-foot button:hover{background:#48341d;border-color:#ddbc84}
+.claim-churn-filters select:focus-visible,.claim-churn-filters button:focus-visible,.claim-churn-foot button:focus-visible{outline:2px solid #ffda9d;outline-offset:3px}
+.claim-churn-list{display:grid;gap:8px;margin-top:12px}
+.claim-churn-item{border:1px solid #514432;border-radius:9px;background:#1b1918;padding:12px 14px;overflow-wrap:anywhere}
+.claim-churn-item-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.claim-churn-item-head strong{font-size:13px;color:#f5e8d2}
+.claim-churn-count{font-size:11px;border-radius:999px;background:#46321a;border:1px solid #896238;color:#ffe0b4;padding:3px 8px;white-space:nowrap;font-weight:700}
+.claim-churn-item p{font-size:12px;color:#d5c6af;margin:8px 0 3px;line-height:1.5}
+.claim-churn-item small{display:block;color:#a99a86;font-size:11px;line-height:1.5}
+.claim-churn-source{margin-top:8px}
+.claim-churn-foot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-top:12px;color:#b3a692;font-size:11px;line-height:1.5}
+.claim-churn-empty{font-size:12px;color:#bdb19f;line-height:1.6;margin:14px 0 2px}
+@media(max-width:760px){
+  .claim-churn-panel{padding:15px;margin-bottom:18px}
+  .claim-churn-head{flex-wrap:wrap;gap:7px}
+  .claim-churn-head h2{font-size:17px}
+  .claim-churn-item-head{flex-wrap:wrap}
+  .claim-churn-filters label{width:100%;justify-content:space-between}
+  .claim-churn-filters select{min-height:44px}
+  .claim-churn-filters button,.claim-churn-foot button{min-height:44px}
+  .claim-churn-foot button{width:100%}
+}
 .blocked-queue-panel{border:1px solid #4b465b;background:linear-gradient(180deg,#1d1a28,#15141b);border-radius:13px;padding:18px 20px;margin:0 0 22px}
 .blocked-queue-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
 .blocked-queue-head h2{font-size:18px;margin:3px 0}
