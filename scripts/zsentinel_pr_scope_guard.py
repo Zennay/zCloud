@@ -1987,6 +1987,8 @@ def graph_private_csv(report):
         "pr_head_sha", "pr_base_ref", "related_pr_url", "related_pr_head_sha",
         "related_pr_base_ref", "shared_files_observed", "scope_conflict_pairs_observed", "scope_conflict_relation",
         "scope_conflict_left_path", "scope_conflict_right_path",
+        "portable_alias_pair_count", "portable_alias_relation",
+        "portable_alias_left_path", "portable_alias_right_path",
         "unverified_issue_number", "issue_identity_status", "observed_issue_priority",
         "owner_verified", "merge_authorized", "operator_notice"
     )
@@ -2022,7 +2024,11 @@ def graph_private_csv(report):
         str(report["observed_connected_path_scope_collision_clusters"]) +
         ", shown=" + str(len(report["linked_pr_path_scope_collision_clusters"])) +
         ", groups_truncated=" + str(report["path_scope_collision_clusters_truncated"]) +
-        "; this is path-scope evidence, not merge authority."))
+        "; portable path alias pairs observed=" +
+        str(report["observed_portable_path_alias_pairs"]) +
+        ", shown=" + str(len(report["shown_portable_path_alias_pairs"])) +
+        ", truncated=" + str(report["portable_path_alias_pairs_truncated"]) +
+        "; these are advisory path hints, not merge authority."))
     for pr in report["inspected_pr_heads"]:
         row("observed_pr_sample", pr_number=pr["number"], pr_url=pr["url"],
             pr_head_sha=pr["head_sha"], pr_base_ref=pr["base_ref"],
@@ -2071,6 +2077,25 @@ def graph_private_csv(report):
             row("source_warning", operator_notice="More file/directory path conflict examples omitted for PR pair.")
     if report["path_scope_collision_pairs_truncated"]:
         row("source_warning", operator_notice="Additional file/directory PR pairs beyond bounded output cap.")
+    for pair in report["shown_portable_path_alias_pairs"]:
+        for alias in pair["path_aliases"]:
+            row("portable_path_alias",
+                pr_number=pair["left"]["number"],
+                pr_url=pair["left"]["url"],
+                pr_head_sha=pair["left"]["head_sha"],
+                pr_base_ref=pair["left"]["base_ref"],
+                related_pr_url=pair["right"]["url"],
+                related_pr_head_sha=pair["right"]["head_sha"],
+                related_pr_base_ref=pair["right"]["base_ref"],
+                portable_alias_pair_count=pair["path_alias_count_observed"],
+                portable_alias_relation=alias["relation"],
+                portable_alias_left_path=alias["left_path"],
+                portable_alias_right_path=alias["right_path"],
+                operator_notice="NFC/casefold possible filesystem alias; not a Git merge conflict or owner proof.")
+        if pair["path_aliases_truncated"]:
+            row("source_warning", operator_notice="More portable path aliases for this PR pair are not shown.")
+    if report["portable_path_alias_pairs_truncated"] or report["portable_path_alias_examples_truncated"]:
+        row("source_warning", operator_notice="Portable path alias inventory is truncated; unseen aliases remain unknown.")
     for group in report["shown_duplicate_issue_groups"]:
         for pr in group["shown_pr_sources"]:
             row("unverified_issue_number", pr_url=pr["url"],
@@ -2164,7 +2189,8 @@ def main(argv=None):
             # An exact-filename-only check could report exit 0 despite
             # observed cross-PR tree collisions.
             return (2 if (report["observed_file_collision_pairs"] or
-                          report["observed_path_scope_collision_pairs"])
+                          report["observed_path_scope_collision_pairs"] or
+                          report["observed_portable_path_alias_pairs"])
                     else 3 if not report["pr_file_scope_sample_complete"] else 0)
         if args.resolve_issue_identity:
             raise ValueError("--resolve-issue-identity requires --audit-open-prs")
