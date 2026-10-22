@@ -609,7 +609,9 @@ def main():
             decision["local_runner_processes"] = admit_local_runners(observe_local_runners())
             if "cloud" in args.project:
                 from zsentinel_local_runner_observer import observe_local_runner
-                from zsentinel_runner_cross_source import combine, validate_additional_jobs
+                from zsentinel_runner_cross_source import (
+                    combine, validate_additional_jobs, validate_approval_workflows,
+                )
                 github_source = provenance.get("github_jobs")
                 refreshed = (
                     github_source.get("refreshed_projects", [])
@@ -636,6 +638,14 @@ def main():
                 except (ValueError, TypeError, KeyError, AttributeError):
                     secondary_links = []
                     secondary_links_coverage = "degraded_untrusted_receipt"
+                try:
+                    approval_links = validate_approval_workflows(
+                        cloud_coverage.get("approval_wait_workflows", []))
+                    approval_links_coverage = ("bounded_observed"
+                                               if cloud_coverage else "not_requested")
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    approval_links = []
+                    approval_links_coverage = "degraded_untrusted_receipt"
                 if (not refreshed and discovery_status == "degraded_unavailable"
                         or not refreshed and bool(incomplete_windows)
                         or not refreshed and bool(not_scanned_windows)):
@@ -663,6 +673,8 @@ def main():
                         "request_count": discovery_source.get("request_count"),
                         "additional_job_links": secondary_links,
                         "additional_links_coverage": secondary_links_coverage,
+                        "approval_wait_workflows": approval_links,
+                        "approval_links_coverage": approval_links_coverage,
                         "full_repo_ci_inventory": False,
                     }
                 except (OSError, ValueError, TypeError, KeyError, AttributeError):
@@ -727,6 +739,7 @@ def main():
                 if "runner_cross_source" in decision:
                     from zsentinel_runner_cross_source import (
                         as_html as runner_cross_source_html, additional_jobs_html,
+                        approval_workflows_html,
                     )
                     if rendered.count("<main>") != 1:
                         raise ValueError("incompatible exact runner correlation view")
@@ -744,9 +757,22 @@ def main():
                         extra_jobs = additional_jobs_html(
                             discovery_view.get("additional_job_links", [])
                             if isinstance(discovery_view, dict) else [])
+                    if (isinstance(discovery_view, dict) and
+                            discovery_view.get("approval_links_coverage") ==
+                            "degraded_untrusted_receipt"):
+                        approval_cards = (
+                            '<section class="panel warn"><h2>Goedkeuringswacht</h2>'
+                            '<p>ONBEKEND · bron bevat geen verifieerbare '
+                            'workflowlinks. Geen runnerstoring of vrijgave bewezen.'
+                            '</p></section>')
+                    else:
+                        approval_cards = approval_workflows_html(
+                            discovery_view.get("approval_wait_workflows", [])
+                            if isinstance(discovery_view, dict) else [])
                     rendered = rendered.replace(
                         "<main>", "<main>" + runner_cross_source_html(
-                            decision["runner_cross_source"]) + extra_jobs, 1)
+                            decision["runner_cross_source"]) + extra_jobs +
+                        approval_cards, 1)
                 elif "runner_cross_source_unavailable" in decision:
                     if rendered.count("<main>") != 1:
                         raise ValueError("incompatible unavailable runner correlation view")
