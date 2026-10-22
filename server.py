@@ -3485,13 +3485,55 @@ def portfolio_queue_allocate():
                 new_workers_claimed += 1
     return selected
 
-def portfolio_queue_drop(queue_id,evidence=''):
+def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
+                         expected_status=None,expected_blocker=None,
+                         expected_evidence=None,actor=None):
     queue_id=str(queue_id or '').strip()
     if not queue_id:
         raise ValueError('queue_id is verplicht')
+    note=re.sub(r'[\x00-\x1f\x7f]+',' ',str(evidence or ''))
+    note=re.sub(r'\s+',' ',note).strip()[:1200]
+    actor=re.sub(r'[^A-Za-z0-9_.:@ -]+','',str(actor or '')).strip()[:100]
+    guarded=any(value is not None for value in
+                (expected_status,expected_blocker,expected_evidence))
+    if guarded:
+        if expected_status!='blocked':
+            raise ValueError('Alleen exact geblokkeerde taken kunnen brongebonden worden gesloten')
+        if (not isinstance(expected_updated_at,str)
+                or not 1<=len(expected_updated_at)<=80):
+            raise ValueError('Bronversie is vereist voor definitief sluiten')
+        if len(note)<12 or not actor:
+            raise ValueError('Concrete sluitreden en geauthenticeerde operator vereist')
+    elif expected_updated_at is not None:
+        raise ValueError('Bronstatus is vereist bij brongebonden sluiting')
+    if expected_blocker is not None and (
+            not isinstance(expected_blocker,str) or len(expected_blocker)>4000):
+        raise ValueError('Ongeldige bronblokkade bij definitief sluiten')
+    if expected_evidence is not None and (
+            not isinstance(expected_evidence,str) or len(expected_evidence)>6000):
+        raise ValueError('Ongeldige bronevidence bij definitief sluiten')
     ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
+        row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',
+                      (queue_id,)).fetchone()
+        if not row or str(row['status']) not in ('queued','blocked'):
+            return {'dropped':False,'queue_id':queue_id,
+                    'reason':'not-droppable','queue_audit':None}
+        if (row['worker_slot'] is not None or row['claimed_at'] is not None
+                or row['claim_expires'] is not None):
+            return {'dropped':False,'queue_id':queue_id,
+                    'reason':'active-claim-or-lease','queue_audit':None}
+        if guarded and (
+                str(row['status'])!=expected_status or
+                str(row['updated_at'] or '')!=expected_updated_at or
+                (expected_blocker is not None and
+                 str(row['blocker'] or '')!=expected_blocker) or
+                (expected_evidence is not None and
+                 str(row['evidence'] or '')!=expected_evidence)):
+            return {'dropped':False,'queue_id':queue_id,
+                    'reason':'dependency-source-changed-reconfirm',
+                    'queue_audit':None}
         # Terminal operator cancellation must not revoke a live worker lease.
         # A queued/parked task is safe only after its claim identity is clear.
         # The conditional UPDATE is the authority; a pre-read cannot race it.
@@ -3501,7 +3543,7 @@ def portfolio_queue_drop(queue_id,evidence=''):
                          WHERE queue_id=? AND status IN ('queued','blocked')
                            AND worker_slot IS NULL AND claimed_at IS NULL
                            AND claim_expires IS NULL""",
-                      (str(evidence or '')[:4000],str(evidence or '')[:2000],ts,queue_id))
+                      (note[:4000],note[:2000],ts,queue_id))
         dropped=bool(cur.rowcount)
         attention_resolved=False
         if dropped:
@@ -4914,7 +4956,13 @@ class Handler(BaseHTTPRequestHandler):
                         )
                         return self.reply({'ok':bool(item.get('updated')),'result':item,'time':now()},200 if item.get('updated') else 409)
                     if action=='drop':
-                        item=portfolio_queue_drop(payload.get('queue_id'),payload.get('evidence') or '')
+                        item=portfolio_queue_drop(
+                            payload.get('queue_id'),payload.get('evidence') or '',
+                            expected_updated_at=payload.get('expected_updated_at'),
+                            expected_status=payload.get('expected_status'),
+                            expected_blocker=payload.get('expected_blocker'),
+                            expected_evidence=payload.get('expected_evidence'),
+                            actor=request_actor(self))
                         dropped=bool(item.get('dropped'))
                         return self.reply({'ok':dropped,'result':item,'time':now()},200 if dropped else 409)
                     if action=='resume_blocked':
