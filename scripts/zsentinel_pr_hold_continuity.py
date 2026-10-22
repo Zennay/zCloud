@@ -163,8 +163,19 @@ def compare(current, previous, previous_sha256, now=None):
             state = "exact_head_changed_REINSPECT_GATE"
         elif item["step"] != old["step"]:
             state = "same_head_owner_step_changed_REVIEW_GATE"
+        elif item["gates"] != old["gates"]:
+            # A check can move from queued to failed without a new commit,
+            # even when the coarse human next_step remains unchanged.
+            state = "same_head_observed_ci_or_review_changed_REVIEW_GATE"
         else:
-            state = "same_observed_head_and_owner_step_NOT_ALL_CLEAR"
+            state = "same_observed_head_and_gate_sample_NOT_ALL_CLEAR"
+        gate_fields_changed = (
+            [field for field in (
+                "check_runs", "classic_statuses", "same_head_reviews")
+             if item["gates"][field] != old["gates"][field]]
+            if (comparable_clock and old is not None
+                and item["coverage"] == EXACT and old["coverage"] == EXACT
+                and item["head"] == old["head"]) else [])
         changes.append({
             "pr_url": url,
             "state": state,
@@ -172,17 +183,21 @@ def compare(current, previous, previous_sha256, now=None):
             "previous_head_sha": old["head"] if old else None,
             "observed_next_step": item["step"],
             "previous_next_step": old["step"] if old else None,
+            "observed_gate_families_changed": gate_fields_changed,
+            "observed_gate_sample_changed": bool(gate_fields_changed),
             "gate_changed_proven": state in (
                 "exact_head_changed_REINSPECT_GATE",
-                "same_head_owner_step_changed_REVIEW_GATE"),
+                "same_head_owner_step_changed_REVIEW_GATE",
+                "same_head_observed_ci_or_review_changed_REVIEW_GATE"),
             "merge_verified": False, "owner_verified": False,
         })
     rank = {"exact_head_changed_REINSPECT_GATE": 0,
+            "same_head_observed_ci_or_review_changed_REVIEW_GATE": 1,
             "same_head_owner_step_changed_REVIEW_GATE": 1,
             "partial_exact_source_NO_GATE_DELTA": 2,
             "incomparable_source_times_NO_GATE_DELTA": 2,
             "newly_in_bounded_sample_NOT_NEW_PR": 3,
-            "same_observed_head_and_owner_step_NOT_ALL_CLEAR": 4}
+            "same_observed_head_and_gate_sample_NOT_ALL_CLEAR": 4}
     changes.sort(key=lambda x: (rank[x["state"]], x["pr_url"]))
     previous_missing = sorted(set(prior) - set(curr))
     return {
@@ -197,7 +212,7 @@ def compare(current, previous, previous_sha256, now=None):
         "sampled_previous_prs": len(prior),
         "observed_changed_gate_count": sum(x["gate_changed_proven"] for x in changes),
         "same_head_and_owner_step_observed_count": sum(
-            x["state"] == "same_observed_head_and_owner_step_NOT_ALL_CLEAR"
+            x["state"] == "same_observed_head_and_gate_sample_NOT_ALL_CLEAR"
             for x in changes),
         "current_prs": changes,
         "previously_sampled_not_current_NOT_MERGED": previous_missing,
@@ -224,12 +239,24 @@ def text_summary(report):
         description = {
             "exact_head_changed_REINSPECT_GATE": "HEAD veranderd: exacte CI/reviews opnieuw inspecteren",
             "same_head_owner_step_changed_REVIEW_GATE": "Owneractie veranderd: actuele releasegate beoordelen",
-            "same_observed_head_and_owner_step_NOT_ALL_CLEAR": "Zelfde waargenomen HEAD/owneractie, overige gates ONBEKEND",
+            "same_head_observed_ci_or_review_changed_REVIEW_GATE": "Zelfde HEAD, maar geobserveerde CI/status/review gewijzigd: gate opnieuw bekijken",
+            "same_observed_head_and_gate_sample_NOT_ALL_CLEAR": "Zelfde HEAD, eigenaaractie en begrensde CI/reviewsteekproef; overige gates ONBEKEND",
             "newly_in_bounded_sample_NOT_NEW_PR": "Nieuw in steekproef, geen bewijs van nieuwe PR",
             "partial_exact_source_NO_GATE_DELTA": "Bron gedeeltelijk: geen betrouwbare gatevergelijking",
             "incomparable_source_times_NO_GATE_DELTA": "Bronmomenten onvergelijkbaar",
         }[row["state"]]
-        lines.append(row["pr_url"] + " · " + description)
+        families = row.get("observed_gate_families_changed", [])
+        labels = {
+            "check_runs": "check-runs",
+            "classic_statuses": "klassieke statussen",
+            "same_head_reviews": "reviews",
+        }
+        if (type(families) is not list or len(families) > 3
+                or any(f not in labels for f in families)):
+            raise ValueError("invalid observed PR gate family changes")
+        lines.append(row["pr_url"] + " · " + description +
+                     (" · geobserveerd: " + ", ".join(labels[x] for x in families)
+                      if families else ""))
     for url in report["previously_sampled_not_current_NOT_MERGED"]:
         lines.append(url + " · niet meer in beperkte steekproef, NIET bewezen gemerged")
     if not report["current_prs"] and not report["previously_sampled_not_current_NOT_MERGED"]:
@@ -247,7 +274,7 @@ def html_panel(report):
             "HEAD gewijzigd · controleer verplichte CI en reviews opnieuw",
         "same_head_owner_step_changed_REVIEW_GATE":
             "Vervolgactie gewijzigd · huidige gate opnieuw bekijken",
-        "same_observed_head_and_owner_step_NOT_ALL_CLEAR":
+        "same_observed_head_and_gate_sample_NOT_ALL_CLEAR":
             "Zelfde geobserveerde HEAD en gate-actie · geen bewijs van herstel",
         "newly_in_bounded_sample_NOT_NEW_PR":
             "Nu in beperkte steekproef · niet bewezen nieuw",
