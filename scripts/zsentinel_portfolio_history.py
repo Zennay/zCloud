@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Compare two bounded zSentinel portfolio issue snapshots without inventing closures.
+
+This is an offline, non-authorizing operator aid. Disappearance from a sampled
+GitHub issue window is never proof of resolution or completed remediation.
+"""
+from __future__ import annotations
+
+import csv
+import html
+import io
+import json
+from datetime import datetime, timezone
+
+from zsentinel_live_issue_inbox import ISSUE, REPO
+from zsentinel_recovery_policy import PolicyInputError, _read_input
+
+MAX_DELTA_CARDS = 100
+VALID_STATES = frozenset((
+    "SAMPLED", "INCOMPLETE", "SOURCE_UNAVAILABLE",
+    "NOT_READ_AFTER_SOURCE_ERROR",
+))
+
+
+def _timestamp(raw):
+    if not isinstance(raw, str) or len(raw) > 36 or not raw.endswith("Z"):
+        raise PolicyInputError("snapshot time must be UTC ISO 8601")
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise PolicyInputError("invalid snapshot observation time") from exc
+    if parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise PolicyInputError("snapshot time is not UTC")
+    return parsed
+
+
+def _validate_snapshot(report):
+    if not isinstance(report, dict) or report.get("schema_version") != 1 or (
+        report.get("policy") != "zsentinel-portfolio-github-issue-desk-v1"
+    ):
+        raise PolicyInputError("previous report is not a portfolio issue desk snapshot")
+    repositories = report.get("repositories_requested")
+    if (not isinstance(repositories, list) or not 2 <= len(repositories) <= 6
+            or any(type(name) is not str or REPO.fullmatch(name) is None
+                   for name in repositories)
+            or len(set(repositories)) != len(repositories)):
+        raise PolicyInputError("snapshot repository list is invalid")
+    if report.get("display_view") not in (
+        "all", "explicit-critical", "critical-and-title-hints",
+    ):
+        raise PolicyInputError("snapshot display view is unsupported")
+    observed = report.get("repositories_observed")
+    if (not isinstance(observed, list) or len(observed) != len(repositories)):
+        raise PolicyInputError("snapshot coverage rows do not match repositories")
+    state_by_repo = {}
+    for name, row in zip(repositories, observed):
+        if (not isinstance(row, dict) or row.get("repository") != name
+                or row.get("state") not in VALID_STATES
+                or type(row.get("source_partial_or_unknown")) is not bool):
+            raise PolicyInputError("snapshot source coverage is invalid")
+        if row["state"] in ("SAMPLED", "INCOMPLETE"):
+            _timestamp(row.get("observed_at_utc"))
+        elif row.get("observed_at_utc") is not None:
+            raise PolicyInputError("unread repository cannot have observation time")
+        state_by_repo[name] = row["state"]
+    issues = report.get("issues")
+    if not isinstance(issues, list) or len(issues) > 120:
+        raise PolicyInputError("snapshot displayed issue bound is invalid")
+    unique = {}
+    for item in issues:
+        if not isinstance(item, dict):
+            raise PolicyInputError("snapshot issue row must be an object")
+        repo, num, url, rank = (
+            item.get("repository"), item.get("number"),
+            item.get("url"), item.get("priority_rank"),
+        )
+        if (repo not in state_by_repo or state_by_repo[repo] not in
+                ("SAMPLED", "INCOMPLETE") or type(num) is not int or num < 1
+                or type(rank) is not int or rank not in range(7)
+                or not isinstance(url, str)):
+            raise PolicyInputError("snapshot issue provenance is invalid")
+        match = ISSUE.fullmatch(url)
+        if match is None or match[1] != repo or int(match[2]) != num:
+            raise PolicyInputError("snapshot issue URL does not match source")
+        if url in unique:
+            raise PolicyInputError("duplicate issue in source snapshot")
+        unique[url] = {"repository": repo, "number": num,
+                       "url": url, "priority_rank": rank}
+    return _timestamp(report.get("generated_at_utc")), repositories, state_by_repo, unique
+
+
+def load_previous_snapshot(path):
+    """Accept only a bounded, stable, regular JSON input file."""
+    raw = _read_input(str(path))
+    try:
+        previous = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                              parse_constant=_reject_nonstandard)
+    except (ValueError, UnicodeError) as exc:
+        raise PolicyInputError("previous snapshot contains invalid UTF-8 JSON") from exc
+    _validate_snapshot(previous)
+    return previous
+
+
+def _unique_pairs(pairs):
+    obj = {}
+    for key, value in pairs:
+        if key in obj:
+            raise PolicyInputError("duplicate snapshot JSON property")
+        obj[key] = value
+    return obj
+
+
+def _reject_nonstandard(_value):
+    raise PolicyInputError("nonstandard snapshot JSON number")
+
+
+def compare_snapshots(previous, current):
+    """Compare visible issue cards only, without asserting issue closure."""
+    before_at, before_repos, before_state, before_items = _validate_snapshot(previous)
+    after_at, after_repos, after_state, after_items = _validate_snapshot(current)
+    if before_repos != after_repos or previous["display_view"] != current["display_view"]:
+        raise PolicyInputError("comparison requires identical repo order and display view")
+    if before_at >= after_at:
+        raise PolicyInputError("previous snapshot must precede current observation")
+    changes = []
+    coverage = []
+    for repo in after_repos:
+        comparable = (
+            before_state[repo] in ("SAMPLED", "INCOMPLETE")
+            and after_state[repo] in ("SAMPLED", "INCOMPLETE")
+        )
+        coverage.append({
+            "repository": repo, "previous_state": before_state[repo],
+            "current_state": after_state[repo],
+            "comparable_visible_cards": comparable,
+            "resolution_status": "NOT_VERIFIABLE_FROM_SAMPLES",
+        })
+        if not comparable:
+            continue
+        before = {k: v for k, v in before_items.items() if v["repository"] == repo}
+        after = {k: v for k, v in after_items.items() if v["repository"] == repo}
+        for url, item in after.items():
+            if url not in before:
+                kind = "NEWLY_OBSERVED_NOT_PROVEN_NEW"
+            elif before[url]["priority_rank"] != item["priority_rank"]:
+                kind = "OBSERVED_PRIORITY_CHANGE"
+            else:
+                continue
+            changes.append({
+                **item, "change": kind,
+                "prior_priority_rank": before[url]["priority_rank"]
+                if url in before else None,
+                "current_priority_rank": item["priority_rank"],
+                "closure_verified": False, "action_executed": False,
+            })
+        for url, item in before.items():
+            if url not in after:
+                changes.append({
+                    **item, "change": "NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED",
+                    "prior_priority_rank": item["priority_rank"],
+                    "current_priority_rank": None,
+                    "closure_verified": False, "action_executed": False,
+                })
+    # Critical observed cards first; missing cards are review-only, never closed.
+    changes.sort(key=lambda row: (
+        row["change"] == "NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED",
+        row["current_priority_rank"] if row["current_priority_rank"] is not None
+        else row["prior_priority_rank"],
+        row["repository"], row["number"],
+    ))
+    counts = {name: sum(c["change"] == name for c in changes) for name in (
+        "NEWLY_OBSERVED_NOT_PROVEN_NEW", "OBSERVED_PRIORITY_CHANGE",
+        "NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED",
+    )}
+    return {
+        "schema_version": 1,
+        "policy": "zsentinel-portfolio-visible-issue-delta-v1",
+        "previous_observed_at_utc": previous["generated_at_utc"],
+        "current_observed_at_utc": current["generated_at_utc"],
+        "previous_snapshot_operator_supplied": True,
+        "repositories_compared": coverage,
+        "cards_compared_are_bounded_display_samples": True,
+        "issues_resolved_or_closed_verified": False,
+        "ownership_claims_verified": False, "ci_or_review_verified": False,
+        "actions_executed": False, "merge_or_deploy_authorized": False,
+        "counts": counts, "total_changes": len(changes),
+        "omitted_change_cards": max(0, len(changes) - MAX_DELTA_CARDS),
+        "changes": changes[:MAX_DELTA_CARDS],
+    }
+
+
+def as_markdown(delta):
+    rows = [
+        "", "## Changes since previous bounded issue observation", "",
+        "Previous snapshot is operator-supplied. Changed sample membership is "
+        "**not** issue creation/closure, remediation, current ownership or release proof.",
+        "",
+        "- Previous: " + delta["previous_observed_at_utc"],
+        "- Current: " + delta["current_observed_at_utc"],
+    ]
+    for name, count in delta["counts"].items():
+        rows.append("- " + name + ": " + str(count))
+    rows += ["- Hidden change cards: " + str(delta["omitted_change_cards"]), ""]
+    for coverage in delta["repositories_compared"]:
+        rows.append("- " + coverage["repository"] + ": " + coverage["previous_state"] +
+                    " → " + coverage["current_state"] + " · comparison possible: " +
+                    str(coverage["comparable_visible_cards"]))
+    rows += ["", "### Visible-card changes", ""]
+    for change in delta["changes"]:
+        rows.append(
+            "- [" + change["repository"] + " #" + str(change["number"]) +
+            "](" + change["url"] + ") · " + change["change"] +
+            " · prior rank " + str(change["prior_priority_rank"]) +
+            " → current rank " + str(change["current_priority_rank"]) +
+            " · **HUMAN FOLLOW-UP ONLY**"
+        )
+    if not delta["changes"]:
+        rows.append("No comparable changed cards; this does not prove a clear backlog.")
+    return "\n".join(rows) + "\n"
+
+
+def as_html(delta):
+    esc = lambda x: html.escape(str(x), quote=True)
+    rows = [
+        "<section aria-label='Source-bound issue changes'><h2>Changes since previous snapshot</h2>",
+        "<p><strong>Not a closure or release report.</strong> The previous snapshot "
+        "was supplied locally, and disappearing from a sampled window never proves resolution.</p>",
+        "<p>Previous " + esc(delta["previous_observed_at_utc"]) +
+        " · current " + esc(delta["current_observed_at_utc"]) + "</p>",
+        "<p>" + " · ".join(esc(k) + ": " + esc(v)
+                          for k, v in delta["counts"].items()) + "</p>",
+        "<p>Hidden change cards: " + esc(delta["omitted_change_cards"]) + "</p><ul>",
+    ]
+    for c in delta["repositories_compared"]:
+        rows.append("<li>" + esc(c["repository"]) + ": " + esc(c["previous_state"]) +
+                    " → " + esc(c["current_state"]) + " · comparable: " +
+                    esc(c["comparable_visible_cards"]) + "</li>")
+    rows.append("</ul><ol>")
+    for c in delta["changes"]:
+        rows.append(
+            "<li><a target='_blank' rel='noopener noreferrer' href='" +
+            esc(c["url"]) + "'>" + esc(c["repository"]) + " #" +
+            esc(c["number"]) + "</a> · " + esc(c["change"]) +
+            " · prior rank " + esc(c["prior_priority_rank"]) + " → current " +
+            esc(c["current_priority_rank"]) + " · HUMAN FOLLOW-UP ONLY</li>"
+        )
+    rows.append("</ol></section>")
+    return "\n".join(rows)
+
+
+def append_csv(base, delta):
+    """Append rows in the existing 24-field issue-desk CSV schema."""
+    sink = io.StringIO(newline="")
+    writer = csv.writer(sink, lineterminator="\n")
+    for c in delta["changes"]:
+        row = [""] * 24
+        row[0] = "delta_" + c["change"].lower()
+        row[1] = c["repository"]
+        row[12] = c["url"]
+        row[18] = "SAMPLED CHANGE; NO ISSUE CLOSURE, CLAIM OR MERGE VERIFIED"
+        writer.writerow(row)
+    return base + sink.getvalue()
