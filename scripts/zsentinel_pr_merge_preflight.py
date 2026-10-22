@@ -17,6 +17,39 @@ from zsentinel_pr_live_read import (
 )
 
 
+def _gate_cards(head, checks, reviews, stable):
+    """Operator workorders; read-only samples never satisfy release gates."""
+    state = ("OBSERVED" if stable else "UNKNOWN")
+    sample = ("UNKNOWN" if checks is None else
+              "OBSERVED_FAILURE" if checks["sampled_blocking_checks"] else
+              "OBSERVED_PENDING" if checks["sampled_pending_checks"] else
+              "SAMPLE_ONLY")
+    return [
+        {"gate": "exact_head", "state": state,
+         "next": "Reconfirm current exact SHA at the time of authorized merge."},
+        {"gate": "pr_open_non_draft_on_main",
+         "state": ("OBSERVED" if stable and head and
+                   head["observed_state"] == "open" and
+                   not head["observed_draft"] and
+                   not head["reported_merged"] and
+                   head["target_branch"] == "main" else "HOLD"),
+         "next": "Check the actual default branch and intended PR release target."},
+        {"gate": "head_check_sample", "state": sample,
+         "next": "Resolve visible failures and pending jobs; independently determine mandatory checks."},
+        {"gate": "all_required_ci", "state": "UNKNOWN",
+         "next": "Confirm every branch-required check on this exact SHA."},
+        {"gate": "independent_review_and_threads", "state": "UNKNOWN",
+         "next": "Confirm latest independent approval and zero unresolved review threads.",
+         "sample_available": reviews is not None},
+        {"gate": "branch_protection", "state": "UNKNOWN",
+         "next": "Confirm protection without bypass, force or disabled checks."},
+        {"gate": "claim_and_owner", "state": "UNKNOWN",
+         "next": "Check active worker/Notion claims and get explicit owner authorization."},
+        {"gate": "main_merge_and_live", "state": "NOT_EXECUTED",
+         "next": "After authorized merge verify merged=true, exact main SHA and separate live deploy."},
+    ]
+
+
 def observe_exact_pr(pr_url, *, token=None):
     """Four GETs maximum; re-read the PR to pin secondary hints to one HEAD."""
     match = REPO_URL.fullmatch(pr_url) if isinstance(pr_url, str) else None
@@ -98,6 +131,7 @@ def observe_exact_pr(pr_url, *, token=None):
         "source_stable_between_reads": True,
         "secondary_source_gaps": missing, "sampled_check_runs": checks,
         "sampled_reviews": reviews, "get_attempts": attempted,
+        "operator_gates": _gate_cards(first, checks, reviews, True),
         "next_human_step": next_step,
         "required_ci_verified": False, "independent_review_verified": False,
         "branch_protection_verified": False, "active_claim_verified": False,
@@ -115,6 +149,7 @@ def _unknown_pr(pr_url, first, gaps, attempted):
         "status": "SOURCE_UNKNOWN", "source_stable_between_reads": False,
         "secondary_source_gaps": gaps, "sampled_check_runs": None,
         "sampled_reviews": None, "get_attempts": attempted,
+        "operator_gates": _gate_cards(None, None, None, False),
         "next_human_step": "Recover source admission and re-read the exact PR; do not merge.",
         "required_ci_verified": False, "independent_review_verified": False,
         "branch_protection_verified": False, "active_claim_verified": False,
@@ -145,6 +180,9 @@ def as_markdown(report):
         "", "## Operator next step", "", report["next_human_step"], "",
         "## Missing source segments", "",
     ]
+    lines.extend("- " + item["gate"] + ": " + item["state"] + " — " + item["next"]
+                 for item in report["operator_gates"])
+    lines.extend(["", "## Missing sources", ""])
     lines.extend("- " + entry for entry in report["secondary_source_gaps"])
     if not report["secondary_source_gaps"]:
         lines.append("- None observed in bounded samples; required-gate completeness remains UNKNOWN.")
@@ -195,6 +233,9 @@ def as_html(report):
     parts.extend(["</dl></section><section><h2>Operator action</h2><p>",
                   esc(report["next_human_step"]), "</p></section>",
                   "<section><h2>Source gaps and sampled checks</h2><ul>"])
+    for gate in report["operator_gates"]:
+        parts.append("<li><strong>" + esc(gate["gate"]) + " — " +
+                     esc(gate["state"]) + "</strong>: " + esc(gate["next"]) + "</li>")
     for gap in report["secondary_source_gaps"]:
         parts.append("<li>" + esc(gap) + "</li>")
     for key in ("sampled_blocking_checks", "sampled_pending_checks"):
