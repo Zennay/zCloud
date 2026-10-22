@@ -777,11 +777,16 @@ function blockedQueuePanel(){
   const items=loaded?BLOCKED_QUEUE.filter(item=>item&&item.status==='blocked').sort(
     (a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9)):[];
   const total=items.length;
+  const snapshotFresh=blockedQueueSourceIsFresh();
+  const unboundFieldsCount=items.filter(blockedQueueIsParked).length;
   const claimStateSummary=loaded
-    ?'<p class="blocked-queue-claim-summary">Queue and separate task-claim fields clear: '
-      +items.filter(blockedQueueIsParked).length+' · owner/claim/source review required: '
-      +(total-items.filter(blockedQueueIsParked).length)
-      +'. Clear fields are not a dependency-resolution or resume authorization.</p>':'';
+    ?'<p class="blocked-queue-claim-summary">'
+      +(snapshotFresh?'Current sampled queue/claim fields unbound: ':'Last-observed queue/claim fields unbound (NOT CURRENT): ')
+      +unboundFieldsCount+' · owner/claim/source review required: '
+      +(total-unboundFieldsCount)+'. '
+      +(snapshotFresh?'Clear fields are not a dependency-resolution or resume authorization.'
+        :'The queue observation is stale or unknown. All recovery actions require a refreshed source.')
+      +'</p>':'';
   const observation=blockedQueueTime(blockedQueueObservedAt);
   const freshness=claimChurnSnapshotFreshness();
   const projectIds=[...new Set(items.map(item=>String(item.project_id||'')))].filter(Boolean).sort();
@@ -810,7 +815,9 @@ function blockedQueuePanel(){
         const evidence=String(item.evidence||'').trim();
         const attention=Array.isArray(DATA.attention_needed)
           ?DATA.attention_needed.find(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'):null;
-        const eligibilityConflict=!blockedQueueIsParked(item)||!blockedQueueSourceIsFresh();
+        const eligibilityConflict=!blockedQueueIsParked(item)||!snapshotFresh;
+        const actionBlockedReason=!snapshotFresh?'Refresh queue source: observation is stale or unknown':
+          'Queue or separate task-claim state is unknown or bound';
         const taskClaimNotice=blockedQueueTaskClaimNotice(item);
         const action=attention?'Human action recorded — inspect its source and confirm the dependency has cleared.'
           :'Review the original dependency and its evidence. No automatic resolution is established.';
@@ -831,12 +838,14 @@ function blockedQueuePanel(){
           +'<strong>'+esc(title)+'</strong><p>'+esc(blocker.length>360?blocker.slice(0,357)+'…':blocker)+'</p>'
           +blockedQueueChurnHint(item)
           +taskClaimNotice
-          +'<small>Parked task · not assigned to a worker · source evidence is not an automatic resolution</small>'
+          +'<small>'+(eligibilityConflict
+            ?'Protected dependency hold · current claim or source clearance is NOT confirmed'
+            :'Observed parked queue row and no separate task claim · dependency clearance still unverified')+'</small>'
           +(sourceLink?'<div class="blocked-queue-links"><a href="'+esc(sourceLink)+'" target="_blank" rel="noopener noreferrer">Open '+(sourceLink.includes('/pull/')?'pull request':'source issue')+' ↗</a></div>':'')
           +context
           +'</div><div class="blocked-queue-actions">'
-          +'<button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Queue, separate task claim, or observation freshness is unknown or bound"':'')+'>Resume after confirmation</button>'
-          +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Queue, separate task claim, or observation freshness is unknown or bound"':'')+'>Close permanently…</button>'
+          +'<button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="'+esc(actionBlockedReason)+'"':'')+'>Resume after confirmation</button>'
+          +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="'+esc(actionBlockedReason)+'"':'')+'>Close permanently…</button>'
           +'<button type="button" class="blocked-queue-inspect" data-inspect-blocked="'+esc(item.queue_id)+'">Inspect current recovery conditions</button>'
           +'</div></article>';
       }).join('')+'</div>'
