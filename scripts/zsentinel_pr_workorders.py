@@ -15,7 +15,7 @@ import json
 import re
 import unicodedata
 
-from zsentinel_pr_scope_guard import csv_formula_inert, edit_path
+from zsentinel_pr_scope_guard import coverage_reason_text, csv_formula_inert, edit_path
 from zsentinel_pr_gate_continuity import (
     LABELS as HISTORICAL_CHANGE_LABELS, NEXT_STEP_LABELS,
 )
@@ -1136,7 +1136,7 @@ def collect_workorders(board):
         source_warnings = list(notes)
         if coverage_reasons:
             source_warnings.append("PR-overlapbrondekking onvolledig: " +
-                                   ", ".join(coverage_reasons))
+                                   coverage_reason_text(coverage_reasons))
         cards.append({
             "attention_status": attention_status,
             "attention_label": ATTENTION_LABELS[attention_status],
