@@ -1240,14 +1240,21 @@ def render_html(bundle):
         parts.append("<nav aria-label=\"Inhoud PR-werkopdrachten\"><strong>"
                      "Werkvolgorde · " + str(len(bundle["items"])) +
                      " geselecteerde PRs (geen volledige repositorydekking)"
-                     "</strong><ol>")
-        for summary in bundle["items"]:
-            parts.append("<li><a href=\"#" + e(_article_anchor(summary)) + "\">" +
-                         e(summary["project"]) + " · PR #" +
-                         e(summary["number"]) + "</a> — " +
-                         e(summary["category"]) + " · " +
-                         e(summary["workstream_label"]) + "</li>")
-        parts.append("</ol></nav><main>")
+                     "</strong>")
+        for workstream in WORKSTREAM_ORDER:
+            group = [row for row in bundle["items"]
+                     if row["workstream"] == workstream]
+            if not group:
+                continue
+            parts.append("<h3>" + e(WORKSTREAM_LABELS[workstream]) +
+                         " (" + str(len(group)) + ")</h3><ol>")
+            for summary in group:
+                parts.append("<li><a href=\"#" + e(_article_anchor(summary)) + "\">" +
+                             e(summary["project"]) + " · PR #" +
+                             e(summary["number"]) + "</a> — " +
+                             e(summary["category"]) + "</li>")
+            parts.append("</ol>")
+        parts.append("</nav><main>")
     for card in bundle["items"]:
         repo = card["repository"]
         url = _same_repo_url(card["url"], repo)
