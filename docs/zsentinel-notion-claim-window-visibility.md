@@ -30,3 +30,10 @@ The live reader emits aggregate `claim_window_observation_counts` for **all** ob
 - These observations are source-only. Existing exact-head CI, independent reviews, branch protection and deployment authorization remain mandatory.
 
 Implementation: `scripts/zsentinel_notion_claim_observer.py`, `scripts/zsentinel_recovery_view.py`, `scripts/zsentinel_incident_desk.py`, `scripts/zsentinel_runtime_handoff.py`. No QA suites were added or run.
+
+
+## Per-project owner handoff
+
+The live adapter now also computes `active_project_claim_window_counts` per canonical project label. Each project's seven-class histogram sums to its observed unfinished-work count; project distributions must reconcile exactly with the global histogram. The owner handoff (private HTML and Markdown) highlights the number of missing/invalid/expired/future claim clocks **per project**. The default offline cockpit prioritizes up to twelve projects by observed clock uncertainty. This grouping comes from **all read records**, not the 30 displayed examples; both project paging and the operator's project shortlist remain bounded. Unknown or unregistered project labels are never mapped to an assumed owner.
+
+Rows without live claim-clock provenance are refused by the offline card renderer. These are read-only owner recheck hints: **no file ownership, queue takeover, worker restart, dispatch, merge or deployment permissions result from any of these categories.**
