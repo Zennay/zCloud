@@ -32,7 +32,11 @@ python3 scripts/zsentinel_pr_gate_now.py \
   review nog **niet is aangevraagd**, stelt de eigenaarwerkbak voor om die
   *parallel* met bestaande CI aan te vragen. Ontbrekende checkbron,
   mergeconflicten, afwijzingen en foutieve CI blijven hogere prioriteit.
-  Het programma dient zelf geen reviews in.
+  Bij werkelijk waargenomen lange queued of in-progress checks krijgt de
+  bevoegde eigenaar **eerst concrete CI-/runnertoewijzingstriage**, met
+  daarnaast een **aparte parallelle reviewactie**. Een CI-wacht is niet meer
+  alleen een generiek passief HOLD; de tool geeft zelf geen restart, retry,
+  reviewaanvraag of deployment af.
 - GitHub-automatiseringsreviews, inclusief `[bot]`-gebruikers, worden
   als activiteit verwerkt maar nooit als onafhankelijke menselijke
   goedkeuring gerekend. Zelfreviews of hoofdlettervarianten evenmin.
