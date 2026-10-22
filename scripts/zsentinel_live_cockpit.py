@@ -58,7 +58,7 @@ def assemble(registry, selected, jobs, queue_path, token=None,
              include_issues=True, include_ci_discovery=True, observe_vps=False,
              include_notion=False, notion_data_source=None, notion_token=None,
              notion_registry=ROOT / "projects.json", notion_export_path=None, queue_snapshot=None,
-             pinned_issues=None, worker_events_database=None):
+             pinned_issues=None, worker_events_database=None, archive_target=None):
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(selected) != len(set(selected))
             or any(name not in registry for name in selected)):
@@ -136,7 +136,7 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         # may supply local capacity. This never authorizes a worker or runner.
         from zsentinel_vps_resource_observer import observe_vps_capacity
         bundle["resources"] = observe_vps_capacity(
-            queue_path, archive_target=args.archive_target)
+            queue_path, archive_target=archive_target)
     source = {
         "vps_capacity": ("same_host_readonly_opt_in" if observe_vps
                          else "unknown_not_sampled"),
@@ -466,6 +466,7 @@ def main():
                             if args.github_only else None),
             pinned_issues=args.pin_issue,
             worker_events_database=args.worker_events_database,
+            archive_target=args.archive_target,
         )
         # Combine existing PR source with the SAME read-only queue/issue/job
         # window. Reuse canonical PR collectors; no new claims or CI dispatch.
