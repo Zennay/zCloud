@@ -481,9 +481,9 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
         item["first_observed_at"] = stamp(first_seen or observed)
         item["new_since_previous"] = (item["id"] not in prior) if prior is not None else None
     events = sorted(deduped.values(), key=lambda x: (x["source_at"], x["id"]), reverse=True)
-    # Actions can outnumber PRs and main commits. Interleave all three
+    # Actions can outnumber PRs, branch tips and main commits. Interleave all
     # bounded source types within each project before the output cap.
-    # A short operator view must never hide all PRs behind recent CI runs.
+    # A short operator view must never hide one source behind recent CI runs.
     buckets = {(project, kind): [] for project in selected
                for kind in ("pr", "ci", "commit", "branch")}
     for item in events:
