@@ -18,11 +18,41 @@ from zsentinel_recovery_policy import PolicyInputError
 MAX_LIVE_RECHECKS = 6
 MISSING = "NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED"
 UNCHECKED = "NOT_RECHECKED"
-CODES = frozenset({
-    "OPEN_AT_LIVE_RECHECK", "CLOSED_AT_LIVE_RECHECK",
-    "SOURCE_UNAVAILABLE_AT_LIVE_RECHECK", "NOT_CHECKED_AFTER_SOURCE_ERROR",
-    "NOT_CHECKED_READ_LIMIT", UNCHECKED,
-})
+LIVE_FOLLOWUP = {
+    UNCHECKED: ("check_original_issue_state", "Check the original issue manually."),
+    "OPEN_AT_LIVE_RECHECK": (
+        "continue_existing_issue_with_verified_owner",
+        "Issue is open; inspect its existing PR and active owner before any change.",
+    ),
+    "CLOSED_AT_LIVE_RECHECK": (
+        "verify_closed_issue_release_evidence",
+        "Issue is closed on GitHub; separately verify PR merge, release and actual runtime behavior.",
+    ),
+    "SOURCE_UNAVAILABLE_AT_LIVE_RECHECK": (
+        "confirm_github_source_access_without_retry",
+        "Read failed; ask the authorized source owner to inspect access and provider admission.",
+    ),
+    "NOT_CHECKED_AFTER_SOURCE_ERROR": (
+        "defer_until_provider_access_restored",
+        "Earlier GitHub detail read failed; avoid more probes until the source recovers.",
+    ),
+    "NOT_CHECKED_PRIOR_PROVIDER_STOP": (
+        "defer_after_portfolio_provider_stop",
+        "Earlier portfolio read stopped on provider error; retain UNKNOWN without additional GETs.",
+    ),
+    "NOT_CHECKED_READ_LIMIT": (
+        "recheck_manually_if_priority_warrants",
+        "This issue exceeded the bounded read allowance; check directly if still urgent.",
+    ),
+}
+
+
+def _set_status(item, state):
+    code, action = LIVE_FOLLOWUP[state]
+    item["live_issue_recheck_state"] = state
+    item["live_next_action_code"] = code
+    item["live_next_action"] = action
+    item["live_action_executed"] = False
 
 
 def _utc():
@@ -62,19 +92,19 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
     observed_closed = 0
     source_errors = 0
     for item in missing:
-        item["live_issue_recheck_state"] = UNCHECKED
+        _set_status(item, UNCHECKED)
         item["live_issue_recheck_observed_at_utc"] = None
         item["live_issue_state_reason"] = None
         item["live_issue_priority_label"] = None
         item["live_issue_closed_does_not_prove_fix_merged"] = True
         if not source_read_admitted:
-            item["live_issue_recheck_state"] = "NOT_CHECKED_PRIOR_PROVIDER_STOP"
+            _set_status(item, "NOT_CHECKED_PRIOR_PROVIDER_STOP")
             continue
         if stopped:
-            item["live_issue_recheck_state"] = "NOT_CHECKED_AFTER_SOURCE_ERROR"
+            _set_status(item, "NOT_CHECKED_AFTER_SOURCE_ERROR")
             continue
         if attempted >= max_reads:
-            item["live_issue_recheck_state"] = "NOT_CHECKED_READ_LIMIT"
+            _set_status(item, "NOT_CHECKED_READ_LIMIT")
             continue
         attempted += 1
         try:
@@ -89,13 +119,13 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
             # request after a shared quota/network/admission failure.
             source_errors += 1
             stopped = True
-            item["live_issue_recheck_state"] = "SOURCE_UNAVAILABLE_AT_LIVE_RECHECK"
+            _set_status(item, "SOURCE_UNAVAILABLE_AT_LIVE_RECHECK")
             continue
         state = summary["observed_state"]
-        item["live_issue_recheck_state"] = (
+        _set_status(item, (
             "OPEN_AT_LIVE_RECHECK" if state == "open"
             else "CLOSED_AT_LIVE_RECHECK"
-        )
+        ))
         item["live_issue_recheck_observed_at_utc"] = summary["observed_at_utc"]
         item["live_issue_state_reason"] = summary["reported_state_reason"]
         item["live_issue_priority_label"] = summary["priority_from_explicit_labels"]
