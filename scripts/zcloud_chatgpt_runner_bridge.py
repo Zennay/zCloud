@@ -502,16 +502,9 @@ def _host_capacity_observation() -> dict[str, object]:
 
             # Recheck both mount membership and path identity around the path-based
             # statvfs call; a changed target must not be credited as archive capacity.
-            archive_stat_after = os.stat(ARCHIVE_MOUNT_PATH, follow_symlinks=False)
             vfs_after = os.statvfs(ARCHIVE_MOUNT_PATH)
             flags_after = getattr(vfs_after, "f_flag", None)
-            if read_only is not None and (
-                type(read_only_flag) is not int
-                or type(flags_after) is not int
-                or flags_after < 0
-                or bool(flags_after & read_only_flag) != read_only
-            ):
-                raise ValueError("archive_mount_read_only_state_changed")
+            archive_stat_after = os.stat(ARCHIVE_MOUNT_PATH, follow_symlinks=False)
             if (
                 not stat.S_ISDIR(archive_stat_after.st_mode)
                 or (archive_stat_before.st_dev, archive_stat_before.st_ino)
@@ -519,6 +512,13 @@ def _host_capacity_observation() -> dict[str, object]:
                 or _mountinfo_target_state(ARCHIVE_MOUNT_PATH) != "mounted"
             ):
                 raise ValueError("archive_mount_changed_during_observation")
+            if read_only is not None and (
+                type(read_only_flag) is not int
+                or type(flags_after) is not int
+                or flags_after < 0
+                or bool(flags_after & read_only_flag) != read_only
+            ):
+                raise ValueError("archive_mount_read_only_state_changed")
 
             archive.update({
                 "total_bytes": total,
