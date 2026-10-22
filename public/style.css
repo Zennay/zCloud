@@ -73,6 +73,22 @@
 .attention-notion{display:inline-block;margin-top:13px}.detail-summary+.attention-panel{margin-top:-7px}
  
 /* Dependency holds are preserved queue work, separate from terminal drops and human gates. */
+
+/* Project-level recovery mirrors the portfolio's exact-source queue controls. */
+.blocked-project-panel{margin:0 0 20px;padding:16px 18px}
+.blocked-project-panel .blocked-queue-head h2{font-size:17px}
+.blocked-project-panel .blocked-queue-list{margin-top:12px}
+.blocked-project-panel .blocked-queue-item{padding:12px}
+.blocked-project-panel .blocked-queue-copy{flex:1 1 auto}
+.blocked-project-panel .blocked-queue-meta{gap:10px}
+.blocked-project-panel .blocked-queue-state{justify-content:space-between}
+.blocked-project-panel .blocked-queue-state span{flex:1 1 230px}
+.blocked-project-panel [data-resume-blocked]:disabled{cursor:not-allowed;opacity:.5}
+@media(max-width:760px){
+  .blocked-project-panel{padding:14px 15px}
+  .blocked-project-panel .blocked-queue-head{gap:10px}
+  .blocked-project-panel .blocked-queue-state button{flex:1 1 100%}
+}
 .blocked-queue-panel{border:1px solid #4b465b;background:linear-gradient(180deg,#1d1a28,#15141b);border-radius:13px;padding:18px 20px;margin:0 0 22px}
 .blocked-queue-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
 .blocked-queue-head h2{font-size:18px;margin:3px 0}
