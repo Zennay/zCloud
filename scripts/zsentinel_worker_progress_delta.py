@@ -235,6 +235,11 @@ def compare(previous, current, now=None):
                 "vergelijk cursors niet alsof dit dezelfde taak is. Laat de bevoegde "
                 "eigenaar de actuele claim en voortgang handmatig verifiëren."
             )
+        elif after["desired"] in ("paused", "draining"):
+            # The owner deliberately held this slot; absent queue evidence
+            # must not override an explicit pause/drain with a restart hint.
+            stage = "paused_or_draining_owner_hold"
+            action = "Respecteer actuele pauze-/drainstatus en bestaande eigenaar."
         elif (before["claim_window_fingerprint"] is None
               or after["claim_window_fingerprint"] is None):
             stage = "claim_window_unavailable_requires_owner_recheck"
@@ -248,9 +253,6 @@ def compare(previous, current, now=None):
                 or (pfirst is not None and plast is None)):
             stage = "indexed_source_reset_or_regression"
             action = "Eigenaar verifieert reset/retentie en broncontinuïteit; geen hervatting afleiden."
-        elif after["desired"] in ("paused", "draining"):
-            stage = "paused_or_draining_owner_hold"
-            action = "Respecteer actuele pauze-/drainstatus en bestaande eigenaar."
         elif progress_advanced:
             stage = "generation_progress_signal_observed"
             action = "Controleer echte codecommit of taakoplevering; event is geen productbewijs."
