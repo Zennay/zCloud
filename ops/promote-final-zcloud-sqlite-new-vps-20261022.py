@@ -293,6 +293,8 @@ def main() -> int:
     real_private_file(SOURCE, uid)
     no_sidecars(SOURCE)
     no_sidecars(TARGET)
+    if TARGET.is_symlink():
+        refuse("target history.db symlink refused, even if dangling")
     if TARGET.exists():
         real_private_file(TARGET, uid)
     if TARGET.exists() and SOURCE.samefile(TARGET):
