@@ -371,6 +371,7 @@ def as_markdown(report):
         json.dumps(reviews.get("observed_review_states_exact_head", "UNKNOWN"), sort_keys=True),
         "- Reviews on other HEADs: " + str(reviews.get("other_head_review_count", "UNKNOWN")),
         "- Reviews without valid commit binding: " + str(reviews.get("unbound_review_count", "UNKNOWN")),
+        "- Review records with unknown/missing state: " + str(reviews.get("unknown_review_state_count", "UNKNOWN")),
         "- Exact-HEAD review coverage: " + str(reviews.get("exact_head_review_coverage", "UNKNOWN")),
         "- Independent review verdict: UNKNOWN (counts are not approval authority)",
         "- GitHub GET attempts: " + str(report["get_attempts"]),
@@ -431,6 +432,7 @@ def as_html(report):
         ("Exact-HEAD review states", json.dumps(reviews.get("observed_review_states_exact_head", "UNKNOWN"), sort_keys=True)),
         ("Reviews on other HEADs", reviews.get("other_head_review_count", "UNKNOWN")),
         ("Reviews without valid commit binding", reviews.get("unbound_review_count", "UNKNOWN")),
+        ("Review records with unknown/missing state", reviews.get("unknown_review_state_count", "UNKNOWN")),
         ("Exact-HEAD review coverage", reviews.get("exact_head_review_coverage", "UNKNOWN")),
         ("Independent review verdict", "UNKNOWN — sampled counts are not approval authority"),
     ]
