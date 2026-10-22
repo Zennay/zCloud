@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""Conservative, date-scoped cold zCloud directory offload to encrypted Google Drive."""
+import argparse
+import datetime as dt
+import fcntl
+import hashlib
+import json
+import os
+import re
+import stat
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+HOME = Path("/home/ubuntu")
+ROOT = HOME / "zennay-cloud"
+STATE = HOME / ".local/state/zcloud-drive"
+BIN = HOME / ".local/bin/rclone"
+DEST = "vpsarchive:zCloud-cold"
+# Shared zCloud checkouts contain dated private/research directories from OTHER projects.
+# A date alone is not permission to upload or prune their contents.
+ARCHIVE_NAME = re.compile(r"^zcloud-(?:cold|archive|backup)-(20\d{6})(?:[-_][A-Za-z0-9_-]{1,80})?$")
+DATED_DIRECTORY = re.compile(r"(?<!\d)(20\d{6})(?!\d)")
+EXCLUDE = {"repos", "worktrees", "scripts", "tests", "public", "deploy", ".git", ".github",
+           "node_modules", ".venv", "backups", "dist", "build", "__pycache__"}
+MIN_UPLOAD_DAYS = 2
+MIN_PRUNE_DAYS = 7
+MAX_BATCH_BYTES = 4 * 1024 ** 3
+MAX_CANDIDATES = 8
+MAX_SCAN_NODES = 100000
+
+def command(*args, capture=False, timeout=3600):
+    try:
+        p = subprocess.run(args, text=True, stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        # Never include command arguments or upstream output in an error.
+        raise RuntimeError("Archive command exceeded its bounded time budget") from exc
+    if p.returncode:
+        # Upstream stderr may contain tokens or private provider details.
+        raise RuntimeError("Archive command failed (exit code %d)" % p.returncode)
+    return p.stdout if capture else ""
+
+def examine(path, cutoff):
+    if path.is_symlink() or not path.is_dir() or path.parent != ROOT or path.name in EXCLUDE:
+        return None
+    match = ARCHIVE_NAME.fullmatch(path.name)
+    if not match:
+        return None
+    try:
+        if dt.datetime.strptime(match.group(1), "%Y%m%d").replace(tzinfo=dt.timezone.utc).timestamp() >= cutoff:
+            return None
+    except ValueError:
+        return None
+    size = 0
+    count = 0
+    scanned = 0
+    newest = 0
+    fingerprint = hashlib.sha256()
+    try:
+        root_stat = path.lstat()
+        device = root_stat.st_dev
+        if root_stat.st_uid != os.geteuid() or root_stat.st_mode & 0o022:
+            return None
+        def reject_unreadable(error):
+            # os.walk normally SKIPS directories it cannot list: a partial
+            # archive must never become eligible for source removal.
+            raise error
+        for current, dirs, files in os.walk(path, followlinks=False,
+                                            onerror=reject_unreadable):
+            # Metadata-tree fingerprints must not depend on readdir ordering.
+            dirs.sort()
+            files.sort()
+            st = os.lstat(current)
+            if (not stat.S_ISDIR(st.st_mode) or st.st_dev != device
+                    or st.st_uid != os.geteuid() or st.st_mode & 0o022):
+                return None
+            newest = max(newest, st.st_mtime, st.st_ctime)
+            scanned += 1
+            if scanned > MAX_SCAN_NODES:
+                return None
+            fingerprint.update(repr((os.path.relpath(current, path), st.st_mode,
+                st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)).encode("utf-8", "surrogateescape"))
+            for name in sorted(dirs + files):
+                child = Path(current) / name
+                x = child.lstat()
+                scanned += 1
+                if (stat.S_ISLNK(x.st_mode) or x.st_dev != device
+                        or x.st_uid != os.geteuid() or x.st_mode & 0o022
+                        or (not stat.S_ISDIR(x.st_mode) and
+                            (not stat.S_ISREG(x.st_mode) or x.st_nlink != 1))):
+                    return None
+                newest = max(newest, x.st_mtime, x.st_ctime)
+                fingerprint.update(repr((os.path.relpath(child, path), x.st_mode,
+                    x.st_dev, x.st_ino, x.st_size, x.st_nlink,
+                    x.st_mtime_ns, x.st_ctime_ns)).encode("utf-8", "surrogateescape"))
+                if stat.S_ISREG(x.st_mode):
+                    size += x.st_size
+                    count += 1
+                    if size > MAX_BATCH_BYTES:
+                        return None
+                if scanned > MAX_SCAN_NODES:
+                    return None
+    except (OSError, PermissionError):
+        return None
+    if newest >= cutoff or count == 0:
+        return None
+    return {"name": path.name, "path": path, "bytes": size, "files": count,
+            "latest_mtime": newest, "fingerprint": fingerprint.hexdigest()}
+
+def candidates(age, limit=MAX_CANDIDATES):
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=age)).timestamp()
+    # Never follow a redirected checkout path or silently scan outside root.
+    if ROOT.is_symlink() or not ROOT.is_dir():
+        raise RuntimeError("Canonical zCloud source directory is unavailable")
+    results = []
+    for path in ROOT.iterdir():
+        v = examine(path, cutoff)
+        if v:
+            results.append(v)
+    results.sort(key=lambda x: (x["latest_mtime"], x["name"]))
+    return results[:limit]
+
+def bounded_batch(items):
+    """Apply the same four-GiB selection in plan and mutation modes."""
+    selected, deferred = [], []
+    used = 0
+    for item in items:
+        if used + item["bytes"] > MAX_BATCH_BYTES:
+            deferred.append(item)
+            continue
+        selected.append(item)
+        used += item["bytes"]
+    return selected, deferred, used
+
+
+def excluded_dated_directory_count():
+    """Report an aggregate only; never list or read foreign project contents."""
+    if ROOT.is_symlink() or not ROOT.is_dir():
+        raise RuntimeError("Canonical zCloud source directory is unavailable")
+    return sum(1 for path in ROOT.iterdir()
+               if path.is_dir() and not path.is_symlink()
+               and DATED_DIRECTORY.search(path.name)
+               and ARCHIVE_NAME.fullmatch(path.name) is None)
+
+
+def connected():
+    try:
+        command(str(BIN), "lsd", "gdrive:", "--max-depth", "1", timeout=25)
+        return True
+    except Exception:
+        return False
+
+def active_process(path):
+    """Fail closed when an open file or an unobservable process may own a tree.
+
+    A process holding a file descriptor can keep writing even when its cwd
+    is elsewhere. An unreadable /proc entry never proves the tree is idle.
+    """
+    prefix = str(path) + "/"
+    def inside(link):
+        target = link.removesuffix(" (deleted)")
+        return target == str(path) or target.startswith(prefix)
+    try:
+        for item in Path("/proc").iterdir():
+            if not item.name.isdecimal():
+                continue
+            try:
+                for attribute in ("cwd", "exe"):
+                    if inside(os.readlink(item / attribute)):
+                        return True
+                for descriptor in (item / "fd").iterdir():
+                    try:
+                        target = os.readlink(descriptor)
+                    except FileNotFoundError:
+                        # An individual descriptor closed; continue checking
+                        # the others rather than skipping the whole process.
+                        continue
+                    if inside(target):
+                        return True
+            except FileNotFoundError:
+                # A vanished process cannot still own a descriptor. A live
+                # process with unreadable cwd/exe evidence is inconclusive.
+                if item.exists():
+                    return True
+                continue
+            except (OSError, PermissionError):
+                # This shared host contains unrelated processes. Without
+                # visibility, destructive pruning is not independently safe.
+                return True
+    except (OSError, PermissionError):
+        return True
+    return False
+
+
+def prune_authorized():
+    """Honor only an actual user-owned 0600 file, never a symlink or directory."""
+    marker = HOME / ".config/zcloud-drive/allow-prune"
+    try:
+        info = marker.lstat()
+    except OSError:
+        return False
+    return (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+            and info.st_nlink == 1 and stat.S_IMODE(info.st_mode) == 0o600)
+
+def transfer(item, prune=False):
+    src = item["path"]
+    dst = DEST + "/" + item["name"]
+    common = ["--transfers", "1", "--checkers", "2", "--tpslimit", "2",
+              "--bwlimit", "4M", "--retries", "2", "--low-level-retries", "3"]
+    command(str(BIN), "copy", str(src), dst, *common)
+    # Compare actual remote bytes, not only size or a copy exit status.
+    # Two-way verification: a stale extra file in the remote destination
+    # would otherwise be silently included in a later restore.
+    command(str(BIN), "check", str(src), dst, "--download", *common)
+    if prune:
+        if not prune_authorized():
+            raise RuntimeError("Pruning requires the offline-key-backup approval file")
+        old = examine(src, (dt.datetime.now(dt.timezone.utc) -
+                            dt.timedelta(days=MIN_PRUNE_DAYS)).timestamp())
+        if not old or old["fingerprint"] != item["fingerprint"] or active_process(src):
+            raise RuntimeError("Source changed, insufficiently cold, or referenced by active process")
+        # Never follow symlinks; do not remove any directory that is now active.
+        shutil.rmtree(src)
+        print("PRUNED VERIFIED COLD DIRECTORY:", src.name, flush=True)
+    else:
+        print("ARCHIVED AND VERIFIED, ORIGINAL PRESERVED:", src.name, flush=True)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mode", choices=["plan", "run", "cleanup"])
+    args = parser.parse_args()
+    # Planning does not create state, acquire a lock or contact OAuth.
+    if args.mode == "plan":
+        window = candidates(MIN_UPLOAD_DAYS, limit=MAX_CANDIDATES + 1)
+        items = window[:MAX_CANDIDATES]
+        selected, deferred, total = bounded_batch(items)
+        print(json.dumps({"mode": "read_only", "cold_days": MIN_UPLOAD_DAYS,
+            "candidate_count": len(items), "candidate_window_truncated": len(window) > MAX_CANDIDATES,
+            "scope": "zcloud-{cold,archive,backup}-YYYYMMDD[-suffix]",
+            "max_candidates": MAX_CANDIDATES, "max_batch_bytes": MAX_BATCH_BYTES,
+            "selected_count": len(selected), "selected_bytes": total,
+            "deferred_by_batch_budget": len(deferred),
+            "unscoped_dated_directories_excluded": excluded_dated_directory_count(),
+            "unscoped_size_measured": False, "manual_owner_selection_required": True,
+            "transfer_performed": False, "cleanup_authorized": False,
+            "items": [{"name": x["name"], "bytes": x["bytes"], "files": x["files"]}
+                      for x in selected]}, indent=2))
+        return
+    STATE.mkdir(parents=True, exist_ok=True)
+    lock = open(STATE / "archive.lock", "a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("Another archive job is running; skip safely")
+        return
+    days = MIN_PRUNE_DAYS if args.mode == "cleanup" else MIN_UPLOAD_DAYS
+    items = candidates(days)
+    if not items:
+        print("NO_ELIGIBLE_ZCLOUD_COLD_DIRECTORIES: no foreign project data touched")
+        return
+    # Mutation modes alone connect to external storage.
+    if not connected():
+        print("NOT_CONNECTED: authorize Google Drive for the gdrive remote first", file=sys.stderr)
+        raise SystemExit(4)
+    if args.mode == "cleanup" and not prune_authorized():
+        print("PRUNE_DISABLED: secure the recovery keys and provide a user-owned mode-0600 approval file", file=sys.stderr)
+        raise SystemExit(4)
+    batch, deferred, budgeted_bytes = bounded_batch(items)
+    transferred = 0
+    for item in batch:
+        try:
+            transfer(item, prune=args.mode == "cleanup")
+            transferred += item["bytes"]
+        except Exception as e:
+            print("FAILED, ORIGINAL PRESERVED:", item["name"], str(e), file=sys.stderr)
+            sys.exit(5)
+    print("COMPLETED:", args.mode, "bytes_verified:", transferred,
+          "budgeted_bytes:", budgeted_bytes, "deferred_by_batch_budget:", len(deferred),
+          flush=True)
+
+if __name__ == "__main__":
+    main()
