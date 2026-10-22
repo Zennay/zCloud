@@ -1301,9 +1301,12 @@ refused and preview must be recreated. Exports happen through a local browser
 Blob with UTF-8 BOM for spreadsheet import; no automatic network/upload or
 localStorage persistence.
 
-Every cell is quoted; control bytes are stripped and leading spreadsheet
-formula markers (`=`, `+`, `-`, `@`) are neutralized with an apostrophe
-before CSV quoting, including untrusted GitHub issue titles and notes.
+Every cell is quoted; control bytes are normalized and leading spreadsheet
+formula markers (`=`, `+`, `-`, `@`) are neutralized with an apostrophe before
+CSV quoting, including when Unicode whitespace, zero-width or bidirectional
+format controls precede the marker. Detection ignores those prefixes without
+rewriting the underlying source text otherwise; untrusted GitHub issue titles
+and private notes use the same protection.
 The private CSV may still be copied to a cloud provider by the chosen
 spreadsheet application: the workbench explains this and the private-note
 checkbox defaults off. Original ownership, exact-head checks, independent
