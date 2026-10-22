@@ -162,6 +162,23 @@ def combine(local, refreshed_projects):
             "GitHub-job wacht mogelijk op goedkeuring of concurrency; geen runneruitval bewezen.",
             "Inspecteer exacte approval/concurrency state, niet de VPS-runner herstarten.",
             local, pinned=pinned, source_freshness="bounded_recent")
+    if status == "completed":
+        conclusion = receipt.get("conclusion")
+        if type(conclusion) is not str or conclusion not in JOB_CONCLUSIONS:
+            conclusion = None
+        if conclusion in TERMINAL_CI_FAILURES:
+            return _action(
+                "terminal_ci_failure_not_runner_recovery",
+                "De exacte GitHub-job is terminaal mislukt; dit bewijst geen actuele runneruitval.",
+                "Inspecteer de gekoppelde jobuitkomst en routeer één root-fix naar een bevoegde eigenaar; geen blinde retry of runnerrestart.",
+                local, pinned=pinned, source_freshness="bounded_recent",
+                job_status=status, job_conclusion=conclusion)
+        return _action(
+            "terminal_job_not_runner_recovery",
+            "De exacte GitHub-job is terminaal; historische toewijzing bewijst geen actuele runnerstoring.",
+            "Beoordeel de vastgelegde jobuitkomst en actuele runnerbron apart; herstart geen runner op basis van deze historische job.",
+            local, pinned=pinned, source_freshness="bounded_recent",
+            job_status=status, job_conclusion=conclusion)
     if route != "self_hosted":
         return _action(
             "job_not_proven_self_hosted",
@@ -192,23 +209,6 @@ def combine(local, refreshed_projects):
             "Self-hosted job ongeassignerd; geen listener in volledige lokale processteekproef.",
             "Bevoegd eigenaar onderzoekt runner-service en registratie, zonder automatische herstart.",
             local, pinned=pinned, source_freshness="bounded_recent")
-    if status == "completed":
-        conclusion = receipt.get("conclusion")
-        if type(conclusion) is not str or conclusion not in JOB_CONCLUSIONS:
-            conclusion = None
-        if conclusion in TERMINAL_CI_FAILURES:
-            return _action(
-                "terminal_ci_failure_not_runner_recovery",
-                "De exacte GitHub-job is terminaal mislukt; dit bewijst geen actuele runneruitval.",
-                "Inspecteer de gekoppelde jobuitkomst en routeer één root-fix naar een bevoegde eigenaar; geen blinde retry of runnerrestart.",
-                local, pinned=pinned, source_freshness="bounded_recent",
-                job_status=status, job_conclusion=conclusion)
-        return _action(
-            "terminal_job_not_runner_recovery",
-            "De exacte GitHub-job is terminaal; historische toewijzing bewijst geen actuele runnerstoring.",
-            "Beoordeel de vastgelegde jobuitkomst en actuele runnerbron apart; herstart geen runner op basis van deze historische job.",
-            local, pinned=pinned, source_freshness="bounded_recent",
-            job_status=status, job_conclusion=conclusion)
     if assigned:
         return _action(
             "job_assignment_observed_only",
