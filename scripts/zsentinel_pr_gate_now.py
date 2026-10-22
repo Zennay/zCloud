@@ -59,6 +59,20 @@ def _sha(value):
     return value
 
 
+def _branch_ref(value):
+    """Validate GitHub's short target branch name before pinning or rendering it."""
+    forbidden = (" ", "~", "^", ":", "?", "*", "[", "\\\\")
+    if (type(value) is not str or not 1 <= len(value) <= 255
+            or value != value.strip() or value.startswith("/")
+            or value.endswith(("/", ".")) or "//" in value or ".." in value
+            or "@{" in value or any(ord(char) < 32 or ord(char) == 127
+                                    or char in forbidden for char in value)
+            or any(not part or part.startswith(".") or part.endswith(".lock")
+                   for part in value.split("/"))):
+        raise ValueError("invalid target branch identity")
+    return value
+
+
 def _source_evidence_fingerprint(source_kind, observed_rows):
     """Deterministic bounded evidence identity; never approval or authentication."""
     if source_kind not in ("check_runs", "legacy_status", "current_head_reviews",
@@ -126,6 +140,7 @@ def _one(repo, number, token):
         raise ValueError("PR not open or source missing")
     head = _sha(first["head"].get("sha"))
     base = _sha(first["base"].get("sha"))
+    base_ref = _branch_ref(first["base"].get("ref"))
     requested_people, requested_teams = _pending_review_requests(first)
     base_repo = first["base"].get("repo")
     author = first.get("user")
@@ -296,7 +311,8 @@ def _one(repo, number, token):
             or type(last.get("head")) is not dict
             or type(last.get("base")) is not dict
             or last["head"].get("sha") != head
-            or last["base"].get("sha") != base):
+            or last["base"].get("sha") != base
+            or _branch_ref(last["base"].get("ref")) != base_ref):
         raise ValueError("PR head/base changed during observation")
     # Draft and GitHub's mergeability signal are separate from check/review
     # receipts. Never advise an operator to merge a conflicted or draft PR
@@ -348,6 +364,7 @@ def _one(repo, number, token):
         "url": "https://github.com/" + repo + "/pull/" + str(number),
         "repository": repo, "number": number,
         "head_sha_observed": head, "base_sha_observed": base,
+        "base_ref_observed": base_ref,
         "draft_at_read": last["draft"],
         "draft_state_stable_on_second_read": True,
         "pending_review_requests_stable_on_second_read": True,
@@ -472,6 +489,7 @@ def human_gate_summary(source: dict) -> str:
             lines.append("GitHub-bron onbereikbaar of HEAD veranderd; PR niet vrijgeven.")
             continue
         lines.append("Waargenomen HEAD: " + item["head_sha_observed"])
+        lines.append("Doelbranch: " + item["base_ref_observed"])
         if item["draft_at_read"]:
             lines.append("PR-status: CONCEPT; eigenaar moet deze eerst reviewklaar maken.")
         elif item["merge_conflict_observed"]:
