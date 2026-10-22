@@ -404,6 +404,7 @@ def render_delta(delta, format="text"):
                                  " (NIET bewezen opgelost)</li>")
                 if row["overlap_sample_pair_preview_truncated"]:
                     links.append("<li>Meer historische overlapparen buiten zichtbare limiet.</li>")
+            if not row["scope_conflicts_comparable_if_complete"]:
                 for conflict in row.get("scope_conflicts_only_in_current_sample_not_proven_new", []):
                     links.append("<li>Alleen huidige bestand/map-steekproef: " +
                                  link(conflict["left"]) + " · <code>" + escape(conflict["left_path"]) +
@@ -426,6 +427,7 @@ def render_delta(delta, format="text"):
                     links.append("<li>Niet meer waargenomen overlap: " +
                                  link(pair["left"]) + " ↔ " + link(pair["right"]) +
                                  " (geen bewijs van geslaagde merge of release)</li>")
+            if row["scope_conflicts_comparable_if_complete"]:
                 for conflict in row.get("added_scope_conflicts_if_complete", []):
                     links.append("<li>Nieuwe bestand/map-ancestorrelatie: " +
                                  link(conflict["left"]) + " · <code>" + escape(conflict["left_path"]) +
@@ -523,6 +525,7 @@ def render_delta(delta, format="text"):
             for pair in row["overlap_pairs_only_in_previous_sample_not_proven_resolved"]:
                 lines.append("  Alleen vorige botsingssteekproef, NIET bewezen opgelost: " +
                              pair["left"] + " ↔ " + pair["right"])
+        if not row["scope_conflicts_comparable_if_complete"]:
             for conflict in row.get("scope_conflicts_only_in_current_sample_not_proven_new", []):
                 lines.append("  Alleen huidige bestand/map-steekproef, NIET bewezen nieuw: " +
                              conflict["left"] + " " + conflict["left_path"] + " ↔ " +
@@ -540,6 +543,7 @@ def render_delta(delta, format="text"):
             for pair in row["disappeared_collision_pairs_if_complete"]:
                 lines.append("  Niet meer waargenomen overlap, GEEN merge-bewijs: " +
                              pair["left"] + " ↔ " + pair["right"])
+        if row["scope_conflicts_comparable_if_complete"]:
             for conflict in row.get("added_scope_conflicts_if_complete", []):
                 lines.append("  Nieuwe bestand/map-relatie: " + conflict["left"] +
                              " " + conflict["left_path"] + " ↔ " + conflict["right"] +
