@@ -421,7 +421,7 @@ def build_bundle(*, inbox: Path, output_dir: Path, name: str,
                 raise ValueError("existing private artifact differs from the saved recovery plan; existing files preserved")
 
     if checkpoint_data is None:
-        checkpoint_payload = json.dumps(plan, ensure_ascii=False, indent=2) + "\\n"
+        checkpoint_payload = json.dumps(plan, ensure_ascii=False, indent=2) + "\n"
         if len(checkpoint_payload.encode("utf-8")) > MAX_CHECKPOINT_BYTES:
             raise ValueError("private bundle checkpoint exceeds its byte limit")
         write_create_only(checkpoint_path, checkpoint_payload)
