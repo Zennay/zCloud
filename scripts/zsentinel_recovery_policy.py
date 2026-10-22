@@ -47,7 +47,8 @@ EVIDENCE_FIELDS = frozenset({
     "task_claim_observed_at_utc",
     "escalation_reason", "permission_required", "irreversible_risk",
     "safe_routes_exhausted", "capacity", "exact_head",
-    "required_ci", "independent_review", "branch_protection", "owner_authorized",
+    "required_ci", "independent_review", "branch_protection",
+    "pr_state", "pr_target_branch", "pr_mergeable", "owner_authorized",
     "root_cause_confirmed", "unresolved_review_threads", "merged_main",
     "post_merge_health", "release_approval", "runtime_owner_authorized",
     "runner_state", "running_jobs", "human_approval",
@@ -60,6 +61,9 @@ ENUMS = {
     "required_ci": {"green", "red", "pending", "unknown"},
     "independent_review": {"approved", "changes_requested", "missing", "unknown"},
     "branch_protection": {"satisfied", "blocked", "unknown"},
+    "pr_state": {"open", "draft", "closed", "unknown"},
+    "pr_target_branch": {"main", "other", "unknown"},
+    "pr_mergeable": {"yes", "no", "unknown"},
     "merged_main": {"verified", "no", "unknown"},
     "post_merge_health": {"healthy", "failed", "unknown"},
     "runner_state": {"healthy", "unavailable", "unknown"},
@@ -324,6 +328,8 @@ def recommended_next_step_code(action, blockers):
         return "resolve_claim_with_owner"
     if codes & {"competing_incident_routes", "competing_incident_actions", "competing_blocked_task_routes"}:
         return "choose_one_incident_route"
+    if codes & {"pr_not_open", "pr_not_main", "pr_mergeability_not_confirmed"}:
+        return "refresh_exact_pr_state_and_base"
     if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
                 "main_state_not_open", "main_merge_unverified",
                 "branch_protection_not_satisfied", "independent_review_missing",
@@ -396,6 +402,8 @@ def recommended_next_step(action, blockers, required_evidence):
         return "Ask the current owner to confirm or release the exact claim; do not preempt, reassign, or mutate the queue."
     if codes & {"competing_incident_routes", "competing_incident_actions", "competing_blocked_task_routes"}:
         return "Ask the authorized owner to choose one recovery route for this incident before reviewing route-specific gates."
+    if codes & {"pr_not_open", "pr_not_main", "pr_mergeability_not_confirmed"}:
+        return "Read the current GitHub PR state, default-branch target and mergeability for the exact HEAD; closed, draft, non-main or unknown PRs cannot be proposed for normal merge."
     if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
                 "main_state_not_open", "main_merge_unverified",
                 "branch_protection_not_satisfied", "independent_review_missing",
@@ -803,6 +811,19 @@ def evaluate(data, max_age_minutes, *, now=None):
                 ("evidence.active_claim",))
 
     elif action == "merge_pr":
+        # Exact-head checks do not establish that the PR still exists as a
+        # review-ready open main-target change. GitHub's mergeable hint is
+        # advisory only and never overrides branch/review/CI protection.
+        require(value("pr_state") == "open",
+                "pr_not_open", "Only an open non-draft PR is eligible for merge review.",
+                ("evidence.pr_state",))
+        require(value("pr_target_branch") == "main",
+                "pr_not_main", "The PR must target protected main.",
+                ("evidence.pr_target_branch",))
+        require(value("pr_mergeable") == "yes",
+                "pr_mergeability_not_confirmed",
+                "Exact-head GitHub mergeability must be affirmative, not stale or unknown.",
+                ("evidence.pr_mergeable",))
         require(value("active_claim") == "none",
                 "claim_not_clear", "Do not merge while any active or unknown worker claim remains.",
                 ("evidence.active_claim",))
