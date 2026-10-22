@@ -159,6 +159,8 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
         "shared_file_pairs_hidden": 0,
         "path_scope_pairs_hidden": 0,
         "focused_overlap_receipts_hidden": 0,
+        "issue_mentions_hidden": 0,
+        "duplicate_issue_groups_hidden": 0,
         "malformed_source_list": False,
     }
     if type(collision_pairs) is not list:
@@ -357,15 +359,25 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
     # Every title/body issue mention is an operator search hint, even when
     # no second PR mentions the same issue. Match exact observed PR HEAD to
     # avoid attaching stale issue text from a changed source branch.
-    for mention in (view.get("observed_issue_to_pr_mentions_unverified", [])[:512]
-                    if stable_scope else []):
+    issue_mentions = view.get("observed_issue_to_pr_mentions_unverified", [])
+    duplicate_issue_groups = view.get("shown_duplicate_issue_groups", [])
+    if type(issue_mentions) is not list:
+        issue_mentions = []
+        scan_omissions["malformed_source_list"] = True
+    elif len(issue_mentions) > 512:
+        scan_omissions["issue_mentions_hidden"] = len(issue_mentions) - 512
+    if type(duplicate_issue_groups) is not list:
+        duplicate_issue_groups = []
+        scan_omissions["malformed_source_list"] = True
+    elif len(duplicate_issue_groups) > 80:
+        scan_omissions["duplicate_issue_groups_hidden"] = len(duplicate_issue_groups) - 80
+    for mention in (issue_mentions[:512] if stable_scope else []):
         if (type(mention) is dict and mention.get("pr_url") == pr_url
                 and mention.get("pr_head_sha") == head):
             n = mention.get("issue_number")
             if type(n) is int and 0 < n < 100000000:
                 hinted_issues.add(n)
-    for issue in (view.get("shown_duplicate_issue_groups", [])[:80]
-                  if stable_scope else []):
+    for issue in (duplicate_issue_groups[:80] if stable_scope else []):
         if head is not None and any(
                 source.get("url") == pr_url and source.get("head_sha") == head
                 for source in issue.get("shown_pr_sources", [])):
@@ -518,6 +530,8 @@ def _coordination_groups(cards):
                 "shared_file_pairs_hidden",
                 "path_scope_pairs_hidden",
                 "focused_overlap_receipts_hidden",
+                "issue_mentions_hidden",
+                "duplicate_issue_groups_hidden",
             )
             if (type(scan_omissions) is not dict
                     or set(scan_omissions) != set(omission_counts) | {"malformed_source_list"}
@@ -933,6 +947,12 @@ def collect_workorders(board):
         if scan_omissions["focused_overlap_receipts_hidden"]:
             notes.append(
                 f"{scan_omissions['focused_overlap_receipts_hidden']} aanvullende gefocuste overlap-ontvangstbewijzen buiten de 16-item scan.")
+        if scan_omissions["issue_mentions_hidden"]:
+            notes.append(
+                f"{scan_omissions['issue_mentions_hidden']} aanvullende onbevestigde issue-PR-vermeldingen buiten de 512-item scan.")
+        if scan_omissions["duplicate_issue_groups_hidden"]:
+            notes.append(
+                f"{scan_omissions['duplicate_issue_groups_hidden']} aanvullende dubbele-issuegroepen buiten de 80-groep scan.")
         if scan_omissions["malformed_source_list"]:
             notes.append("Een overlapbronlijst had een ongeldige structuur; volledige scope is UNKNOWN.")
         alias_view = projects[project]
