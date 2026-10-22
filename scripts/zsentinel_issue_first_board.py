@@ -19,7 +19,8 @@ from zsentinel_claim_visibility import observe as observe_local_claims
 from zsentinel_issue_page_bundle import private_json
 from zsentinel_issue_merge_priority import (
     issue_inventory, link_candidates, priority_rank, unaddressed_urgent,
-    classification, references, title_references, reference_hints
+    classification, references, title_references, reference_hints,
+    parse_utc_timestamp
 )
 
 MAX_PROJECTS = 3
@@ -208,8 +209,46 @@ def issue_local_claim_evidence(project, local_claims):
     }
 
 
+def issue_activity_evidence(source_issue, observed_at):
+    """Report GitHub issue last-activity age without implying owner progress."""
+    parsed = parse_utc_timestamp(source_issue.get("updated_at_utc"))
+    if parsed is None:
+        return {"last_activity_at_utc": None, "activity_age_seconds": None,
+                "activity_age_band": "UNKNOWN"}
+    normalized = parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+    delta = (observed_at - parsed).total_seconds()
+    if delta < -120:
+        return {"last_activity_at_utc": normalized, "activity_age_seconds": None,
+                "activity_age_band": "CLOCK_SKEW_OR_FUTURE"}
+    age = max(0, int(delta))
+    band = ("RECENT" if age < 86400 else
+            "AGING" if age < 7 * 86400 else "STALE")
+    return {"last_activity_at_utc": normalized, "activity_age_seconds": age,
+            "activity_age_band": band}
+
+
+def issue_activity_label(issue):
+    band = issue.get("activity_age_band", "UNKNOWN")
+    timestamp = issue.get("last_activity_at_utc")
+    age = issue.get("activity_age_seconds")
+    if band == "UNKNOWN" or not isinstance(timestamp, str):
+        return "UNKNOWN (no canonical issue activity timestamp)"
+    if band == "CLOCK_SKEW_OR_FUTURE":
+        return "CLOCK_SKEW_OR_FUTURE (timestamp >2m after observation) · " + timestamp
+    if type(age) is not int or age < 0:
+        return "UNKNOWN (invalid activity age)"
+    if age < 3600:
+        age_text = str(age // 60) + "m ago"
+    elif age < 86400:
+        age_text = str(age // 3600) + "h ago"
+    else:
+        age_text = str(age // 86400) + "d ago"
+    return band + " · " + age_text + " · " + timestamp
+
+
 def observed_issue_inbox(rows, unlinked, partial, repo_projects,
-                         source_inventory=None, limit=48, local_claims=None):
+                         source_inventory=None, limit=48, local_claims=None,
+                         observed_at=None):
     """Turn the *observed* P0/P1 issue window into a read-only action inbox.
 
     A selected PR's explicit issue reference is an inspection hint, not a fix,
@@ -226,6 +265,12 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
         raise ValueError("invalid bounded local claim evidence")
     if source_inventory is None:
         source_inventory = []
+    if observed_at is None:
+        observed_at = dt.datetime.now(dt.timezone.utc)
+    if (not isinstance(observed_at, dt.datetime) or observed_at.tzinfo is None
+            or observed_at.utcoffset() is None):
+        raise ValueError("invalid issue activity observation clock")
+    observed_at = observed_at.astimezone(dt.timezone.utc)
     if not isinstance(source_inventory, list) or len(source_inventory) > 300:
         raise ValueError("invalid bounded issue source")
     issue_map = {}
@@ -249,6 +294,7 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
             "candidate_pr_count_in_sample": source_issue["candidate_pr_count_in_sample"],
             "candidate_prs_omitted": source_issue["candidate_prs_omitted"],
             "candidate_pr_source": "UNVERIFIED_RECENT_OPEN_PR_LISTING",
+            **issue_activity_evidence(source_issue, observed_at),
         }
     for row in rows:
         repo = row["repo"]
@@ -263,6 +309,8 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
                 "linked_prs": [], "ownership": "NOT_INFERABLE",
                 "candidate_pr_numbers": [], "candidate_pr_count_in_sample": 0,
                 "candidate_prs_omitted": 0, "candidate_pr_source": "NOT_OBSERVED",
+                "last_activity_at_utc": None, "activity_age_seconds": None,
+                "activity_age_band": "UNKNOWN",
             })
             if (entry["priority"] != ref["priority"]
                     or entry["title"] != ref["title"] or entry["url"] != ref["url"]):
@@ -294,6 +342,7 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
             "linked_prs": [], "ownership": "NOT_INFERABLE",
             "candidate_pr_numbers": [], "candidate_pr_count_in_sample": 0,
             "candidate_prs_omitted": 0, "candidate_pr_source": "NOT_OBSERVED",
+            **issue_activity_evidence(ref, observed_at),
         }
     # First prefer existing PRs for the same severity; source-unknown issues
     # are still explicitly shown, never silently assigned to a new worker.
@@ -373,6 +422,10 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
         item["merged_main"] = "NOT_PROVEN"
         item["live_verified"] = False
     limited = ordered[:limit]
+    activity_bands = ("RECENT", "AGING", "STALE", "UNKNOWN", "CLOCK_SKEW_OR_FUTURE")
+    activity_summary = {band: sum(item.get("activity_age_band") == band
+                                  for item in ordered)
+                        for band in activity_bands}
     return {
         "coverage": "PARTIAL_OBSERVATION" if partial else "SELECTED_SOURCE_WINDOW_ONLY",
         "ownership": "NOT_INFERABLE",
@@ -384,6 +437,7 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
         "unlinked_in_sample": sum(
             not x["linked_prs"] and not x["candidate_pr_numbers"]
             for x in ordered),
+        "issue_activity_bands_in_sample": activity_summary,
         "visible": len(limited),
         "omitted": len(ordered) - len(limited),
         "items": limited,
@@ -435,6 +489,8 @@ def render_issue_inbox(inbox):
             candidate_links + " · extra kandidaten buiten venster: " +
             esc(issue["candidate_prs_omitted"]) +
             local_summary +
+            "<br>Laatste issue-activiteit: " + esc(issue_activity_label(issue)) +
+            " · activiteit is geen bewijs van eigenaar- of oplossingsvoortgang."
             "<br>Volgende stap: " + esc(issue["operator_action"]) +
             ("<br>Lees bestaande PRs: <code>" +
              esc(issue["read_only_issue_command"]) + "</code>"
@@ -449,7 +505,10 @@ def render_issue_inbox(inbox):
             "; niet opnieuw geïnspecteerde PR-kandidaten: " +
             esc(inbox["uninspected_pr_candidate_issues"]) +
             "; zonder waargenomen PR-link: " + esc(inbox["unlinked_in_sample"]) +
-            "; niet getoond: " + esc(inbox["omitted"]) + ".</p><p>"
+            "; niet getoond: " + esc(inbox["omitted"]) + ". Laatste issue-activiteit in bronvenster: "
+            + ", ".join(esc(key) + "=" + esc(value) for key, value in
+                          inbox.get("issue_activity_bands_in_sample", {}).items())
+            + ".</p><p>"
             "Dit is een begrensde bronselectie, geen compleet issue-overzicht "
             "en geen toestemming tot claim, merge of deploy. Dekking: " +
             esc(inbox["coverage"]) + ".</p><ol>" +
@@ -1375,7 +1434,8 @@ def main():
             rows, unmatched, partial, source_inventory = collect(
                 args.project, registry, budget)
             target_coverage = None
-        observed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        observed_time = dt.datetime.now(dt.timezone.utc)
+        observed = observed_time.strftime("%Y-%m-%d %H:%M:%S")
         repo_projects = {
             repo: project for repo, project in registry.values()
             if project in args.project
@@ -1383,7 +1443,8 @@ def main():
         local_claims = observe_local_claims(DB, args.project)
         issue_inbox = (observed_issue_inbox(
             rows, unmatched, partial, repo_projects,
-            source_inventory=source_inventory, local_claims=local_claims)
+            source_inventory=source_inventory, local_claims=local_claims,
+            observed_at=observed_time)
             if args.issue is None else None)
         if args.output:
             board.private_write(board.Path(args.output),
@@ -1456,6 +1517,7 @@ def main():
                           issue["url"] + " inspected_prs=" + prs +
                           " uninspected_pr_candidates=" + hinted +
                           " next=" + issue["operator_action"] +
+                          " activity=" + issue_activity_label(issue) +
                           " local_claims=" +
                           str((issue.get("local_claim_evidence") or {}).get("status", "UNKNOWN")) +
                           "(active=" + str((issue.get("local_claim_evidence") or {}).get("active_local_leases_observed")
