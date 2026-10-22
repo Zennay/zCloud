@@ -21,7 +21,7 @@ The example paths are placeholders. The output directory must already exist and 
 
 - Before output publication, a hidden owner-only `.<name>.checkpoint.json` records exact source SHA-256/byte fingerprints, the selected options, the fixed UTC generation clock, and expected digests for every artifact and the final receipt.
 - A retry is admitted only if all source bytes and output-affecting options match that checkpoint. The original generation clock is reused so freshness labels, HTML, Markdown, and receipt bytes remain reproducible.
-- Existing outputs are opened without following symlinks and must be stable, regular files owned by the current user with mode `0600`; their bytes must match the checkpoint's expected output exactly.
+- Existing outputs are opened with no-follow and nonblocking flags and must be stable, regular files owned by the current user with mode `0600`; their bytes must match the checkpoint's expected output exactly. Source and checkpoint reads remain nonblocking if a path is swapped to a FIFO between metadata inspection and open, then fail closed after descriptor inspection.
 - Missing outputs are created without clobbering existing files. The receipt remains the final published artifact. A failed retry preserves all existing files and the checkpoint.
 - The checkpoint is retained as private recovery metadata. It is not a live GitHub/Notion observation, proof of current ownership, CI approval, merge authorization, or deployment evidence.
 
