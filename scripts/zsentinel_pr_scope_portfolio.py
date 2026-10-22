@@ -584,6 +584,10 @@ def summary_lines(view):
     result = [
         "Open PR's bekeken: " + str(view["inspected_open_prs"]) +
         " / waargenomen " + str(view["observed_open_prs"]),
+        "GitHub-pagina's gelezen: " + str(view["open_pr_pages_read"]) +
+        " · volledige opeenvolgende PR-inventaris: " +
+        ("ja (dubbel gelezen; laatste pagina niet vol)"
+         if view["open_pr_window_complete"] else "NEE/ONBEKEND"),
         "Waargenomen gedeelde-bestandsparen: " +
         str(view["observed_collision_pairs"]),
         "Waargenomen bestand/map-ancestorparen: " +
@@ -1224,6 +1228,9 @@ def as_markdown(board):
             " / " + str(view["observed_open_prs"]) +
             ". Compleet: " + ("ja (alleen open-PR-sample)" if view["sample_complete"]
                               else "nee") + ".",
+            "Opeenvolgende GitHub-pagina's: " + str(view["open_pr_pages_read"]) +
+            "; lijstbron volledig: " + (
+                "ja" if view["open_pr_window_complete"] else "NEE/ONBEKEND") + ".",
             "",
         ])
         lines.extend(["### Samenhangende PR-bestandsgroepen", "",
@@ -1382,6 +1389,11 @@ def as_html(board):
                          ". Inspecteer ontbrekende PRs of padvoorbeelden bij de eigenaar; "
                          "geen automatische claim- of mergevrijgave.</p>"
                          if view.get("source_coverage_reasons") else "")
+        page_note = ("<p><strong>Open-PR-pagina's:</strong> " +
+                     str(view["open_pr_pages_read"]) +
+                     " · laatste pagina en dubbele bronlezing: " +
+                     ("volledig" if view["open_pr_window_complete"] else "ONVOLLEDIG/ONBEKEND") +
+                     " (geen eigenaar-/leasebewijs).</p>")
         unpaired = view["unpaired_open_prs_not_claim_verified"]
         duplicates = []
         for group in view["shown_duplicate_issue_groups"]:
@@ -1416,7 +1428,7 @@ def as_html(board):
         cards.append(
             "<section><h2>" + escape(view["project"]) + "</h2>"
             "<p><strong>" + escape(state) +
-            "</strong> · " + escape(view["repository"]) + "</p>" + source_note + coverage_note +
+            "</strong> · " + escape(view["repository"]) + "</p>" + page_note + source_note + coverage_note +
             "<h3>Samenhangende PR-bestandsgroepen</h3>"
             "<p>Alleen geobserveerde bestanden, geen vrij eigenaarschap "
             "of mergevolgorde.</p><ol>" +
