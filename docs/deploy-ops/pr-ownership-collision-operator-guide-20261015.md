@@ -78,7 +78,9 @@ pagination, invalid identities, inventory churn, or a main-SHA mismatch. The
 branch JSON now records `snapshot_started_at_utc`, `snapshot_completed_at_utc`
 and `snapshot_duration_seconds`; these describe the inventory read window,
 not branch creation or last-commit time. A backwards local clock refuses the
-snapshot instead of emitting a negative duration.
+snapshot instead of emitting a negative duration. The unverified state fingerprint
+deliberately excludes these clock fields, so an unchanged inventory remains
+comparable across separate observations; it is still not a signed source receipt.
 The workflow requires the PR-file snapshot and branch snapshot to carry the same
 `main_sha == GITHUB_SHA` before it reports a combined result. The bounded JSON
 snapshots are retained as a 14-day workflow artifact; the summary shows counts
