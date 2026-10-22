@@ -874,6 +874,12 @@ def collect_workorders(board):
         "counts": {key: sum(card["workstream"] == key for card in cards)
                    for key in WORKSTREAM_ORDER},
         "selected_pr_count": len(cards),
+        "direct_failing_job_actions": sum(
+            card["operator_action_kind"] == "inspect_failing_exact_head_job"
+            for card in cards),
+        "parallel_independent_review_actions": sum(
+            card["operator_action_kind"] == "request_parallel_independent_review"
+            for card in cards),
         "all_actions_manual": True,
         "source_only_no_execution_authority": True,
     }
@@ -934,7 +940,7 @@ def render_csv(bundle):
     fields = (
         "record_type", "project", "pr_number", "pr_url",
         "attention_status", "attention_label", "workstream", "workstream_label",
-        "operator_action_link",
+        "operator_action_link", "operator_action_kind",
         "head_sha_at_observation", "current_source_verified", "rank",
         "category", "blocker", "human_next_step", "operator_primary_step",
         "parallel_review_possible", "source_observed_at_utc",
@@ -992,6 +998,7 @@ def render_csv(bundle):
                 "workstream": card["workstream"],
                 "workstream_label": card["workstream_label"],
                 "operator_action_link": card["operator_action_link"],
+                "operator_action_kind": card["operator_action_kind"],
                 "change_since_previous_observation":
                     card["change_since_previous_observation"],
                 "new_evidence_since_previous":
@@ -1035,6 +1042,12 @@ def render_csv(bundle):
             workstream=key, workstream_label=WORKSTREAM_LABELS[key],
             detail=str(work["counts"][key]) + " existing PRs in sampled workstream; "
                    "not owner claim or permission to merge")
+    add("direct_job_actions_overview",
+        detail="Direct GitHub failing-job links=" +
+               str(work["direct_failing_job_actions"]) +
+               "; parallel independent human review actions=" +
+               str(work["parallel_independent_review_actions"]) +
+               "; no automatic execution authorized")
     for card in bundle["items"]:
         repo = card["repository"]
         pr_url = _same_repo_url(card["url"], repo)
@@ -1230,7 +1243,11 @@ def render_html(bundle):
     for key in WORKSTREAM_ORDER:
         parts.append("<li>" + e(WORKSTREAM_LABELS[key]) + ": <strong>" +
                      e(work["counts"][key]) + "</strong> PRs</li>")
-    parts.append("</ol><p>Gebaseerd op bronmomenten, niet op actuele eigenaarclaims; "
+    parts.append("</ol><p>Directe falende joblinks: <strong>" +
+                 e(work["direct_failing_job_actions"]) +
+                 "</strong> · vrije menselijke reviewstappen naast CI: <strong>" +
+                 e(work["parallel_independent_review_actions"]) +
+                 "</strong>. Gebaseerd op bronmomenten, niet op actuele eigenaarclaims; "
                  "geen automatische merge of workflowherstart.</p></section>")
     if bundle["items"]:
         change_labels = {
@@ -1543,9 +1560,14 @@ def render_markdown(bundle):
     for key in WORKSTREAM_ORDER:
         lines.append("- " + WORKSTREAM_LABELS[key] + ": **" +
                      str(work["counts"][key]) + "** bestaande PRs")
-    lines += ["Acties zijn adviezen uit begrensde GitHub-bronwaarnemingen; "
-              "actieve claims, verplichte review en mergebevoegdheid blijven onbekend.",
-              ""]
+    lines += [
+        "Directe links naar falende exacte-HEAD jobs: " +
+        str(work["direct_failing_job_actions"]) +
+        " · aparte handmatige reviewacties naast CI: " +
+        str(work["parallel_independent_review_actions"]) + ".",
+        "Acties zijn adviezen uit begrensde GitHub-bronwaarnemingen; "
+        "actieve claims, verplichte review en mergebevoegdheid blijven onbekend.",
+        ""]
     change_counts = {
         "changed_gate_receipt": 0, "changed_or_uncertain_head": 0,
         "incomplete_gate_source": 0, "newly_selected_not_new_pr": 0,
