@@ -73,7 +73,8 @@ een snapshot met een verkeerde klok niet stilzwijgend als vers worden gelezen.
 
 Een wijziging van bronfreshness (bijvoorbeeld retrybron van vers naar verouderd)
 verschijnt apart per snapshot-overgang, ook als de issue- en queue-aantallen gelijk
-blijven.
+blijven. Dit zijn uitsluitend de oorspronkelijke freshness-vlaggen bij opname,
+geen nieuwe fetch en geen bewijs van actuele bronbeschikbaarheid.
 
 ### Merge-first historie zonder nieuwe claims
 
@@ -91,8 +92,13 @@ check of approval is geen bewijs voor de huidige HEAD. Een verdwenen PR is
 geen merge- of closurebewijs. Voor echte merge blijven actuele GitHub-status,
 exact-HEAD verplichte CI, branchbescherming, onafhankelijke review en
 owner-/claimtoestemming noodzakelijk.
- Dit zijn uitsluitend de oorspronkelijke freshness-vlaggen bij opname,
-geen nieuwe fetch en geen bewijs van actuele bronbeschikbaarheid.
+
+De eerste sectie van de HTML toont vervolgens een **historische herstelprioriteit**
+voor projecten (P0-kaarten, waargenomen verlopen leases, P1-kaarten en hoge
+claimpogingen) met afzonderlijk een merge-first-lijst van alle opgenomen
+PR-gatewaarnemingen. Bij een ontbrekende queuebron staat expliciet
+"onbekend", niet nul. Dit overzicht geeft operators onmiddellijk brongebonden
+volgorde en context, maar **geen dispatch**, claimovername of mergeautorisatie.
 
 
 Open vervolgens recovery-history-october.index.html in die privémap.
