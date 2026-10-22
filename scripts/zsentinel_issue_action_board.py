@@ -431,6 +431,11 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
          if type(board.get("pr_groups_with_unknown_head")) is int
          and type(board.get("pr_groups_with_inconsistent_head_receipts")) is int
          else "PR-HEAD-groepsdekking: ONBEKEND (geen tellerbron)."),
+        ("Bestaande PR-groepen met expliciete bestand/map-botsing: " +
+         str(board["pr_groups_with_observed_file_directory_collision"]) +
+         " (afgekapt bronvenster, geen bewezen Git-mergeconflict)."
+         if type(board.get("pr_groups_with_observed_file_directory_collision")) is int
+         else "Bestand/map-botsingsoverzicht: ONBEKEND."),
         "GEEN huidige claims, verplichte branchregels, mergebevoegdheid of "
         "live herstel geverifieerd.",
         "",
@@ -484,6 +489,10 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
                              " (bronmoment; geen actuele HEAD- of mergevrijgave).")
             if group["any_file_overlap_observed"]:
                 lines.append("  Bestandscope-overlap in bron gezien: stem af met eigenaar.")
+            if group.get("any_file_directory_overlap_observed"):
+                lines.append("  Bestand/map-ancestorbotsing: maximaal " +
+                             str(group["file_directory_conflict_peers_observed_max"]) +
+                             " conflicterende peer-PRs gezien. Controleer beide HEADs.")
             if group["any_historical_movement_observed"]:
                 lines.append("  Historische PR-bronbeweging gezien: exacte HEAD opnieuw beoordelen.")
             for issue_url in linked_visible:
@@ -534,6 +543,7 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
                     "[Open PR](" + ref + ")" if style == "markdown"
                     else ref) + " · exacte-HEAD bron: " + other["gate_state"] +
                     (" · bestandsoverlap" if other["file_overlap_observed"] else "") +
+                    (" · bestand/map" if other.get("file_directory_overlap_observed") else "") +
                     (" · historische beweging" if other["source_movement_observed"] else ""))
     if len(board["cards"]) > max_rows:
         lines.append("")
