@@ -888,6 +888,10 @@ def merge_first_attention(board):
             "head_sha": gate.get("head_sha_observed") if current else None,
             "base_sha": gate.get("base_sha_observed") if current else None,
             "base_ref": gate.get("base_ref_observed") if current else None,
+            "captured_base_ref": gate.get("captured_base_ref"),
+            "base_ref_observed": gate.get("base_ref_observed"),
+            "base_ref_stable_on_second_read": (
+                gate.get("base_ref_stable_on_second_read") is True),
             "blocker": blocker, "blocker_text": BLOCKER_DESCRIPTIONS[blocker],
             "rank": rank, "attention_group": ATTENTION_TITLES[rank],
             "human_next_step": (
@@ -987,6 +991,12 @@ def attention_lines(board, markdown=False):
             lines.append("  HEAD " + row["head_sha"][:12] +
                          " · doelbranch " + row["base_ref"] +
                          " · doelbasis " + row["base_sha"][:12])
+        elif row.get("captured_base_ref") or row.get("base_ref_observed"):
+            lines.append("  Doelbranch bronvergelijking: " +
+                         str(row.get("captured_base_ref") or "ONBEKEND") + " → " +
+                         str(row.get("base_ref_observed") or "ONBEKEND") +
+                         " · stabiel bij tweede read: " +
+                         str(row["base_ref_stable_on_second_read"]))
         for job in row["non_green_jobs"]:
             detail = ("[" + safe_markdown_label(job["name"]) + "](" +
                       job["url"] + ")" if markdown else
@@ -1030,7 +1040,12 @@ def attention_html(board):
                     "</code> · doelbranch <code>" + escape(row["base_ref"]) +
                     "</code> · doelbasis <code>" + escape(row["base_sha"][:12]) +
                     "</code></p>" if row["head_sha"] else
-                    "<p>HEAD/bron niet veilig bevestigd.</p>")
+                    "<p>HEAD/bron niet veilig bevestigd.</p>" +
+                    ("<p>Doelbranch capture → tweede read: <code>" +
+                     escape(row.get("captured_base_ref") or "ONBEKEND") + "</code> → <code>" +
+                     escape(row.get("base_ref_observed") or "ONBEKEND") +
+                     "</code> · stabiel: " + str(row["base_ref_stable_on_second_read"]) + "</p>"
+                     if row.get("captured_base_ref") or row.get("base_ref_observed") else ""))
             movement_note = (
                 "<p><strong>Gewijzigd sinds vorige opname:</strong> " +
                 escape(row["historical_gate_change"]) +
