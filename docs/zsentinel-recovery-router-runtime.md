@@ -4012,3 +4012,25 @@ privébronpad. Een bevoegde operator moet actuele bron, claimrechten,
 exacte PR-HEAD/review/CI en eventuele runtime-dependency apart
 vaststellen. Dit werk wijzigt geen queue-row, lease, SQLite-writer,
 worker, runner, workflow of deployment.
+
+### 22 oktober · volledige GitHub terminale jobconclusies zonder valse recovery
+
+De live refresh-adapter accepteert alle gedocumenteerde GitHub Actions
+terminal conclusions: `success`, `failure`, `cancelled`, `timed_out`,
+`action_required`, `neutral`, `skipped`, `stale` en `startup_failure`.
+Een onbekende of ontbrekende conclusie blijft een bronfout en wordt niet als
+succes geïnterpreteerd. De router onderscheidt expliciet:
+
+- `failure`, `timed_out` en `action_required`: terminale mislukking; onderzoek
+  de exacte job voordat een scoped bronfix wordt toegewezen;
+- `startup_failure`: een runner/bootstrap/admission-incident, niet automatisch
+  een codefout en geen toestemming om de runner te herstarten;
+- `cancelled`: reden en eigenaar eerst vaststellen;
+- `stale`: verouderde runconclusie; vernieuw de exacte-head bron;
+- `neutral` en `skipped`: geldige terminale uitkomsten, maar geen bewijs van
+  succesvolle CI of runtimeherstel;
+- `success`: alleen een groene jobconclusie; runtime- en releaseacceptatie blijven
+  afzonderlijke gates.
+
+Hierdoor worden geldige GitHub-resultaten niet langer als een onbekende bron
+verworpen, terwijl geen enkele non-successconclusie stilzwijgend groen wordt.
