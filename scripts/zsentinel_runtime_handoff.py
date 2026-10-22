@@ -1579,6 +1579,17 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                               c.get("review_by_utc", "9999"),
                               0 if c.get("existing_pr_urls") else 1,
                               c["project"], c.get("issue_url", ""), c["next_step"]))
+    # Notion owner cards also share the GLOBAL 24-item priority window with
+    # real incidents/PRs. 'Shown' means visible *after* the priority sort,
+    # not merely selected before the global P0/P1/PR limit.
+    visible_notion = sum(
+        row["kind"] == "notion_claim_clock_owner_review"
+        for row in cards[:MAX_ITEMS])
+    notion_clock_meta = {
+        "visible": visible_notion,
+        "truncated": (notion_clock_review_truncated or
+                      visible_notion < notion_clock_review_count),
+    }
     # Source grouping happens before the GLOBAL 24-card owner window.
     # Count only blocked groups actually rendered inside that window;
     # other P0 incidents/merge-first work may legitimately take priority.
@@ -1643,7 +1654,8 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 and notion_owner_status["source_age_seconds"] is not None
                 and notion_owner_status["source_age_seconds"] <= 600
                 else "not_observed_or_stale"),
-            "owner_cards_sample_truncated": notion_clock_review_truncated,
+            "owner_cards_shown": notion_clock_meta["visible"],
+            "owner_cards_sample_truncated": notion_clock_meta["truncated"],
             "source_only_not_lease_proof": True,
             "claim_authorized": False, "retry_authorized": False,
             "dispatch_authorized": False,
