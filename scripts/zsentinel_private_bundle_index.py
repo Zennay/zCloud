@@ -467,13 +467,22 @@ def historical_merge_attention(snap: dict) -> str:
             -len(pair[1]["blocking_unknowns"]), pair[0])):
         status = ("check geslaagd bij opname" if item["observed_check_success"]
                   else "check niet bewezen bij opname")
+        saved_gates = item["blocking_unknowns"]
+        saved_clock = item.get("source_observed_at_utc")
         lines.append(
             "<li><a href='" + escape(url, quote=True) +
             "' target='_blank' rel='noopener noreferrer'>" +
-            escape(url) + "</a>: <code>" + escape(item["head_sha"][:12]) +
-            "</code> · " + status + " · approvals " +
-            str(item["observed_approvals"]) + " · onbekende gates " +
-            str(len(item["blocking_unknowns"])) + "</li>"
+            escape(url) + "</a>: HEAD <code>" +
+            escape(item["head_sha"]) + "</code> · " + status +
+            " · approvals bij opname " + str(item["observed_approvals"]) +
+            " · bron-UTC <code>" +
+            escape(str(saved_clock or "onbekend")) + "</code>" +
+            "<br>Openstaande/ongeverifieerde bronvoorwaarden: " +
+            (escape(", ".join(saved_gates)) if saved_gates else
+             "geen in beperkte historische sample; LIVE GATES ONBEKEND") +
+            "<br><strong>Volgende eigenaaractie:</strong> huidige PR-HEAD, "
+            "branch protection, vereiste checkruns en review op dezelfde "
+            "HEAD opnieuw ophalen; daarna pas merge overwegen.</li>"
         )
     return ("<h3>Merge-first: opgeslagen PR-gates</h3><p>Maximaal vijf "
             "brongebonden PR-waarnemingen. De opgeslagen waarden zijn "
