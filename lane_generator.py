@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import re
 
+from capability_route import choose_execution_route
+
 ACTIVE_STATUSES = frozenset({"claimed", "running", "verifying"})
 PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
@@ -304,6 +306,7 @@ def classify_backlog_item(project, item):
         "lane_id": lane["id"],
         "profile": profile,
         "scope": _lane_scope(project_id, lane["id"], item),
+        "execution_route": choose_execution_route(item),
     }
 
 
@@ -470,6 +473,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             "status": str(chosen.get("status") or "") if chosen else "blocked" if blocked_by else "idle",
             "scope": scope,
             "blocked_by": blocked_by,
+            "execution_route": chosen.get("execution_route") if chosen else None,
         })
     return results
 
