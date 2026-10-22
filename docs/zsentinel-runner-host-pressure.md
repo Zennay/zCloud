@@ -27,7 +27,12 @@ snapshots. These are observation relationships, not health or permission
 states. A unit reported active while the listener is missing (or vice versa)
 remains a discrepancy for the authorized owner, never an automatic restart
 decision. The HTML/text workbench labels this separately from GitHub
-registration and exact-job assignment.
+registration and exact-job assignment. For a stale unassigned self-hosted job,
+the owner route also differentiates a missing unit, an active unit without an
+observed listener, a listener with an inactive unit, and an inactive/failed
+unit with no listener. Each route remains advisory and requires the authorized
+owner to verify current work, repository registration, labels and access; none
+permits an automatic restart or re-registration.
 
 The new `zsentinel_runner_host_pressure.py` reader pins the root directory
 with `O_NOFOLLOW` and reads capacity through `fstatvfs`; it reuses
