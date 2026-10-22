@@ -70,18 +70,21 @@ def _read_sqlite(path):
             "WHERE status='blocked' GROUP BY project_id,priority "
             "ORDER BY project_id,priority LIMIT ?", (MAX_BLOCKED_GROUPS + 1,)
         )]
-        # Human worklist only: select bounded, P0/P1-first blocked tasks.
-        # A blocked queue row is not a failed job or free worker claim.
-        blocked_work = [dict(row) for row in connection.execute(
-            "SELECT queue_id,project_id,priority,attempts,eligible,"
-            "updated_at,claimed_at,claim_expires,title FROM portfolio_queue "
-            "WHERE status='blocked' "
-            "ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 "
-            "WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END, "
-            "CASE WHEN claimed_at IS NOT NULL OR claim_expires IS NOT NULL "
-            "THEN 0 ELSE 1 END, updated_at DESC, queue_id ASC LIMIT ?",
-            (MAX_BLOCKED_WORK_ITEMS + 1,)
-        )]
+        # Human-only P0/P1-first shortlist. Do NOT ORDER BY across a
+        # potentially huge blocked queue: SQLite could spill its temp sort
+        # onto the already pressured VPS root mount despite query_only=ON.
+        # Four individually LIMIT-ed priority lookups never require temp-sort.
+        blocked_work = []
+        for priority in ("P0", "P1", "P2", "P3"):
+            remaining = MAX_BLOCKED_WORK_ITEMS - len(blocked_work)
+            if remaining <= 0:
+                break
+            blocked_work.extend(dict(row) for row in connection.execute(
+                "SELECT queue_id,project_id,priority,attempts,eligible,"
+                "updated_at,claimed_at,claim_expires,title FROM portfolio_queue "
+                "WHERE status='blocked' AND priority=? LIMIT ?",
+                (priority, remaining)
+            ))
         connection.execute("ROLLBACK")
     finally:
         connection.close()
@@ -174,7 +177,7 @@ def _blocked_queue_observation(raw, observed_at):
                 if claim_fields_present else
                 "Inspect current owner, exact queue status and dependency before authorized resume."),
         })
-    work_truncated = len(work_source) > MAX_BLOCKED_WORK_ITEMS
+    work_truncated = total > len(work_source)
     # 0 blocked rows can only be called fully listed if aggregate coverage
     # was complete. A limited top-N sample never proves other rows are absent.
     work_complete = (not work_truncated and invalid_work == 0
