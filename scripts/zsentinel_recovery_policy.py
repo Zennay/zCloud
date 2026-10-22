@@ -435,8 +435,18 @@ def recommended_next_step_code(action, blockers):
 def recommended_next_step(action, blockers, required_evidence):
     """Give a deterministic safe handoff; never turn policy output into execution."""
     codes = {item["code"] for item in blockers}
-    if action == "assign_independent_work" and "task_claim_source_unknown" in codes:
-        return "Re-read the independent task's separate task-claim source and queue lease; do not admit work while the claim source is unavailable."
+    if action == "assign_independent_work" and (
+        codes & {"source_stale", "source_not_verified", "source_future_dated",
+                 "task_claim_source_unknown"}
+        or any(
+            code.endswith(("_missing", "_after_receipt", "_stale"))
+            and code.startswith(("independent_task_source_observed_at_utc",
+                                 "queue_lease_observed_at_utc",
+                                 "task_claim_observed_at_utc"))
+            for code in codes
+        )
+    ):
+        return "Re-read the exact candidate queue row, queue lease and separate task-claim source at current source time; bind all three to the same candidate task ID before considering admission."
     if action == "assign_independent_work" and codes & {
         "independent_task_id_missing", "independent_task_project_missing",
         "independent_task_source_url_missing", "independent_task_source_unverified",
@@ -448,13 +458,6 @@ def recommended_next_step(action, blockers, required_evidence):
         "independent_task_not_queued", "independent_task_not_eligible",
     }:
         return "Select a currently queued, explicitly eligible task; do not admit a claimed, running, verifying, blocked, dropped or unknown row."
-    if action == "assign_independent_work" and any(
-        code.endswith(("_missing", "_after_receipt", "_stale"))
-        and code.startswith(("independent_task_source_observed_at_utc",
-                             "queue_lease_observed_at_utc", "task_claim_observed_at_utc"))
-        for code in codes
-    ):
-        return "Reobserve the independent task's queue lease and separate task claim at current source time; a fresh wrapper receipt cannot refresh older evidence."
     if codes & {"source_stale", "source_not_verified", "source_future_dated", "task_claim_source_unknown"} or any(
         code.endswith(("_missing", "_after_receipt", "_stale"))
         and code.startswith(("blocked_source_observed_at_utc",
