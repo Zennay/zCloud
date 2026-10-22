@@ -1844,6 +1844,11 @@ def graph_private_csv(report):
         ", shown=" + str(len(report["linked_pr_path_scope_collision_clusters"])) +
         ", groups_truncated=" + str(report["path_scope_collision_clusters_truncated"]) +
         "; this is path-scope evidence, not merge authority."))
+    for pr in report["inspected_pr_heads"]:
+        row("observed_pr_sample", pr_number=pr["number"], pr_url=pr["url"],
+            pr_head_sha=pr["head_sha"], pr_base_ref=pr["base_ref"],
+            operator_notice=("Observed in a bounded open-PR sample only; " +
+                             "not proof of no collisions, no claims, or merge readiness."))
     for cluster in report["linked_pr_collision_clusters"]:
         for file_row in cluster["shared_file_pr_matrix"]:
             for pr in file_row["touching_prs"]:
