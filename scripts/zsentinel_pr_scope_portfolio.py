@@ -214,6 +214,9 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                     or type(receipt.get("product_candidate_based_on_title")) is not bool
                     or type(receipt.get("head_sha")) is not str
                     or type(receipt.get("base_sha")) is not str
+                    or type(receipt.get("base_ref")) is not str
+                    or not 1 <= len(receipt["base_ref"]) <= 255
+                    or any(not char.isprintable() or char.isspace() for char in receipt["base_ref"])
                     or type(receipt.get("url")) is not str
                     or receipt["number"] in by_num
                     or receipt["url"] != "https://github.com/" +
@@ -361,13 +364,17 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
         matched = (
             gate.get("status") == "observed_current_head_partial_gate_evidence"
             and gate.get("head_sha_observed") == captured["head_sha"]
-            and gate.get("base_sha_observed") == captured["base_sha"])
+            and gate.get("base_sha_observed") == captured["base_sha"]
+            and gate.get("base_ref_observed") == captured["base_ref"])
         if matched:
             item = {
                 "project": project,
                 "url": captured["url"],
                 "head_sha_observed": captured["head_sha"],
                 "base_sha_observed": captured["base_sha"],
+                "base_ref_observed": gate["base_ref_observed"],
+                "captured_base_ref": captured["base_ref"],
+                "base_ref_stable_on_second_read": True,
                 "observed_in_recent_pr_collision_sample":
                     not captured.get("direct_explicit_source_only", False),
                 "complete_file_collision_coverage_verified": False,
@@ -436,6 +443,9 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "project": project, "url": captured["url"],
                 "head_sha_observed": captured["head_sha"],
                 "base_sha_observed": captured["base_sha"],
+                "base_ref_observed": gate.get("base_ref_observed"),
+                "captured_base_ref": captured["base_ref"],
+                "base_ref_stable_on_second_read": False,
                 "observed_in_recent_pr_collision_sample":
                     not captured.get("direct_explicit_source_only", False),
                 "complete_file_collision_coverage_verified": False,
@@ -876,6 +886,7 @@ def merge_first_attention(board):
             "number": int(suffix),
             "head_sha": gate.get("head_sha_observed") if current else None,
             "base_sha": gate.get("base_sha_observed") if current else None,
+            "base_ref": gate.get("base_ref_observed") if current else None,
             "blocker": blocker, "blocker_text": BLOCKER_DESCRIPTIONS[blocker],
             "rank": rank, "attention_group": ATTENTION_TITLES[rank],
             "human_next_step": (
