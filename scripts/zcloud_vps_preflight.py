@@ -259,7 +259,7 @@ def worker_safety_snapshot(root: Path) -> dict:
     """
     evidence = {
         "state": "unknown", "source": "sqlite_mode_ro", "queued_claims": None,
-        "durable_claims": None, "fresh_generating_slots": None,
+        "active_queue_items": None, "durable_claims": None, "fresh_generating_slots": None,
         "fresh_observed_slots": None, "events_sample_complete": False,
         "safe_idle_verified": False, "worker_interruption_authorized": False,
         "read_performed": False,
@@ -278,6 +278,12 @@ def worker_safety_snapshot(root: Path) -> dict:
             claims = conn.execute(
                 "SELECT COUNT(*) FROM portfolio_queue WHERE status='claimed'"
             ).fetchone()[0]
+            # Claimed, running and verifying rows all represent active work.
+            # Queued work is intentionally excluded; it has not been admitted.
+            active_queue_items = conn.execute(
+                "SELECT COUNT(*) FROM portfolio_queue "
+                "WHERE status IN ('claimed','running','verifying')"
+            ).fetchone()[0]
             ownership = conn.execute(
                 "SELECT COUNT(*) FROM task_claims"
             ).fetchone()[0]
@@ -288,6 +294,7 @@ def worker_safety_snapshot(root: Path) -> dict:
             conn.execute("ROLLBACK")
         evidence["read_performed"] = True
         evidence["queued_claims"] = claims
+        evidence["active_queue_items"] = active_queue_items
         evidence["durable_claims"] = ownership
         latest = {}
         now_utc = datetime.now(timezone.utc)
@@ -331,7 +338,7 @@ def worker_safety_snapshot(root: Path) -> dict:
                 evidence["events_sample_complete"] = False
         if not evidence["events_sample_complete"]:
             evidence["state"] = "event_window_incomplete"
-        elif claims or ownership or evidence["fresh_generating_slots"]:
+        elif active_queue_items or claims or ownership or evidence["fresh_generating_slots"]:
             evidence["state"] = "active_work_observed"
         else:
             evidence["state"] = "no_active_evidence_unverified"
@@ -684,7 +691,7 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
     if worker_snapshot is not None:
         if worker_snapshot["state"] == "active_work_observed":
             mark("ACTIVE_WORK_REQUIRES_DRAIN", "block",
-                 "Claims or fresh browser-reported generation observed. Preserve work and use serialized owner-gated safe idle.")
+                 "Claimed/running/verifying queue work, durable claims or fresh browser-reported generation observed. Preserve work and use serialized owner-gated safe idle.")
         elif worker_snapshot["state"] not in {"no_active_evidence_unverified"}:
             mark("WORKER_EVIDENCE_INCOMPLETE", "block",
                  "Current worker/queue observation is incomplete or untrusted; release must remain blocked.")
@@ -1107,6 +1114,7 @@ def render_html(report: dict) -> str:
         worker_html = (
             '<section aria-labelledby="worker"><h2 id="worker">Worker protection</h2>'
             f'<dl>{item("Workload evidence", worker["state"])}'
+            f'{item("Active queue entries (claimed/running/verifying)", val(worker["active_queue_items"]))}'
             f'{item("Claimed queue entries", val(worker["queued_claims"]))}'
             f'{item("Durable claims", val(worker["durable_claims"]))}'
             f'{item("Fresh generating slots", val(worker["fresh_generating_slots"]))}'
@@ -1481,7 +1489,7 @@ def render_report_to_stdout(report: dict, args: argparse.Namespace) -> None:
             print(f"Host demand: {pressure['load_per_cpu']} per CPU; CPU PSI some={pressure['cpu_some_avg10_pct']}%; memory full={pressure['memory_full_avg10_pct']}%; IO full={pressure['io_full_avg10_pct']}%; source={pressure['state']}")
         worker = report.get("worker_safety")
         if worker is not None:
-            print(f"Worker protection: {worker['state']}; claimed queue={worker['queued_claims']}; fresh generating={worker['fresh_generating_slots']}; safe idle NOT verified")
+            print(f"Worker protection: {worker['state']}; active queue={worker['active_queue_items']} (claimed={worker['queued_claims']}); fresh generating={worker['fresh_generating_slots']}; safe idle NOT verified")
         print("Release decision board (all entries are advisory):")
         for row in report["release_gates"]:
             print(f"  {row['gate']}: {row['status']} [{row['owner']}]")
