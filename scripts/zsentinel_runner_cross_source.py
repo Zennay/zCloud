@@ -223,6 +223,47 @@ def combine(local, refreshed_projects):
         local, pinned=pinned, source_freshness="bounded_recent")
 
 
+
+def additional_jobs_html(rows):
+    """Render only validated, bounded exact-job links from the same discovery window."""
+    if type(rows) is not list or len(rows) > 5:
+        raise ValueError("unbounded additional exact-job links")
+    items = []
+    for job in rows:
+        if (type(job) is not dict
+                or type(job.get("run_id")) is not int
+                or not 1 <= job["run_id"] <= 2**53 - 1
+                or type(job.get("job_id")) is not int
+                or not 1 <= job["job_id"] <= 2**53 - 1
+                or type(job.get("head_sha")) is not str
+                or not SHA.fullmatch(job["head_sha"])
+                or job.get("job_status") not in ("queued", "in_progress", "completed")
+                or job.get("runner_route") not in ("self_hosted", "hosted_or_custom", "unknown")
+                or job.get("source_window") not in ("queued", "in_progress", "failure")
+                or job.get("observed_only") is not True
+                or job.get("work_resumed_verified") is not False
+                or job.get("action_authorized") is not False
+                or job.get("url") != (
+                    "https://github.com/Zennay/zCloud/actions/runs/" +
+                    str(job["run_id"]) + "/job/" + str(job["job_id"]))):
+            raise ValueError("untrusted additional exact-job receipt")
+        items.append(
+            '<li><a rel="noopener noreferrer" href="' +
+            escape(job["url"], quote=True) + '">Run ' +
+            str(job["run_id"]) + ' · job ' + str(job["job_id"]) +
+            '</a> · ' + escape(job["job_status"]) + ' · ' +
+            escape(job["runner_route"]) + ' · SHA ' +
+            escape(job["head_sha"][:8]) +
+            ' · alleen waargenomen; geen actieautorisatie</li>')
+    if not items:
+        return ""
+    return (
+        '<section><h2>Andere waargenomen exacte jobs</h2><ul>' +
+        ''.join(items) + '</ul><p>Maximaal vijf aanvullende links; '
+        'dit is geen volledige CI-inventaris en geen bewijs van herstel.</p></section>'
+    )
+
+
 def as_html(result):
     if (type(result) is not dict or result.get("schema") != SCHEMA
             or result.get("restart_authorized") is not False
