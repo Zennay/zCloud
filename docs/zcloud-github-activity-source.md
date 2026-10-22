@@ -7,7 +7,7 @@ The read-only GitHub activity collector now includes a bounded branch-tip observ
 - Reads at most one page of 100 branch refs per canonical allowlisted repository. The endpoint is name-ordered, not activity-ordered; coverage is `bounded_truncated` when the page cap is reached and must not be treated as a complete branch inventory.
 - Emits only a stable hash of the branch ref name, the immutable tip commit SHA, the commit timestamp, and the canonical commit URL. Raw branch names are not exported.
 - The event kind `branch_tip_commit` means a recent commit is currently at a sampled branch tip. It is **not** a branch-ref update timestamp, proof of PR review, proof of merge to `main`, or proof of deployment.
-- A tip SHA already present in the sampled `main` commit window is not emitted again as a branch event. PR-reported merge targets remain separate from proven main-history membership.
+- A tip SHA already present in the sampled `main` commit window or sampled PR heads is not emitted again as a branch event. PR-reported merge targets remain separate from proven main-history membership.
 - Branch coverage and page-limit state are explicit in each repository's coverage receipt. A provider failure produces `partial` or `unavailable`, never a complete/empty claim.
 - Worst-case request budget is 10 GitHub GETs per repository: five PR pages, two Actions pages, two main-commit pages and one branch page. The on-demand cache reserves the same worst-case cost before starting a refresh.
 
