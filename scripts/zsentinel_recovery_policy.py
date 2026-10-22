@@ -322,7 +322,7 @@ def recommended_next_step_code(action, blockers):
         return "identify_exact_blocked_task"
     if "terminal_reason_missing" in codes:
         return "obtain_concrete_terminal_reason"
-    if codes & {"source_guard_missing", "blocked_task_eligible", "blocked_source_not_parked"}:
+    if codes & {"source_guard_missing", "blocked_task_eligible", "blocked_source_not_parked", "park_source_not_queued"}:
         return "refresh_exact_blocked_source"
     if codes & {"queue_lease_not_clear", "task_claim_not_clear", "task_claim_source_unknown"}:
         return "resolve_claim_with_owner"
@@ -388,7 +388,7 @@ def recommended_next_step(action, blockers, required_evidence):
         return "Identify the exact blocked queue item from current source evidence; do not change an entire project lane."
     if "terminal_reason_missing" in codes:
         return "Explain why the exact task is permanently obsolete; an unresolved dependency alone is not a closure reason."
-    if codes & {"source_guard_missing", "blocked_task_eligible", "blocked_source_not_parked"}:
+    if codes & {"source_guard_missing", "blocked_task_eligible", "blocked_source_not_parked", "park_source_not_queued"}:
         return "Re-read the exact blocked row, including eligible/status/version and original evidence, before resume or terminal review."
     if codes & {"queue_lease_not_clear", "task_claim_not_clear", "task_claim_source_unknown"}:
         return "Have the current owner reconcile both queue leases and separate task claims; never resume or retire an active or unknown claim."
@@ -423,7 +423,7 @@ def recommended_next_step(action, blockers, required_evidence):
         "retry_ci": "An authorized owner may review one bounded retry against the current exact head; this report does not dispatch it.",
         "route_root_fix": "Hand the confirmed root cause and narrow scope to the named owner; implementation remains a separate authorized action.",
         "assign_independent_work": "Have the owner recheck live claims, disjoint scope and capacity before admitting the independent task.",
-        "park_blocker": "Have the owner park only the exact dependent task after confirming unrelated ready work; no queue mutation is performed here.",
+        "park_blocker": "Have the owner recheck the exact queued task, both claim sources and unrelated ready work before guarded parking; no queue mutation is performed here.",
         "resume_blocked": "Have the owner recheck the exact blocked, non-eligible row, clear queue lease and separate task claim, and cleared dependency before explicitly resuming it.",
         "close_blocked": "Have the authorized operator re-read the parked task, confirm no claims, and explicitly confirm the terminal decision twice.",
         "escalate_human": "Route the specific permission or risk decision to the named human owner; preserve all existing claims.",
@@ -538,6 +538,33 @@ def evaluate(data, max_age_minutes, *, now=None):
                 ("evidence.owner_authorized",))
 
     elif action == "park_blocker":
+        # A scope label cannot identify the queued row. Review only a
+        # source-bound dependent item with both ownership channels clear.
+        require(type(value("blocked_task_id")) is str
+                and bool(QUEUE_ID.fullmatch(value("blocked_task_id"))),
+                "blocked_task_id_missing",
+                "Parking requires the exact canonical dependent queue item.",
+                ("evidence.blocked_task_id",))
+        require(value("blocked_source_status") == "queued",
+                "park_source_not_queued",
+                "Only an explicitly queued item may enter this parking route.",
+                ("evidence.blocked_source_status",))
+        require(value("blocked_source_guarded") is True,
+                "source_guard_missing",
+                "The current queue ID, status, version, blocker and evidence must match.",
+                ("evidence.blocked_source_guarded",))
+        require(value("queue_lease_state") == "clear",
+                "queue_lease_not_clear",
+                "The queue slot, claim timestamp and lease must all be clear.",
+                ("evidence.queue_lease_state",))
+        require(value("task_claim_source_available") is True,
+                "task_claim_source_unknown",
+                "Parking requires a readable separate task-claim source.",
+                ("evidence.task_claim_source_available",))
+        require(value("task_claim_state") == "none",
+                "task_claim_not_clear",
+                "The separate task-claim source must show no owner.",
+                ("evidence.task_claim_state",))
         require(value("dependency_kind") == "external",
                 "dependency_not_external", "Only an external dependency may be parked by this action.",
                 ("evidence.dependency_kind",))
@@ -1025,7 +1052,7 @@ def evaluate_batch(data, max_age_minutes):
     blocked_routes = {}
     for item in results:
         report = item["report"]
-        if report["action"] not in {"resume_blocked", "close_blocked"}:
+        if report["action"] not in {"park_blocker", "resume_blocked", "close_blocked"}:
             continue
         queue_id = data[item["index"]]["evidence"].get("blocked_task_id")
         if queue_id is not None:
