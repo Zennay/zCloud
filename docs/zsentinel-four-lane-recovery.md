@@ -18,6 +18,15 @@ actief P0/P1 en tonen de categorie `owner_review_kind` in JSON.
 De volledige CSV kent dezelfde P0/P1-prioriteit voor actieve-only regels,
 in plaats van die als `UNKNOWN` aan te duiden.
 
+Dezelfde bronkaart bereikt nu ook de maximaal negen zichtbare
+**incident-acties**: de eerste in de lokale shortlist waargenomen
+`P0_ACTIVE_OWNER` verschijnt als `ACTIVE_P0_OWNER_PROTECTED` met een
+concrete eigenaarstap. Dit is **geen vastgelopen-incidentdiagnose**;
+actieve P0-taak betekent slechts dat de bestaande eigenaar en claimklok
+bij opvolging behouden moeten blijven. Het paneel houdt de volgorde
+P0-wachtwerk → P0-actieve eigenaar → P1-wachtwerk aan, ná de bestaande
+kritieke runner-/scopebeveiligingswaarschuwingen.
+
 Een actieve-only kaart is expliciet **eigenaarrecheck**, geen vrij
 werkpakket. Geen actieve lease of worker wordt geclaimd, onderbroken,
 opnieuw ingepland of overgenomen. Alle gegevens blijven één beperkte
