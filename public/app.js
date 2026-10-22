@@ -333,8 +333,11 @@ let ownerIntegrityVisible=12,ownerIntegrityUrgentOnly=false,ownerIntegrityProjec
 let blockedQueueFilterTimer=null;
 let blockedQueueObservedAt='';
 function blockedQueueIsParked(item){
+  // The queue row and the separate task_claims lease must both prove clear.
+  // Missing claim-source fields are UNKNOWN, never an implicit free claim.
   return !!item&&item.status==='blocked'&&(item.eligible===false||item.eligible===0)
-    &&item.worker_slot==null&&item.claimed_at==null&&item.claim_expires==null;
+    &&item.worker_slot==null&&item.claimed_at==null&&item.claim_expires==null
+    &&item.task_claim_source_available===true&&item.task_claim_state==='none';
 }
 function blockedQueueSourceUrl(raw){
   // Queue evidence can contain user-supplied URLs. Only link exact GitHub
@@ -839,7 +842,9 @@ function blockedResumeFingerprint(item){
     String(item?.blocker??''),String(item?.evidence??''),
     String(item?.updated_at??''),String(item?.worker_slot??''),
     String(item?.claimed_at??''),String(item?.claim_owner??''),
-    String(item?.claim_expires??''),String(item?.source_url??'')
+    String(item?.claim_expires??''),String(item?.source_url??''),
+    String(item?.task_claim_source_available??''),String(item?.task_claim_state??''),
+    String(item?.task_claim_lease_until??'')
   ]);
 }
 
@@ -848,6 +853,10 @@ const BLOCKED_INSPECT_REASON_TEXT={
   task_not_blocked:'The item is no longer blocked.',
   blocked_task_eligible:'The blocked item is marked eligible; the owner must reconcile queue state.',
   claim_or_lease_still_bound:'A worker claim or lease field is still present; do not take over.',
+  task_claim_source_unavailable:'The separate task-claim source could not be read; no claim-free conclusion is safe.',
+  task_claim_lease_still_bound:'A separate task claim has a live lease; its owner must reconcile/release it before recovery.',
+  task_claim_record_still_present:'A task-claim record remains after lease expiry; expiry alone does not authorize takeover.',
+  task_claim_lease_unknown:'The separate task-claim lease is malformed or unknown; do not resume or close this task.',
   project_registration_missing:'Project registration is missing; no durable recovery receipt can be guaranteed.',
   project_not_active:'The owning project is not active; resumption is not permitted.',
   project_human_gated:'The project requires human admission rather than worker allocation.',
@@ -891,6 +900,7 @@ async function inspectBlockedQueue(queueId,button){
       +esc(result.found?('Queue: '+String(result.queue_status||'unknown')+'. '
           +'Resume candidate: '+(result.resume_candidate===true?'yes':'no')+'. '
           +'Terminal-close candidate: '+(result.close_candidate===true?'yes':'no')+'. '
+          +'Separate task claim: '+String(result.task_claim_state||'unknown')+'. '
           +'Linked human Attention: '+String(result.linked_attention_status||'unknown')+'.')
         :'Queue item not found.')+'</p>'
       +(details?'<ul>'+details+'</ul>':'')
