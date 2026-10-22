@@ -25,6 +25,7 @@ from zsentinel_issue_merge_priority import (
 
 MAX_PROJECTS = 3
 MAX_PER_PROJECT = 4
+ISSUE_ACTIVITY_CONTRACT_VERSION = 1
 TARGET_CANDIDATES_PER_PAGE = 20
 MAX_TARGET_PAGES = 50
 
@@ -304,7 +305,8 @@ def issue_activity_badge(issue):
     label = html.escape(issue_activity_label(issue), quote=True)
     action_code = html.escape(issue_activity_follow_up_code(issue), quote=True)
     activity_band = html.escape(band, quote=True)
-    return ("<span class='zsentinel-issue-activity' data-activity-band='" +
+    return ("<span class='zsentinel-issue-activity' data-contract-version='" +
+            str(ISSUE_ACTIVITY_CONTRACT_VERSION) + "' data-activity-band='" +
             activity_band + "' data-follow-up-code='" + action_code +
             "' role='status' aria-label='Laatste GitHub-issueactiviteit; "
             "geen bewijs van eigenaarschap of oplossingsvoortgang' "
@@ -513,6 +515,7 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
         for code in activity_actions
     }
     return {
+        "issue_activity_contract_version": ISSUE_ACTIVITY_CONTRACT_VERSION,
         "coverage": "PARTIAL_OBSERVATION" if partial else "SELECTED_SOURCE_WINDOW_ONLY",
         "ownership": "NOT_INFERABLE",
         "total_observed_issues": len(ordered),
@@ -1564,6 +1567,7 @@ def main():
                                         targeted_project=args.project[0] if targeted else None,
                                         observed_at=observed_time))
         payload = {
+            "issue_activity_contract_version": ISSUE_ACTIVITY_CONTRACT_VERSION,
             "observed_utc": observed,
             "project_ids": args.project,
             "github_gets": budget[0],
