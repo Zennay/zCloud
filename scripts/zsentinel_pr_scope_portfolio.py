@@ -25,6 +25,7 @@ from zsentinel_pr_scope_guard import (
 
 from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
 from zsentinel_pr_gate_continuity import compare_gate_episodes, render_gate_episodes
+from zsentinel_pr_gate_now import SOURCE_PROBLEMS_NL
 from zsentinel_private_report_writer import write_private_report
 
 MAX_PROJECTS = 3
@@ -464,6 +465,9 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "sampled_file_overlaps_hidden":
                     captured.get("sampled_file_overlaps_hidden", 0),
                 "status": "pr_source_unavailable_or_changed_between_observations",
+                "source_problem_kind_observed": (
+                    gate.get("source_problem_kind")
+                    if gate.get("source_problem_kind") in SOURCE_PROBLEMS_NL else None),
                 "required_rules_verified": False,
                 "live_owner_claim_verified": False,
                 "merge_authorized": False,
@@ -740,6 +744,9 @@ def current_gate_lines(board, markdown=False):
         lines.append("  Actuele blokkade: " + BLOCKER_DESCRIPTIONS[
             gate["human_gate_blocker"]])
         if gate["status"] != "current_exact_pr_head_and_sample_match":
+            lines.append("  Bronmelding: " + SOURCE_PROBLEMS_NL.get(
+                gate.get("source_problem_kind_observed"),
+                "Exacte PR-bron onbereikbaar of gewijzigd; geen merge-/herstelbewijs."))
             continue
         lines.append(
             "  Exact HEAD " + gate["head_sha_observed"][:12] +
@@ -1322,7 +1329,9 @@ def as_html(board):
         for gate in live["items"]:
             url = escape(gate["url"], quote=True)
             if gate["status"] != "current_exact_pr_head_and_sample_match":
-                detail = "GitHub-bron of exacte PR-HEAD veranderd; geen gates afleiden."
+                detail = SOURCE_PROBLEMS_NL.get(
+                    gate.get("source_problem_kind_observed"),
+                    "GitHub-bron of exacte PR-HEAD veranderd; geen gates afleiden.")
             else:
                 detail = (
                     "HEAD " + escape(gate["head_sha_observed"][:12]) +
