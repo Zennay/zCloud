@@ -60,6 +60,88 @@ def observe_exact_job(run_id: int, job_id: int, sha: str, token=None):
     }
 
 
+
+def observe_discovered_job(token=None):
+    """Discover one bounded existing job, refresh its exact identity, then correlate locally."""
+    from zsentinel_github_discovery import discover
+
+    discovery = None
+    receipts = {}
+    try:
+        receipts, discovery = discover(REGISTRY, ["cloud"], token=token)
+    except (OSError, ValueError):
+        # Do not turn an inaccessible source into an empty/healthy job inventory.
+        discovery = {
+            "source": "github_canonical_readonly_bounded_discovery",
+            "request_count": None,
+            "coverage": [{
+                "project_id": "cloud", "status": "degraded_unavailable",
+                "authoritative_all_clear": False,
+            }],
+            "full_repo_ci_inventory": False,
+            "jobs_restarted": False,
+            "runner_mutations": False,
+        }
+
+    coverage = discovery.get("coverage")
+    row = coverage[0] if isinstance(coverage, list) and coverage else {}
+    status = row.get("status")
+    if status not in (
+            "selected_one_source_bound_job",
+            "selected_one_source_bound_job_partial_window",
+            "no_actionable_job_in_sampled_windows", "degraded_unavailable"):
+        status = "degraded_unavailable"
+    if "cloud" in receipts:
+        pin = receipts["cloud"]
+        report = observe_exact_job(
+            pin["run_id"], pin["job_id"], pin["head_sha"], token=token)
+        report["github_discovery"] = discovery
+        report["github_gets_discovery_observed"] = discovery.get("request_count")
+        report["github_get_budget_max"] = (
+            discovery["request_count"] + 2
+            if type(discovery.get("request_count")) is int else None)
+    else:
+        local = observe_local_runner()
+        # An incomplete discovery window is not evidence that no job exists.
+        incomplete = (
+            status == "degraded_unavailable"
+            or bool(row.get("incomplete_windows"))
+            or bool(row.get("not_scanned_windows"))
+        )
+        receipt = ([{
+            "project_id": "cloud", "source": "github_exact_run_job",
+            "status": "degraded",
+        }] if incomplete else [])
+        combined = combine(local, receipt)
+        report = {
+            "schema": "zsentinel-single-exact-runner-workbench-v1",
+            "runner": combined,
+            "github_receipt_coverage": status,
+            "github_get_budget_max": discovery.get("request_count"),
+            "github_gets_discovery_observed": discovery.get("request_count"),
+            "local_listener_processes_observed": local["listener_processes_observed"],
+            "local_worker_processes_observed": local["worker_processes_observed"],
+            "local_proc_coverage": combined["local_proc_coverage"],
+            "repository": REGISTRY["cloud"],
+            "runner_registration_verified": False,
+            "runner_resumed_verified": False,
+            "automatic_retry_authorized": False,
+            "runner_restart_authorized": False,
+            "queue_or_claims_changed": False,
+            "vps_mutations_performed": False,
+            "github_discovery": discovery,
+        }
+    # Keep the three-line handoff useful without claiming full-repository coverage.
+    detail = " · discovery=" + status
+    windows = row.get("incomplete_windows", [])
+    if isinstance(windows, list) and windows:
+        safe_windows = [x for x in windows if x in ("queued", "in_progress", "failure")]
+        if safe_windows:
+            detail += " (" + ",".join(safe_windows) + " onvolledig)"
+    if len(report["runner"]["status"]) + len(detail) <= 320:
+        report["runner"]["status"] += detail
+    return report
+
 def html_document(report):
     from html import escape
     if (report.get("schema") != "zsentinel-single-exact-runner-workbench-v1"
@@ -82,23 +164,41 @@ def html_document(report):
         '<p>Lokale listenerprocessen aangetroffen: ' +
         str(report["local_listener_processes_observed"]) +
         ' · processample: ' + escape(report["local_proc_coverage"]) + '.</p>'
-        '<p>Geen herstart, CI-retry, claimwijziging of registratiebewijs.</p>'
-        '</main></html>'
+        + ('<p>GitHub discovery: ' + escape(str(report.get("github_receipt_coverage", "not_requested"))) +
+           ' · geobserveerde discovery-GETs: ' +
+           escape(str(report.get("github_gets_discovery_observed", "unknown"))) +
+           ' · volledige CI-inventaris: nee.</p>'
+           if "github_discovery" in report else '')
+        + '<p>Geen herstart, CI-retry, claimwijziging of registratiebewijs.</p>'
+        + '</main></html>'
     )
 
 
 def main():
     parser = argparse.ArgumentParser(description="Inspect one exact existing GitHub job and local runner; no mutation")
-    parser.add_argument("--run-id", type=int, required=True)
-    parser.add_argument("--job-id", type=int, required=True)
-    parser.add_argument("--head-sha", required=True)
+    parser.add_argument("--discover", action="store_true",
+                        help="discover one bounded existing queued/running/failing job before exact refresh")
+    parser.add_argument("--run-id", type=int,
+                        help="existing exact GitHub Actions run ID (use all three exact pin options together)")
+    parser.add_argument("--job-id", type=int,
+                        help="existing exact GitHub Actions job ID")
+    parser.add_argument("--head-sha",
+                        help="full 40-character HEAD SHA from the existing job")
     parser.add_argument("--format", choices=("text", "json", "html"), default="text")
     parser.add_argument("--output", type=Path, help="new private .html or .json (0600, create-only)")
     args = parser.parse_args()
     try:
-        report = observe_exact_job(
-            args.run_id, args.job_id, args.head_sha,
-            token=os.environ.get("GITHUB_TOKEN"))
+        pins = (args.run_id, args.job_id, args.head_sha)
+        if args.discover:
+            if any(value is not None for value in pins):
+                raise ValueError("--discover cannot be combined with exact job pin options")
+            report = observe_discovered_job(token=os.environ.get("GITHUB_TOKEN"))
+        else:
+            if any(value is None for value in pins):
+                raise ValueError("provide --discover or all of --run-id, --job-id and --head-sha")
+            report = observe_exact_job(
+                args.run_id, args.job_id, args.head_sha,
+                token=os.environ.get("GITHUB_TOKEN"))
         if args.format == "text":
             if args.output is not None:
                 raise ValueError("text output is stdout only; never writes a file")
