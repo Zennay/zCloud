@@ -1353,9 +1353,11 @@ def graph_html(report):
             files += "<br>...meer paden"
         rows.append(
             "<tr><td><a rel='noopener noreferrer' href='" + left +
-            "'>PR #" + str(a["number"]) + "</a> ↔ "
+            "'>PR #" + str(a["number"]) + "</a><br><small>Doelbranch: " +
+            escape(a["base_ref"]) + "</small> ↔ "
             "<a rel='noopener noreferrer' href='" + right +
-            "'>PR #" + str(b["number"]) + "</a></td><td>" +
+            "'>PR #" + str(b["number"]) + "</a><br><small>Doelbranch: " +
+            escape(b["base_ref"]) + "</small></td><td>" +
             str(row["shared_file_count_observed"]) + "</td><td>" + files +
             "</td></tr>")
     if not rows:
@@ -1373,9 +1375,11 @@ def graph_html(report):
         scope_rows.append(
             "<tr><td><a rel='noopener noreferrer' href='" +
             escape(a["url"], quote=True) + "'>PR #" + str(a["number"]) +
-            "</a> ↔ <a rel='noopener noreferrer' href='" +
+            "</a><br><small>Doelbranch: " + escape(a["base_ref"]) +
+            "</small> ↔ <a rel='noopener noreferrer' href='" +
             escape(b["url"], quote=True) + "'>PR #" + str(b["number"]) +
-            "</a></td><td>" + str(row["path_conflict_count_observed"]) +
+            "</a><br><small>Doelbranch: " + escape(b["base_ref"]) +
+            "</small></td><td>" + str(row["path_conflict_count_observed"]) +
             "</td><td>" + examples + "</td></tr>")
     if not scope_rows:
         scope_rows.append("<tr><td colspan='3'>Geen bestand/map-ancestorparen waargenomen in de gelezen PR-steekproef.</td></tr>")
