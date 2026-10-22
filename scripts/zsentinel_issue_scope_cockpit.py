@@ -361,7 +361,10 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
                                      side.get("head_sha"))
                 if (type(number) is not int or not 0 < number < 100000000
                         or url != "https://github.com/" + repo + "/pull/" + str(number)
-                        or sampled_heads.get(url) != head):
+                        or url not in sampled_heads
+                        or type(head) is not str
+                        or re.fullmatch(r"[a-f0-9]{40}", head) is None
+                        or sampled_heads[url] != head):
                     raise ValueError("file/directory conflict HEAD not in current PR sample")
                 urls.append(url)
             if urls[0] == urls[1]:
