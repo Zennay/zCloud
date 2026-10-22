@@ -714,7 +714,8 @@ def render_merge_first_csv(board, max_rows=20):
             card.get("latest_linked_open_pr_inactivity_hours"),
             card["linked_pr_activity_coverage"],
             card["activity_window_hours"], card.get("activity_as_of_utc"),
-            card.get("activity_event_clock_incoherent"), "",
+            ("YES" if card.get("activity_event_clock_incoherent") is True else
+             "NO" if card.get("activity_event_clock_incoherent") is False else "UNKNOWN"), "",
             board.get("observed_issue_source_at_utc"),
             board.get("observed_pr_source_at_utc"),
             "sample_complete" if card["issue_reference_sample_complete"]
