@@ -547,7 +547,7 @@ nieuwe server-API, extra providerrequest, claim-, retry- of queue-write.
 
 Een tweede operatorrisico was een **oud tabblad**: een eerder succesvolle
 queue-GET kon na lange tijd nog als gewone momentopname worden weergegeven.
-De claimchurn- én Dependency Holds-weergave markeren de bron daarom als
+De claimchurn-, portfolio Dependency Holds- én projectdetailweergave markeren de bron daarom als
 **STALE** zodra het waarnemingsmoment meer dan 15 minuten oud is.
 Beide handoffs schrijven nu expliciet `source_freshness.state` en
 `age_seconds` weg; voor de Dependency Holds-export waarschuwt
@@ -557,8 +557,8 @@ bestaande verse GET, bronfingerprint, servertransactie en
 authenticatie blijven verplicht vóór hervatten of permanent sluiten.
 
 **Bronintegratie:** `public/app.js` Git-blob
-`c0f7f83ba56a5a3d7c528d418a32d78aa1cb7961` is via de
-exacte assetpin `sha=c0f7f83ba56a` in `public/index.html`
+`fd8d48963a3ec9177c1c17129eeda3c7d2cf5401` is via de
+exacte assetpin `sha=fd8d48963a3e` in `public/index.html`
 op dezelfde PR geïntegreerd. De bestaande `style.css`-pin is
 ongewijzigd. Dit betreft alleen broncode op [PR #1565](https://github.com/Zennay/zCloud/pull/1565);
 geen merge of productiedeploy. Exact-head CI, onafhankelijke review,
