@@ -2898,13 +2898,16 @@ def _portfolio_queue_task_claim_snapshot(connection, rows, observed_at=None):
     keys = {(str(row['project_id'] or ''), str(row['queue_id'] or '')) for row in blocked}
     states = {
         key: {'source_available': True,
-              'state': 'none' if key[0].strip() and key[1].strip() else 'unknown',
+              'state': 'none' if key[0] and key[1] and
+                       key[0] == key[0].strip() and key[1] == key[1].strip()
+                       else 'unknown',
               'lease_until': None}
         for key in keys
     }
     if not keys:
         return states
-    queue_ids = sorted({queue_id for _, queue_id in keys if queue_id})
+    queue_ids = sorted({queue_id for _, queue_id in keys
+                         if queue_id and queue_id == queue_id.strip()})
     try:
         for offset in range(0, len(queue_ids), 180):
             chunk = queue_ids[offset:offset + 180]
@@ -2916,8 +2919,8 @@ def _portfolio_queue_task_claim_snapshot(connection, rows, observed_at=None):
                 placeholders + ')', chunk,
             ).fetchall()
             for claim in claims:
-                key = (str(claim['project_id'] or '').strip(),
-                       str(claim['claim_key'] or '').strip())
+                key = (str(claim['project_id'] or ''),
+                       str(claim['claim_key'] or ''))
                 if key not in states or not key[0] or not key[1]:
                     continue
                 lease_until = claim['lease_until']
