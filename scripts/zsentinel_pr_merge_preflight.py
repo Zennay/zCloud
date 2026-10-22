@@ -22,6 +22,47 @@ def _known(value):
     return "UNKNOWN" if value is None else str(value)
 
 
+def _review_followup(observed, reviews, source_stable):
+    """One actionable read-only reviewer follow-up, never approval evidence."""
+    unknown = {
+        "state": "UNKNOWN",
+        "next": "Inspect GitHub reviews and pending requests before contacting reviewers.",
+        "independent_review_verified": False,
+        "external_action_executed": False,
+    }
+    if not source_stable or type(observed) is not dict or type(reviews) is not dict:
+        return unknown
+    submissions = reviews.get("sampled_count")
+    if type(submissions) is not int or submissions < 0:
+        return unknown
+    if submissions:
+        return {
+            "state": "REVIEW_SUBMISSIONS_OBSERVED",
+            "next": "Inspect current effective review decisions on this exact HEAD and open threads; submissions alone are not approval.",
+            "independent_review_verified": False,
+            "external_action_executed": False,
+        }
+    users, teams = (
+        observed.get("pending_reviewer_requests"),
+        observed.get("pending_team_review_requests"),
+    )
+    if type(users) is not int or type(teams) is not int or users < 0 or teams < 0:
+        return unknown
+    if users + teams:
+        return {
+            "state": "PENDING_REQUESTS_OBSERVED",
+            "next": "Follow up on existing GitHub reviewer requests; do not send duplicate requests.",
+            "independent_review_verified": False,
+            "external_action_executed": False,
+        }
+    return {
+        "state": "NO_REVIEW_REQUESTS_OBSERVED",
+        "next": "Request independent review from an authorized owner and verify exact-HEAD approval before merge.",
+        "independent_review_verified": False,
+        "external_action_executed": False,
+    }
+
+
 def _repository_default_branch(payload, full_name):
     """Read one canonical repository identity and its current default branch."""
     if not isinstance(payload, dict) or payload.get("full_name") != full_name:
@@ -476,6 +517,10 @@ def observe_exact_pr(pr_url, *, token=None):
         "owner_authorized": False, "merge_authorized": False,
         "merge_executed": False, "deployed": False, "advisory_only": True,
     }
+    report["review_request_followup"] = _review_followup(
+        report.get("observed"), report.get("sampled_reviews"),
+        report["source_stable_between_reads"],
+    )
     report["parallel_owner_actions"] = _parallel_owner_actions(report)
     return report
 
@@ -508,6 +553,10 @@ def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None,
         "owner_authorized": False, "merge_authorized": False,
         "merge_executed": False, "deployed": False, "advisory_only": True,
     }
+    report["review_request_followup"] = _review_followup(
+        report.get("observed"), report.get("sampled_reviews"),
+        report["source_stable_between_reads"],
+    )
     report["parallel_owner_actions"] = _parallel_owner_actions(report)
     return report
 
@@ -552,6 +601,8 @@ def as_markdown(report):
         "- Review records with unknown/missing state: " + str(reviews.get("unknown_review_state_count", "UNKNOWN")),
         "- Exact-HEAD review coverage: " + str(reviews.get("exact_head_review_coverage", "UNKNOWN")),
         "- Independent review verdict: UNKNOWN (counts are not approval authority)",
+        "- Reviewer follow-up (human only): " + report["review_request_followup"]["state"] +
+        " — " + report["review_request_followup"]["next"],
         "- GitHub GET attempts: " + str(report["get_attempts"]),
         "", "## Operator next step", "", report["next_human_step"], "",
         "## Owner gate checklist — observation is not authorization", "",
@@ -622,6 +673,8 @@ def as_html(report):
         ("Review records with unknown/missing state", reviews.get("unknown_review_state_count", "UNKNOWN")),
         ("Exact-HEAD review coverage", reviews.get("exact_head_review_coverage", "UNKNOWN")),
         ("Independent review verdict", "UNKNOWN — sampled counts are not approval authority"),
+        ("Reviewer follow-up", report["review_request_followup"]["state"] +
+         " — " + report["review_request_followup"]["next"]),
     ]
     parts = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
