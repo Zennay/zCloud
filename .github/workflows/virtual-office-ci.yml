@@ -1,0 +1,244 @@
+name: Virtual Office isolated CI
+on:
+  push:
+    branches:
+      - feature/virtual-ai-office-mvp-20261012
+    paths:
+      - "virtual-office/**"
+      - ".github/workflows/virtual-office-ci.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  office-tests:
+    name: Python API + UI syntax + smoke
+    if: ${{ github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/feature/virtual-ai-office-mvp-20261012' && github.actor == 'Zennay' }}
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile + unit tests
+        run: |
+          test "$(hostname)" = "vps-bb300bba"
+          python3 -m py_compile virtual-office/server.py virtual-office/office_features.py virtual-office/office_game.py virtual-office/office_staff.py virtual-office/office_control.py virtual-office/office_experts.py virtual-office/tools/fake_zcloud.py
+          python3 -m unittest discover -s virtual-office/tests -v
+      - name: Parse module and check JS syntax
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          html=Path("virtual-office/index.html").read_text()
+          assert html.count('<script type="module">') == 1
+          part=html.split('<script type="module">',1)[1].split('</script>',1)[0]
+          Path("/tmp/virtual-office-ui.mjs").write_text(part)
+          PY
+          node --check /tmp/virtual-office-ui.mjs
+          node --check virtual-office/office-relay.user.js
+          for module in scene city interior people post materials panel walk layout slides game; do
+            cp "virtual-office/$module.js" "/tmp/virtual-office-$module.mjs"
+            node --check "/tmp/virtual-office-$module.mjs"
+          done
+          node --test virtual-office/tests/*.mjs
+          bash -n virtual-office/office-relay-vps.sh
+          test -s virtual-office/office-relay-vps.service
+          python3 -m unittest discover -s virtual-office/tests -p test_penthouse.py -v
+      - name: Local API smoke (no account needed)
+        run: |
+          OFFICE_ZCLOUD_URL=http://127.0.0.1:18998 OFFICE_DB_PATH="$RUNNER_TEMP/office-smoke-$GITHUB_RUN_ID.db" OFFICE_PORT=18999 python3 virtual-office/server.py all &
+          PID=$!
+          trap 'kill "$PID" || true' EXIT
+          for i in $(seq 1 15); do
+            if curl --fail --silent http://127.0.0.1:18999/api/health > /tmp/office-health.json; then break; fi
+            sleep 1
+          done
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          root="http://127.0.0.1:18999"
+          health=json.load(open("/tmp/office-health.json"))
+          assert health["online"] is True
+          assert health["mode"] == "zcloud_chatgpt_chats"
+          assert health["zcloud_online"] is False
+          body=json.dumps({"employee":"maya","kind":"task","instruction":"Maak een weekplanning"}).encode()
+          request=urllib.request.Request(root+"/api/jobs",data=body,headers={"Content-Type":"application/json"})
+          response=json.load(urllib.request.urlopen(request))
+          assert response["status"]=="queued"
+          pending=json.load(urllib.request.urlopen(root+"/api/jobs"))
+          assert pending["jobs"][0]["id"]==response["id"]
+          print("Live browser UI + authenticated-independent SQLite outbox OK")
+          PY
+
+  deploy-vps:
+    name: Deploy isolated office on VPS
+    needs: [office-tests]
+    # Explicitly avoid PR/fork/untrusted contexts on a privileged self-hosted runner.
+    if: ${{ github.event_name == 'push' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/feature/virtual-ai-office-mvp-20261012' && github.actor == 'Zennay' }}
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 9
+    concurrency:
+      group: virtual-office-release
+      cancel-in-progress: false
+    steps:
+      - name: Check out exact tested source (never persist credentials)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install separate, always-on 3D Office service
+        shell: bash
+        env:
+          EXPECTED_HOST: vps-bb300bba
+          OFFICE_PORT: "3422"
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "$EXPECTED_HOST"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/feature/virtual-ai-office-mvp-20261012"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -f virtual-office/server.py
+          test -f virtual-office/index.html
+          test -f virtual-office/office_game.py
+          python3 -m py_compile virtual-office/server.py virtual-office/office_game.py virtual-office/office_staff.py virtual-office/office_control.py virtual-office/office_experts.py
+          user="$(id -un)"
+          group="$(id -gn)"
+          sudo install -d -m 0755 -o "$user" -g "$group" /opt/virtual-office
+          sudo install -d -m 0700 -o "$user" -g "$group" /var/lib/virtual-office
+          sudo install -d -m 0700 /etc/virtual-office
+          if ! sudo test -s /etc/virtual-office/office.env; then
+            secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+            printf 'OFFICE_ACCESS_TOKEN=%s\n' "$secret" | sudo tee /etc/virtual-office/office.env >/dev/null
+            unset secret
+          fi
+          sudo chmod 0600 /etc/virtual-office/office.env
+          sudo rm -f /opt/virtual-office/skyline.jpg
+          sudo install -m 0644 virtual-office/server.py /opt/virtual-office/server.py
+          sudo install -m 0644 virtual-office/index.html /opt/virtual-office/index.html
+          sudo install -m 0644 virtual-office/office_features.py virtual-office/office_game.py virtual-office/office_staff.py virtual-office/office_control.py virtual-office/office_experts.py /opt/virtual-office/
+          sudo install -m 0644 virtual-office/scene.js virtual-office/city.js virtual-office/interior.js virtual-office/people.js virtual-office/post.js virtual-office/materials.js virtual-office/panel.js virtual-office/walk.js virtual-office/layout.js virtual-office/slides.js virtual-office/game.js virtual-office/office-relay.user.js /opt/virtual-office/
+          # three.js is vendored (pinned, offline-capable): no CDN at runtime
+          sudo rm -rf /opt/virtual-office/vendor
+          sudo cp -r virtual-office/vendor /opt/virtual-office/vendor
+          sudo chmod -R a+rX /opt/virtual-office/vendor
+          # The new browser profile is isolated from the existing zCloud workers.
+          # Install only; do not open an unauthenticated browser or alter the live
+          # X11/Firefox worker session in an unattended CI deployment.
+          sudo install -m 0755 virtual-office/office-relay-vps.sh /opt/virtual-office/office-relay-vps.sh
+          install -d -m 0700 "$HOME/.config/systemd/user"
+          install -m 0644 virtual-office/office-relay-vps.service "$HOME/.config/systemd/user/office-relay-vps.service"
+          printf '%s' "$GITHUB_SHA" | sudo tee /opt/virtual-office/RELEASE >/dev/null
+          sudo chown "$user:$group" /opt/virtual-office/server.py /opt/virtual-office/index.html
+          printf '[Unit]\nDescription=3D Virtual Office ChatGPT worker frontend\nAfter=network-online.target zennay-cloud.service\nWants=network-online.target\n\n[Service]\nType=simple\nUser=%s\nGroup=%s\nWorkingDirectory=/opt/virtual-office\nEnvironment=OFFICE_BIND=0.0.0.0\nEnvironment=OFFICE_PORT=%s\nEnvironment=OFFICE_DB_PATH=/var/lib/virtual-office/office.db\nEnvironment=OFFICE_ZCLOUD_URL=http://127.0.0.1:8765\nEnvironmentFile=/etc/virtual-office/office.env\nExecStart=/usr/bin/python3 /opt/virtual-office/server.py all\nRestart=always\nRestartSec=5\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nReadWritePaths=/var/lib/virtual-office\n\n[Install]\nWantedBy=multi-user.target\n' "$user" "$group" "$OFFICE_PORT" | sudo tee /etc/systemd/system/virtual-office.service >/dev/null
+          sudo systemctl daemon-reload
+          sudo systemctl enable virtual-office.service
+          sudo systemctl restart virtual-office.service
+          healthy=0
+          for i in $(seq 1 20); do
+            if curl -fsS --max-time 2 "http://127.0.0.1:$OFFICE_PORT/api/health" >/tmp/virtual-office-health.json; then
+              healthy=1; break
+            fi
+            sleep 1
+          done
+          if [ "$healthy" != 1 ]; then
+            sudo journalctl -u virtual-office.service --no-pager -n 30
+            exit 1
+          fi
+          curl -fsS --max-time 3 "http://127.0.0.1:$OFFICE_PORT/" | grep -q 'VIRTUAL OFFICE'
+          python3 - <<'PY'
+          import json
+          with open("/tmp/virtual-office-health.json") as file:
+              state=json.load(file)
+          assert state["online"] is True
+          assert state["auth_required"] is True
+          assert state["mode"] == "zcloud_chatgpt_chats"
+          print("office server healthy, work endpoints access-code protected; zcloud online:",state["zcloud_online"])
+          PY
+          if command -v ufw >/dev/null 2>&1; then
+            sudo ufw allow "$OFFICE_PORT/tcp" comment 'Virtual Office 3D demo' || true
+          fi
+          public_ip="$(curl -fsS --max-time 8 https://api.ipify.org || true)"
+          echo "Source SHA: $GITHUB_SHA"
+          echo "Private task API guarded by a long randomly generated server-side secret."
+          echo "No ChatGPT credentials, Codex CLI, or token API are used."
+          if [ -n "$public_ip" ]; then
+            echo "Candidate browser demo URL: http://$public_ip:$OFFICE_PORT/"
+            {
+              echo "## Virtual Office 0.3 Penthouse"
+              echo "Built and deployed SHA: $GITHUB_SHA"
+              echo "Candidate browser demo: http://$public_ip:$OFFICE_PORT/"
+              echo "Interactive office + ChatGPT link. Server-only authenticated task submission."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          sudo systemctl is-active --quiet virtual-office.service
+
+      - name: Private workstation readback and anonymous denial on deployed server
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo python3 - <<'PY'
+          import json, urllib.request, urllib.error
+          from pathlib import Path
+          token = next(line.split("=",1)[1].strip() for line in Path("/etc/virtual-office/office.env").read_text().splitlines() if line.startswith("OFFICE_ACCESS_TOKEN="))
+          root = "http://127.0.0.1:3422"
+          for command in ("uptime", "memory", "disk", "services"):
+              req = urllib.request.Request(root+"/api/workstation", data=json.dumps({"command":command}).encode(), headers={"Content-Type":"application/json","X-Office-Token":token})
+              result = json.load(urllib.request.urlopen(req,timeout=8))
+              assert result["source"] == "vps" and result["output"]
+              print("Private VPS command verified:", command)
+          for path in ("/api/decks", "/api/relay/status", "/api/jobs", "/api/events"):
+              try:
+                  urllib.request.urlopen(root+path,timeout=5)
+                  raise AssertionError("Private route exposed")
+              except urllib.error.HTTPError as exc:
+                  assert exc.code == 401
+          for path in ("/scene.js", "/city.js", "/interior.js", "/people.js", "/post.js", "/materials.js", "/panel.js", "/walk.js", "/layout.js", "/slides.js", "/game.js", "/vendor/three.module.min.js", "/vendor/addons/postprocessing/EffectComposer.js", "/office-relay.user.js"):
+              response = urllib.request.urlopen(root+path,timeout=5)
+              assert response.status == 200
+          health = json.load(urllib.request.urlopen(root+"/api/health",timeout=12))
+          assert health["version"] == "0.3-penthouse"
+          print("Penthouse private API and static assets verified. No work queued by this probe.")
+          PY
+
+      - name: Start independent VPS relay browser if desktop session is available
+        # The Office backend is already deployed and verified above. Failure to
+        # open the optional Firefox RDP desktop must not affect zCloud workers.
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = ubuntu
+          display_socket=/tmp/.X11-unix/X10
+          runtime_dir="/run/user/$(id -u)"
+          if [ ! -S "$display_socket" ] || [ ! -S "$runtime_dir/bus" ]; then
+            echo "Dedicated Office Firefox is installed but not started: RDP Xorg :10 or user bus unavailable."
+            exit 0
+          fi
+          export XDG_RUNTIME_DIR="$runtime_dir"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+          systemctl --user daemon-reload
+          systemctl --user enable --now office-relay-vps.service
+          systemctl --user is-active --quiet office-relay-vps.service
+          echo "Dedicated Office Firefox service started (browser login, Tampermonkey and manual relay pairing still required)."
+
+      - name: Isolated Firefox visual evidence
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser="$(command -v firefox || true)"
+          if [ -z "$browser" ]; then
+            for candidate in /opt/firefox/firefox /usr/lib/firefox/firefox /snap/bin/firefox /home/ubuntu/firefox/firefox; do
+              if [ -x "$candidate" ]; then browser="$candidate"; break; fi
+            done
+          fi
+          test -n "$browser"
+          profile="$(mktemp -d "$RUNNER_TEMP/office-visual-XXXXXX")"
+          mkdir -p "$RUNNER_TEMP/office-visual"
+          printf 'user_pref("webgl.force-enabled",true);\nuser_pref("gfx.webrender.all",true);\n' > "$profile/user.js"
+          timeout 55s "$browser" --headless --no-remote --profile "$profile" --window-size 1600,1000 --screenshot "$RUNNER_TEMP/office-visual/lounge.png" http://127.0.0.1:3422/
+          test -s "$RUNNER_TEMP/office-visual/lounge.png"
+      - name: Preserve visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: office-visual-evidence
+          path: ${{ runner.temp }}/office-visual/
+          if-no-files-found: ignore
+          retention-days: 3
