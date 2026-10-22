@@ -810,3 +810,35 @@ De kaarten komen onder huidige, exacte PR-/productissue-eigenaaracties in
 de sortering, zodat de geblokkeerde-queuecategorie bestaand mergebaar werk
 niet wegdrukt. Bij bronafkapping blijft de aparte groepssamenvatting
 zichtbaar in HTML en Markdown, ook als de werkbak zelf zijn limiet bereikt.
+
+
+## 22 oktober · geblokkeerd-werk triage: correcte issuekoppeling en brononafhankelijkheid
+
+De eigenaarwerkbak koppelt **niet** langer ieder geblokkeerd werkpakket
+automatisch aan generiek queue-retry issue #677. Dat issue is relevant voor
+retry-/attemptbeleid, maar niet noodzakelijk de oorzaak van elke blokkade.
+Alleen een werkelijk waargenomen canonieke issue-/PR-link uit het specifieke
+queuevoorbeeld wordt als **niet geverifieerde navigatie** getoond. Die link
+bewijst geen open PR, eigenaarschap of mergebevoegdheid.
+
+Per P0/P1-projectgroep kiest de werkbak nu uit maximaal twee bounded
+queuevoorbeelden het voorbeeld met het sterkste eigenaarsrisicosignaal
+(aanwezige claimmetadata, niet-eligible werk, een afwijkende bronklok,
+een bruikbare maar niet geverifieerde bronlink of veel claimpogingen).
+De bestaande HTML- en Markdown-rapporten tonen bij dit voorbeeld
+expliciet gemarkeerde **voorbeeldsignalen (niet volledig)**. De signaalnamen
+zijn uitsluitend adviserend: claimpogingen zijn geen bewezen failures,
+claimmetadata verleent geen vrijgave en een bronlink is geen ownerclaim.
+Zonder voorbeeld blijft de geverifieerde groepsaggregatie zichtbaar.
+
+Actieve en geblokkeerde queue-items gebruiken binnen één SQLite-snapshot
+verschillende, begrensde bronobservaties. Wanneer ongeldige ACTIEVE
+queue-items de actieve inventaris onvolledig maken, mag een afzonderlijke
+valide en recente `blocked_queue`-bron nog steeds P0/P1-geblokkeerd-werk
+eigenaaracties tonen; de HTML/Markdown-regel meldt dan nadrukkelijk dat de
+**actieve** queue-inventaris onvolledig is en huidige claims/slots onbekend
+blijven. Bij verouderde, ontbrekende of ongeldige blocked-bron blijft de
+geblokkeerde werkbak onderdrukt en wordt geen nulstatus verzonnen.
+
+Alle kaarten blijven zonder retry, claim-, hervat-, merge- of deployrecht.
+Geen QA-/regressiesuites of handmatige workflow dispatch uitgevoerd.
