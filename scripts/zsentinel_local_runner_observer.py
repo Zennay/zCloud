@@ -198,6 +198,9 @@ def observe_local_runner():
                         workers += 1
             except (OSError, ValueError):
                 unreadable += 1
+    # Service-unit state is an independent read-only source. A denied or
+    # unavailable systemd query must not invalidate the bounded /proc sample.
+    service_observation = observe_systemd_service()
     # A zero count is explicitly never converted to "offline" or "idle".
     complete = unreadable == 0
     return {
@@ -215,6 +218,7 @@ def observe_local_runner():
         "zombie_worker_processes": worker_zombies,
         "listener_seen_in_process_sample": listeners > 0,
         "worker_seen_in_process_sample": workers > 0,
+        "systemd_service_observation": service_observation,
         "github_registration_verified": False,
         "github_job_assignment_verified": False,
         "github_job_completed_verified": False,
@@ -236,6 +240,7 @@ def runner_text(report):
         ", workerprocessen=" + str(report["worker_processes_observed"]) +
         ", processdekking=" + ("volledig" if report["process_inventory_complete"] else
                                "ONVOLLEDIG") +
+        "; systemd-unit: " + _systemd_summary(report) +
         "; GitHub toegewezen job: NIET BEWEZEN; safe idle/herstel: NIET BEWEZEN;"
         " herstart of workerwijziging: NIET TOEGESTAAN."
     )
@@ -266,6 +271,7 @@ def main():
             print("zSentinel VPS listenerprocessen: " + str(result["listener_processes_observed"]))
             print("zSentinel VPS workerprocessen: " + str(result["worker_processes_observed"]))
             print("Bron volledig: " + str(result["process_inventory_complete"]))
+            print("Systemd zCloud-runnerunit: " + _systemd_summary(result))
             print("GitHub jobtoewijzing: ONBEKEND; idle, herstel en herstart NIET geautoriseerd.")
     except (OSError, ValueError) as exc:
         parser.exit(2, "zSentinel runner source unavailable: " + str(exc)[:160] + "\\n")
