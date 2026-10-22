@@ -484,3 +484,45 @@ De vergelijking verandert geen Notion-statussen, claimlease,
 GitHub-review of PR, CI-run, queue, VPS-service, worker, billing
 of deployment. Bestaande exact-HEAD CI, independent review,
 branch protection en bevoegde releasehouder blijven vereist.
+
+
+## 22 oktober · CI- en reviewwijzigingen ook bij ongewijzigde HEAD
+
+De bestaande tweemomentenfunctie maakt nu een werkelijk operationeel
+onderscheid tussen een **gelijke commit** en **gelijke CI-/reviewstatus**.
+GitHub Actions kunnen bijvoorbeeld van `queued` naar `failure` gaan
+terwijl zowel de PR-HEAD als de grove `next_step` gelijk blijven.
+
+Bij twee onderling vergelijkbare, exact-head PR-bronnen legt
+`pr_gate_continuity` daarom ook de volgende *begrensd geobserveerde*
+statusfamilies naast elkaar, **zonder extra API-GET**:
+
+- `check_runs`: getoonde falende, wachtende en onbesliste check-run-namen,
+  totale gerapporteerde check-run-count en of de getoonde check-pagina compleet
+  was; namen blijven uit de transitie-tekst (alleen aantallen).
+- `classic_statuses`: gecombineerde GitHub legacy-status, getoonde
+  falende/wachtende statuscontexts, bronomvang en afkapping.
+- `same_head_reviews`: waargenomen same-head approvals, changes-requested
+  en afkapping van het reviewvenster.
+
+De operator ziet expliciet welke bronfamilie wijzigde, en relevante
+**voor→na aantallen**. Een wijziging van één bronfamilie met dezelfde HEAD
+wordt apart als `same_head_observed_ci_or_review_changed_REVIEW_GATE`
+gerouteerd — ook als de menselijke PR-vervolgactie gelijk blijft.
+Dezelfde code werkt in live-cockpit, refresh, offline HTML/desk, privé
+tekstrapporten, Markdown/JSON en in het bestaande CSV-v1
+`next_step`-veld van de eigenaaroverdracht.
+
+Als HEAD of brondekking verschilt, doet de vergelijking géén aannames over
+welke individuele CI-run veranderde. Alleen huidige werkelijk geobserveerde
+brondata telt. Een ongewijzigd begrensd checks/reviewvenster bewijst **nooit**
+dat alle verplichte branch-protection statuschecks geslaagd zijn, dat reviews
+de huidige policy voldoen, dat een issue is gesloten of dat een merge/live
+release heeft plaatsgevonden. Ook een getoond aantal approvals blijft
+uitdrukkelijk **geen** zelfstandige mergebevoegdheid.
+
+De vorige snapshot wordt tevens gekoppeld aan de exacte canonieke
+`repository`, `pr_number` en `project_id` van iedere bronrij zodat
+cross-repo/cross-PR-omwisseling geen geldige operatie kan lijken.
+Geen QA-suite, CI-rerun, workergebruik of geautoriseerde productieactie
+wordt toegevoegd of aangeroepen.
