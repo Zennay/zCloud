@@ -143,7 +143,9 @@ twee expliciete `local_procfs`-bronrecords met hetzelfde aantal CPU's worden
 gebruikt; beide records moeten ook expliciet `release_authorized=false` en
 `changes_host=false` aangeven. Ontbrekende of afwijkende bronvelden worden
 per opname benoemd en leveren `untrusted_source` op. De ruwe load, CPU-count
-en afgeleide load-per-CPU moeten onderling consistent zijn. De totale trend wordt alleen als rising/falling/stable/mixed
+en afgeleide load-per-CPU moeten onderling consistent zijn. Het meetvenster
+moet bovendien strikt positief en maximaal 60 minuten lang zijn; nul seconden
+is geen tijdtrend. De totale trend wordt alleen als rising/falling/stable/mixed
 samengevat wanneer **alle vier metrics** geldig zijn en beide snapshotstatussen
 `observed` zijn. Bij gedeeltelijke overlap blijven beschikbare deltas per
 metric zichtbaar, maar de geaggregeerde trend blijft `unknown`; het rapport
