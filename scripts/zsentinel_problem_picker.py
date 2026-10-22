@@ -331,7 +331,7 @@ def problems_html(result, pr_desk=None):
             'bestandseigendom en releasegates niet geverifieerd. '
             'Dit onderdeel voert NOOIT zelf werk uit.</p><div class="grid">' +
             "".join(rows) + '</div>' +
-            ('<details><summary>Issueblokkades die een infrastructuureigenaar vereisen</summary><ul>' +
+            ('<details><summary>Issueblokkades die een bevoegde eigenaar vereisen</summary><ul>' +
              held + '</ul></details>' if held else '') +
             ('<details><summary>CI-/runtime-incidenten die eigenaaractie vereisen</summary><ul>' +
              blockers + '</ul></details>' if blockers else '') + '</section>')
