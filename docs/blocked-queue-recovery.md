@@ -805,3 +805,15 @@ the separate task-claim source prove the task unbound. Hold cards and the
 private handoff show claim state and observed lease expiry without exposing
 owner IDs. This is still only a read-only observation; the actual writes recheck the claim
 inside the same `BEGIN IMMEDIATE` transaction as the guarded state change.
+
+## Stale queue snapshots cannot authorize operator actions
+
+The dashboard distinguishes the **age and integrity of the queue observation** from the task-claim state itself. A queue GET is safe to *view* when old, but must not make an operator action appear ready.
+
+- Missing or invalid observation timestamps, timestamps more than two minutes in the future, and snapshots older than 15 minutes disable **Resume after confirmation** and **Close permanently** on every blocked-task card. Queue-linked Attention's **Confirm & resume** follows the same rule. A separate task_claims record, unavailable claim source, non-parked queue row, or unknown lease also keeps these buttons disabled.
+- Operators can use **Refresh queue source** on the Dependency holds panel. It only reads the existing authenticated GET /api/portfolio-queue endpoint, independent of history/host telemetry. No claim, task, Attention, lease, retry, or production state is written.
+- A returned HTTP 200 with a stale/missing observation time remains **unavailable** for recovery, not a successful fresh-source receipt. Failed targeted refresh discards the outdated local queue snapshot and displays an explicit error instead of presenting the former data as current.
+- Even when a visible card is fresh, resume and terminal close repeat the GET **after** the human confirmation, require a fresh observation time, check the original task fingerprint, and pass the existing exact-state/dependency-version guards to the authorized server transaction. A recent timestamp only permits the *confirmation workflow*; it never proves that a dependency is resolved or authorizes releasing someone else's active claim.
+- The existing backend's independent atomic guard, admin permissions, receipt provenance, review and release policy remain authoritative. The 15-minute client window is a user-interface fail-closed boundary, not new authority or a scheduled recovery mechanism.
+
+This ships on the existing zSentinel PR #1565 branch until all exact-head required CI, independent review, branch protection and release ownership conditions permit a real main merge. No QA/regression suites were written, changed or run for this feature.
