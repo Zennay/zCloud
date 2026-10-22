@@ -674,38 +674,6 @@ def render_delta(delta, format="text"):
                     links.append("<li>Meer historische padaliasparen/voorbeelden buiten de limiet.</li>")
             if row.get("portable_alias_comparison_unavailable"):
                 links.append("<li>Padaliashistorie onbekend: minstens één snapshot mist de nieuwe aliasbronvelden of was niet beschikbaar.</li>")
-            if row.get("portable_aliases_comparable_if_complete"):
-                for alias in row["added_portable_path_aliases_if_complete"]:
-                    links.append("<li>Nieuwe mogelijke cross-platform padalias: " +
-                                 link(alias["left"]) + " · <code>" + escape(alias["left_path"]) +
-                                 "</code> ↔ " + link(alias["right"]) + " · <code>" +
-                                 escape(alias["right_path"]) + "</code> [" +
-                                 escape(alias["relation"]) +
-                                 "] (NFC/casefold-hint, geen Git-mergeconflict)</li>")
-                for alias in row["disappeared_portable_path_aliases_if_complete"]:
-                    links.append("<li>Niet meer waargenomen cross-platform padalias: " +
-                                 link(alias["left"]) + " · <code>" + escape(alias["left_path"]) +
-                                 "</code> ↔ " + link(alias["right"]) + " · <code>" +
-                                 escape(alias["right_path"]) + "</code> [" +
-                                 escape(alias["relation"]) +
-                                 "] (geen bewijs van merge of release)</li>")
-            else:
-                for alias in row.get("portable_path_aliases_only_in_current_sample_not_proven_new", []):
-                    links.append("<li>Alleen huidige padalias-steekproef: " +
-                                 link(alias["left"]) + " · <code>" + escape(alias["left_path"]) +
-                                 "</code> ↔ " + link(alias["right"]) + " · <code>" +
-                                 escape(alias["right_path"]) + "</code> [" +
-                                 escape(alias["relation"]) + "] (niet bewezen nieuw)</li>")
-                for alias in row.get("portable_path_aliases_only_in_previous_sample_not_proven_resolved", []):
-                    links.append("<li>Alleen eerdere padalias-steekproef: " +
-                                 link(alias["left"]) + " · <code>" + escape(alias["left_path"]) +
-                                 "</code> ↔ " + link(alias["right"]) + " · <code>" +
-                                 escape(alias["right_path"]) + "</code> [" +
-                                 escape(alias["relation"]) + "] (niet bewezen opgelost)</li>")
-                if row.get("portable_alias_preview_truncated"):
-                    links.append("<li>Meer historische padaliasparen/voorbeelden buiten de limiet.</li>")
-            if row.get("portable_alias_comparison_unavailable"):
-                links.append("<li>Padaliashistorie onbekend: minstens één snapshot mist de nieuwe aliasbronvelden of was niet beschikbaar.</li>")
             if row.get("scope_conflict_comparison_unavailable"):
                 links.append("<li>Bestand/map-historie onbekend: minstens één snapshot mist de nieuwe bronvelden of was niet beschikbaar.</li>")
             sections.append("<section><h3>" + escape(row["project"]) + "</h3><p>" +
@@ -769,17 +737,6 @@ def render_delta(delta, format="text"):
                      ", steekproef-only eerder " +
                      str(len(row.get("portable_path_aliases_only_in_previous_sample_not_proven_resolved", []))) +
                      (" (voorbeelden afgekapt)" if row.get("portable_alias_preview_truncated") else ""))
-        lines.append("  Padaliasdelta: " +
-                     ("volledig vergelijkbaar" if row.get("portable_aliases_comparable_if_complete")
-                      else "ONVOLLEDIG/ONBEKEND") +
-                     ", nieuw " + str(len(row.get("added_portable_path_aliases_if_complete", []))) +
-                     ", niet meer waargenomen " +
-                     str(len(row.get("disappeared_portable_path_aliases_if_complete", []))) +
-                     ", steekproef-only huidig " +
-                     str(len(row.get("portable_path_aliases_only_in_current_sample_not_proven_new", []))) +
-                     ", steekproef-only eerder " +
-                     str(len(row.get("portable_path_aliases_only_in_previous_sample_not_proven_resolved", []))) +
-                     (" (voorbeelden afgekapt)" if row.get("portable_alias_preview_truncated") else ""))
         if row["connected_cluster_comparison_complete"]:
             lines.append("  Verbonden PR-groepen: eerdere/nieuwe volledige bron vergelijkbaar; " +
                          str(len(row["connected_clusters_only_in_current_full_inventory"])) +
@@ -805,56 +762,6 @@ def render_delta(delta, format="text"):
             lines.append("  Alleen vorige steekproef, niet bewezen gesloten: " + url)
         if row.get("portable_alias_comparison_unavailable"):
             lines.append("  Padaliashistorie onbekend: minstens één snapshot mist de nieuwe aliasbronvelden of was niet beschikbaar.")
-        if row.get("portable_aliases_comparable_if_complete"):
-            for alias in row["added_portable_path_aliases_if_complete"]:
-                lines.append("  Nieuwe mogelijke cross-platform padalias: " +
-                             alias["left"] + " " + alias["left_path"] + " ↔ " +
-                             alias["right"] + " " + alias["right_path"] +
-                             " [" + alias["relation"] + "] (geen Git-mergeconflict)")
-            for alias in row["disappeared_portable_path_aliases_if_complete"]:
-                lines.append("  Niet meer waargenomen cross-platform padalias (geen mergebewijs): " +
-                             alias["left"] + " " + alias["left_path"] + " ↔ " +
-                             alias["right"] + " " + alias["right_path"] +
-                             " [" + alias["relation"] + "]")
-        else:
-            for alias in row.get("portable_path_aliases_only_in_current_sample_not_proven_new", []):
-                lines.append("  Alleen huidige padalias-steekproef, NIET bewezen nieuw: " +
-                             alias["left"] + " " + alias["left_path"] + " ↔ " +
-                             alias["right"] + " " + alias["right_path"] +
-                             " [" + alias["relation"] + "]")
-            for alias in row.get("portable_path_aliases_only_in_previous_sample_not_proven_resolved", []):
-                lines.append("  Alleen eerdere padalias-steekproef, NIET bewezen opgelost: " +
-                             alias["left"] + " " + alias["left_path"] + " ↔ " +
-                             alias["right"] + " " + alias["right_path"] +
-                             " [" + alias["relation"] + "]")
-            if row.get("portable_alias_preview_truncated"):
-                lines.append("  Meer historische padaliasparen/voorbeelden buiten de limiet.")
-        if row.get("portable_alias_comparison_unavailable"):
-            lines.append("  Padaliashistorie onbekend: minstens één snapshot mist de nieuwe aliasbronvelden of was niet beschikbaar.")
-        if row.get("portable_aliases_comparable_if_complete"):
-            for alias in row["added_portable_path_aliases_if_complete"]:
-                lines.append("  Nieuwe mogelijke cross-platform padalias: " +
-                             alias["left"] + " " + alias["left_path"] + " ↔ " +
-                             alias["right"] + " " + alias["right_path"] +
-                             " [" + alias["relation"] + "] (geen Git-mergeconflict)")
-            for alias in row["disappeared_portable_path_aliases_if_complete"]:
-                lines.append("  Niet meer waargenomen cross-platform padalias (geen mergebewijs): " +
-                             alias["left"] + " " + alias["left_path"] + " ↔ " +
-                             alias["right"] + " " + alias["right_path"] +
-                             " [" + alias["relation"] + "]")
-        else:
-            for alias in row.get("portable_path_aliases_only_in_current_sample_not_proven_new", []):
-                lines.append("  Alleen huidige padalias-steekproef, NIET bewezen nieuw: " +
-                             alias["left"] + " " + alias["left_path"] + " ↔ " +
-                             alias["right"] + " " + alias["right_path"] +
-                             " [" + alias["relation"] + "]")
-            for alias in row.get("portable_path_aliases_only_in_previous_sample_not_proven_resolved", []):
-                lines.append("  Alleen eerdere padalias-steekproef, NIET bewezen opgelost: " +
-                             alias["left"] + " " + alias["left_path"] + " ↔ " +
-                             alias["right"] + " " + alias["right_path"] +
-                             " [" + alias["relation"] + "]")
-            if row.get("portable_alias_preview_truncated"):
-                lines.append("  Meer historische padaliasparen/voorbeelden buiten de limiet.")
         if row.get("scope_conflict_comparison_unavailable"):
             lines.append("  Bestand/map-historie onbekend: minstens één snapshot bevat deze bronvelden niet of was niet beschikbaar.")
         if row.get("scope_conflict_sample_preview_truncated"):
