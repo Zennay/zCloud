@@ -73,6 +73,35 @@ checkstatussen en approvals zijn geen huidige GitHub-verificatie of
 mergebevoegdheid. Ook de PR-CSV wordt volledig uit de opgeslagen JSON
 gereconstrueerd voordat een v2-pakket als intern consistent wordt erkend.
 
+Om de **inhoud daadwerkelijk te verbinden aan de lokaal aanwezige
+oorspronkelijke privé-operatorbundels**, gebruik je bovendien:
+
+```bash
+python3 scripts/zsentinel_verify_history_package.py \
+  --source "$HOME/zsentinel-private/recovery-history-handoff.index.zip" \
+  --verify-sources "$HOME/zsentinel-private" \
+  --extract-to "$HOME/zsentinel-private"
+```
+
+De optionele `--verify-sources` doet méér dan alleen ZIP-hashes narekenen:
+voor iedere oorspronkelijke bundle-stam leest de bestaande
+`verify_bundle`-admissie de eigen receipt, oorspronkelijke board en
+bijbehorende HTML/optionele eigenaarshandoff opnieuw vanuit een
+eigen 0700-map, uitsluitend read-only en met no-follow/0600-bestandsgrenzen.
+De opnieuw opgebouwde project-, PR-, queue- en overgangsgegevens moeten
+precies overeenkomen met de geschiedenis in de ZIP. Alleen
+indexgeneratietijd en daarvan afhankelijke leeftijd/klokwaarschuwing
+zijn uitgesloten van deze reproduceerbare vergelijking.
+Een mismatch of ontbrekend origineel weigert de uitpakactie zonder
+bestaande bestanden te wijzigen.
+
+De uitvoer onderscheidt `original_private_bundle_files_reverified` van
+`saved_checksum_consistent`. Ook een geslaagde vergelijking met de
+**lokale oorspronkelijke** bundels is geen onafhankelijke authenticatie
+van de afzender, geen huidige bronstatus, geen eigenaartoestemming en
+geen machtiging voor merge/deploy. Zonder `--verify-sources` wordt
+expliciet `original_private_bundle_files_reverified=false` gerapporteerd.
+
 Deze functie inspecteert uitsluitend een niet-gesymlinkte 0600 ZIP in
 een eigen privémappad: vaste ledennamen, bestandstypen, groottelimieten,
 SHA-256 voor elk lid, oorspronkelijke board-identiteiten, en zowel de
