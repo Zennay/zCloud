@@ -1283,7 +1283,11 @@ Use a new output filename in an existing owner-controlled private directory. The
 
 ## Claim-state gates for execution-impacting recovery
 
-Retry, root-fix routing, independent task admission, parking/resuming a task, merging a PR, deploying and restarting a runner now all require the observed claim state to be explicitly none. Missing or unknown claim evidence is a HOLD; an active claim must not be displaced by a second recovery action. Human escalation is different: it may be routed to a known current owner, but unknown ownership remains blocked. These policy decisions are advisory only and do not change any live claim, queue, runner or release state.
+Retry, root-fix routing, independent task admission, parking/resuming a task, merging a PR, deploying and restarting a runner all require the observed global claim state to be explicitly none. Missing or unknown claim evidence is a HOLD; an active claim must not be displaced by a second recovery action.
+
+**Independent-task admission has a separate per-task ownership gate.** In addition to the global claim state, `assign_independent_work` now requires `queue_lease_state=clear`, `task_claim_source_available=true`, and `task_claim_state=none`. It also requires fresh `queue_lease_observed_at_utc` and `task_claim_observed_at_utc` source clocks within the configured freshness window and no later than the reported receipt. A missing, stale, future-relative or unavailable task-claim source is a HOLD; a global `active_claim=none` cannot substitute for proof that the candidate task itself is unclaimed. The policy's source-clock report shows each queue-lease and separate task-claim age independently.
+
+Human escalation is different: it may be routed to a known current owner, but unknown ownership remains blocked. These policy decisions are advisory only and do not change any live claim, queue, runner or release state.
 
 ## Actionable next steps in policy reports
 
