@@ -2788,3 +2788,39 @@ Dit voorkomt dat een operator een niet-getoond ancestor-pad als opgelost
 interpreteert wanneer de volledige PR-inventaris wel compleet was maar de
 padvoorvertoning niet. Het is nog altijd geen bewijs van Git-mergeability,
 review, actueel eigenaarschap of productie-vrijgave.
+
+
+## 22 oktober · daadwerkelijk issuegerichte bestand/map-herstelroute
+
+De bestaande `scripts/zsentinel_issue_scope_cockpit.py` toont nu niet
+alleen identiek gewijzigde bestandsnamen, maar ook de al door de
+PR-scopegraaf waargenomen **bestand/map-ancestorbotsingen** per gekoppelde
+bestaande product-PR. Daardoor kan een wijziging van bestand `src` niet
+langer als onafhankelijk worden aangeboden ten opzichte van een andere
+PR die `src/app.py` vereist.
+
+- De bron is de reeds bestaande begrensde `shown_path_scope_collision_pairs`
+  van precies het geselecteerde project. Elke partner moet overeenkomen
+  met een daadwerkelijk waargenomen open PR én zijn exacte bron-HEAD.
+  Een vreemd project, ongekend PR-nummer, vals pad of duplicate paar
+  wordt afgewezen in plaats van een menselijk mergeadvies te vormen.
+- Per issue-PR worden de geobserveerde partners, gepinde peer-HEAD,
+  werkelijk conflicterende padvoorbeelden, afkapping en expliciete
+  `merge_authorized=false` zichtbaar in JSON, Nederlandse tekst,
+  Markdown en de responsieve offline HTML-werkbak. Er is geen nieuwe
+  netwerk-opvraag en er wordt geen claim of release geactiveerd.
+- `scripts/zsentinel_issue_action_board.py` neemt ancestorbotsingen mee
+  bij **bestaande PR eerst / eigenaar afstemmen**, groepeert één bestaande
+  PR over meerdere issues en toont de nieuwe aparte bronobservatie in
+  de privé-CSV. De gewone exacte-bestandscategorie blijft afzonderlijk.
+- De directe `--audit-open-prs` CLI en de issuegerichte CLI geven
+  niet langer ten onrechte exitstatus 0 bij uitsluitend geobserveerde
+  bestand/mapconflicten. Status 2 betekent bronconflict waargenomen;
+  status 3 blijft onvolledige bron. Exitstatus 0 verleent nooit
+  claim-, merge- of deploybevoegdheid.
+
+Dit herstelt een echte inconsistentie tussen de beschikbare PR-bron,
+de issuegerichte gebruikerswerkbak en de machineleesbare route voor
+menselijke afstemming. Ook bij een brongebonden conflict blijft de
+werkelijke Git-mergebaarheid, actuele lease, verplichte checklijst,
+onafhankelijke review en productie-eigenaar apart te bewijzen.
