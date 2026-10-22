@@ -444,6 +444,59 @@ def additional_jobs_html(rows):
     )
 
 
+
+def validate_approval_workflows(rows):
+    """Admit only the two observed, exact-HEAD, non-authorizing cloud waits.
+
+    Workflow-level admission is separate from job admission: an environment
+    approval can hold the workflow before GitHub creates any job.
+    """
+    if type(rows) is not list or len(rows) > 2:
+        raise ValueError("unbounded workflow approval source")
+    normalized = []
+    seen = set()
+    for row in rows:
+        if type(row) is not dict:
+            raise ValueError("invalid approval source")
+        run_id = row.get("run_id")
+        sha = row.get("head_sha")
+        if (type(run_id) is not int or not 1 <= run_id <= 2**53 - 1
+                or run_id in seen
+                or type(sha) is not str or not SHA.fullmatch(sha)
+                or row.get("workflow_status_observed") != "waiting"
+                or row.get("action_authorized") is not False
+                or row.get("url") != (
+                    "https://github.com/Zennay/zCloud/actions/runs/" + str(run_id))):
+            raise ValueError("approval workflow identity or status untrusted")
+        seen.add(run_id)
+        normalized.append({"run_id": run_id, "head_sha": sha,
+                           "url": row["url"], "action_authorized": False,
+                           "workflow_status_observed": "waiting"})
+    return normalized
+
+
+def approval_workflows_html(rows):
+    """Read-only operator navigation; never expose an approve or retry action."""
+    cards = []
+    for item in validate_approval_workflows(rows):
+        cards.append(
+            '<li><a target="_blank" rel="noopener noreferrer" href="' +
+            escape(item["url"], quote=True) + '">GitHub-workflow ' +
+            str(item["run_id"]) + '</a> · status waiting · commit ' +
+            escape(item["head_sha"][:12]) + '</li>')
+    if not cards:
+        return ""
+    return (
+        '<section class="panel read"><h2>Workflows in goedkeuringswacht</h2>'
+        '<p>Maximaal twee direct geobserveerde GitHub-runs; de workflow kan '
+        'wachten voordat er een job of runner is toegewezen. Dit is geen '
+        'bewijs van runneruitval en geen live approval-autorisatie.</p>'
+        '<ul>' + ''.join(cards) + '</ul>'
+        '<p>Alleen de bevoegde workflow-eigenaar kan goedkeuren of herstellen. '
+        'Geen automatische approval, retry, runnerherstart of deploy.</p></section>'
+    )
+
+
 def as_html(result):
     if (type(result) is not dict or result.get("schema") != SCHEMA
             or result.get("restart_authorized") is not False
