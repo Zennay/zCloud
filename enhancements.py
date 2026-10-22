@@ -931,7 +931,8 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
     recovery=recovery_status(recovery_dir)
     now_ts=datetime.now(timezone.utc)
     items=[]
-    for alert in list_alerts(db_path,80,False):
+    alerts, alerts_source_status = list_alerts(db_path,80,False,with_source_status=True)
+    for alert in alerts:
         if str(alert.get("kind") or "").strip().lower().replace("-","_")=="claim_conflict":
             if not _claim_conflict_is_active(db_path,alert,now_ts):
                 continue
@@ -1006,17 +1007,28 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
     ordered=list(dedup.values())
     ordered.sort(key=lambda x:str(x.get("detected_at") or ""),reverse=True)
     ordered.sort(key=lambda x:priority.get(str(x.get("severity") or "").lower(),3))
-    return {"count":len(ordered),"items":ordered[:max(1,int(limit))],"recovery":recovery}
+    return {"count":len(ordered),"items":ordered[:max(1,int(limit))],
+            "recovery":recovery,
+            "alerts_source_status":alerts_source_status,
+            "alerts_source_complete":alerts_source_status=="observed",
+            "alerts_source_next_step":(
+                "Controleer de bestaande SQLite-bron en herstel de leesroute; geen meldingen is niet bewezen."
+                if alerts_source_status!="observed" else None)}
 
-def list_alerts(db_path, limit=20, important_only=False):
+def list_alerts(db_path, limit=20, important_only=False, *, with_source_status=False):
+    """List persisted alerts; optionally expose unavailable source separately from empty."""
     try:
         with _db_connect_readonly(db_path) as c:
             c.row_factory = sqlite3.Row
             where = "WHERE important=1" if important_only else ""
             rows = c.execute("SELECT * FROM alerts %s ORDER BY ts DESC LIMIT ?" % where, (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        alerts = [dict(r) for r in rows]
+        source = "observed"
     except Exception:
-        return []
+        # Missing, corrupt or unreadable SQLite must not be presented by the
+        # operator cockpit as proof that no alerts exist.
+        alerts, source = [], "unavailable"
+    return (alerts, source) if with_source_status else alerts
 
 def _state_for(data):
     state = {"milestones": [], "quality": {}}
