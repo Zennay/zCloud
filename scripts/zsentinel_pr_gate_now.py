@@ -191,6 +191,8 @@ def _closed_pr_lifecycle(repo, number, first, token):
             or type(last.get("head")) is not dict or
             last["head"].get("sha") != head or type(last.get("base")) is not dict
             or last["base"].get("ref") != target_ref
+            or type(last["base"].get("repo")) is not dict
+            or last["base"]["repo"].get("full_name") != repo
             or last.get("merge_commit_sha") != first.get("merge_commit_sha")):
         raise ValueError("PR head/base changed during observation")
     if not was_merged:
