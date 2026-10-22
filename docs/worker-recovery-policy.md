@@ -551,7 +551,14 @@ all open GitHub issues.
 The legacy JSON field `source_window_full` now matches
 `recent_issue_window_complete`: true requires a stable, complete,
 error-free recent source, rather than incorrectly returning true when
-the three-page read was exhausted while more GitHub issues remained. Columns carry the original
+the three-page read was exhausted while more GitHub issues remained.
+Both fields use exactly one calculated completeness value, so downstream
+operator integrations cannot receive contradictory coverage claims.
+Two copies of a GitHub issue that differ only in label-source completeness,
+conflicting labels or label/title disagreement (even while normalized
+priority remains UNKNOWN) are now explicitly counted as source-window
+drift. The human route becomes `recheck_changed_issue_source_before_owner_action`
+rather than silently carrying a stale suggested fix. Columns carry the original
 GitHub issue, unverified title hints, observed severity, source-window
 coverage, explicit human-only owner action code, and three short fields
 **problem / action / status**. CSV prefixes unsafe spreadsheet formulas,
