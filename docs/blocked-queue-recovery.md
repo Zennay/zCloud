@@ -817,3 +817,12 @@ The dashboard distinguishes the **age and integrity of the queue observation** f
 - The existing backend's independent atomic guard, admin permissions, receipt provenance, review and release policy remain authoritative. The 15-minute client window is a user-interface fail-closed boundary, not new authority or a scheduled recovery mechanism.
 
 This ships on the existing zSentinel PR #1565 branch until all exact-head required CI, independent review, branch protection and release ownership conditions permit a real main merge. No QA/regression suites were written, changed or run for this feature.
+
+### Concurrent dashboard reads and independent recovery admission
+
+- The dashboard preserves the current queue observation when an older all-project history refresh completes after a targeted source refresh, a failed status refresh, or a human recovery operation. A source-generation counter invalidates older queue completions; unrelated history panels still update.
+- Targeted queue reload remains read-only and is not run concurrently with an already pending operator mutation. Both resume and permanent-close handlers invalidate older observation completions when they enter and leave the guarded flow.
+- An operator-confirmed action first requests the existing read-only `inspect_blocked` decision on the exact queue ID. The returned source observation must be recent, carry the same project/queue version and report the correct `resume_candidate` or `close_candidate`. Active/malformed separate claims, missing project registration, inactive projects and human-gated resume are refused before a mutation request. This inspect step is an **advisory product guard**, never a replacement for the second current GET or the backend's atomic authorized write checks.
+- Project overview badges, parked-task headline and claim summaries distinguish **current** versus **last observed** queue evidence. A stale historical warning does not imply an active owner, current claim, confirmed incident or release authorization.
+- Source-only changes are integrated on the existing PR branch. The historically recorded OOM-guard `blocked` versus `dropped` acceptance mismatch remains a separate required-CI/reviewer HOLD; do not edit or bypass the required test gate to hide it.
+
