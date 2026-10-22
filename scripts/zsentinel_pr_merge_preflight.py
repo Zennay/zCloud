@@ -106,6 +106,9 @@ def _gate_cards(head, checks, reviews, stable, default_branch=None,
     ]
 
 
+MAX_PARALLEL_OWNER_ACTIONS = 12
+
+
 def _parallel_owner_actions(report):
     """Expose independent merge blockers without turning samples into authority.
 
@@ -220,7 +223,8 @@ def _parallel_owner_actions(report):
         "Branch protection, current claims and release-owner permission remain unverified.",
         "Check all required CI, independent review, protection and current ownership before merge.",
         "HUMAN_GATES_UNKNOWN")
-    return cards[:8]
+    # Keep independent CI, review, conflict and authority blockers visible.
+    return cards[:MAX_PARALLEL_OWNER_ACTIONS]
 
 
 def observe_exact_pr(pr_url, *, token=None):
