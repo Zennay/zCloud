@@ -29,25 +29,30 @@ from zsentinel_pr_gate_now import SOURCE_PROBLEMS_NL, _source_problem_kind
 from zsentinel_private_report_writer import write_private_report
 
 MAX_PROJECTS = 3
-MAX_PRS_PER_PROJECT = 16
+MAX_PRS_PER_PAGE = 16
+MAX_PR_PAGES = 3
+MAX_PRS_PER_PROJECT = MAX_PRS_PER_PAGE * MAX_PR_PAGES
 MAX_VISIBLE_PAIRS = 80
 
 
-def collect_portfolio(projects, canonical, token=None, max_prs=10):
+def collect_portfolio(projects, canonical, token=None, max_prs=10, pages=1):
     if (not isinstance(projects, list)
             or not 1 <= len(projects) <= MAX_PROJECTS
             or len(set(projects)) != len(projects)
             or any(project not in canonical for project in projects)
             or type(max_prs) is not int
-            or not 1 <= max_prs <= MAX_PRS_PER_PROJECT):
-        raise ValueError("choose one to three distinct registered projects and 1-16 PRs")
+            or not 1 <= max_prs <= MAX_PRS_PER_PAGE
+            or type(pages) is not int or not 1 <= pages <= MAX_PR_PAGES
+            or pages * max_prs > MAX_PRS_PER_PROJECT):
+        raise ValueError("choose one to three registered projects, 1-16 PRs/page and 1-3 contiguous pages")
     items = []
     for project in projects:
         repo = canonical[project]
         # A failure in one repository must NOT hide observed collisions in
         # another: fail closed for this source, continue independent projects.
         try:
-            source = observe_conflict_graph(repo, token=token, limit=max_prs)
+            source = observe_conflict_graph(
+                repo, token=token, limit=max_prs, page_count=pages)
         except (ValueError, OSError) as error:
             items.append({
                 "project": project,
@@ -82,6 +87,8 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "observed_path_scope_collision_pairs": None,
                 "inspected_open_prs": None,
                 "observed_open_prs": None,
+                "open_pr_pages_read": pages,
+                "open_pr_window_complete": False,
                 "source_observed_at_utc": None,
                 "reason": "github_source_unavailable_or_incomplete",
             })
@@ -159,6 +166,8 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "observed_path_scope_collision_pairs": source["observed_path_scope_collision_pairs"],
             "inspected_open_prs": source["inspected_prs"],
             "observed_open_prs": source["observed_open_prs"],
+            "open_pr_pages_read": source["open_pr_page_count"],
+            "open_pr_window_complete": source["open_pr_window_complete"],
             "source_observed_at_utc": source["observed_at_utc"],
             "source_truncated": display_truncated,
             "reason": ("display_truncated_inspect_original_prs" if display_truncated
@@ -171,7 +180,9 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
         "projects": projects,
         "maximum_projects": MAX_PROJECTS,
         "maximum_prs_per_project": MAX_PRS_PER_PROJECT,
-        "maximum_github_gets": len(projects) * (max_prs + 2),
+        "requested_prs_per_page": max_prs,
+        "requested_contiguous_pages": pages,
+        "maximum_github_gets": len(projects) * (max_prs * pages + 2 * pages),
         "source": "bounded_readonly_open_github_prs",
         "project_views": items,
         "source_coverage_complete": all(i["sample_complete"] for i in items),
@@ -1904,7 +1915,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", action="append", required=True)
-    parser.add_argument("--max-prs", type=int, default=10)
+    parser.add_argument("--max-prs", type=int, default=10,
+                        help="Per-page PR limit (1-16); with --pages up to 48 inspected")
+    parser.add_argument("--pages", type=int, choices=(1, 2, 3), default=1,
+                        help="Contiguous GitHub open-PR pages starting at page one; "
+                             "full scope only when final page is short and snapshots stable")
     parser.add_argument("--output", type=Path,
                         help="Create NEW private offline receipt (0600); default stdout")
     parser.add_argument("--compare-previous", type=Path,
@@ -1921,7 +1936,8 @@ def main(argv=None):
     try:
         canonical = registry(args.registry)
         board = collect_portfolio(args.project, canonical,
-                                  os.environ.get("GITHUB_TOKEN"), args.max_prs)
+                                  os.environ.get("GITHUB_TOKEN"),
+                                  args.max_prs, pages=args.pages)
         if args.gate_pr and not args.inspect_current_pr_gates:
             raise ValueError("--gate-pr requires --inspect-current-pr-gates")
         if args.format in ("workorders", "workorders-json", "workorders-html", "workorders-csv"):
