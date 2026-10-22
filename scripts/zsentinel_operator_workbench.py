@@ -542,7 +542,7 @@ def project_operations_html(view: dict) -> str:
         elif counts["P1"]:
             badge = "Review observed P1 product work"
         elif queue is not None and queue["expired_active_leases"]:
-            badge = "Review suspected expired lease with current owner"
+            badge = "Reconcile suspected expired lease with authorized queue owner"
         elif queue is not None and queue["high_claim_attempts"]:
             badge = "Investigate repeated claim cycles (not failures)"
         else:
@@ -565,7 +565,7 @@ def project_operations_html(view: dict) -> str:
             '<label>Local human follow-up <select data-recovery-choice="' +
             escape(row["project"], quote=True) + '">' +
             '<option value="investigate">Investigate (not a live owner)</option>' +
-            '<option value="coordinate-owner">Coordinate current owner</option>' +
+            '<option value="coordinate-owner">Verify owner before coordination</option>' +
             '<option value="park-blocker">Park external blocker</option>' +
             '</select></label>' +
             '<label>Manual follow-up contact label (not a claim)' +
@@ -3385,7 +3385,7 @@ function drawDetail(){
  const label=elem('label','Operator disposition (non-authorizing)');label.htmlFor='decision';
  const sel=elem('select');sel.id='decision';
  [['investigate','Investigate product issue'],['integrate-existing-pr','Inspect/integrate existing PR'],
-  ['coordinate-owner','Coordinate current owner'],['park-blocker','Park external blocker'],
+  ['coordinate-owner','Verify owner before coordination'],['park-blocker','Park external blocker'],
   ['ready-for-new-product-work','Candidate for new product implementation (verify live claims)']]
  .forEach(([v,t])=>{const o=elem('option',t);o.value=v;sel.append(o)});
  const ownerLabel=elem('label','Manual follow-up contact label (not an assignee, max 80 characters)');
