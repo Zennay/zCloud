@@ -4157,3 +4157,20 @@ De queue-ID wordt niet geëxporteerd en er wordt niets geschreven. Omdat
 `runner_events` zelf geen queue-ID draagt, blijft dit
 `time_window_only_not_identity_bound`: geen exacte claim-epoch-binding,
 geen bewezen productcommit en geen toestemming voor automatische recovery.
+
+
+## 22 oktober · issue-inbox eigenaarroutering voor P0 #1326 en billing #1523
+
+Het bestaande `scripts/zsentinel_issue_delivery.py` routeert de twee expliciet
+human-gated zCloud-issues nu naar verschillende eigenaarsacties:
+
+- **#1326 — self-hosted runner:** bevoegde zCloud-runnerbeheerder controleert
+  registratie, labels, exacte job en Listener/Worker-status via toegestane
+  bronnen. Geen restart zolang actieve worker of runner-identiteit onzeker is.
+- **#1523 — GitHub billing:** bevoegde accountbilling-eigenaar controleert
+  spend/admission. Geen betaalde retry, billingwijziging of runneractie.
+
+De routes worden uit de canonieke issue-URL gekozen, niet uit de issue-titel of
+een bewaarde eerdere tekst. Bestaande open PR's blijven eerste navigatiestap
+voor niet-human-gated issues; dit bord verleent geen claims, dispatch, merge of
+deployrechten.
