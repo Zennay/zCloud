@@ -368,9 +368,9 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         if active:
             action = "Reconcile observed claim IDs against the live lease source before coordination; do not infer current ownership from the snapshot."
         elif issue_totals.get(pid, {}).get("P0", 0):
-            action = "Review sampled P0 issues and current owner/PR state."
+            action = "Review sampled P0 issues and verify live owner/PR state."
         elif issue_totals.get(pid, {}).get("P1", 0):
-            action = "Review sampled P1 issues and current owner/PR state."
+            action = "Review sampled P1 issues and verify live owner/PR state."
         elif queue and queue["expired_active_leases"]:
             action = "Escalate expired leases to the authorized queue owner."
         elif queue and queue["high_claim_attempts"]:
