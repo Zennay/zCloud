@@ -120,6 +120,9 @@ def issue_local_claim_evidence(project, local_claims):
     unknown = {
         "source": "LOCAL_SQLITE_READ_ONLY",
         "status": "UNKNOWN",
+        "observed_at_utc": None,
+        "source_identity_sha256_private": None,
+        "source_identity_verified": False,
         "active_local_leases_observed": None,
         "expired_local_leases_observed": None,
         "active_local_writers_observed": None,
@@ -161,8 +164,25 @@ def issue_local_claim_evidence(project, local_claims):
         "LOCAL_ACTIVE_CLAIMS_OBSERVED", "EXPIRED_LOCAL_LEASES_OBSERVED",
         "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED",
     }
-    if status in observed_statuses and any(
-            type(value) is not int for value in counts.values()):
+    observed_at = row.get("observed_at_utc")
+    source_identity = row.get("source_identity_sha256_private")
+    identity_verified = row.get("source_identity_verified")
+    if identity_verified is True:
+        if (type(observed_at) is not str or not 1 <= len(observed_at) <= 45
+                or type(source_identity) is not str
+                or not re.fullmatch(r"[0-9a-f]{64}", source_identity)):
+            return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
+        try:
+            source_time = dt.datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except ValueError:
+            return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
+        if source_time.tzinfo is None or source_time.utcoffset() is None:
+            return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
+    elif (identity_verified is not False or observed_at is not None
+          or source_identity is not None):
+        return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
+    if status in observed_statuses and (
+            identity_verified is not True or any(type(value) is not int for value in counts.values())):
         return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
     if status == "EXPIRED_LOCAL_LEASES_OBSERVED" and not (
             active == 0 and expired > 0
@@ -179,7 +199,12 @@ def issue_local_claim_evidence(project, local_claims):
             "LOCAL_SOURCE_UNAVAILABLE", "CLAIM_INVENTORY_TRUNCATED",
             "CLAIM_SOURCE_INVALID"} and any(value is not None for value in counts.values()):
         return {**unknown, "status": "LOCAL_SOURCE_INVALID"}
-    return {**unknown, **counts, "status": status}
+    return {
+        **unknown, **counts, "status": status,
+        "observed_at_utc": observed_at,
+        "source_identity_sha256_private": source_identity,
+        "source_identity_verified": identity_verified is True,
+    }
 
 
 def observed_issue_inbox(rows, unlinked, partial, repo_projects,
@@ -1054,7 +1079,15 @@ def render_claim_visibility(source):
             " · ambigue leases=" +
             esc(result["ambiguous_active_leases"] if
                 result["ambiguous_active_leases"] is not None else "UNKNOWN") +
-            " · Notion=" + esc(result["notion_claim_status"]) + "</p>"
+            " · Notion=" + esc(result["notion_claim_status"]) +
+            " · bronmoment=" + esc(result.get("observed_at_utc") or "UNKNOWN") +
+            " · DB-bronfingerprint=" + esc(
+                result["source_identity_sha256_private"][:12]
+                if isinstance(result.get("source_identity_sha256_private"), str)
+                else "UNKNOWN") +
+            " · bronidentiteit geverifieerd=" +
+            ("JA" if result.get("source_identity_verified") is True else "NEE/UNKNOWN") +
+            "</p>"
         )
     cards.append("</section>")
     return "".join(cards)
@@ -1103,7 +1136,13 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
             " · verlopen=" + esc(show_count("expired_local_leases_observed")) +
             " · schrijvers=" + esc(show_count("active_local_writers_observed")) +
             " · ambigu=" + esc(show_count("ambiguous_active_leases")) +
-            ". Owner-vrijgave en externe Notion-status: UNKNOWN.</p>"
+            " · bronmoment=" + esc(target_claims.get("observed_at_utc") or "UNKNOWN") +
+            " · DB-bronfingerprint=" + esc(
+                target_claims["source_identity_sha256_private"][:12]
+                if isinstance(target_claims.get("source_identity_sha256_private"), str)
+                else "UNKNOWN") +
+            ". Bronidentiteit is alleen bestandsidentiteit, geen eigenaarbewijs; "
+            "owner-vrijgave en externe Notion-status: UNKNOWN.</p>"
         )
         if target_claims["status"] == "EXPIRED_LOCAL_LEASES_OBSERVED":
             target_section += (
