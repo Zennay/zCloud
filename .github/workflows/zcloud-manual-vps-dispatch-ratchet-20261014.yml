@@ -1,0 +1,79 @@
+name: Manual VPS dispatch safety ratchet (hosted source only)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py'
+      - 'tests/test_zcloud_manual_vps_dispatch_ratchet_20261014.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-vps-dispatch-ratchet-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  offline-policy:
+    if: github.repository == 'Zennay/zCloud' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Deny foreign PR source before any checkout
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPOSITORY" = "Zennay/zCloud"
+          test "$HEAD_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+      - name: Checkout exact PR source without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable Git inputs and focused offline tests
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git cat-file -e "${HEAD_SHA}^{commit}"
+          # Deny deletion or mode replacement of the ratchet's own three artifacts.
+          for protected in \
+            ".github/workflows/zcloud-manual-vps-dispatch-ratchet-20261014.yml" \
+            "scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py" \
+            "tests/test_zcloud_manual_vps_dispatch_ratchet_20261014.py"; do
+            git ls-tree "$HEAD_SHA" -- "$protected" | grep -Eq '^100644 blob [0-9a-f]{40}[[:space:]]'
+          done
+          current_main="$(cd "$RUNNER_TEMP" && GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
+          test "$current_main" = "$BASE_SHA"
+          # Run the immutable policy before any PR-supplied unit tests.
+          # Bootstrap PR: the source-only scanner does not yet exist on main,
+          # so the candidate's self-test is NOT independently trusted.
+          # Once merged, run the scanner from immutable BASE_SHA, never the
+          # untrusted PR checkout, including when PRs edit their own scanner.
+          policy_path="scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py"
+          if git cat-file -e "${BASE_SHA}:${policy_path}" 2>/dev/null; then
+            git show "${BASE_SHA}:${policy_path}" > "${RUNNER_TEMP}/zcloud-trusted-manual-policy.py"
+            echo "POLICY_PROVENANCE=trusted_base_sha"
+            echo "Policy source: immutable PR base commit (trusted-base mode)." >> "$GITHUB_STEP_SUMMARY"
+            python3 "${RUNNER_TEMP}/zcloud-trusted-manual-policy.py" \
+              --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+          else
+            echo "POLICY_PROVENANCE=untrusted_bootstrap_review_required"
+            echo "::warning::First-install policy is from PR source; this passing job is not an independent security admission."
+            echo "BOOTSTRAP ONLY: policy not yet on trusted main. Independent review is mandatory before merge." >> "$GITHUB_STEP_SUMMARY"
+            python3 "$policy_path" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+          fi
+          python3 -m unittest discover -s tests -p 'test_zcloud_manual_vps_dispatch_ratchet_20261014.py' -v
+          current_main="$(cd "$RUNNER_TEMP" && GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
+          test "$current_main" = "$BASE_SHA"
