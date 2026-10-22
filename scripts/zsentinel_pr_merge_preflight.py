@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 from zsentinel_pr_live_read import (
     GitHubReadError, MAX_LIST_PAGE, REPO_URL, _checks_summary,
-    _limited_json, _pr_summary, _review_summary, utc,
+    _limited_json, _pr_summary, _review_summary, _review_request_identities, utc,
 )
 
 
@@ -255,7 +255,10 @@ def observe_exact_pr(pr_url, *, token=None):
         raise GitHubReadError("PR number is out of bounds")
     api = "/repos/" + quote(match[1], safe="") + "/" + quote(match[2], safe="")
     path = api + "/pulls/" + str(number)
-    first = _pr_summary(_limited_json(path, token=token), full_name, number)
+    first_payload = _limited_json(path, token=token)
+    first = _pr_summary(first_payload, full_name, number)
+    first_requested = _review_request_identities(first_payload)
+    del first_payload
     checks = None
     reviews = None
     missing = []
@@ -367,7 +370,10 @@ def observe_exact_pr(pr_url, *, token=None):
 
     attempted += 1
     try:
-        second = _pr_summary(_limited_json(path, token=token), full_name, number)
+        second_payload = _limited_json(path, token=token)
+        second = _pr_summary(second_payload, full_name, number)
+        second_requested = _review_request_identities(second_payload)
+        del second_payload
     except GitHubReadError as exc:
         missing.append("final PR re-read: " + str(exc))
         return _unknown_pr(
@@ -378,12 +384,16 @@ def observe_exact_pr(pr_url, *, token=None):
     stable_keys = (
         "number", "observed_state", "observed_draft", "reported_merged",
         "target_branch", "base_sha", "exact_head_sha",
+        "head_repo_full_name", "head_ref",
         "pending_reviewer_requests", "pending_team_review_requests",
     )
-    if any(first[k] != second[k] for k in stable_keys):
+    if ((first_requested is not None and second_requested is not None
+         and first_requested != second_requested)
+            or any(first[k] != second[k] for k in stable_keys)):
         return _unknown_pr(
             pr_url, first,
-            ["PR state or HEAD moved between source reads; re-observe"], attempted,
+            ["PR state, source ref or pending reviewer requests changed between "
+             "source reads; re-observe without re-requesting review"], attempted,
         )
 
     if first["reported_merged"]:
