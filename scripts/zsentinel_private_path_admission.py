@@ -26,6 +26,7 @@ def admit_private_paths(*, destinations: Mapping[str, Path | None],
     if not isinstance(destinations, dict) or not isinstance(sources, dict):
         raise ValueError("private path admission needs explicit named mappings")
     occupied = {}
+    occupied_inodes = {}
     for role, path in destinations.items():
         if path is None:
             continue
@@ -36,6 +37,20 @@ def admit_private_paths(*, destinations: Mapping[str, Path | None],
             raise ValueError(
                 "private outputs overlap: " + occupied[canonical] + " and " + role)
         occupied[canonical] = role
+        # Different names may still be hardlinks to the same existing file.
+        # This is especially important for reusable --state/--window-state:
+        # a ledger must never be a writable alias for another source.
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            info = None
+        if info is not None:
+            inode = (info.st_dev, info.st_ino)
+            if inode in occupied_inodes:
+                raise ValueError(
+                    "private output inode overlaps: " +
+                    occupied_inodes[inode] + " and " + role)
+            occupied_inodes[inode] = role
         # Operator reports are create-only. Refuse an existing path (including
         # a dangling symlink) before sending any requests or creating sibling
         # artifacts. Stateful cursors/ledgers deliberately may already exist.
@@ -69,3 +84,11 @@ def admit_private_paths(*, destinations: Mapping[str, Path | None],
         if path.resolve(strict=False) in occupied:
             raise ValueError(
                 "private destination overlaps input source: " + role)
+        try:
+            source_info = path.stat()
+        except FileNotFoundError:
+            source_info = None
+        if (source_info is not None and
+                (source_info.st_dev, source_info.st_ino) in occupied_inodes):
+            raise ValueError(
+                "private writable inode overlaps input source: " + role)
