@@ -549,6 +549,14 @@ secondary **navigation hint**, not a verified priority or authority.
 An explicitly labelled P2/P3 issue remains in its labelled priority group
 even when its title contradictorily begins with P0/P1. Incomplete or
 malformed label sets never promote a title hint into prioritized triage.
+A mismatched title/explicit label now creates an operator-visible
+`explicit_label_title_disagreement` and a human-only
+`inspect_conflicting_priority_with_issue_owner` follow-up across JSON,
+Markdown and offline HTML. The source-window summary reports the number
+of observed contradictions. If two sampled versions of the same issue
+disagree, the prior contradiction becomes UNKNOWN rather than falsely
+preserving a stable owner action; only the original issue owner can
+resolve the metadata inconsistency.
 The original issue title/body, user names, private label names and
 tokens are never exported; the operator receives canonical issue
 links, observed priority labels (not the original label text), limited
