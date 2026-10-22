@@ -274,8 +274,10 @@ def html_panel(report):
             "HEAD gewijzigd · controleer verplichte CI en reviews opnieuw",
         "same_head_owner_step_changed_REVIEW_GATE":
             "Vervolgactie gewijzigd · huidige gate opnieuw bekijken",
+        "same_head_observed_ci_or_review_changed_REVIEW_GATE":
+            "Geobserveerde CI/status/review gewijzigd bij dezelfde HEAD · herinspecteer gate",
         "same_observed_head_and_gate_sample_NOT_ALL_CLEAR":
-            "Zelfde geobserveerde HEAD en gate-actie · geen bewijs van herstel",
+            "Zelfde waargenomen HEAD, actie en beperkte CI/reviewbron · geen bewijs van herstel",
         "newly_in_bounded_sample_NOT_NEW_PR":
             "Nu in beperkte steekproef · niet bewezen nieuw",
         "partial_exact_source_NO_GATE_DELTA":
@@ -291,11 +293,21 @@ def html_panel(report):
         head = item.get("observed_head_sha")
         if head is not None and (type(head) is not str or not HEAD.fullmatch(head)):
             raise ValueError("invalid private current PR commit")
+        families = item.get("observed_gate_families_changed")
+        labels = {"check_runs": "check-runs",
+                  "classic_statuses": "klassieke status",
+                  "same_head_reviews": "reviews"}
+        if (type(families) is not list or len(families) > 3
+                or len(set(families)) != len(families)
+                or any(field not in labels for field in families)):
+            raise ValueError("invalid bounded PR gate differences")
+        delta = (" · gewijzigd: " + ", ".join(labels[x] for x in families)
+                 if families else "")
         cards.append(
             '<li><a target="_blank" rel="noopener noreferrer" href="' +
             escape(item["pr_url"], quote=True) + '">' +
             escape(item["pr_url"].rsplit("/", 1)[-1]) + '</a> · ' +
-            escape(descriptions[state]) + ' · HEAD ' +
+            escape(descriptions[state] + delta) + ' · HEAD ' +
             escape(head[:12] if head else "ONBEKEND") + '</li>')
     previously_missing = report["previously_sampled_not_current_NOT_MERGED"]
     if not isinstance(previously_missing, list) or len(previously_missing) > MAX_ROWS:
