@@ -996,7 +996,9 @@ niet naar de waargenomen standaardbranch wijst. PR-status, base, draft,
 merged en SHA worden eveneens opnieuw gelezen vóór de stabiele exact-HEAD
 wordt getoond. De check-run samenvatting scheidt potentieel blokkerende
 terminale non-success (failure/cancelled/stale/unknown), neutral/skipped en
-pending; neutral/skipped zijn uitdrukkelijk géén succesbewijs. De check- en
+pending; neutral/skipped zijn uitdrukkelijk géén succesbewijs. Markdown en
+de scriptvrije offline HTML linken iedere zichtbare check naar het bestaande
+exacte GitHub-runbewijs waar een canoniek run-ID beschikbaar is. De check- en
 reviewpagina zijn **beperkte samples**; zelfs volledig geslaagde zichtbare
 checks bewijzen niet welke CI branch protection verplicht stelt. Reviewstatus,
 onopgeloste threads, owner claims en release-autorisatie blijven apart
