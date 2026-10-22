@@ -300,6 +300,7 @@ def html(receipt):
             (" (labels onvolledig)" if not job["labels_complete"] else "") +
             "</li>")
     partial = (receipt.get("run_state_drift_observed") is True
+               or coverage != "bounded_observed"
                or any(not x["all_status_runs_sampled"] for x in receipt["run_windows"])
                or any(not x["jobs_sample_complete"] for x in receipt["run_receipts"]))
     windows_note = "; ".join(
