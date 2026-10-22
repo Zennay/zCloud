@@ -18,6 +18,11 @@ Twee productreparaties in dezelfde bestaande merge-eerst PR:
   net als GitHub zelf. Een PR-auteur kan geen onafhankelijke goedkeuring
   krijgen via een andere schrijfwijze van zijn login; hetzelfde account kan
   niet dubbel tellen als twee onafhankelijke reviews.
+- Bot-accounts zoals `dependabot[bot]` blijven leesbaar als PR-auteur of
+  activiteitsschrijver. Hun ingediende reviewevents worden afzonderlijk
+  geteld als automatisering, nooit als onafhankelijke goedkeuring. Dit voorkomt
+  dat een botreactie de hele actuele GitHub-gatewerkbak laat uitvallen of
+  ten onrechte de menselijke reviewvoorwaarde invult.
 
 Deze broncontroles geven **nooit** toestemming om een workerclaim,
 PR-review, branchbescherming, verplichte exacte-HEAD CI of deploygate over
