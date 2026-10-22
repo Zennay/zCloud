@@ -1,3 +1,19 @@
+## 22 oktober 2026 · swap niet aanwezig is niet hetzelfde als 0% gebruikt
+
+De read-only hostobservatie gaf voor een machine zonder geconfigureerde swap
+`swap_used_percent=0.0` door. Dat was numeriek waar als formule-uitkomst,
+maar de operatorweergave maakte geen onderscheid tussen "swap bestaat niet"
+en "swap bestaat en is volledig vrij".
+
+Het hostpacket heeft nu een expliciete `swap_status`: `OBSERVED`,
+`NO_SWAP_CONFIGURED` of `UNKNOWN`. Als `SwapTotal=0`, blijft
+`swap_used_percent=null` en zegt de mensentaalweergave dat swap niet is
+geconfigureerd; alleen een positieve, geldig waargenomen `SwapTotal`
+levert een percentage op. De bestaande drukdrempels tellen swapgebruik
+alleen mee als swap werkelijk aanwezig is. Dit verandert geen
+worker-admission, queue, claim, runner of service en geeft geen
+capaciteits-/herstartautorisatie.
+
 ## 22 oktober 2026 · partiële PSI verbergt geen bekende hostdruk meer
 
 De read-only Linux PSI-waarnemer gaf bij één ontbrekende kernelbron `status=PARTIAL`
