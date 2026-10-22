@@ -477,6 +477,8 @@ def human(report, markdown=False):
                      " · " + OWNER_LANES[action["owner_lane"]] +
                      " · " + HUMAN_GATE_LABELS_NL.get(action["human_next_gate"],
                                                      "Herlees actuele GitHub-bron.") +
+                     (" · parallel: " + HUMAN_GATE_LABELS_NL[action["parallel_human_gate"]]
+                      if action["parallel_human_gate"] else "") +
                      " · GEEN merge-/claimvrijgave")
     if report["owner_attention_queue_hidden_after_24"]:
         lines.append(str(report["owner_attention_queue_hidden_after_24"]) +
@@ -563,6 +565,9 @@ def html(report):
                           "<a rel='noopener noreferrer' href='" + ref + "'>" +
                           str(action["manifest_position"]) + ". " + ref + "</a>" +
                           " · " + reason +
+                          (" · <em>Parallel: " +
+                           escape(HUMAN_GATE_LABELS_NL[action["parallel_human_gate"]]) +
+                           "</em>" if action["parallel_human_gate"] else "") +
                           " <small>HISTORISCH / geen mergevrijgave</small></li>")
     lane_totals = " · ".join(escape(OWNER_LANES[lane]) + ": " +
                              str(report["owner_attention_lane_counts"][lane])
