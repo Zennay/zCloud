@@ -258,7 +258,6 @@ def summarize_worker_windows(windows):
                         "UNKNOWN_event_cursor_or_source_rotation",
                         "UNKNOWN_progress_cursor_or_source_rotation",
                         "UNKNOWN_queue_claim_window_changed",
-                        "UNKNOWN_no_current_queue_claim_window",
                         "UNKNOWN_worker_desired_state_changed")):
                 attention.append({
                     "from_window": pair["from_window"],
