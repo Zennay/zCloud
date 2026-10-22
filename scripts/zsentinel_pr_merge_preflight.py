@@ -270,7 +270,11 @@ def as_markdown(report):
         ("Pending", "sampled_pending_checks"),
     ):
         for entry in checks.get(field, []):
-            lines.append("- " + label + ": `" + entry["name"].replace("`", "'") + "`" +
+            check_label = "`" + entry["name"].replace("`", "'") + "`"
+            check_url = entry.get("url")
+            if isinstance(check_url, str) and check_url.startswith("https://github.com/"):
+                check_label = "[" + check_label + "](" + check_url + ")"
+            lines.append("- " + label + ": " + check_label +
                          " (" + str(entry.get("conclusion") or entry.get("status")) + ")")
     lines.extend([
         "", "**Always recheck:** required exact-head CI, independent reviewer,",
@@ -312,16 +316,20 @@ def as_html(report):
     parts.extend("<dt>" + esc(k) + "</dt><dd>" + esc(v) + "</dd>" for k, v in details)
     parts.extend(["</dl></section><section><h2>Operator action</h2><p>",
                   esc(report["next_human_step"]), "</p></section>",
-                  "<section><h2>Source gaps and sampled checks</h2><ul>"])
+                  "<section><h2>Owner gate checklist</h2><ul>"])
     for gate in report["operator_gates"]:
         parts.append("<li><strong>" + esc(gate["gate"]) + " — " +
                      esc(gate["state"]) + "</strong>: " + esc(gate["next"]) + "</li>")
+    parts.extend(["</ul></section><section><h2>Source gaps and sampled checks</h2><ul>"])
     for gap in report["secondary_source_gaps"]:
         parts.append("<li>" + esc(gap) + "</li>")
     for key in ("sampled_blocking_checks", "sampled_non_success_checks", "sampled_pending_checks"):
         for item in checks.get(key, []):
-            parts.append("<li>" + esc(item["name"]) + " — " +
-                         esc(item.get("conclusion") or item.get("status")) + "</li>")
+            label = esc(item["name"]) + " — " + esc(item.get("conclusion") or item.get("status"))
+            check_url = item.get("url")
+            if isinstance(check_url, str) and check_url.startswith("https://github.com/"):
+                label = "<a href='" + esc(check_url) + "'>" + label + "</a>"
+            parts.append("<li>" + label + "</li>")
     parts.extend(["</ul><p>Unknown required CI, branch protection, independent review, claims and owner authorization always remain HOLD.</p></section>",
                   "<footer>No retry, merge, deploy, queue mutation or runner restart occurred.</footer>",
                   "</body></html>\n"])
