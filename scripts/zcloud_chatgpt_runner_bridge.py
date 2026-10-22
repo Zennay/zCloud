@@ -464,20 +464,29 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
     ]
     coverage = service_cgroup.get("membership_coverage")
     summary = service_cgroup.get("observation_summary")
+    listener_summary = service_cgroup.get("listener_summary")
+    worker_summary = service_cgroup.get("worker_summary")
     if coverage != "complete_for_comm_matched_processes":
         codes.append("RUNNER_MEMBERSHIP_UNKNOWN")
-    if summary in (
-        "listener_outside_expected_unit_comm_only",
-        "mixed_listener_unit_membership_comm_only",
-        "worker_outside_expected_unit_comm_only",
-        "mixed_worker_unit_membership_comm_only",
-    ):
+    mismatch_summaries = {
+        "all_outside_expected_unit_comm_only",
+        "mixed_unit_membership_comm_only",
+    }
+    # Evaluate both roles independently: the combined summary prioritizes the
+    # listener, so it can hide a worker mismatch when the listener is in-unit.
+    listener_mismatch = listener_summary in mismatch_summaries
+    worker_mismatch = worker_summary in mismatch_summaries
+    if listener_mismatch or worker_mismatch:
         codes.append("OWNER_RECONCILIATION_REQUIRED")
-    elif summary == "no_runner_processes_observed":
+        if listener_mismatch:
+            codes.append("LISTENER_SERVICE_MEMBERSHIP_MISMATCH")
+        if worker_mismatch:
+            codes.append("WORKER_SERVICE_MEMBERSHIP_MISMATCH")
+    if summary == "no_runner_processes_observed":
         codes.append("NO_PROCESS_MATCH_IS_NOT_REGISTRATION_PROOF")
-    elif summary in (
-        "listener_in_expected_unit_comm_only",
-        "worker_in_expected_unit_comm_only",
+    if (
+        listener_summary == "all_in_expected_unit_comm_only"
+        or worker_summary == "all_in_expected_unit_comm_only"
     ):
         codes.append("REGISTRATION_AND_JOB_ASSIGNMENT_UNVERIFIED")
     if state == "no_other_worker_observed_not_clearance":
