@@ -48,6 +48,28 @@ Er is geen QA-suite geschreven of uitgevoerd, geen CI handmatig gestart en
 geen claim, queue, runner, merge of deployment aangepast.
 
 
+## 22 oktober · historische vergelijking van cross-platform padaliaswaarschuwingen
+
+De bestaande `scripts/zsentinel_pr_scope_delta.py` vergelijkt nu ook de
+NFC/casefold-padaliaswaarschuwingen uit twee private portfolio-snapshots.
+Een vergelijking wordt alleen als volledig getoond wanneer beide snapshots
+stabiel zijn, de open-PR-inventaris volledig is, alle aliasparen en
+padvoorbeelden binnen de weergavelimieten vallen en elk aliaspaar aan de
+beide snapshots' exacte HEAD, base-SHA en doelbranch is gebonden.
+
+- Nieuwe aliaswaarschuwingen zijn heuristische hints, geen bewezen Git-conflict.
+- Een verdwenen aliaswaarschuwing bewijst geen merge, oplossing of release.
+- Als een snapshot ouder is dan de aliasvelden, de PR-inventaris onvolledig is
+  of aliasvoorbeelden zijn afgekapt, toont de delta uitsluitend
+  steekproefverschillen met expliciet "niet bewezen nieuw/opgelost", of
+  "ONBEKEND" als de oude bronvelden ontbreken.
+- JSON, tekst, Markdown en HTML gebruiken dezelfde uitkomst; geen claim,
+  merge- of deploybevoegdheid wordt verleend.
+
+De historie wordt read-only uit opgeslagen bronnen afgeleid. Er is geen
+QA-suite geschreven of uitgevoerd en geen CI, claim, queue, runner of
+deployment gestart of gewijzigd.
+
 ## 22 oktober · sluiting, merge en live-oplevering zijn drie verschillende feiten
 
 De bestaande `scripts/zsentinel_pr_gate_now.py` en
