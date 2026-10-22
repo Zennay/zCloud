@@ -723,22 +723,22 @@
     "icon": "server",
     "accent": "#74cfe8",
     "notion_url": "https://app.notion.com/p/4019e19ac9558122ba7ce0c4e0264db4",
-    "phase": "M0 · standalone runtime genesis and zCloud registration",
+    "phase": "M0 browser runtime source on main · VPS first-session proof open",
     "status": "active",
     "priority": "low",
-    "next_step": "Create the standalone BrowserAgent repository and build a minimum Playwright browser session with safe DOM snapshots, domain-scoped navigation and interactive operator approvals. Do not route CAPTCHA bypasses.",
+    "next_step": "Install dependencies in a controlled, unprivileged VPS environment and prove one allowed-site browser session; then implement the OpenAI Responses API task loop and operator dashboard. Do not claim live connectivity yet.",
     "milestone_revision": "browseragent-m0-genesis-20261022",
-    "progress_basis": "Only Notion project creation and zCloud registration are evidenced; no browser runtime, model connection or production deployment is yet claimed.",
+    "progress_basis": "Notion HQ/queue, standalone private repository, merged source PR #1 and zCloud registration are verified. Node parse check passed; no live Chromium session or OpenAI connection has been verified.",
     "milestones": [
       {
         "title": "M0 · Project HQ, repository foundation and zCloud registration",
         "done": false,
-        "progress": 30
+        "progress": 85
       },
       {
         "title": "M1 · Isolated Playwright sessions and observable browser actions",
         "done": false,
-        "progress": 0
+        "progress": 55
       },
       {
         "title": "M2 · OpenAI tool-calling control loop with bounded actions",
@@ -760,6 +760,8 @@
         "done": false,
         "progress": 0
       }
-    ]
+    ],
+    "repo_url": "https://github.com/Zennay/BrowserAgent",
+    "handoff_url": "https://app.notion.com/p/4019e19ac95581fc854cda719267541a"
   }
 ]
