@@ -11,6 +11,7 @@ from html import escape
 import re
 
 from zsentinel_pr_scope_delta import _clock, MAX_AGE_SECONDS
+from zsentinel_pr_gate_now import GATE_STEPS_NL
 
 SCHEMA = "zsentinel-pr-gate-episode-comparison-v1"
 BOARD = "zsentinel-portfolio-pr-collision-board-v1"
@@ -25,6 +26,8 @@ GATE_KEYS = (
     "status", "human_gate_blocker", "draft_at_read", "base_sha_observed",
     "base_ref_observed",
     "observed_checks_pending", "observed_checks_unknown",
+    "running_check_attention_60m_observed", "running_check_age_unknown_observed",
+    "queued_check_attention_30m_observed", "queued_check_age_unknown_observed",
     "observed_checks_not_successful", "observed_legacy_pending",
     "observed_legacy_failure_or_error",
     "observed_independent_exact_head_approvals",
@@ -37,7 +40,9 @@ GATE_KEYS = (
     "check_runs_total_observed", "check_runs_latest_attempts_observed",
     "check_runs_superseded_attempts_observed",
     "legacy_contexts_observed", "legacy_status_superseded_attempts_observed",
-    "human_next_gate_step", "check_runs_evidence_sha256",
+    "human_next_gate_step", "parallel_independent_review_step",
+    "automation_review_events_excluded_from_independent_approval",
+    "check_runs_evidence_sha256",
     "legacy_status_evidence_sha256", "exact_head_review_evidence_sha256",
     "pending_individual_review_requests_observed",
     "pending_team_review_requests_observed",
@@ -177,6 +182,21 @@ def _gate_rows(board, repos):
                 val = row.get(key)
                 if type(val) is not int or not 0 <= val <= 1000000:
                     raise ValueError("invalid check/review count")
+            # These bounded operator signals were introduced after older
+            # receipts. Validate values when present without fabricating
+            # any old stall/review activity for a missing field.
+            for field in ("queued_check_attention_30m_observed",
+                          "queued_check_age_unknown_observed",
+                          "running_check_attention_60m_observed",
+                          "running_check_age_unknown_observed",
+                          "automation_review_events_excluded_from_independent_approval"):
+                value = row.get(field)
+                if value is not None and (type(value) is not int or
+                                          not 0 <= value <= 1000000):
+                    raise ValueError("invalid bounded CI triage or bot review count")
+            parallel = row.get("parallel_independent_review_step")
+            if parallel is not None and parallel not in GATE_STEPS_NL:
+                raise ValueError("unrecognized parallel independent review recommendation")
             # Existing old snapshots can lack source identities. They are
             # allowed for comparison, but must NEVER qualify as unchanged.
             for field in ("check_runs_evidence_sha256",
