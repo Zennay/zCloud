@@ -46,7 +46,14 @@ def cmd(argv: list[str], timeout: int = 4) -> tuple[int, str]:
         except ProcessLookupError:
             pass
         try:
-            p.comdef _proc_start_ticks(process: Path, expected_pid: int) -> tuple[int | None, str | None]:
+            p.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            if p.stdout:
+                p.stdout.close()
+        return (124, "")
+
+
+def _proc_start_ticks(process: Path, expected_pid: int) -> tuple[int | None, str | None]:
     """Read one bounded kernel process-lifetime identity without exporting it."""
     fd = None
     try:
@@ -237,13 +244,6 @@ def permitted_auth(path: str, uid: int) -> bool:
     finally:
         if fd is not None:
             os.close(fd)
-metadata.st_mode) or metadata.st_uid != uid:
-            return False
-        return candidate.is_file()
-    except OSError:
-        return False
-
-
 def main() -> int:
     _, name = cmd(["hostname"])
     if name != EXPECTED_HOST:
