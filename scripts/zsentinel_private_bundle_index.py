@@ -692,6 +692,135 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
     return json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
 
 
+
+def _history_csv_cell(value):
+    """Preserve offline evidence without spreadsheet formula or row injection."""
+    import unicodedata
+
+    if value is None:
+        return ""
+    if type(value) is bool:
+        value = "true" if value else "false"
+    elif type(value) in (dict, list):
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    elif type(value) is not str:
+        value = str(value)
+    # Historical owner advice is human text: keep each row physically flat.
+    value = value.replace("\\r", " ").replace("\\n", " ").replace("\\x00", " ")
+    prefix = 0
+    while prefix < len(value) and (
+        value[prefix].isspace() or
+        unicodedata.category(value[prefix]) in ("Cf", "Cc", "Zs", "Zl", "Zp")
+    ):
+        prefix += 1
+    if prefix < len(value) and value[prefix] in "=+-@":
+        return "'" + value
+    return value
+
+
+def render_csv_history(snapshots: list[dict], index_name: str) -> str:
+    """Human spreadsheet timeline: project snapshots plus *sample* deltas.
+
+    Use the exact fully admitted machine-report source model. An empty field
+    means not observed; zero is only emitted when a source explicitly said zero.
+    An absent issue or PR from a later sample is NOT closure or merge evidence.
+    """
+    import csv
+    from io import StringIO
+
+    report = json.loads(render_machine(snapshots, index_name))
+    columns = (
+        "record_kind", "source_bundle", "previous_bundle", "board_sha256",
+        "saved_observed_utc", "project", "sampled_p0", "sampled_p1",
+        "sampled_issues", "sampled_pr_candidates", "newly_sampled_issues",
+        "no_longer_sampled_issues", "raised_sampled_priority_issues",
+        "newly_sampled_prs", "no_longer_sampled_prs", "queue_active_before",
+        "queue_active_after", "expired_leases_before", "expired_leases_after",
+        "high_attempts_after", "queue_source_utc", "issue_coverage",
+        "claim_context", "recommended_next_step",
+        "source_freshness_at_capture_json", "historical_sample_only",
+        "current_claim_verified", "merge_authorized", "live_verified",
+    )
+    output = StringIO(newline="")
+    writer = csv.writer(output, delimiter=";", lineterminator="\\r\\n")
+    writer.writerow(columns)
+    by_bundle = {row["bundle"]: row for row in report["snapshots"]}
+
+    def queue_number(queue, key):
+        return queue.get(key) if type(queue) is dict else None
+
+    def emit(**facts):
+        writer.writerow([_history_csv_cell(facts.get(name)) for name in columns])
+
+    for snapshot in report["snapshots"]:
+        for project in snapshot["projects"]:
+            ops = project["saved_project_operations"]
+            queue = ops.get("queue_observation")
+            emit(
+                record_kind="snapshot", source_bundle=snapshot["bundle"],
+                board_sha256=snapshot["board_sha256"],
+                saved_observed_utc=snapshot["saved_board_observed_at_utc"],
+                project=project["project"],
+                sampled_p0=project["sampled_priorities"]["P0"],
+                sampled_p1=project["sampled_priorities"]["P1"],
+                sampled_issues=project["sampled_issue_count"],
+                sampled_pr_candidates=len(project["sampled_pr_candidate_urls"]),
+                queue_active_after=queue_number(queue, "active_items"),
+                expired_leases_after=queue_number(queue, "expired_active_leases"),
+                high_attempts_after=queue_number(queue, "high_claim_attempts"),
+                queue_source_utc=ops.get("queue_source_observed_at_utc"),
+                issue_coverage=ops.get("issue_coverage"),
+                claim_context=ops.get("claim_context"),
+                recommended_next_step=ops.get("recommended_next_step"),
+                source_freshness_at_capture_json=
+                    snapshot["saved_individual_source_freshness_at_capture"],
+                historical_sample_only=True, current_claim_verified=False,
+                merge_authorized=False, live_verified=False,
+            )
+    for change in report["sample_transitions"]:
+        new = by_bundle[change["to_bundle"]]
+        for project in change["projects"]:
+            old_queue = project.get("queue_observation_before")
+            new_queue = project.get("queue_observation_after")
+            emit(
+                record_kind="sample_change",
+                source_bundle=change["to_bundle"],
+                previous_bundle=change["from_bundle"],
+                board_sha256=new["board_sha256"],
+                saved_observed_utc=new["saved_board_observed_at_utc"],
+                project=project["project"],
+                newly_sampled_issues=len(project["newly_sampled_issue_ids"]),
+                no_longer_sampled_issues=len(
+                    project["no_longer_sampled_issue_ids"]),
+                raised_sampled_priority_issues=len(
+                    project["higher_sampled_priority_issue_ids"]),
+                newly_sampled_prs=len(project["newly_sampled_pr_candidates"]),
+                no_longer_sampled_prs=len(
+                    project["no_longer_sampled_pr_candidates"]),
+                queue_active_before=queue_number(old_queue, "active_items"),
+                queue_active_after=queue_number(new_queue, "active_items"),
+                expired_leases_before=queue_number(
+                    old_queue, "expired_active_leases"),
+                expired_leases_after=queue_number(
+                    new_queue, "expired_active_leases"),
+                high_attempts_after=queue_number(new_queue, "high_claim_attempts"),
+                queue_source_utc=project.get("queue_source_clock_after"),
+                issue_coverage=project.get("source_coverage_after"),
+                claim_context=project.get("claim_context_after"),
+                recommended_next_step=project.get(
+                    "recommended_next_step_after"),
+                source_freshness_at_capture_json=
+                    new["saved_individual_source_freshness_at_capture"],
+                historical_sample_only=True, current_claim_verified=False,
+                merge_authorized=False, live_verified=False,
+            )
+    result = "\\ufeff" + output.getvalue()
+    if len(result.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("private historical CSV exceeds one MiB")
+    return result
+
+
+
 def newest_private_bundles(directory: Path, maximum: int) -> list[str]:
     """Bounded local receipt discovery; never trust a directory entry as a claim."""
     if type(maximum) is not int or not 2 <= maximum <= MAX_BUNDLES:
@@ -735,10 +864,11 @@ def build_index(directory: Path, stems: list[str], name: str,
         raise ValueError("index stem must not match a bundled snapshot")
     if any(type(stem) is not str or STEM.fullmatch(stem) is None for stem in stems):
         raise ValueError("invalid source bundle stem")
-    if output_format not in ("html", "json"):
+    if output_format not in ("html", "json", "csv"):
         raise ValueError("unsupported private history format")
     snapshots = [load_snapshot(directory, stem) for stem in stems]
     payload = (render(snapshots, name) if output_format == "html"
+               else render_csv_history(snapshots, name) if output_format == "csv"
                else render_machine(snapshots, name))
     filename = name + ".index." + output_format
     write_create_only(directory / filename, payload)
@@ -763,8 +893,8 @@ def main(argv=None) -> int:
                         help="Discover newest 2–24 private receipts (mtime only; not live)")
     parser.add_argument("--name", required=True,
                         help="New create-only index stem")
-    parser.add_argument("--format", choices=("html", "json"), default="html",
-                        help="Script-free offline HTML or non-authorizing machine JSON")
+    parser.add_argument("--format", choices=("html", "json", "csv"), default="html",
+                        help="Private offline HTML, JSON or sample-change spreadsheet CSV")
     args = parser.parse_args(argv)
     try:
         if args.latest is not None and args.bundle:
