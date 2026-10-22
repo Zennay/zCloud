@@ -219,6 +219,7 @@ def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
         base_repo = base.get("repo") if isinstance(base, dict) else None
         head_sha = head.get("sha") if isinstance(head, dict) else None
         base_sha = base.get("sha") if isinstance(base, dict) else None
+        base_ref = base.get("ref") if isinstance(base, dict) else None
         body = row.get("body")
         title = row.get("title")
         updated_at = source_clock(row.get("updated_at"))
@@ -248,11 +249,15 @@ def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
                 or not isinstance(base_repo, dict)
                 or base_repo.get("full_name") != repo
                 or not isinstance(head_sha, str) or not SHA.fullmatch(head_sha)
-                or not isinstance(base_sha, str) or not SHA.fullmatch(base_sha)):
+                or not isinstance(base_sha, str) or not SHA.fullmatch(base_sha)
+                or not isinstance(base_ref, str) or not 0 < len(base_ref) <= 120
+                or base_ref != base_ref.strip()
+                or any(not char.isprintable() or char.isspace() for char in base_ref)):
             raise ValueError("incomplete PR identity")
         seen.add(n)
         result.append({"number": n, "head_sha": head_sha,
-                       "base_sha": base_sha, "updated_at": updated_at,
+                       "base_sha": base_sha, "base_ref": base_ref,
+                       "updated_at": updated_at,
                        "referenced_issue_numbers_unverified": refs,
                        "issue_reference_provenance": ref_provenance,
                        "issue_reference_title_covered": title_covered,
@@ -339,12 +344,16 @@ def selected_source_pr(repo, number, token, expanded_files=False):
     base_repo = base.get("repo") if isinstance(base, dict) else None
     sha = head.get("sha") if isinstance(head, dict) else None
     base_sha = base.get("sha") if isinstance(base, dict) else None
+    base_ref = base.get("ref") if isinstance(base, dict) else None
     updated_at = source_clock(receipt.get("updated_at"))
     if (receipt.get("number") != number or receipt.get("state") != "open"
             or not isinstance(base_repo, dict)
             or base_repo.get("full_name") != repo
             or not isinstance(sha, str) or not SHA.fullmatch(sha)
-            or not isinstance(base_sha, str) or not SHA.fullmatch(base_sha)):
+            or not isinstance(base_sha, str) or not SHA.fullmatch(base_sha)
+            or not isinstance(base_ref, str) or not 0 < len(base_ref) <= 120
+            or base_ref != base_ref.strip()
+            or any(not char.isprintable() or char.isspace() for char in base_ref)):
         raise ValueError("selected PR is not a canonical open project PR")
     # Directly specified old PRs need the same visible product-only policy
     # as the bounded recent-PR inventory. Do not silently elevate test/QA
@@ -362,7 +371,8 @@ def selected_source_pr(repo, number, token, expanded_files=False):
         observed_pages = 1
     return {"number": number, "url": "https://github.com/" + repo +
             "/pull/" + str(number), "head_sha": sha,
-            "base_sha": base_sha, "updated_at": updated_at, "paths": files,
+            "base_sha": base_sha, "base_ref": base_ref,
+            "updated_at": updated_at, "paths": files,
             "source_file_pages_observed": observed_pages,
             "product_candidate_based_on_title": product_candidate,
             "read_only": True}
@@ -437,7 +447,9 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
             if matches:
                 hits.append({"path": candidate, "pr_number": pr["number"],
                              "pr_url": pr["url"], "observed_head_sha": pr["head_sha"],
-                             "observed_base_sha": pr["base_sha"], "matching_files": matches[:32],
+                             "observed_base_sha": pr["base_sha"],
+                             "observed_base_ref": pr["base_ref"],
+                             "matching_files": matches[:32],
                              "matching_path_relations": [
                                  {"requested_path": candidate, "changed_path": changed,
                                   "relation": overlap_relation(candidate, changed)}
@@ -456,7 +468,8 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
                          and isinstance(current_head, dict)
                          and current_head.get("sha") == source["head_sha"]
                          and isinstance(current_base, dict)
-                         and current_base.get("sha") == source["base_sha"])
+                         and current_base.get("sha") == source["base_sha"]
+                         and current_base.get("ref") == source["base_ref"])
     complete = (page_count == 1 and open_page == 1 and source_stable
                 and len(before) < page_size and len(before) <= limit
                 and not truncated_files and snapshot_stable)
@@ -469,6 +482,7 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
             "url": source["url"], "number": source["number"],
             "head_sha": source["head_sha"],
             "base_sha": source["base_sha"],
+            "base_ref": source["base_ref"],
             "source_head_stable": source_stable,
             "source_file_count": len(source["paths"]),
             "source_file_pages_observed": source["source_file_pages_observed"],
@@ -756,6 +770,7 @@ def linked_pr_collision_clusters(observed, pairs):
                 {"number": number, "url": by_num[number]["url"],
                  "head_sha": by_num[number]["head_sha"],
                  "base_sha": by_num[number]["base_sha"],
+                 "base_ref": by_num[number]["base_ref"],
                  "other_prs_with_shared_files_observed": group["degree"][number]}
                 for number in ranked
             ],
@@ -839,6 +854,7 @@ def linked_pr_scope_collision_clusters(observed, pairs, pair_counts):
                 "number": number, "url": by_num[number]["url"],
                 "head_sha": by_num[number]["head_sha"],
                 "base_sha": by_num[number]["base_sha"],
+                "base_ref": by_num[number]["base_ref"],
                 "file_count_observed": by_num[number]["file_count_observed"],
                 "file_list_complete": by_num[number]["file_list_complete"],
                 "other_prs_with_scope_conflicts_observed": group["degree"][number],
@@ -895,7 +911,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         observed.append({
             "number": pr["number"], "url": pr["url"],
             "head_sha": pr["head_sha"], "base_sha": pr["base_sha"],
-            "updated_at": pr["updated_at"],
+            "base_ref": pr["base_ref"], "updated_at": pr["updated_at"],
             "product_candidate_based_on_title": pr["product_issue_reference_candidate"],
             "file_count_observed": len(files),
             "file_paths_observed": files,
@@ -989,7 +1005,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         # Ancestor-pair cards can be numerous; avoid copying each PR's full
         # changed-file inventory into every edge in the bounded output.
         return {key: pr[key] for key in (
-            "number", "url", "head_sha", "base_sha", "updated_at",
+            "number", "url", "head_sha", "base_sha", "base_ref", "updated_at",
             "file_count_observed", "file_list_complete")}
     scope_pairs = {}
     scope_pair_counts = {}
