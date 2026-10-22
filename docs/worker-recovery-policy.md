@@ -478,6 +478,52 @@ closing keywords and their absence **never prove or disprove** GitHub
 cross-reference links or authorized ownership; no title/body, issue text,
 token or private prompt is exported.
 
+### Cross-project GitHub issue cockpit (read-only, no saved case)
+
+zSentinel's portfolio role can now triage original issue source across multiple
+explicit Zennay repositories in a single operator file, instead of requiring
+separate manual project inboxes:
+
+```sh
+umask 077
+mkdir -p -m 700 "$HOME/.local/share/zsentinel"
+python3 scripts/zsentinel_portfolio_issue_desk.py \\
+  --repo Zennay/zCloud --repo Zennay/Supa \\
+  --view explicit-critical --format html \\
+  --output "$HOME/.local/share/zsentinel/portfolio-$(date -u +%Y%m%dT%H%M%S)-$.html"
+```
+
+The same command supports `--format markdown|json|csv` and `--view all`
+(the default), `explicit-critical` (only **label-backed** P0/P1),
+or `critical-and-title-hints` (clearly separates unverified title hints
+from explicit labels). Filters change only local displayed cards; the
+original full bounded source counts, omitted-by-filter and hidden-by-output
+numbers remain present. Per-repository source scorecards show actual
+observed explicit P0/P1 counts and freshness/partial status, independent
+of whether the cards fit the global P0-first display.
+
+**Source and safety bounds:** 2–6 distinct canonical `Zennay/<repo>`
+arguments; one sequential bounded GitHub observation per repo,
+maximum 7 GET per repo and 42 overall, no arbitrary remote hosts,
+and at most 120 P0-first issue cards in a source-bound snapshot.
+The input repo list is explicit rather than inferred from a historical
+Notion claim. Observations across repositories are **not atomic**;
+provider refusal/quota failure marks the affected repo incomplete and
+does not retry or read subsequent repositories. Source failures do not
+mean no issues. No raw titles, bodies, contact data or tokens are included;
+original GitHub issue URLs and human-only follow-up codes remain present.
+All formats require a user-owned private destination, created exclusively
+under the existing secure output guard (non-following, 0600, no overwrite,
+128 KiB cap). JSON/CSV/HTML/Markdown never assert current lease,
+independent review, exact-head required CI or merge/deploy approval.
+No queue/worker/runner/Notion writes, GitHub mutations, Action reruns,
+claims, merge or deploy are performed.
+
+The portfolio inbox is complementary to the single-repository
+`--live-inbox-repo` CLI below; it is not a substitute for the exact
+issue-to-existing-PR live observation (`--live-issue-url`) or the
+repository's real protected-main release gates.
+
 ### GitHub P0/P1-first live issue inbox (no saved case)
 
 zSentinel can now open a **bounded current incident inbox** from the
