@@ -334,8 +334,11 @@ def saved_queue(receipt: dict, *, project=None, priority=None):
             issues = row.get("linked_issue_urls")
             if (match is None or match.group(1) != repo
                     or type(number) is not int or int(match.group(2)) != number
-                    or url in seen or row.get("priority") not in PRIORITY
+                    or url in seen or type(row.get("priority")) is not str
+                    or row.get("priority") not in PRIORITY
+                    or type(row.get("primary_gate")) is not str
                     or row.get("primary_gate") not in CATEGORIES
+                    or type(row.get("gate_source")) is not str
                     or row.get("gate_source") not in SOURCES
                     or row.get("review_and_merge_authorized") is not False
                     or type(issues) is not list or len(issues) > 60

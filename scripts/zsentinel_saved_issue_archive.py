@@ -142,7 +142,9 @@ def _validate_receipt(report, manifest):
             if (not canonical_pr(link, repo)
                     or link in seen_prs
                     or pr.get("pr_number") != int(link.rsplit("/", 1)[-1])
+                    or type(pr.get("source_priority")) is not str
                     or pr.get("source_priority") not in rank
+                    or type(pr.get("issue_link_priority")) is not str
                     or pr.get("issue_link_priority") not in rank
                     or pr.get("owner_claim_verified") is not False
                     or pr.get("required_ci_review_verified") is not False
@@ -189,7 +191,8 @@ def _validate_receipt(report, manifest):
                 or issue.get("last_snapshot_missing_batches") is not
                 bool(snapshots[-1]["missing_batch_indexes"])):
             raise ValueError("Issue continuity inconsistent with sampled PR links")
-        if (issue.get("highest_source_priority") not in rank or
+        if (type(issue.get("highest_source_priority")) is not str
+                or issue.get("highest_source_priority") not in rank or
                 issue["highest_source_priority"] !=
                 min((p["issue_link_priority"] for p in prs),
                     key=lambda v: rank[v]) or

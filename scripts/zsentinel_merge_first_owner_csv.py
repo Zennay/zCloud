@@ -352,27 +352,33 @@ def select_owner_rows(rows, *, repository=None, priority=None, record_type="all"
     inconsistent internal project slugs. A missing match never means that
     the complete live issue/PR inventory was checked.
     """
-    if repository is not None and not re.fullmatch(
-        r"Zennay/[A-Za-z0-9_.-]{1,100}", repository
+    if repository is not None and (
+        type(repository) is not str or not re.fullmatch(
+            r"Zennay/[A-Za-z0-9_.-]{1,100}", repository
+        )
     ):
         raise ValueError("repository filter must be canonical Zennay/<repo>")
-    if priority is not None and priority not in RANK:
+    if priority is not None and (type(priority) is not str or priority not in RANK):
         raise ValueError("unrecognized owner priority filter")
     if record_type not in (
         "all", "existing-pr", "issue-without-pr", "unlinked-pr",
         "archive-only-linked-pr"
     ):
         raise ValueError("unrecognized owner record type")
-    if attention not in ATTENTION:
+    if type(attention) is not str or attention not in ATTENTION:
         raise ValueError("unknown historical attention filter")
-    if pr_url is not None and not re.fullmatch(
-        r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
-        pr_url
+    if pr_url is not None and (
+        type(pr_url) is not str or not re.fullmatch(
+            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
+            pr_url
+        )
     ):
         raise ValueError("PR selector must be a canonical full GitHub PR URL")
-    if issue_url is not None and not re.fullmatch(
-        r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}",
-        issue_url
+    if issue_url is not None and (
+        type(issue_url) is not str or not re.fullmatch(
+            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}",
+            issue_url
+        )
     ):
         raise ValueError("issue selector must be a canonical full GitHub issue URL")
     result = []

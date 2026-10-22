@@ -63,7 +63,8 @@ def portfolio_delta(previous, current, *, stale_after_hours=6, evaluated_at=None
     for url in urls:
         old, new = old_map.get(url), new_map.get(url)
         issue = new or old
-        if issue["highest_source_priority"] not in RANK:
+        if (type(issue.get("highest_source_priority")) is not str
+                or issue["highest_source_priority"] not in RANK):
             raise ValueError("Unknown source issue priority")
         if new is None:
             kind = "not_seen"

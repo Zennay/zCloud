@@ -1,13 +1,13 @@
 # zSentinel · Private Product Delivery Workbench
 
-## 22 oktober · ongeldige prioriteitswaarden sluiten veilig af
+## 22 oktober · malformed enum values fail closed
 
-De bron-toelating van issuekaarten en de paginaselectie van historische
-portfolio-deltas controleren nu eerst dat een prioriteit een string is,
-voordat die met een set of mapping wordt vergeleken. Een malformed JSON-array
-of object eindigt daardoor in het bedoelde begrensde `ValueError`-pad in plaats
-van een ongecontroleerde `TypeError`. Dit verandert geen live issue-status,
-claim, CI, merge- of deploybevoegdheid.
+Source admission for issue cards, saved archive priority fields, historical
+priority/tag filters, owner-worklist selectors and saved gate receipts now
+validate string types before set/dictionary membership or regex matching.
+Malformed JSON arrays/objects therefore follow the bounded `ValueError` path
+instead of leaking an unhandled `TypeError`. This changes no live issue state,
+claim, CI, merge or deployment authority.
 
 
 ## 22 oktober · Privé geschiedenis van meerdere herstelbundels

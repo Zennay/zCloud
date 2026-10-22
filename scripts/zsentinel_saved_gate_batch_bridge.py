@@ -195,6 +195,7 @@ def combined_manifest(manifest: dict, raw: bytes, paths: list[Path], *, allow_pa
         for row, expected in zip(rows, expected_rows):
             url = expected[3]["url"]
             if (type(row) is not dict or row.get("url") != url
+                    or type(row.get("status")) is not str
                     or row.get("status") not in ALLOWED_STATUS
                     or row.get("read_only") is not True
                     or row.get("merge_authorized") is not False
@@ -534,7 +535,8 @@ def prior_gate_delta(previous: dict, current: dict, selected: list) -> list[str]
                 raise ValueError("Duplicate saved issue identity")
             issue_ids.add(issue["issue"])
             for entry in issue["existing_prs"]:
-                if (type(entry) is not dict or entry.get("url") not in allowed
+                if (type(entry) is not dict or type(entry.get("url")) is not str
+                        or entry.get("url") not in allowed
                         or type(entry.get("live_exact_head_review_checks_observation"))
                            is not dict):
                     raise ValueError("Noncanonical prior PR source")
@@ -544,6 +546,7 @@ def prior_gate_delta(previous: dict, current: dict, selected: list) -> list[str]
                     raise ValueError("PR/source issue link or coverage is invalid")
                 gate = entry["live_exact_head_review_checks_observation"]
                 if (gate.get("url") != url
+                        or type(gate.get("status")) is not str
                         or gate.get("status") not in ALLOWED_STATUS
                         or gate.get("read_only") is not True
                         or gate.get("merge_authorized") is not False

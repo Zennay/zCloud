@@ -111,7 +111,7 @@ def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
             if row is None:
                 continue
             data = row["data"]
-            if data["priority"] not in rank:
+            if type(data.get("priority")) is not str or data["priority"] not in rank:
                 raise ValueError("Unrecognized sampled PR priority")
             observations.append((index, row))
         if not observations:
@@ -290,9 +290,9 @@ def select_page(report, *, priority=None, tag=None, issue_url=None,
     Pages are human display slices only, not evidence of other PRs being
     closed, green, owner-free, or excluded from GitHub/Notion work.
     """
-    if priority is not None and priority not in PRIORITIES:
+    if priority is not None and (type(priority) is not str or priority not in PRIORITIES):
         raise ValueError("Unknown source priority filter")
-    if tag is not None and tag not in TAGS:
+    if tag is not None and (type(tag) is not str or tag not in TAGS):
         raise ValueError("Unknown observed source-change label")
     if issue_url is not None and (
             type(issue_url) is not str or not ISSUE_FILTER.fullmatch(issue_url)):
