@@ -1591,6 +1591,7 @@ def main():
                           " uninspected_pr_candidates=" + hinted +
                           " next=" + issue["operator_action"] +
                           " activity=" + issue_activity_label(issue) +
+                           " activity_next=" + issue.get("activity_follow_up", "UNKNOWN")
                           " local_claims=" +
                           str((issue.get("local_claim_evidence") or {}).get("status", "UNKNOWN")) +
                           "(active=" + str((issue.get("local_claim_evidence") or {}).get("active_local_leases_observed")
