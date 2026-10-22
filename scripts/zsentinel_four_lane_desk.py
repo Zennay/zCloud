@@ -666,6 +666,8 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         "held_for_owner_or_source": sum(lane["admission"]["code"].startswith("HOLD_") for lane in visible),
         "local_candidate_external_gates": sum(lane["admission"]["code"] == "CANDIDATE_EXTERNAL_GATES" for lane in visible),
         "no_local_candidate_observed": sum(lane["admission"]["code"] == "NO_LOCAL_CANDIDATE" for lane in visible),
+        "held_by_host_pressure": sum(lane["admission"]["code"] in ("HOLD_HOST_PRESSURE", "HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED") for lane in visible),
+        # Preserve the old field name for consumers of earlier private snapshots.
         "held_by_optional_host_pressure": sum(lane["admission"]["code"] in ("HOLD_HOST_PRESSURE", "HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED") for lane in visible),
     }
     owner_shortlist, shortlist_partial = owner_review_suggestions(portfolio)
@@ -852,8 +854,8 @@ def text_view(data):
         + " banen HOLD; " + str(summary["local_candidate_external_gates"])
         + " lokale kandidaten met externe gates; "
         + str(summary["no_local_candidate_observed"]) + " zonder lokale taak; "
-        + str(summary["held_by_optional_host_pressure"])
-        + " extra kandidaatbanen HOLD wegens optionele hostdrukmeting."
+        + str(summary["held_by_host_pressure"])
+        + " kandidaatbanen HOLD wegens gemeten hostdruk of ontbrekende telemetrie."
     )
     for lane in data["lanes"]:
         extra = " | MEERDERE ACTIEVE TAKEN" if lane["parallel_active_warning"] else ""
