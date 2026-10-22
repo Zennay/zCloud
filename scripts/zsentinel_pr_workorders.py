@@ -533,6 +533,17 @@ def collect_workorders(board):
         seen.add(url)
         head, base = item.get("head_sha"), item.get("base_sha")
         base_ref = item.get("base_ref")
+        captured_base_ref = item.get("captured_base_ref")
+        observed_base_ref = item.get("base_ref_observed")
+        base_ref_stable = item.get("base_ref_stable_on_second_read")
+        for branch_value in (captured_base_ref, observed_base_ref):
+            if (branch_value is not None and
+                    (type(branch_value) is not str or not 1 <= len(branch_value) <= 255
+                     or any(not char.isprintable() or char.isspace()
+                            for char in branch_value))):
+                raise ValueError("invalid target-branch observation")
+        if base_ref_stable is not None and type(base_ref_stable) is not bool:
+            raise ValueError("invalid target-branch stability flag")
         pinned = bool(type(head) is str and SHA.fullmatch(head) and
                       type(base) is str and SHA.fullmatch(base) and
                       type(base_ref) is str and 1 <= len(base_ref) <= 255 and
@@ -551,8 +562,11 @@ def collect_workorders(board):
             if (live_gate.get("status") != "current_exact_pr_head_and_sample_match"
                     or live_gate.get("head_sha_observed") != head
                     or live_gate.get("base_sha_observed") != base
-                or live_gate.get("base_ref_observed") != base_ref):
-                raise ValueError("owner workorder exact-HEAD/base mismatch")
+                    or live_gate.get("base_ref_observed") != base_ref
+                    or captured_base_ref != base_ref
+                    or observed_base_ref != base_ref
+                    or base_ref_stable is not True):
+                raise ValueError("owner workorder exact-HEAD/base/target-branch mismatch")
         elif live_gate.get("status") == "current_exact_pr_head_and_sample_match":
             raise ValueError("current gate receipt lost exact HEAD in workorder")
         # Reuse the current exact-head, double-read GitHub review-request
@@ -888,6 +902,9 @@ def collect_workorders(board):
             "head_sha": head if pinned else None,
             "base_sha": base if pinned else None,
             "base_ref": base_ref if pinned else None,
+            "captured_base_ref": captured_base_ref,
+            "observed_base_ref": observed_base_ref,
+            "base_ref_stable_on_second_read": base_ref_stable is True,
             "category": _markdown(category), "blocker": _markdown(blocker),
             "human_next_step": _markdown(next_step),
             "source_current": pinned and not source_stale,
