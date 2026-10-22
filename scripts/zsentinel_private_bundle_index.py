@@ -706,7 +706,7 @@ def _history_csv_cell(value):
     elif type(value) is not str:
         value = str(value)
     # Historical owner advice is human text: keep each row physically flat.
-    value = value.replace("\\r", " ").replace("\\n", " ").replace("\\x00", " ")
+    value = value.replace("\r", " ").replace("\n", " ").replace("\x00", " ")
     prefix = 0
     while prefix < len(value) and (
         value[prefix].isspace() or
@@ -742,7 +742,7 @@ def render_csv_history(snapshots: list[dict], index_name: str) -> str:
         "current_claim_verified", "merge_authorized", "live_verified",
     )
     output = StringIO(newline="")
-    writer = csv.writer(output, delimiter=";", lineterminator="\\r\\n")
+    writer = csv.writer(output, delimiter=";", lineterminator="\r\n")
     writer.writerow(columns)
     by_bundle = {row["bundle"]: row for row in report["snapshots"]}
 
@@ -814,7 +814,7 @@ def render_csv_history(snapshots: list[dict], index_name: str) -> str:
                 historical_sample_only=True, current_claim_verified=False,
                 merge_authorized=False, live_verified=False,
             )
-    result = "\\ufeff" + output.getvalue()
+    result = "\ufeff" + output.getvalue()
     if len(result.encode("utf-8")) > 1024 * 1024:
         raise ValueError("private historical CSV exceeds one MiB")
     return result
