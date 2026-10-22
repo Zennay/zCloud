@@ -25,6 +25,18 @@ sudo bash ops/new-vps-worker-bootstrap-20261022.sh status
 
 Inspect missing browser components and the current API status. The reference Firefox service expects the `ubuntu` desktop on `DISPLAY=:10` and a pre-existing authenticated `snap/firefox/common/chatgpt-webext-profile`. A new KDE/XRDP user `desktop` is **not** automatically equivalent. If the profile or display is missing, do not force a browser start or create empty worker sessions. Restore the original profile securely to the correct user and confirm the actual desktop session first.
 
+## 1b. Diagnosing an existing Firefox start-post error
+
+The operator confirmed `chatgpt-firefox.service: activating / start-post / ExecMainStatus=1`, a failed `ubuntu` X11 probe on `DISPLAY=:10`, inactive system/user zCloud services, and no listener on port 8765. This is not evidence that the existing Firefox worker tabs are operating. Do not restart, mass-kill, or change `DISPLAY` by guessing.
+
+Run this read-only command **on the new VPS as root**:
+
+```sh
+python3 ops/new-vps-worker-display-discovery-20261022.py
+```
+
+It enumerates X11 sockets and `ubuntu`-owned candidate Xauthority files, then tries bounded `xdotool getdisplaygeometry` connections **as ubuntu**. It reports only successful display and authority file paths, not Xauthority cookies. If none succeed, inspect the actual XRDP session user and X11 authorization; a KDE session owned by `desktop` does not automatically grant `ubuntu` access. Any scoped authorization change must be intentionally reviewed first. Inspect the most recent Firefox journal lines and systemd `ExecStart` status separately if the display preflight passes.
+
 ## 2. Safe handover
 
 1. Verify where the old zCloud server is writing, and pause the **old** scheduler, worker tabs and write jobs after outstanding claims have been reconciled. Do not broadly kill Firefox or cancel unrelated GitHub/FTMO jobs.
