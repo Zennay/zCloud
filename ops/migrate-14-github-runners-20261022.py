@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -125,19 +126,55 @@ def require_target() -> None:
 def prepared_dir(repo: str, source: str) -> Path:
     source_path = Path(source)
     target = DEST / repo.lower()
-    if not (source_path / "config.sh").is_file():
-        raise RuntimeError(f"{repo}: runner binaries not restored to {source_path}")
+    try:
+        home_info = HOME.lstat()
+        source_info = source_path.lstat()
+        config_info = (source_path / "config.sh").lstat()
+    except OSError as exc:
+        raise RuntimeError(f"{repo}: runner source/home path unavailable ({type(exc).__name__})") from None
+    if not stat.S_ISDIR(home_info.st_mode):
+        raise RuntimeError("ubuntu home must be a real directory, not a symlink")
+    if not stat.S_ISDIR(source_info.st_mode) or not stat.S_ISREG(config_info.st_mode):
+        raise RuntimeError(f"{repo}: runner binaries/config.sh must be real files in a real source directory")
     if source_path.resolve() == target.resolve():
         raise RuntimeError("Source and target runner path must differ")
-    target.mkdir(parents=True, exist_ok=True)
+
+    # A prior partial attempt is not an invitation to reuse a possibly
+    # registered or secret-bearing directory. Refuse before rsync/chown.
+    try:
+        dest_info = DEST.lstat()
+    except FileNotFoundError:
+        DEST.mkdir(mode=0o755, parents=False, exist_ok=False)
+    except OSError as exc:
+        raise RuntimeError(f"{repo}: destination root unavailable ({type(exc).__name__})") from None
+    else:
+        if not stat.S_ISDIR(dest_info.st_mode):
+            raise RuntimeError("runner migration destination root must be a real directory")
+
+    try:
+        target.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise RuntimeError(f"{repo}: destination path unavailable ({type(exc).__name__})") from None
+    else:
+        raise RuntimeError(f"{repo}: target path already exists; inspect it before retrying")
+
+    target.mkdir(mode=0o755, exist_ok=False)
     # Deliberately do not copy identity, credentials, workspaces, logs or sessions.
     call(["rsync", "-a", "--exclude=.runner", "--exclude=.runner_migrated",
           "--exclude=.credentials", "--exclude=.credentials_rsaparams",
           "--exclude=_work/", "--exclude=_diag/", "--exclude=.service",
           str(source_path) + "/", str(target) + "/"])
     call(["chown", "-R", "ubuntu:ubuntu", str(target)])
-    if (target / ".runner").exists() or (target / ".credentials").exists():
-        raise RuntimeError(f"{repo}: target unexpectedly contains old registration")
+    for forbidden in (".runner", ".runner_migrated", ".credentials",
+                      ".credentials_rsaparams", ".service"):
+        try:
+            (target / forbidden).lstat()
+        except FileNotFoundError:
+            continue
+        else:
+            raise RuntimeError(f"{repo}: target unexpectedly contains forbidden identity file {forbidden}")
     return target
 
 def migrate_one(repo: str, old_name: str, binary_dir: str) -> None:
