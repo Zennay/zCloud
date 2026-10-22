@@ -25,6 +25,8 @@ The remaining read-only queue and worker polling paths now follow the same conne
 
 **Do not generalize to every GET endpoint:** `GET /api/snapshot` is a separate, legacy localhost-only command that intentionally persists monitor data; it is not a read-only diagnostic and is not covered here. Its method/authorization must be migrated with its callers if changed. Neither that stateful route nor `GET /api/resource-governor` is claimed fixed by this PR.
 
+Project watch and dashboard history reads are covered as well: `live_receipt_status` (including the complete receipts/coverage pair), `history`, `watch_activity` and `compact_history` use the same read-only SQLite connection. `GET /api/project-state-receipts` now reads project receipts through `connect_readonly` too. These changes preserve response data, status checks and authentication; they do not write or renew a project receipt. Receipt creation/updates remain separate authorized paths.
+
 The existing `GET /api/worker-scaling` report opens the telemetry database through SQLite `mode=ro`; it remains an observation-only report.
 
 **Scope boundary:** this document does not assert that every GET route in the server is read-only. On the current main branch, `GET /api/resource-governor` still calls the default cleanup-capable `resource_status(connection)`. Its separate non-mutating display option and route call are present in [PR #1549](https://github.com/Zennay/zCloud/pull/1549), which remains an independent, unmerged integration candidate. Do not treat that endpoint as fixed on main or live until its own required CI, review and release gates complete.
