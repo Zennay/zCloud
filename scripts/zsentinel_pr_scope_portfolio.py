@@ -1700,6 +1700,31 @@ def as_private_csv(board):
         if output.tell() > MAX_PORTFOLIO_CSV_BYTES:
             raise ValueError("private portfolio CSV output limit")
 
+    # An explicit Actions runner triage is a separate, bounded source
+    # snapshot: never conflate job assignment with CI success or runner health.
+    for project, triage in board.get("runner_queue_observations", {}).items():
+        repo = triage["repository"]
+        triage_status = triage.get("source_status", "sampled_nonatomic")
+        emit("runner_queue_summary", project, repo, triage_status,
+             operator_notice=(
+                 "GitHub Actions source unavailable; runner status UNKNOWN."
+                 if triage_status == "unavailable" else
+                 "Queued jobs with no assignment observed: " +
+                 str(triage["unassigned_queued_jobs_observed"]) +
+                 ". This does not prove runner outage, permissions or CI result."))
+        for job in triage.get("sampled_jobs", [])[:64]:
+            emit("runner_queue_job", project, repo, triage_status,
+                 check_name=job["name"], check_state=job["status_at_read"],
+                 check_url=job["job_url"], operator_notice=(
+                     job["assignment"] + " · labels " +
+                     (", ".join(job["labels_observed"]) or "ONBEKEND") +
+                     "; runner health and release gates UNKNOWN."))
+        if triage_status != "unavailable" and (
+                any(not w["all_status_runs_sampled"] for w in triage["run_windows"])
+                or any(not r["jobs_sample_complete"] for r in triage["run_receipts"])):
+            emit("source_warning", project, repo, triage_status,
+                 operator_notice="Additional GitHub Actions runs/jobs outside bounded snapshot.")
+
     for view in board["project_views"]:
         project = view["project"]
         repo = view["repository"]
