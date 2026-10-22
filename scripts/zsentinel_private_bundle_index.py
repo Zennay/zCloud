@@ -267,9 +267,14 @@ def render(snapshots: list[dict], index_name: str) -> str:
     cards = []
     for snap in reversed(snapshots):
         age = now - snap["observed"]
-        old = age > timedelta(hours=24)
-        age_label = ("ouder dan 24 uur" if old else
-                     "maximaal 24 uur oud (niet live)")
+        if age < -timedelta(minutes=5):
+            age_label = "waarneming >5 min in toekomst (mogelijke klokdrift; niet live)"
+        elif age < timedelta(0):
+            age_label = "tijdstempel iets in toekomst (niet live)"
+        elif age > timedelta(hours=24):
+            age_label = "ouder dan 24 uur"
+        else:
+            age_label = "maximaal 24 uur oud (niet live)"
         companions = (
             "<a href='" + escape(snap["stem"] + ".desk.html", quote=True) +
             "'>Open interactieve werkbak</a> · <a href='" +
@@ -328,6 +333,7 @@ def render(snapshots: list[dict], index_name: str) -> str:
 
 def render_machine(snapshots: list[dict], index_name: str) -> str:
     """Produce a private machine-readable history without live authority."""
+    generated_at = datetime.now(timezone.utc)
     ordered = sorted(snapshots, key=lambda item: (item["observed"], item["stem"]))
     entries = []
     for snap in ordered:
@@ -355,6 +361,12 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
             "bundle": snap["stem"],
             "board_sha256": snap["sha256"],
             "saved_board_observed_at_utc": snap["observed"].isoformat(),
+            "snapshot_age_seconds_at_index": int(
+                (generated_at - snap["observed"]).total_seconds()
+            ),
+            "future_timestamp_suspected": (
+                snap["observed"] > generated_at + timedelta(minutes=5)
+            ),
             "saved_individual_source_clocks": snap["source_times"],
             "saved_individual_source_freshness_at_capture": snap["source_fresh"],
             "sampled_cards": snap["card_count"],
@@ -414,7 +426,7 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
     report = {
         "schema": "zsentinel-saved-bundle-history-v1",
         "index_name": index_name,
-        "generated_at_local_utc": datetime.now(timezone.utc).isoformat(),
+        "generated_at_local_utc": generated_at.isoformat(),
         "saved_bundle_integrity_verified": True,
         "observations_are_historical_and_bounded": True,
         "queue_history_is_historical_and_bounded": True,
