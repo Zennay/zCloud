@@ -39,6 +39,67 @@ SHA = re.compile(r"^[a-f0-9]{40}$")
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
 
+COVERAGE_REASON_LABELS = {
+    "open_pr_snapshot_changed_or_duplicate":
+        "de open-PR-lijst veranderde tijdens de dubbele bronlezing of bevat dubbele PRs",
+    "open_pr_window_incomplete":
+        "niet alle open PRs vallen binnen het gelezen venster",
+    "pr_file_lists_incomplete":
+        "bestandslijsten van één of meer PRs zijn onvolledig",
+    "shared_file_pairs_truncated":
+        "meer gedeelde-bestandsparen dan de grafiek toont",
+    "path_scope_pairs_truncated":
+        "meer bestand/map-conflictparen dan de grafiek toont",
+    "path_scope_examples_truncated":
+        "padvoorbeelden van bestand/map-conflicten zijn afgekapt",
+    "portable_alias_pairs_truncated":
+        "meer mogelijke case-/Unicode-padaliassen dan getoond",
+    "portable_alias_examples_truncated":
+        "voorbeelden van case-/Unicode-padaliassen zijn afgekapt",
+    "github_source_unavailable":
+        "GitHub-bron is onbeschikbaar of ongeldig",
+    "portfolio_shared_file_pairs_display_truncated":
+        "portfolio-overzicht toont niet alle gedeelde-bestandsparen",
+    "portfolio_path_scope_pairs_display_truncated":
+        "portfolio-overzicht toont niet alle bestand/map-conflictparen",
+    "portfolio_path_alias_pairs_display_truncated":
+        "portfolio-overzicht toont niet alle padaliasparen",
+    "portfolio_collision_evidence_display_truncated":
+        "portfolio-overzicht heeft conflictinformatie afgekapt",
+    "open_pr_inventory_incomplete":
+        "open-PR-inventaris is onvolledig",
+    "path_scope_comparison_unavailable":
+        "bestand/map-historie kan niet worden vergeleken",
+    "portable_alias_comparison_unavailable":
+        "padaliashistorie kan niet worden vergeleken",
+    "open_pr_snapshot_unstable":
+        "bronmoment van de open-PR-lijst is niet stabiel",
+    "path_scope_preview_incomplete":
+        "bestand/map-padvoorvertoning is onvolledig",
+    "portable_alias_preview_incomplete":
+        "padaliasvoorvertoning is onvolledig",
+}
+
+
+def coverage_reason_text(reasons):
+    """Render bounded machine reason codes as consistent Dutch operator text."""
+    if type(reasons) is not list:
+        return "specifieke bronbeperking onbekend"
+    labels = []
+    for raw in reasons[:16]:
+        if type(raw) is not str or not 1 <= len(raw) <= 140:
+            continue
+        prefix, separator, code = raw.partition(":")
+        if separator and prefix in ("previous", "current"):
+            label = COVERAGE_REASON_LABELS.get(
+                code, "onbekende bronbeperking (" + code + ")")
+            when = "vorige" if prefix == "previous" else "huidige"
+            labels.append(when + " snapshot: " + label)
+        else:
+            labels.append(COVERAGE_REASON_LABELS.get(
+                raw, "onbekende bronbeperking (" + raw + ")"))
+    return "; ".join(dict.fromkeys(labels)) if labels else "specifieke bronbeperking onbekend"
+
 
 def unique(pairs):
     result = {}
