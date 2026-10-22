@@ -98,21 +98,22 @@ def _safe_issue(item, repository, *, observed_at):
         "P1" if isinstance(title, str) and
         re.match(r"^\s*P1\b(?:\s|[:\-])", title, re.IGNORECASE) else "NONE"
     )
-    # Priority rank puts explicitly labelled P0/P1 first. Title-only
-    # hints are lower-trust navigation signals; P2/P3 follow them.
-    # Conflicting labels cannot be silently overruled by title text.
+    # Explicit GitHub priority labels always govern this issue, including
+    # P2/P3. A contradictory title prefix must not move a labelled P2/P3
+    # into the P0/P1 navigation-hint groups. Title-only recall is allowed
+    # only when the entire label source is trustworthy and has no priority.
     if verified_label == "P0":
         rank = 0
     elif verified_label == "P1":
         rank = 1
-    elif not conflict and title_hint == "P0":
-        rank = 2
-    elif not conflict and title_hint == "P1":
-        rank = 3
     elif verified_label == "P2":
         rank = 4
     elif verified_label == "P3":
         rank = 5
+    elif labels_complete and not conflict and title_hint == "P0":
+        rank = 2
+    elif labels_complete and not conflict and title_hint == "P1":
+        rank = 3
     else:
         rank = 6
 
