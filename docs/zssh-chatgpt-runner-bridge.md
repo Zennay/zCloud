@@ -93,6 +93,13 @@ registration, labels, job assignment, service health, claim ownership, or restar
 permission. Partial/inaccessible metadata stays UNKNOWN. No process is stopped,
 no service is inspected/restarted, and no queue or lease is modified.
 
+
+The same object exposes `operator_summary`, a bounded Dutch/English-neutral sentence
+for an operator. It names only the observed category and the safe next step: preserve
+active work, reconcile with the authorized owner, and never infer takeover or restart
+authority from process presence. It is a convenience summary of the enum fields, not
+an independent source of evidence.
+
 ## Test & rollback
 
 `python3 -m unittest -v tests.test_zssh_chatgpt_runner_bridge`

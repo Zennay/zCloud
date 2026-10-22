@@ -170,6 +170,10 @@ def _empty_service_cgroup_observation(coverage: str) -> dict[str, object]:
         "observation_summary": "unknown_source_unavailable" if coverage == "unavailable" else "not_observed",
         "listener_summary": "unknown_source_unavailable" if coverage == "unavailable" else "not_observed",
         "worker_summary": "unknown_source_unavailable" if coverage == "unavailable" else "not_observed",
+        "operator_summary": (
+            "Runner process/cgroup source unavailable; do not infer service health or restart authority."
+            if coverage == "unavailable" else "Runner service-cgroup observation not yet completed."
+        ),
         "process_scan_partial": coverage != "unavailable",
         "listener_processes_observed": 0,
         "listener_in_expected_unit": 0,
@@ -347,6 +351,53 @@ def runner_worker_snapshot() -> dict:
             service_cgroup["observation_summary"] = "no_runner_processes_observed"
     else:
         service_cgroup["observation_summary"] = "unknown_" + str(service_cgroup["membership_coverage"])
+
+    if service_cgroup["membership_coverage"] != "complete_for_comm_matched_processes":
+        if service_cgroup["membership_coverage"] == "no_runner_processes_observed":
+            service_cgroup["operator_summary"] = (
+                "No Runner.Listener/Worker process-name match was observed in the bounded scan; "
+                "this does not prove GitHub registration or job assignment."
+            )
+        else:
+            service_cgroup["operator_summary"] = (
+                "Runner service-cgroup membership is unknown or partial; preserve active work "
+                "and do not restart or take over from this receipt."
+            )
+    elif service_cgroup["observation_summary"] == "listener_outside_expected_unit_comm_only":
+        service_cgroup["operator_summary"] = (
+            "A Runner.Listener process-name match was observed outside the expected service cgroup; "
+            "reconcile process/service identity with the authorized owner. No restart is authorized."
+        )
+    elif service_cgroup["observation_summary"] == "mixed_listener_unit_membership_comm_only":
+        service_cgroup["operator_summary"] = (
+            "Runner.Listener process-name matches have mixed service-cgroup membership; "
+            "preserve all processes and request owner reconciliation. No restart is authorized."
+        )
+    elif service_cgroup["observation_summary"] == "listener_in_expected_unit_comm_only":
+        service_cgroup["operator_summary"] = (
+            "A Runner.Listener process-name match is inside the expected service cgroup; "
+            "GitHub registration and job assignment remain unverified."
+        )
+    elif service_cgroup["observation_summary"] == "worker_outside_expected_unit_comm_only":
+        service_cgroup["operator_summary"] = (
+            "A Runner.Worker process-name match is outside the expected service cgroup; "
+            "preserve the active job and request owner reconciliation. No restart is authorized."
+        )
+    elif service_cgroup["observation_summary"] == "mixed_worker_unit_membership_comm_only":
+        service_cgroup["operator_summary"] = (
+            "Runner.Worker process-name matches have mixed service-cgroup membership; "
+            "preserve active jobs and request owner reconciliation. No restart is authorized."
+        )
+    elif service_cgroup["observation_summary"] == "worker_in_expected_unit_comm_only":
+        service_cgroup["operator_summary"] = (
+            "A Runner.Worker process-name match is inside the expected service cgroup; "
+            "this does not prove job ownership or that takeover is safe."
+        )
+    else:
+        service_cgroup["operator_summary"] = (
+            "No decisive listener/worker service-cgroup clue was observed; "
+            "runner registration and job assignment remain unverified."
+        )
 
     worker_band = _occupancy_band(len(worker_ages), partial)
     observed_band = _occupancy_band(
