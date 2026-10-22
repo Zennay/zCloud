@@ -2943,3 +2943,9 @@ De snapshot komt uit dezelfde reeds verzamelde bron en doet geen extra
 GitHub-verzoeken. Ontbrekende waarden blijven leeg/UNKNOWN volgens het
 broncontract. Stilte bewijst geen stilstand of vrije eigenaar; alle claim-,
 merge- en deployvelden blijven `NO`.
+
+
+De activiteitssignaalbron valideert ook iedere gekoppelde PR-URL vóór set-/mapgebruik.
+Onjuiste typen, niet-canonieke URL's, te lange identiteiten en dubbele refs leveren
+een begrensde bronfout op in plaats van een ongecontroleerde `TypeError` of een
+ambigu activiteitsoverzicht. Dit verandert geen claim- of releasebesluit.
