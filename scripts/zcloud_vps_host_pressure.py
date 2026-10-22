@@ -4,6 +4,7 @@ This module makes no process/queue/service changes and grants no release authori
 """
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
@@ -74,28 +75,39 @@ def host_pressure_snapshot() -> dict:
 
 
 def pressure_findings(sample: dict) -> list[dict[str, str]]:
-    """Conservative operator signals only; never infer release clearance."""
+    """Conservative independent pressure signals; never infer release clearance."""
     findings: list[dict[str, str]] = []
-    ratio = sample["load_per_cpu"]
-    if ratio is None:
+    if not isinstance(sample, dict):
+        return [{"code": "HOST_PRESSURE_INCOMPLETE", "severity": "warn",
+                 "detail": "Host-pressure snapshot is unavailable; no headroom or clearance assertion."}]
+
+    ratio = sample.get("load_per_cpu")
+    if (type(ratio) not in (int, float) or not math.isfinite(ratio)
+            or ratio < 0 or ratio > 1e6):
         findings.append({"code": "HOST_PRESSURE_INCOMPLETE", "severity": "warn",
                          "detail": "Unable to observe CPU demand; no host-headroom assertion."})
-        return findings
-    if ratio >= 2.0:
+    elif ratio >= 2.0:
         findings.append({"code": "HOST_CPU_SATURATED", "severity": "block",
                          "detail": "One-minute runnable/I/O demand at least 2x logical CPU count; preserve active jobs."})
     elif ratio >= 1.0:
         findings.append({"code": "HOST_CPU_BUSY", "severity": "warn",
                          "detail": "One-minute demand at least logical CPU count; inspect concurrent workloads before release."})
-    memory = sample["memory_full_avg10_pct"]
-    io = sample["io_full_avg10_pct"]
-    if memory is not None and memory >= 10:
-        findings.append({"code": "HOST_MEMORY_STALL", "severity": "block",
-                         "detail": "Memory PSI full stall >=10% over ten seconds; avoid overlapping heavy jobs."})
-    if io is not None and io >= 10:
-        findings.append({"code": "HOST_IO_STALL", "severity": "block",
-                         "detail": "I/O PSI full stall >=10% over ten seconds; avoid competing disk-heavy jobs."})
-    if sample["state"] == "partial":
+
+    # CPU/load availability is independent from kernel PSI. Do not return early:
+    # a missing load average must never hide a real memory or I/O stall.
+    for field, code, detail in (
+        ("memory_full_avg10_pct", "HOST_MEMORY_STALL",
+         "Memory PSI full stall >=10% over ten seconds; avoid overlapping heavy jobs."),
+        ("io_full_avg10_pct", "HOST_IO_STALL",
+         "I/O PSI full stall >=10% over ten seconds; avoid competing disk-heavy jobs."),
+    ):
+        value = sample.get(field)
+        if (type(value) in (int, float) and math.isfinite(value)
+                and 10 <= value <= 100):
+            findings.append({"code": code, "severity": "block", "detail": detail})
+
+    if (sample.get("state") in ("partial", "unknown")
+            and not any(item["code"] == "HOST_PRESSURE_INCOMPLETE" for item in findings)):
         findings.append({"code": "HOST_PRESSURE_INCOMPLETE", "severity": "warn",
-                         "detail": "Kernel PSI coverage incomplete; missing counters are not zero pressure."})
+                         "detail": "Kernel PSI or CPU-demand coverage incomplete; missing counters are not zero pressure."})
     return findings
