@@ -391,6 +391,10 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "observed_actionable_check_runs_hidden": gate["observed_actionable_check_runs_hidden"],
                 "observed_checks_pending": gate["observed_checks_pending"],
                 "observed_checks_unknown": gate["observed_checks_unknown"],
+                "queued_check_attention_30m_observed":
+                    gate["queued_check_attention_30m_observed"],
+                "queued_check_age_unknown_observed":
+                    gate["queued_check_age_unknown_observed"],
                 "observed_checks_not_successful": gate["observed_checks_not_successful"],
                 "observed_legacy_pending": gate["legacy_status_pending_observed"],
                 "legacy_contexts_observed": gate["legacy_status_contexts_observed"],
@@ -728,6 +732,8 @@ def current_gate_lines(board, markdown=False):
             " · draft " + str(gate["draft_at_read"]) +
             " · gevraagde reviewwijzigingen " +
             str(gate["observed_exact_head_changes_requested"]) +
+            " · queued checks ≥30m (onderzoek, geen outage bewezen) " +
+            str(gate["queued_check_attention_30m_observed"]) +
             " · onafhankelijke approvals gezien " +
             str(gate["observed_independent_exact_head_approvals"]) +
             " · review aangevraagd bij " +
@@ -821,6 +827,10 @@ def merge_first_attention(board):
                 blockers.append({
                     "name": check["name"], "state": check["state"],
                     "url": check["url"], "kind": "check_run",
+                    "queued_age_seconds_observed":
+                        check.get("queued_age_seconds_observed"),
+                    "queued_attention_30m":
+                        check.get("queued_attention_30m", False),
                 })
             for status in gate["observed_actionable_legacy_contexts"]:
                 blockers.append({
@@ -877,6 +887,10 @@ def merge_first_attention(board):
                 "teams": gate["pending_team_review_requests_observed"],
                 "not_an_approval": True,
             } if current else None),
+            "queued_check_attention_30m_observed": (
+                gate["queued_check_attention_30m_observed"] if current else None),
+            "queued_check_age_unknown_observed": (
+                gate["queued_check_age_unknown_observed"] if current else None),
             "non_green_jobs": blockers[:24],
             "non_green_jobs_hidden": max(0, len(blockers) - 24) +
                 (gate["observed_actionable_check_runs_hidden"] +
@@ -1273,6 +1287,8 @@ def as_html(board):
                     " · draft " + str(gate["draft_at_read"]) +
                     " · reviewwijzigingen " +
                     str(gate["observed_exact_head_changes_requested"]) +
+                    " · queued checks ≥30m (geen outage-bewijs) " +
+                    str(gate["queued_check_attention_30m_observed"]) +
                     " · onafhankelijke approvals gezien " +
                     str(gate["observed_independent_exact_head_approvals"]) +
                     " · review aangevraagd bij " +
