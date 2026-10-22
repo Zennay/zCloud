@@ -835,6 +835,7 @@ def _blocked_queue_summary(source, source_coverage):
         "sample_truncated": True, "invalid_group_rows": None,
         "work_items": [], "work_items_coverage": "not_observed",
         "work_items_truncated": True, "invalid_work_rows": None,
+        "worker_slot_source_covered": False,
         "claim_ownership_verified": False, "queue_write_authorized": False,
         "automatic_retry_authorized": False,
     }
@@ -897,6 +898,9 @@ def _blocked_queue_summary(source, source_coverage):
         samples = []
     truncated = raw.get("work_items_truncated", True)
     invalid_work = raw.get("invalid_work_rows")
+    slot_source_covered = raw.get("worker_slot_source_covered", False)
+    if type(slot_source_covered) is not bool:
+        raise ValueError("untrusted worker-slot coverage flag")
     if (work_coverage not in ("not_observed", "complete", "partial")
             or type(samples) is not list or len(samples) > 24
             or type(truncated) is not bool
@@ -932,6 +936,14 @@ def _blocked_queue_summary(source, source_coverage):
                 or type(attempts) is not int or not 0 <= attempts <= 10**9
                 or type(row.get("eligible_observed")) is not bool
                 or type(row.get("claim_fields_present_observed")) is not bool
+                or type(row.get("worker_slot_source_covered")) is not bool
+                or row["worker_slot_source_covered"] != slot_source_covered
+                or (slot_source_covered and
+                    type(row.get("worker_slot_present_observed")) is not bool)
+                or (not slot_source_covered and
+                    row.get("worker_slot_present_observed") is not None)
+                or (row.get("worker_slot_present_observed") is True
+                    and row["claim_fields_present_observed"] is not True)
                 or row.get("current_owner_verified") is not False
                 or row.get("resume_authorized") is not False
                 or row.get("automatic_retry_authorized") is not False):
@@ -942,6 +954,8 @@ def _blocked_queue_summary(source, source_coverage):
             "title": title, "claim_attempts": attempts,
             "eligible_observed": row["eligible_observed"],
             "claim_fields_present_observed": row["claim_fields_present_observed"],
+            "worker_slot_present_observed": row["worker_slot_present_observed"],
+            "worker_slot_source_covered": slot_source_covered,
             "current_owner_verified": False, "resume_authorized": False,
             "automatic_retry_authorized": False,
             "human_next_step": (
@@ -963,6 +977,7 @@ def _blocked_queue_summary(source, source_coverage):
             "stale" if source_coverage == "stale" else work_coverage),
         "work_items_truncated": truncated or source_coverage == "stale",
         "invalid_work_rows": invalid_work,
+        "worker_slot_source_covered": slot_source_covered,
         "sample_truncated": raw["sample_truncated"] or source_coverage == "stale",
         "invalid_group_rows": raw["invalid_group_rows"],
         "claim_ownership_verified": False, "queue_write_authorized": False,
@@ -983,6 +998,7 @@ def queue_pressure_summary(source, now):
                     "sample_truncated": True, "invalid_group_rows": None,
                     "work_items": [], "work_items_coverage": "not_observed",
                     "work_items_truncated": True, "invalid_work_rows": None,
+                    "worker_slot_source_covered": False,
                     "claim_ownership_verified": False, "queue_write_authorized": False,
                     "automatic_retry_authorized": False,
                 }}
