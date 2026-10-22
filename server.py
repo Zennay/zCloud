@@ -2583,6 +2583,7 @@ def _portfolio_queue_row(row):
     item['metadata']=metadata
     item.pop('metadata_json',None)
     item['execution_lane']=metadata.get('execution_lane') if isinstance(metadata.get('execution_lane'),dict) else None
+    item['execution_route']=choose_execution_route(item)
     return item
 
 def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
