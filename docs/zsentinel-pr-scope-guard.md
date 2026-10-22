@@ -3430,3 +3430,25 @@ nieuwe receipt krijgen `UNKNOWN` in plaats van een verzonnen `NO`. Dit is
 alleen een observatie van bronklokken, geen bewijs van stilstand of vrije claim.
 
 De observatieklok zelf wordt ook begrensd: een `as_of`-waarde meer dan 120 seconden in de toekomst levert een expliciete `ValueError` op. Anders zou een foutieve toekomstige referentie zowel issue- als PR-leeftijden kunstmatig verhogen en actuele productissues ten onrechte als stil presenteren. De toegestane twee minuten vangen kleine klokscheefstand op; er wordt geen toekomstig tijdstip gebruikt om stilte te berekenen.
+
+## 22 oktober · portfolio- en historische-scopewaarschuwingen benoemen de echte dekkingsreden
+
+De grafiek en het portfolio-board hebben verschillende zichtbare uitvoerlimieten.
+Een bron kan alle geselecteerde PR's en paden hebben ingelezen terwijl de
+portfolio-weergave slechts de eerste 80 overlap-, bestand/map- of padaliasparen
+laat zien. Die tweede limiet telt nu mee als afzonderlijke
+`source_coverage_reasons`-categorie (`portfolio_*_display_truncated`).
+JSON, tekst, Markdown, offline HTML en de private CSV tonen dezelfde reden.
+Een onvolledig board wordt niet stilzwijgend als volledige operatorbron
+gepresenteerd.
+
+De historische snapshotvergelijker geeft nu ook concrete reden-codes waarom
+bestand/map- en padaliaswijzigingen niet volledig vergelijkbaar zijn: onder
+meer onbeschikbare GitHub-bron, instabiele snapshots, onvolledige PR-inventaris
+en een onvolledige padvoorvertoning. De reden wordt opgenomen in de JSON-
+uitkomst en in tekst/Markdown en offline HTML weergegeven. Geobserveerde
+steekproefverschillen blijven uitsluitend steekproefwaarnemingen; een reden-code
+verleent geen claim-, merge- of releaseautorisatie.
+
+Deze uitbreiding gebruikt uitsluitend reeds verzamelde bronvelden en introduceert
+geen extra GitHub-polling, CI-dispatch, queue-/claimwijziging of releaseactie.
