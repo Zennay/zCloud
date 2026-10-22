@@ -209,22 +209,46 @@ def issue_local_claim_evidence(project, local_claims):
     }
 
 
+def issue_activity_follow_up(issue):
+    """Suggest evidence-led follow-up without assigning or releasing ownership."""
+    band = issue.get("activity_age_band", "UNKNOWN")
+    if band == "STALE":
+        return ("Review the existing issue/PR timeline and exact-head gates; age "
+                "alone does not prove owner inactivity or an unresolved fix.")
+    if band == "AGING":
+        return ("Inspect the current existing PR and its gates before deciding; "
+                "activity age is only a tie-breaker.")
+    if band == "CLOCK_SKEW_OR_FUTURE":
+        return ("Reconcile the source timestamp before interpreting freshness; "
+                "do not infer owner progress.")
+    if band == "RECENT":
+        return ("Use current issue/PR evidence; recent activity is not proof of a fix.")
+    return ("Refresh the canonical issue source; missing or invalid timestamps "
+            "must remain UNKNOWN.")
+
+
 def issue_activity_evidence(source_issue, observed_at):
     """Report GitHub issue last-activity age without implying owner progress."""
     parsed = parse_utc_timestamp(source_issue.get("updated_at_utc"))
     if parsed is None:
-        return {"last_activity_at_utc": None, "activity_age_seconds": None,
-                "activity_age_band": "UNKNOWN"}
+        unknown = {"last_activity_at_utc": None, "activity_age_seconds": None,
+                   "activity_age_band": "UNKNOWN"}
+        unknown["activity_follow_up"] = issue_activity_follow_up(unknown)
+        return unknown
     normalized = parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
     delta = (observed_at - parsed).total_seconds()
     if delta < -120:
-        return {"last_activity_at_utc": normalized, "activity_age_seconds": None,
-                "activity_age_band": "CLOCK_SKEW_OR_FUTURE"}
+        anomalous = {"last_activity_at_utc": normalized, "activity_age_seconds": None,
+                     "activity_age_band": "CLOCK_SKEW_OR_FUTURE"}
+        anomalous["activity_follow_up"] = issue_activity_follow_up(anomalous)
+        return anomalous
     age = max(0, int(delta))
     band = ("RECENT" if age < 86400 else
             "AGING" if age < 7 * 86400 else "STALE")
-    return {"last_activity_at_utc": normalized, "activity_age_seconds": age,
-            "activity_age_band": band}
+    evidence = {"last_activity_at_utc": normalized, "activity_age_seconds": age,
+                "activity_age_band": band}
+    evidence["activity_follow_up"] = issue_activity_follow_up(evidence)
+    return evidence
 
 
 def issue_activity_rank(issue):
@@ -515,7 +539,8 @@ def render_issue_inbox(inbox):
             esc(issue["candidate_prs_omitted"]) +
             local_summary +
             "<br>Laatste issue-activiteit: " + issue_activity_badge(issue) +
-            "<br><small>Activiteit is geen bewijs van eigenaar- of oplossingsvoortgang.</small>"
+            "<br><small>Activiteit is geen bewijs van eigenaar- of oplossingsvoortgang. "
+            + esc(issue.get("activity_follow_up") or issue_activity_follow_up(issue)) + "</small>"
             "<br>Volgende stap: " + esc(issue["operator_action"]) +
             ("<br>Lees bestaande PRs: <code>" +
              esc(issue["read_only_issue_command"]) + "</code>"
@@ -1142,7 +1167,7 @@ def render_issue_sections(unmatched, partial, observed_at=None):
                      + esc(issue["priority"]) + " · " + esc(issue["repo"]) +
                      "#" + esc(issue["number"]) + " · " + esc(issue["title"]) + "</a> "
                      + issue_activity_badge(activity) +
-                     " <small>activiteit is geen bewijs van eigenaarschap of oplossing.</small></li>")
+                     " <small>" + esc(activity["activity_follow_up"]) + "</small></li>")
         note += "</ul></details>"
     return note + "</section>"
 
@@ -1220,7 +1245,8 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
                 + targeted["title"]) + "</a></p>"
             "<p><strong>Laatste issue-activiteit:</strong> " +
             issue_activity_badge(target_activity) +
-            "<br><small>Activiteit is geen bewijs van eigenaar- of oplossingsvoortgang.</small></p>"
+            "<br><small>" + esc(target_activity["activity_follow_up"]) +
+            "</small></p>"
             "<p>Expliciete PR-body- of titelverwijzingen zijn alleen hints, "
             "geen ownership-, fix- of mergebewijs. Bij UNKNOWN mag de eerdere "
             "P0/P1-prioriteit niet als actueel bewezen gelden.</p>"
