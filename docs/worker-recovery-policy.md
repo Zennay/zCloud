@@ -493,6 +493,24 @@ python3 scripts/zsentinel_portfolio_issue_desk.py \\
   --output "$HOME/.local/share/zsentinel/portfolio-$(date -u +%Y%m%dT%H%M%S)-$.html"
 ```
 
+The **canonical** `zsentinel_recovery_policy.py` entrypoint now
+also exposes this exact multi-project product workflow without requiring
+the standalone script name:
+
+```sh
+umask 077
+python3 scripts/zsentinel_recovery_policy.py \\
+  --portfolio-repo Zennay/zCloud --portfolio-repo Zennay/Supa \\
+  --portfolio-view explicit-critical --format html \\
+  --output "$HOME/.local/share/zsentinel/portfolio-shared-$(date -u +%Y%m%dT%H%M%S)-$.html"
+```
+
+The entrypoint delegates to the same bounded adapter and private writer;
+portfolio mode refuses mixed case-, issue-, single-repository, merge-,
+batch- or retry-oriented modes, and rejects unsupported output formats
+before a remote source read. It does **not** reinterpret the source report
+as a policy approval or automatically follow the offered live-PR commands.
+
 The same command supports `--format markdown|json|csv` and `--view all`
 (the default), `explicit-critical` (only **label-backed** P0/P1),
 or `critical-and-title-hints` (clearly separates unverified title hints
