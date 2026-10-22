@@ -302,7 +302,11 @@ def issue_activity_badge(issue):
     }
     style = styles.get(band, styles["UNKNOWN"])
     label = html.escape(issue_activity_label(issue), quote=True)
-    return ("<span role='status' aria-label='Laatste GitHub-issueactiviteit; "
+    action_code = html.escape(issue_activity_follow_up_code(issue), quote=True)
+    activity_band = html.escape(band, quote=True)
+    return ("<span class='zsentinel-issue-activity' data-activity-band='" +
+            activity_band + "' data-follow-up-code='" + action_code +
+            "' role='status' aria-label='Laatste GitHub-issueactiviteit; "
             "geen bewijs van eigenaarschap of oplossingsvoortgang' "
             "style='display:inline-block;margin:.15rem 0;padding:.18rem .48rem;"
             "border-radius:999px;font-size:.85em;font-weight:600;" + style + "'>"
