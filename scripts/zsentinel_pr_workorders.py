@@ -1465,7 +1465,7 @@ def render_html(bundle):
             for member in group["members"]
         ]
         external_links = [
-            "<a href=\\"" + e(url) + "\\" target=\\"_blank\\" rel=\\"noopener noreferrer\\">" +
+            "<a href=\"" + e(url) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" +
             e(url.rsplit("/", 1)[-1]) + "</a>"
             for url in group["external_peer_pr_urls_to_recheck"]
         ]
