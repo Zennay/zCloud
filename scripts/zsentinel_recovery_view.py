@@ -1347,6 +1347,39 @@ def html_view(decision, registry=None):
         if queue_coverage == "current" else
         "Bron ontbreekt, is onvolledig of verouderd: geen betrouwbare actuele wachtrijclaim."
     )
+    retry_contract = queue.get("native_retry_contract_boundary")
+    required_retry_semantics = [
+        "explicit_failure_disposition", "durable_retry_not_before_backoff",
+        "finite_retry_budget", "claim_identity_continuity",
+    ]
+    if (type(retry_contract) is not dict
+            or retry_contract.get("schema") != "zsentinel-native-retry-contract-boundary-v1"
+            or retry_contract.get("status") != "not_verified_by_read_only_queue_view"
+            or retry_contract.get("source_issue_url") != "https://github.com/Zennay/zCloud/issues/677"
+            or retry_contract.get("source_issue_link_is_navigation_only") is not True
+            or retry_contract.get("attempts_are_claims_not_failures") is not True
+            or retry_contract.get("required_native_semantics") != required_retry_semantics
+            or retry_contract.get("owner_route") != "authorized_queue_writer_owner_after_serialized_write_window"
+            or retry_contract.get("automatic_retry_authorized") is not False
+            or retry_contract.get("queue_write_authorized") is not False
+            or retry_contract.get("historical_attempt_reset_authorized") is not False):
+        raise ValueError("untrusted native retry-contract boundary")
+    retry_contract_panel = (
+        '<section aria-label="Native queue retry-contract boundary">'
+        '<h2>Native queue-retrycontract · NIET GEVERIFIEERD</h2>'
+        '<p>Deze read-only wachtrijweergave bewijst niet of het native retrycontract '
+        'al is geïmplementeerd. Claimpogingen zijn geen mislukte uitvoeringen.</p>'
+        '<ul><li>Expliciete failure-dispositie: FAILED_RETRYABLE / NEEDS_AI / FAILED_FINAL</li>'
+        '<li>Duurzame retry-not-before/backoffgrens</li>'
+        '<li>Begrensd retrybudget met expliciete uitputting</li>'
+        '<li>Correlatie-/claimidentiteit behouden over retries</li></ul>'
+        '<p>Vervolg: bevoegde queue-writereigenaar stemt dit af binnen het bestaande '
+        'serialized control-plane write window. Historische attempt-counters niet resetten.</p>'
+        '<p><a href="https://github.com/Zennay/zCloud/issues/677" rel="noreferrer">'
+        'Issue #677 · navigatie, niet live geverifieerd</a></p>'
+        '<p class="muted">Geen automatische retry, queue-write, claimvrijgave of dispatch.</p>'
+        '</section>'
+    )
     capacity = decision.get("vps_resource_admission")
     if (not isinstance(capacity, dict)
             or capacity.get("state") not in
@@ -1965,6 +1998,7 @@ def html_view(decision, registry=None):
             + section(queue_cards if queue_coverage == "current" else [],
                       "Geen actuele individuele wachtrijincidenten. Claimherstel blijft handmatig geautoriseerd.")
             + '</section>'
+            + retry_contract_panel
             + blocked_queue_panel_html
             + worker_panel
             + branch_panel
