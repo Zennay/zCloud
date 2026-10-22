@@ -48,7 +48,7 @@ EVIDENCE_FIELDS = frozenset({
     "escalation_reason", "permission_required", "irreversible_risk",
     "safe_routes_exhausted", "capacity", "exact_head",
     "required_ci", "independent_review", "branch_protection",
-    "pr_state", "pr_target_branch", "pr_base_sync", "pr_mergeable", "owner_authorized",
+    "pr_state", "pr_target_branch", "pr_base_sync", "pr_history_sync", "pr_mergeable", "owner_authorized",
     "root_cause_confirmed", "unresolved_review_threads", "merged_main",
     "post_merge_health", "release_approval", "runtime_owner_authorized",
     "runner_state", "running_jobs", "human_approval",
@@ -64,6 +64,7 @@ ENUMS = {
     "pr_state": {"open", "draft", "closed", "unknown"},
     "pr_target_branch": {"main", "other", "unknown"},
     "pr_base_sync": {"current", "stale", "unknown"},
+    "pr_history_sync": {"ahead", "diverged", "behind", "identical", "unknown"},
     "pr_mergeable": {"yes", "no", "unknown"},
     "merged_main": {"verified", "no", "unknown"},
     "post_merge_health": {"healthy", "failed", "unknown"},
@@ -333,6 +334,10 @@ def recommended_next_step_code(action, blockers):
         return "reconcile_pr_base_with_current_main"
     if "pr_base_sync_unknown" in codes:
         return "refresh_exact_pr_state_and_base"
+    if codes & {"pr_history_diverged", "pr_history_behind", "pr_history_no_unique_commits"}:
+        return "reconcile_pr_history_with_current_base"
+    if "pr_history_sync_unknown" in codes:
+        return "refresh_exact_pr_history"
     if codes & {"pr_not_open", "pr_not_main", "pr_mergeability_not_confirmed"}:
         return "refresh_exact_pr_state_and_base"
     if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
@@ -411,6 +416,10 @@ def recommended_next_step(action, blockers, required_evidence):
         return "Reconcile the PR base with the current main commit without force-push or bypass, then refresh the exact HEAD, required CI, review and branch-protection evidence before reconsidering merge."
     if "pr_base_sync_unknown" in codes:
         return "Fetch the current default-branch HEAD and the PR base SHA from the same live GitHub source window; until they match, keep merge on HOLD."
+    if codes & {"pr_history_diverged", "pr_history_behind", "pr_history_no_unique_commits"}:
+        return "Reconcile the existing PR history with its exact current base through the branch owner, without force-push or gate bypass. Then refresh the exact comparison, head, required CI, review and branch-protection evidence."
+    if "pr_history_sync_unknown" in codes:
+        return "Refresh the exact base/head compare from stable GitHub SHAs; until ahead/behind history is known, keep merge on HOLD."
     if codes & {"pr_not_open", "pr_not_main", "pr_mergeability_not_confirmed"}:
         return "Read the current GitHub PR state, default-branch target and mergeability for the exact HEAD; closed, draft, non-main or unknown PRs cannot be proposed for normal merge."
     if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
@@ -834,6 +843,14 @@ def evaluate(data, max_age_minutes, *, now=None):
                 "pr_base_stale" if base_sync == "stale" else "pr_base_sync_unknown",
                 "The PR base SHA must match the current default-branch HEAD; stale or unknown base history is a merge HOLD.",
                 ("evidence.pr_base_sync",))
+        history_sync = value("pr_history_sync")
+        require(history_sync == "ahead",
+                ("pr_history_diverged" if history_sync == "diverged" else
+                 "pr_history_behind" if history_sync == "behind" else
+                 "pr_history_no_unique_commits" if history_sync == "identical" else
+                 "pr_history_sync_unknown"),
+                "The exact PR head must be ahead of its current base with no commits missing from the head; diverged, behind, identical or unknown history is a merge HOLD.",
+                ("evidence.pr_history_sync",))
         require(value("pr_mergeable") == "yes",
                 "pr_mergeability_not_confirmed",
                 "Exact-head GitHub mergeability must be affirmative, not stale or unknown.",
@@ -2122,6 +2139,7 @@ def merge_review_template_from_case(case_report, *, project, issue_number, pr_nu
 MERGE_REVIEW_CHECKS = (
     ("active_claim", "No active worker or owner claim remains (none)."),
     ("pr_base_sync", "The PR base SHA matches the current default-branch HEAD (current)."),
+    ("pr_history_sync", "The exact PR head is ahead of its base and behind-by is zero (ahead)."),
     ("exact_head", "The reviewed commit is the current exact PR head (verified)."),
     ("required_ci", "Every mandatory check is green on that exact head (green)."),
     ("independent_review", "An independent reviewer has approved (approved)."),
