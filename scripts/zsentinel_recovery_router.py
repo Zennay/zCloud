@@ -936,8 +936,8 @@ def _blocked_queue_summary(source, source_coverage):
                 or type(attempts) is not int or not 0 <= attempts <= 10**9
                 or type(row.get("eligible_observed")) is not bool
                 or type(row.get("claim_fields_present_observed")) is not bool
-                or type(row.get("worker_slot_source_covered")) is not bool
-                or row["worker_slot_source_covered"] != slot_source_covered
+                or type(row.get("worker_slot_source_covered", False)) is not bool
+                or row.get("worker_slot_source_covered", False) != slot_source_covered
                 or (slot_source_covered and
                     type(row.get("worker_slot_present_observed")) is not bool)
                 or (not slot_source_covered and
@@ -954,7 +954,7 @@ def _blocked_queue_summary(source, source_coverage):
             "title": title, "claim_attempts": attempts,
             "eligible_observed": row["eligible_observed"],
             "claim_fields_present_observed": row["claim_fields_present_observed"],
-            "worker_slot_present_observed": row["worker_slot_present_observed"],
+            "worker_slot_present_observed": row.get("worker_slot_present_observed"),
             "worker_slot_source_covered": slot_source_covered,
             "current_owner_verified": False, "resume_authorized": False,
             "automatic_retry_authorized": False,
