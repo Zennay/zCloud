@@ -1213,6 +1213,7 @@ function projectBlockedQueuePanel(project){
     .sort((a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9));
   if(!rows.length)return '';
   const observed=blockedQueueTime(blockedQueueObservedAt);
+  const freshness=claimChurnSnapshotFreshness();
   const cards=rows.slice(0,6).map(item=>{
     const blocker=String(item.blocker||item.evidence||'No dependency evidence recorded').trim();
     const source=blockedQueueSourceUrl(item.source_url);
@@ -1246,6 +1247,7 @@ function projectBlockedQueuePanel(project){
     +'<div class="blocked-queue-list">'+cards+'</div>'
     +'<div class="blocked-queue-state"><span>'
     +(observed?'Queue observed '+esc(observed):'Queue observation time unknown')
+    +(freshness.state==='stale_observation'?' · STALE SNAPSHOT ('+Math.ceil(freshness.age_seconds/60)+' min; not live)':'')
     +' · '+Math.min(rows.length,6)+' of '+rows.length+' loaded parked tasks</span>'
     +'<button type="button" data-blocked-jump-project="'+esc(project.id)+'">Open project holds in portfolio workbench</button>'
     +'</div></section>';
