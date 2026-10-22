@@ -1834,6 +1834,12 @@ def _claim_metadata_json(metadata):
     return raw
 
 def task_claims(project_id=None, *, prune_expired=True):
+    """List live claims; prune_expired=True also deletes expired rows.
+
+    Read-only HTTP observations must pass prune_expired=False. That mode
+    filters expired leases from the result without mutating the claim table;
+    authorized scheduler/control paths retain explicit cleanup ownership.
+    """
     ts=now()
     with connect() as c:
         if prune_expired:
