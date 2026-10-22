@@ -1182,13 +1182,64 @@ def runtime_source_panel(decision):
                         "Live opgevraagde Notion werkstatus · geen bestands- of leaseclaim"))
         lease_summary = ""
         if current_source:
+            project_counts = notion.get("active_project_counts")
+            verifying_counts = notion.get("verifying_project_counts")
+            project_clocks = notion.get("active_project_claim_window_counts")
+            running_clocks = notion.get("active_project_in_progress_claim_clock_rechecks")
+            if (type(project_counts) is not dict or len(project_counts) > 50
+                    or type(verifying_counts) is not dict
+                    or type(project_clocks) is not dict
+                    or type(running_clocks) is not dict
+                    or set(project_clocks) != set(project_counts)
+                    or set(running_clocks) != set(project_counts)):
+                raise ValueError("untrusted Notion private incident desk project coverage")
+            aggregate_reconciled = {}
+            for project, buckets in project_clocks.items():
+                if (type(project) is not str or not 1 <= len(project) <= 80
+                        or type(buckets) is not dict or len(buckets) > 7
+                        or any(k not in lease_terms or type(n) is not int or n < 1
+                               for k, n in buckets.items())
+                        or sum(buckets.values()) != project_counts[project]
+                        or type(running_clocks[project]) is not int
+                        or not 0 <= running_clocks[project] <=
+                           project_counts[project] - verifying_counts.get(project, 0)
+                        or running_clocks[project] > sum(
+                            n for k, n in buckets.items()
+                            if k != "time_window_present_not_owner_verified")):
+                    raise ValueError("invalid Notion private incident desk owner source")
+                for key, n in buckets.items():
+                    aggregate_reconciled[key] = aggregate_reconciled.get(key, 0) + n
+            if aggregate_reconciled != aggregate:
+                raise ValueError("Notion incident desk project/portfolio lease totals disagree")
             suspicious = sum(n for key, n in aggregate.items()
                              if key != "time_window_present_not_owner_verified")
+            running_anomalies = sum(running_clocks.values())
+            important = sorted(
+                project_clocks, key=lambda project: (
+                    -running_clocks[project],
+                    -sum(n for k, n in project_clocks[project].items()
+                         if k != "time_window_present_not_owner_verified"),
+                    project))
+            work = []
+            for project in important[:8]:
+                suspect = sum(n for k, n in project_clocks[project].items()
+                              if k != "time_window_present_not_owner_verified")
+                if suspect == 0:
+                    continue
+                work.append('<li>' + _operator_visible_label(project) +
+                            ' · ' + str(suspect) + ' onbekende claimklokken, ' +
+                            str(running_clocks[project]) +
+                            ' bij Claimed/Running; eigenaarcontrole, GEEN retry.</li>')
             lease_summary = (
                 '<p><strong>Claimklokken:</strong> ' + str(suspicious) +
-                ' onvolledig/verlopen/toekomstig/inconsistent; ' +
+                ' onvolledig/verlopen/toekomstig/inconsistent, waarvan ' +
+                str(running_anomalies) +
+                ' op dezelfde Claimed/Running-regels; ' +
                 str(aggregate.get("time_window_present_not_owner_verified", 0)) +
-                ' met tijdvenster maar géén bevoegdheidsbewijs.</p>')
+                ' met tijdvenster maar géén bevoegdheidsbewijs.</p>' +
+                ('<ul>' + ''.join(work) + '</ul>' if work else '') +
+                ('<p>Per-project bron slechts gedeeltelijk zichtbaar; '
+                 'overige eigenaaracties ONBEKEND.</p>' if len(important) > 8 else ''))
         panels.append('<details><summary>Notion statusbron · ' +
                       str(notion["active_count"]) + ' waargenomen werkregels' +
                       (' · samples afgekapt' if notion["items_truncated"] else '') +
