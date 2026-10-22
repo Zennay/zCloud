@@ -3,8 +3,9 @@
 ## 22 oktober · Projectgeschiedenis als CSV en volledig privé ZIP-pakket
 
 De bestaande [private bundle index](../scripts/zsentinel_private_bundle_index.py)
-kan nu ook **CSV** en een **ZIP met HTML, JSON, CSV en SHA-256-manifest**
-maken van dezelfde 2–24 eerder aangemaakte, geverifieerde privébundels.
+kan nu ook **CSV** en een **ZIP met HTML, JSON, twee CSV-bestanden
+en SHA-256-manifest** maken van dezelfde 2–24 eerder aangemaakte,
+geverifieerde privébundels.
 Een operator kan veranderingen in P0/P1-steekproeven, PR-kandidaten,
 waargenomen queue-druk, leaseproblemen, claimcontext en aanbevelingen
 in een spreadsheet volgen, zonder handmatig snapshots te vergelijken.
@@ -25,8 +26,8 @@ spreadsheetprogramma's en formuleveilige velden. De regelsoorten
 verschillen tussen *steekproeven*. Ontbrekende queuebronnen blijven leeg
 (onbekend) en worden niet als nul geteld. Historische verschillen bewijzen
 geen issue-closure, PR-merge of vrijgekomen workerclaim. De ZIP bevat
-`history.html`, `history.json`, `history.csv`, `README.txt` en
-`manifest.json` met per bestandslid SHA-256 plus de originele
+`history.html`, `history.json`, `history.csv`,
+`history-prs.csv`, `README.txt` en `manifest.json` met per bestandslid SHA-256 plus de originele
 board-SHA-256's. Links vanuit HTML naar originele privébundels werken
 alleen als die originele bestanden naast de uitgepakte HTML blijven staan;
 de ZIP kopieert die originele bundels niet.
@@ -40,10 +41,37 @@ python3 scripts/zsentinel_verify_history_package.py \
   --source "$HOME/zsentinel-private/recovery-history-handoff.index.zip"
 ```
 
+Om dezelfde gevalideerde bronbestanden zonder handmatig uitpakken te openen,
+kan de operator ze **create-only** publiceren in een *bestaande*
+eigen 0700-directory, bijvoorbeeld naast de eerder opgeslagen originele
+private operatorbundels:
+
+```bash
+python3 scripts/zsentinel_verify_history_package.py \
+  --source "$HOME/zsentinel-private/recovery-history-handoff.index.zip" \
+  --extract-to "$HOME/zsentinel-private"
+```
+
+De uitpakactie maakt zes private 0600-companions met dezelfde veilige
+naamstam, zoals `recovery-history-handoff.index.html` en
+`recovery-history-handoff.index.prs.csv`. Geen bestaande bestandspaden
+worden overschreven; alle leden zijn vooraf geverifieerd en komen uit
+dezelfde in-geheugen ZIP-bytes. Bij falen worden uitsluitend nog identieke,
+door deze actie aangemaakte bestanden opgeruimd. Een oudere v1 ZIP zonder
+`history-prs.csv` blijft inspecteerbaar en kan vijf companions opleveren.
+
+**Merge-first geschiedenis:** `history-prs.csv` bevat de maximaal vijf
+per bronmoment bewaarde, reeds gekoppelde PR-gatewaarnemingen plus
+`newly_sampled`, `no_longer_sampled` en `observed_change` records
+tussen opeenvolgende originele snapshots. Waargenomen exacte HEAD,
+checkstatussen en approvals zijn geen huidige GitHub-verificatie of
+mergebevoegdheid. Ook de PR-CSV wordt volledig uit de opgeslagen JSON
+gereconstrueerd voordat een v2-pakket als intern consistent wordt erkend.
+
 Deze functie inspecteert uitsluitend een niet-gesymlinkte 0600 ZIP in
 een eigen privémappad: vaste ledennamen, bestandstypen, groottelimieten,
-SHA-256 voor elk lid, oorspronkelijke board-identiteiten en volledige
-projectregels in CSV tegenover JSON. Geslaagde checksumcontrole bewijst
+SHA-256 voor elk lid, oorspronkelijke board-identiteiten, en zowel de
+volledige project-CSV als de PR-gate-CSV opnieuw opgebouwd uit JSON. Geslaagde checksumcontrole bewijst
 **interne pakketintegriteit, geen cryptografische afzenderidentiteit** en
 geen nieuwe actuele issue-, claim-, CI-, review- of merge-status.
 
