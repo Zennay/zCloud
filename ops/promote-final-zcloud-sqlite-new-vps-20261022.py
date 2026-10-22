@@ -215,7 +215,7 @@ def write_receipt(directory: Path, payload: dict, uid: int) -> Path:
 
 
 def promote(uid: int, incoming: dict, existing: dict | None,
-            digest: str, fence: dict) -> dict:
+            digest: str, fence: dict, target_digest: str | None) -> dict:
     ensure_backup_directory(uid)
     lock_fd = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     stage = None
@@ -229,6 +229,10 @@ def promote(uid: int, incoming: dict, existing: dict | None,
         no_sidecars(TARGET)
         if file_hash(SOURCE) != digest:
             refuse("final transferred SQLite changed since preflight")
+        if TARGET.exists() != (target_digest is not None):
+            refuse("target presence changed after preflight")
+        if target_digest and file_hash(TARGET) != target_digest:
+            refuse("target data changed since operator reconciliation")
         stage = unique_file(ROOT, ".history-final-stage-")
         sqlite_copy(SOURCE, stage)
         if db_facts(stage)["counts"] != incoming["counts"]:
@@ -240,6 +244,8 @@ def promote(uid: int, incoming: dict, existing: dict | None,
             sqlite_copy(TARGET, rollback)
             if db_facts(rollback)["counts"] != existing["counts"]:
                 refuse("current target changed while backing up; refuse promotion")
+            if file_hash(TARGET) != target_digest:
+                refuse("current target changed during backup; refuse promotion")
             os.chown(rollback, uid, pwd.getpwnam("ubuntu").pw_gid)
             os.chmod(rollback, 0o600)
         os.chown(stage, uid, pwd.getpwnam("ubuntu").pw_gid)
@@ -257,6 +263,7 @@ def promote(uid: int, incoming: dict, existing: dict | None,
             "status": "promoted_not_activated", "host": NEW_HOST,
             "new_history_db": str(TARGET), "incoming_sha256": digest,
             "incoming": incoming, "previous": existing,
+        "target_sha256": target_digest,
             "rollback_backup": str(rollback) if rollback else None,
             "old_fenced_at_utc": fence["fenced_at_utc"],
             "promoted_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -275,6 +282,8 @@ def main() -> int:
                         help="private old-host operator JSON receipt, transferred securely")
     parser.add_argument("--apply", action="store_true",
                         help="atomically promote only after manual writer/claim fence")
+    parser.add_argument("--expected-target-sha256",
+                        help="required for an existing target; must match reviewed preflight")
     args = parser.parse_args()
     uid = require_host()
     real_directory(HOME, uid)
@@ -293,7 +302,13 @@ def main() -> int:
     fence = read_receipt(args.fence_receipt, uid, digest)
     incoming = db_facts(SOURCE)
     existing = db_facts(TARGET) if TARGET.exists() else None
+    target_digest = file_hash(TARGET) if existing is not None else None
     check_no_regression(incoming, existing)
+    if args.apply:
+        if existing is not None and args.expected_target_sha256 != target_digest:
+            refuse("provide the exact reviewed --expected-target-sha256 before replacing existing data")
+        if existing is None and args.expected_target_sha256:
+            refuse("unexpected target digest for an absent database")
     result = {
         "status": "ready_to_promote" if not args.apply else "applying",
         "host": NEW_HOST, "source_sha256": digest,
@@ -302,7 +317,7 @@ def main() -> int:
         "requires": "no unmanaged old/new writers and no live queue claims",
     }
     if args.apply:
-        result = promote(uid, incoming, existing, digest, fence)
+        result = promote(uid, incoming, existing, digest, fence, target_digest)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
