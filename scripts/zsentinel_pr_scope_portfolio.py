@@ -19,7 +19,8 @@ import stat
 import sys
 
 from zsentinel_pr_scope_guard import (
-    ROOT, coverage_reason_text, csv_formula_inert, observe_conflict_graph, overlap_relation,
+    ROOT, coverage_reason_text, coverage_recovery_steps, csv_formula_inert,
+    observe_conflict_graph, overlap_relation,
     overlaps, registry,
 )
 
@@ -61,6 +62,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10, pages=1):
                 "source_status": "unavailable",
                 "sample_complete": False,
                 "source_coverage_reasons": ["github_source_unavailable"],
+                "source_recovery_steps": coverage_recovery_steps(["github_source_unavailable"]),
                 "open_pr_snapshot_stable": False,
                 "sampled_open_pr_heads": [],
                 "shown_collision_pairs": [],
@@ -127,6 +129,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10, pages=1):
                              if complete else "partial_open_pr_sample",
             "sample_complete": complete,
             "source_coverage_reasons": coverage_reasons,
+            "source_recovery_steps": coverage_recovery_steps(coverage_reasons),
             "open_pr_snapshot_stable": source["open_pr_snapshot_stable"],
             "sampled_open_pr_heads": source["inspected_pr_heads"],
             "source_sample_complete": source["pr_file_scope_sample_complete"],
@@ -612,8 +615,9 @@ def summary_lines(view):
     reasons = view.get("source_coverage_reasons", [])
     if reasons:
         result.append("Bronbeperkingen: " + coverage_reason_text(reasons))
-        result.append("Eigenaaractie: ontbrekende PR-/bestandsdekking inspecteren; "
-                      "geen claim, merge of vrijgave uit dit overzicht afleiden.")
+        for action in view.get("source_recovery_steps", []):
+            result.append("Eigenaarroute: " + action)
+        result.append("Geen claim, merge of vrijgave uit dit overzicht afleiden.")
     for cluster in view["linked_pr_collision_clusters"]:
         result.append(
             "  GROEP " + str(cluster["component_number"]) + " · " +
@@ -1241,6 +1245,11 @@ def as_markdown(board):
                 "ja" if view["open_pr_window_complete"] else "NEE/ONBEKEND") + ".",
             "",
         ])
+        if view.get("source_recovery_steps"):
+            lines.extend(["### Bronherstel via bestaande PRs (handmatig)", ""])
+            for action in view["source_recovery_steps"]:
+                lines.append("- " + action)
+            lines.append("")
         lines.extend(["### Samenhangende PR-bestandsgroepen", "",
                       "Verbonden door identieke bestanden; geen claim- of mergevrijgave."])
         for cluster in view["linked_pr_collision_clusters"]:
@@ -1402,6 +1411,12 @@ def as_html(board):
                      " · laatste pagina en dubbele bronlezing: " +
                      ("volledig" if view["open_pr_window_complete"] else "ONVOLLEDIG/ONBEKEND") +
                      " (geen eigenaar-/leasebewijs).</p>")
+        recovery_html = (
+            "<section aria-label='Bronherstel'><h3>Wat de eigenaar nu kan doen</h3><ul>" +
+            "".join("<li>" + escape(action) + "</li>"
+                    for action in view.get("source_recovery_steps", [])) +
+            "</ul><p>Alleen leesacties; geen claim-, CI- of mergevrijgave.</p></section>"
+            if view.get("source_recovery_steps") else "")
         unpaired = view["unpaired_open_prs_not_claim_verified"]
         duplicates = []
         for group in view["shown_duplicate_issue_groups"]:
@@ -1436,7 +1451,7 @@ def as_html(board):
         cards.append(
             "<section><h2>" + escape(view["project"]) + "</h2>"
             "<p><strong>" + escape(state) +
-            "</strong> · " + escape(view["repository"]) + "</p>" + page_note + source_note + coverage_note +
+            "</strong> · " + escape(view["repository"]) + "</p>" + page_note + source_note + coverage_note + recovery_html +
             "<h3>Samenhangende PR-bestandsgroepen</h3>"
             "<p>Alleen geobserveerde bestanden, geen vrij eigenaarschap "
             "of mergevolgorde.</p><ol>" +
@@ -1690,6 +1705,9 @@ def as_private_csv(board):
                  "Incomplete source evidence: " +
                  coverage_reason_text(view.get("source_coverage_reasons", [])) +
                  "; claims, review and release rules UNKNOWN."))
+        for action in view.get("source_recovery_steps", [])[:5]:
+            emit("source_recovery_action", project, repo, source_status,
+                 **summary, operator_notice=action)
         if source_status == "unavailable":
             continue
         for group in view["linked_pr_collision_clusters"]:
