@@ -841,8 +841,9 @@ def main():
     try:
         if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
             raise ValueError("disk scan requires both root and private HTML output")
-        if args.archive_target is not None and args.disk_hotspots_root is None:
-            raise ValueError("--archive-target requires private disk scan")
+        if (args.archive_target is not None and args.disk_hotspots_root is None
+                and not args.observe_vps_capacity):
+            raise ValueError("--archive-target requires --observe-vps-capacity or a private disk scan")
         if args.disk_sqlite and args.disk_hotspots_root is None:
             raise ValueError("--disk-sqlite requires private disk scan with root/output")
         if args.disk_inspect_unlinked_files and args.disk_hotspots_root is None:
