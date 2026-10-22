@@ -164,6 +164,13 @@
 .blocked-queue-links a{color:#d5b7fa;text-decoration:underline;text-underline-offset:3px;font-size:12px;font-weight:600}
 .blocked-queue-links a:focus-visible{outline:2px solid #d4b7ff;outline-offset:3px;border-radius:2px}
 
+.blocked-queue-actions{display:flex;align-items:stretch;flex:0 0 180px;flex-direction:column;gap:8px}
+.blocked-queue-item .blocked-queue-actions button{flex:0 0 auto;width:100%;min-height:38px;text-align:center}
+.blocked-queue-item .blocked-queue-actions button:disabled{opacity:.55;cursor:not-allowed}
+.blocked-queue-item .blocked-queue-actions button:focus-visible{outline:2px solid #ead0ff;outline-offset:3px}
+.blocked-queue-item .blocked-queue-actions button.blocked-queue-close{border-color:#95644f;background:#30221d;color:#ffcfb7}
+.blocked-queue-item .blocked-queue-actions button.blocked-queue-close:hover:not(:disabled){border-color:#df9982;background:#4a3028;color:#fff}
+@media(max-width:760px){.blocked-queue-actions{width:100%;flex:1 1 auto;display:grid;grid-template-columns:1fr;gap:9px}.blocked-queue-item .blocked-queue-actions button{min-height:44px}}
 .blocked-queue-item button{flex:0 0 auto;border:1px solid #5a5273;background:#252033;color:#e0d5ff;border-radius:8px;padding:8px 11px;font-size:11px}
 .blocked-queue-state{margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .blocked-queue-state button{border:1px solid #66577e;background:#292238;color:#e3d8fb;border-radius:8px;padding:8px 11px;font-size:12px;min-height:38px}
