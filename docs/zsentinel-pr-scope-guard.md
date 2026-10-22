@@ -28,8 +28,10 @@ mag worden genomen. Ongeldige repo/checkidentiteiten worden geweigerd.
 
 De live broncollector onderscheidt nu zonder ruwe HTTP- of exceptionstrings:
 
-- ontbreken/weigeren van GitHub-toegang (401/403);
-- GitHub-rate limiting (429);
+- GitHub-401 (authenticatie) of 403 (rechten, beleidsblokkade óf
+  secundaire limieten: niet zonder bronbewijs één oorzaak aannemen);
+- GitHub-rate limiting bij 429, of bij 403 met door GitHub geleverde
+  `x-ratelimit-remaining: 0` / `retry-after` header;
 - niet-gevonden PR of API-bron (404/410);
 - netwerk-/GitHub-serverprobleem;
 - aantoonbaar wisselende HEAD/basis, conceptstatus of reviewaanvraag
