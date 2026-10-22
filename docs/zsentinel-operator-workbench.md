@@ -170,7 +170,10 @@ PR URLs; peer HEADs must be full hexadecimal commit SHAs; freshness and
 partial-coverage flags must be booleans; and peer/path-conflict lists have hard
 count limits. A stale/missing observation cannot be upgraded into a clean
 group by altering the saved group JSON. HTML external-peer navigation is
-therefore sourced only from the recomputed validated groups.
+therefore sourced only from the recomputed validated groups. The CSV column
+`external_peer_prs_to_recheck` now carries the bounded canonical URL list, and
+`external_peer_prs_to_recheck_count` carries its separate count (rather than
+placing a count under a URL-list field name).
 
 This is an offline artifact-integrity improvement. It does not poll GitHub,
 verify live owner claims or branch protection, run checks, change queue state,
