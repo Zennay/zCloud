@@ -2735,3 +2735,32 @@ This is still only a bounded observation of open PR paths. The counts do not
 prove Git merge conflicts, active owners, claim leases, review approval or safe
 integration order. A partial/stale sample cannot clear a path for editing or
 merging.
+
+
+## 22 oktober · veilige lokale herinvoer in de bestaande merge-first werkbak
+
+De bestaande operatorroutes voor (1) een geselecteerd privé reviewmanifest,
+(2) een historische privé PR-snapshot en (3) de canonieke projectregistratie
+openen hun bron voortaan **nonblocking en zonder symlink-follow**. De
+bestandstypecontrole gebeurt al vóór `open` met `lstat`: een FIFO, socket,
+directory of device wordt geweigerd in plaats van een operatorconsole te laten
+hangen aan een onbegrensde read. Een ontbrekende veilige `O_NOFOLLOW`/
+`O_NONBLOCK` capability leidt ook tot expliciete weigering.
+
+Een geopende invoer wordt aan hetzelfde reguliere bestand gebonden met
+device/inode, grootte en nanoseconde-wijzigingstijd vóór en na één begrensde
+read. Het werkelijk gelezen aantal bytes moet exact overeenkomen met de
+gepinde grootte. De historische snapshot blijft verplicht eigendom van de
+operator, alleen voor die gebruiker toegankelijk en maximaal 2 MiB; een
+reviewmanifest blijft maximaal 1 MiB en de canonieke registratie maximaal
+512 KiB. Alle bestaande JSON-schema-, eigenaar-, HEAD- en mergegatechecks
+blijven daarna bestaan.
+
+Praktisch gevolg: een verkeerd gekozen pipe of tijdens import vervangen
+bestand kan niet meer onzichtbaar de merge-first beoordeling blokkeren of
+een gemengde historische bron als één vaste waarneming presenteren. Een
+geweigerd bestand moet door de operator opnieuw als **regulier lokaal
+bestand** worden aangeboden; er wordt niet automatisch een andere bron,
+branch of eigen claim gekozen. Dit verandert geen GitHub-, Notion-,
+queue-, CI-, VPS-, runner- of deploymentstatus; **broncontrole is nooit
+merge- of leaseautorisatie**.
