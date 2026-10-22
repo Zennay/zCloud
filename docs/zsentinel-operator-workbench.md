@@ -135,9 +135,14 @@ geen nieuwe actuele issue-, claim-, CI-, review- of merge-status.
 Voor daadwerkelijke productoverdracht kan dezelfde bron ook een **compacte
 Markdown-eigenaarbriefing** genereren, zonder raw queue-ID's of verborgen
 workerprompts. De eigenaar ziet de bewaarde P0/P1-prioriteiten,
-oorspronkelijke queue-leases en claimcontext, historisch vervolgadvies,
-waargenomen bestaande PR-HEADs en de verplichte **actuele**
-eigenaar-/CI-/reviewstappen. Output is alleen in een bestaande eigen
+oorspronkelijke queue-leases en claimcontext, canonieke issue-URL's,
+historisch vervolgadvies, waargenomen bestaande PR-HEADs en de verplichte
+**actuele** eigenaar-/CI-/reviewstappen. De briefing bevat daarnaast
+een projectgericht wijzigingsoverzicht tussen de laatste twee originele
+bundels: nieuwe/niet opnieuw waargenomen issues en PR-kandidaten,
+prioriteitsverhogingen en gewijzigde queue-/claimcontext.
+**Afwezig in een latere sample is nooit bewezen opgelost of gemerged.**
+Output is alleen in een bestaande eigen
 0700-map, create-only met rechten 0600; bronnotities verschijnen nooit op
 stdout.
 
