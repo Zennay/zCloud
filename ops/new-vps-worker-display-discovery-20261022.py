@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -21,14 +22,30 @@ LIMIT = 8
 
 
 def cmd(argv: list[str], timeout: int = 4) -> tuple[int, str]:
+    """Bound the whole descendant process group; don't block on inherited pipes."""
     try:
-        p = subprocess.run(
-            argv, check=False, stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, timeout=timeout,
+        p = subprocess.Popen(
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, start_new_session=True,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError:
+        return (127, "")
+    try:
+        stdout, _ = p.communicate(timeout=timeout)
+        return (p.returncode, stdout.strip())
+    except subprocess.TimeoutExpired:
+        # systemctl --user -M can leave children holding stdout after a timed-out
+        # parent; killing only the parent can make subprocess.run() hang forever.
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            p.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            if p.stdout:
+                p.stdout.close()
         return (124, "")
-    return p.returncode, p.stdout.strip()
 
 
 def proc_display_auth(uid: int) -> tuple[set[str], set[str]]:
