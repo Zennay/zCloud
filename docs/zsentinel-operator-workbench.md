@@ -31,6 +31,22 @@ board-SHA-256's. Links vanuit HTML naar originele privébundels werken
 alleen als die originele bestanden naast de uitgepakte HTML blijven staan;
 de ZIP kopieert die originele bundels niet.
 
+Bij overdracht kan de ontvanger de pakketchecksums en de
+bronbinding van de CSV aan de JSON ook **zelf offline inspecteren** met
+[de nieuwe verificatie-CLI](../scripts/zsentinel_verify_history_package.py):
+
+```bash
+python3 scripts/zsentinel_verify_history_package.py \
+  --source "$HOME/zsentinel-private/recovery-history-handoff.index.zip"
+```
+
+Deze functie inspecteert uitsluitend een niet-gesymlinkte 0600 ZIP in
+een eigen privémappad: vaste ledennamen, bestandstypen, groottelimieten,
+SHA-256 voor elk lid, oorspronkelijke board-identiteiten en volledige
+projectregels in CSV tegenover JSON. Geslaagde checksumcontrole bewijst
+**interne pakketintegriteit, geen cryptografische afzenderidentiteit** en
+geen nieuwe actuele issue-, claim-, CI-, review- of merge-status.
+
 De bestaande oorspronkelijke bundels worden volledig gecontroleerd vóór
 de export. Output wordt alleen create-only opgeslagen in de bestaande
 eigen 0700-map; de ZIP krijgt mode 0600. Geen live GitHub/Notion-query,
