@@ -132,6 +132,15 @@ def observe_discovered_job(token=None):
             "selected_one_source_bound_job_partial_window",
             "no_actionable_job_in_sampled_windows", "degraded_unavailable"):
         status = "degraded_unavailable"
+    # Optional secondary links never invalidate the primary exact-job receipt.
+    from zsentinel_runner_cross_source import validate_additional_jobs
+    try:
+        row["additional_job_links"] = validate_additional_jobs(
+            row.get("additional_job_links", []))
+        row["additional_links_coverage"] = "bounded_observed"
+    except (ValueError, TypeError, KeyError, AttributeError):
+        row["additional_job_links"] = []
+        row["additional_links_coverage"] = "degraded_untrusted_receipt"
     if "cloud" in receipts:
         pin = receipts["cloud"]
         report = observe_exact_job(
@@ -205,7 +214,13 @@ def html_document(report):
             if type(row) is not dict or row.get("project_id") != "cloud":
                 raise ValueError("untrusted discovery project")
             from zsentinel_runner_cross_source import additional_jobs_html
-            extra_html = additional_jobs_html(row.get("additional_job_links", []))
+            if row.get("additional_links_coverage") == "degraded_untrusted_receipt":
+                extra_html = (
+                    '<section><h2>Aanvullende GitHub-jobs</h2>'
+                    '<p>ONBEKEND · Ongeldige begrensde joblinks zijn niet weergegeven.</p>'
+                    '<p>Geen retry-, merge- of runnerautorisatie.</p></section>')
+            else:
+                extra_html = additional_jobs_html(row.get("additional_job_links", []))
     return (
         '<!doctype html><html lang="nl"><meta charset="utf-8">'
         '<meta name="referrer" content="no-referrer">'
