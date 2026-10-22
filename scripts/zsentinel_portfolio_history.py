@@ -314,11 +314,22 @@ def _operator_workorders(delta):
             "deployment_verified": False,
             "action_executed": False,
         })
-    # Real observed current P0/P1 first, then historical urgency hints.
+    # Current label-verified P0/P1 before historical P0/P1, followed
+    # by unverified title hints, lower priorities, and source UNKNOWN.
+    # This ordering never upgrades a historical rank into live severity.
+    def priority_bucket(row):
+        rank = row["priority_rank_hint"]
+        historical = row["priority_source"] == "HISTORICAL_SAMPLE_ONLY"
+        if rank in (0, 1):
+            return (2 if historical else 0) + rank
+        if rank in (2, 3):
+            return (6 if historical else 4) + (rank - 2)
+        if rank in (4, 5):
+            return (10 if historical else 8) + (rank - 4)
+        return 13 if historical else 12
+
     work.sort(key=lambda row: (
-        row["priority_rank_hint"],
-        row["priority_source"] == "HISTORICAL_SAMPLE_ONLY",
-        row["repository"], row["issue_number"],
+        priority_bucket(row), row["repository"], row["issue_number"],
     ))
     # Keep the advisory operator desk concise and bounded. The historical
     # delta still retains its independent 100-card window and omitted totals.
