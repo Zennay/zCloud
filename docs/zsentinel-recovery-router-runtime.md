@@ -3823,7 +3823,7 @@ mutation, workflow dispatch, runner restart, or deploy is performed.
 
 ## 22 oktober · actieve eigenaar zichtbaar als afzonderlijke OWNER-HOLD
 
-Een anderszins geschikte wachtrijtaak met `active_owner=true` verdwijnt niet langer stilzwijgend uit de operatorweergave. De router emitteert `routing_owner_holds` als apart, begrensd JSON-contract met brondekking, telling, maximaal acht voorbeelden en expliciet `claim_authorized=false` en `dispatch_authorized=false`.
+Een wachtrijtaak die door de bron expliciet `active_owner=true` is gemarkeerd en de basisvoorwaarden voor bron/status/scope doorstaat, blijft zichtbaar in de operatorweergave in plaats van stilzwijgend te verdwijnen. De router emitteert `routing_owner_holds` als apart, begrensd JSON-contract met brondekking, telling, maximaal acht voorbeelden en expliciet `claim_authorized=false` en `dispatch_authorized=false`. Dit eigenaar-HOLD kan naast andere afhankelijkheids- of gateblokkades bestaan; het beweert niet dat de taak verder volledig routeerbaar is.
 
 - De tekstuitvoer, offline recovery-cockpit en centrale private runtime-handoff tonen een afzonderlijke **OWNER-HOLD**. De handoff bevat een expliciete coverage/count-samenvatting; een voorbeeld bevat alleen de bestaande taak-ID, project-ID, prioriteit en reden, nooit bestandspaden of claimtokens.
 - De melding betekent uitsluitend dat de taakbron een actieve eigenaar rapporteert. Dit is op zichzelf **geen bewijs van een actuele lease of toestemming tot overname**.
