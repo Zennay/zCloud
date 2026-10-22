@@ -17,23 +17,40 @@ from zsentinel_pr_live_read import (
 )
 
 
-def _gate_cards(head, checks, reviews, stable):
+def _repository_default_branch(payload, full_name):
+    """Read one canonical repository identity and its current default branch."""
+    if not isinstance(payload, dict) or payload.get("full_name") != full_name:
+        raise GitHubReadError("repository metadata identity is inconsistent")
+    branch = payload.get("default_branch")
+    if (not isinstance(branch, str) or not branch or len(branch) > 255
+            or branch != branch.strip()
+            or any(not char.isprintable() or char.isspace() for char in branch)):
+        raise GitHubReadError("repository default branch is missing or invalid")
+    return branch
+
+
+def _gate_cards(head, checks, reviews, stable, default_branch=None, default_branch_stable=False):
     """Operator workorders; read-only samples never satisfy release gates."""
     state = ("OBSERVED" if stable else "UNKNOWN")
     sample = ("UNKNOWN" if checks is None else
               "OBSERVED_FAILURE" if checks["sampled_blocking_checks"] else
               "OBSERVED_PENDING" if checks["sampled_pending_checks"] else
               "SAMPLE_ONLY")
+    branch_gate = (
+        "UNKNOWN" if not default_branch_stable or not default_branch else
+        "OBSERVED" if stable and head and
+        head["observed_state"] == "open" and
+        not head["observed_draft"] and
+        not head["reported_merged"] and
+        head["target_branch"] == default_branch else "HOLD"
+    )
     return [
         {"gate": "exact_head", "state": state,
          "next": "Reconfirm current exact SHA at the time of authorized merge."},
-        {"gate": "pr_open_non_draft_on_main",
-         "state": ("OBSERVED" if stable and head and
-                   head["observed_state"] == "open" and
-                   not head["observed_draft"] and
-                   not head["reported_merged"] and
-                   head["target_branch"] == "main" else "HOLD"),
-         "next": "Check the actual default branch and intended PR release target."},
+        {"gate": "pr_open_non_draft_on_default_branch", "state": branch_gate,
+         "next": "Target the observed repository default branch (" +
+                 (default_branch or "UNKNOWN") +
+                 ") and independently confirm intended release scope."},
         {"gate": "head_check_sample", "state": sample,
          "next": "Resolve visible failures and pending jobs; independently determine mandatory checks."},
         {"gate": "all_required_ci", "state": "UNKNOWN",
@@ -45,13 +62,13 @@ def _gate_cards(head, checks, reviews, stable):
          "next": "Confirm protection without bypass, force or disabled checks."},
         {"gate": "claim_and_owner", "state": "UNKNOWN",
          "next": "Check active worker/Notion claims and get explicit owner authorization."},
-        {"gate": "main_merge_and_live", "state": "NOT_EXECUTED",
-         "next": "After authorized merge verify merged=true, exact main SHA and separate live deploy."},
+        {"gate": "default_branch_merge_and_live", "state": "NOT_EXECUTED",
+         "next": "After authorized merge verify merged=true, exact current default-branch SHA and separate live deploy."},
     ]
 
 
 def observe_exact_pr(pr_url, *, token=None):
-    """Four GETs maximum; re-read the PR to pin secondary hints to one HEAD."""
+    """At most six bounded GETs; pin PR state and default branch to stable reads."""
     match = REPO_URL.fullmatch(pr_url) if isinstance(pr_url, str) else None
     if match is None or len(pr_url) > 250:
         raise GitHubReadError("provide one canonical Zennay GitHub pull-request URL")
@@ -66,6 +83,18 @@ def observe_exact_pr(pr_url, *, token=None):
     reviews = None
     missing = []
     attempted = 1
+    default_branch = None
+    default_branch_stable = False
+    try:
+        attempted += 1
+        default_branch = _repository_default_branch(
+            _limited_json(api, token=token), full_name,
+        )
+    except GitHubReadError as exc:
+        missing.append("repository metadata: " + str(exc))
+        if "authentication, quota or provider admission" in str(exc):
+            return _unknown_pr(pr_url, first, missing, attempted)
+
     try:
         attempted += 1
         checks = _checks_summary(_limited_json(
@@ -87,6 +116,28 @@ def observe_exact_pr(pr_url, *, token=None):
         if "authentication, quota or provider admission" in str(exc):
             return _unknown_pr(pr_url, first, missing, attempted)
 
+    if default_branch is not None:
+        try:
+            attempted += 1
+            second_default_branch = _repository_default_branch(
+                _limited_json(api, token=token), full_name,
+            )
+            if second_default_branch != default_branch:
+                return _unknown_pr(
+                    pr_url, first,
+                    ["repository default branch changed during observation; "
+                     "no stable release target was established"], attempted,
+                    default_branch=default_branch,
+                )
+            default_branch_stable = True
+        except GitHubReadError as exc:
+            missing.append("repository default-branch re-read: " + str(exc))
+            if "authentication, quota or provider admission" in str(exc):
+                return _unknown_pr(
+                    pr_url, first, missing, attempted,
+                    default_branch=default_branch,
+                )
+
     attempted += 1
     second = _pr_summary(_limited_json(path, token=token), full_name, number)
     stable_keys = (
@@ -105,9 +156,12 @@ def observe_exact_pr(pr_url, *, token=None):
     elif first["observed_state"] != "open":
         next_step = "Find an existing open replacement PR; the closed PR is not a merge candidate."
         status = "CLOSED_UNMERGED"
-    elif first["target_branch"] != "main":
-        next_step = "Confirm the intended default branch and release owner before integrating."
-        status = "BASE_NOT_MAIN"
+    elif default_branch is None or not default_branch_stable:
+        next_step = "Restore repository-metadata visibility and confirm the current default branch before merge review."
+        status = "DEFAULT_BRANCH_SOURCE_UNKNOWN"
+    elif first["target_branch"] != default_branch:
+        next_step = "This PR targets " + first["target_branch"] + ", not the observed default branch " + default_branch + "; confirm intended release scope."
+        status = "BASE_NOT_DEFAULT"
     elif first["observed_draft"]:
         next_step = "Finish the existing draft with its owner; keep independent review and CI gates."
         status = "DRAFT"
@@ -129,9 +183,17 @@ def observe_exact_pr(pr_url, *, token=None):
         "url": pr_url, "observed_at_utc": utc(),
         "observed": first, "status": status,
         "source_stable_between_reads": True,
+        "repository_default_branch": default_branch,
+        "repository_default_branch_stable": default_branch_stable,
+        "target_is_default_branch": (
+            first["target_branch"] == default_branch
+            if default_branch is not None and default_branch_stable else None
+        ),
         "secondary_source_gaps": missing, "sampled_check_runs": checks,
         "sampled_reviews": reviews, "get_attempts": attempted,
-        "operator_gates": _gate_cards(first, checks, reviews, True),
+        "operator_gates": _gate_cards(
+            first, checks, reviews, True, default_branch, default_branch_stable,
+        ),
         "next_human_step": next_step,
         "required_ci_verified": False, "independent_review_verified": False,
         "branch_protection_verified": False, "active_claim_verified": False,
@@ -140,16 +202,22 @@ def observe_exact_pr(pr_url, *, token=None):
     }
 
 
-def _unknown_pr(pr_url, first, gaps, attempted):
+def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None):
     """Do not retain a supposedly stable PR HEAD after provider uncertainty."""
     return {
         "schema_version": 1, "policy": "zsentinel-exact-pr-preflight-v1",
         "url": pr_url, "observed_at_utc": utc(),
         "observed": None, "unconfirmed_first_head": first["exact_head_sha"],
         "status": "SOURCE_UNKNOWN", "source_stable_between_reads": False,
+        "repository_default_branch": None,
+        "unconfirmed_default_branch": default_branch,
+        "repository_default_branch_stable": False,
+        "target_is_default_branch": None,
         "secondary_source_gaps": gaps, "sampled_check_runs": None,
         "sampled_reviews": None, "get_attempts": attempted,
-        "operator_gates": _gate_cards(None, None, None, False),
+        "operator_gates": _gate_cards(
+            None, None, None, False, default_branch, False,
+        ),
         "next_human_step": "Recover source admission and re-read the exact PR; do not merge.",
         "required_ci_verified": False, "independent_review_verified": False,
         "branch_protection_verified": False, "active_claim_verified": False,
@@ -172,6 +240,8 @@ def as_markdown(report):
         (observed.get("exact_head_sha") or "UNKNOWN"),
         "- GitHub merged hint: " + str(observed.get("reported_merged", "UNKNOWN")),
         "- Base branch: " + str(observed.get("target_branch", "UNKNOWN")),
+        "- Repository default branch: " + str(report.get("repository_default_branch") or "UNKNOWN"),
+        "- Base is current default: " + str(report.get("target_is_default_branch", "UNKNOWN")),
         "- Sampled checks: " + str(checks.get("sampled_count", "UNKNOWN")) +
         " of " + str(checks.get("provider_total_count", "UNKNOWN")),
         "- Sampled review states: " +
@@ -213,6 +283,8 @@ def as_html(report):
         ("Observed at", report["observed_at_utc"]),
         ("Stable exact HEAD", observed.get("exact_head_sha", "UNKNOWN")),
         ("Base", observed.get("target_branch", "UNKNOWN")),
+        ("Repository default branch", report.get("repository_default_branch") or "UNKNOWN"),
+        ("Base is current default", report.get("target_is_default_branch", "UNKNOWN")),
         ("Reported merged", observed.get("reported_merged", "UNKNOWN")),
         ("Check sample", str(checks.get("sampled_count", "UNKNOWN")) + " / " +
          str(checks.get("provider_total_count", "UNKNOWN"))),
