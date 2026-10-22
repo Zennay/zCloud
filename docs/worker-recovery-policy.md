@@ -1105,3 +1105,18 @@ python3 scripts/zsentinel_recovery_policy.py \
 The direct `scripts/zsentinel_portfolio_issue_desk.py` command offers the equivalent `--snapshot-output` option. The two private outputs are produced from the **same** already bounded GitHub reads, with the raw source snapshot explicitly excluding any nested history comparison. JSON/HTML/Markdown/CSV are valid report formats; only `.json` is accepted for the paired snapshot. Both filenames must be distinct, be newly created (no overwrites), belong to safe existing owner-controlled directories, be size-bounded to 128 KiB, and be mode 0600. Output bytes and bounds are checked before creating either file. When the second artifact fails after the first snapshot was written (for example, because the report destination already exists), only the first snapshot may remain: this is preserved source evidence, **not** a successful paired report or a completed operational handoff. The command returns a failure and should be retried with new unused report filenames after resolving the path issue.
 
 This snapshot is **not a new GitHub permission or independent claim attestation**: it records what the bounded live issue reader observed, still limited to 2–6 explicit repositories and sample windows. Any source errors remain UNKNOWN; no issue disappearance is interpreted as closure. No runner, worker, notifier, queue writer, retry, CI workflow or production deploy is invoked.
+
+### Offline incident/history briefing during a GitHub access outage
+
+When two private source snapshots already exist, generate a human-readable comparison **without making any GitHub request at all**:
+
+```sh
+python3 scripts/zsentinel_portfolio_history.py \
+  --previous /private/path/snapshot-22.json \
+  --current /private/path/snapshot-23.json \
+  --format html --output /private/path/offline-issue-changes.html
+```
+
+The offline compare command also supports JSON, Markdown and a compact CSV schema, with the same create-only private output requirements. Both snapshots are read under the regular-file/no-symlink bounded admission contract. A comparison requires identical canonical project names/order and display view, a strictly later snapshot, and validated issue links, ranks and UTC times. The result explicitly distinguishes newly observed and re-ranked source cards, old cards absent from the new bounded window, >=6-hour unchanged P0/P1 GitHub update metadata, and source-coverage transitions.
+
+**Not a live audit:** an offline output states clearly that it is based only on operator-supplied observations. It cannot establish current issue closure, current worker state, rights to merge or deploy, or present GitHub availability. A source-access failure means the next live GitHub read must be checked by an authorized owner, rather than interpreting the last successful report as current.
