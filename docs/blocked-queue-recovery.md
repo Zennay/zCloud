@@ -49,6 +49,24 @@ Only an authenticated, authorized operator may use the existing `portfolio_queue
 
 ## Claim-safe periodic queue audit
 
+The queue audit also checks the **separate** `task_claims` identity
+for every otherwise-retirable queued row. An unassigned `worker_slot`
+does not prove a task is unowned. The audit now preserves a candidate
+when `claimed_at` or `claim_expires` remains present, the separate
+claim record exists (including expired-but-not-reconciled entries),
+the claim source is unavailable, or its project identity is ambiguous.
+Those entries appear in the existing `protected_active` response list;
+this is a safety hold, **not** proof that the worker is currently active.
+
+When the source is clear, the SQL `UPDATE` still uses a fail-closed
+`NOT EXISTS` predicate on the claim table alongside the queue status,
+eligibility, worker slot and lease fields. If an allocator or separate
+claim writer changes ownership between initial inspection and UPDATE,
+the atomic predicate prevents the task from being dropped.
+The audit neither releases those claims nor prunes the claim table.
+
+
+
 The periodic queue audit may prune **only** `queued`, `eligible=1`, unassigned tasks that are no longer executable (for example, a newly human-gated project). Its UPDATE checks status, eligibility and `worker_slot IS NULL` again at write time. If a worker claims a task between selection and update, the audit cannot turn that active task into `dropped` or release its slot.
 
 Already `claimed`, `running` or `verifying` tasks are **never silently dropped by audit**, even when their classification changes. Existing owners must finish or park them using normal claim-aware transitions. Both `portfolio_queue_audit(refill=False)` and the refilling mode return `protected_active` with the queue IDs they intentionally preserved. No claims, queue state or running workers are mutated simply by generating the report; the only mutation is the previously supported pruning of truly unassigned non-executable queued tasks. Refill continues to obey project modes and normal capacity/lease gates.
