@@ -115,10 +115,54 @@ def fresh_events(keys: list[tuple[str, int]], since: datetime) -> list[str]:
     return present
 
 
+def _ensure_private_backup_directory() -> Path:
+    home = Path("/home/ubuntu")
+    try:
+        home_info = home.lstat()
+    except OSError as exc:
+        raise Refused(f"ubuntu home unavailable ({type(exc).__name__})") from None
+    if not stat.S_ISDIR(home_info.st_mode) or home_info.st_uid != os.getuid():
+        raise Refused("backup home must be a real ubuntu-owned directory")
+
+    dest = home
+    for part in (".local", "state", "zcloud", "fleet-backups"):
+        dest = dest / part
+        try:
+            info = dest.lstat()
+        except FileNotFoundError:
+            try:
+                dest.mkdir(mode=0o700, exist_ok=False)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                raise Refused(f"backup directory unavailable ({type(exc).__name__})") from None
+            try:
+                info = dest.lstat()
+            except OSError as exc:
+                raise Refused(f"backup directory unavailable ({type(exc).__name__})") from None
+        except OSError as exc:
+            raise Refused(f"backup directory unavailable ({type(exc).__name__})") from None
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            raise Refused("backup path components must be real ubuntu-owned directories")
+
+    fd = None
+    try:
+        fd = os.open(
+            dest,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+        )
+        os.fchmod(fd, 0o700)
+    except OSError as exc:
+        raise Refused(f"backup directory could not be secured ({type(exc).__name__})") from None
+    finally:
+        if fd is not None:
+            os.close(fd)
+    return dest
+
+
 def backup() -> Path:
-    dest = Path("/home/ubuntu/.local/state/zcloud/fleet-backups")
-    dest.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(dest, 0o700)
+    dest = _ensure_private_backup_directory()
     old_umask = os.umask(0o077)
     target: Path | None = None
     backup_fd: int | None = None
