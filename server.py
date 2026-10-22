@@ -3487,15 +3487,18 @@ def portfolio_queue_allocate():
 
 def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
                          expected_status=None,expected_blocker=None,
-                         expected_evidence=None,actor=None):
+                         expected_evidence=None,actor=None,
+                         expected_project_id=None,expected_title=None,
+                         expected_priority=None,expected_source_url=None):
     queue_id=str(queue_id or '').strip()
     if not queue_id:
         raise ValueError('queue_id is verplicht')
     note=re.sub(r'[\x00-\x1f\x7f]+',' ',str(evidence or ''))
     note=re.sub(r'\s+',' ',note).strip()[:1200]
     actor=re.sub(r'[^A-Za-z0-9_.:@ -]+','',str(actor or '')).strip()[:100]
+    identity=(expected_project_id,expected_title,expected_priority,expected_source_url)
     guarded=any(value is not None for value in
-                (expected_status,expected_blocker,expected_evidence))
+                (expected_status,expected_blocker,expected_evidence,*identity))
     if guarded:
         if expected_status!='blocked':
             raise ValueError('Alleen exact geblokkeerde taken kunnen brongebonden worden gesloten')
@@ -3507,8 +3510,12 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
         # A source-guarded terminal decision is valid only for a COMPLETE
         # dependency fingerprint. Partial guards permit an unnoticed blocker
         # edit when the update clock has not advanced or lacks precision.
-        if expected_blocker is None or expected_evidence is None:
-            raise ValueError('Brongebonden sluiten vereist blocker en evidence, ook indien leeg')
+        if expected_blocker is None or expected_evidence is None or any(v is None for v in identity):
+            raise ValueError('Brongebonden sluiten vereist volledige taakidentiteit, blocker en evidence, ook indien leeg')
+        for value,cap,name in zip(identity,(100,4096,32,2048),
+                                  ('project_id','title','priority','source_url')):
+            if not isinstance(value,str) or len(value)>cap or (name!='source_url' and not value):
+                raise ValueError(f'Ongeldige bronidentiteit bij definitief sluiten: {name}')
     elif expected_updated_at is not None:
         raise ValueError('Bronstatus is vereist bij brongebonden sluiting')
     if expected_blocker is not None and (
@@ -3544,6 +3551,10 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
         if guarded and (
                 str(row['status'])!=expected_status or
                 str(row['updated_at'] or '')!=expected_updated_at or
+                str(row['project_id'] or '')!=expected_project_id or
+                str(row['title'] or '')!=expected_title or
+                str(row['priority'] or '')!=expected_priority or
+                str(row['source_url'] or '')!=expected_source_url or
                 str(row['blocker'] or '')!=expected_blocker or
                 str(row['evidence'] or '')!=expected_evidence):
             return {'dropped':False,'queue_id':queue_id,
@@ -5032,6 +5043,10 @@ class Handler(BaseHTTPRequestHandler):
                             expected_status=payload.get('expected_status'),
                             expected_blocker=payload.get('expected_blocker'),
                             expected_evidence=payload.get('expected_evidence'),
+                            expected_project_id=payload.get('expected_project_id'),
+                            expected_title=payload.get('expected_title'),
+                            expected_priority=payload.get('expected_priority'),
+                            expected_source_url=payload.get('expected_source_url'),
                             actor=request_actor(self))
                         dropped=bool(item.get('dropped'))
                         return self.reply({'ok':dropped,'result':item,'time':now()},200 if dropped else 409)
