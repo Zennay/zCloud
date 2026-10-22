@@ -1051,3 +1051,30 @@ If the claim is active/unknown and its owner is also missing, the route is `iden
 ## Specific next steps for dependency, escalation and release holds
 
 The recommendation map now gives explicit routes for unverified source receipts, missing blocked-task IDs, unknown dependency type, missing operator attestation, escalation-basis gaps, and post-merge health gaps. Release approval is separated from technical gate readiness. Unknown/missing owner and active-claim combinations remain owner-identification HOLDs; none of these recommendation codes performs a queue or runtime action.
+
+## Portfolio issue desk — source-bound change tracking
+
+The recovery role can compare **two bounded private GitHub issue-desk JSON observations** without writing queue, lease, CI or GitHub state. This is meant for the human owner to see newly visible P0/P1 work and changed urgency while the live runtime/release gates are still waiting.
+
+Create a first snapshot into a private existing directory:
+
+```sh
+python3 scripts/zsentinel_recovery_policy.py \
+  --portfolio-repo Zennay/zCloud --portfolio-repo Zennay/Supa \
+  --portfolio-view all --format json --output /private/path/baseline.json
+```
+
+Later, create a distinct output file using exactly the same repository order and view:
+
+```sh
+python3 scripts/zsentinel_recovery_policy.py \
+  --portfolio-repo Zennay/zCloud --portfolio-repo Zennay/Supa \
+  --portfolio-view all --portfolio-previous-snapshot /private/path/baseline.json \
+  --format html --output /private/path/changes.html
+```
+
+The dedicated CLI `scripts/zsentinel_portfolio_issue_desk.py` also accepts `--previous-snapshot` and the same four private output formats (JSON, offline CSP-locked HTML, Markdown and CSV). A previous snapshot is read with the existing bounded, regular-file/no-symlink, identity-checked local file reader; its JSON fields, UTC timestamps, issue links, repository coverage, duplicate IDs, observed rank and sample limits are checked before any GitHub GET. Missing or contradictory fields fail closed.
+
+**Interpretation is intentionally conservative.** The comparison reports `NEWLY_OBSERVED_NOT_PROVEN_NEW`, `OBSERVED_PRIORITY_CHANGE`, and `NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED`. A card disappearing from a limited window never means its issue was closed, its fix merged or its worker released. Both source windows must have been readable for a repository to compare it; an inaccessible repo stays UNKNOWN. The tool does not recheck historical issue state with extra GitHub API calls, infer claim ownership, retry workflows, grant reviews, merge, deploy or touch the VPS.
+
+A comparison has a bounded 100-card operator window, counts and explicit omitted-card totals. Its output is **advisory only**, with `issues_resolved_or_closed_verified=false`, `ownership_claims_verified=false`, `ci_or_review_verified=false`, `merge_or_deploy_authorized=false`, and `actions_executed=false`. It is a planning aid, not an authority source. For actual action, recheck present claims, the exact existing PR, its exact-head mandatory checks, review, branch protection and owner authorization directly.
