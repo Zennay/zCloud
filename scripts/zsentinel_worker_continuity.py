@@ -196,6 +196,11 @@ def summarize_worker_windows(windows):
                 # Do not compare event cursors across different observed queue
                 # claim windows, even if the underlying slot cursor regressed.
                 category = "UNKNOWN_queue_claim_window_changed"
+            elif (old["claim_window_fingerprint"] is None
+                  or new["claim_window_fingerprint"] is None):
+                # Same-slot browser cursors without TWO valid lease windows
+                # cannot be attributed to the same original queue task.
+                category = "UNKNOWN_no_current_queue_claim_window"
             elif last0 is None or last1 is None or last1 < last0:
                 category = "UNKNOWN_event_cursor_or_source_rotation"
             elif (prog0 is not None and prog1 is not None and prog1 < prog0):
@@ -253,6 +258,7 @@ def summarize_worker_windows(windows):
                         "UNKNOWN_event_cursor_or_source_rotation",
                         "UNKNOWN_progress_cursor_or_source_rotation",
                         "UNKNOWN_queue_claim_window_changed",
+                        "UNKNOWN_no_current_queue_claim_window",
                         "UNKNOWN_worker_desired_state_changed")):
                 attention.append({
                     "from_window": pair["from_window"],
