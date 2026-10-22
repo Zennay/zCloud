@@ -1,3 +1,26 @@
+## 22 oktober · historische queuekwaliteit zichtbaar per project
+
+De offline geschiedenis in `scripts/zsentinel_private_bundle_index.py`
+maakt voortaan bij **ieder** getoond queueaantal duidelijk of de
+oorspronkelijke `retry`-bron **bij opname vers**, **bij opname verouderd** of
+**onbekend** was. Ook een toen verse observatie is bij het later openen van
+het historische bestand **nooit live**. Een ontbrekend queuebeeld krijgt
+`queuebron ONBEKEND`; dit is geen bewijs voor nul wachtrijtaken.
+
+In het verschiloverzicht tussen twee opgeslagen bundels verschijnt nu een
+projectkaart zodra de originele queuefrisheid omslaat, zelfs als de
+bemonsterde aantallen actieve items, herhaalde claimpogingen en verlopen
+leases gelijk zijn gebleven. De operator ziet de oude en nieuwe
+bronstatus naast elkaar zonder dat een dergelijke verandering als
+herstel, vrijgekomen workerclaim of afgeronde taak wordt geïnterpreteerd.
+De volledige originele queuebronklok blijft apart zichtbaar.
+
+Dit betreft uitsluitend private brongebonden HTML-geschiedenis;
+er worden geen GitHub/Notion/VPS-verzoeken, queuewrites, CI-reruns,
+claims, merges of deployments uitgevoerd. De bestaande verplichte
+exact-HEAD-checks, onafhankelijke review en branch protection blijven
+nodig voordat deze PR op `main` kan landen.
+
 # zSentinel · Private Product Delivery Workbench
 
 ## 22 oktober · Projectgeschiedenis als CSV en volledig privé ZIP-pakket
