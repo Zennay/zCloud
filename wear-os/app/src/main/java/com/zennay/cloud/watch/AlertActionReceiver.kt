@@ -17,7 +17,7 @@ class AlertActionReceiver : BroadcastReceiver() {
         if (context == null || intent?.action != ACTION_SNOOZE_BLOCKER) return
 
         val id = intent.getStringExtra(EXTRA_INCIDENT_ID)
-            ?.takeIf { it.isNotBlank() && it.length <= 256 && it.none(Char::isISOControl) }
+            ?.takeIf { it.isNotBlank() && it.length <= 256 && it.none { ch -> ch.isISOControl() } }
             ?: return
         val project = intent.getStringExtra(EXTRA_PROJECT_ID)
             ?.takeIf { it.matches(PROJECT_ID) }
