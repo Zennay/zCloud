@@ -337,6 +337,21 @@ def suggested_actions(packet):
     if isinstance(pressure, dict):
         pressure_status = pressure.get("status")
         hint = pressure.get("pressure_hint")
+        coverage = pressure.get("source_coverage")
+        labels = {
+            "meminfo": "RAM/swap", "loadavg": "load/CPU",
+            "root_disk": "root-schijf", "psi": "PSI",
+        }
+        incomplete = []
+        if isinstance(coverage, dict):
+            for key in ("meminfo", "loadavg", "root_disk", "psi"):
+                value = coverage.get(key)
+                if value in ("UNKNOWN", "PARTIAL"):
+                    incomplete.append(labels[key] + "=" + value)
+        coverage_detail = (
+            " Onvolledige bronnen: " + ", ".join(incomplete) + "."
+            if incomplete else ""
+        )
         if (pressure_status in ("HOST_SNAPSHOT_OBSERVED", "HOST_PARTIAL")
                 and hint in ("HIGH_LOCAL_PRESSURE", "ELEVATED_LOCAL_PRESSURE")):
             result.append(action(
@@ -345,27 +360,22 @@ def suggested_actions(packet):
                 "De lokale host heeft verhoogde RAM-, swap-, CPU- of schijfruimtedruk; "
                 "dit is geen bewijs dat een GitHub-job vastzit."
                 + _psi_owner_context(pressure)
-                + _runner_pressure_context(packet),
+                + _runner_pressure_context(packet)
+                + coverage_detail,
+                "Behoud bestaande jobs en claims. Vergelijk cgroup-limieten, "
+                "runner-toewijzing, procfs-PSI en workerprogressie met de bevoegde eigenaar "
+                "vóór capaciteitsverhoging, opslagopschoning of serviceactie. "
+                "Controleer ook alle hierboven ontbrekende of partiële bronnen."
+                if incomplete else
                 "Behoud bestaande jobs en claims. Vergelijk cgroup-limieten, "
                 "runner-toewijzing, procfs-PSI en workerprogressie met de bevoegde eigenaar "
                 "vóór capaciteitsverhoging, opslagopschoning of serviceactie.",
                 "HOLD_CAPACITY_OWNER_REVIEW",
             ))
         elif pressure_status != "HOST_SNAPSHOT_OBSERVED" or hint == "UNKNOWN":
-            coverage = pressure.get("source_coverage")
-            labels = {
-                "meminfo": "RAM/swap", "loadavg": "load/CPU",
-                "root_disk": "root-schijf", "psi": "PSI",
-            }
-            incomplete = []
-            if isinstance(coverage, dict):
-                for key in ("meminfo", "loadavg", "root_disk", "psi"):
-                    value = coverage.get(key)
-                    if value in ("UNKNOWN", "PARTIAL"):
-                        incomplete.append(labels[key] + "=" + value)
             detail = (
-                " Onvolledige bronnen: " + ", ".join(incomplete) + "."
-                if incomplete else
+                coverage_detail
+                if coverage_detail else
                 " De exacte ontbrekende bron is niet volledig waargenomen."
             )
             result.append(action(
