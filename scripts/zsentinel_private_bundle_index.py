@@ -148,6 +148,32 @@ def project_table(snapshot: dict) -> str:
             " / P1 " + str(source_counts.get("P1", "onbekend"))
         )
         queue_text = queue_summary(queue)
+        # Issue and PR pointers are canonical URLs admitted by the saved
+        # product board. Make the historical project actionable to inspect,
+        # not actionable to claim, retry or merge.
+        issue_rows = sorted(data["issues"].items(), key=lambda row: (
+            PRIORITIES.index(data["issue_priorities"][row[0]]), row[0]))
+        issue_links_html = "".join(
+            "<li><a rel='noopener noreferrer' target='_blank' href='" +
+            escape(url, quote=True) + "'>" +
+            escape(data["issue_priorities"][issue]) + " · " +
+            escape(issue) + "</a></li>"
+            for issue, url in issue_rows[:16]
+        )
+        remaining = max(0, len(issue_rows) - 16)
+        saved_navigation = (
+            "<details><summary>Opgeslagen issues (" +
+            str(len(issue_rows)) + ") en PR-kandidaten (" +
+            str(len(data["prs"])) + ")</summary><p>Dit zijn uitsluitend "
+            "bronlinks in deze historische steekproef. Open actuele GitHub "
+            "en controleer claims, reviews en CI opnieuw.</p>" +
+            ("<ul>" + issue_links_html + "</ul>" if issue_rows else
+             "<p>Geen issuekaart in dit sample; backlog onbekend.</p>") +
+            ("<p>+" + str(remaining) + " issuekaarten niet getoond.</p>"
+             if remaining else "") +
+            "<p>Historische PR-kandidaten: " +
+            pr_links(data["prs"]) + "</p></details>"
+        )
         details = (
             "<details><summary>Bron en vervolgactie</summary><p>" +
             "Dekking: " + escape(str(coverage)) + " · " +
@@ -158,7 +184,7 @@ def project_table(snapshot: dict) -> str:
                        "geen verse queuewaarneming")) + "</p><p>Vervolgadvies: " +
             escape(str(operations.get("recommended_next_step") or
                        "Geen opgeslagen advies voor dit project.")) +
-            "</p></details>"
+            "</p></details>" + saved_navigation
         )
         rows.append(
             "<tr><th scope='row'>" + escape(pid) + "</th><td>" +
