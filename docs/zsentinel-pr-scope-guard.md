@@ -2922,3 +2922,24 @@ los van HEAD/base-SHA-stabiliteit: een stabiele `base.ref` wordt niet ten
 onrechte als veranderde branch gelabeld wanneer alleen de commitbron verschoof.
 De vervolgstap benoemt branch-retargeting expliciet wanneer de twee branchnamen
 verschillen; elke vorm van brononzekerheid blijft een menselijke HOLD.
+
+
+## 22 oktober · activiteitssnapshot meenemen in merge-first CSV
+
+De `worklist-csv`-export bevat nu op iedere issue-regel niet alleen het
+activiteitssignaal en de laatste issue-update, maar ook de berekende
+issue-inactiviteit in uren, de laatste waargenomen update van gekoppelde open
+PR's en de inactiviteitsduur daarvan. De rij bewaart tevens de dekking van
+gekoppelde PR-activiteit, het observatievenster en de UTC-referentietijd.
+
+Een bestaande PR blijft één gegroepeerde integratiekans. De PR-regel krijgt
+daarom een begrensd `related_issue_activity_snapshot_json` met per zichtbaar
+gekoppeld issue de afzonderlijke prioriteit, activiteitssignaal, timestamps,
+leeftijden en dekkingsstatus. De leeftijd van een issue wordt niet samengevoegd
+met die van een ander issue en de activiteit van een willekeurige PR wordt niet
+voorgesteld als de activiteit van deze kandidaat-PR.
+
+De snapshot komt uit dezelfde reeds verzamelde bron en doet geen extra
+GitHub-verzoeken. Ontbrekende waarden blijven leeg/UNKNOWN volgens het
+broncontract. Stilte bewijst geen stilstand of vrije eigenaar; alle claim-,
+merge- en deployvelden blijven `NO`.
