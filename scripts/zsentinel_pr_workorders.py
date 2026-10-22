@@ -448,6 +448,7 @@ def _coordination_groups(cards):
         raise ValueError("duplicate PR in coordination desk")
     parent = {url: url for url in by_url}
     edges = set()
+    external_peers = {url: set() for url in by_url}
     missing_or_partial = False
 
     def root(url):
@@ -473,6 +474,7 @@ def _coordination_groups(cards):
         for url, sha in observed:
             other = by_url.get(url)
             if other is None:
+                external_peers[source].add(url)
                 missing_or_partial = True
                 continue
             # Never join historical commits or a peer that moved since the
@@ -488,6 +490,7 @@ def _coordination_groups(cards):
         for peer_url in card["related_prs"]:
             # Unpinned overlap hints cannot be treated as exact collisions.
             if peer_url not in [row[0] for row in observed]:
+                external_peers[source].add(peer_url)
                 missing_or_partial = True
 
     components = {}
@@ -497,6 +500,7 @@ def _coordination_groups(cards):
     for members in components.values():
         urls = {member["url"] for member in members}
         linked = [edge for edge in edges if set(edge) <= urls]
+        external_group_peers = sorted(set().union(*(external_peers[url] for url in urls)))
         group = {
             "group_number": len(groups) + 1,
             "members": [{
@@ -505,7 +509,9 @@ def _coordination_groups(cards):
                 "head_sha_at_observation": member["head_sha"],
             } for member in members],
             "observed_selected_scope_collisions": len(linked),
-            "owner_coordination_recommended": bool(linked),
+            "external_peer_pr_urls_to_recheck": external_group_peers[:12],
+            "external_peer_preview_truncated": len(external_group_peers) > 12,
+            "owner_coordination_recommended": bool(linked) or bool(external_group_peers),
             "all_project_claims_verified": False,
             "merge_authorized": False,
         }
@@ -513,6 +519,8 @@ def _coordination_groups(cards):
             member["coordination_group_number"] = group["group_number"]
             member["coordination_selected_peer_urls"] = sorted(
                 url for url in urls if url != member["url"])
+            member["coordination_external_peer_urls"] = sorted(
+                external_peers[member["url"]])[:8]
         groups.append(group)
     return {
         "groups": groups,
@@ -1101,6 +1109,7 @@ def render_csv(bundle):
     fields = (
         "record_type", "project", "pr_number", "pr_url",
         "coordination_group_number", "observed_selected_scope_peers",
+        "external_peer_prs_to_recheck",
         "attention_status", "attention_label", "workstream", "workstream_label",
         "operator_action_link", "operator_action_kind",
         "head_sha_at_observation", "target_branch_at_observation",
@@ -1150,6 +1159,7 @@ def render_csv(bundle):
                 "project": card["project"], "pr_number": card["number"],
                 "coordination_group_number": card["coordination_group_number"],
                 "observed_selected_scope_peers": len(card["coordination_selected_peer_urls"]),
+                "external_peer_prs_to_recheck": len(card["coordination_external_peer_urls"]),
                 "pr_url": _same_repo_url(card["url"], card["repository"]),
                 "head_sha_at_observation": card["head_sha"],
                 "target_branch_at_observation": card["base_ref"],
@@ -1454,14 +1464,22 @@ def render_html(bundle):
             e(member["project"]) + " #" + e(member["number"]) + "</a>"
             for member in group["members"]
         ]
+        external_links = [
+            "<a href=\\"" + e(url) + "\\" target=\\"_blank\\" rel=\\"noopener noreferrer\\">" +
+            e(url.rsplit("/", 1)[-1]) + "</a>"
+            for url in group["external_peer_pr_urls_to_recheck"]
+        ]
         parts.append("<li>Groep " + e(group["group_number"]) + ": " +
                      ", ".join(links) + " · " +
                      e(group["observed_selected_scope_collisions"]) +
                      " vastgepinde botsingsrelaties" +
                      (" · <strong>eigenaren afstemmen</strong>"
                       if group["owner_coordination_recommended"] else
-                      " · geen onderlinge botsing waargenomen, niet bewezen vrij")
-                     + "</li>")
+                      " · geen onderlinge botsing waargenomen, niet bewezen vrij") +
+                     (" · andere PRs opnieuw controleren: " + ", ".join(external_links)
+                      if external_links else "") +
+                     (" (aanvullende PRs verborgen)" if group[
+                         "external_peer_preview_truncated"] else "") + "</li>")
     parts.append("</ol>" +
                  ("<p>Bron deels onvolledig of peer-HEAD niet gelijk: "
                   "hercontrole noodzakelijk.</p>"
@@ -1822,6 +1840,13 @@ def render_markdown(bundle):
                      ("afstemmen met eigenaren" if group[
                          "owner_coordination_recommended"] else
                       "geen botsing in geselecteerde bron, niet bewezen vrij"))
+        if group["external_peer_pr_urls_to_recheck"]:
+            lines.append("  - Externe PR-kandidaten buiten selectie: " +
+                         ", ".join("[" + url.rsplit("/", 1)[-1] + "](" + url + ")"
+                                   for url in group["external_peer_pr_urls_to_recheck"]) +
+                         (" (extra bronnen verborgen)" if group[
+                             "external_peer_preview_truncated"] else "") +
+                         ". Actuele HEAD/claim blijft onbekend.")
     lines += [
         ("Bron onvolledig of peer-HEAD gewijzigd; aanvullende hercontrole nodig."
          if coordination["source_partial_or_unpinned"] else
