@@ -1301,7 +1301,8 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
                                               len(snapshots_before[-1]) == page_size),
         "open_pr_snapshot_stable": stable,
         "pr_file_scope_sample_complete": fully_sampled,
-        "source_result": ("collisions_observed" if ordered or ordered_scope or ordered_alias else
+        "source_result": ("collisions_observed" if ordered or ordered_scope else
+                          "portable_path_aliases_advisory" if ordered_alias else
                           "incomplete_no_collisions_observed" if not fully_sampled
                           else "no_open_pr_shared_paths_observed"),
         "findings_are_merge_conflicts": False,
@@ -2184,14 +2185,13 @@ def main(argv=None):
                 print(graph_markdown(report))
             else:
                 print(graph_operator_text(report))
-            # Ancestor file/directory conflicts are equally actionable:
-            # git cannot represent a file and its descendant directory.
-            # An exact-filename-only check could report exit 0 despite
-            # observed cross-PR tree collisions.
+            # Exact shared Git paths and file/directory ancestor collisions
+            # use exit 2. A case/NFC alias is advisory, not a proven Git
+            # collision, so it returns the review-required/unknown exit 3.
             return (2 if (report["observed_file_collision_pairs"] or
-                          report["observed_path_scope_collision_pairs"] or
-                          report["observed_portable_path_alias_pairs"])
-                    else 3 if not report["pr_file_scope_sample_complete"] else 0)
+                          report["observed_path_scope_collision_pairs"])
+                    else 3 if (report["observed_portable_path_alias_pairs"] or
+                               not report["pr_file_scope_sample_complete"]) else 0)
         if args.resolve_issue_identity:
             raise ValueError("--resolve-issue-identity requires --audit-open-prs")
         report = observe(
