@@ -23,8 +23,9 @@ from zsentinel_product_delivery_board import unique
 
 PACKAGE = re.compile(r"^[a-z][a-z0-9_-]{0,50}\.index\.zip$")
 HEX = re.compile(r"^[a-f0-9]{64}$")
-MEMBERS = {"history.html", "history.json", "history.csv",
-           "README.txt", "manifest.json"}
+LEGACY_MEMBERS = {"history.html", "history.json", "history.csv",
+                  "README.txt", "manifest.json"}
+MEMBERS = LEGACY_MEMBERS | {"history-prs.csv"}
 MAX_ARCHIVE = 4 * 1024 * 1024
 MAX_MEMBER = 1024 * 1024
 
@@ -91,9 +92,11 @@ def inspect_history_bytes(archive: bytes) -> dict:
         raise ValueError("invalid archive bytes")
     with ZipFile(BytesIO(archive)) as package:
         info = package.infolist()
-        if (len(info) != len(MEMBERS) or
-                {member.filename for member in info} != MEMBERS):
+        filenames = {member.filename for member in info}
+        if (len(info) != len(filenames) or filenames not in
+                (LEGACY_MEMBERS, MEMBERS)):
             raise ValueError("history ZIP has missing, duplicate or extra entries")
+        has_pr_history = "history-prs.csv" in filenames
         parts = {}
         for member in info:
             mode = member.external_attr >> 16
@@ -110,8 +113,10 @@ def inspect_history_bytes(archive: bytes) -> dict:
 
     manifest = _json(parts["manifest.json"])
     report = _json(parts["history.json"])
-    if (manifest.get("schema") !=
-            "zsentinel-private-recovery-history-package-v1"
+    schema = ("zsentinel-private-recovery-history-package-v2"
+              if has_pr_history else
+              "zsentinel-private-recovery-history-package-v1")
+    if (manifest.get("schema") != schema
             or report.get("schema") != "zsentinel-saved-bundle-history-v1"
             or manifest.get("source") != "verified_saved_operator_bundles_not_live"
             or manifest.get("generated_at_local_utc") !=
@@ -126,7 +131,7 @@ def inspect_history_bytes(archive: bytes) -> dict:
         raise ValueError("historical release authority contract mismatch")
     expected_digests = {
         name: hashlib.sha256(parts[name]).hexdigest()
-        for name in MEMBERS - {"manifest.json"}
+        for name in filenames - {"manifest.json"}
     }
     if manifest.get("members_sha256") != expected_digests:
         raise ValueError("saved history member digest mismatch")
@@ -204,9 +209,16 @@ def inspect_history_bytes(archive: bytes) -> dict:
         [], report.get("index_name", ""),
         machine_text=parts["history.json"].decode("utf-8"),
     ).encode("utf-8")
-    if not hashlib.sha256(canonical_csv).digest() == hashlib.sha256(
-            parts["history.csv"]).digest() or canonical_csv != parts["history.csv"]:
+    if canonical_csv != parts["history.csv"]:
         raise ValueError("CSV values do not match the saved machine history")
+    if has_pr_history:
+        from zsentinel_private_bundle_index import render_history_pr_csv
+        expected_pr_csv = render_history_pr_csv(
+            [], report.get("index_name", ""),
+            machine_text=parts["history.json"].decode("utf-8"),
+        ).encode("utf-8")
+        if expected_pr_csv != parts["history-prs.csv"]:
+            raise ValueError("PR gate CSV values disagree with saved JSON")
     return {
         "schema": "zsentinel-private-recovery-history-inspection-v1",
         "package_sha256": hashlib.sha256(archive).hexdigest(),
@@ -214,6 +226,7 @@ def inspect_history_bytes(archive: bytes) -> dict:
         "project_snapshot_and_change_rows": len(expected),
         "saved_checksum_consistent": True,
         "all_csv_values_rebuilt_from_saved_json": True,
+        "pr_gate_timeline_included": has_pr_history,
         "source_authenticity_independently_verified": False,
         "current_claim_verified": False,
         "required_ci_review_verified": False,
@@ -247,6 +260,7 @@ def extract_verified_history(archive: bytes, destination: Path,
         ("history.html", basename + ".index.html"),
         ("history.json", basename + ".index.json"),
         ("history.csv", basename + ".index.csv"),
+        ("history-prs.csv", basename + ".index.prs.csv"),
         ("README.txt", basename + ".index.README.txt"),
         ("manifest.json", basename + ".index.manifest.json"),
     )
@@ -267,8 +281,9 @@ def extract_verified_history(archive: bytes, destination: Path,
         with ZipFile(BytesIO(archive)) as package:
             # Named, validated and bounded member access. Never use
             # ZipFile.extract or names/paths supplied by an archive entry.
+            archived = set(package.namelist())
             values = [(filename, package.read(member))
-                      for member, filename in outputs]
+                      for member, filename in outputs if member in archived]
         for _, filename in values:
             try:
                 os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
