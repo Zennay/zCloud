@@ -127,22 +127,33 @@ def registry(path):
     if not isinstance(rows, list):
         raise ValueError("invalid canonical registry")
     result = {}
+    seen_repositories = set()
     for row in rows:
         if not isinstance(row, dict):
-            continue
+            raise ValueError("invalid canonical registry row")
         key, url = row.get("id"), row.get("repo_url")
-        if not isinstance(key, str) or not PROJECT.fullmatch(key) or not isinstance(url, str):
-            continue
-        parsed = urllib.parse.urlsplit(url)
+        if (not isinstance(key, str) or not PROJECT.fullmatch(key)
+                or not isinstance(url, str) or not url
+                or any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7f
+                       for char in url)):
+            raise ValueError("invalid canonical project identity or repository URL")
+        try:
+            parsed = urllib.parse.urlsplit(url)
+        except ValueError as exc:
+            raise ValueError("invalid canonical repository URL") from exc
         if (parsed.scheme != "https" or parsed.netloc != "github.com"
                 or parsed.query or parsed.fragment or parsed.path.count("/") != 2):
-            continue
+            raise ValueError("invalid canonical repository URL")
         repo = parsed.path.lstrip("/")
         if not REPO.fullmatch(repo):
-            continue
+            raise ValueError("invalid canonical repository identity")
         if key in result:
             raise ValueError("duplicate project in canonical registry")
+        repository_identity = repo.casefold()
+        if repository_identity in seen_repositories:
+            raise ValueError("duplicate repository in canonical registry")
         result[key] = repo
+        seen_repositories.add(repository_identity)
     if not 1 <= len(result) <= 24:
         raise ValueError("no canonical registered projects")
     return result
