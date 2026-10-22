@@ -77,6 +77,9 @@
 .card-churn-tag{display:inline-flex;align-items:center;border:1px solid #a17846;border-radius:999px;background:#34291b;color:#f4dab4;font-size:10px;font-weight:700;line-height:1.25;padding:5px 8px}
 .project-card-link:focus-visible .card-churn-tag{outline:2px solid #ffda9d;outline-offset:2px}
 @media(max-width:760px){.card-churn-tag{font-size:10px;padding:5px 7px}}
+.card-integrity-tag{display:inline-flex;align-items:center;gap:5px;border:1px solid #7296ab;border-radius:999px;background:#203044;color:#cfe6fb;font-size:10px;font-weight:700;line-height:1.25;padding:5px 8px}
+.project-card-link:focus-visible .card-integrity-tag{outline:2px solid #c1e5ff;outline-offset:2px}
+@media(max-width:760px){.card-integrity-tag{font-size:10px;padding:5px 7px}}
 .card-hold-tag{display:inline-flex;align-items:center;gap:5px;border:1px solid #7b5877;border-radius:999px;background:#342032;color:#f8c9ec;font-size:10px;font-weight:700;line-height:1.25;padding:5px 8px}
 .project-card-link:focus-visible .card-hold-tag{outline:2px solid #f8c9ec;outline-offset:2px}
 @media(max-width:760px){.card-hold-tag{font-size:10px;padding:5px 7px}}
