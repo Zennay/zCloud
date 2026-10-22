@@ -124,6 +124,37 @@ def observe_portfolio(repositories, *, token=None, view="all"):
             # may have refused credentials, quota or external admission.
             stopped_for_provider = True
 
+    # A project without readable GitHub source is a real operator
+    # dependency, not an empty or lower-priority incident backlog.
+    source_routes = {
+        "SOURCE_UNAVAILABLE": (
+            "confirm_github_access_or_provider_admission",
+            "Confirm GitHub authorization, repository access and quota "
+            "with the source owner before repeating this read.",
+        ),
+        "NOT_READ_AFTER_SOURCE_ERROR": (
+            "retry_source_only_after_upstream_access_restored",
+            "Resume this repository's source read only after the earlier "
+            "GitHub admission blocker is resolved.",
+        ),
+        "INCOMPLETE": (
+            "inspect_partial_github_issue_source",
+            "Review observed issue links and the truncated/incomplete "
+            "GitHub source windows; unobserved issues remain UNKNOWN.",
+        ),
+        "SAMPLED": (
+            "inspect_existing_prs_and_current_worker_claims",
+            "Review current issue and existing repair PRs; establish "
+            "active owner and exact-head gates before any action.",
+        ),
+    }
+    for observation in recorded:
+        code, action = source_routes[observation["state"]]
+        observation["human_source_followup_code"] = code
+        observation["human_source_followup"] = action
+        observation["human_source_followup_executed"] = False
+        observation["source_owner_verified"] = False
+
     # P0/P1 first ACROSS repositories, round-robin for project fairness.
     # This cannot promote a title hint above an actual source label.
     selected = []
@@ -258,8 +289,10 @@ def as_markdown(result):
                 str(r["source_priority_counts"]["label_p0"]) + "/" +
                 str(r["source_priority_counts"]["label_p1"])
                 if r["source_priority_counts"] is not None else "UNKNOWN"
-            )
+            ) + " · next: " + r["human_source_followup_code"]
         )
+        rows.append("  - Human follow-up: " + r["human_source_followup"] +
+                    " (not executed)")
     rows += ["", "## Issue workorders · source P0/P1 first", ""]
     for issue in result["issues"]:
         rows += [
@@ -320,7 +353,9 @@ def as_html(result):
             (esc(r["source_priority_counts"]["label_p0"]) + "/" +
              esc(r["source_priority_counts"]["label_p1"])
              if r["source_priority_counts"] is not None else "UNKNOWN") +
-            "</li>"
+            "<br><strong>Human source action:</strong> " +
+            esc(r["human_source_followup"]) +
+            " <small>(not executed)</small></li>"
         )
     rows.append("</ul></section><main><h2>P0-first human owner routes</h2>")
     groups = (
@@ -378,6 +413,7 @@ def as_csv(result):
         "row_kind", "source_repository", "source_observed_utc",
         "source_state", "sampled_issue_count", "source_partial_unknown",
         "display_view", "source_label_p0", "source_label_p1",
+        "source_followup_code", "source_followup_executed",
         "issue_url", "priority_label", "title_hint_unverified",
         "human_action_code", "human_next_action", "status",
         "single_issue_live_pr_review_command", "command_executed",
@@ -406,6 +442,7 @@ def as_csv(result):
             r["source_partial_or_unknown"], result["display_view"],
             r["source_priority_counts"]["label_p0"] if r["source_priority_counts"] else None,
             r["source_priority_counts"]["label_p1"] if r["source_priority_counts"] else None,
+            r["human_source_followup_code"], False,
             "", "", "", "", "",
             "SOURCE COVERAGE IS NOT LIVE OWNER AUTHORITY",
             "", False, False, False, False, False,
@@ -417,7 +454,8 @@ def as_csv(result):
             r["state"], r["sampled_count"],
             r["source_partial_or_unknown"], result["display_view"],
             r["source_priority_counts"]["label_p0"],
-            r["source_priority_counts"]["label_p1"], issue["url"],
+            r["source_priority_counts"]["label_p1"],
+            r["human_source_followup_code"], False, issue["url"],
             issue["explicit_priority"], issue["title_hint_unverified"],
             issue["human_action_code"], issue["human_next_action"],
             issue["status"], issue["single_issue_live_pr_review_command"],
