@@ -2824,3 +2824,43 @@ de issuegerichte gebruikerswerkbak en de machineleesbare route voor
 menselijke afstemming. Ook bij een brongebonden conflict blijft de
 werkelijke Git-mergebaarheid, actuele lease, verplichte checklijst,
 onafhankelijke review en productie-eigenaar apart te bewijzen.
+
+
+## 22 oktober · bestand/map-ancestorbotsingen in de issuegerichte merge-eerst werkbak
+
+De bestaande live PR-conflictgraaf zag niet alleen identieke bestandsnamen,
+maar ook **file-versus-directory ancestorconflicten** (bijvoorbeeld `src`
+versus `src/app.py`). De issuegerichte Product Delivery Cockpit sloeg deze
+tweede soort echter over. Daardoor kon een P0/P1-issue met een werkelijk
+waargenomen bestand/map-botsing ten onrechte de neutrale route
+`inspect_existing_pr_and_owner_gates_first` krijgen.
+
+Dezelfde waargenomen scopebron wordt nu zonder nieuwe GitHub-opvraag
+verbonden aan bestaande issue→PR-kaarten. Per betrokken PR laat de
+uitgebreide cockpit de canonieke peer-PR, geobserveerde HEAD, telling,
+een padpaar en expliciete voorvertoningsafkapping zien. De menselijke
+tekst-/Markdownoverdracht, compacte merge-eerst HTML en per-issue
+privé-handoff maken de afzonderlijke ancestorcategorie zichtbaar.
+De `--audit-open-prs` commandostatus signaleert ook ancestorbotsingen
+als actievere inspectie, zelfs zonder identiek bestand.
+
+Elke peeridentiteit moet tot de geobserveerde PR-head-steekproef behoren;
+brondata met onjuiste repository, HEAD, padrelatie, dubbele paren of
+onbegrensde previews wordt geweigerd. Bij beperkte brondekking of
+onverenigbare waarneming is het resultaat nooit een automatische
+`safe to merge`. Het samengestelde issue-advies stuurt naar menselijke
+owner-/scope-afstemming, nooit een claim/lease-intrekking.
+
+De compacte worklist maakt onderscheid tussen algemene bestandsoverlap
+en de specifiek waargenomen bestand/map-ancestorbotsing. Deze signalen
+en de teller betrokken PRs zijn nu onderdeel van het **lokale bron-token**
+voor privé notities, zodat een eerdere sessie niet stilzwijgend dezelfde
+opvolgnotities kan hergebruiken wanneer het scopebewijs gewijzigd is.
+De private per-issue Markdown-handoff bevat diezelfde waarneming.
+
+Alle bronclaims blijven `merge_authorized=false`,
+`owner_verified=false` en `release_authorized=false`.
+Exacte GitHub HEAD/CI, onafhankelijke review, Notion- en workerclaims,
+branch protection en productiebevoegdheid blijven afzonderlijke gates.
+Geen QA-/regressiesuite of automatische CI-rerun nodig om deze broncodewijziging
+uit te voeren; er is ook geen VPS/SQLite/runner-mutatie gedaan.
