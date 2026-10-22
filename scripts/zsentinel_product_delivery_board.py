@@ -416,6 +416,28 @@ def handoff_freshness(data):
     )
 
 
+def queue_handoff_rows(data):
+    """Return bounded queue incidents in P0-first, owner-safe order."""
+    rows = [
+        row for row in data["project_operations"]
+        if row["queue_observation"] is not None and (
+            row["queue_observation"]["high_claim_attempts"] > 0 or
+            row["queue_observation"]["expired_active_leases"] > 0
+        )
+    ]
+    def rank(row):
+        queue = row["queue_observation"]
+        counts = row["issue_counts_in_sample"]
+        return (
+            0 if counts["P0"] else
+            1 if queue["expired_active_leases"] else
+            2 if queue["high_claim_attempts"] else
+            3 if counts["P1"] else 4,
+            row["project"],
+        )
+    return sorted(rows, key=rank)
+
+
 def markdown(data):
     lines = ["# zSentinel · Product delivery board", "",
              "**Read-only evidence; no work ownership, merge or deployment authority.**", "",
@@ -471,13 +493,7 @@ def markdown(data):
             "authority UNKNOWN.",
             "",
         ])
-    queue_handoffs = [
-        row for row in data["project_operations"]
-        if row["queue_observation"] is not None and (
-            row["queue_observation"]["high_claim_attempts"] > 0 or
-            row["queue_observation"]["expired_active_leases"] > 0
-        )
-    ]
+    queue_handoffs = queue_handoff_rows(data)
     lines.extend(["", "## Queue-only incident handoffs (human-only)", ""])
     if not queue_handoffs:
         lines.append(
@@ -487,7 +503,9 @@ def markdown(data):
     for row in queue_handoffs:
         queue = row["queue_observation"]
         lines.extend([
-            "Problem: " + safe(row["project"]) + " · queue active=" +
+            "Problem: " + safe(row["project"]) + " · P0=" +
+            safe(row["issue_counts_in_sample"]["P0"]) + " P1=" +
+            safe(row["issue_counts_in_sample"]["P1"]) + " · queue active=" +
             safe(queue["active_items"]) + ", high claim cycles=" +
             safe(queue["high_claim_attempts"]) + ", expired leases=" +
             safe(queue["expired_active_leases"]) + ".",
@@ -554,16 +572,12 @@ def html(data):
             '<details><summary>Evidence gaps</summary><ul>' + gaps +
             '</ul></details></article>')
     queue_handoffs = []
-    for row in data["project_operations"]:
+    for row in queue_handoff_rows(data):
         queue = row["queue_observation"]
-        if queue is None or not (
-            queue["high_claim_attempts"] > 0 or
-            queue["expired_active_leases"] > 0
-        ):
-            continue
+        counts = row["issue_counts_in_sample"]
         handoff = "\n".join((
-            "Problem: {} · queue active={}, high claim cycles={}, expired leases={}.".format(
-                row["project"], queue["active_items"],
+            "Problem: {} · P0={} P1={} · queue active={}, high claim cycles={}, expired leases={}.".format(
+                row["project"], counts["P0"], counts["P1"], queue["active_items"],
                 queue["high_claim_attempts"], queue["expired_active_leases"]),
             "Action: {} (human-only; no automatic retry or reclaim).".format(
                 row["recommended_next_step"]),
