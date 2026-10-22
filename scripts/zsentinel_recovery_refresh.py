@@ -317,6 +317,27 @@ def main():
     args = parser.parse_args()
     ledger_lock = None
     try:
+        # The refresh CLI shares the exact same pre-observation path safety
+        # contract as live/portfolio: all outputs and mutable state are unique,
+        # and none may alias the original evidence or saved PR source.
+        from zsentinel_private_path_admission import admit_private_paths
+        admit_private_paths(
+            destinations={
+                "output": args.output,
+                "desk_output": args.desk_output,
+                "action_output": args.action_output,
+                "owner_handoff_output": args.owner_handoff_output,
+                "state": Path(args.state) if args.state is not None else None,
+            },
+            sources={
+                "bundle": Path(args.bundle),
+                "registry": args.registry,
+                "queue_database": args.queue_database,
+                "worker_events_database": args.worker_events_database,
+                "notion_claims_export": args.notion_claims_export,
+                "previous_pr_report": args.previous_pr_report,
+            },
+        )
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
         if args.output is not None:
