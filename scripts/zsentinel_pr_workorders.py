@@ -149,13 +149,38 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
     paths, related, hinted_issues = set(), set(), set()
     scope_conflicts = []
     paths_limited = False
+    # The portfolio view can expose up to 200 collision cards, while a
+    # single work order deliberately inspects only 80. A PR whose edges occur
+    # later in that bounded list must remain visibly incomplete rather than
+    # looking collision-free merely because its pairs were not scanned.
+    collision_pairs = view.get("shown_collision_pairs", [])
+    scope_collision_pairs = view.get("shown_path_scope_collision_pairs", [])
+    if type(collision_pairs) is not list:
+        collision_pairs = []
+        paths_limited = True
+    elif len(collision_pairs) > 80:
+        paths_limited = True
+    if type(scope_collision_pairs) is not list:
+        scope_collision_pairs = []
+        paths_limited = True
+    elif len(scope_collision_pairs) > 80:
+        paths_limited = True
+    # Focused overlaps are independently capped at 16 in this work order.
+    # Preserve an explicit incomplete flag if an upstream caller supplies
+    # more observations than this renderer can inspect.
+    if direct_overlaps is not None:
+        if type(direct_overlaps) is not list:
+            direct_overlaps = []
+            paths_limited = True
+        elif len(direct_overlaps) > 16:
+            paths_limited = True
     # An unstable before/after GitHub inventory is not evidence of a
     # collision at the selected exact HEAD. Suppress *positive* edges,
     # including focused older-PR overlaps, until a stable source exists.
     stable_scope = view.get("open_pr_snapshot_stable") is True
     if not stable_scope:
         paths_limited = True
-    for pair in (view.get("shown_collision_pairs", [])[:80] if stable_scope else []):
+    for pair in (collision_pairs[:80] if stable_scope else []):
         if (type(pair) is not dict or type(pair.get("left")) is not dict
                 or type(pair.get("right")) is not dict):
             raise ValueError("malformed observed PR collision")
@@ -201,7 +226,7 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
             "peer_file_conflicts_with_selected_descendant",
     }
     if stable_scope and head is not None:
-        for pair in view.get("shown_path_scope_collision_pairs", [])[:80]:
+        for pair in scope_collision_pairs[:80]:
             if (type(pair) is not dict or type(pair.get("left")) is not dict
                     or type(pair.get("right")) is not dict
                     or type(pair.get("path_conflicts")) is not list):
