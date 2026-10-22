@@ -4274,7 +4274,10 @@ changed files, duplicate JSON keys, non-finite values and receipt entries
 with unexpected names, roles or hashes. It requires exact saved SHA-256
 and byte lengths for the original JSON board, offline HTML desk and optional
 P0-first Markdown owner handoff, and checks the same original board SHA-256
-is present in the accompanying HTML and owner brief.
+is present in the accompanying HTML and owner brief. The receipt's card
+count, source clock and source freshness must also agree with the exact
+saved JSON board, preventing a locally inconsistent delivery manifest from
+passing merely because every file's own checksum was recomputed.
 
 On success it prints a bounded local integrity receipt with
 `integrity_verified=true`, artifact count, exact board digest and
