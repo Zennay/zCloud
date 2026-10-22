@@ -1579,6 +1579,85 @@ def html_view(decision, registry=None):
         )
     # Keep otherwise-eligible tasks visible when an execution gate, VPS
     # capacity receipt, or explicit destination prevents safe suggestion.
+    # Owner-guarded queued work stays visible as a non-actionable handoff.
+    owner_report = decision.get("routing_owner_holds")
+    if owner_report is None:
+        owner_report = {
+            "coverage": "incomplete_or_stale", "coverage_reasons": [],
+            "count": 0, "examples": [], "samples_truncated": False,
+            "claim_authorized": False, "dispatch_authorized": False,
+        }
+    owner_examples = owner_report.get("examples") if type(owner_report) is dict else None
+    owner_coverage = owner_report.get("coverage") if type(owner_report) is dict else None
+    owner_reasons = owner_report.get("coverage_reasons") if type(owner_report) is dict else None
+    if (type(owner_report) is not dict
+            or owner_coverage not in ("complete", "incomplete_or_stale")
+            or type(owner_reasons) is not list or len(owner_reasons) > 7
+            or any(reason not in allowed_coverage_reasons for reason in owner_reasons)
+            or (owner_coverage == "complete" and owner_reasons)
+            or type(owner_report.get("count")) is not int
+            or not 0 <= owner_report["count"] <= 250
+            or type(owner_examples) is not list or len(owner_examples) > 8
+            or len(owner_examples) > owner_report["count"]
+            or owner_report.get("samples_truncated") is not (
+                owner_report["count"] > len(owner_examples))
+            or owner_report.get("claim_authorized") is not False
+            or owner_report.get("dispatch_authorized") is not False):
+        raise ValueError("untrusted active-owner hold report")
+    owner_cards = []
+    for item in owner_examples:
+        if (type(item) is not dict
+                or item.get("reason") != "active_owner_protection"
+                or item.get("claim_authorized") is not False
+                or item.get("dispatch_authorized") is not False
+                or item.get("priority") not in ("P0", "P1", "P2", "P3")
+                or type(item.get("id")) is not str
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", item["id"])
+                or type(item.get("project_id")) is not str
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", item["project_id"])):
+            raise ValueError("invalid active-owner hold example")
+        owner_cards.append(
+            '<article class="panel warn"><span class="tag">OWNER-HOLD · ' +
+            phrase(item["priority"], 5) + '</span><h3>' +
+            phrase(item["project_id"], 80) + ' / ' + phrase(item["id"], 80) +
+            '</h3><p>De bron meldt een actieve eigenaar. Dit is geen bewijs van een actuele claim of toestemming tot overname.</p>' +
+            '<p>Verifieer de actuele eigenaar/claim en stem een overdracht af. Niet overnemen, geen claim of dispatch.</p></article>'
+        )
+    if owner_coverage == "complete":
+        owner_heading = "Taken beschermd door een actieve eigenaar (" + str(owner_report["count"]) + ")"
+        owner_status = (
+            '<p class="muted">Deze anderszins geschikte taken zijn bewust niet als vrij werk voorgesteld. '
+            'Controleer de actuele eigenaar/claim en stem overdracht af; deze weergave verleent geen eigendom of uitvoerrechten.</p>'
+        )
+        owner_empty = "Geen wachtrijtaak met een expliciet actieve eigenaar waargenomen."
+    else:
+        owner_heading = "Bescherming door actieve eigenaar — STATUS ONBEKEND"
+        owner_status = (
+            '<p class="muted">Taak-/claiminventaris is onvolledig of verouderd. '
+            'Het aantal is geen totaal en nul bewijst niet dat een taak vrij is.</p>'
+        )
+        owner_empty = "Geen voorbeelden in de onvolledige/verouderde bron; totaal onbekend."
+    owner_reason_labels = {
+        "claim_inventory_not_complete": "Claiminventaris is niet expliciet compleet.",
+        "task_inventory_not_complete": "Taakinventaris is niet expliciet compleet.",
+        "claim_observation_missing": "Waarneming van actieve claims ontbreekt.",
+        "task_observation_missing": "Waarneming van de taakinventaris ontbreekt.",
+        "claim_observation_stale_or_future": "Claimwaarneming is ouder dan vijf minuten of heeft een ongeldige toekomsttijd.",
+        "task_observation_stale_or_future": "Taakwaarneming is ouder dan vijf minuten of heeft een ongeldige toekomsttijd.",
+        "active_claim_scope_unknown": "Bestandsscope van minstens één actieve claim is onbekend.",
+    }
+    owner_coverage_notes = (
+        '<ul class="muted">' + ''.join(
+            '<li>' + phrase(owner_reason_labels[reason], 180) + '</li>'
+            for reason in owner_reasons) + '</ul>'
+        if owner_reasons else ''
+    )
+    owner_hold_panel = (
+        '<section><h2>' + owner_heading + '</h2>' + owner_status +
+        owner_coverage_notes + section(owner_cards, owner_empty) +
+        ('<p class="muted">Niet alle eigenaar-HOLD-voorbeelden getoond.</p>'
+         if owner_report["samples_truncated"] else '') + '</section>'
+    )
     gate_report = decision.get("routing_gate_holds")
     if gate_report is None:
         gate_report = {
@@ -1793,6 +1872,7 @@ def html_view(decision, registry=None):
             + worker_panel
             + branch_panel
             + held_panel
+            + owner_hold_panel
             + gate_hold_panel
             + selection_hold_panel(decision.get("routing_selection_holds"))
             + f'<section><h2>Onafhankelijke werkvoorstellen ({len(tasks)})</h2>'
