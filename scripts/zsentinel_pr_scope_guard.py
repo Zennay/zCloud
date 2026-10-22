@@ -1656,6 +1656,15 @@ def graph_markdown(report):
                      str(receipt["observed_prs"]) + " PRs.")
     if report["cross_page_duplicate_prs_observed"]:
         lines.append("**ONSTABIEL:** dezelfde PR op meerdere pagina's.")
+    lines.extend(["", "## Geobserveerde PR's in dit begrensde venster", "",
+                  "Dit zijn uitsluitend bronwaarnemingen; een PR zonder zichtbare overlap is niet claimvrij.",
+                  ""])
+    for pr in report["inspected_pr_heads"]:
+        lines.append("- [PR #" + str(pr["number"]) + "](" + pr["url"] +
+                     ") · HEAD " + pr["head_sha"][:12] +
+                     " · doelbranch " + pr["base_ref"] +
+                     " · " + str(pr["file_count_observed"]) + " bestanden (" +
+                     ("volledig" if pr["file_list_complete"] else "gedeeltelijk") + ")")
     lines.extend(["", "## Verbonden PR-bestandsgroepen", "",
                   "Alleen gedeelde bestandspaden in het bekeken venster; "
                   "geen eigenaarschap, Git-conflictbewijs of mergeautorisatie.", ""])
