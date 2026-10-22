@@ -240,6 +240,8 @@ def blocked_queue_panel(source):
             "source_coverage": "not_supplied", "observed_at": None,
             "total_items_observed": None, "project_groups": [],
             "sample_truncated": True, "invalid_group_rows": None,
+            "work_items": [], "work_items_coverage": "not_observed",
+            "work_items_truncated": True, "invalid_work_rows": None,
             "claim_ownership_verified": False, "queue_write_authorized": False,
             "automatic_retry_authorized": False,
         }
@@ -331,11 +333,82 @@ def blocked_queue_panel(source):
     table = ('<div class="wrap"><table><thead><tr><th>Project</th><th>Prioriteit</th>'
              '<th>Rijen met status blocked</th></tr></thead><tbody>' +
              rows + '</tbody></table></div>' if rows else "")
+    # This is bounded read-only evidence, NOT an operator 'resume' queue.
+    work = source.get("work_items", [])
+    work_coverage = source.get("work_items_coverage", "not_observed")
+    work_truncated = source.get("work_items_truncated", True)
+    invalid_work = source.get("invalid_work_rows")
+    if (type(work) is not list or len(work) > 24
+            or work_coverage not in ("not_observed", "complete", "partial", "stale")
+            or type(work_truncated) is not bool
+            or (invalid_work is not None and
+                (type(invalid_work) is not int or not 0 <= invalid_work <= 24))):
+        raise ValueError("invalid blocked worklist source")
+    if (coverage in ("not_supplied", "not_observed", "stale")
+            or work_coverage in ("not_observed", "stale")):
+        if work:
+            raise ValueError("unknown/stale blocked worklist cannot show current items")
+    elif (work_coverage == "complete" and
+          (coverage != "complete" or work_truncated or invalid_work != 0
+           or len(work) != total)):
+        raise ValueError("complete individual queue list contradicts aggregate")
+    seen_items = set()
+    work_rows = []
+    for row in work:
+        if type(row) is not dict:
+            raise ValueError("invalid blocked task sample")
+        ref, title, pid, priority = (
+            row.get("queue_ref"), row.get("title"),
+            row.get("project_id"), row.get("priority"))
+        count = row.get("claim_attempts")
+        if (type(ref) is not str or re.fullmatch(r"[0-9a-f]{16}", ref) is None
+                or ref in seen_items or type(pid) is not str
+                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", pid) is None
+                or priority not in ("P0", "P1", "P2", "P3")
+                or type(title) is not str or len(title) > 180
+                or any(ord(ch) < 32 for ch in title)
+                or type(count) is not int or not 0 <= count <= 10**9
+                or type(row.get("eligible_observed")) is not bool
+                or type(row.get("claim_fields_present_observed")) is not bool
+                or row.get("resume_authorized") is not False
+                or row.get("current_owner_verified") is not False
+                or row.get("automatic_retry_authorized") is not False):
+            raise ValueError("untrusted individual blocked queue evidence")
+        seen_items.add(ref)
+        work_rows.append(
+            "<tr><td>" + phrase(priority, 3) + "</td><td>" +
+            phrase(pid, 65) + "</td><td><code>" + phrase(ref, 16) +
+            "</code></td><td>" + phrase(title, 180) + "</td><td>" +
+            str(count) + "</td><td>" +
+            ("JA · eigenaar controleren" if row["claim_fields_present_observed"]
+             else "Geen claimvelden gezien · eigenaar onbekend") +
+            "</td><td>" +
+            ("Ja, bronvlag; GEEN hervatrecht" if row["eligible_observed"]
+             else "Nee, bronvlag") + "</td></tr>")
+    if total is not None and len(work_rows) > total:
+        raise ValueError("blocked work items exceed counted blocked rows")
+    work_html = (
+        '<details><summary>Geblokkeerde taken · individuele P0/P1-eerst '
+        'werkvolgorde (' + str(len(work_rows)) + ' getoond)</summary>' +
+        ('<p>Volledige taaksteekproef op bronmoment.' if work_coverage == "complete"
+         else '<p>ONVOLLEDIGE taaksteekproef: meer taken mogelijk.'
+         if work_coverage == "partial"
+         else '<p>Geen actuele individuele taakbron beschikbaar.') +
+        ' Queue-id is alleen een afgeleide referentie; controleer de '
+        'actuele echte taak via bevoegde beheertoegang.</p>' +
+        ('<div class="wrap"><table><thead><tr><th>Prioriteit</th><th>Project</th>'
+         '<th>Opaak kenmerk</th><th>Taak</th><th>Claims</th>'
+         '<th>Claimvelden</th><th>Eligible?</th></tr></thead><tbody>' +
+         "".join(work_rows) + '</tbody></table></div>' if work_rows else '') +
+        '<p class="muted">Een blocked status is geen mislukte job of '
+        'automatische retry. Alleen bevoegde eigenaar kan na actuele '
+        'lease-/broncontrole besluiten over herstel.</p></details>'
+    )
     source_note = (" · broninventaris " + phrase(source.get("source_coverage"), 20)
                    if coverage not in ("not_supplied", "not_observed") else "")
     return ('<section aria-label="Geblokkeerde wachtrij-items"><h2>Parkeerstatus · blocked</h2>'
             '<p>' + phrase(summary, 360) + source_note + '</p>' +
-            table +
+            table + work_html +
             '<p class="muted">Dit zijn queue-rijen met status=blocked, geen bewezen fouten of '
             'retry-opdrachten. Geen claimvrijgave, automatische retry of dispatch.</p></section>')
 
