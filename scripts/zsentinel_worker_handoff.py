@@ -145,19 +145,19 @@ def compare_worker_snapshots(prior, current):
         elif after is None:
             label = "ontbreekt_in_recente_steekproef_niet_opgelost"
             next_step = "Verifieer met eigenaar of slot nog bestaat; GEEN herstelbewijs."
-        elif (before is not None and after is not None
-              and (previous_claim_window is None or current_claim_window is None)):
-            label = "queue_claimvenster_ontbreekt_cursorvergelijking_ingehouden"
-            next_step = (
-                "Zonder twee geldige queueclaimvensters bewijzen twee browsercursors "
-                "geen voortgang van dezelfde taak; controleer lease en eigenaar."
-            )
         elif claim_window_changed:
             label = "queue_claimvenster_gewijzigd_cursorvergelijking_ingehouden"
             next_step = (
                 "Het lokale queue-claimvenster veranderde; vergelijk events niet "
                 "alsof dit dezelfde taak is. Laat de bevoegde eigenaar claim en "
                 "productvoortgang handmatig verifiëren."
+            )
+        elif (before is not None and after is not None
+              and (previous_claim_window is None or current_claim_window is None)):
+            label = "queue_claimvenster_ontbreekt_cursorvergelijking_ingehouden"
+            next_step = (
+                "Zonder twee geldige queueclaimvensters bewijzen browsercursors "
+                "geen voortgang van dezelfde taak; controleer lease en eigenaar."
             )
         elif state_before != state_now:
             label = "bronclassificatie_gewijzigd_herstel_niet_bewezen"
