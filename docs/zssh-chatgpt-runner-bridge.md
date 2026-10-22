@@ -124,8 +124,11 @@ plus `WORKER_SERVICE_MEMBERSHIP_MISMATCH`. The corresponding listener code is
 `LISTENER_SERVICE_MEMBERSHIP_MISMATCH`. Mixed membership in either role also
 requires owner reconciliation. The combined human summary prioritizes an
 outside/mixed worker finding over a listener-in-unit finding, so an in-unit
-listener cannot mask an anomalous worker. These codes do not prove executable
-identity or GitHub assignment. These codes summarize the same bounded observation;
+listener cannot mask an anomalous worker. A positive per-role outside-unit
+counter remains an owner-reconciliation lead even if unrelated process/cgroup
+coverage is partial; the receipt still reports partial/unknown coverage and
+does not promote that observation to a complete identity finding. These codes
+do not prove executable identity or GitHub assignment. These codes summarize the same bounded observation;
 they are not a task/claim inventory and never authorize mutation, takeover,
 service restart, release, or deployment.
 
