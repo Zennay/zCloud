@@ -116,8 +116,16 @@ def _rows(source):
         coverage = row.get("coverage")
         head = row.get("head_sha")
         action = row.get("next_step")
-        if (type(url) is not str or not PR_URL.fullmatch(url) or
-                url in rows or coverage not in COVERAGE or
+        repo = row.get("repository")
+        number = row.get("pr_number")
+        project = row.get("project_id")
+        if (type(repo) is not str or not re.fullmatch(
+                r"Zennay/[A-Za-z0-9_.-]{1,100}", repo)
+                or type(number) is not int or not 1 <= number <= 100000000
+                or type(project) is not str
+                or not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", project)
+                or url != "https://github.com/" + repo + "/pull/" + str(number)
+                or url in rows or coverage not in COVERAGE or
                 action not in NEXT_ACTION_NL):
             raise ValueError("invalid or duplicate source PR URL/coverage")
         if coverage == EXACT:
@@ -125,6 +133,9 @@ def _rows(source):
                 raise ValueError("complete exact-PR coverage lacks head")
         elif head is not None:
             raise ValueError("incomplete PR source cannot carry current head")
+        if (type(source.get("observed_at_utc")) is not str
+                and source.get("observed_at_utc") is not None):
+            raise ValueError("noncanonical PR source timestamp")
         # Only a FULL exact-head PR observation can prove which bounded
         # CI/status/review fields came from this source snapshot.
         gates = _gate_sample(row, head) if coverage == EXACT else None
