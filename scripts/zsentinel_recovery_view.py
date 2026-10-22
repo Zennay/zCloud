@@ -1059,13 +1059,49 @@ def html_view(decision, registry=None):
                     description += " Extra gevonden jobs buiten deze vijf zijn niet getoond."
             elif extras or extra_cut:
                 raise ValueError("additional job links lack a bounded count")
+            # Workflow-level approval evidence remains useful even when no
+            # GitHub job has been created yet. Require source-pinned run IDs,
+            # exact SHA and canonical repo links before rendering controls.
+            approval = row.get("approval_wait_workflows", [])
+            count = row.get("approval_wait_workflows_sampled", 0)
+            repository = row.get("repository")
+            if (type(approval) is not list or len(approval) > 2
+                    or type(count) is not int or count != len(approval)
+                    or type(repository) is not str or not re.fullmatch(
+                        r"Zennay/[A-Za-z0-9_.-]{1,100}", repository)):
+                raise ValueError("invalid GitHub approval workflow provenance")
+            seen_approvals = set()
+            approval_links = []
+            for workflow in approval:
+                if type(workflow) is not dict:
+                    raise ValueError("invalid approval workflow row")
+                rid, sha = workflow.get("run_id"), workflow.get("head_sha")
+                if (type(rid) is not int or not 0 < rid <= 2**53-1
+                        or rid in seen_approvals or type(sha) is not str
+                        or not re.fullmatch(r"[a-f0-9]{40}", sha)
+                        or workflow.get("action_authorized") is not False
+                        or workflow.get("url") != "https://github.com/" +
+                        repository + "/actions/runs/" + str(rid)):
+                    raise ValueError("untrusted approval workflow link")
+                seen_approvals.add(rid)
+                approval_links.append('<li><a target="_blank" rel="noopener noreferrer" href="' +
+                                      escape(workflow["url"], quote=True) +
+                                      '">Approval-workflow ' + str(rid) +
+                                      '</a> · HEAD ' + sha[:12] + '</li>')
+            if approval_links:
+                linked += ('<details><summary>Menselijke goedkeuringswacht (≥' +
+                           str(count) + ')</summary><ul>' +
+                           ''.join(approval_links) + '</ul><p class="small">'
+                           'Workflowbron, geen job- of runnerstoringsbewijs. '
+                           'Alle approvals en concurrency-beslissingen blijven '
+                           'bij de bevoegde eigenaar.</p></details>')
             cards.append('<article class="panel read"><h3>' + pid +
                          '</h3><p>' + phrase(description, 750) +
                          '</p>' + linked + '</article>')
         discovery_panel = (
             '<section><h2>GitHub-zoekvensters · alleen een beperkte steekproef</h2>'
-            '<p class="muted">Volgorde: wachtende workflows, lopende workflows met '
-            'wachtende jobs, daarna mislukte workflows. Van de eerste vijf workflowruns '
+            '<p class="muted">Volgorde: queued, in_progress, approval-waiting; '
+            'failures alleen als geen lopend of wachtend werk is aangetroffen. Van de eerste vijf workflowruns '
             'per venster wordt maximaal de nieuwste en de verst terugliggende '
             'geldige run onderzocht; per run maximaal 25 jobs uit één GitHub-pagina. '
             'Oudere of tussenliggende runs zijn ONBEKEND. '
