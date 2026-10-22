@@ -123,6 +123,10 @@ def render(report: dict) -> str:
         if trend is not None:
             lines.append("CPU/PSI-trend: " + _md(trend.get("status", "unknown")) +
                          " · " + _md(trend.get("trend", "unknown")) +
+                         " · dekking " + _md(str(trend.get("metrics_compared", 0)) + "/" +
+                                              str(trend.get("metrics_expected", len(trend.get("metrics", [])))) +
+                                              " " + trend.get("coverage", "unknown")) +
+                         " · bronhiaten " + _md(", ".join(trend.get("source_gaps", [])) or "geen") +
                          " (twee bronopnames, geen doorlopend toezicht).")
             for metric in trend.get("metrics", []):
                 lines.append("- " + _md(metric.get("label", metric.get("metric", "unknown"))) +
