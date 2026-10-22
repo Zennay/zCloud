@@ -1414,7 +1414,8 @@ def graph_html(report):
     isolated_links = "".join(
         "<li><a rel='noopener noreferrer' href='" +
         escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
-        "</a> · " + escape(pr["head_sha"][:12]) + "</li>"
+        "</a> · HEAD " + escape(pr["head_sha"][:12]) +
+        " · doelbranch " + escape(pr["base_ref"]) + "</li>"
         for pr in unpaired)
     cluster_cards = []
     for cluster in report["linked_pr_collision_clusters"]:
@@ -1422,6 +1423,7 @@ def graph_html(report):
             "<li><a rel='noopener noreferrer' href='" +
             escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
             "</a> · HEAD <code>" + escape(pr["head_sha"][:12]) +
+            "</code> · doelbranch <code>" + escape(pr["base_ref"]) +
             "</code> · " + str(pr["other_prs_with_shared_files_observed"]) +
             " directe bestandsverbindingen</li>"
             for pr in cluster["participating_prs"])
@@ -1431,6 +1433,7 @@ def graph_html(report):
                 "<li><a rel='noopener noreferrer' href='" +
                 escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
                 "</a> · HEAD <code>" + escape(pr["head_sha"][:12]) +
+                "</code> · doelbranch <code>" + escape(pr["base_ref"]) +
                 "</code> · " +
                 ("volledige" if pr["source_file_list_complete"] else "gedeeltelijke") +
                 " bestandslijst</li>"
@@ -1455,6 +1458,7 @@ def graph_html(report):
             "<li><a rel='noopener noreferrer' href='" +
             escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
             "</a> · HEAD <code>" + escape(pr["head_sha"][:12]) +
+            "</code> · doelbranch <code>" + escape(pr["base_ref"]) +
             "</code> · " + str(pr["other_prs_with_scope_conflicts_observed"]) +
             " directe scopeverbindingen · " +
             ("volledige" if pr["file_list_complete"] else "gedeeltelijke") +
