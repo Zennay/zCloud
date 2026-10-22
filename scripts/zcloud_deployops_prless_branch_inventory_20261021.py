@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import sys
+from datetime import datetime, timezone
 
 from scripts.zcloud_deployops_pr_owner_collision_20261015 import (
     InvalidInventory, MAX_PRS, SHA,
@@ -106,12 +107,16 @@ def _open_pr_heads(read):
 
 def collect(read):
     """Require complete, repeatable branch/PR inventories and an unchanged main."""
+    started_at = datetime.now(timezone.utc)
     main_before = _main_sha(read)
     branches_before = _branches(read)
     prs_before = _open_pr_heads(read)
     branches_after = _branches(read)
     prs_after = _open_pr_heads(read)
     main_after = _main_sha(read)
+    completed_at = datetime.now(timezone.utc)
+    if completed_at < started_at:
+        raise InvalidInventory("snapshot_clock_moved_backwards")
 
     if branches_before != branches_after:
         raise InvalidInventory("branch_inventory_changed_during_snapshot")
@@ -151,6 +156,9 @@ def collect(read):
         "policy": "zcloud-deployops-prless-branch-inventory-v1",
         "repo": REPO,
         "main_sha": main_before,
+        "snapshot_started_at_utc": started_at.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "snapshot_completed_at_utc": completed_at.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "snapshot_duration_seconds": round((completed_at - started_at).total_seconds(), 3),
         "branch_inventory_complete": True,
         "open_pr_inventory_complete": True,
         "branches_scanned": len(annotated),
