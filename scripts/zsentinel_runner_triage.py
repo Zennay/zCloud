@@ -136,7 +136,7 @@ def observe_discovered_job(token=None):
     from zsentinel_runner_cross_source import validate_additional_jobs
     try:
         row["additional_job_links"] = validate_additional_jobs(
-            row.get("additional_job_links", []))
+            row.get("additional_job_links"))
         row["additional_links_coverage"] = "bounded_observed"
     except (ValueError, TypeError, KeyError, AttributeError):
         row["additional_job_links"] = []
