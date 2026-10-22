@@ -15,9 +15,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from zsentinel_issue_delivery import (
-    HUMAN_ONLY_ROUTE_CODES, build_workboard, canonical_issue_action,
-    render_html, render_markdown,
+    build_workboard, canonical_issue_action, render_html, render_markdown,
 )
+from zsentinel_owner_routes import HUMAN_ONLY_ROUTE_CODES
 from zsentinel_issue_progress import load_private_prior, _source
 from zsentinel_product_issue_inbox import ROOT, canonical_projects, collect
 
