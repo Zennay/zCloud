@@ -257,11 +257,11 @@ def combine(local, refreshed_projects):
 
 
 
-def additional_jobs_html(rows):
-    """Render only validated, bounded exact-job links from the same discovery window."""
+def validate_additional_jobs(rows):
+    """Return a bounded allowlist of exact job receipts, dropping provider extras."""
     if type(rows) is not list or len(rows) > 5:
         raise ValueError("unbounded additional exact-job links")
-    items = []
+    normalized = []
     for job in rows:
         if (type(job) is not dict
                 or type(job.get("run_id")) is not int
@@ -270,9 +270,12 @@ def additional_jobs_html(rows):
                 or not 1 <= job["job_id"] <= 2**53 - 1
                 or type(job.get("head_sha")) is not str
                 or not SHA.fullmatch(job["head_sha"])
-                or job.get("job_status") not in ("queued", "in_progress", "completed")
-                or job.get("runner_route") not in ("self_hosted", "hosted_or_custom", "unknown")
-                or job.get("source_window") not in ("queued", "in_progress", "failure")
+                or type(job.get("job_status")) is not str
+                or job["job_status"] not in ("queued", "in_progress", "completed")
+                or type(job.get("runner_route")) is not str
+                or job["runner_route"] not in ("self_hosted", "hosted_or_custom", "unknown")
+                or type(job.get("source_window")) is not str
+                or job["source_window"] not in ("queued", "in_progress", "failure")
                 or job.get("observed_only") is not True
                 or job.get("work_resumed_verified") is not False
                 or job.get("action_authorized") is not False
@@ -280,6 +283,20 @@ def additional_jobs_html(rows):
                     "https://github.com/Zennay/zCloud/actions/runs/" +
                     str(job["run_id"]) + "/job/" + str(job["job_id"]))):
             raise ValueError("untrusted additional exact-job receipt")
+        normalized.append({
+            "run_id": job["run_id"], "job_id": job["job_id"],
+            "head_sha": job["head_sha"], "job_status": job["job_status"],
+            "runner_route": job["runner_route"], "source_window": job["source_window"],
+            "observed_only": True, "work_resumed_verified": False,
+            "action_authorized": False, "url": job["url"],
+        })
+    return normalized
+
+
+def additional_jobs_html(rows):
+    """Render only validated, bounded exact-job links from the same discovery window."""
+    items = []
+    for job in validate_additional_jobs(rows):
         items.append(
             '<li><a rel="noopener noreferrer" href="' +
             escape(job["url"], quote=True) + '">Run ' +
