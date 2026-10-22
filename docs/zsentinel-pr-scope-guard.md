@@ -4,7 +4,7 @@
 
 De scope-guard toont maximaal 16 bronbeperkingen per samenvatting. Als de bron meer redenen bevat, vermeldt de tekst nu hoeveel items buiten de weergavelimiet vallen en dat de volledige actuele bron moet worden geïnspecteerd. Ongeldige redenitems worden apart geteld in plaats van stilzwijgend te verdwijnen.
 
-De eigenaaracties verwerken maximaal 64 reden-codes. Zodra de lijst groter is dan de weergavelimiet, komt er een expliciete waarschuwing vóór de specifieke herstelacties; boven 64 items vermeldt de uitvoer dat niet alle codes zijn verwerkt. De begrenzing houdt verwerking en uitvoer eindig, maar een afgekapt overzicht kan nooit als bewijs van een conflictvrije PR of als mergevrijgave gelden. De onderliggende bronvolledigheid wordt niet opgewaardeerd door deze weergavefix.
+De eigenaaracties verwerken maximaal 64 reden-codes. Zodra de lijst groter is dan de weergavelimiet, komt er een expliciete waarschuwing vóór de specifieke herstelacties; boven 64 items vermeldt de uitvoer dat niet alle codes zijn verwerkt. De actie-uitvoer is zelf ook begrensd op vijf regels: wanneer extra herstelacties daardoor wegvallen, meldt de uitvoer hoeveel niet zijn getoond. De begrenzing houdt verwerking en uitvoer eindig, maar een afgekapt overzicht kan nooit als bewijs van een conflictvrije PR of als mergevrijgave gelden. De onderliggende bronvolledigheid wordt niet opgewaardeerd door deze weergavefix.
 
 ## 22 oktober · volledige PR-dekking is óók volledige conflictvoorvertoning
 
