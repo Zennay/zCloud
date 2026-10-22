@@ -4241,14 +4241,18 @@ def watch_incident_episode_id(incident):
     types use a real detection receipt (if available) to distinguish events.
     No free text is returned to the client in this identifier.
     """
-    category = str(incident.get('type') or '')
+    # Source labels are semantically case-insensitive elsewhere in the
+    # incident pipeline. Normalize them before fingerprinting so harmless
+    # casing/whitespace changes do not create a fresh notification episode.
+    category = str(incident.get('type') or '').strip().lower()
     identity = str(incident.get('id') or '')
+    severity = str(incident.get('severity') or '').strip().lower()
     if not identity or len(identity) > 256 or not category:
         return None
     # Scope the fingerprint to the project as well. Separate projects can
     # legitimately reuse an incident's local name or worker identifier.
     project = str(incident.get('project') or 'cloud')
-    parts = [project[:80], category, identity, str(incident.get('severity') or '')]
+    parts = [project[:80], category, identity, severity]
     if category == 'service_health':
         parts.append(str(incident.get('cause') or '')[:512])
     else:
