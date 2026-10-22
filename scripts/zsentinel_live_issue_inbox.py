@@ -171,6 +171,8 @@ def observe_repo_inbox(repo_full_name, *, token=None):
     provider_total_count = None
     provider_incomplete = False
     recent_provider_count_drift = False
+    recent_rows_read = 0
+    recent_duplicate_issue_records = 0
     recent_window_truncated = True
     recall_performed = False
     recall_sources = []
@@ -197,6 +199,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
 
     def admit_rows(items, source):
         nonlocal total_rows, prs_excluded, invalid_excluded
+        nonlocal recent_duplicate_issue_records
         total_rows += len(items)
         for raw in items:
             if isinstance(raw, dict) and "pull_request" in raw:
@@ -221,6 +224,8 @@ def observe_repo_inbox(repo_full_name, *, token=None):
                 item["inbox_source_windows"] = [source]
                 collected[item["number"]] = item
             else:
+                if source == "recent":
+                    recent_duplicate_issue_records += 1
                 if source not in existing["inbox_source_windows"]:
                     existing["inbox_source_windows"].append(source)
                 if (existing["updated_at_utc"] != item["updated_at_utc"]
@@ -248,14 +253,16 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             source_error = str(exc)
             break
         pages_read += 1
+        recent_rows_read += len(items)
         if provider_total_count is not None and provider_total_count != count:
             recent_provider_count_drift = True
         provider_total_count = count
         provider_incomplete = provider_incomplete or incomplete
         admit_rows(items, "recent")
-        recent_window_truncated = (
-            len(items) == PAGE_SIZE and page * PAGE_SIZE < count
-        )
+        # A short GitHub Search page does not prove the result set ended
+        # when total_count still reports more issues. Keep the bounded
+        # pagination active, and then recall older high-priority items.
+        recent_window_truncated = recent_rows_read < count
         if not recent_window_truncated:
             break
 
@@ -265,7 +272,11 @@ def observe_repo_inbox(repo_full_name, *, token=None):
     # bounded first pages (30 records each) are optional and advisory.
     # No title hit becomes authoritative unless the returned issue itself
     # has one single explicit P0/P1 label.
-    if source_error is None and (recent_window_truncated or provider_incomplete):
+    if source_error is None and (
+        recent_window_truncated or provider_incomplete
+        or recent_provider_count_drift
+        or recent_duplicate_issue_records or invalid_excluded
+    ):
         recall_performed = True
         scopes = [
             ("label_P0", "label:P0,priority:P0,priority/P0",
@@ -323,6 +334,8 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         "source": "github_rest_search_issues_issue_only",
         "pages_read": pages_read, "max_pages": MAX_PAGES,
         "items_per_page": PAGE_SIZE, "source_rows_scanned": total_rows,
+        "recent_rows_read": recent_rows_read,
+        "recent_duplicate_issue_records": recent_duplicate_issue_records,
         "pull_requests_excluded": prs_excluded,
         "provider_total_issue_count_at_observation": provider_total_count,
         "provider_incomplete_results": provider_incomplete,
@@ -331,6 +344,13 @@ def observe_repo_inbox(repo_full_name, *, token=None):
             item["source_window_identity_drift"] for item in issues
         ),
         "recent_window_truncated": recent_window_truncated,
+        "recent_issue_window_complete": (
+            pages_read > 0 and source_error is None
+            and not provider_incomplete and not recent_provider_count_drift
+            and not recent_window_truncated
+            and not recent_duplicate_issue_records
+            and not invalid_excluded
+        ),
         "priority_recall_performed": recall_performed,
         "priority_recall_sources": recall_sources,
         "priority_recall_not_authoritative": True,
@@ -343,6 +363,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         "source_partial_or_unknown": (
             bool(source_error) or provider_incomplete or recent_provider_count_drift
             or recent_window_truncated or recall_partial
+            or recent_duplicate_issue_records > 0 or invalid_excluded > 0
             or any(item["source_window_identity_drift"] for item in issues)
         ),
         "source_error": source_error,
@@ -380,6 +401,11 @@ def markdown(report):
         "/" + str(report["max_pages"]),
         "- Recent window truncated: " +
         str(report["recent_window_truncated"]),
+        "- Recent issue window complete: " +
+        str(report["recent_issue_window_complete"]),
+        "- Recent rows read: " + str(report["recent_rows_read"]),
+        "- Duplicate recent issue records: " +
+        str(report["recent_duplicate_issue_records"]),
         "- Extra P0/P1 title recall performed: " +
         str(report["priority_recall_performed"]),
         "- Maximum bounded GETs: " +
@@ -506,6 +532,11 @@ def html_view(report):
         esc(report["priority_recall_performed"]) +
         " · bounded GET attempts: " + esc(report["get_attempts"]) +
         "/" + esc(report["read_get_attempt_upper_bound"]) + "</p>",
+        "<p>Recent window complete: " +
+        esc(report["recent_issue_window_complete"]) +
+        " · recent rows read: " + esc(report["recent_rows_read"]) +
+        " · duplicate recent issue records: " +
+        esc(report["recent_duplicate_issue_records"]) + "</p>",
         "<p>Recent source count drift: " +
         esc(report["recent_provider_count_drift"]) +
         " · issues with conflicting snapshots: " +
