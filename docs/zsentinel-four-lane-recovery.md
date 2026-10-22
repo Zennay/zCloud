@@ -1380,3 +1380,23 @@ Broncommits:
 Dit blijft werk op bestaande PR #1572; exacte-head verplichte CI,
 onafhankelijke review en geautoriseerde main-/live-integratie
 blijven afzonderlijk verplicht.
+
+
+### 22 October · reconcile the recovery lanes with the current five-slot contract
+
+Current `main@12079bbb` explicitly raises zSentinel's configured worker cap to
+five (`fix(zCloud): honor ten-worker selected fleet and 5-slot zSentinel cap`).
+The recovery feature still uses the four distinct `portfolio-recovery` lanes;
+those lanes are work categories, not a declaration that exactly four workers
+must run. Keep the current-main `ai_worker_cap=5` instead of reverting it to
+four while resolving this PR's contract conflict.
+
+The local read-only contract desk now requires both
+`lane_profile=portfolio-recovery` and `ai_worker_cap=5`, and reports
+`FIVE_WORKER_CAP_MISMATCH` for a different cap. The earlier 21 October
+four-worker-cap note records the then-current branch contract and is superseded
+for integration with current main. This remains local-file evidence only: it
+does not prove the live service loaded the contract, five slots are active, or
+resource admission permits five concurrent workers. Active claims, leases,
+runner assignment, required CI, independent review, branch protection and
+release authorization remain separate gates.
