@@ -82,8 +82,11 @@ def pressure_findings(sample: dict) -> list[dict[str, str]]:
                  "detail": "Host-pressure snapshot is unavailable; no headroom or clearance assertion."}]
 
     ratio = sample.get("load_per_cpu")
-    if (type(ratio) not in (int, float) or not math.isfinite(ratio)
-            or ratio < 0 or ratio > 1e6):
+    ratio_is_number = (
+        type(ratio) in (int, float) and
+        (type(ratio) is int or math.isfinite(ratio))
+    )
+    if not ratio_is_number or ratio < 0 or ratio > 1e6:
         findings.append({"code": "HOST_PRESSURE_INCOMPLETE", "severity": "warn",
                          "detail": "Unable to observe CPU demand; no host-headroom assertion."})
     elif ratio >= 2.0:
@@ -94,16 +97,21 @@ def pressure_findings(sample: dict) -> list[dict[str, str]]:
                          "detail": "One-minute demand at least logical CPU count; inspect concurrent workloads before release."})
 
     # CPU/load availability is independent from kernel PSI. Do not return early:
-    # a missing load average must never hide a real memory or I/O stall.
+    # missing load must not hide valid CPU, memory or I/O stall measurements.
     for field, code, detail in (
+        ("cpu_some_avg10_pct", "HOST_CPU_STALL",
+         "CPU PSI some stall >=10% over ten seconds; preserve active jobs and inspect CPU contention."),
         ("memory_full_avg10_pct", "HOST_MEMORY_STALL",
          "Memory PSI full stall >=10% over ten seconds; avoid overlapping heavy jobs."),
         ("io_full_avg10_pct", "HOST_IO_STALL",
          "I/O PSI full stall >=10% over ten seconds; avoid competing disk-heavy jobs."),
     ):
         value = sample.get(field)
-        if (type(value) in (int, float) and math.isfinite(value)
-                and 10 <= value <= 100):
+        finite_number = (
+            type(value) in (int, float) and
+            (type(value) is int or math.isfinite(value))
+        )
+        if finite_number and 10 <= value <= 100:
             findings.append({"code": code, "severity": "block", "detail": detail})
 
     if (sample.get("state") in ("partial", "unknown")
