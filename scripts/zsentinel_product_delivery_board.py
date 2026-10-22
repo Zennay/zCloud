@@ -401,6 +401,7 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
     project_operations.sort(key=lambda item: (
         -item["issue_counts_in_sample"]["P0"],
         -item["issue_counts_in_sample"]["P1"],
+        -(item["queue_observation"] or {}).get("expired_active_leases", 0),
         -(item["queue_observation"] or {}).get("high_claim_attempts", 0),
         item["project"],
     ))
