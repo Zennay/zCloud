@@ -150,6 +150,8 @@ threshold warning codes, coverage, and a bounded operator summary. The archive
 is counted only if the configured path is a real mount point, not merely a
 directory or symlink.
 
+Mount membership is resolved from a bounded `/proc/self/mountinfo` snapshot with exact decoded mountpoint matching; `os.path.ismount()` alone is not treated as authoritative because same-device bind mounts may be missed. Truncated, malformed, unreadable, or multiply matched mount evidence fails closed. The bridge rechecks the path's device/inode and mountinfo membership around the capacity read; if the observed target changes, archive capacity is not credited. The receipt exposes only a bounded detection-basis enum, not mount IDs or source paths.
+
 Warnings use conservative fixed thresholds (root filesystem >=95% used, swap
 >=90% used, available RAM <=10%, or maximum load average >=2x detected CPU
 count). Machine-readable severity is `critical` for a critically full root
