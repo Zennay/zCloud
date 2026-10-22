@@ -882,7 +882,11 @@ It applies these rules:
   ineligible or still lease-bound tasks are refused. Existing fields, source
   evidence and owner/claim state are preserved; there is no lease pruning.
 - A safely unassigned, eligible **queued** task may have its title, priority,
-  criteria or source updated under that same transaction.
+  criteria or source updated under that same transaction **only if it has never
+  been claimed or acquired evidence** (`attempts=0`, empty `evidence` and
+  `blocker`). A task returned to queued via `CONTINUE` retains its historical
+  identity and receipts even if its current worker/lease fields are clear.
+  An unchanged duplicate still returns the original without a write.
 - A duplicate whose requested fields already match is **idempotent**:
   it returns the existing task without changing `updated_at` or creating
   artificial activity/churn.
