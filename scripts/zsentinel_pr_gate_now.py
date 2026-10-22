@@ -159,15 +159,82 @@ def _running_age_from_github(check, now):
     return min(int(seconds), 365 * 24 * 3600)
 
 
+def _closed_pr_lifecycle(repo, number, first, token):
+    """GitHub-confirmed closed/merged distinction; no claim of live deploy.
+
+    A closed PR is not "merged". A merged PR is only on the DEFAULT branch
+    if GitHub's canonical repository identifies that branch as its target.
+    Pinned second PR read prevents a mixed head/state/merge-commit receipt.
+    """
+    head = _sha(first["head"].get("sha"))
+    target_base = _sha(first["base"].get("sha"))
+    target_ref = _branch_ref(first["base"].get("ref"))
+    target_repo = first["base"].get("repo")
+    if (type(target_repo) is not dict or target_repo.get("full_name") != repo
+            or first.get("state") != "closed" or type(first.get("merged")) is not bool):
+        raise ValueError("invalid closed GitHub PR lifecycle source")
+    was_merged = first["merged"]
+    commit = first.get("merge_commit_sha")
+    if was_merged:
+        commit = _sha(commit)
+    else:
+        commit = None
+    last = github_json(repo, "/pulls/" + str(number), token)
+    if (type(last) is not dict or last.get("number") != number
+            or last.get("state") != "closed" or last.get("merged") is not was_merged
+            or type(last.get("head")) is not dict or
+            last["head"].get("sha") != head or type(last.get("base")) is not dict
+            or last["base"].get("sha") != target_base
+            or last["base"].get("ref") != target_ref
+            or last.get("merge_commit_sha") != first.get("merge_commit_sha")):
+        raise ValueError("PR head/base changed during observation")
+    if not was_merged:
+        status = "github_confirmed_closed_without_merge"
+        default_branch = None
+    else:
+        # A GitHub merge commit can belong to a development/release branch.
+        # Resolve the repository's *actual* default branch before claiming
+        # delivery on main. Refuse missing/ambiguous repository metadata.
+        metadata = github_json(repo, "/", token)
+        if (type(metadata) is not dict
+                or metadata.get("full_name") != repo
+                or type(metadata.get("default_branch")) is not str):
+            raise ValueError("GitHub default branch metadata unavailable")
+        default_branch = _branch_ref(metadata["default_branch"])
+        status = ("github_confirmed_merged_on_default_branch"
+                  if target_ref == default_branch
+                  else "github_confirmed_merged_on_other_branch")
+    return {
+        "url": "https://github.com/" + repo + "/pull/" + str(number),
+        "repository": repo, "number": number,
+        "status": status,
+        "head_sha_observed": head,
+        "base_ref_observed": target_ref,
+        "default_branch_ref_observed": default_branch,
+        "github_merged_observed": was_merged,
+        "github_merge_commit_sha_observed": commit,
+        "exact_head_stable_on_second_read": True,
+        "required_branch_checks_and_rules_verified": False,
+        "required_review_policy_verified": False,
+        "deployed_live_verified": False,
+        "merge_authorized": False,
+        "deployment_authorized": False,
+        "read_only": True,
+    }
+
+
 def _one(repo, number, token):
     if not REPO.fullmatch(repo) or type(number) is not int or not 1 <= number <= 999999999:
         raise ValueError("invalid canonical PR identity")
     prefix = "/pulls/" + str(number)
     first = github_json(repo, prefix, token)
     if (type(first) is not dict or first.get("number") != number
-            or first.get("state") != "open" or type(first.get("base")) is not dict
+            or first.get("state") not in ("open", "closed")
+            or type(first.get("base")) is not dict
             or type(first.get("head")) is not dict):
-        raise ValueError("PR not open or source missing")
+        raise ValueError("PR lifecycle source missing")
+    if first["state"] == "closed":
+        return _closed_pr_lifecycle(repo, number, first, token)
     head = _sha(first["head"].get("sha"))
     base = _sha(first["base"].get("sha"))
     base_ref = _branch_ref(first["base"].get("ref"))
@@ -588,6 +655,8 @@ def observe_many(prs, token=None):
         "observed_prs": len(items),
         "max_github_gets": len(items) * 5,
         "current_review_and_check_samples_only": True,
+        "closed_pr_lifecycle_source_is_github_only": True,
+        "default_branch_merges_do_not_prove_deployment": True,
         "required_branch_protection_verified": False,
         "merge_authorized": False, "deployment_authorized": False,
         "writes_performed": False,
