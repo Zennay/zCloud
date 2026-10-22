@@ -293,6 +293,30 @@ def main():
     args = parser.parse_args()
     ledger_lock = None
     try:
+        # Admit every operator-owned output and mutable cursor in one pass.
+        # No provider read, private artifact or ledger lock happens first.
+        from zsentinel_private_path_admission import admit_private_paths
+        admit_private_paths(
+            destinations={
+                "output": args.output,
+                "agenda_output": args.agenda_output,
+                "desk_output": args.desk_output,
+                "handoff_output": args.handoff_output,
+                "action_output": args.action_output,
+                "disk_hotspots_output": args.disk_hotspots_output,
+                "state": args.state,
+            },
+            sources={
+                "registry": args.registry,
+                "database": args.database,
+                "worker_events_database": args.worker_events_database,
+                "notion_claims_export": args.notion_claims_export,
+                "disk_hotspots_previous": args.disk_hotspots_previous,
+                "previous_pr_report": args.previous_pr_report,
+                "disk_hotspots_root": args.disk_hotspots_root,
+                "archive_target": args.archive_target,
+            },
+        )
         # PR pins, discovery selectors and continuity reports belong to the
         # same explicit read-only PR observer. Never silently discard owner
         # input or compare a prior source against a missing current receipt.
