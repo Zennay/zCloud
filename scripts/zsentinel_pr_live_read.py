@@ -288,9 +288,11 @@ def _checks_summary(payload, sha, full_name):
     sums = {"completed_success": 0, "completed_other": 0, "not_completed": 0}
     observed_names = []
     sampled_blocking_checks = []
+    sampled_non_success_checks = []
     sampled_pending_checks = []
-    # These are only hints from a first-page sample. They never establish
-    # which checks branch protection requires or make CI green.
+    # Cancelled, stale, unknown and other non-success terminal conclusions
+    # must not silently disappear from the merge-first operator's attention.
+    # These are sampled hints, not proof that branch protection requires them.
     for row in rows:
         if not isinstance(row, dict):
             raise GitHubReadError("invalid check-run row")
@@ -311,13 +313,20 @@ def _checks_summary(payload, sha, full_name):
             "".join(c if c.isprintable() else " " for c in name)[:90]
             if isinstance(name, str) else "unnamed sampled check"
         )
-        if (status == "completed" and conclusion in
-                ("failure", "timed_out", "action_required")
-                and len(sampled_blocking_checks) < 6):
-            sampled_blocking_checks.append({
-                "name": clean_name, "conclusion": conclusion, "url": check_link,
-                "required_by_branch_protection": "UNKNOWN",
-            })
+        if status == "completed" and conclusion not in ("success", "neutral", "skipped"):
+            if len(sampled_blocking_checks) < 6:
+                sampled_blocking_checks.append({
+                    "name": clean_name,
+                    "conclusion": conclusion if isinstance(conclusion, str) else "UNKNOWN",
+                    "url": check_link,
+                    "required_by_branch_protection": "UNKNOWN",
+                })
+        elif status == "completed" and conclusion in ("neutral", "skipped"):
+            if len(sampled_non_success_checks) < 6:
+                sampled_non_success_checks.append({
+                    "name": clean_name, "conclusion": conclusion, "url": check_link,
+                    "required_by_branch_protection": "UNKNOWN",
+                })
         if status != "completed" and len(sampled_pending_checks) < 6:
             sampled_pending_checks.append({
                 "name": clean_name, "status": str(status)[:32],
@@ -335,6 +344,7 @@ def _checks_summary(payload, sha, full_name):
         "sample_incomplete": count > len(rows),
         "sample_status_counts": sums, "sample_names": observed_names[:12],
         "sampled_blocking_checks": sampled_blocking_checks,
+        "sampled_non_success_checks": sampled_non_success_checks,
         "sampled_pending_checks": sampled_pending_checks,
         "required_checks_identified": False,
         "required_ci_verdict": "UNKNOWN",
