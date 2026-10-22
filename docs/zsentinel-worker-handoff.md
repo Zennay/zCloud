@@ -258,8 +258,10 @@ waargenomen duur mag niet negatief of langer dan zeven dagen zijn. Een ontbreken
 of ongeldige starttijd is dus geen geldige lease meer.
 
 Bij een geldige lease krijgen de huidige queue-rij en het project/worker-slot een
-niet-omkeerbare SHA-256-vensterfingerprint op basis van de queue-ID en
-`claimed_at`. De ruwe queue-ID, eigenaar en tijdstempels worden niet in het
+niet-omkeerbare SHA-256-vensterfingerprint op basis van de queue-ID,
+`attempts` en `claimed_at` (microsecondenprecisie wanneer aanwezig). Een
+leaseverlenging verandert de fingerprint niet; een nieuwe poging of claimstart
+wel. De ruwe queue-ID, eigenaar en tijdstempels worden niet in het
 operatorrapport opgenomen. Voortgang, prompt- en browserblokkadesignalen uit
 eerdere claims worden niet aan het huidige claimvenster toegeschreven; de
 read-only HTML en tekst tonen welke events binnen/buiten het venster vallen.
