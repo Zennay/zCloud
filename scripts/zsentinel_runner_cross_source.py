@@ -165,7 +165,12 @@ def combine(local, refreshed_projects):
     if status == "completed":
         conclusion = receipt.get("conclusion")
         if type(conclusion) is not str or conclusion not in JOB_CONCLUSIONS:
-            conclusion = None
+            return _action(
+                "terminal_job_conclusion_unknown",
+                "GitHub meldt een afgeronde job zonder bruikbare, herkende conclusie.",
+                "Ververs de canonieke exacte run/job-conclusie en laat een bevoegde eigenaar het resultaat beoordelen; geen retry of runnerrestart.",
+                local, pinned=pinned, source_freshness="bounded_recent",
+                job_status=status)
         if conclusion in TERMINAL_CI_FAILURES:
             return _action(
                 "terminal_ci_failure_not_runner_recovery",
@@ -173,10 +178,38 @@ def combine(local, refreshed_projects):
                 "Inspecteer de gekoppelde jobuitkomst en routeer één root-fix naar een bevoegde eigenaar; geen blinde retry of runnerrestart.",
                 local, pinned=pinned, source_freshness="bounded_recent",
                 job_status=status, job_conclusion=conclusion)
+        if conclusion == "startup_failure":
+            return _action(
+                "terminal_runner_startup_failure_owner_route",
+                "De exacte job is tijdens runner/bootstrap-start mislukt; een actuele listenerstoring is daarmee niet bewezen.",
+                "Routeer de exacte job naar de GitHub workflow/account-eigenaar voor bootstrap- en admission-onderzoek; geen automatische retry of runnerrestart.",
+                local, pinned=pinned, source_freshness="bounded_recent",
+                job_status=status, job_conclusion=conclusion)
+        if conclusion == "cancelled":
+            return _action(
+                "terminal_job_cancelled_owner_review",
+                "De exacte job is geannuleerd; de conclusie bepaalt niet wie of wat de annulering veroorzaakte.",
+                "Controleer cancellation actor, concurrency en de exacte jobhistorie met de workflow-eigenaar; behoud ander actief werk en voer geen blinde retry uit.",
+                local, pinned=pinned, source_freshness="bounded_recent",
+                job_status=status, job_conclusion=conclusion)
+        if conclusion == "stale":
+            return _action(
+                "terminal_job_stale_refresh_required",
+                "De opgeslagen jobconclusie is stale en bewijst geen huidige HEAD- of runnerstatus.",
+                "Ververs de actuele exacte-head run/job-bron voordat een merge- of herstelbesluit wordt genomen.",
+                local, pinned=pinned, source_freshness="bounded_recent",
+                job_status=status, job_conclusion=conclusion)
+        if conclusion in ("neutral", "skipped"):
+            return _action(
+                "terminal_job_not_successful_ci_owner_review",
+                "De exacte job eindigde met " + conclusion + "; dit is geen bewijs van geslaagde verplichte CI.",
+                "Controleer de vereiste-checks en de reden voor neutral/skipped bij de workflow-eigenaar; markeer CI niet groen en herstart geen runner.",
+                local, pinned=pinned, source_freshness="bounded_recent",
+                job_status=status, job_conclusion=conclusion)
         return _action(
-            "terminal_job_not_runner_recovery",
-            "De exacte GitHub-job is terminaal; historische toewijzing bewijst geen actuele runnerstoring.",
-            "Beoordeel de vastgelegde jobuitkomst en actuele runnerbron apart; herstart geen runner op basis van deze historische job.",
+            "terminal_job_success_not_runner_health",
+            "De exacte job is succesvol afgerond; historisch succes bewijst niet dat de runner nu gezond of beschikbaar is.",
+            "Gebruik de job als historisch bewijs en beoordeel een actuele runnerstoring uitsluitend met verse registratie- en hostbronnen.",
             local, pinned=pinned, source_freshness="bounded_recent",
             job_status=status, job_conclusion=conclusion)
     if route != "self_hosted":
