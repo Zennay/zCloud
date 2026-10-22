@@ -990,6 +990,20 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             card["queue_lease_observed_not_verified"] = (
                 item.get("current_queue_lease_observed") is True)
             cards.append(card)
+    if worker is None and sources.get("worker_progress") in (
+            "degraded_unavailable_no_recovery_proof",
+            "unavailable_no_worker_recovery_proof"):
+        # This is a requested-but-unavailable input, NOT a negative worker
+        # inventory. Keep the other project/PR owner cards usable.
+        worker_coverage = "requested_source_unavailable_owner_recheck"
+        card = _card(
+            "P2", "cloud", "worker_source_refresh_required",
+            "De aangevraagde worker-eventbron is onbeschikbaar of incompatibel. "
+            "Controleer met de broneigenaar database/schema en toegestane "
+            "read-only observatie; geen nul workers, recovery of slotvrijgave.",
+            source="requested_worker_observation_unavailable")
+        card["current_worker_incidents_verified"] = False
+        cards.append(card)
     pressure = decision.get("live_queue_pressure")
     queue_coverage = "not_requested_or_unavailable"
     if pressure is not None:
@@ -1000,6 +1014,24 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
         # An aggregate must never invent a new owner or translate attempts to failures.
         if pressure.get("queue_write_authorized") is True:
             raise ValueError("queue write authority cannot come from a read-only handoff")
+    if pressure is None:
+        # Both live-cockpit and explicit pinned-job refresh can report a
+        # deliberately absent/failed SQLite read. Never infer an empty queue.
+        queue_scope = sources.get("queue")
+        read_scope = decision.get("live_github_read")
+        source_scope = (read_scope.get("queue_source")
+                        if type(read_scope) is dict else None)
+        if (queue_scope == "explicitly_unobserved_no_database"
+                or source_scope == "degraded_unavailable_no_mutation"):
+            queue_coverage = "requested_source_unavailable_owner_recheck"
+            card = _card(
+                "P2", "cloud", "queue_source_refresh_required",
+                "De aangevraagde read-only queuebron is niet beschikbaar. "
+                "Laat de bevoegde broneigenaar de bestaande SQLite-bron "
+                "controleren; geen vrije slots, nul claims of retries afleiden.",
+                source="requested_queue_observation_unavailable")
+            card["current_queue_owner_claim_verified"] = False
+            cards.append(card)
     # A first operator run has no private previous queue snapshot yet.
     # Existing router already validated a bounded *current* SQLite source:
     # surface current lease conflicts now, without inventing trend or owner.
