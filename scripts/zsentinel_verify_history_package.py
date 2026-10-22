@@ -316,6 +316,11 @@ def historical_source_age(report: dict, *, as_of=None,
             kind: stamp.isoformat() for kind, stamp in sorted(inputs.items())
         },
         "source_freshness_at_capture": dict(sorted(captured_freshness.items())),
+        "missing_optional_source_names": sorted(allowed - set(inputs)),
+        "saved_source_coverage_status": (
+            "partial_saved_source_coverage" if allowed - set(inputs)
+            else "all_supported_source_kinds_observed"
+        ),
         "source_age_hours_by_kind": {
             kind: round((observed_at - stamp).total_seconds() / 3600, 2)
             for kind, stamp in sorted(inputs.items())
@@ -463,6 +468,9 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
         "Verouderde of bij opname al onverse bronsoorten: " +
             safe(", ".join(age["stale_or_not_fresh_at_capture_sources"])
                  or "geen onder de aanwezige bronnen") + ".",
+        "Niet opgenomen optionele bronnen (geen bewijs van nul): " +
+            safe(", ".join(age["missing_optional_source_names"])
+                 or "geen") + ".",
         "Bronbundel: `" + safe(latest["bundle"]) + "`.",
         "Bronboard SHA-256: `" + safe(latest["board_sha256"]) + "`.",
         "",
@@ -532,7 +540,7 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
         # project. A shared repo does not prove a PR belongs to this project.
         # Admit ONLY exact saved project PR references, never repo-wide PRs.
         candidates = selected.get("sampled_pr_candidate_urls", [])
-        if type(candidates) is not list or len(candidates) > 60:
+        if type(candidates) is not list or len(candidates) > 180:
             raise ValueError("unbounded selected project PR sample")
         project_pr_urls = set()
         for candidate in candidates:
