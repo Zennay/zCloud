@@ -1774,13 +1774,14 @@ def owner_actions_csv(data):
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\r\n")
     writer.writerow((
-        "project", "priority_hint_local", "queued_p0_local", "queued_p1_local",
+        "project", "owner_review_order", "priority_hint_local", "queued_p0_local", "queued_p1_local",
         "eligible_hint_p0_local", "eligible_hint_p1_local",
         "in_flight_p0_local", "in_flight_p1_local",
         "owner_action", "next_human_step",
         "existing_open_prs_url", "existing_open_issues_url",
         "snapshot_utc", "local_source_key_sha256",
         "local_source_complete", "portfolio_groups_complete",
+        "host_admission_observation", "held_local_recovery_lanes",
         "external_github_issue_coverage", "external_notion_claim_coverage",
         "owner_verified", "claim_authorized", "merge_authorized",
         "deploy_authorized",
@@ -1789,11 +1790,34 @@ def owner_actions_csv(data):
         not data["portfolio_priority_partial"]
         and not bool(data["portfolio_unknown_project_groups"])
     )
+    def owner_priority(item):
+        _project_id, name = item
+        row = counts.get(name)
+        if row:
+            if row["queued_p0"]:
+                return (0, name.casefold())
+            if row["in_flight_p0"]:
+                return (1, name.casefold())
+            if row["queued_p1"]:
+                return (2, name.casefold())
+            if row["in_flight_p1"]:
+                return (3, name.casefold())
+            return (4, name.casefold())
+        return (5, name.casefold())
+
+    # The full 13-project export stays bounded but now surfaces urgent P0
+    # candidate/owner blocks before lower-priority or unobserved projects.
     for project_id, project_name in sorted(
-        PORTFOLIO_PROJECTS.items(), key=lambda pair: pair[1].casefold()
+        PORTFOLIO_PROJECTS.items(), key=owner_priority
     ):
         row = counts.get(project_name)
         action = data["project_owner_decisions"][project_id]
+        order = owner_priority((project_id, project_name))[0]
+        category = ("P0_QUEUED" if order == 0 else
+                    "P0_ACTIVE_OWNER" if order == 1 else
+                    "P1_QUEUED" if order == 2 else
+                    "P1_ACTIVE_OWNER" if order == 3 else
+                    "OTHER_LOCAL" if order == 4 else "UNOBSERVED")
         links = github_inbox_urls(project_name)
         if links is None:
             raise ValueError("Missing verified project GitHub navigation mapping")
@@ -1802,7 +1826,7 @@ def owner_actions_csv(data):
         # These are fixed product enums and canonical project names; never
         # interpolate untrusted row titles or GitHub issue body into Excel.
         writer.writerow((
-            project_name, rank,
+            project_name, category, rank,
             row["queued_p0"] if row else "UNKNOWN",
             row["queued_p1"] if row else "UNKNOWN",
             row["eligible_queued_p0"] if row else "UNKNOWN",
@@ -1814,6 +1838,8 @@ def owner_actions_csv(data):
             data["observed_utc"], data["portfolio_source_key"],
             str(bool(data["source_complete"])).lower(),
             str(portfolio_groups_complete).lower(),
+            data["host_admission"],
+            data["admission_summary"]["held_for_owner_or_source"],
             "UNKNOWN", "UNKNOWN", "false", "false", "false", "false",
         ))
     return buffer.getvalue()
