@@ -212,7 +212,15 @@ def observe_exact_pr(pr_url, *, token=None):
                 )
 
     attempted += 1
-    second = _pr_summary(_limited_json(path, token=token), full_name, number)
+    try:
+        second = _pr_summary(_limited_json(path, token=token), full_name, number)
+    except GitHubReadError as exc:
+        missing.append("final PR re-read: " + str(exc))
+        return _unknown_pr(
+            pr_url, first, missing, attempted,
+            default_branch=default_branch,
+            default_branch_sha=default_branch_sha,
+        )
     stable_keys = (
         "number", "observed_state", "observed_draft", "reported_merged",
         "target_branch", "base_sha", "exact_head_sha",
