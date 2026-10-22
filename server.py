@@ -3036,17 +3036,47 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
         queue_id=project_id+'-'+digest
     queue_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(queue_id).strip())[:160]
     ts=now()
+    criteria=str(completion_criteria or '')
+    source=str(source_url or '')
     with connect() as c:
-        c.execute("""INSERT INTO portfolio_queue(
-            queue_id,project_id,title,priority,status,eligible,completion_criteria,source_url,
-            created_at,updated_at,parent_queue_id
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(queue_id) DO UPDATE SET
-            project_id=excluded.project_id,title=excluded.title,priority=excluded.priority,
-            completion_criteria=excluded.completion_criteria,source_url=excluded.source_url,
-            updated_at=excluded.updated_at""",
-            (queue_id,project_id,title,priority,'queued',1,str(completion_criteria or ''),
-             str(source_url or ''),ts,ts,parent_queue_id))
+        # One explicit writer transaction protects the identity inspection and
+        # its subsequent insert/update. A duplicate queue ID must NEVER rewrite
+        # the scope or evidence of a blocked, finished, or worker-owned task.
+        c.execute('BEGIN IMMEDIATE')
+        existing=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(queue_id,)).fetchone()
+        claim=_portfolio_queue_task_claim_guard(
+            c,project_id,queue_id,datetime.now(timezone.utc))
+        if not claim['source_available'] or claim['state']!='none':
+            raise ValueError('Queue claim-bron is onbekend of nog gebonden; enqueue geweigerd')
+        if existing is not None:
+            if (str(existing['project_id'] or '')!=project_id or
+                    existing['parent_queue_id']!=parent_queue_id):
+                raise ValueError('Queue-ID behoort bij een ander project of parent; enqueue geweigerd')
+            if (existing['status']!='queued' or int(existing['eligible'] or 0)!=1 or
+                    existing['worker_slot'] is not None or
+                    existing['claimed_at'] is not None or
+                    existing['claim_expires'] is not None):
+                raise ValueError('Bestaande queue-taak is gebonden, geblokkeerd of voltooid; enqueue geweigerd')
+            # An idempotent duplicate is a no-op: even updated_at is retained
+            # so existing operator versions and worker observations stay valid.
+            if (existing['title']==title and existing['priority']==priority and
+                    existing['completion_criteria']==criteria and
+                    existing['source_url']==source):
+                return _portfolio_queue_row(existing)
+            c.execute("""UPDATE portfolio_queue
+                         SET title=?,priority=?,completion_criteria=?,source_url=?,updated_at=?
+                         WHERE queue_id=? AND project_id=? AND status='queued' AND eligible=1
+                           AND worker_slot IS NULL AND claimed_at IS NULL AND claim_expires IS NULL""",
+                      (title,priority,criteria,source,ts,queue_id,project_id))
+            if c.execute('SELECT changes()').fetchone()[0]!=1:
+                raise ValueError('Queue-admission status veranderde; enqueue geweigerd')
+        else:
+            c.execute("""INSERT INTO portfolio_queue(
+                queue_id,project_id,title,priority,status,eligible,completion_criteria,source_url,
+                created_at,updated_at,parent_queue_id
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (queue_id,project_id,title,priority,'queued',1,criteria,
+                 source,ts,ts,parent_queue_id))
         row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(queue_id,)).fetchone()
     return _portfolio_queue_row(row)
 
