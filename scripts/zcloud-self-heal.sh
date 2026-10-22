@@ -245,6 +245,12 @@ heal_worker_progress() {
 }
 
 heal_zcloud
-heal_zcloud_actions_runner
-heal_project_runtimes
+# New-VPS recovery starts with a deliberately smaller authority surface.
+# Historical hosts retain the original defaults until their own cutover.
+if [[ "${ZCLOUD_HEAL_ACTIONS_RUNNER:-true}" == true ]]; then
+  heal_zcloud_actions_runner
+fi
+if [[ "${ZCLOUD_HEAL_PROJECT_RUNTIMES:-true}" == true ]]; then
+  heal_project_runtimes
+fi
 heal_worker_progress
