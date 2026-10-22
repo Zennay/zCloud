@@ -3549,3 +3549,34 @@ servicewijziging, merge of deploy uitgevoerd.
 Een volledige GitHub-PR-scan is onafhankelijk van Notion-/workerclaims en
 branch protection. Bij ontbreken van CI/review/eigenaarschap blijft de
 bestaande merge-HOLD van kracht.
+
+## 22 oktober · optionele GitHub Actions runnerwachtrij in dezelfde operatorbalie
+
+De bestaande `scripts/zsentinel_pr_scope_portfolio.py` ondersteunt nu
+`--inspect-runner-queue` voor **afzonderlijke, read-only GitHub Actions
+bronnen**. Per geregistreerd project worden maximaal twee workflowruns in
+status `queued` en twee in `in_progress` gelezen, met maximaal zestien
+jobs per run; de maximale nieuwe bronbelasting is zes GitHub GETs/project.
+De standaard blijft UIT. De operator kan dit combineren met bestaande
+`--inspect-current-pr-gates`, zonder extra workflow, testsuite, service
+of agent te starten.
+
+Het bronmodel maakt onderscheid tussen `NO_ASSIGNMENT_OBSERVED`,
+`ASSIGNED_AT_READ` en `UNKNOWN`, met afzonderlijk de jobstatus,
+maximaal acht GitHub-runnerlabels, bronleeftijd en canonieke direct te openen
+Actions-joblinks. De bewijsverzameling is begrensd, niet-atomair en nooit
+hetzelfde als een volledige runner-inventaris. Een niet toegewezen job
+bewijst GEEN offline zCloud-listener; de eigenaar verifieert GitHub-repository/
+runnergroep/labels en, indien toegestaan en zonder actieve Runner.Worker te
+verstoren, de echte listener via zSSH.
+
+JSON, operator-tekst, Markdown, offline scriptvrije HTML en private CSV
+bevatten de optionele diagnose. De individuele private PR-handoff neemt
+uitsluitend **repositorybrede, van PR-gates gescheiden** queuecontext over:
+geen enkel queue-item wordt als bewijs van geslaagde verplichte exacte-HEAD
+CI/review gepresenteerd. Geen automatische workflowdispatch, retry,
+runnerrestart, claim, merge of deployment.
+
+Voor P0 [#1326](https://github.com/Zennay/zCloud/issues/1326) blijft
+de bevoegde infrastructuureigenaar verantwoordelijk voor het echte herstel
+en de live-verificatie van runnerregistratie en uitgevoerde jobs.
