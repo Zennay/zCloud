@@ -1,0 +1,87 @@
+name: zCloud workflow name collision ratchet (hosted)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/zcloud_workflow_name_collision_ratchet_20261016_w21.py'
+      - 'tests/test_zcloud_workflow_name_collision_ratchet_20261016_w21.py'
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-workflow-name-collision-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  reject-new-workflow-name-conflicts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Enforce same-repository PR provenance before checkout
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          TARGET_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          TARGET_BRANCH: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$SOURCE_REPO" = "$GITHUB_REPOSITORY"
+          test "$TARGET_REPO" = "$GITHUB_REPOSITORY"
+          test "$TARGET_BRANCH" = main
+      - name: Check out immutable candidate without GitHub credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 0
+      - name: Run exact-main guard and adversarial tests
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$EXPECTED_BASE"
+          git cat-file -e "${EXPECTED_BASE}^{commit}"
+          python3 -m unittest -v tests.test_zcloud_workflow_name_collision_ratchet_20261016_w21
+          SOURCE_RECEIPT="$(python3 scripts/zcloud_workflow_name_collision_ratchet_20261016_w21.py \
+            --base "$EXPECTED_BASE" --head "$EXPECTED_HEAD" --root .)"
+          export SOURCE_RECEIPT
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          final_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$final_main" = "$EXPECTED_BASE"
+          echo WORKFLOW_NAME_NO_NEW_COLLISION=PASS
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          import os
+          receipt = json.loads(os.environ["SOURCE_RECEIPT"])
+          assert receipt["status"] == "pass"
+          assert receipt["merge_authorized"] is False
+          assert receipt["production_mutation_authorized"] is False
+          print("### Read-only workflow dependency audit")
+          print("No new workflow name collisions, unresolved references, or trigger cycles.")
+          print("")
+          for field, description in (
+              ("workflow_count_base", "Baseline workflows"),
+              ("workflow_count_head", "Candidate workflows"),
+              ("baseline_collision_count", "Legacy duplicated name pairs"),
+              ("baseline_reference_risk_count", "Legacy unresolved trigger references"),
+              ("baseline_cycle_edge_count", "Legacy cyclic trigger edges"),
+              ("added_reference_risk_count", "New reference risks"),
+              ("added_cycle_edge_count", "New cyclic trigger edges"),
+          ):
+              print(f"- {description}: {int(receipt[field])}")
+          print("")
+          print("**Merge authorized: no. Production mutation authorized: no.**")
+          PY
