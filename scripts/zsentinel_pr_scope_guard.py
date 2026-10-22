@@ -48,6 +48,12 @@ COVERAGE_REASON_LABELS = {
         "bestandslijsten van één of meer PRs zijn onvolledig",
     "shared_file_pairs_truncated":
         "meer gedeelde-bestandsparen dan de grafiek toont",
+    "shared_file_examples_truncated":
+        "gedeelde-bestandsnamen van een of meer conflicterende PR-paren zijn afgekapt",
+    "path_scope_clusters_truncated":
+        "niet alle samenhangende bestand/map-conflictgroepen worden getoond",
+    "path_scope_cluster_examples_truncated":
+        "bestand/map-conflictpaden binnen een of meer groepen zijn afgekapt",
     "path_scope_pairs_truncated":
         "meer bestand/map-conflictparen dan de grafiek toont",
     "path_scope_examples_truncated":
@@ -1353,6 +1359,8 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         source_coverage_reasons.append("pr_file_lists_incomplete")
     if len(ordered) > MAX_CONFLICT_PAIRS:
         source_coverage_reasons.append("shared_file_pairs_truncated")
+    if any(card["shared_files_truncated"] for card in cards):
+        source_coverage_reasons.append("shared_file_examples_truncated")
     if scope_pairs_truncated:
         source_coverage_reasons.append("path_scope_pairs_truncated")
     if any(row["path_conflicts_truncated"] for row in scope_cards):
@@ -1361,16 +1369,20 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         source_coverage_reasons.append("portable_alias_pairs_truncated")
     if alias_examples_truncated:
         source_coverage_reasons.append("portable_alias_examples_truncated")
-    fully_sampled = not source_coverage_reasons
-    # An unpaired PR is a useful independent-work candidate ONLY after the
-    # entire open-PR source sample is complete and stable. An unchecked PR
-    # could otherwise touch the exact same path.
-    not_paired = ([pr for pr in observed if pr["number"] not in collided]
-                  if fully_sampled else [])
     clusters = linked_pr_collision_clusters(observed, pairs)
     scope_clusters = linked_pr_scope_collision_clusters(
         observed, scope_pairs, scope_pair_counts)
     shown_scope_clusters = scope_clusters[:MAX_SCOPE_CLUSTER_CARDS]
+    if len(scope_clusters) > MAX_SCOPE_CLUSTER_CARDS:
+        source_coverage_reasons.append("path_scope_clusters_truncated")
+    if any(group["path_conflicts_sample_truncated"] for group in shown_scope_clusters):
+        source_coverage_reasons.append("path_scope_cluster_examples_truncated")
+    fully_sampled = not source_coverage_reasons
+    # An unpaired PR is useful for manual owner triage only when the complete
+    # observed PR source is stable AND every conflict view is untruncated.
+    # Even then it does not prove worker ownership, claims or merge safety.
+    not_paired = ([pr for pr in observed if pr["number"] not in collided]
+                  if fully_sampled else [])
     return {
         "schema": "zsentinel-pr-file-collision-graph-v1",
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -1432,6 +1444,8 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
             all(pr["issue_reference_text_covered"] for pr in chosen),
         "observed_file_collision_pairs": len(ordered),
         "shown_file_collision_pairs": cards,
+        "shared_file_examples_truncated": any(
+            card["shared_files_truncated"] for card in cards),
         "observed_path_scope_collision_pairs": len(ordered_scope),
         "shown_path_scope_collision_pairs": scope_cards,
         "observed_portable_path_alias_pairs": len(ordered_alias),
@@ -1510,7 +1524,7 @@ def graph_operator_text(report):
     ]
     if report.get("source_coverage_reasons"):
         result.append("Bronbeperkingen: " +
-                      ", ".join(report["source_coverage_reasons"]))
+                      coverage_reason_text(report["source_coverage_reasons"]))
     for receipt in report["open_pr_page_receipts"]:
         result.append("BRONPAGINA " + str(receipt["page"]) + " · posities " +
                       str(receipt["first_position"]) + "–" +
@@ -1703,7 +1717,7 @@ def graph_html(report):
                     if report["pr_file_scope_sample_complete"]
                     else "onvolledig; bron/venster niet stabiel of afgekapt")
     if report.get("source_coverage_reasons"):
-        completeness += " · " + ", ".join(report["source_coverage_reasons"])
+        completeness += " · " + coverage_reason_text(report["source_coverage_reasons"])
     unpaired = report["unpaired_open_prs_in_sample_not_claim_verified"]
     page_rows = "".join(
         "<li>Pagina " + str(r["page"]) + " · posities " +
@@ -2007,7 +2021,7 @@ def graph_markdown(report):
         "## Gedeelde bestandsnamen",
     ]
     if report.get("source_coverage_reasons"):
-        lines.append("Bronbeperkingen: " + ", ".join(report["source_coverage_reasons"]))
+        lines.append("Bronbeperkingen: " + coverage_reason_text(report["source_coverage_reasons"]))
     lines.extend(["", "## Waargenomen GitHub-pagina's", ""])
     for receipt in report["open_pr_page_receipts"]:
         lines.append("- Pagina " + str(receipt["page"]) + " · posities " +
