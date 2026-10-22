@@ -659,8 +659,22 @@ def operator_text(report):
                          " | doelbranch " + hit["observed_base_ref"] +
                          " | " + ", ".join(hit["matching_files"]) +
                          " | relatie: " + relations)
+    elif not report["observed_portable_path_aliases"]:
+        lines.append("Geen exacte Git-pad-overlap of mogelijke alias in de gelezen steekproef; dit is GEEN vrijgave.")
     else:
-        lines.append("Geen overlap in de gelezen steekproef; dit is GEEN vrijgave.")
+        lines.append("Geen exacte Git-pad-overlap waargenomen; mogelijke cross-platform padaliases staan hieronder en vereisen menselijke hercontrole.")
+    for hit in report["observed_portable_path_aliases"]:
+        relations = "; ".join(
+            item["changed_path"] + " [" + item["relation"] + "]"
+            for item in hit["matching_aliases"])
+        lines.append("PADALIAS " + hit["path"] + " | PR #" +
+                     str(hit["pr_number"]) + " | " + hit["pr_url"] +
+                     " | HEAD " + hit["observed_head_sha"][:12] +
+                     " | " + str(hit["alias_count_observed"]) +
+                     " mogelijke aliassen | " + relations +
+                     (" | aliasvoorbeelden afgekapt" if hit["matches_truncated"] else ""))
+    if report["portable_path_aliases_truncated"]:
+        lines.append("ONVOLLEDIG: meer padalias-hits dan de bounded weergave.")
     if not report["open_pr_snapshot_stable"]:
         lines.append("Let op: open PR-lijst of heads veranderden tijdens inspectie.")
     if (report["selected_source_pr"] is not None
@@ -676,6 +690,7 @@ def operator_text(report):
 
 def html_view(report):
     rows = []
+    alias_rows = []
     page_list = "".join(
         "<li>Pagina " + str(row["page"]) + " · posities " +
         str(row["first_position"]) + "–" + str(row["last_position"]) +
@@ -693,8 +708,30 @@ def html_view(report):
                     escape(", ".join(hit["matching_files"])) +
                     "<br><small>Relatie: " + escape(relations) +
                     "</small></td></tr>")
+    for hit in report["observed_portable_path_aliases"]:
+        link = escape(hit["pr_url"], quote=True)
+        examples = "<br>".join(
+            "<code>" + escape(alias["changed_path"]) + "</code><br><small>" +
+            escape(alias["relation"]) + "</small>"
+            for alias in hit["matching_aliases"])
+        if hit["matches_truncated"]:
+            examples += "<br><small>Extra aliasvoorbeelden niet getoond.</small>"
+        alias_rows.append(
+            "<tr><td><code>" + escape(hit["path"]) +
+            "</code></td><td><a rel='noreferrer noopener' href='" + link +
+            "'>PR #" + str(hit["pr_number"]) + "</a><br><small>HEAD " +
+            escape(hit["observed_head_sha"][:12]) + " · doelbranch " +
+            escape(hit["observed_base_ref"]) + "</small></td><td>" +
+            str(hit["alias_count_observed"]) + " mogelijke aliassen<br>" +
+            examples + "</td></tr>")
     if not rows:
-        rows.append("<tr><td colspan='3'>Geen botsing waargenomen in gelezen steekproef; geen vrijgave.</td></tr>")
+        rows.append("<tr><td colspan='3'>" +
+                    ("Geen exacte Git-pad-overlap; bekijk de mogelijke aliaswaarschuwingen hieronder."
+                     if report["observed_portable_path_aliases"] else
+                     "Geen exacte overlap of mogelijke alias in gelezen steekproef; geen vrijgave.") +
+                    "</td></tr>")
+    if not alias_rows:
+        alias_rows.append("<tr><td colspan='3'>Geen mogelijke case-/Unicode-padaliases waargenomen.</td></tr>")
     coverage = "Volledige huidige open-PR steekproef" if report["pr_file_scope_sample_complete"] else "Onvolledige bron: controleer overige PR's"
     source = report["selected_source_pr"]
     source_link = ("<p>Bron-PR: <a rel='noreferrer noopener' href='" +
@@ -737,6 +774,13 @@ def html_view(report):
             "<h2>Waargenomen bestandsoverlap</h2><table><thead><tr>"
             "<th>Gevraagd pad</th><th>PR</th><th>Gewijzigde bestanden</th>"
             "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+            "<h2>Mogelijke cross-platform padaliases</h2>"
+            "<p>NFC/casefold-heuristiek voor case-insensitive of Unicode-normaliserende filesystems; geen bewezen alias op elk platform en geen Git-mergeconflict.</p>"
+            "<table><thead><tr><th>Gevraagd pad</th><th>PR / HEAD</th><th>Mogelijke alias</th></tr></thead><tbody>" +
+            "".join(alias_rows) + "</tbody></table>" +
+            ("<p><strong>ONVOLLEDIG:</strong> alias-hits of voorbeelden zijn afgekapt.</p>"
+             if report["portable_path_aliases_truncated"] or any(
+                 hit["matches_truncated"] for hit in report["observed_portable_path_aliases"]) else "") +
             "<p>Bronmoment " + escape(report["observed_at_utc"]) + "</p></html>")
 
 
@@ -1825,6 +1869,22 @@ def as_markdown(report):
                      "; doelbranch: " + hit["observed_base_ref"] +
                      "; relatie: " + relations +
                      (" (gedeeltelijke weergave)" if hit["matches_truncated"] else ""))
+    lines.extend(["", "## Mogelijke cross-platform padaliases", "",
+                  "NFC/casefold-heuristiek voor case-insensitive of Unicode-normaliserende filesystems. Dit is geen bewezen alias op elk platform, Git-mergeconflict of eigenaarsbewijs.", ""])
+    if not report["observed_portable_path_aliases"]:
+        lines.append("Geen mogelijke cross-platform padaliases waargenomen.")
+    for hit in report["observed_portable_path_aliases"]:
+        lines.append("- [PR #" + str(hit["pr_number"]) + "](" + hit["pr_url"] +
+                     ") · gevraagd pad " + chr(96) + hit["path"] + chr(96) +
+                     " · " + str(hit["alias_count_observed"]) +
+                     " mogelijke aliases · HEAD " + hit["observed_head_sha"][:12])
+        for alias in hit["matching_aliases"]:
+            lines.append("  - " + chr(96) + alias["changed_path"] + chr(96) +
+                         " [" + alias["relation"] + "]")
+        if hit["matches_truncated"]:
+            lines.append("  - Extra aliasvoorbeelden buiten de limiet.")
+    if report["portable_path_aliases_truncated"]:
+        lines.append("**ONVOLLEDIG:** meer alias-hits dan getoond.")
     lines.extend([
         "",
         "**Geen toestemming:** Notion-/SQLite-claims, PR-loze branches, "
@@ -2240,8 +2300,9 @@ def main(argv=None):
             print(operator_text(report))
         # Exit status 2 is a real observed collision; status 3 is insufficient
         # evidence even if some overlaps are visible. Never exit 0 for permission.
-        return 2 if report["observed_overlaps"] else (
-            3 if not report["pr_file_scope_sample_complete"] else 0)
+        return (2 if report["observed_overlaps"] else
+                3 if (report["observed_portable_path_aliases"] or
+                      not report["pr_file_scope_sample_complete"]) else 0)
     except (ValueError, OSError):
         print("zSentinel source unavailable or invalid; no claim or merge clearance",
               file=sys.stderr)
