@@ -8,6 +8,8 @@ ledger locks, window-cursor writes and any first sidecar export.
 """
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 from typing import Mapping
 
@@ -44,6 +46,20 @@ def admit_private_paths(*, destinations: Mapping[str, Path | None],
                 pass
             else:
                 raise ValueError("private create-only output already exists: " + role)
+            # Fail before potentially expensive GitHub/Notion reads when a
+            # destination directory would be refused by the pinned private
+            # writer anyway. Actual writes still recheck and pin its inode.
+            parent = path.parent
+            try:
+                parent_info = parent.lstat()
+            except OSError as exc:
+                raise ValueError(
+                    "private output directory unavailable: " + role) from exc
+            if (not stat.S_ISDIR(parent_info.st_mode)
+                    or parent_info.st_uid != os.geteuid()
+                    or stat.S_IMODE(parent_info.st_mode) & 0o022):
+                raise ValueError(
+                    "private output directory is not owner-controlled: " + role)
 
     for role, path in sources.items():
         if path is None:
