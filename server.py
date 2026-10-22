@@ -3290,6 +3290,18 @@ def portfolio_queue_health():
         ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue
                            WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
         queued=c.execute("SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status='queued'").fetchone()[0]
+        # Source-claim clearance is not proof of lane, CPU or owner approval,
+        # but counting all 'queued' rows as freely allocatable is misleading.
+        # A separate task_claims record always holds a row, even if expired.
+        owner_clear_queued=c.execute(
+            """SELECT COUNT(*) FROM portfolio_queue
+               WHERE eligible=1 AND status='queued'
+                 AND worker_slot IS NULL AND claimed_at IS NULL AND claim_expires IS NULL
+                 AND NOT EXISTS (
+                   SELECT 1 FROM task_claims
+                   WHERE task_claims.claim_key=portfolio_queue.queue_id
+                 )"""
+        ).fetchone()[0]
         projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue
                               WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
         blocked=c.execute("SELECT COUNT(*) FROM portfolio_queue WHERE status='blocked'").fetchone()[0]
@@ -3298,6 +3310,8 @@ def portfolio_queue_health():
     target=max(6,max(1,int(GLOBAL_CHATGPT_WORKER_LIMIT))*PORTFOLIO_QUEUE_MIN_READY_PER_WORKER)
     return {
         'ready':int(ready),'queued':int(queued),'projects':int(projects),
+        'owner_clear_queued':int(owner_clear_queued),
+        'owner_held_queued':int(queued-owner_clear_queued),
         'blocked':int(blocked),'dropped':int(dropped),
         'healthy':int(ready)>=min(target,max(1,len([p for p in PROJECT_INDEX.values() if str(p.get('queue_mode') or '').lower()!='human-gated']))),
         'notion_attention_url':PORTFOLIO_ATTENTION_NOTION_URL,
