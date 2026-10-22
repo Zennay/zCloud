@@ -3010,6 +3010,12 @@ run/job/SHA. Een ontbrekende, tegenstrijdige of malforme receipt wordt
 omgezet naar `degraded_unavailable` met lege kandidaatset; ze veroorzaakt
 geen traceback of schijnbaar gezonde lege inventaris.
 
+De aanvullende links zijn een afzonderlijke, optionele bewijslaag:
+dezelfde allowlist-normalisatie wordt toegepast op het standalone triage-JSON
+vóór serialisatie. Ongeldige secundaire links geven
+`additional_links_coverage=degraded_untrusted_receipt` en een zichtbare
+UNKNOWN-kaart, zonder een geldig primair run/job/SHA-bewijs weg te gooien.
+
 De private HTML toont maximaal vijf aanvullende, canonieke exacte joblinks
 uit dezelfde discovery-steekproef (run/job/SHA/status/route gevalideerd).
 Deze extra jobs blijven observation-only, zonder dispatch- of herstelknoppen;
