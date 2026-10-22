@@ -804,7 +804,6 @@ function blockedQueuePanel(){
           +'<summary>Operator context and next step</summary>'
           +'<p><strong>Next step:</strong> '+esc(action)+'</p>'
           +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state or separate task-claim state is unknown/bound. Inspect source before acting.</p>':'')
-          +taskClaimNotice
           +'<dl>'
           +'<div><dt>Queue update</dt><dd>'+esc(lastUpdated||'Unknown')+'</dd></div>'
           +'<div><dt>Original queue entry</dt><dd>'+esc(createdAt||'Unknown')+'</dd></div>'
@@ -817,12 +816,13 @@ function blockedQueuePanel(){
           +'<div class="blocked-queue-meta"><span>'+esc(project?.name||item.project_id||'Unknown project')+'</span><b>'+esc(item.priority||'P2')+'</b></div>'
           +'<strong>'+esc(title)+'</strong><p>'+esc(blocker.length>360?blocker.slice(0,357)+'…':blocker)+'</p>'
           +blockedQueueChurnHint(item)
+          +taskClaimNotice
           +'<small>Parked task · not assigned to a worker · source evidence is not an automatic resolution</small>'
           +(sourceLink?'<div class="blocked-queue-links"><a href="'+esc(sourceLink)+'" target="_blank" rel="noopener noreferrer">Open '+(sourceLink.includes('/pull/')?'pull request':'source issue')+' ↗</a></div>':'')
           +context
           +'</div><div class="blocked-queue-actions">'
-          +'<button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Inconsistent queue state"':'')+'>Resume after confirmation</button>'
-          +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Current parked-task claim is inconsistent"':'')+'>Close permanently…</button>'
+          +'<button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Queue or separate task-claim state is unknown or bound"':'')+'>Resume after confirmation</button>'
+          +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Queue or separate task-claim state is unknown or bound"':'')+'>Close permanently…</button>'
           +'<button type="button" class="blocked-queue-inspect" data-inspect-blocked="'+esc(item.queue_id)+'">Inspect current recovery conditions</button>'
           +'</div></article>';
       }).join('')+'</div>'
