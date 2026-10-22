@@ -568,7 +568,7 @@ def as_html(report):
     for card in report.get("parallel_owner_actions", []):
         parts.append("<li><strong>" + esc(card["problem"]) + "</strong><br>" +
                      esc(card["owner_action"]) + " <small>(" + esc(card["code"]) +
-                     ) · " + esc(card["status"]) + "</small></li>")
+                     ") · " + esc(card["status"]) + "</small></li>")
     parts.extend(["</ul></section><section><h2>Source gaps and sampled checks</h2><ul>"])
     for gap in report["secondary_source_gaps"]:
         parts.append("<li>" + esc(gap) + "</li>")
