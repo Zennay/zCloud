@@ -569,6 +569,8 @@ def as_markdown(report):
         "# zSentinel — live exact-PR owner preflight", "",
         "**HOLD: observation only; NOT safe-to-merge approval.**", "",
         "- Pull request: " + report["url"],
+        "- GitHub review conversation: " + report["url"],
+        "- Changed files for owner review: " + report["url"] + "/files",
         "- Source observed (UTC): " + report["observed_at_utc"],
         "- Source status: " + report["status"],
         "- Exact HEAD (only after stable re-read): " +
@@ -691,7 +693,18 @@ def as_html(report):
         parts.append("<p><a href='" + esc(observed["exact_head_checks_url"]) +
                      "'>Inspect GitHub checks for this exact HEAD (read-only)</a></p>")
     parts.extend("<dt>" + esc(k) + "</dt><dd>" + esc(v) + "</dd>" for k, v in details)
-    parts.extend(["</dl></section><section><h2>Operator action</h2><p>",
+    followup = report["review_request_followup"]
+    parts.extend([
+        "</dl></section><section><h2>Review coordination (read-only)</h2>",
+        "<p><strong>" + esc(followup["state"]) + "</strong> — " +
+        esc(followup["next"]) + "</p>",
+        "<p><a href='" + esc(report["url"]) + "'>Open PR conversation / reviewers</a> · ",
+        "<a href='" + esc(report["url"] + "/files") +
+        "'>Inspect source changes</a></p>",
+        "<p>These are current-request observations only, not approval; "
+        "required exact-head checks, independent review and branch protection "
+        "must still be confirmed before GitHub merge.</p>",
+        "</section><section><h2>Operator action</h2><p>",
                   esc(report["next_human_step"]), "</p></section>",
                   "<section><h2>Owner gate checklist</h2><ul>"])
     for gate in report["operator_gates"]:
