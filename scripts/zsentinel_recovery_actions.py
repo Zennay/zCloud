@@ -330,13 +330,15 @@ def suggested_actions(packet):
             "Laat de taak starten uitsluitend na externe claim-, eigenaar- en resourcecontrole; geen parallelle schrijver.",
             "SERIAL_CANDIDATE_NOT_AUTHORIZED",
         ))
-    # Local host memory/swap/load is corroborating evidence only. Resource
-    # pressure can explain slow CI/worker throughput; low pressure does not
-    # prove cgroup quotas, GitHub admission, free leases or new worker rights.
+    # Local host evidence is corroborating only. Incomplete coverage is
+    # itself an owner-review HOLD for new work, even when no known metric
+    # crosses a pressure threshold; UNKNOWN must never read as healthy.
     pressure = packet.get("host_pressure")
-    if isinstance(pressure, dict) and pressure.get("status") in ("HOST_SNAPSHOT_OBSERVED", "HOST_PARTIAL"):
+    if isinstance(pressure, dict):
+        pressure_status = pressure.get("status")
         hint = pressure.get("pressure_hint")
-        if hint in ("HIGH_LOCAL_PRESSURE", "ELEVATED_LOCAL_PRESSURE"):
+        if (pressure_status in ("HOST_SNAPSHOT_OBSERVED", "HOST_PARTIAL")
+                and hint in ("HIGH_LOCAL_PRESSURE", "ELEVATED_LOCAL_PRESSURE")):
             result.append(action(
                 "host-pressure-owner-review",
                 "urgent" if hint == "HIGH_LOCAL_PRESSURE" else "review",
@@ -348,6 +350,34 @@ def suggested_actions(packet):
                 "runner-toewijzing, procfs-PSI en workerprogressie met de bevoegde eigenaar "
                 "vóór capaciteitsverhoging, opslagopschoning of serviceactie.",
                 "HOLD_CAPACITY_OWNER_REVIEW",
+            ))
+        elif pressure_status != "HOST_SNAPSHOT_OBSERVED" or hint == "UNKNOWN":
+            coverage = pressure.get("source_coverage")
+            labels = {
+                "meminfo": "RAM/swap", "loadavg": "load/CPU",
+                "root_disk": "root-schijf", "psi": "PSI",
+            }
+            incomplete = []
+            if isinstance(coverage, dict):
+                for key in ("meminfo", "loadavg", "root_disk", "psi"):
+                    value = coverage.get(key)
+                    if value in ("UNKNOWN", "PARTIAL"):
+                        incomplete.append(labels[key] + "=" + value)
+            detail = (
+                " Onvolledige bronnen: " + ", ".join(incomplete) + "."
+                if incomplete else
+                " De exacte ontbrekende bron is niet volledig waargenomen."
+            )
+            result.append(action(
+                "host-pressure-source-unknown", "review",
+                "Hostcapaciteit is gedeeltelijk of UNKNOWN; geen gemeten drempel "
+                "betekent zonder volledige dekking niet dat de host gezond is."
+                + detail,
+                "Behoud bestaande jobs en claims. Laat de bevoegde hosteigenaar "
+                "de ontbrekende RAM/swap-, loadavg-, root-schijf- of PSI-bron "
+                "verifiëren voordat nieuwe workers worden toegelaten; geen restart "
+                "of claimwijziging op basis van ontbrekende telemetrie.",
+                "HOLD_CAPACITY_SOURCE_UNVERIFIED",
             ))
     # Runner /proc only corroborates local process presence. It cannot prove
     # GitHub runner registration, labels, job assignment or successful CI.
