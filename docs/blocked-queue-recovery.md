@@ -249,3 +249,17 @@ wijziging aan die assets opnieuw worden ververst. Een commit op deze
 featurebranch is geen productie-installatie: pas na exacte-HEAD
 verplichte CI, onafhankelijke review, branch protection en toestemming
 van de release-eigenaar mag worden gemerged of geactiveerd.
+
+### Bronknop op de afzonderlijke blokkadekaart
+
+Voor een geparkeerde taak met een `source_url` die exact verwijst naar
+`https://github.com/Zennay/<repo>/issues/<nummer>` of
+`https://github.com/Zennay/<repo>/pull/<nummer>`, verschijnt nu
+**Open source issue / Open pull request**. Hiermee kan de operator
+meteen de oorspronkelijke afhankelijkheid bekijken vóór een
+hervattingsbevestiging. Aangeleverde willekeurige URLs, queryfragmenten,
+userinfo, andere hosts en niet-HTTPS-protocollen krijgen **geen**
+klikbare kaartlink. Linknavigatie verandert geen claim of queuebron,
+en de daadwerkelijke backend-hervatcontrole blijft onafhankelijk.
+De zoekbalk accepteert ook het exacte opgeslagen `source_url` als
+zoekterm, maar haalt geen nieuwe privé-informatie op.
