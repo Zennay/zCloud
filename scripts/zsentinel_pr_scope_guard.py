@@ -1868,7 +1868,7 @@ def graph_private_csv(report):
     for pr in report["unpaired_open_prs_in_sample_not_claim_verified"]:
         row("unpaired_pr_in_sample",
             pr_number=pr["number"], pr_url=pr["url"],
-            pr_head_sha=pr["head_sha"],
+            pr_head_sha=pr["head_sha"], pr_base_ref=pr["base_ref"],
             operator_notice=("No identical file within the observed sample; "
                              "NOT claim-free, merge-ready or owner-verified."))
     if report["collision_cards_truncated"] or report["duplicate_issue_groups_truncated"]:
