@@ -476,3 +476,4 @@ refuses all three routes even if an operator explicitly selects them. Filtering
 or saving a private note does not establish ownership, change a claim, dispatch
 a job, approve billing, restart a runner, merge a PR or authorize a deployment.
 The cross-project next-problem shortlist uses the same separate runner/billing routes; it does not collapse either incident into a generic infrastructure code.
+The canonical map, machine route codes, UI labels and owner-safe actions now live together in `scripts/zsentinel_owner_routes.py`; the issue board, portfolio aggregation, browser filter/packet guard and cross-project shortlist import that contract.
