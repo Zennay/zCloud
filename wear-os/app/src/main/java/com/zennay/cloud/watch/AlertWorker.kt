@@ -26,6 +26,9 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
         // Do not broadcast stale historical alerts as if they were current.
         if (snapshot.stale || !snapshot.currentBlockerFeedAvailable) return Result.success()
 
+        // Keep the local read→notify→receipt operation atomic with respect
+        // to the notification action receiver and in-app snooze/resume taps.
+        synchronized(IncidentSnoozeStore.deliveryLock) {
         val prefs = applicationContext.getSharedPreferences("zennay_alerts", Context.MODE_PRIVATE)
         val previouslySeen = prefs.getStringSet("delivered_ids", null)
             ?: prefs.getStringSet("active_ids", emptySet())
@@ -150,6 +153,7 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                 // later notification fails and WorkManager retries this poll.
                 prefs.edit().putStringSet("delivered_ids", delivered.toList().takeLast(200).toSet()).apply()
             }
+        }
         }
         Result.success()
     } catch (_: Exception) {
