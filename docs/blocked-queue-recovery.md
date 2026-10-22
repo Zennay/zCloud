@@ -780,3 +780,27 @@ read-only inspectie dat expliciet. Als het bounded venster vol is, wordt
 de dekking als beperkt gemarkeerd. De actie knoppen hebben nog steeds
 hun eigen verse broncontrole, onafhankelijke menselijke beslissing,
 bestaande beveiligingscontrole en transactionele writercontract.
+
+
+## Separate task-claim lease guard · 22 October
+
+The portfolio queue row is not the only source of ownership. A worker can
+leave a separate `task_claims(project_id, claim_key)` record behind even when
+the queue row has been marked `blocked` and its `worker_slot`,
+`claimed_at`, and `claim_expires` fields were cleared. Portfolio allocation
+uses the queue ID as that claim key, so recovery must inspect both records.
+
+The queue snapshot now reads the separate task claim for blocked items in the
+same read-only SQLite snapshot and exposes only `task_claim_state`,
+`task_claim_source_available`, and its lease expiry. Recovery inspection,
+resume, and terminal close all refuse if the claim source is unavailable, a
+live claim exists, a malformed lease cannot be classified, or **any claim
+record remains after expiry**. Expiry alone is not authorization to take over;
+the current owner must reconcile/release the stale record first. No recovery
+path prunes, releases, or overwrites a task claim.
+
+The dashboard disables resume/close controls unless both the queue row and
+the separate task-claim source prove the task unbound. The private handoff
+includes this limited claim-state evidence without exposing owner IDs. This
+is still only a read-only observation; the actual writes recheck the claim
+inside the same `BEGIN IMMEDIATE` transaction as the guarded state change.
