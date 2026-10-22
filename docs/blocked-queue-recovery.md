@@ -858,3 +858,45 @@ These are source-side changes to the existing integration PR #1565. Required
 exact-head CI, independent review, protected-main merge, authorized runtime
 admission and live verification remain separate. No operator claim, queue,
 runner, VPS, release workflow or billing setting was changed by this work.
+
+
+## Queue identity admission: protect existing assignments
+
+The queue's trusted `enqueue` API used to perform `INSERT ... ON CONFLICT(queue_id) DO UPDATE`
+unconditionally. A replayed identifier could rewrite the title, priority,
+project ID, criteria, source and `updated_at` of a **blocked, assigned or
+completed original task** while its execution status remained unchanged.
+This mismatched the source receipts and made a protected task appear to have
+different work or a different owner.
+
+The existing server-side `portfolio_queue_enqueue` now uses one
+`BEGIN IMMEDIATE` transaction to inspect the original queue row and the
+separate `task_claims` source before inserting or updating an identifier.
+It applies these rules:
+
+- A previously unseen canonical identifier creates a normal queued task
+  **only if** the separate task-claim source proves no recorded claim exists.
+- A duplicate identifier for a different project or parent task is refused.
+  No cross-project/parent reassignment occurs.
+- Duplicates of blocked, claimed, running, verifying, done, dropped,
+  ineligible or still lease-bound tasks are refused. Existing fields, source
+  evidence and owner/claim state are preserved; there is no lease pruning.
+- A safely unassigned, eligible **queued** task may have its title, priority,
+  criteria or source updated under that same transaction.
+- A duplicate whose requested fields already match is **idempotent**:
+  it returns the existing task without changing `updated_at` or creating
+  artificial activity/churn.
+- Explicit queue identifiers must be 1–160 characters of canonical ASCII
+  `[A-Za-z0-9._:-]`. The server rejects whitespace, Unicode/confusable
+  aliases, invalid punctuation and overlong identifiers instead of silently
+  sanitizing or truncating to another task's ID. Default generated IDs keep
+  their stable project/hash identity.
+
+Denied admission returns the existing operator-facing validation error;
+the caller must resolve source/ownership and, if necessary, submit a
+**different genuine task** under its own identity. It must not claim,
+overwrite, release or restart another owner's work.
+
+This is a branch-level product source repair in PR #1565. It does not
+authorize new workers, a release, queue mutation on the VPS, CI bypass,
+or any recovery without existing operator permission and mandatory gates.
