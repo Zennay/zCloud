@@ -15,6 +15,27 @@ MAX_INCIDENTS = 200
 MAX_ISSUES = 8
 MAX_TASKS = 5
 
+INCIDENT_PROBLEM_LABELS_NL = {
+    "github_job_unstarted": "GitHub-job niet gestart · oorzaak nog onbekend",
+    "github_job_startup_failure": "GitHub-job kon niet starten · runner/bootstrap onderzoeken",
+    "github_job_stale_conclusion": "Jobconclusie verouderd · actuele HEAD opnieuw lezen",
+    "github_job_neutral_or_skipped": "Job neutraal/overgeslagen · geen groen bewijs",
+    "github_job_cancelled": "GitHub-job geannuleerd · reden onbekend",
+    "github_workflow_failed": "GitHub-job mislukt · oorzaak nog niet bevestigd",
+    "github_job_unassigned": "GitHub-job zonder runner-toewijzing",
+    "github_job_pending_or_waiting": "Job wacht · geen runnerstoring bewezen",
+    "github_hosted_billing_admission": "GitHub-hosted toelating vereist account-eigenaar",
+    "github_required_owner_approval": "GitHub-ownergoedkeuring vereist",
+    "stale_github_observation": "GitHub-waarneming verlopen · bron vernieuwen",
+    "ci_green_runtime_not_verified": "CI groen · runtimeherstel nog niet bewezen",
+    "runtime_progress_missing": "Runtimevoortgang ontbreekt · claim en heartbeat controleren",
+    "active_owner_or_serialized_release": "Actieve eigenaar/releasegate · niet overnemen",
+    "explicit_human_gate": "Expliciete menselijke gate · niet omzeilen",
+    "notion_project_posture": "Project bewust gepauzeerd",
+    "scheduled_wait_not_elapsed": "Wachttijd nog niet verstreken",
+    "insufficient_progress_evidence": "Onvoldoende verse voortgangsgegevens",
+}
+
 CSS = """
 :root{color-scheme:dark;font-family:system-ui,-apple-system,sans-serif;background:#0c1422;color:#edf4ff}
 *{box-sizing:border-box}body{max-width:1200px;margin:auto;padding:clamp(1rem,3vw,2.5rem)}
@@ -72,10 +93,11 @@ def incident_card(item, registry=None):
     action = phrase(item.get("action"), 480)
     status = phrase(item.get("status"), 50)
     reason = item.get("problem")
-    # A zero-step completed job requires account/platform inspection. Never
-    # tell the operator that billing denial or a VPS listener is proven.
-    problem = ("GitHub-job niet gestart · oorzaak nog onbekend"
-               if reason == "github_job_unstarted" else phrase(reason, 120))
+    # A displayed reason is an operator hint, never proof of recovery, billing
+    # denial or a broken VPS listener. Prefer clear Dutch labels for known routes.
+    label = (INCIDENT_PROBLEM_LABELS_NL.get(reason, reason)
+             if isinstance(reason, str) else reason)
+    problem = phrase(label, 120)
     # Derive provenance links only from the canonical project registry and
     # a fresh exact run/job/SHA receipt; never link unpinned incidents.
     from zsentinel_runtime_handoff import _attach_verified_job
@@ -97,7 +119,7 @@ def incident_card(item, registry=None):
                                label + '</a>')
     return (f'<article class="panel warn"><span class="tag">{priority}</span>'
             f'<span class="tag">{project}</span>'
-            f'<h3 class="word">Problem · {problem}</h3>'
+            f'<h3 class="word">Probleem · {problem}</h3>'
             f'<p class="row"><strong>Actie ({owner})</strong><br>{action}</p>'
             f'<p class="row"><strong>Status:</strong> {status}<br>'
             f'<span class="muted small">Herbeoordeling voor {due}; geen automatische retry.</span></p>'
