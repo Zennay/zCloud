@@ -184,14 +184,16 @@ def summarize_worker_windows(windows):
             prog0, prog1 = old["latest_indexed_progress_event_id"], new["latest_indexed_progress_event_id"]
             # A rotated/replaced event ledger, missing cursor or changing
             # assignment is a NEW source/owner review, never "stalled".
-            if last0 is None or last1 is None or last1 < last0:
+            if (old["claim_window_fingerprint"] != new["claim_window_fingerprint"]
+                    and (old["claim_window_fingerprint"] is not None
+                         or new["claim_window_fingerprint"] is not None)):
+                # Do not compare event cursors across different observed queue
+                # claim windows, even if the underlying slot cursor regressed.
+                category = "UNKNOWN_queue_claim_window_changed"
+            elif last0 is None or last1 is None or last1 < last0:
                 category = "UNKNOWN_event_cursor_or_source_rotation"
             elif (prog0 is not None and prog1 is not None and prog1 < prog0):
                 category = "UNKNOWN_progress_cursor_or_source_rotation"
-            elif (old["claim_window_fingerprint"] != new["claim_window_fingerprint"]
-                  and (old["claim_window_fingerprint"] is not None
-                       or new["claim_window_fingerprint"] is not None)):
-                category = "UNKNOWN_queue_claim_window_changed"
             elif old["desired_state"] != new["desired_state"]:
                 category = "UNKNOWN_worker_desired_state_changed"
             elif (old["allocated_global_slot"] != new["allocated_global_slot"]
