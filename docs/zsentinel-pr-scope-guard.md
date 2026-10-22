@@ -1,5 +1,32 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · portable exacte-HEAD Markdown eigenaarsoverdracht
+
+De bestaande read-only huidige PR-gatecollector heeft een vierde, makkelijk
+deelbare outputvorm naast JSON, tekst en HTML:
+
+```bash
+python3 scripts/zsentinel_pr_gate_now.py \
+  --pr 'Zennay/zCloud#1567' \
+  --format markdown \
+  --output /eigen/private/zsentinel-pr-overdracht.md
+```
+
+Per geselecteerde PR wordt de actuele bron-HEAD als canonieke GitHub-commitlink
+gepresenteerd, met **maximaal drie vaste hoofdregels**: **Probleem**, **Actie**
+en **Status**. Een afzonderlijke parallelle reviewactie verschijnt alleen
+als de gatecollector die heeft onderbouwd. Lang queued of lopende checks
+krijgen uitsluitend door de collector geconstrueerde canonieke checklinks
+(maximaal acht). Een wisselende of ontbrekende HEAD levert **ONBEKEND**.
+
+De bron bevat nooit PR-prompts, gegenereerde workertekst, sleutels of externe
+providerlinks. Bij `--from-review` worden batchnummer en beide herkomsthashes
+getoond; bij directe `--pr`-selectie staat expliciet dat Notion-claims niet
+zijn onderzocht. Zowel `--format markdown` als HTML zijn informatief,
+niet autoriserend: de GitHub branchregels, exact-head verplichte checks,
+onafhankelijke menselijke review, claimownership en live verificatie gelden
+nog steeds. Een deelbaar Markdown-bestand is geen bewijs van merge.
+
 ## 22 oktober · veilige opgeslagen gatebatches en directe eigenaarwerkbak
 
 De al bestaande merge-first batchroute combineert maximaal 75 door de
