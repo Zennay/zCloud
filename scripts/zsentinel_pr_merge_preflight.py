@@ -556,6 +556,12 @@ def observe_exact_pr(pr_url, *, token=None):
                 _limited_json(compare_path, token=token),
                 comparison_base_sha, first["exact_head_sha"],
             )
+            # A human navigation link is useful for the existing PR owner,
+            # but is never evidence of mergeability or release authority.
+            history_comparison["browser_url"] = (
+                "https://github.com/" + full_name + "/compare/" +
+                comparison_base_sha + "..." + first["exact_head_sha"]
+            )
         except GitHubReadError as exc:
             missing.append("exact base/head compare: " + str(exc))
 
@@ -756,6 +762,9 @@ def as_markdown(report):
         "- Default branch stable across reads: " + str(report.get("repository_default_branch_stable", False)),
         "- Default branch tip stable across reads: " + str(report.get("repository_default_branch_sha_stable", False)),
         "- Base tip matches current default: " + _known(report.get("base_tip_matches_default")),
+        "- Exact base/head GitHub compare for owner inspection: " +
+        ((report.get("base_head_history") or {}).get("browser_url") or "UNKNOWN"),
+        "- Compare link is navigation only; it does not prove merge readiness.",
         "- Recovery-policy input hint evidence.pr_base_sync: " +
         str((report.get("merge_policy_input_hint") or {}).get("pr_base_sync", "unknown")),
         "- Recovery-policy input hint evidence.pr_history_sync: " +
@@ -835,6 +844,8 @@ def as_html(report):
         ("Default branch stable across reads", report.get("repository_default_branch_stable", False)),
         ("Default branch tip stable across reads", report.get("repository_default_branch_sha_stable", False)),
         ("Base tip matches current default", _known(report.get("base_tip_matches_default"))),
+        ("Exact base/head GitHub compare navigation",
+         (report.get("base_head_history") or {}).get("browser_url") or "UNKNOWN"),
         ("Recovery-policy input hint evidence.pr_base_sync",
          (report.get("merge_policy_input_hint") or {}).get("pr_base_sync", "unknown")),
         ("Recovery-policy input hint evidence.pr_history_sync",
@@ -874,6 +885,10 @@ def as_html(report):
     if report.get("source_stable_between_reads") and observed.get("exact_head_checks_url"):
         parts.append("<p><a href='" + esc(observed["exact_head_checks_url"]) +
                      "'>Inspect GitHub checks for this exact HEAD (read-only)</a></p>")
+    compare_url = (report.get("base_head_history") or {}).get("browser_url")
+    if compare_url and report.get("source_stable_between_reads"):
+        parts.append("<p><a href='" + esc(compare_url) +
+                     "'>Inspect exact base/HEAD difference in GitHub (navigation only)</a></p>")
     parts.extend("<dt>" + esc(k) + "</dt><dd>" + esc(v) + "</dd>" for k, v in details)
     followup = report["review_request_followup"]
     parts.extend([
