@@ -767,7 +767,7 @@ GitHub Actions heeft **twee aparte statussen**: de workflow-run en elke
 individuele job. Een workflow kan `in_progress` zijn terwijl een vereiste
 self-hosted job nog `queued` is. Alleen workflow-status `queued` lezen
 mist dat scenario. zSentinel doorzoekt daarom in vaste, begrensde volgorde
-`queued` → `in_progress` → `failure` en selecteert een gedateerde,
+`queued` → `in_progress` → `waiting` → `failure` en selecteert een gedateerde,
 run-ID/job-ID/SHA-gebonden job die in de steekproef werkelijk `queued`
 is. De bestaande exacte jobverificatie en self-hosted-**labelvereiste**
 blijven ongewijzigd. Zonder die labels is wachttijd nooit een bewezen
@@ -1199,7 +1199,7 @@ restart a runner, approve a PR, enable paid Actions, or deploy.
 
 **These are examples, not claims that the example IDs/database exist.** The default live command uses a bounded read-only GitHub CI discovery source (`scripts/zsentinel_github_discovery.py`): two separate bounded GitHub Actions windows (queued jobs first, failed workflows second) across all workflow event types, each listing at most five runs and inspecting at most two of them with ten jobs per run. Only a *specific* queued unassigned job older than 30 minutes or a completed failed/timed-out/action-required job becomes a candidate for the source-bound router. Job/run/commit identities must match GitHub. Incomplete/permission-limited sampling is **not** interpreted as zero CI incidents; successful completed jobs are not treated as evidence of live VPS recovery. Use `--skip-ci-discovery` to disable this GET source; `--job` pins an exact run/job to fetch independently. Discovery does not start, rerun, cancel, label, assign or restart anything.
 
- Use a private, existing operator-owned output directory and existing readable DB file, without changing VPS services. `--project` is repeated up to three times, must exist in canonical `projects.json`. Optional `--job` is limited to one pinned existing run/job/commit per project; GitHub details must match exactly. The issue collector is read-only, credential-safe, no-redirect, capped at three API calls per selected project. The CI discovery reader uses up to nine GitHub GETs per project (three status-filtered workflow windows: `queued`, `in_progress`, `failure`; each has one bounded run-list GET plus at most two bounded job-list GETs). The exact pinned-job collector uses up to two additional GETs per pinned or discovered job. The default combined bound for three projects is at most 42 GitHub GETs per invocation (27 discovery + 9 issue/PR + 6 exact-job reads), with no background polling. A workflow may already be `in_progress` while one of its jobs is still `queued`: the previous two-window lookup silently missed this high-impact runner scenario. All three windows are only sampled, never an all-clear. Credentials are never printed. The command does **not poll, daemonize, create a watch notification, or dispatch GitHub Actions**.
+ Use a private, existing operator-owned output directory and existing readable DB file, without changing VPS services. `--project` is repeated up to three times, must exist in canonical `projects.json`. Optional `--job` is limited to one pinned existing run/job/commit per project; GitHub details must match exactly. The issue collector is read-only, credential-safe, no-redirect, capped at three API calls per selected project. The CI discovery reader uses up to twelve GitHub GETs per project (four status-filtered workflow windows: `queued`, `in_progress`, `waiting`, `failure`; each has one bounded run-list GET plus at most two bounded job-list GETs). The exact pinned-job collector uses up to two additional GETs per pinned or discovered job. The default combined bound for three projects is at most 51 GitHub GETs per invocation (36 discovery + 9 issue/PR + 6 exact-job reads), with no background polling. A workflow may already be `in_progress` while one of its jobs is still `queued`: the previous two-window lookup silently missed this high-impact runner scenario. All four windows are only sampled, never an all-clear. Credentials are never printed. The command does **not poll, daemonize, create a watch notification, or dispatch GitHub Actions**.
 
 The queue observer in `scripts/zsentinel_queue_observer.py` also runs standalone:
 
@@ -3066,7 +3066,7 @@ geen run-ID, job-ID of SHA handmatig hoeft over te typen:
 python3 scripts/zsentinel_runner_triage.py --discover
 ```
 Dit gebruikt de bestaande begrensde queued-, in-progress- en failure-vensters
-(maximaal negen discovery-GETs voor één repo), kiest maximaal één
+(maximaal twaalf discovery-GETs voor één repo), kiest maximaal één
 brongebonden kandidaat en ververst daarna de exacte run/job/SHA met maximaal
 twee extra GETs vóór de lokale procescorrelatie. De privé JSON/HTML vermeldt
 de ontdekkingsdekking en het requestbudget; tekst blijft drie regels en
@@ -3098,7 +3098,7 @@ restart, claimwijziging of mergeconclusie. Een historische `success` is
 evenmin bewijs van de huidige listenergezondheid.
 
 De `--discover` CLI valideert vóór exact-job refresh ook de complete
-envelop: precies één `cloud`-coverage-rij, maximaal negen discovery-GETs,
+envelop: precies één `cloud`-coverage-rij, maximaal twaalf discovery-GETs,
 maximaal vijf aanvullende links en een consistente selectie-status ↔ exacte
 run/job/SHA. Een ontbrekende, tegenstrijdige of malforme receipt wordt
 omgezet naar `degraded_unavailable` met lege kandidaatset; ze veroorzaakt
@@ -4313,3 +4313,33 @@ zero available swap remains ambiguous and cannot be interpreted as proof that
 swap is absent. All independent CPU, memory, disk, inode and source-freshness
 checks remain unchanged. This is advisory capacity classification only; it
 does not authorize a worker, restart, retry, queue mutation or deployment.
+
+
+## 22 oktober 2026 · GitHub approval-wait workflows zichtbaar zonder valse runnerstoring
+
+De on-demand CI-discovery leest nu ook het begrensde GitHub Actions-venster
+`status=waiting`, na `queued` en `in_progress` en vóór de optionele
+failure-fallback. Per venster wordt maximaal één runlijst (vijf regels)
+en twee jobpagina's (25 jobs per run) gelezen: maximaal **12** discovery-
+GETs per project; geen polling, dispatch, rerun, claim of servicewijziging.
+
+Een `waiting` of `pending` job wordt uitsluitend als menselijke/concurrency-
+wacht geobserveerd, nooit als bewijs van een offline of onbeschikbare
+self-hosted runner. De bestaande exact-job-refresh controleert daarna
+repository, run/job, HEAD en tijdstempels vóór een diagnose. Als een GitHub
+workflow nog op een omgevingstoestemming wacht en GitHub daarvoor **nog
+geen job** heeft gemaakt, blijven maximaal twee brongeverifieerde, direct
+openbare workflowlinks met exacte SHA zichtbaar in de offline incidentkaart
+en portfolio-overzicht. Deze links geven geen approval-, merge-, deploy-
+of runnerrechten.
+
+De portfolio-HTML/tekst onderscheidt nu afzonderlijk waargenomen wachtende
+self-hosted jobs, `waiting/pending` jobs en workflow-level approval waits.
+Bij onvolledige GitHub-paginering of ontoegankelijke bron blijven alle niet
+geobserveerde jobs expliciet ONBEKEND. In de bronstatus worden nu vier
+vensters gevalideerd; een oudere handmatige snapshot wordt niet stilzwijgend
+als actuele goedkeurings- of eigendomsinformatie behandeld.
+
+Releasegrens: de wijziging staat uitsluitend op bestaande product-PR #1563.
+Verplichte exacte-HEAD CI, onafhankelijke review, branch protection en de
+bevoegde release-eigenaar blijven onveranderd nodig; geen QA-suite uitgevoerd.
