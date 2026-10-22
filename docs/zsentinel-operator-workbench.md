@@ -179,3 +179,10 @@ This is an offline artifact-integrity improvement. It does not poll GitHub,
 verify live owner claims or branch protection, run checks, change queue state,
 dispatch workflows, or grant merge/release rights. Existing exact-head CI,
 independent review and authorized release gates remain required.
+
+
+## 22 October · per-workorder collision scan limits are now explicit
+
+The private PR workorder inspects at most 80 shared-file collision pairs and 80 file/directory scope-collision pairs from the saved portfolio view, plus at most 16 focused-overlap receipts. Those are deliberately smaller than some upstream views. If any source list exceeds the workorder's local scan limit—or arrives with the wrong structure—the card now sets its overlap-coverage warning rather than silently presenting the partial scan as complete. This protects a PR whose relevant collision appears after the first 80 pairs from looking collision-free just because the workorder did not inspect that edge.
+
+The exact selected PR HEAD is still required before positive collision links are attached. The warning is conservative coverage metadata only: it does not prove a Git merge conflict, active ownership, claim state, required CI success, or merge/deploy authorization. No new PR, claim, queue mutation, workflow dispatch, test suite, or deployment is part of this change.
