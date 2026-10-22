@@ -266,6 +266,7 @@ def validated_view(source: dict) -> dict:
             "coverage": safe_coverage,
             "project_operations": project_operations,
             "project_source_observed_at_utc": admitted_clocks,
+            "source_freshness": dict(source_fresh),
             "projects": sorted(projects | {r["project"] for r in chosen}),
             "global_gate": "live claims, exact-head CI, review and release authority unverified"}
 
@@ -4889,6 +4890,10 @@ document.getElementById('downloadCsv').onclick=()=>{
 // queue-only project leads visible and never exports opaque claim IDs or local notes.
 function projectRecoveryCsvSource(){
  const columns=['source_board_sha256','source_observed_at_utc','project',
+  'source_inbox_fresh','source_inbox_observed_at_utc',
+  'source_retry_fresh','source_retry_observed_at_utc',
+  'source_branches_fresh','source_branches_observed_at_utc',
+  'source_prs_fresh','source_prs_observed_at_utc',
   'sampled_issue_coverage','sampled_P0_issues','sampled_P1_issues',
   'sampled_P2_issues','sampled_unspecified_priority_issues',
   'queue_observation_available','sampled_queue_active_items',
@@ -4901,8 +4906,16 @@ function projectRecoveryCsvSource(){
  const rows=operations.map(row=>{
   const q=row.queue_observation;
   const counts=row.issue_counts_in_sample||{};
-  return [boardSha,board.observed_at_utc,row.project,row.issue_coverage,
-   counts.P0,counts.P1,counts.P2,counts.Unspecified,q!==null,
+  const freshness=board.source_freshness||{};
+  const clocks=board.project_source_observed_at_utc||{};
+  const flag=name=>freshness[name]===true?'true':
+   freshness[name]===false?'false':'UNKNOWN';
+  return [boardSha,board.observed_at_utc,row.project,
+   flag('inbox'),clocks.inbox||'UNKNOWN',
+   flag('retry'),clocks.retry||'UNKNOWN',
+   flag('branches'),clocks.branches||'UNKNOWN',
+   flag('prs'),clocks.prs||'UNKNOWN',
+   row.issue_coverage,counts.P0,counts.P1,counts.P2,counts.Unspecified,q!==null,
    q===null?'UNKNOWN':q.active_items,
    q===null?'UNKNOWN':q.high_claim_attempts,
    q===null?'UNKNOWN':q.expired_active_leases,
