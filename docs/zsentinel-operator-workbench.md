@@ -502,7 +502,7 @@ The [source-bound product delivery board](zsentinel-product-delivery-board.md) i
 
 Each issue card in both the Markdown and static, script-free HTML Product Delivery Board includes a **Three-line incident handoff**: `Problem`, a human-only `Action`, and `Status`. The status always says `HOLD`, includes the board-generation UTC and per-source freshness labels alongside project-source coverage, and keeps current claim, exact-HEAD CI, independent review and release authority explicitly `UNKNOWN`. This gives operators a concise portable escalation without turning an offline snapshot into a retry, claim, merge or deployment action.
 
-Queue-only project observations with expired leases or repeated high claim cycles receive the same three-line handoff even when no sampled GitHub issue card exists. These queue handoffs are ordered P0-first and include the sampled P0/P1 counts. If the bounded queue sample contains no such row, the board explicitly says that this does not prove the queue is clear.
+Queue-only project observations with expired leases or repeated high claim cycles receive the same three-line handoff even when no sampled GitHub issue card exists. These queue handoffs are ordered P0-first and include the sampled P0/P1 counts. If the bounded queue sample contains no such row, the board explicitly says that this does not prove the queue is clear. The interactive offline `Project recovery` list also exposes the handoff for sampled P0/P1 work or queue anomalies, showing unknown queue source time explicitly and never implying owner or release authorization.
 
 ## 21 oktober · projectgerichte issue-/PR-botsingswerkbak uit privé bronmomenten
 
