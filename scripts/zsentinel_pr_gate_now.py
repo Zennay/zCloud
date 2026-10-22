@@ -484,6 +484,17 @@ def human_gate_summary(source: dict) -> str:
             "Checks: " + str(item["observed_checks_pending"]) + " lopend, " +
             str(item["observed_checks_not_successful"]) + " niet geslaagd")
         lines.append(
+            "Queued jobs sinds minstens 30 minuten: " +
+            str(item["queued_check_attention_30m_observed"]) +
+            " · queued bron zonder valide tijdstip: " +
+            str(item["queued_check_age_unknown_observed"]) +
+            " (onderzoek runnerroute; geen runneruitval of CI-rerun bewezen).")
+        for job in item["observed_actionable_check_runs"]:
+            if job.get("queued_attention_30m") is True:
+                lines.append("  Onderzoek queued job: " + job["name"] + " · " +
+                             str(job["queued_age_seconds_observed"] // 60) +
+                             " minuten · " + job["url"])
+        lines.append(
             "Oudere statuscontexten: " +
             str(item["legacy_status_pending_observed"]) + " lopend, " +
             str(item["legacy_status_failure_or_error_observed"]) + " niet geslaagd")
