@@ -26,7 +26,8 @@ jobs:
       github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - name: Checkout exact PR revision without credentials

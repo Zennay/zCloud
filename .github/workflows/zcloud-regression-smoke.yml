@@ -22,7 +22,8 @@ jobs:
     # regression job (GitHub treats skipped required jobs as successful).
     # This admission step NEVER checks out or executes contributor code.
     name: Reject untrusted regression events before checkout
-    runs-on: ubuntu-latest
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
       - name: Assert trusted event and repository provenance
@@ -69,7 +70,8 @@ jobs:
         github.actor == 'Zennay' &&
         github.triggering_actor == 'Zennay' &&
         github.run_attempt == 1))
-    runs-on: ubuntu-latest
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

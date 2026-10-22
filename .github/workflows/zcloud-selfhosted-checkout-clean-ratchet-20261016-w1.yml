@@ -16,7 +16,8 @@ concurrency:
 jobs:
   trusted-event:
     name: Explicitly fail untrusted checkout hygiene PR events
-    runs-on: ubuntu-latest
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
       - name: Deny fork, alternate base, actor or rerun before any checkout
@@ -41,7 +42,8 @@ jobs:
           echo "CHECKOUT_CLEAN_EVENT_ADMITTED=1"
   validate:
     needs: trusted-event
-    runs-on: ubuntu-latest
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     steps:
       - name: Checkout immutable PR source with no retained credentials

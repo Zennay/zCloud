@@ -263,7 +263,7 @@
     "zsentinel": {
       "queue_mode": "execution",
       "lane_profile": "platform",
-      "ai_worker_cap": 1,
+      "ai_worker_cap": 5,
       "autonomy": {
         "mode": "ai_worker",
         "auto_start": true

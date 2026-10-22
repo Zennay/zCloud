@@ -29,8 +29,8 @@ AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait
 # Compatibility: this remains the TOTAL number of dynamic browser workers.
 # Provider-specific counts live in DYNAMIC_CHATGPT_WORKERS / DYNAMIC_CLAUDE_WORKERS.
 GLOBAL_CHATGPT_WORKER_LIMIT = 3
-MAX_CHATGPT_WORKERS = 8
-MAX_DYNAMIC_WORKERS_PER_PROVIDER = 8
+MAX_CHATGPT_WORKERS = 20
+MAX_DYNAMIC_WORKERS_PER_PROVIDER = 20
 DYNAMIC_CHATGPT_WORKERS = 2
 DYNAMIC_CLAUDE_WORKERS = 1
 DYNAMIC_CHATGPT_COOLDOWN_SECONDS = 120
@@ -191,7 +191,7 @@ def project_runner_prompt(project_id, name):
             'PRIORITEIT 1: verwijder echte P0/P1-blokkades: falende CI, gebroken services, niet-toegewezen of vastgelopen workers en mislukte dependencies. '
             'Kies het hoogste-impact onbeheerde probleem in een ECHT portfolio-project, los de oorzaak materieel op, test en verifieer daadwerkelijke voortgang. '
             'Respecteer bestaande eigenaren, claims, geheime gegevens, FTMO-holdouts en veiligheids-, apparaat- en releasegates; forceer niets buiten autorisatie. '
-            'PRIORITEIT 2: werk open bugs, issues, onafgemaakte PRs en features in andere projecten af. '
+            'PRIORITEIT 2: pak bestaande onafgemaakte of mergeklare PRs op in de echte projecten volgens actuele claims; maak drafts reviewklaar, los echte blokkades op en merge zelfstandig zodra GitHub exact-head checks, vereiste reviews en branch protection toestaat. Bevestig merged-status plus default-branch commit; een nieuwe PR is geen oplevering. Geen bypass of source merge als live deploy voorstellen. Werk daarna open bugs, issues en features af. '
             'Als een onderdeel wacht op CI, review of VPS, kies meteen ander vrij uitvoerbaar herstelwerk in een ander project. '
             'Voer meerdere concrete fixes na elkaar uit en stop niet bij een statuscheck, nieuwe taak, enkele commit of een groene heartbeat. '
         'Herstel bij voorkeur één volledige cross-project kritieke route in plaats van een reeks symptoomfixes; bewijs daarna herstelde taakuitvoering. '
@@ -201,11 +201,11 @@ def project_runner_prompt(project_id, name):
         f'Werk verder aan {name}. '
         'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
         'Check actuele main, open issues/PRs, branch-eigenaars en CI; kies urgent open werk in de ACTUELE fase. '
-        'Rond open PRs af vóór nieuwe branches in de ontwikkelfase; integreer op actuele main en merge zelfstandig na groene exact-head CI en branchchecks. Geen extra review tenzij GitHub die verplicht; maak drafts eerst reviewklaar. Na uitrol gelden release-gates; merge is geen live deploy of toestemming voor security-, broker- of researchacties. '
+        'LEVERBELEID 20-10-2026 — MERGE EERST: inventariseer aan het begin van elke run de bestaande open PRs op het project, hun actuele head, mergeability, verplichte checks, review-gates en actuele werkclaims. Pak eerst je eigen onafgemaakte PR of een vrij, mergeklaar product-PR en werk die daadwerkelijk af voordat je een nieuwe branch/PR maakt. Draft of HOLD is geen eindresultaat; maak reviewklaar en los concrete codeconflicten en falende vereiste CI op, tenzij er een echte, benoemde externe veiligheids- of autorisatiegate is. Merge zelfstandig met GitHub zodra GitHub de actuele head, branch protection en verplichte review/checks toestaat; probeer geen verboden bypass of force-merge. Controleer daarna de GitHub merged-status en het nieuwe commit-SHA op de echte default branch. Pas dan telt de wijziging als opgeleverd op main. Een open PR, losse commit, groen testverslag of queued CI is uitdrukkelijk NIET afgerond. Laat alleen de specifiek geblokkeerde PR wachten en pak bij wachten direct een ander vrij integratiewerkpakket. Rapporteer aantallen daadwerkelijk gemergede PRs, bijbehorende main-SHAs en afzonderlijk wat nog niet gemerged is. Nieuwe productbranches alleen wanneer bestaand vrij merge-/integratiewerk niet uitvoerbaar is; geen parallelle PR-stapels. Na uitrol gelden aparte release-gates; een source merge is geen live deploy en geeft nooit toestemming voor security-, broker- of onderzoeksacties. '
         'Bouw echte functionaliteit en fix bugs; geen eindeloze QA-rondes of toekomstfase-drafts zonder productblokkade. '
         'Kies één samenhangende productmijlpaal en lever deze end-to-end: bouw alle benodigde onderdelen, sluit bestaande PRs, integreer en bewijs werking. '
         'Losse QA, documenten, configuratietweaks, één mini-fix of alleen een nieuwe PR zijn geen afgeronde mijlpaal. '
-        'Test wijzigingen gericht; de uurlijkse audit doet de brede kwaliteits- en voortgangsreview. '
+        'Geen nieuwe QA-, regressie- of testsuites schrijven, uitbreiden of draaien; controleer hooguit een build, bestaande CI-resultaten of directe productwerking. Bestaande verplichte GitHub-checks blijven intact. '
         'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet na één actie, commit, retrigger of statuscheck. '
         'HOLD alleen bij falende CI, scopeconflict of bewezen risico voor veiligheid, rechten, research of productie; beperk het tot de getroffen actie en herstel waar mogelijk. '
         'Ontbrekende data/toestemming blokkeren ander veilig fasewerk niet. Als iets wacht op CI, VPS of review, pak direct ander veilig uitvoerbaar werk. '
@@ -942,7 +942,7 @@ def dynamic_worker_settings():
     return {
         'count':int(total),
         'enabled':bool(total > 0),
-        'max_workers':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER*2),
+        'max_workers':int(MAX_CHATGPT_WORKERS),
         'max_workers_per_provider':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER),
         'cooldown_seconds':int(DYNAMIC_CHATGPT_COOLDOWN_SECONDS),
         'chatgpt_count':counts['chatgpt'],
@@ -977,6 +977,8 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
         0 if legacy_only else payload.get('claude_count',DYNAMIC_CLAUDE_WORKERS),
         'Claude workers',0,MAX_DYNAMIC_WORKERS_PER_PROVIDER
     )
+    if chatgpt_count + claude_count > MAX_CHATGPT_WORKERS:
+        raise ValueError(f'Maximum {MAX_CHATGPT_WORKERS} totale workers')
     chatgpt_cooldown=_dynamic_int(payload.get('chatgpt_cooldown_seconds',DYNAMIC_CHATGPT_COOLDOWN_SECONDS),'ChatGPT cooldown',5,86400)
     claude_cooldown=_dynamic_int(payload.get('claude_cooldown_seconds',DYNAMIC_CLAUDE_COOLDOWN_SECONDS),'Claude cooldown',5,86400)
     check_ms=_dynamic_int(payload.get('check_interval_ms',DYNAMIC_WORKER_CHECK_INTERVAL_MS),'Check interval',1000,60000)
@@ -1168,6 +1170,7 @@ def init_db():
             except Exception: return default
         DYNAMIC_CHATGPT_WORKERS=setting_int('chatgpt_count',DYNAMIC_CHATGPT_WORKERS,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
         DYNAMIC_CLAUDE_WORKERS=setting_int('claude_count',DYNAMIC_CLAUDE_WORKERS,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
+        DYNAMIC_CLAUDE_WORKERS=min(DYNAMIC_CLAUDE_WORKERS,MAX_CHATGPT_WORKERS-DYNAMIC_CHATGPT_WORKERS)
         DYNAMIC_CHATGPT_COOLDOWN_SECONDS=setting_int('chatgpt_cooldown_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS,5,86400)
         DYNAMIC_CLAUDE_COOLDOWN_SECONDS=setting_int('claude_cooldown_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS,5,86400)
         DYNAMIC_WORKER_CHECK_INTERVAL_MS=setting_int('check_interval_ms',5000,1000,60000)
