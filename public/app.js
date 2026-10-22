@@ -995,6 +995,12 @@ async function resumeBlockedQueue(queueId,button){
       if(reason==='parked-task-still-bound-to-worker'){
         throw new Error('Resume refused: the parked task still carries a worker claim or lease. Ask the current owner to settle it; no task was changed.');
       }
+      if(reason==='task-claim-record-still-bound'){
+        throw new Error('Resume refused: a separate task-claim record remains ('+String(result.result?.task_claim_state||'unknown')+'). Lease expiry alone is not takeover permission; ask its owner to reconcile/release it.');
+      }
+      if(reason==='task-claim-source-unavailable'){
+        throw new Error('Resume refused: the separate task-claim source is unavailable. Claim-free state cannot be established.');
+      }
       if(reason==='dependency-source-changed-reconfirm'){
         throw new Error('The dependency source changed. Review the refreshed task and confirm again before resuming.');
       }
@@ -1096,6 +1102,12 @@ async function closeBlockedQueue(queueId,button){
       }
       if(reason==='active-claim-or-lease'){
         throw new Error('Terminal closure refused: worker or lease remains bound. Contact its owner.');
+      }
+      if(reason==='task-claim-record-still-bound'){
+        throw new Error('Terminal closure refused: a separate task-claim record remains ('+String(result.result?.task_claim_state||'unknown')+'). Lease expiry alone is not permission to take over; ask its owner to reconcile/release it.');
+      }
+      if(reason==='task-claim-source-unavailable'){
+        throw new Error('Terminal closure refused: the separate task-claim source is unavailable. Claim-free state cannot be established.');
       }
       if(reason==='blocked-task-not-parked'){
         throw new Error('Terminal closure refused: this blocked item is not safely parked and ineligible. The queue owner must correct the state.');
