@@ -412,8 +412,8 @@ def _host_capacity_observation() -> dict[str, object]:
     )
     if (archive.get("mount_detected") is True
             and archive.get("separate_filesystem") is True
-            and not archive_has_capacity):
-        # This is an offload-capacity limitation, not itself host pressure.
+            and type(archive_available) is int and archive_available == 0):
+        # Only a measured zero is "no space"; missing counters are unavailable.
         evidence_warnings.append("archive_mount_no_available_space")
 
     if "root_filesystem_critical" in warnings:
