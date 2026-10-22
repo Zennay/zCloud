@@ -167,8 +167,8 @@ def observe_exact_pr(pr_url, *, token=None):
         next_step = "Finish the existing draft with its owner; keep independent review and CI gates."
         status = "DRAFT"
     elif checks is not None and checks["sampled_blocking_checks"]:
-        next_step = "Repair the observed exact-head failure without bypassing required checks."
-        status = "OBSERVED_FAILED_CHECKS"
+        next_step = "Investigate potentially blocking terminal non-success conclusions (failure/cancelled/stale/unknown); repair confirmed causes without bypassing required checks."
+        status = "OBSERVED_BLOCKING_NON_SUCCESS"
     elif checks is not None and checks["sampled_pending_checks"]:
         next_step = "Wait for exact-head checks or resolve their actual runner/admission dependency."
         status = "OBSERVED_PENDING_CHECKS"
