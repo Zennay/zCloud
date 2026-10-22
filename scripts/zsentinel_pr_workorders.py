@@ -837,6 +837,61 @@ def collect_workorders(board):
         for value in (category, blocker, next_step):
             _markdown(value)
         notes = []
+        alias_view = projects[project]
+        alias_pairs = alias_view.get("shown_portable_path_alias_pairs", [])
+        alias_matches = []
+        if pinned and alias_view.get("open_pr_snapshot_stable") is True:
+            if type(alias_pairs) is not list:
+                notes.append("POTENTIËLE cross-platform padaliases: bronstructuur UNKNOWN; herlees scope.")
+            else:
+                for pair in alias_pairs[:80]:
+                    if (type(pair) is not dict or type(pair.get("left")) is not dict
+                            or type(pair.get("right")) is not dict
+                            or type(pair.get("path_aliases")) is not list):
+                        notes.append("POTENTIËLE cross-platform padaliasbron onvolledig; herlees scope.")
+                        continue
+                    left, right = pair["left"], pair["right"]
+                    if left.get("url") == url:
+                        selected, peer = left, right
+                    elif right.get("url") == url:
+                        selected, peer = right, left
+                    else:
+                        continue
+                    if selected.get("head_sha") != head:
+                        continue
+                    peer_url = _same_repo_url(peer.get("url"), repo)
+                    peer_head = peer.get("head_sha")
+                    if type(peer_head) is not str or SHA.fullmatch(peer_head) is None:
+                        notes.append("POTENTIËLE padalias-peer zonder stabiele HEAD; hercontrole nodig.")
+                        continue
+                    count = pair.get("path_alias_count_observed")
+                    if type(count) is not int or count < 1:
+                        notes.append("POTENTIËLE padalias-telling onbetrouwbaar; herlees scope.")
+                        continue
+                    example = "geen voorbeeld beschikbaar"
+                    if pair["path_aliases"]:
+                        first_alias = pair["path_aliases"][0]
+                        if (type(first_alias) is dict
+                                and first_alias.get("relation") in (
+                                    "case_or_unicode_normalization_alias",
+                                    "left_path_alias_conflicts_with_right_descendant",
+                                    "right_path_alias_conflicts_with_left_descendant")):
+                            example = (_markdown(edit_path(first_alias.get("left_path"))) +
+                                       " ↔ " + _markdown(edit_path(first_alias.get("right_path"))))
+                    peer_number = PR.fullmatch(peer_url).group(2)
+                    alias_matches.append(
+                        "POTENTIËLE cross-platform padalias met PR #" + peer_number +
+                        " (peer HEAD " + peer_head[:12] + "; " + str(count) +
+                        " aliasparen waargenomen; NFC/casefold-heuristiek, geen Git-mergeconflict): " +
+                        example)
+        elif alias_pairs:
+            notes.append("Historische of niet-stabiele padaliasbron; geen positieve alias aan actuele HEAD toegeschreven.")
+        for alias_note in alias_matches[:4]:
+            notes.append(alias_note)
+        if len(alias_matches) > 4:
+            notes.append("Meer potentiële padalias-peers buiten de vier zichtbare waarschuwingen.")
+        if alias_view.get("portable_path_alias_pairs_truncated") or alias_view.get("portable_path_alias_examples_truncated"):
+            notes.append("Padaliasinventaris onvolledig; controleer het portfolio-overzicht voordat bestanden worden gewijzigd.")
         if source_stale:
             notes.append(
                 "HISTORISCHE BRON: de opgeslagen GitHub/PR-gatewaarneming is "
