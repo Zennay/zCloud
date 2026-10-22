@@ -23,6 +23,7 @@ MAX_CHECKS = 12
 
 GATE_KEYS = (
     "status", "human_gate_blocker", "draft_at_read", "base_sha_observed",
+    "base_ref_observed",
     "observed_checks_pending", "observed_checks_unknown",
     "observed_checks_not_successful", "observed_legacy_pending",
     "observed_legacy_failure_or_error",
@@ -43,6 +44,19 @@ GATE_KEYS = (
     "pending_review_requests_stable_on_second_read",
     "pending_review_request_evidence_sha256",
 )
+
+
+def _valid_base_ref(value):
+    if (type(value) is not str or not 1 <= len(value) <= 255
+            or value != value.strip() or value.startswith("/")
+            or value.endswith("/") or "//" in value or ".." in value
+            or "@{" in value or any(not char.isprintable() or char.isspace()
+                                    or char in ("~", "^", ":", "?", "*", "[", "\\")
+                                    for char in value)
+            or any(not part or part.startswith(".") or part.endswith(".")
+                   or part.lower().endswith(".lock") for part in value.split("/"))):
+        return False
+    return True
 
 
 def _project_repositories(board):
@@ -107,8 +121,10 @@ def _gate_rows(board, repos):
             head = row.get("head_sha_observed")
             base = row.get("base_sha_observed")
             if (type(head) is not str or not SHA.fullmatch(head)
-                    or type(base) is not str or not SHA.fullmatch(base)):
-                raise ValueError("missing pinned exact HEAD or base")
+                    or type(base) is not str or not SHA.fullmatch(base)
+                    or (row.get("base_ref_observed") is not None
+                        and not _valid_base_ref(row.get("base_ref_observed")))):
+                raise ValueError("missing pinned exact HEAD/base or invalid target branch")
             for key in ("observed_actionable_check_runs",
                         "observed_actionable_legacy_contexts"):
                 val = row.get(key)
@@ -326,12 +342,16 @@ def compare_gate_episodes(previous, current):
         past = old_rows.get(url)
         old_head = past.get("head_sha_observed") if past else None
         old_base = past.get("base_sha_observed") if past else None
+        old_base_ref = past.get("base_ref_observed") if past else None
         head = now.get("head_sha_observed")
         base = now.get("base_sha_observed")
+        base_ref = now.get("base_ref_observed")
         same_ref = (
             type(head) is str and SHA.fullmatch(head) is not None
             and type(base) is str and SHA.fullmatch(base) is not None
-            and head == old_head and base == old_base)
+            and _valid_base_ref(base_ref) and _valid_base_ref(old_base_ref)
+            and head == old_head and base == old_base
+            and base_ref == old_base_ref)
         exact = (past is not None and
                  past["status"] == now["status"] ==
                  "current_exact_pr_head_and_sample_match" and same_ref)
@@ -382,6 +402,8 @@ def compare_gate_episodes(previous, current):
             "current_head": head if type(head) is str and SHA.fullmatch(head) else None,
             "previous_base": old_base if type(old_base) is str and SHA.fullmatch(old_base) else None,
             "current_base": base if type(base) is str and SHA.fullmatch(base) else None,
+            "previous_base_ref": old_base_ref if _valid_base_ref(old_base_ref) else None,
+            "current_base_ref": base_ref if _valid_base_ref(base_ref) else None,
             "change": change,
             "operator_next_step": _next_step(change, now),
             "previous_blocker": past.get("human_gate_blocker") if past else None,
@@ -400,6 +422,9 @@ def compare_gate_episodes(previous, current):
             "current_head": None,
             "previous_base": old.get("base_sha_observed"),
             "current_base": None,
+            "previous_base_ref": old.get("base_ref_observed") if
+                _valid_base_ref(old.get("base_ref_observed")) else None,
+            "current_base_ref": None,
             "observed_changed_non_green_checks": [],
             "observed_changed_non_green_checks_hidden": 0,
             "observed_changed_gate_evidence_categories": [],
@@ -437,7 +462,7 @@ def compare_gate_episodes(previous, current):
 
 LABELS = {
     "newly_selected_in_current_sample_not_new_pr": "Nieuw in selectie; geen bewijs van nieuwe PR",
-    "head_changed_or_source_uncertain": "PR-HEAD/doelbasis gewijzigd of bron onzeker; huidige eigenaar controleren",
+    "head_changed_or_source_uncertain": "PR-HEAD/doelbranch/doelbasis gewijzigd of bron onzeker; huidige eigenaar controleren",
     "gate_source_incomplete_no_stability_claim": "Onvolledige gatebron; geen stabiel-hold bewijs",
     "same_exact_head_and_gate_receipts_at_two_observations":
         "Zelfde HEAD en gatebewijs op beide bronmomenten; geen ongewijzigde tussenperiode bewezen",
@@ -463,6 +488,8 @@ def render_gate_episodes(report, style="text"):
             "<li><a rel='noopener noreferrer' href='" +
             escape(row["url"], quote=True) + "'>" + escape(row["url"]) +
             "</a>: " + escape(LABELS[row["change"]]) +
+            "<p>Doelbranch: " + escape(row.get("previous_base_ref") or "ONBEKEND") +
+            " → " + escape(row.get("current_base_ref") or "ONBEKEND") + "</p>" +
             "<p>Vervolg: " + escape(NEXT_STEP_LABELS[row["operator_next_step"]]) +
             "</p>" +
             ("<p>Gewijzigd bronbewijs: " +
@@ -501,6 +528,9 @@ def render_gate_episodes(report, style="text"):
         link = ("[Open PR](" + row["url"] + ")" if style == "markdown" else row["url"])
         lines.append("- " + link + " · " + LABELS[row["change"]] +
                      (" · HEAD " + row["current_head"][:12] if row["current_head"] else ""))
+        lines.append("  Doelbranch: " +
+                     (row.get("previous_base_ref") or "ONBEKEND") + " → " +
+                     (row.get("current_base_ref") or "ONBEKEND"))
         lines.append("  Vervolg: " + NEXT_STEP_LABELS[row["operator_next_step"]])
         if row["observed_changed_gate_evidence_categories"]:
             lines.append("  Gewijzigd bronbewijs: " +
