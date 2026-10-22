@@ -367,14 +367,14 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         coverage_status = coverage.get(pid, "unavailable")
         if active:
             action = "Reconcile observed claim IDs against the live lease source before coordination; do not infer current ownership from the snapshot."
-        elif queue and queue["expired_active_leases"]:
-            action = "Escalate expired leases to the authorized queue owner."
-        elif queue and queue["high_claim_attempts"]:
-            action = "Inspect recurring claim cycles; do not auto-retry."
         elif issue_totals.get(pid, {}).get("P0", 0):
             action = "Review sampled P0 issues and current owner/PR state."
         elif issue_totals.get(pid, {}).get("P1", 0):
             action = "Review sampled P1 issues and current owner/PR state."
+        elif queue and queue["expired_active_leases"]:
+            action = "Escalate expired leases to the authorized queue owner."
+        elif queue and queue["high_claim_attempts"]:
+            action = "Inspect recurring claim cycles; do not auto-retry."
         elif coverage_status == "unavailable":
             action = "Restore GitHub issue-source coverage; zero observed issues are not a clean backlog."
         elif coverage_status == "degraded":
@@ -400,8 +400,9 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         })
     project_operations.sort(key=lambda item: (
         -item["issue_counts_in_sample"]["P0"],
+        -item["issue_counts_in_sample"]["P1"],
         -(item["queue_observation"] or {}).get("high_claim_attempts", 0),
-        -item["issue_counts_in_sample"]["P1"], item["project"],
+        item["project"],
     ))
 
     return {
