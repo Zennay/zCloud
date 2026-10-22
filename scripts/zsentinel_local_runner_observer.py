@@ -121,6 +121,28 @@ def _systemd_summary(report):
             + "; UnitFileState=" + unit + "; Result=" + result)
 
 
+def _systemd_process_relationship(report):
+    service = report.get("systemd_service_observation")
+    if (type(service) is not dict or service.get("status") != "observed"
+            or type(service.get("properties")) is not dict):
+        return "unknown_service_state"
+    if report.get("process_inventory_complete") is not True:
+        return "unknown_partial_process_sample"
+    listeners = report.get("listener_processes_observed")
+    if type(listeners) is not int or not 0 <= listeners <= MAX_PIDS:
+        return "unknown_partial_process_sample"
+    active = service["properties"].get("ActiveState")
+    if active == "active" and listeners == 0:
+        return "unit_active_listener_not_observed"
+    if active in ("inactive", "failed") and listeners > 0:
+        return "listener_observed_unit_not_active"
+    if active == "active" and listeners > 0:
+        return "unit_active_listener_observed"
+    if active in ("inactive", "failed") and listeners == 0:
+        return "unit_not_active_listener_not_observed"
+    return "unit_state_not_comparable"
+
+
 def _runner_binary(first, process):
     """Identify only this configured runner with relative or absolute argv[0].
 
@@ -241,6 +263,7 @@ def runner_text(report):
         ", processdekking=" + ("volledig" if report["process_inventory_complete"] else
                                "ONVOLLEDIG") +
         "; systemd-unit: " + _systemd_summary(report) +
+        "; unit/proces-relatie: " + _systemd_process_relationship(report) +
         "; GitHub toegewezen job: NIET BEWEZEN; safe idle/herstel: NIET BEWEZEN;"
         " herstart of workerwijziging: NIET TOEGESTAAN."
     )
@@ -272,6 +295,7 @@ def main():
             print("zSentinel VPS workerprocessen: " + str(result["worker_processes_observed"]))
             print("Bron volledig: " + str(result["process_inventory_complete"]))
             print("Systemd zCloud-runnerunit: " + _systemd_summary(result))
+            print("Unit/proces-relatie: " + _systemd_process_relationship(result))
             print("GitHub jobtoewijzing: ONBEKEND; idle, herstel en herstart NIET geautoriseerd.")
     except (OSError, ValueError) as exc:
         parser.exit(2, "zSentinel runner source unavailable: " + str(exc)[:160] + "\\n")
