@@ -16,3 +16,7 @@ This collector is public/read-only by default in the on-demand cockpit. Its sour
 ## Last-successful cache behavior
 
 The on-demand reader retains the previous successful bounded receipt while a refresh is running. If a refresh fails or capacity/rate admission delays a new fetch, the response keeps that receipt and reports the current state separately, with `stale=true`, `last_successful_sync_at` (collector completion time) and `stale_age_s`. A provider failure does not replace useful prior evidence with an empty receipt. This timestamp is not the GitHub source timestamp; the receipt's `observed_at` and each event's `source_at` remain separate. The UI should render these fields explicitly and must continue to show the feed as partial.
+
+## Observation and completion clocks
+
+The top-level `observed_at` and each coverage row's `observed_at` mark the start of a collection. Top-level `completed_at` marks the end of the bounded collection attempt, even if some providers failed. Per-project `synced_at` is updated to that completion time only when at least one provider produced an accepted observation; it remains null when every source was unavailable. Each event's `source_at` is still the original GitHub event/commit timestamp. These clocks are not interchangeable.
