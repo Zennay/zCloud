@@ -23,6 +23,11 @@ from zsentinel_pr_live_read import GitHubReadError
 from zsentinel_recovery_policy import (
     MAX_OUTPUT_BYTES, PolicyInputError, _emit_output,
 )
+from zsentinel_portfolio_history import (
+    load_previous_snapshot, compare_snapshots,
+    as_markdown as history_markdown, as_html as history_html,
+    append_csv as history_csv,
+)
 
 MAX_REPOS = 6
 MAX_GLOBAL_CARDS = 120
@@ -358,7 +363,10 @@ def as_markdown(result):
         rows.append(
             "No issue cards selected; this is not evidence of an empty live backlog."
         )
-    return "\n".join(rows) + "\n"
+    output = "\n".join(rows) + "\n"
+    if "comparison" in result:
+        output += history_markdown(result["comparison"])
+    return output
 
 
 def as_html(result):
@@ -454,6 +462,8 @@ def as_html(result):
             "<section>No issues observed in the selected bounded windows. "
             "Live backlog absence is NOT verified.</section>"
         )
+    if "comparison" in result:
+        rows.append(history_html(result["comparison"]))
     rows.append("</main></body></html>\n")
     return "\n".join(rows)
 
@@ -514,7 +524,10 @@ def as_csv(result):
             issue["status"], issue["single_issue_live_pr_review_command"],
             False, False, False, False, False,
         )])
-    return sink.getvalue()
+    output = sink.getvalue()
+    if "comparison" in result:
+        output = history_csv(output, result["comparison"])
+    return output
 
 
 def main(argv=None):
@@ -531,12 +544,21 @@ def main(argv=None):
                         default="html")
     parser.add_argument("--output", type=Path, required=True,
                         help="Create-only private output path; no stdout mode.")
+    parser.add_argument("--previous-snapshot", type=Path,
+                        help="Prior private JSON desk output for conservative offline visible-card comparison")
     args = parser.parse_args(argv)
     try:
+        previous = (load_previous_snapshot(args.previous_snapshot)
+                    if args.previous_snapshot is not None else None)
+        if previous is not None and (previous["repositories_requested"] != args.repo
+                                     or previous["display_view"] != args.view):
+            raise PolicyInputError("previous snapshot requires same repositories and view")
         report = observe_portfolio(
             args.repo, token=os.environ.get("GITHUB_TOKEN") or None,
             view=args.view,
         )
+        if previous is not None:
+            report["comparison"] = compare_snapshots(previous, report)
         source = (
             as_html(report) if args.format == "html" else
             as_markdown(report) if args.format == "markdown" else
