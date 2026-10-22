@@ -272,7 +272,8 @@ def text_report(data):
         if service.get("status") == "OBSERVED_COMPLETE":
             lines.append(
                 "  zCloud service-cgroup (lokale proceskoppeling): "
-                f"listener in verwachte unit {service['listener_in_expected_unit']}; "
+                f"verwachte unit {service['expected_unit']}; "
+                f"listener in unit {service['listener_in_expected_unit']}; "
                 f"buiten unit {service['listener_outside_expected_unit']}; "
                 f"worker in unit {service['worker_in_expected_unit']}; "
                 f"buiten unit {service['worker_outside_expected_unit']}."
@@ -287,6 +288,23 @@ def text_report(data):
                 lines.append(
                     "  HOLD: zCloud-listeners hebben gemengde service-cgroup-lidmaatschappen; "
                     "geen listener opruimen of herstarten op basis van deze observatie."
+                )
+            zcloud = data.get("families", {}).get("zCloud", {})
+            worker_count = zcloud.get("workers", 0) if isinstance(zcloud, dict) else 0
+            worker_in = service.get("worker_in_expected_unit", 0)
+            worker_out = service.get("worker_outside_expected_unit", 0)
+            if (type(worker_count) is int and worker_count > 0
+                    and type(worker_in) is int and type(worker_out) is int
+                    and worker_in == 0 and worker_out == worker_count):
+                lines.append(
+                    "  HOLD: de waargenomen zCloud-worker valt buiten de verwachte "
+                    "systemd-service-cgroup; behoud de actieve worker en vraag owner-reconciliatie."
+                )
+            elif (type(worker_in) is int and type(worker_out) is int
+                    and worker_in > 0 and worker_out > 0):
+                lines.append(
+                    "  HOLD: zCloud-workers hebben gemengde service-cgroup-lidmaatschappen; "
+                    "beëindig geen proces en herstart niet."
                 )
         elif service.get("status") == "PARTIAL":
             lines.append(

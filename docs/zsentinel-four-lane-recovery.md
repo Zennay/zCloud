@@ -1411,3 +1411,8 @@ This source-only enhancement performs no service inspection through systemd, pro
 ### 22 October · current contract cap supersedes the earlier four-worker note
 
 The earlier dated section describing `ai_worker_cap=4` records an intermediate configuration. The current `main` contract and this PR's four-lane desk now both use `lane_profile=portfolio-recovery` with `ai_worker_cap=5`; the desk requires that exact profile/cap pair for `MATCH_LOCAL_FILE`. Five is a configured maximum, not evidence that five workers are active or that resource, claim, runner, CI or release gates permit them to start.
+
+
+### 22 October · worker cgroup mismatch remains a protected owner HOLD
+
+The runner presence summary now calls out a zCloud `Runner.Worker` observed outside the expected service cgroup (or mixed worker membership) separately from listener membership. This does not label the worker stale or idle: the action explicitly preserves the job and asks the authorized runtime owner to reconcile service/cgroup identity with an actual GitHub job receipt. It never terminates, pauses, or restarts a worker.
