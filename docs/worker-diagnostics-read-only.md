@@ -7,6 +7,7 @@ The following GET endpoints are observations only:
 - `GET /api/worker-debug`
 - `GET /api/runner-targets`
 - `GET /api/task-claims`
+- `GET /api/worker-preflight`
 
 The first two use `runner_worker_targets(..., reconcile=False)`. The default `reconcile=True` path can create missing `runner_workers` rows and update a provider field, so it must not be used from a GET diagnostic handler. Their responses explicitly report `read_only_observation: true`, `sqlite_reconciliation_performed: false`, and `queue_mutations_performed: false`.
 
@@ -14,7 +15,7 @@ The first two use `runner_worker_targets(..., reconcile=False)`. The default `re
 
 The worker/claim diagnostic paths now use `connect_readonly()`: a SQLite URI with `mode=ro` plus `PRAGMA query_only=ON`. This applies to `runner_worker_targets(..., reconcile=False)`, the event/command lookups inside `worker_debug_report()`, and `task_claims(..., prune_expired=False)`. It rejects a missing database instead of creating one, and denies accidental SQL writes even if a read helper changes in the future. It does **not** use `immutable=1` because the operator must observe live SQLite/WAL changes. The normal `connect()` path and explicit reconciliation/pruning for authorized control/scheduler calls are unchanged. A diagnostic GET can still report unavailable SQLite when the database is absent or its read-only/WAL prerequisites are not satisfied; do not silently retry through a writable connection.
 
-The claim-fingerprint code used by `GET /api/worker-preflight` also had a hidden `DELETE FROM task_claims` in `_coordination_claim_rows_locked()`. Its observational path now passes `prune_expired=False`, filters leases with `WHERE lease_until>?` and uses `connect_readonly()`; the authorized atomic preflight/acquisition path retains the explicit `prune_expired=True` default. Creating/updating a worker preflight is still a separate authorized POST write. Active-claim fingerprints are computed from the same ordered **live** rows in both modes, without GET-side expiration cleanup. Malformed/missing source state fails rather than switching to a writable GET.
+The claim-fingerprint code used by `GET /api/worker-preflight` also had a hidden `DELETE FROM task_claims` in `_coordination_claim_rows_locked()`. Its observational path now passes `prune_expired=False`, filters leases with `WHERE lease_until>?` and uses `connect_readonly()`; the authorized atomic preflight/acquisition path retains the explicit `prune_expired=True` default. Creating/updating a worker preflight is still a separate authorized POST write. Active-claim fingerprints are computed from the same ordered **live** rows in both modes, without GET-side expiration cleanup. Malformed/missing source state fails rather than switching to a writable GET. The HTTP GET response declares `read_only_observation: true`, `sqlite_mutations_performed: false`, and `expired_claims_pruned: false`; the existing `ok` field continues to mean the recorded preflight is still usable, **not** that this GET granted new ownership or authorized work.
 
 The existing `GET /api/worker-scaling` report opens the telemetry database through SQLite `mode=ro`; it remains an observation-only report.
 
