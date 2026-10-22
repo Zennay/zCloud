@@ -3534,19 +3534,51 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
             return {'dropped':False,'queue_id':queue_id,
                     'reason':'dependency-source-changed-reconfirm',
                     'queue_audit':None}
+        # Retain the original dependency evidence in the terminal record.
+        # Overwriting it with just a dismissal note would erase why this
+        # task had been parked in the first place.
+        prior_blocker=str(row['blocker'] or '')[:1000]
+        prior_evidence=str(row['evidence'] or '')[:1400]
+        proof=(
+            f'Previous queue status: {row["status"]}\n'
+            f'Previous blocker: {prior_blocker}\n'
+            f'Previous evidence: {prior_evidence}\n'
+            f'Operator {actor or "legacy-authorized-client"} closed task: {note}'
+        )[:4000]
         # Terminal operator cancellation must not revoke a live worker lease.
-        # A queued/parked task is safe only after its claim identity is clear.
-        # The conditional UPDATE is the authority; a pre-read cannot race it.
+        # The conditional UPDATE remains authoritative after the transaction read.
         cur=c.execute("""UPDATE portfolio_queue
                          SET status='dropped',eligible=0,evidence=?,blocker=?,
                              worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                          WHERE queue_id=? AND status IN ('queued','blocked')
                            AND worker_slot IS NULL AND claimed_at IS NULL
                            AND claim_expires IS NULL""",
-                      (note[:4000],note[:2000],ts,queue_id))
+                      (proof,note[:2000],ts,queue_id))
         dropped=bool(cur.rowcount)
         attention_resolved=False
         if dropped:
+            # The action, actor and original blocker must be auditable in the
+            # same commit as the state transition, not a separate best-effort log.
+            project_id=str(row['project_id'] or '')
+            if project_id in PROJECT_INDEX:
+                project=PROJECT_INDEX[project_id]
+                project_runtime.record_receipt(
+                    c,project_id,
+                    phase=str(project.get('phase') or ''),
+                    action=f"Operator terminally closed queue item {queue_id}",
+                    ci_status='cancelled',
+                    blocker='',
+                    next_gate=str(project.get('next_step') or ''),
+                    source='portfolio_queue_drop',
+                    observed_at=ts,
+                    evidence={'queue_id':queue_id,'operator_actor':actor,
+                              'previous_status':str(row['status']),
+                              'previous_blocker':prior_blocker,
+                              'previous_evidence':prior_evidence,
+                              'terminal_resolution_note':note,
+                              'source_version_guarded':guarded,
+                              'active_claim_revoked':False},
+                )
             # A terminally cancelled queue item cannot still demand that a
             # human resume it; settle only its exact queue-bound Attention.
             attention_resolved=bool(c.execute(
