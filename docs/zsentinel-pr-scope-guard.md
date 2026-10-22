@@ -773,6 +773,16 @@ De privé HTML-werkkaart biedt directe, uitsluitend navigerende links naar **PR/
 
 De HTML blijft één lokaal scriptvrij bestand met strikte CSP; CSV-cellen blijven formuleveilig en bounded, de offline bron wordt exclusief/private 0600 aangemaakt via de bestaande writer. **Geen** automatische reviewverzoeken, CI-reruns, claims, merge, productieacties of extra gates. Voor een merge blijven exacte huidige GitHub-required checks, onafhankelijke ingediende reviews, branch protection, huidige eigenaar en releaseautorisatie noodzakelijk.
 
+### 22 oktober · Actie-eerst werkvoorraad voor bestaande privé-PR-opdrachten
+
+De bestaande offline `zsentinel_pr_workorders.py` operatorbundel sorteert de geselecteerde huidige product-PRs nu op **concreet eigenaarwerk**, **brononderzoek**, **bestaande CI/independent review afwachten**, **protected-main/release-handoff** en **ongewijzigde HOLD parkeren**. Dit zijn *presentatie- en werkrichtingen*, niet nieuwe scheduler-, review- of branchregels. Alle acties vereisen nog steeds actuele HEAD- en claimcontrole bij GitHub en een bevoegde eigenaar. Historische bron die ouder dan zes uur is of op kernpunten onzeker, wordt niet als direct vrij werk aangemerkt.
+
+JSON ontvangt `workstream`, `operator_primary_step`, `operator_action_link` per kaart plus een totaaloverzicht `workstream_summary`. De scriptvrije privé-HTML toont groepsnavigatie met anchors en een korte werkvoorraad; Markdown en privé-CSV bevatten dezelfde volgende acties, inclusief doorklikbare GitHub-links. CSV-cellen blijven formuleveilig en alle uitvoer blijft begrensd. De oorspronkelijke gateactie blijft zichtbaar naast de operationele volgende stap.
+
+**Parallel review versus wachtende CI:** bij een op beide bronlezingen vastgepinde niet-draft PR met `mergeable=true`, volledige check- en reviewbron, uitsluitend bestaande lopende CI, geen wijzigingsverzoeken, geen onafhankelijke approvals en **geen reeds aangevraagd reviewverzoek**, verschijnt een aanvullende handmatige eigenaaractie om alvast onafhankelijke review aan te vragen. Zo verdwijnt deze vrije stap niet achter `wait_for_existing_current_head_checks`. Bij een veranderde/oudere/onvolledige bron wordt zo'n actie niet als uitvoerbaar voorgesteld. Het systeem vraagt zelf **nooit** review aan, start geen CI en geeft geen merge-/deploybevoegdheid.
+
+Voor een concrete brongebonden operatorbundel: voer de bestaande `scripts/zsentinel_pr_scope_portfolio.py` uit met `--inspect-current-pr-gates`, de gewenste `--gate-pr project#nummer`, `--format workorders-html` (of `workorders`, `workorders-json`, `workorders-csv`) en een **nieuw** privé `--output`-pad. Geen QA-/regressie- of CI-rerun maakt deel uit van dit product.
+
 ### Direct Dutch triage without exporting JSON
 
 The same bounded CLI supports `--format text` for an immediately readable
