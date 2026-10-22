@@ -2764,3 +2764,27 @@ bestand** worden aangeboden; er wordt niet automatisch een andere bron,
 branch of eigen claim gekozen. Dit verandert geen GitHub-, Notion-,
 queue-, CI-, VPS-, runner- of deploymentstatus; **broncontrole is nooit
 merge- of leaseautorisatie**.
+
+
+## 22 oktober · historische bestand/map-botsingen zonder schijnoplossingen
+
+De historische PR-snapshotvergelijker kent nu **twee onafhankelijke
+volledigheidsgrenzen**. Een complete stabiele lijst van open PR's is niet
+genoeg om afzonderlijke bestand/map-conflictpaden volledig te vergelijken:
+per PR-paar kunnen nog steeds padvoorbeelden zijn afgekapt. Zowel de
+teller van getoonde paren, de totale waargenomen paren als beide expliciete
+truncatievlaggen en elke `path_conflicts_truncated` worden betrokken.
+
+Als ook maar één van de twee momentopnames onvoldoende paddekking heeft,
+rapporteren JSON, offline HTML, operator-tekst en Markdown verschillen
+**uitsluitend als steekproefwaarnemingen**. Er volgt dan geen stellige
+"conflict verdwenen" / "nieuw volledig conflict"-melding; de werkbak toont
+juist wat in de huidige of vorige beperkte bron zichtbaar was en dat de
+ontbrekende paden opnieuw moeten worden bekeken. Exact gedeelde
+bestandsnamen en bijbehorende onafhankelijke volledigheidsclaims behouden
+hun bestaande betekenis.
+
+Dit voorkomt dat een operator een niet-getoond ancestor-pad als opgelost
+interpreteert wanneer de volledige PR-inventaris wel compleet was maar de
+padvoorvertoning niet. Het is nog altijd geen bewijs van Git-mergeability,
+review, actueel eigenaarschap of productie-vrijgave.
