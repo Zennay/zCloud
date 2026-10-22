@@ -1267,13 +1267,27 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         collided.add(right)
     # Combining bounded pages improves collision discovery, not claim admission.
     # With more than one page we never infer whole-inventory completeness.
-    fully_sampled = (page_count == 1 and open_page == 1
-                     and len(before) < page_size and len(before) <= limit
-                     and not suspicious_lists and stable
-                     and len(ordered) <= MAX_CONFLICT_PAIRS
-                     and not scope_pairs_truncated
-                     and not alias_pairs_truncated
-                     and not alias_examples_truncated)
+    # Fully loaded PR filenames do not imply complete operator evidence:
+    # a capped ancestor-pair preview could still hide observed scope edges.
+    source_coverage_reasons = []
+    if not stable:
+        source_coverage_reasons.append("open_pr_snapshot_changed_or_duplicate")
+    if (page_count != 1 or open_page != 1
+            or len(before) >= page_size or len(before) > limit):
+        source_coverage_reasons.append("open_pr_window_incomplete")
+    if suspicious_lists:
+        source_coverage_reasons.append("pr_file_lists_incomplete")
+    if len(ordered) > MAX_CONFLICT_PAIRS:
+        source_coverage_reasons.append("shared_file_pairs_truncated")
+    if scope_pairs_truncated:
+        source_coverage_reasons.append("path_scope_pairs_truncated")
+    if any(row["path_conflicts_truncated"] for row in scope_cards):
+        source_coverage_reasons.append("path_scope_examples_truncated")
+    if alias_pairs_truncated:
+        source_coverage_reasons.append("portable_alias_pairs_truncated")
+    if alias_examples_truncated:
+        source_coverage_reasons.append("portable_alias_examples_truncated")
+    fully_sampled = not source_coverage_reasons
     # An unpaired PR is a useful independent-work candidate ONLY after the
     # entire open-PR source sample is complete and stable. An unchecked PR
     # could otherwise touch the exact same path.
@@ -1376,6 +1390,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
                                               len(snapshots_before[-1]) == page_size),
         "open_pr_snapshot_stable": stable,
         "pr_file_scope_sample_complete": fully_sampled,
+        "source_coverage_reasons": source_coverage_reasons,
         "source_result": ("collisions_observed" if ordered or ordered_scope else
                           "portable_path_aliases_advisory" if ordered_alias else
                           "incomplete_no_collisions_observed" if not fully_sampled
@@ -1420,6 +1435,9 @@ def graph_operator_text(report):
         "Bron volledig: " + ("ja" if report["pr_file_scope_sample_complete"]
                                else "NEE (steekproef of veranderde bron)"),
     ]
+    if report.get("source_coverage_reasons"):
+        result.append("Bronbeperkingen: " +
+                      ", ".join(report["source_coverage_reasons"]))
     for receipt in report["open_pr_page_receipts"]:
         result.append("BRONPAGINA " + str(receipt["page"]) + " · posities " +
                       str(receipt["first_position"]) + "–" +
@@ -1611,6 +1629,8 @@ def graph_html(report):
     completeness = ("volledig, uitsluitend voor huidige open PR's"
                     if report["pr_file_scope_sample_complete"]
                     else "onvolledig; bron/venster niet stabiel of afgekapt")
+    if report.get("source_coverage_reasons"):
+        completeness += " · " + ", ".join(report["source_coverage_reasons"])
     unpaired = report["unpaired_open_prs_in_sample_not_claim_verified"]
     page_rows = "".join(
         "<li>Pagina " + str(r["page"]) + " · posities " +
@@ -1913,6 +1933,8 @@ def graph_markdown(report):
         "",
         "## Gedeelde bestandsnamen",
     ]
+    if report.get("source_coverage_reasons"):
+        lines.append("Bronbeperkingen: " + ", ".join(report["source_coverage_reasons"]))
     lines.extend(["", "## Waargenomen GitHub-pagina's", ""])
     for receipt in report["open_pr_page_receipts"]:
         lines.append("- Pagina " + str(receipt["page"]) + " · posities " +
