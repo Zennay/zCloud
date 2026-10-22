@@ -21,7 +21,7 @@ zodat de heuristiek niet ten onrechte als bewezen Git-conflict wordt gebruikt
 maar ook nooit als een schone scope eindigt.
 
 Dezelfde observatie verschijnt in:
-- de directe scope-CLI tekst, JSON, Markdown, HTML en private create-only CSV;
+- de directe scope-CLI bij zowel `--audit-open-prs` als een expliciet `--path`/`--source-pr`, in tekst, JSON, Markdown, HTML en private create-only CSV;
 - het portfolio-overzicht in tekst, Markdown, HTML en private CSV;
 - de bestaande merge-first eigenaarwerkbak als een HEAD-gebonden menselijke
   waarschuwing, met peer-PR en peer-HEAD, zonder de alias als Git-conflict te
@@ -35,6 +35,9 @@ python3 scripts/zsentinel_pr_scope_guard.py \
 
 python3 scripts/zsentinel_pr_scope_portfolio.py \
   --project zcloud --format html
+
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project zcloud --path 'src/Config.py' --format html
 ```
 
 De eerste opdracht toont de begrensde PR-grafiek; de tweede brengt dezelfde
