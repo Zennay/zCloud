@@ -366,10 +366,11 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
     project_scope_partial = (view.get("sample_complete") is not True or
                              view.get("open_pr_snapshot_stable") is not True or
                              view.get("source_truncated") is True)
+    # Return the bounded-scan candidates before the final card display cap;
+    # the caller records exact hidden counts and never silently drops peers.
     return (sorted(paths)[:MAX_PATHS],
             len(paths) > MAX_PATHS or paths_limited or project_scope_partial,
-            sorted(related)[:8], sorted(hinted_issues)[:MAX_ISSUE_HINTS],
-            scope_conflicts)
+            sorted(related), sorted(hinted_issues), scope_conflicts)
 
 
 
@@ -843,7 +844,16 @@ def collect_workorders(board):
             # not the exact-head gate read; never resurrect stale peers.
             paths_cut = True
             peer_partial = True
-        related = sorted(set(related) - {url})[:8]
+        related = sorted(set(related) - {url})
+        related_hidden = max(0, len(related) - 8)
+        related = related[:8]
+        hints = sorted(set(hints))
+        hints_hidden = max(0, len(hints) - MAX_ISSUE_HINTS)
+        hints = hints[:MAX_ISSUE_HINTS]
+        if related_hidden:
+            # Missing peer links can hide collision relationships, so this
+            # work order must not imply complete overlap coverage.
+            paths_cut = True
         links = []
         for job in item.get("non_green_jobs", [])[:MAX_CHECKS]:
             if (type(job) is not dict or type(job.get("name")) is not str
@@ -882,6 +892,12 @@ def collect_workorders(board):
         for value in (category, blocker, next_step):
             _markdown(value)
         notes = []
+        if related_hidden:
+            notes.append(
+                f"{related_hidden} aanvullende peer-PR(s) buiten de acht zichtbare links; herlees de volledige actuele scope.")
+        if hints_hidden:
+            notes.append(
+                f"{hints_hidden} aanvullende onbevestigde issuehint(s) buiten de zichtbare lijst; herlees de actuele issue-/PR-tekst.")
         alias_view = projects[project]
         alias_pairs = alias_view.get("shown_portable_path_alias_pairs", [])
         alias_matches = []
@@ -1239,7 +1255,9 @@ def collect_workorders(board):
             "source_open_pr_window_complete": (
                 projects[project].get("open_pr_window_complete") is True),
             "scope_path_conflicts": scope_conflicts,
-            "related_prs": related, "unverified_issue_hints": hints,
+            "related_prs": related, "related_prs_hidden": related_hidden,
+            "unverified_issue_hints": hints,
+            "unverified_issue_hints_hidden": hints_hidden,
             "peer_head_evidence": peer_evidence,
             "peer_head_evidence_partial": peer_partial,
             "source_warnings": source_warnings,
