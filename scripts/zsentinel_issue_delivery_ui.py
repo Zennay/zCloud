@@ -29,6 +29,8 @@ def controls(projects):
         '<option value="Unspecified">Onbekend</option></select></label>'
         '<label>Route <select id="issue-route"><option value="">Alle</option>'
         '<option value="authorized_infrastructure_owner_required">Menselijke infrablokkade</option>'
+        '<option value="authorized_zcloud_runner_owner_required">zCloud-runnerbeheerder nodig</option>'
+        '<option value="authorized_github_billing_owner_required">GitHub-billingeigenaar nodig</option>'
         '<option value="review_existing_pr_first">Bestaande PR eerst</option>'
         '<option value="verify_ownership_and_scope">Eerst eigendom/scope</option>'
         '<option value="check_assignee_and_current_claim">Assignee controleren</option>'
@@ -176,7 +178,7 @@ input("preview-packet").addEventListener("click",()=>{
     item.querySelector("[data-work-packet]")?.checked);
   if(!selected.length||selected.length>12){
     invalidatePacket();
-    packetFeedback.textContent="Selecteer 1 t/m 12 zichtbare productissues. Infrastructuur-P0 is uitgesloten.";
+    packetFeedback.textContent="Selecteer 1 t/m 12 zichtbare productissues. Human-gated infrastructuur-, runner- en billingissues zijn uitgesloten.";
     return;
   }
   const seen=new Set();
@@ -189,9 +191,11 @@ input("preview-packet").addEventListener("click",()=>{
     if(parts.hostname!=="github.com"||parts.protocol!=="https:"||
        tokens.length!==4||tokens[0]!=="Zennay"||tokens[2]!=="issues"||
        !/^[1-9][0-9]*$/.test(tokens[3])||seen.has(raw)||
-       item.dataset.route==="authorized_infrastructure_owner_required"){
+       ["authorized_infrastructure_owner_required",
+        "authorized_zcloud_runner_owner_required",
+        "authorized_github_billing_owner_required"].includes(item.dataset.route)){
       invalidatePacket();
-      packetFeedback.textContent="Onbetrouwbare of dubbele issuebron; geen werkpakket.";
+      packetFeedback.textContent="Onbetrouwbare, dubbele of human-gated issuebron; geen werkpakket.";
       return;
     }
     seen.add(raw);
