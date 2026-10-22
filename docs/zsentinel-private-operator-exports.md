@@ -462,3 +462,16 @@ adjacent blocked counts only when both observations are fresh and share the same
 SQLite source identity. Source gaps remain UNKNOWN; a lower count is not proof of
 task recovery. The panel is read-only: no status transition, retry, claim release,
 dispatch, worker restart or deployment is performed.
+## Human-gated issue routing and work-packet exclusion
+
+The product issue board now exposes separate route filters for the authorized
+zCloud runner owner (`authorized_zcloud_runner_owner_required`) and the GitHub
+account-billing owner (`authorized_github_billing_owner_required`). These are
+distinct from the legacy infrastructure-owner route.
+
+All three routes are sourced from the canonical issue-delivery contract and are
+counted as human-owner issues in both per-project and portfolio summaries;
+they are excluded from the product-issue count. The local work-packet preview
+refuses all three routes even if an operator explicitly selects them. Filtering
+or saving a private note does not establish ownership, change a claim, dispatch
+a job, approve billing, restart a runner, merge a PR or authorize a deployment.
