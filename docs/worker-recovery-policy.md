@@ -1026,7 +1026,10 @@ alle verplichte exacte-HEAD-checks; een lege reviewsteekproef is alleen
 `ZERO_REVIEWS_IN_SAMPLE`, nooit bewijs dat op GitHub geen reviewer bestaat.
 
 Elke kaart heeft een stabiele code, herleidbare *sample*-categorie en
-`status=HOLD_OWNER_REVIEW`, met `execution_authorized=false`.
+`status=HOLD_OWNER_REVIEW`, met `execution_authorized=false`. De parallelle
+owner-workorders zijn begrensd op maximaal twaalf kaarten, zodat een extra
+mergeability-conflictactie niet stilzwijgend onafhankelijke CI-, review- of
+autorisatieblokkades verdringt.
 Gesloten PRs worden niet meer als mergekandidaat aangeboden; bij
 `merged=true` gaat de eigenaarshandoff uitsluitend over controle van de
 default-branch-mergecommit en een afzonderlijke live release.
