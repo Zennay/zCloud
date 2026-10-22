@@ -42,7 +42,7 @@ GATE_STEPS_NL = {
     "wait_for_requested_independent_review":
         "Onafhankelijke review is al aangevraagd bij persoon/team; wacht op beslissing.",
     "request_independent_current_head_review":
-        "Vraag onafhankelijke review op de actuele HEAD aan.",
+        "Vraag onafhankelijke review op de actuele HEAD aan; bestaande CI mag parallel doorlopen.",
     "verify_required_rules_ownership_and_release_separately":
         "Branchregels, eigenaar en release apart verifiëren; nog geen mergevrijgave.",
 }
@@ -55,6 +55,9 @@ GITHUB_ACTOR = re.compile(r"^[A-Za-z0-9-]{1,39}(?:\[bot\])?$")
 OK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 # Owner attention only; this is not a required CI gate or proof of runner failure.
 QUEUED_CHECK_ATTENTION_AFTER_SECONDS = 30 * 60
+# Read-only warning threshold, not evidence of a frozen process or a right
+# to restart/reassign a runner. Runtime may legitimately exceed one hour.
+RUNNING_CHECK_ATTENTION_AFTER_SECONDS = 60 * 60
 
 
 def _sha(value):
@@ -133,6 +136,25 @@ def _queued_age_from_github(check, now):
     return min(int(seconds), 365 * 24 * 3600)
 
 
+def _running_age_from_github(check, now):
+    """Age of a GitHub-reported in-progress check, never runner-health proof."""
+    if check.get("status") != "in_progress":
+        return None
+    raw = check.get("started_at")
+    if type(raw) is not str or len(raw) > 40:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        return None
+    seconds = (now - timestamp.astimezone(timezone.utc)).total_seconds()
+    if seconds < 0:
+        return None
+    return min(int(seconds), 365 * 24 * 3600)
+
+
 def _one(repo, number, token):
     if not REPO.fullmatch(repo) or type(number) is not int or not 1 <= number <= 999999999:
         raise ValueError("invalid canonical PR identity")
@@ -197,6 +219,8 @@ def _one(repo, number, token):
     observed_queue_time = datetime.now(timezone.utc)
     queued_over_attention = 0
     queued_age_unknown = 0
+    running_over_attention = 0
+    running_age_unknown = 0
     for row in latest_checks.values():
         state, conclusion = row.get("status"), row.get("conclusion")
         if state == "completed":
@@ -208,6 +232,12 @@ def _one(repo, number, token):
         else:
             statuses["other_observed"] += 1
         age = _queued_age_from_github(row, observed_queue_time)
+        running_age = _running_age_from_github(row, observed_queue_time)
+        if state == "in_progress":
+            if running_age is None:
+                running_age_unknown += 1
+            elif running_age >= RUNNING_CHECK_ATTENTION_AFTER_SECONDS:
+                running_over_attention += 1
         if state == "queued":
             if age is None:
                 queued_age_unknown += 1
@@ -231,9 +261,19 @@ def _one(repo, number, token):
                 "queued_attention_30m": (
                     age is not None and
                     age >= QUEUED_CHECK_ATTENTION_AFTER_SECONDS),
+                "running_age_seconds_observed": running_age,
+                "running_attention_60m": (
+                    running_age is not None and
+                    running_age >= RUNNING_CHECK_ATTENTION_AFTER_SECONDS),
             })
+    # Put actionable *observed* long-running checks ahead of routine queued
+    # checks within the bounded 12-row operator sample, without claiming a
+    # failure, runner outage, or authority to dispatch/retry.
     actionable.sort(key=lambda item: (
-        item["state"] != "completed", item["name"], item["check_run_id"]))
+        0 if item["state"] == "completed" else
+        1 if item["running_attention_60m"] else
+        2 if item["queued_attention_30m"] else 3,
+        item["name"], item["check_run_id"]))
     actionable_hidden = max(0, len(actionable) - 12)
     actionable = actionable[:12]
     # Check Runs and legacy commit statuses are distinct GitHub evidence
@@ -364,6 +404,11 @@ def _one(repo, number, token):
         # an unrelated exact-head CI job is still queued. Do not hide it
         # behind a generic "wait for CI" message.
         gate_step = "owner_address_exact_head_review_changes"
+    elif not approved and not (requested_people or requested_teams):
+        # An independent review request is actionable while existing CI is
+        # queued. Do not artificially serialize review behind an unrelated
+        # slow or unassigned runner; no review is submitted by this observer.
+        gate_step = "request_independent_current_head_review"
     elif (statuses["pending_observed"] or statuses["other_observed"] or
           legacy_states["pending"]):
         gate_step = "wait_for_existing_current_head_checks"
@@ -405,6 +450,8 @@ def _one(repo, number, token):
         "observed_checks_unknown": statuses["other_observed"],
         "queued_check_attention_30m_observed": queued_over_attention,
         "queued_check_age_unknown_observed": queued_age_unknown,
+        "running_check_attention_60m_observed": running_over_attention,
+        "running_check_age_unknown_observed": running_age_unknown,
         "legacy_status_contexts_observed": len(latest_context),
         "legacy_status_evidence_sha256": legacy_fingerprint,
         "legacy_status_superseded_attempts_observed":
@@ -526,7 +573,17 @@ def human_gate_summary(source: dict) -> str:
             " · queued bron zonder valide tijdstip: " +
             str(item["queued_check_age_unknown_observed"]) +
             " (onderzoek runnerroute; geen runneruitval of CI-rerun bewezen).")
+        lines.append(
+            "Lopende jobs sinds minstens 60 minuten: " +
+            str(item["running_check_attention_60m_observed"]) +
+            " · in-progress bron zonder valide starttijd: " +
+            str(item["running_check_age_unknown_observed"]) +
+            " (eigenaartriage; geen vastloper of restart bewezen).")
         for job in item["observed_actionable_check_runs"]:
+            if job.get("running_attention_60m") is True:
+                lines.append("  Onderzoek langdurige lopende check: " + job["name"] + " · " +
+                             str(job["running_age_seconds_observed"] // 60) +
+                             " minuten · " + job["url"])
             if job.get("queued_attention_30m") is True:
                 lines.append("  Onderzoek queued job: " + job["name"] + " · " +
                              str(job["queued_age_seconds_observed"] // 60) +
