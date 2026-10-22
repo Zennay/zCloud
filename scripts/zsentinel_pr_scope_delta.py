@@ -811,10 +811,10 @@ def render_delta(delta, format="text"):
             lines.append("  Alleen vorige steekproef, niet bewezen gesloten: " + url)
         if not row["scope_conflicts_comparable_if_complete"]:
             lines.append("  Reden bestand/map-vergelijking onvolledig: " +
-                         ", ".join(row.get("scope_conflict_comparison_reasons", [])))
+                         coverage_reason_text(row.get("scope_conflict_comparison_reasons", [])))
         if not row.get("portable_aliases_comparable_if_complete"):
             lines.append("  Reden padaliasvergelijking onvolledig: " +
-                         ", ".join(row.get("portable_alias_comparison_reasons", [])))
+                         coverage_reason_text(row.get("portable_alias_comparison_reasons", [])))
         if row.get("portable_alias_comparison_unavailable"):
             lines.append("  Padaliashistorie onbekend: minstens één snapshot mist de nieuwe aliasbronvelden of was niet beschikbaar.")
         if row.get("scope_conflict_comparison_unavailable"):
