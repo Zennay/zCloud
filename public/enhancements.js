@@ -138,7 +138,7 @@
       var recovery=center.recovery||{};
       var recoveryText=recovery.available?'Recovery point available':'No recovery point yet';
       if(sourceUnconfirmed){
-        return '<div class="panel alert-panel incident-panel source-unconfirmed"><div class="panel-header"><div><h2>Status unknown</h2><div class="panel-subtitle">Monitoring data is stale or the current incident feed is unavailable</div></div></div><div class="alert-empty" role="status">No current blocker state was verified. Refresh the dashboard before concluding that no intervention is needed.</div></div>';
+        return '<div class="panel alert-panel incident-panel source-unconfirmed"><div class="panel-header"><div><h2>Status unknown</h2><div class="panel-subtitle">Monitoring data is stale or the current incident feed is unavailable</div></div></div><div class="alert-empty" role="status">No current blocker state was verified. Refresh the dashboard before concluding that no intervention is needed.</div><p><a class="events-link" href="/">Dashboard opnieuw laden</a></p></div>';
       }
       return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Needs attention</h2><div class="panel-subtitle">No action needed · '+esc(recoveryText)+'</div></div>'+icon('check')+'</div><div class="alert-empty">Everything currently running needs no intervention.</div></div>';
     }
@@ -156,7 +156,7 @@
         '<br><b>Actie:</b> '+esc(trText(x.action||'Controleer de huidige blokkade'))+'</li>';
     }).join('');
     var sourceNotice=sourceUnconfirmed
-      ? '<div class="alert-empty" role="status">Monitoring data is stale. These are last-known incidents, not confirmation that the blockers are still active.</div>'
+      ? '<div class="alert-empty" role="status">Monitoring data is stale. These are last-known incidents, not confirmation that the blockers are still active. <a class="events-link" href="/">Dashboard opnieuw laden</a></div>'
       : '';
     return '<div class="panel alert-panel incident-panel'+(sourceUnconfirmed?' source-unconfirmed':'')+'"><div class="panel-header"><div><h2>'+(sourceUnconfirmed?'Last-known blockers · status unconfirmed':'Wat zit vast?')+'</h2><div class="panel-subtitle">'+items.length+' aandachtspunten'+(sourceUnconfirmed?' · monitoringbron niet actueel':' · belangrijkste eerst')+'</div></div><a class="events-link" href="#activity">Historie</a></div>'+
       sourceNotice+'<ol class="incident-quick" aria-label="Vijf belangrijkste blokkades">'+brief+'</ol>'+
