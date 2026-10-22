@@ -1,0 +1,27 @@
+name: zCloud provenance tier offline proof
+
+on:
+  pull_request:
+    paths:
+      - scripts/zcloud_control_plane_provenance_tier_offline.py
+      - tests/test_zcloud_control_plane_provenance_tier_offline.py
+      - .github/workflows/zcloud-provenance-tier-offline.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provenance-tier-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove-offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run isolated fail-closed tests
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_control_plane_provenance_tier_offline.py' -v
