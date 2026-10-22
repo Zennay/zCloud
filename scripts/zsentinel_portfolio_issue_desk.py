@@ -295,22 +295,50 @@ def as_html(result):
             "</li>"
         )
     rows.append("</ul></section><main><h2>P0-first human owner routes</h2>")
-    for issue in result["issues"]:
-        rows += [
-            "<section class='hold'><h3><a target='_blank' rel='noopener noreferrer' href='" +
-            esc(issue["url"]) + "'>" + esc(issue["repository"]) + " #" +
-            esc(issue["number"]) + "</a></h3>",
-            "<p>Explicit label: " + esc(issue["explicit_priority"]) +
-            " · unverified title hint: " + esc(issue["title_hint_unverified"]) + "</p>",
-            "<p><strong>Problem:</strong> " + esc(issue["problem"]) + "<br>" +
-            "<strong>Human action:</strong> " + esc(issue["human_next_action"]) +
-            "<br><strong>Status:</strong> " + esc(issue["status"]) +
-            "</p><p><strong>Inspect existing PRs:</strong> <code>" +
-            esc(issue["single_issue_live_pr_review_command"]) +
-            "</code> (not executed)</p></section>",
-        ]
+    groups = (
+        ("label-p0", "Explicit P0 GitHub labels", (0,)),
+        ("label-p1", "Explicit P1 GitHub labels", (1,)),
+        ("title-hints", "Unverified title-only P0/P1 hints", (2, 3)),
+        ("label-p2-p3", "Explicit P2/P3 GitHub labels", (4, 5)),
+        ("unknown", "Unknown, incomplete or conflicting priorities", (6,)),
+    )
+    grouped = [
+        (key, label, [
+            issue for issue in result["issues"]
+            if issue["priority_rank"] in ranks
+        ]) for key, label, ranks in groups
+    ]
+    rows.append("<nav aria-label='Issue urgency groups'><p>Jump to: " +
+                " · ".join(
+                    "<a href='#" + key + "'>" + esc(label) +
+                    " (" + str(len(items)) + ")</a>"
+                    for key, label, items in grouped if items
+                ) + "</p></nav>")
+    for key, label, items in grouped:
+        if not items:
+            continue
+        rows.append("<div id='" + key + "'><h3>" + esc(label) +
+                    " (" + str(len(items)) + ")</h3>")
+        for issue in items:
+            rows += [
+                "<section class='hold'><h4><a target='_blank' rel='noopener noreferrer' href='" +
+                esc(issue["url"]) + "'>" + esc(issue["repository"]) + " #" +
+                esc(issue["number"]) + "</a></h4>",
+                "<p>Explicit label: " + esc(issue["explicit_priority"]) +
+                " · unverified title hint: " + esc(issue["title_hint_unverified"]) + "</p>",
+                "<p><strong>Problem:</strong> " + esc(issue["problem"]) + "<br>" +
+                "<strong>Human action:</strong> " + esc(issue["human_next_action"]) +
+                "<br><strong>Status:</strong> " + esc(issue["status"]) +
+                "</p><p><strong>Inspect existing PRs:</strong> <code>" +
+                esc(issue["single_issue_live_pr_review_command"]) +
+                "</code> (not executed)</p></section>",
+            ]
+        rows.append("</div>")
     if not result["issues"]:
-        rows.append("<section>No issues observed in the selected bounded windows. Live backlog absence is NOT verified.</section>")
+        rows.append(
+            "<section>No issues observed in the selected bounded windows. "
+            "Live backlog absence is NOT verified.</section>"
+        )
     rows.append("</main></body></html>\n")
     return "\n".join(rows)
 
