@@ -155,10 +155,12 @@ def _safe_followup(state, assignment):
         return "owner_check_paused_worker_with_current_queue_lease"
     if state == "allocated_queue_claim_expired_or_invalid_owner_recheck":
         return "owner_reconcile_stale_queue_claim_without_claim_transfer"
-    if state in ("allocated_no_active_claim_owner_review",
-                 "allocated_multiple_active_claims_owner_review",
-                 "allocated_queue_source_unavailable_owner_review"):
-        return "owner_verify_current_queue_claim_and_slot_without_takeover"
+    if state == "allocated_no_active_claim_owner_review":
+        return "owner_verify_unclaimed_allocated_slot"
+    if state == "allocated_multiple_active_claims_owner_review":
+        return "owner_reconcile_duplicate_active_queue_claims"
+    if state == "allocated_queue_source_unavailable_owner_review":
+        return "owner_recheck_queue_observer_source_scope"
     if state == "recent_client_block_event_owner_review":
         return "owner_inspect_current_assignment_and_recent_browser_block"
     if state == "recent_browser_block_without_prompt_context_owner_review":
