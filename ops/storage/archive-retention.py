@@ -73,7 +73,7 @@ def safe_subtree(root, sub):
     if not isinstance(sub, str) or not sub or sub.startswith("/"):
         return None
     parts = Path(sub).parts
-    if any(x in {".", ".."} or x in DENY_PARTS for x in parts):
+    if not parts or any(x in {".", ".."} or x in DENY_PARTS for x in parts):
         return None
     target = root
     for part in parts:
@@ -83,7 +83,7 @@ def safe_subtree(root, sub):
     return target
 
 def dangerous(rel):
-    return (any(p.lower() in DENY_PARTS for p in rel.parts) or
+    return (any(p.lower() in DENY_PARTS or "champion" in p.lower() or "live-model" in p.lower() for p in rel.parts) or
             rel.name.lower().endswith(DENY_SUFFIXES) or
             rel.name.startswith(".") or
             rel.name.lower() in {"status.json", "trainer.lock", "stop", "current.json", "live.json"})
@@ -112,7 +112,8 @@ def archive_one(source, root, remote, project, rclone, apply, now, min_age, user
     # An immutable content-addressed destination avoids overwriting older snapshots.
     archive_path = f"{remote}/{project}/{rel.as_posix()}.{checksum}.archive"
     manifest_path = archive_path + ".manifest.json"
-    if snapshot(safe_regular(source, user_uid) or st) != first:
+    refreshed = safe_regular(source, user_uid)
+    if refreshed is None or snapshot(refreshed) != first:
         log("skipped_changed_before_upload", source=str(source))
         return 0
     invoke(rclone, "copyto", str(source), archive_path, "--retries", "3",
@@ -128,7 +129,8 @@ def archive_one(source, root, remote, project, rclone, apply, now, min_age, user
     subprocess.run([rclone, "rcat", manifest_path, "--retries", "3"],
                    input=manifest, check=True, timeout=120,
                    stdout=subprocess.DEVNULL)
-    if snapshot(safe_regular(source, user_uid) or st) != first:
+    refreshed = safe_regular(source, user_uid)
+    if refreshed is None or snapshot(refreshed) != first:
         log("preserved_changed_during_upload", project=project, source=str(source))
         return 0
     # A valid copy exists even if unlink fails; deletion never precedes verification.
