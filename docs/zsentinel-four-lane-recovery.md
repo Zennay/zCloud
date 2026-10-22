@@ -1,5 +1,22 @@
 # zSentinel · four-lane recovery admission
 
+## 22 October · portable portfolio owner-actions CSV from one local snapshot
+
+The read-only four-lane desk can now create a private **all-project owner-actions CSV** without fetching GitHub/Notion, claiming workers or mutating queue state. Unlike the six-row urgent shortlist, the CSV contains a row for **every canonical project** (13 projects); absent local rows stay `UNKNOWN`, never "zero open issues".
+
+```bash
+# Choose a pre-existing operator-owned directory with mode 0700.
+python3 scripts/zsentinel_four_lane_desk.py \
+  --db /path/to/existing/history.db \
+  --format owner-actions-csv \
+  --output /path/to/private-owner-dir/zsentinel-portfolio-actions-20261022.csv
+```
+
+A new `.csv` destination is required and is created with exclusive ownership mode 0600, never overwritten. The CSV contains canonical project names, **local** queued P0/P1 and active P0/P1 counts, separate eligible hints, the fixed per-project HOLD/owner action and recommended manual next step. Canonical GitHub **open-PR and open-issue search links** are navigation, *not* evidence of current issue/PR state. Each row carries the exact source observation timestamp, a privacy-preserving local source fingerprint and source-completeness booleans.
+
+No raw `queue_id`, task title, file path, claim key, worker ID, process arguments, token or prompt content enters the CSV. All external GitHub issue / Notion claim coverage remains `UNKNOWN`; `owner_verified`, `claim_authorized`, `merge_authorized` and `deploy_authorized` remain `false`. If the local source is incomplete, a project with no sampled row still cannot be assumed clear. Existing exact-head CI, review and owner checks apply before every merge or production action.
+
+
 This is source guidance for the `portfolio-recovery` profile in
 `lane_generator.py`. The zSentinel role remains cross-project recovery within
 zCloud, not a separate product or permission boundary.
