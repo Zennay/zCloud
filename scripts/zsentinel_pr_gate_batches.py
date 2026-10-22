@@ -39,6 +39,7 @@ HUMAN_GATE_STEPS = frozenset(HUMAN_GATE_LABELS_NL)
 OWNER_LANES = {
     "refresh_source": "Bron vernieuwen: huidige PR/HEAD opnieuw lezen",
     "fix_source": "Actie eigenaar: bestaande productcode of gate herstellen",
+    "inspect_ci": "CI/runner-toewijzing onderzoeken zonder automatische retry",
     "request_review": "Onafhankelijke reviewer aanvragen",
     "external_wait": "Externe CI/review afhankelijkheid parkeren",
     "release_handoff": "Bevoegde release-eigenaar laat geldende gates controleren",
@@ -52,6 +53,8 @@ def _owner_lane(category):
     if category in ("saved_draft", "observed_merge_conflict", "observed_check_failure",
                     "observed_review_changes"):
         return "fix_source"
+    if category == "observed_slow_ci_owner_triage":
+        return "inspect_ci"
     if category == "saved_review_needed":
         return "request_review"
     if category in ("observed_checks_waiting", "saved_review_requested_waiting"):
@@ -174,6 +177,16 @@ def _gate_class(item: dict, observed: bool, old: bool) -> str:
         return "observed_check_failure"
     if item.get("observed_exact_head_changes_requested", 0) > 0:
         return "observed_review_changes"
+    # Preserve the real exact-head collector's actionable owner route.
+    # A long-running CI job is not just passive waiting, and missing
+    # independent review can be requested while checks are pending.
+    if item.get("human_next_gate_step") == "owner_triage_observed_slow_current_head_checks":
+        return "observed_slow_ci_owner_triage"
+    if (item.get("human_next_gate_step") == "request_independent_current_head_review"
+            and item["observed_independent_exact_head_approvals"] < 1
+            and not item.get("pending_individual_review_requests_observed", 0)
+            and not item.get("pending_team_review_requests_observed", 0)):
+        return "saved_review_needed"
     if (item["observed_checks_pending"] > 0
             or item.get("legacy_status_pending_observed", 0) > 0):
         return "observed_checks_waiting"
@@ -253,6 +266,8 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 or type(item.get("observed_checks_not_successful")) is not int
                 or type(item.get("observed_independent_exact_head_approvals")) is not int
                 or item.get("human_next_gate_step") not in HUMAN_GATE_STEPS
+                or (item.get("parallel_independent_review_step") is not None
+                    and item.get("parallel_independent_review_step") not in HUMAN_GATE_STEPS)
             ):
                 raise ValueError("incomplete observed gate evidence")
             if observed:
@@ -311,6 +326,8 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 "pending_team_review_requests_observed": (
                     item.get("pending_team_review_requests_observed") if observed else None),
                 "next_human_gate": item["human_next_gate_step"] if observed else "recollect_exact_head_source",
+                "parallel_human_gate": (item.get("parallel_independent_review_step")
+                                        if observed else None),
                 "historic_gate_category": _gate_class(item, observed, age > 900),
                 "saved_source_stale_over_15_minutes": age > 900,
                 "merge_authorized": False, "deployment_authorized": False,
@@ -344,6 +361,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
             "historic_gate_category": row["historic_gate_category"],
             "owner_lane": _owner_lane(row["historic_gate_category"]),
             "human_next_gate": row["next_human_gate"],
+            "parallel_human_gate": row["parallel_human_gate"],
             "pending_individual_review_requests_observed":
                 row["pending_individual_review_requests_observed"],
             "pending_team_review_requests_observed":
@@ -364,7 +382,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
     # Separate *prioritized operator attention* from the original P0/P1-first
     # manifest order. Within each category, preserve source manifest order.
     # The prioritization is a visual handoff, not a merge/claim decision.
-    owner_priority = ("fix_source", "refresh_source", "request_review",
+    owner_priority = ("fix_source", "inspect_ci", "refresh_source", "request_review",
                       "release_handoff", "external_wait")
     attention_queue = sorted(manual_queue,
                              key=lambda action: (owner_priority.index(action["owner_lane"]),
