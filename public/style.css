@@ -90,6 +90,12 @@
 .blocked-queue-state button{border:1px solid #66577e;background:#292238;color:#e3d8fb;border-radius:8px;padding:8px 11px;font-size:12px;min-height:38px}
 .blocked-queue-project-label{display:inline-flex;align-items:center;gap:8px;font-weight:600;color:#d9cbee}
 .blocked-queue-project-label select{max-width:min(275px,75vw);min-height:38px;border:1px solid #66577e;border-radius:8px;background:#211c2d;color:#f4edff;padding:7px 10px}
+.blocked-queue-search-label{display:inline-flex;align-items:center;gap:8px;font-weight:600;color:#d9cbee}
+.blocked-queue-search-label input{width:clamp(150px,20vw,250px);max-width:70vw;min-height:38px;border:1px solid #66577e;border-radius:8px;background:#211c2d;color:#f4edff;padding:7px 10px;font:inherit}
+.blocked-queue-search-label input::placeholder{color:#aaa3ba}
+.blocked-queue-search-label input:focus-visible,.blocked-queue-project-label select:focus-visible{outline:2px solid #d4b7ff;outline-offset:2px}
+@media(max-width:760px){.blocked-queue-search-label{width:100%;justify-content:space-between}.blocked-queue-search-label input{min-height:44px;max-width:70%;width:70%}}
+
 @media(max-width:760px){.blocked-queue-project-label{width:100%;justify-content:space-between}.blocked-queue-project-label select{min-height:44px;max-width:70%}}
 .blocked-queue-state button:hover,.blocked-queue-state button[aria-pressed="true"]{border-color:#b89be7;background:#342748;color:#fff}
 @media(max-width:760px){.blocked-queue-state button{min-height:44px;flex:1 1 auto}}
