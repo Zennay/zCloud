@@ -195,7 +195,8 @@ def _gate_rows(board, repos):
                                           not 0 <= value <= 1000000):
                     raise ValueError("invalid bounded CI triage or bot review count")
             parallel = row.get("parallel_independent_review_step")
-            if parallel is not None and parallel not in GATE_STEPS_NL:
+            if parallel is not None and (type(parallel) is not str or
+                                         parallel not in GATE_STEPS_NL):
                 raise ValueError("unrecognized parallel independent review recommendation")
             # Existing old snapshots can lack source identities. They are
             # allowed for comparison, but must NEVER qualify as unchanged.
@@ -319,6 +320,9 @@ NEXT_STEP_LABELS = {
         "Controleer rechtstreeks of de PR nog open is; niet als gemerged tellen.",
     "inspect_current_gate_receipt_with_owner":
         "Controleer veranderd gatebewijs bij de PR-eigenaar.",
+    "inspect_observed_slow_ci_with_owner":
+        "Onderzoek de langdurig queued/lopende GitHub-check met de runner-eigenaar; "
+        "geen herstart of herdispatch zonder bevoegdheid.",
 }
 
 
@@ -331,6 +335,10 @@ def _next_step(change, now=None):
                   "gate_source_incomplete_no_stability_claim"):
         return "inspect_current_pr_at_source"
     blocker = now.get("human_gate_blocker") if now is not None else None
+    if blocker in ("checks_still_running", "check_source_not_terminal") and now is not None:
+        if (now.get("queued_check_attention_30m_observed", 0) > 0 or
+                now.get("running_check_attention_60m_observed", 0) > 0):
+            return "inspect_observed_slow_ci_with_owner"
     return BLOCKER_NEXT_STEP.get(blocker, "inspect_current_gate_receipt_with_owner")
 
 
@@ -382,6 +390,12 @@ def compare_gate_episodes(previous, current):
             and row.get("observed_actionable_check_runs_hidden") == 0
             and row.get("observed_actionable_legacy_contexts_hidden") == 0
             and row.get("pending_review_requests_stable_on_second_read") is True
+            and all(type(row.get(key)) is int and 0 <= row[key] <= 1000000
+                    for key in ("queued_check_attention_30m_observed",
+                                "queued_check_age_unknown_observed",
+                                "running_check_attention_60m_observed",
+                                "running_check_age_unknown_observed",
+                                "automation_review_events_excluded_from_independent_approval"))
             and all(type(row.get(key)) is int and 0 <= row[key] <= 100
                     for key in ("pending_individual_review_requests_observed",
                                 "pending_team_review_requests_observed"))
