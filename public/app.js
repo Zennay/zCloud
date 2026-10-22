@@ -282,8 +282,24 @@ function projectPrimaryActions(p,placement='card'){
   return `<div class="project-primary-actions project-primary-actions-${esc(placement)}"><div class="project-action-copy"><small>${placement==='detail'?'PROJECT CONTROL':'WORK'}</small><span><i class="${active?'is-active':''}"></i>${esc(state)}</span></div><div class="project-action-buttons">${primary}${force}${pause}</div></div>`;
 }
 function projectCard(p){const holds=Array.isArray(BLOCKED_QUEUE)?BLOCKED_QUEUE.filter(row=>row?.status==='blocked'&&row.project_id===p.id):null;const urgent=holds?.filter(row=>row.priority==='P0'||row.priority==='P1').length||0;const holdTag=holds?.length?'<span class="card-hold-tag" title="Parked tasks in current loaded queue snapshot">'+holds.length+' parked'+(urgent?' · '+urgent+' P0/P1':'')+'</span>':'';const draggable=!(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches);return `<article class="project-card" style="--accent:${p.accent}" draggable="${draggable}" data-project-id="${esc(p.id)}"><div class="project-card-top"><span class="project-icon">${icon(p.icon)}</span><div class="project-card-actions"><span class="drag-handle" title="Drag to move" aria-hidden="true">⋮⋮</span><button class="archive-button" data-archive="${esc(p.id)}" type="button">Archive</button></div></div><a class="project-card-link" href="#project/${esc(p.id)}" aria-label="View ${esc(p.name)}: ${num(p.progress)} percent of project steps"><div class="card-badge-row">${badge(p)}${holdTag}</div><div class="eyebrow">${p.eyebrow}</div><h3>${p.name}</h3><p>${p.goal}</p><div class="progress-row"><span>${p.completed} / ${p.milestones.length} project steps</span><strong>${num(p.progress)}<small>%</small></strong></div><div class="progress-track"><span style="width:${p.progress}%"></span></div><div class="project-bottom">${icon('target')}<span>${p.phase?'Phase: '+esc(p.phase):'Next: '+esc(p.next)}</span><span class="arrow">${icon('arrow')}</span></div></a></article>`}
+function safeAttentionSourceUrl(raw){
+  // Never render a user-supplied javascript:, file: or credential-bearing URL.
+  // Issue/PR links have the more restrictive blockedQueueSourceUrl contract.
+  try{
+    const url=new URL(String(raw||''));
+    return url.protocol==='https:'&&!url.username&&!url.password&&!url.port
+      &&url.hostname&&url.hostname.length<=253?url.href:'';
+  }catch(_){return ''}
+}
 function attentionPanel(projectId=''){
-  const all=Array.isArray(DATA?.attention_needed)?DATA.attention_needed:[];
+  if(!Array.isArray(DATA?.attention_needed)){
+    return '<section class="attention-panel"><div class="attention-head"><div>'
+      +'<span class="eyebrow">ATTENTION SOURCE UNKNOWN</span><h2>Human-action source unavailable</h2>'
+      +'<p>Cannot confirm whether this '+(projectId?'project':'portfolio')
+      +' has pending human requests. No action has been dismissed.</p>'
+      +'</div><span class="attention-count">?</span></div></section>';
+  }
+  const all=DATA.attention_needed;
   const items=projectId?all.filter(item=>item.project_id===projectId):all;
   const notion=DATA?.portfolio_queue_health?.notion_attention_url||'';
   if(!items.length){
@@ -301,7 +317,7 @@ function attentionPanel(projectId=''){
       ?'<button type="button" data-resume-blocked="'+esc(queueId)+'"'+(taskAvailable?'':' disabled title="Read the parked queue before resuming"')+'>'+(taskAvailable?'Confirm & resume':'Parked task unavailable')+'</button>'
       :'<button type="button" data-attention-resolve="'+esc(attentionId)+'">Done</button>'; 
     const queueNotice=queueId?'<p>Linked to the original parked task. Confirm the cleared dependency to resolve both; dismissing the alert alone does not unblock work.</p>':'';
-    return `<article class="attention-item ${item.severity==='urgent'?'is-urgent':''}"><div class="attention-copy"><small>${esc(project?.name||item.project_id)}</small><strong>${esc(item.action)}</strong>${queueNotice}${detail?`<p>${esc(detail.length>220?detail.slice(0,217)+'…':detail)}</p>`:''}<div class="attention-links">${item.source_url?`<a href="${esc(item.source_url)}" target="_blank" rel="noreferrer">Open source</a>`:''}</div></div>${control}</article>`;
+    return `<article class="attention-item ${item.severity==='urgent'?'is-urgent':''}"><div class="attention-copy"><small>${esc(project?.name||item.project_id)}</small><strong>${esc(item.action)}</strong>${queueNotice}${detail?`<p>${esc(detail.length>220?detail.slice(0,217)+'…':detail)}</p>`:''}<div class="attention-links">${safeAttentionSourceUrl(item.source_url)?`<a href="${esc(safeAttentionSourceUrl(item.source_url))}" target="_blank" rel="noopener noreferrer">Open source</a>`:''}</div></div>${control}</article>`;
   }).join('');
   return `<section class="attention-panel"><div class="attention-head"><div><span class="eyebrow">ATTENTION NEEDED</span><h2>${items.length===1?'1 thing needs you':items.length+' things need you'}</h2><p>Only human, physical or external gates appear here. They never occupy a worker slot.</p></div><span class="attention-count">${items.length}</span></div><div class="attention-list">${rows}</div>${notion&&!projectId?`<a class="text-link attention-notion" href="${esc(notion)}" target="_blank" rel="noreferrer">Open the simple Notion list →</a>`:''}</section>`;
 }
