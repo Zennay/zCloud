@@ -1,3 +1,13 @@
+## 22 oktober 2026 · urgente drukmelding toont óók ontbrekende bronnen
+
+Wanneer een bekende HIGH/ELEVATED-drukbron samengaat met gedeeltelijke
+hosttelemetrie, toont de eigenaaractie nu beide feiten: de bekende druk én de
+onbekende/partiële broncategorieën. De bevoegde eigenaar krijgt expliciet de
+opdracht die ontbrekende dekking mee te controleren vóór capaciteitswijziging
+of nieuwe worker-toelating. Daarmee gaat brononzekerheid niet verloren doordat
+de waarschuwing als urgent/review wordt gerouteerd. De melding blijft adviserend:
+geen job, claim, worker, service of deployment wordt gewijzigd.
+
 ## 22 oktober 2026 · incomplete hosttelemetrie krijgt een expliciete eigenaaractie
 
 De vierbaan-herstelactie toont nu ook een concrete HOLD als de hostbron
