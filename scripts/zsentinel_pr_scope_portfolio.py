@@ -55,6 +55,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "repository": repo,
                 "source_status": "unavailable",
                 "sample_complete": False,
+                "source_coverage_reasons": ["github_source_unavailable"],
                 "open_pr_snapshot_stable": False,
                 "sampled_open_pr_heads": [],
                 "shown_collision_pairs": [],
@@ -102,6 +103,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "source_status": "complete_open_pr_sample_only"
                              if complete else "partial_open_pr_sample",
             "sample_complete": complete,
+            "source_coverage_reasons": source["source_coverage_reasons"],
             "open_pr_snapshot_stable": source["open_pr_snapshot_stable"],
             "sampled_open_pr_heads": source["inspected_pr_heads"],
             "source_sample_complete": source["pr_file_scope_sample_complete"],
@@ -147,6 +149,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "source_observed_at_utc": source["observed_at_utc"],
             "source_truncated": display_truncated,
             "reason": ("display_truncated_inspect_original_prs" if display_truncated
+                       else "source_incomplete_inspect_original_prs" if not complete
                        else "same_filename_does_not_prove_merge_conflict"),
         })
     return {
@@ -568,8 +571,13 @@ def summary_lines(view):
         "Open PR-teksten met hetzelfde issue (GEEN fix- of eigenaarsbewijs): " +
         str(view["observed_duplicate_issue_groups"]),
         "Bron: " + ("volledige huidige open PR-lijst (geen leasebewijs)"
-                     if view["sample_complete"] else "ONVOLLEDIG: andere PR's kunnen ontbreken"),
+                     if view["sample_complete"] else "ONVOLLEDIG: PR's of conflictdetails kunnen ontbreken"),
     ]
+    reasons = view.get("source_coverage_reasons", [])
+    if reasons:
+        result.append("Bronbeperkingen: " + ", ".join(reasons))
+        result.append("Eigenaaractie: ontbrekende PR-/bestandsdekking inspecteren; "
+                      "geen claim, merge of vrijgave uit dit overzicht afleiden.")
     for cluster in view["linked_pr_collision_clusters"]:
         result.append(
             "  GROEP " + str(cluster["component_number"]) + " · " +
