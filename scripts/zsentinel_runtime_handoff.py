@@ -360,6 +360,24 @@ def _notion_owner_status_summary(observed, source_mode, registry):
             raise ValueError("untrusted Notion claim window observations")
     elif window_counts is not None:
         raise ValueError("saved connector cannot supply live lease evidence")
+    project_windows = observed.get("active_project_claim_window_counts")
+    if mode[0] == "notion_readonly_data_source_pages":
+        if (type(project_windows) is not dict or len(project_windows) > 50
+                or set(project_windows) != set(counts)):
+            raise ValueError("untrusted per-project Notion lease source")
+        summed_windows = {}
+        for project, buckets in project_windows.items():
+            if (type(buckets) is not dict or len(buckets) > 7
+                    or any(k not in allowed_windows or type(n) is not int or n < 1
+                           for k, n in buckets.items())
+                    or sum(buckets.values()) != counts[project]):
+                raise ValueError("inconsistent project Notion lease evidence")
+            for key, value in buckets.items():
+                summed_windows[key] = summed_windows.get(key, 0) + value
+        if summed_windows != window_counts:
+            raise ValueError("Notion project/portfolio lease totals disagree")
+    elif project_windows is not None:
+        raise ValueError("saved Notion source cannot assert live project claim windows")
     windows = observed.get("status_source_windows")
     status_windows = []
     if windows is not None:
@@ -405,6 +423,8 @@ def _notion_owner_status_summary(observed, source_mode, registry):
         known.append({
             "project": pid, "observed_unfinished_min": total,
             "observed_verifying_min": review,
+            "claim_window_observation_counts": (
+                dict(project_windows.get(pid, {})) if project_windows is not None else None),
             "next_step": ("Controleer bestaande PR en verificatie-eigenaar vóór nieuw werk."
                           if review else
                           "Controleer actieve taakclaim, scope en bestaande PR."),
@@ -1886,6 +1906,13 @@ def _notion_review_summary(report):
         seen.add(project)
         total = row.get("observed_unfinished_min")
         review = row.get("observed_verifying_min")
+        project_counts = row.get("claim_window_observation_counts")
+        if project_counts is not None and (
+                type(project_counts) is not dict or len(project_counts) > 7
+                or any(k not in lease_categories or type(n) is not int or not 1 <= n <= 400
+                       for k, n in project_counts.items())
+                or sum(project_counts.values()) != total):
+            raise ValueError("untrusted per-project Notion claim clock summary")
         if (type(total) is not int or not 1 <= total <= 400
                 or type(review) is not int or not 0 <= review <= total
                 or row.get("live_owner_verified") is not False
@@ -1915,6 +1942,10 @@ def _notion_review_html(report):
         lines.append(
             "<li><strong>" + escape(row["project"]) + "</strong> · ≥" +
             str(row["observed_unfinished_min"]) + " onafgerond" +
+            (" · " + str(sum(n for k, n in row["claim_window_observation_counts"].items()
+                              if k != "time_window_present_not_owner_verified")) +
+             " onduidelijke/verlopen claimklokken"
+             if row.get("claim_window_observation_counts") is not None else "") +
             (" · ≥" + str(row["observed_verifying_min"]) + " Verifying"
              if row["observed_verifying_min"] else "") +
             " · " + escape(row["next_step"]) + "</li>")
@@ -2333,6 +2364,10 @@ def markdown(report):
             lines.append("- " + _md(item["project"]) +
                          ": minstens " + str(item["observed_unfinished_min"]) +
                          " onafgerond" +
+                         (", claimklokken onduidelijk/verlopen " +
+                          str(sum(n for k, n in item["claim_window_observation_counts"].items()
+                                  if k != "time_window_present_not_owner_verified"))
+                          if item.get("claim_window_observation_counts") is not None else "") +
                          (", Verifying minstens " + str(item["observed_verifying_min"])
                           if item["observed_verifying_min"] else "") +
                          " · " + _md(item["next_step"], 160))
