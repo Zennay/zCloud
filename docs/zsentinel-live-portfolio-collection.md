@@ -437,3 +437,12 @@ capacity, swap >=90%, available RAM <=10%, or filesystem headroom below 5 GiB
 keeps admission overloaded. A mounted archive is displayed as capacity evidence
 only; it never overrides root pressure or authorizes a copy, move, deletion,
 restart, queue write or claim change.
+
+
+### Conservatieve afronding van capaciteitsbewijs
+
+Vrije bytes/ruimte en beschikbare RAM/swap worden vóór classificatie naar
+beneden gekwantiseerd; bezettingspercentages, load-per-core en inode-
+onbeschikbaarheid worden naar boven gekwantiseerd. De weergegeven precisie kan
+zo geen drempel stilzwijgend versoepelen of de router laten afwijken van de
+capaciteitsbanden en warning-codes.

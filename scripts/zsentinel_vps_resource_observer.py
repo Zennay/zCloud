@@ -56,6 +56,19 @@ def _memory_values():
             seen["SwapFree:"], seen["SwapTotal:"])
 
 
+
+def _floor_precision(value: float, places: int) -> float:
+    """Round nonnegative capacity/headroom down so thresholds cannot be softened."""
+    scale = 10 ** places
+    return math.floor(value * scale) / scale
+
+
+def _ceil_precision(value: float, places: int) -> float:
+    """Round nonnegative pressure percentages/load up so thresholds fail closed."""
+    scale = 10 ** places
+    return math.ceil(value * scale) / scale
+
+
 def _archive_mount_capacity(archive_target: Path | None, root_device: int,
                             database_device: int) -> dict[str, object]:
     """Report aggregate archive-mount capacity only from a pinned directory fd."""
@@ -110,7 +123,7 @@ def _archive_mount_capacity(archive_target: Path | None, root_device: int,
         same_root = opened.st_dev == root_device
         same_database = opened.st_dev == database_device
         free_gib = fs.f_bavail * fs.f_frsize / (1024 ** 3)
-        unavailable_percent = 100 * (1 - fs.f_bavail / fs.f_blocks)
+        unavailable_percent = _ceil_precision(100 * (1 - fs.f_bavail / fs.f_blocks), 2)
         if (not math.isfinite(free_gib) or free_gib < 0 or free_gib > 100000
                 or not math.isfinite(unavailable_percent)
                 or not 0 <= unavailable_percent <= 100):
@@ -183,18 +196,20 @@ def observe_vps_capacity(database: Path, *, archive_target: Path | None = None):
     cores = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
     if type(cores) is not int or not 1 <= cores <= 128:
         raise ValueError("invalid CPU affinity")
-    load = os.getloadavg()[1]
+    load = _ceil_precision(os.getloadavg()[1], 3)
     available, total_memory, swap, total_swap = _memory_values()
-    available_memory_percent = 100 * available / total_memory
-    swap_used_percent = (100 * (total_swap - swap) / total_swap
+    available = _floor_precision(available, 1)
+    swap = _floor_precision(swap, 1)
+    available_memory_percent = _floor_precision(100 * available / total_memory, 2)
+    swap_used_percent = (_ceil_precision(100 * (total_swap - swap) / total_swap, 2)
                          if total_swap > 0 else None)
-    load_5m_per_core = load / cores
+    load_5m_per_core = _ceil_precision(load / cores, 3)
     if fs.f_blocks <= 0 or fs.f_frsize <= 0 or not 0 <= fs.f_bavail <= fs.f_blocks:
         raise ValueError("invalid database-mount capacity")
-    free = fs.f_bavail * fs.f_frsize / (1024 ** 3)
+    free = _floor_precision(fs.f_bavail * fs.f_frsize / (1024 ** 3), 3)
     # Account for blocks unavailable to the unprivileged runtime (including
     # filesystem reserves); 94% occupied with 6 GiB free still matters.
-    unavailable_percent = 100 * (1 - fs.f_bavail / fs.f_blocks)
+    unavailable_percent = _ceil_precision(100 * (1 - fs.f_bavail / fs.f_blocks), 2)
     # Byte headroom is not inode headroom; creating jobs/logs can fail despite free bytes.
     if any(type(x) is not int or x < 0 for x in (fs.f_files, fs.f_ffree, fs.f_favail)):
         raise ValueError("invalid database-mount inode accounting")
@@ -203,7 +218,8 @@ def observe_vps_capacity(database: Path, *, archive_target: Path | None = None):
             raise ValueError("contradictory database-mount inode accounting")
         inode_available = fs.f_favail
         inode_total = fs.f_files
-        inode_unavailable_percent = round(100 * (1 - inode_available / inode_total), 2)
+        inode_unavailable_percent = _ceil_precision(
+            100 * (1 - inode_available / inode_total), 2)
         inode_source = "same_database_mount_statvfs"
     else:
         inode_available = inode_total = inode_unavailable_percent = None
@@ -224,8 +240,9 @@ def observe_vps_capacity(database: Path, *, archive_target: Path | None = None):
             or root_fs.f_blocks <= 0 or root_fs.f_frsize <= 0
             or not 0 <= root_fs.f_bavail <= root_fs.f_blocks):
         raise ValueError("invalid VPS root filesystem capacity")
-    root_free = root_fs.f_bavail * root_fs.f_frsize / (1024 ** 3)
-    root_unavailable_pct = 100 * (1 - root_fs.f_bavail / root_fs.f_blocks)
+    root_free = _floor_precision(root_fs.f_bavail * root_fs.f_frsize / (1024 ** 3), 3)
+    root_unavailable_pct = _ceil_precision(
+        100 * (1 - root_fs.f_bavail / root_fs.f_blocks), 2)
     if any(type(x) is not int or x < 0 for x in
            (root_fs.f_files, root_fs.f_ffree, root_fs.f_favail)):
         raise ValueError("invalid VPS root inode accounting")
@@ -234,7 +251,7 @@ def observe_vps_capacity(database: Path, *, archive_target: Path | None = None):
             raise ValueError("contradictory VPS root inode counters")
         root_inode_available = root_fs.f_favail
         root_inode_total = root_fs.f_files
-        root_inode_pct = round(
+        root_inode_pct = _ceil_precision(
             100 * (1 - root_inode_available / root_inode_total), 2)
         root_inode_source = "root_directory_fstatvfs"
     else:
