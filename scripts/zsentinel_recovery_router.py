@@ -932,6 +932,28 @@ def _blocked_queue_summary(source, source_coverage):
                               row.get("priority"))
         title, attempts = row.get("title"), row.get("claim_attempts")
         link = row.get("canonical_github_source_link_unverified")
+        updated_at = row.get("updated_at_observed_utc")
+        age_seconds = row.get("age_seconds_at_observation")
+        updated_future = row.get("updated_at_future_observed")
+        updated_clock_anomaly = row.get("updated_at_clock_anomaly_observed")
+        observation_stamp = _stamp(raw.get("observed_at_utc"))
+        updated_stamp = _stamp(updated_at) if updated_at is not None else None
+        if (updated_at is not None and updated_stamp is None
+                or (age_seconds is not None and
+                    (type(age_seconds) is not int or not 0 <= age_seconds <= 10**9))
+                or type(updated_future) is not bool
+                or type(updated_clock_anomaly) is not bool
+                or observation_stamp is None
+                or (updated_stamp is None and
+                    (age_seconds is not None or updated_future or updated_clock_anomaly))
+                or (updated_stamp is not None and
+                    (updated_future != (updated_stamp > observation_stamp)
+                     or updated_clock_anomaly !=
+                        (updated_stamp > observation_stamp + timedelta(minutes=2))
+                     or age_seconds != (
+                        None if updated_stamp > observation_stamp else
+                        int((observation_stamp - updated_stamp).total_seconds()))))):
+            raise ValueError("invalid blocked-work row timestamp evidence")
         if (link is not None and (
                 type(link) is not str or len(link) > 220
                 or CANONICAL_BLOCKED_SOURCE.fullmatch(link) is None)):
@@ -960,6 +982,10 @@ def _blocked_queue_summary(source, source_coverage):
         safe_work.append({
             "queue_ref": ref, "project_id": pid, "priority": priority,
             "title": title, "claim_attempts": attempts,
+            "updated_at_observed_utc": updated_at,
+            "age_seconds_at_observation": age_seconds,
+            "updated_at_future_observed": updated_future,
+            "updated_at_clock_anomaly_observed": updated_clock_anomaly,
             "canonical_github_source_link_unverified": link,
             "eligible_observed": row["eligible_observed"],
             "claim_fields_present_observed": row["claim_fields_present_observed"],
