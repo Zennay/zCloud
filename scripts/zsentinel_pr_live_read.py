@@ -371,6 +371,7 @@ def _review_summary(rows, exact_head_sha=None):
     other_head_states = {}
     unbound_states = {}
     exact_head_count = other_head_count = unbound_count = 0
+    unknown_state_count = 0
     for row in rows:
         if not isinstance(row, dict):
             raise GitHubReadError("invalid review entry")
@@ -378,6 +379,8 @@ def _review_summary(rows, exact_head_sha=None):
         valid_state = state if isinstance(state, str) and state in valid_states else None
         if valid_state is not None:
             states[valid_state] = states.get(valid_state, 0) + 1
+        else:
+            unknown_state_count += 1
         if exact_head_sha is None:
             continue
         commit_id = row.get("commit_id")
@@ -396,6 +399,7 @@ def _review_summary(rows, exact_head_sha=None):
     result = {
         "sampled_count": len(rows), "may_be_truncated": len(rows) == MAX_LIST_PAGE,
         "observed_review_states": states,
+        "unknown_review_state_count": unknown_state_count,
         "independent_review_verdict": "UNKNOWN",
         "review_binding_sha": exact_head_sha,
         "exact_head_review_count": exact_head_count if exact_head_sha is not None else None,
@@ -406,7 +410,7 @@ def _review_summary(rows, exact_head_sha=None):
         "observed_review_states_unbound": unbound_states if exact_head_sha is not None else None,
         "exact_head_review_coverage": (
             "NOT_REQUESTED" if exact_head_sha is None else
-            "PARTIAL" if unbound_count or len(rows) == MAX_LIST_PAGE else
+            "PARTIAL" if unbound_count or unknown_state_count or len(rows) == MAX_LIST_PAGE else
             "OBSERVED"
         ),
     }
@@ -1456,6 +1460,8 @@ def owner_html(report):
                          esc(reviews.get("other_head_review_count", "UNKNOWN")) +
                          " · unbound: " +
                          esc(reviews.get("unbound_review_count", "UNKNOWN")) +
+                         " · unknown-state records: " +
+                         esc(reviews.get("unknown_review_state_count", "UNKNOWN")) +
                          " · coverage: " +
                          esc(reviews.get("exact_head_review_coverage", "UNKNOWN")) +
                          ".</p><p>Exact-HEAD states: " +
@@ -1690,6 +1696,7 @@ def markdown(report):
                 json.dumps(reviews.get("observed_review_states_exact_head", "UNKNOWN"), sort_keys=True),
                 "- Reviews on other commits: " + str(reviews.get("other_head_review_count", "UNKNOWN")),
                 "- Reviews without valid commit binding: " + str(reviews.get("unbound_review_count", "UNKNOWN")),
+                "- Review records with unknown/missing state: " + str(reviews.get("unknown_review_state_count", "UNKNOWN")),
                 "- Exact-HEAD review coverage: " + str(reviews.get("exact_head_review_coverage", "UNKNOWN")),
                 "- Independent review verdict: UNKNOWN (sample counts are not approval authority)",
                 "",
