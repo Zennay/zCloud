@@ -512,6 +512,20 @@ def _coordination_groups(cards):
                 or type(card.get("peer_head_evidence_partial")) is not bool
                 or type(card.get("overlap_paths_hidden")) is not bool):
             raise ValueError("invalid PR coordination freshness flags")
+        scan_omissions = card.get("collision_scan_omissions")
+        if scan_omissions is not None:
+            omission_counts = (
+                "shared_file_pairs_hidden",
+                "path_scope_pairs_hidden",
+                "focused_overlap_receipts_hidden",
+            )
+            if (type(scan_omissions) is not dict
+                    or set(scan_omissions) != set(omission_counts) | {"malformed_source_list"}
+                    or any(type(scan_omissions.get(key)) is not int
+                           or not 0 <= scan_omissions[key] <= 1000000
+                           for key in omission_counts)
+                    or type(scan_omissions.get("malformed_source_list")) is not bool):
+                raise ValueError("invalid collision scan omission receipt")
         coverage_reasons = card.get("source_coverage_reasons", [])
         recovery_steps = card.get("source_recovery_steps", [])
         if (type(recovery_steps) is not list or len(recovery_steps) > 5
