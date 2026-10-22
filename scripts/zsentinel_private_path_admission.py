@@ -34,6 +34,16 @@ def admit_private_paths(*, destinations: Mapping[str, Path | None],
             raise ValueError(
                 "private outputs overlap: " + occupied[canonical] + " and " + role)
         occupied[canonical] = role
+        # Operator reports are create-only. Refuse an existing path (including
+        # a dangling symlink) before sending any requests or creating sibling
+        # artifacts. Stateful cursors/ledgers deliberately may already exist.
+        if role not in ("state", "window_state"):
+            try:
+                path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                raise ValueError("private create-only output already exists: " + role)
 
     for role, path in sources.items():
         if path is None:
