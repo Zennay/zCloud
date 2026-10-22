@@ -574,6 +574,64 @@ def main():
             from zsentinel_local_runner_processes import observe as observe_local_runners
             from zsentinel_local_runner_processes import _admit as admit_local_runners
             decision["local_runner_processes"] = admit_local_runners(observe_local_runners())
+            if "cloud" in args.project:
+                from zsentinel_local_runner_observer import observe_local_runner
+                from zsentinel_runner_cross_source import combine
+                github_source = provenance.get("github_jobs")
+                refreshed = (
+                    github_source.get("refreshed_projects", [])
+                    if isinstance(github_source, dict) else [])
+                discovery_source = provenance.get("ci_discovery")
+                if not isinstance(discovery_source, dict):
+                    discovery_source = {}
+                coverage_rows = discovery_source.get("coverage")
+                if not isinstance(coverage_rows, list):
+                    coverage_rows = []
+                cloud_coverage = next((
+                    row for row in coverage_rows
+                    if isinstance(row, dict) and row.get("project_id") == "cloud"
+                ), {})
+                discovery_status = cloud_coverage.get(
+                    "status", "not_requested" if discovery_source.get("source") == "not_requested"
+                    else "unknown")
+                incomplete_windows = cloud_coverage.get("incomplete_windows", [])
+                not_scanned_windows = cloud_coverage.get("not_scanned_windows", [])
+                if (not refreshed and discovery_status == "degraded_unavailable"
+                        or not refreshed and bool(incomplete_windows)
+                        or not refreshed and bool(not_scanned_windows)):
+                    refreshed = [{
+                        "project_id": "cloud", "source": "github_exact_run_job",
+                        "status": "degraded",
+                    }]
+                try:
+                    local_exact = observe_local_runner()
+                    cross_source = combine(local_exact, refreshed)
+                    suffix = " · discovery=" + str(discovery_status)[:48]
+                    if len(cross_source.get("status", "")) + len(suffix) <= 320:
+                        cross_source["status"] += suffix
+                    decision["runner_cross_source"] = cross_source
+                    decision["runner_cross_source_discovery"] = {
+                        "status": discovery_status,
+                        "incomplete_windows": [
+                            value for value in incomplete_windows
+                            if value in ("queued", "in_progress", "failure")
+                        ] if isinstance(incomplete_windows, list) else [],
+                        "not_scanned_windows": [
+                            value for value in not_scanned_windows
+                            if value in ("queued", "in_progress", "failure")
+                        ] if isinstance(not_scanned_windows, list) else [],
+                        "request_count": discovery_source.get("request_count"),
+                        "full_repo_ci_inventory": False,
+                    }
+                except (OSError, ValueError, TypeError):
+                    decision["runner_cross_source_unavailable"] = {
+                        "stage": "local_source_unavailable",
+                        "problem": "De exacte lokale zCloud-runnerbron is niet beschikbaar.",
+                        "next_action": "Controleer de bevoegde VPS-bron en gebruik geen historische processteekproef als herstelbewijs.",
+                        "status": "ONBEKEND · geen runneractie toegestaan",
+                        "restart_authorized": False,
+                        "mutations_performed": False,
+                    }
         if "worker_progress_observation" in bundle:
             decision["worker_progress_observation"] = bundle["worker_progress_observation"]
         if "notion_claims_observation" in bundle:
@@ -624,6 +682,21 @@ def main():
                 rendered = rendered.replace(
                     "<main>", "<main>" + runner_process_html(
                         decision["local_runner_processes"]), 1)
+                if "runner_cross_source" in decision:
+                    from zsentinel_runner_cross_source import as_html as runner_cross_source_html
+                    if rendered.count("<main>") != 1:
+                        raise ValueError("incompatible exact runner correlation view")
+                    rendered = rendered.replace(
+                        "<main>", "<main>" + runner_cross_source_html(
+                            decision["runner_cross_source"]), 1)
+                elif "runner_cross_source_unavailable" in decision:
+                    if rendered.count("<main>") != 1:
+                        raise ValueError("incompatible unavailable runner correlation view")
+                    rendered = rendered.replace(
+                        "<main>",
+                        '<main><section class="panel warn"><h2>Exacte GitHub-job + VPS-runner</h2>'
+                        '<p>ONBEKEND · De exacte lokale zCloud-runnerbron is niet beschikbaar.</p>'
+                        '<p>Geen herstart-, retry-, claim- of releaseautorisatie.</p></section>', 1)
             if owner_handoff is not None:
                 from zsentinel_runtime_handoff import handoff_html
                 if rendered.count("<main>") != 1:
@@ -672,6 +745,15 @@ def main():
             if args.observe_local_runners:
                 from zsentinel_local_runner_processes import render_text as runner_process_text
                 lines.insert(0, runner_process_text(decision["local_runner_processes"]))
+                if "runner_cross_source" in decision:
+                    from zsentinel_runner_cross_source import as_text as runner_cross_source_text
+                    lines.append(runner_cross_source_text(decision["runner_cross_source"]))
+                elif "runner_cross_source_unavailable" in decision:
+                    lines.extend((
+                        "RUNNER · Exacte GitHub-job + VPS-correlatie onbekend.",
+                        "ACTIE · Controleer de bevoegde VPS-bron; geen historische observatie als herstelbewijs.",
+                        "STATUS · Geen herstart-, retry-, claim- of releaseautorisatie.",
+                    ))
             if "disk_pressure_private_report" in decision:
                 disk = decision["disk_pressure_private_report"]
                 lines.append("SCHIJFRUIMTE: afzonderlijk privé HTML-rapport aangemaakt; "
