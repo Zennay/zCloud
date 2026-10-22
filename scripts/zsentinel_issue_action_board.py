@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import Counter
 import csv
 import io
+import json
 import re
 
 from zsentinel_pr_scope_guard import csv_formula_inert
@@ -587,7 +588,10 @@ def render_merge_first_csv(board, max_rows=20):
         "human_action_category", "human_next_step",
         "file_directory_scope_collision_observed",
         "file_directory_scope_peer_count_observed",
-        "issue_activity_signal", "issue_updated_at",
+        "issue_activity_signal", "issue_updated_at", "issue_inactivity_hours",
+        "latest_linked_open_pr_updated_at", "latest_linked_open_pr_inactivity_hours",
+        "linked_pr_activity_coverage", "activity_window_hours", "activity_as_of_utc",
+        "related_issue_activity_snapshot_json",
         "issue_source_observed_at_utc", "pr_source_observed_at_utc",
         "issue_coverage", "pr_coverage",
         "current_owner_verified", "claim_authorized",
@@ -608,6 +612,34 @@ def render_merge_first_csv(board, max_rows=20):
         writer.writerow(cells)
 
     writer.writerow(header)
+
+    def activity_snapshot(issue_urls):
+        # Preserve the bounded per-issue activity evidence on the single PR
+        # work-order row, so CSV users can sort/reconcile without losing the
+        # distinct activity age of each linked issue.
+        records = []
+        for url in issue_urls:
+            card = visible.get(url)
+            if card is None:
+                continue
+            records.append({
+                "issue_url": url,
+                "priority": card["priority"],
+                "activity_signal": card["activity_signal"],
+                "issue_updated_at": card.get("issue_updated_at"),
+                "issue_inactivity_hours": card.get("issue_inactivity_hours"),
+                "latest_linked_open_pr_updated_at":
+                    card.get("latest_linked_open_pr_updated_at"),
+                "latest_linked_open_pr_inactivity_hours":
+                    card.get("latest_linked_open_pr_inactivity_hours"),
+                "linked_pr_activity_coverage":
+                    card["linked_pr_activity_coverage"],
+                "activity_window_hours": card["activity_window_hours"],
+                "activity_as_of_utc": card.get("activity_as_of_utc"),
+            })
+        return json.dumps(records, ensure_ascii=True, sort_keys=True,
+                          separators=(",", ":"))
+
     # A PR mentioned on several issue cards is one integration review
     # opportunity, never several independent implementation assignments.
     for group in board["pr_groups"]:
@@ -637,7 +669,9 @@ def render_merge_first_csv(board, max_rows=20):
             "existing_pr_owner_review", group["human_next_gate_step"],
             "YES" if group["any_file_directory_overlap_observed"] else "NO",
             group["file_directory_conflict_peers_observed_max"],
-            "", "", board.get("observed_issue_source_at_utc"),
+            "", "", "", "", "", "", "", "",
+            activity_snapshot(matches),
+            board.get("observed_issue_source_at_utc"),
             board.get("observed_pr_source_at_utc"),
             "sample_complete" if issue_scope_complete else "partial",
             "sample_complete" if pr_scope_complete else "partial",
@@ -667,6 +701,11 @@ def render_merge_first_csv(board, max_rows=20):
             max((pr["file_directory_conflict_peer_count_observed"]
                  for pr in card["all_existing_pr_candidates_in_sample"]), default=0),
             card["activity_signal"], card["issue_updated_at"],
+            card.get("issue_inactivity_hours"),
+            card.get("latest_linked_open_pr_updated_at"),
+            card.get("latest_linked_open_pr_inactivity_hours"),
+            card["linked_pr_activity_coverage"],
+            card["activity_window_hours"], card.get("activity_as_of_utc"), "",
             board.get("observed_issue_source_at_utc"),
             board.get("observed_pr_source_at_utc"),
             "sample_complete" if card["issue_reference_sample_complete"]
