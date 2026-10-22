@@ -1082,10 +1082,14 @@ def render_html(report: dict) -> str:
         )
         trend_html = (
             '<section aria-labelledby="pressure-trend"><h2 id="pressure-trend">Host pressure trend</h2>'
-            + '<dl>' + item("Coverage", trend["status"])
-            + item("Direction", trend["trend"])
+            + '<dl>' + item("Status", trend["status"])
+            + item("Aggregate direction", trend["trend"])
+            + item("Metric coverage", str(trend.get("metrics_compared", 0)) + "/" +
+                   str(trend.get("metrics_expected", len(trend.get("metrics", [])))) +
+                   " · " + trend.get("coverage", "unknown"))
+            + item("Source gaps", ", ".join(trend.get("source_gaps", [])) or "none observed")
             + item("Seconds between snapshots", trend["elapsed_seconds"])
-            + rows + '</dl><p class="muted">Private operator-supplied readings only; no trusted host identity or recovery clearance. A missing reading does not mean recovered.</p></section>'
+            + rows + '</dl><p class="muted">Private operator-supplied readings only; no trusted host identity or recovery clearance. Aggregate direction is withheld unless all expected metrics and source bindings are complete. A missing reading does not mean recovered.</p></section>'
         )
     archive = report.get("archive_readiness")
     archive_html = ""
@@ -1458,7 +1462,7 @@ def render_report_to_stdout(report: dict, args: argparse.Namespace) -> None:
             print(f"Confirmed resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
             print(f"Recovery unverified: {', '.join(change['recovery_unverified_findings']) or 'none'}")
             trend = change["host_pressure_trend"]
-            print(f"CPU / PSI trend: {trend['status']} · {trend['trend']} (operator snapshot comparison, not release clearance)")
+            print(f"CPU / PSI trend: {trend['status']} · {trend['trend']} · coverage={trend.get('metrics_compared', 0)}/{trend.get('metrics_expected', len(trend.get('metrics', [])))} {trend.get('coverage', 'unknown')} · source gaps={', '.join(trend.get('source_gaps', [])) or 'none'} (operator snapshot comparison, not release clearance)")
             print(f"Still present: {', '.join(change['still_present']) or 'none'}")
             for entry in change["severity_changes"]:
                 print(f"Severity changed: {entry['code']} {entry['previous']} -> {entry['current']}")
