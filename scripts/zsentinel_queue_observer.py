@@ -75,23 +75,52 @@ def _read_sqlite(path):
         worker_slot_covered = "worker_slot" in fields
         worker_slot_predicate = (
             "worker_slot IS NOT NULL" if worker_slot_covered else "NULL")
-        # Human-only P0/P1-first shortlist. Do NOT ORDER BY across a
-        # potentially huge blocked queue: SQLite could spill its temp sort
-        # onto the already pressured VPS root mount despite query_only=ON.
-        # Four individually LIMIT-ed priority lookups never require temp-sort.
+        # Portfolio-fair blocked task shortlist: one high-volume project
+        # must not hide another project's P0 tasks. Reuse the bounded
+        # project/priority aggregates already read in this same SQLite
+        # snapshot, and interleave each project's existing row order.
+        #
+        # At most 24 scoped LIMIT queries in total and 24*24 candidate rows.
+        # There is NO new unbounded global ORDER BY/temp-sort on the VPS root.
+        # With >250 project groups the source stays explicitly partial;
+        # absent projects must never be reported as healthy.
         blocked_work = []
+        valid_groups = {
+            (row["project_id"], row["priority"])
+            for row in blocked_groups[:MAX_BLOCKED_GROUPS]
+            if type(row.get("project_id")) is str
+            and PROJECT.fullmatch(row["project_id"])
+            and row.get("priority") in PRIORITY
+            and type(row.get("items")) is int and row["items"] > 0
+        }
+        remaining_query_budget = MAX_BLOCKED_WORK_ITEMS
         for priority in ("P0", "P1", "P2", "P3"):
             remaining = MAX_BLOCKED_WORK_ITEMS - len(blocked_work)
-            if remaining <= 0:
+            if remaining == 0 or remaining_query_budget == 0:
                 break
-            blocked_work.extend(dict(row) for row in connection.execute(
-                "SELECT queue_id,project_id,priority,attempts,eligible,"
-                "updated_at,claimed_at,claim_expires,title," +
-                worker_slot_predicate +
-                " AS worker_slot_present FROM portfolio_queue "
-                "WHERE status='blocked' AND priority=? LIMIT ?",
-                (priority, remaining)
-            ))
+            projects = sorted(project for project, rank in valid_groups
+                              if rank == priority)[:min(remaining, remaining_query_budget)]
+            candidates = []
+            for project in projects:
+                candidates.append([dict(row) for row in connection.execute(
+                    "SELECT queue_id,project_id,priority,attempts,eligible,"
+                    "updated_at,claimed_at,claim_expires,title," +
+                    worker_slot_predicate +
+                    " AS worker_slot_present FROM portfolio_queue "
+                    "WHERE status='blocked' AND priority=? AND project_id=? LIMIT ?",
+                    (priority, project, remaining)
+                )])
+                remaining_query_budget -= 1
+            # Round robin, without conflating alphabetical project order with
+            # global task priority; no queue row is claimed or reordered.
+            for index in range(remaining):
+                for batch in candidates:
+                    if index < len(batch):
+                        blocked_work.append(batch[index])
+                        if len(blocked_work) == MAX_BLOCKED_WORK_ITEMS:
+                            break
+                if len(blocked_work) == MAX_BLOCKED_WORK_ITEMS:
+                    break
         connection.execute("ROLLBACK")
     finally:
         connection.close()
