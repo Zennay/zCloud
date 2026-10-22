@@ -27,6 +27,11 @@ HUMAN_ONLY_ROUTES = {
         "authorized_github_billing_owner_required",
 }
 HUMAN_ONLY = frozenset(HUMAN_ONLY_ROUTES)
+# All human-gated routes are excluded from autonomous product work packets and
+# counted separately in portfolio summaries, including legacy infrastructure.
+HUMAN_ONLY_ROUTE_CODES = frozenset(HUMAN_ONLY_ROUTES.values()) | frozenset((
+    "authorized_infrastructure_owner_required",
+))
 
 # One immutable, owner-safe action per canonical issue route. Saved portfolio
 # windows must regenerate this wording rather than carry old Notion owner
