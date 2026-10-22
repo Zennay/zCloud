@@ -1231,6 +1231,35 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                         # Operator navigation only; queue-supplied links do
                         # NOT prove an issue owner, open PR or authorization.
                         card["unverified_queue_source_url"] = target
+                    # Sample-only risk hints, not a project aggregate. These
+                    # attributes are intentionally from the same validated
+                    # blocked work row and confer NO ownership/retry rights.
+                    hints = []
+                    for key, label in (
+                            ("claim_fields_present_observed",
+                             "Voorbeeld bevat claimmetadata: eigenaar controleren"),
+                            ("updated_at_clock_anomaly_observed",
+                             "Voorbeeld heeft onbetrouwbare toekomstige updateklok"),
+                            ("updated_at_future_observed",
+                             "Voorbeeldupdate ligt na het bronmoment")):
+                        value = example[0].get(key)
+                        if type(value) is not bool:
+                            raise ValueError("invalid bounded blocked-work risk flag")
+                        if value:
+                            hints.append(label)
+                    eligible = example[0].get("eligible_observed")
+                    if type(eligible) is not bool:
+                        raise ValueError("invalid blocked-work eligibility observation")
+                    if not eligible:
+                        hints.append("Voorbeeld is niet eligible: geen hervatting")
+                    if example[0].get("worker_slot_source_covered") is False:
+                        hints.append("Workerslot ontbreekt in bron: toewijzing ONBEKEND")
+                    attempts = example[0].get("claim_attempts")
+                    if type(attempts) is not int or not 0 <= attempts <= 10**9:
+                        raise ValueError("invalid blocked-work claim attempt count")
+                    if attempts >= 3:
+                        hints.append("Voorbeeld heeft herhaalde claimpogingen, GEEN bewezen fouten")
+                    card["sample_only_cautions"] = hints[:6]
                 card["blocked_items_observed"] = count
                 card["queue_priority_observed"] = pri
                 card["queue_observed_at_utc"] = parsed.isoformat(timespec="seconds")
