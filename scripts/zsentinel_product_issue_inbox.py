@@ -142,8 +142,21 @@ def bounded_get(url, token):
     except urllib.error.HTTPError as error:
         if error.code == 404:
             raise ValueError("repository_inaccessible") from None
-        if error.code in (401, 403, 429):
-            raise ValueError("github_permission_or_rate_limit") from None
+        if error.code == 401:
+            # An invalid bearer token affects every remaining project read.
+            raise ValueError("github_authentication_required") from None
+        if error.code == 429:
+            raise ValueError("github_rate_limit_confirmed") from None
+        if error.code == 403:
+            # A repository-private/permission 403 must not hide other projects.
+            # Stop portfolio reads only when GitHub confirms a global cooldown.
+            remaining = (error.headers.get("X-RateLimit-Remaining")
+                         if error.headers is not None else None)
+            retry_after = (error.headers.get("Retry-After")
+                           if error.headers is not None else None)
+            if remaining == "0" or retry_after is not None:
+                raise ValueError("github_rate_limit_confirmed") from None
+            raise ValueError("github_repository_forbidden_or_rate_limit_unknown") from None
         raise ValueError("github_http_unavailable") from None
     except (TimeoutError, OSError, urllib.error.URLError):
         raise ValueError("github_network_unavailable") from None
@@ -162,12 +175,16 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
     coverage = []
     calls = 0
     rate_or_auth_denied = False
+    repository_denials = set()
     for project in names:
         repo = projects[project]
         statuses = []
         for direction in ("asc", "desc"):
             if rate_or_auth_denied:
                 statuses.append("not_fetched_after_rate_or_auth_denial")
+                continue
+            if repo in repository_denials:
+                statuses.append("not_fetched_after_repository_denial")
                 continue
             if calls >= MAX_CALLS:
                 statuses.append("request_budget_exhausted")
@@ -216,15 +233,19 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                 statuses.append("bounded_truncated" if len(issues) == 12 else "bounded_window")
             except ValueError as error:
                 statuses.append(str(error))
-                if str(error) == "github_permission_or_rate_limit":
+                if str(error) in {"github_authentication_required", "github_rate_limit_confirmed"}:
                     rate_or_auth_denied = True
+                elif str(error) in {"repository_inaccessible",
+                                    "github_repository_forbidden_or_rate_limit_unknown"}:
+                    repository_denials.add(repo)
         successful = sum(s.startswith("bounded_") for s in statuses)
         # Candidate reuse first: check a bounded recent window of existing
         # open PRs for explicit #issue references. This is NOT proof of
         # active ownership or acceptance: never claim the PR's branch.
         pr_coverage = ("not_fetched_after_rate_or_auth_denial" if rate_or_auth_denied
+                       else "not_fetched_after_repository_denial" if repo in repository_denials
                        else "not_fetched_budget")
-        if not rate_or_auth_denied and calls < MAX_CALLS:
+        if not rate_or_auth_denied and repo not in repository_denials and calls < MAX_CALLS:
             calls += 1
             params = urllib.parse.urlencode({
                 "state": "open", "sort": "updated", "direction": "desc",
@@ -270,8 +291,11 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                 pr_coverage = "bounded_truncated" if len(open_prs) == 8 else "bounded_window"
             except ValueError as error:
                 pr_coverage = str(error)
-                if str(error) == "github_permission_or_rate_limit":
+                if str(error) in {"github_authentication_required", "github_rate_limit_confirmed"}:
                     rate_or_auth_denied = True
+                elif str(error) in {"repository_inaccessible",
+                                    "github_repository_forbidden_or_rate_limit_unknown"}:
+                    repository_denials.add(repo)
         coverage.append({
             "project": project, "repository": repo, "oldest_window": statuses[0], "open_pr_window": pr_coverage,
             "recent_window": statuses[1],
