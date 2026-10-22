@@ -34,10 +34,31 @@ def _envelope(project: str, kind: str, state: str) -> dict:
         "source": "canonical_github_readonly",
         "feed_complete": False,
         "authorizes_repair": False, "authorizes_merge": False,
-        "authorizes_deploy": False, "retry_after_s": 3 if state == "refreshing" else 0,
+        "authorizes_deploy": False,
+        "stale": False, "last_successful_sync_at": None, "stale_age_s": None,
+        "retry_after_s": 3 if state == "refreshing" else 0,
         "notes": "Partial canonical PR/CI/main or issue observations. Claim and release not verified.",
     }
 
+
+def _cached_envelope(project: str, kind: str, state: str,
+                     entry: dict, now: float, retry_after_s: int = 0) -> dict:
+    """Retain the last successful source receipt while refresh/retry is blocked."""
+    result = _envelope(project, kind, state)
+    receipt = entry.get("receipt")
+    if receipt is not None:
+        result["receipt"] = receipt
+        result["last_successful_sync_at"] = (
+            entry.get("last_successful_sync_at") or receipt.get("observed_at")
+        )
+        last_success = entry.get("last_success_monotonic")
+        result["stale_age_s"] = (
+            max(0, int(now - last_success))
+            if isinstance(last_success, (int, float)) else None
+        )
+        result["stale"] = state != "partial" or bool(entry.get("stale"))
+    result["retry_after_s"] = max(0, int(retry_after_s))
+    return result
 
 def _collect(registry: Path, project: str, kind: str) -> dict:
     # Explicit, public-only requests. Never read server GitHub credentials,
@@ -85,40 +106,70 @@ def read_live(registry: Path, project: str, kind: str = "activity") -> dict:
             future = entry.get("future")
             if future is not None:
                 if not future.done():
-                    return _envelope(project, kind, "refreshing")
+                    return _cached_envelope(
+                        project, kind, "refreshing", entry, now, retry_after_s=3
+                    )
                 entry["future"] = None
                 try:
                     data = future.result()
                 except Exception:
-                    # Never return arbitrary provider/URL/exception data.
-                    entry.update(receipt=None, expires=now+30)
+                    # Keep the last successful bounded receipt; never expose
+                    # provider exceptions, URLs, response bodies or credentials.
+                    entry.update(expires=now + 30, stale=True)
+                    if entry.get("receipt") is not None:
+                        return _cached_envelope(
+                            project, kind, "stale", entry, now, retry_after_s=30
+                        )
                     return _envelope(project, kind, "unavailable")
                 if not _valid_receipt(data, kind):
-                    entry.update(receipt=None, expires=now+30)
+                    entry.update(expires=now + 30, stale=True)
+                    if entry.get("receipt") is not None:
+                        return _cached_envelope(
+                            project, kind, "stale", entry, now, retry_after_s=30
+                        )
                     return _envelope(project, kind, "unavailable")
-                entry.update(receipt=data, expires=now+CACHE_SECONDS)
+                completed = time.monotonic()
+                entry.update(
+                    receipt=data,
+                    expires=completed + CACHE_SECONDS,
+                    stale=False,
+                    last_successful_sync_at=source.stamp(source.utc_now()),
+                    last_success_monotonic=completed,
+                )
             if now < entry.get("expires", 0):
                 if entry.get("receipt") is not None:
-                    result = _envelope(project, kind, "partial")
-                    result["receipt"] = entry["receipt"]
-                    result["retry_after_s"] = max(0, int(entry["expires"]-now))
-                    return result
+                    state = "stale" if entry.get("stale") else "partial"
+                    return _cached_envelope(
+                        project, kind, state, entry, now,
+                        retry_after_s=max(0, int(entry["expires"] - now)),
+                    )
                 return _envelope(project, kind, "unavailable")
         pending = sum(bool(item.get("future") is not None and
                            not item["future"].done()) for item in _ENTRIES.values())
         if pending >= MAX_CONCURRENT:
+            if entry is not None and entry.get("receipt") is not None:
+                return _cached_envelope(
+                    project, kind, "capacity_wait", entry, now, retry_after_s=3
+                )
             return _envelope(project, kind, "capacity_wait")
         # Admission is intentionally conservative: every started background
         # request reserves the maximum REST calls for its collector. A failed
         # provider request keeps its reservation to prevent hammering 403/429.
-        while _RESERVATIONS and now-_RESERVATIONS[0][0] >= RATE_WINDOW_SECONDS:
+        while _RESERVATIONS and now - _RESERVATIONS[0][0] >= RATE_WINDOW_SECONDS:
             _RESERVATIONS.popleft()
-        reserved = sum(cost for _,cost in _RESERVATIONS)
+        reserved = sum(cost for _, cost in _RESERVATIONS)
         cost = 10 if kind == "activity" else 3
-        if reserved+cost > MAX_PROVIDER_REQUESTS_PER_HOUR:
+        if reserved + cost > MAX_PROVIDER_REQUESTS_PER_HOUR:
+            retry_after = max(
+                60, int(RATE_WINDOW_SECONDS - (now - _RESERVATIONS[0][0]))
+            ) if _RESERVATIONS else 3600
+            if entry is not None and entry.get("receipt") is not None:
+                return _cached_envelope(
+                    project, kind, "rate_budget_wait", entry, now,
+                    retry_after_s=retry_after,
+                )
             answer = _envelope(project, kind, "rate_budget_wait")
-            answer["retry_after_s"] = max(60,int(
-                RATE_WINDOW_SECONDS-(now-_RESERVATIONS[0][0]))) if _RESERVATIONS else 3600
+            answer["retry_after_s"] = retry_after
             return answer
         if key not in _ENTRIES and len(_ENTRIES) >= MAX_ENTRIES:
             oldest_finished = next((name for name, value in _ENTRIES.items()
@@ -127,8 +178,18 @@ def read_live(registry: Path, project: str, kind: str = "activity") -> dict:
             if oldest_finished is None:
                 return _envelope(project, kind, "capacity_wait")
             _ENTRIES.pop(oldest_finished, None)
-        _RESERVATIONS.append((now,cost))
-        _ENTRIES[key] = {"future": _EXECUTOR.submit(_collect, registry, project, kind),
-                         "receipt": None, "expires": 0}
+        _RESERVATIONS.append((now, cost))
+        previous_receipt = entry.get("receipt") if entry is not None else None
+        previous_success_at = entry.get("last_successful_sync_at") if entry is not None else None
+        previous_success_mono = entry.get("last_success_monotonic") if entry is not None else None
+        entry = {
+            "future": _EXECUTOR.submit(_collect, registry, project, kind),
+            "receipt": previous_receipt,
+            "expires": 0,
+            "stale": previous_receipt is not None,
+            "last_successful_sync_at": previous_success_at,
+            "last_success_monotonic": previous_success_mono,
+        }
+        _ENTRIES[key] = entry
         _ENTRIES.move_to_end(key)
-    return _envelope(project, kind, "refreshing")
+    return _cached_envelope(project, kind, "refreshing", entry, time.monotonic(), retry_after_s=3)
