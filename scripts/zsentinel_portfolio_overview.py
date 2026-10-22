@@ -176,6 +176,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             "github_sampled_actionable_jobs": None,
             "github_sampled_queued_self_hosted_jobs_min": None,
             "github_sampled_approval_wait_jobs_min": None,
+            "github_approval_wait_workflows_sampled": None,
+            "github_approval_wait_workflow_links": [],
             "github_other_jobs_list_truncated": False,
         }
     for entry in groups:
@@ -268,6 +270,31 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                        for w in windows_skipped)
                 or len(set(windows_skipped)) != len(windows_skipped)):
             raise ValueError("invalid canonical GitHub CI stop")
+        # A workflow may await owner approval before a job object exists.
+        # These immutable source links never grant runner or approval rights.
+        approval = item.get("approval_wait_workflows", [])
+        sampled = item.get("approval_wait_workflows_sampled", 0)
+        if (type(approval) is not list or len(approval) > 2
+                or type(sampled) is not int or sampled != len(approval)
+                or item.get("repository") != registry[pid]):
+            raise ValueError("invalid GitHub approval-workflow source")
+        seen_approval = set()
+        for workflow in approval:
+            if (type(workflow) is not dict or
+                    workflow.get("action_authorized") is not False or
+                    type(workflow.get("run_id")) is not int or
+                    not 0 < workflow["run_id"] <= 2**53-1 or
+                    workflow["run_id"] in seen_approval or
+                    type(workflow.get("head_sha")) is not str or
+                    len(workflow["head_sha"]) != 40 or
+                    any(c not in "0123456789abcdef" for c in workflow["head_sha"]) or
+                    workflow.get("url") != "https://github.com/" + registry[pid] +
+                    "/actions/runs/" + str(workflow["run_id"])):
+                raise ValueError("invalid pinned approval-workflow identity")
+            seen_approval.add(workflow["run_id"])
+        summary[pid]["github_approval_wait_workflows_sampled"] = sampled
+        summary[pid]["github_approval_wait_workflow_links"] = [
+            workflow["url"] for workflow in approval]
         summary[pid]["github_ci_source_stop_reason"] = source_stop
         summary[pid]["github_ci_windows_not_scanned"] = windows_skipped
         count = item.get("sampled_actionable_jobs")
@@ -652,7 +679,15 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
                             str(row["github_sampled_approval_wait_jobs_min"]) +
                             (' · andere jobs deels verborgen'
                              if row["github_other_jobs_list_truncated"] else ''))) +
-            '</td>'
+            ('<br><small>Approval-workflows ≥' +
+             str(row["github_approval_wait_workflows_sampled"]) +
+             ' · menselijk controleren: ' +
+             ' '.join('<a target="_blank" rel="noopener noreferrer" href="' +
+                      escape(url, quote=True) + '">workflow ' +
+                      str(i + 1) + '</a>' for i, url in enumerate(
+                          row["github_approval_wait_workflow_links"])) +
+             '</small>' if row["github_approval_wait_workflows_sampled"] is not None
+             else '') + '</td>'
             '<td>' + ('ONBEKEND' if row["p0_p1_issue_sample_hits"] is None
                       else '≥' + str(row["p0_p1_issue_sample_hits"])) + '</td>'
             '<td>' + ('ONBEKEND' if row["p2_unranked_issue_sample_hits"] is None
@@ -1516,6 +1551,10 @@ def main():
                     _count(row["github_sampled_queued_self_hosted_jobs_min"]),
                     _count(row["github_sampled_approval_wait_jobs_min"]),
                     row["github_other_jobs_list_truncated"]))
+                if row["github_approval_wait_workflows_sampled"] is not None:
+                    lines.append("  GitHub approval-workflows in bounded sample ≥%s; bronlinks=%s. Menselijke approval vereist; geen runnerherstel." % (
+                        row["github_approval_wait_workflows_sampled"],
+                        ", ".join(row["github_approval_wait_workflow_links"]) or "geen"))
                 lines.append("  GitHub bronpoging: %s (%s, huidige run: %s); historische poging is GEEN health." % (
                     row["github_last_attempt_at_utc"] or "ONBEKEND",
                     row["github_last_attempt_coverage"] or "ONBEKEND",
