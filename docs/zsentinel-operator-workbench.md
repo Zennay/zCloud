@@ -15,6 +15,11 @@ python3 scripts/zsentinel_private_bundle_index.py \
   --directory "$HOME/zsentinel-private" \
   --latest 8 --name recovery-history-table --format csv
 
+# Apart merge-first overzicht van opgeslagen PR-HEADs, gates en changes
+python3 scripts/zsentinel_private_bundle_index.py \
+  --directory "$HOME/zsentinel-private" \
+  --latest 8 --name recovery-prs-table --format prs-csv
+
 python3 scripts/zsentinel_private_bundle_index.py \
   --directory "$HOME/zsentinel-private" \
   --latest 8 --name recovery-history-handoff --format zip
