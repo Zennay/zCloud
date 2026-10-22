@@ -1,0 +1,83 @@
+name: zCloud remote shell source no-new-debt (hosted only)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-remote-shell-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable PR head without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 0
+      - name: Focused adversarial real-Git tests
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          python3 -m unittest discover -s tests -p 'test_zcloud_remote_shell_ratchet_20261015_w1.py' -v
+          python3 -m py_compile scripts/zcloud_remote_shell_ratchet_20261015_w1.py
+      - name: Compare exact committed main and PR Git trees
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git check-ref-format "refs/heads/$HEAD_REF"
+          test "$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')" = "$HEAD_SHA"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          base_sha="$(git rev-parse refs/remotes/origin/main)"
+          test "$base_sha" = "$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          report="$RUNNER_TEMP/zcloud-remote-shell-source-result.json"
+          set +e
+          python3 scripts/zcloud_remote_shell_ratchet_20261015_w1.py \
+            --repo . --base "$base_sha" --head "$HEAD_SHA" > "$report"
+          scan_exit=$?
+          set -e
+          SCAN_EXIT="$scan_exit" SOURCE_REPORT="$report" python3 - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+          from scripts.zcloud_remote_shell_ratchet_20261015_w1 import SourceError, operator_summary, parse_operator_result
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          try:
+              report = parse_operator_result(Path(os.environ["SOURCE_REPORT"]).read_text(encoding="utf-8"))
+              scan_exit = int(os.environ["SCAN_EXIT"])
+              summary = operator_summary(report, scan_exit)
+          except (ValueError, OSError, SourceError, TypeError):
+              summary = ("### zCloud broncontrole — Onbetrouwbaar bewijs\n\n"
+                         "Geen productieautorisatie. Bronbewijs onvolledig of tegenstrijdig.\n")
+              summary_path.open("a", encoding="utf-8").write(summary)
+              sys.exit(2)
+          summary_path.open("a", encoding="utf-8").write(summary)
+          PY
+          test "$scan_exit" -eq 0
+          test "$base_sha" = "$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')" = "$HEAD_SHA"
