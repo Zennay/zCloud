@@ -166,32 +166,31 @@ claims, runner processes or production scheduler.
 
 ## Runtime boundaries
 
-### 21 October · host-pressure admission connected to actual lane cards
+### 22 October · host-pressure is mandatory for new-worker guidance
 
-With the **existing** optional `--host-pressure` flag the four-lane
-desk now reads the bounded host snapshot **once** and uses that same
-observation in the operator recovery cards, the action list and JSON.
+The four-lane desk now reads the bounded host snapshot **once by default**
+and uses that same observation in the operator recovery cards, action list
+and JSON. The legacy `--host-pressure` flag remains accepted for existing
+commands but no longer controls whether this safety input is collected.
 
 - `HIGH_LOCAL_PRESSURE` or `ELEVATED_LOCAL_PRESSURE` produces
   `HOLD_HOST_PRESSURE` for an otherwise queued new worker. This includes
   independently observed high host pressure even if another portion of
-  procfs/PSI is partial. The current worker is never preempted.
-- A requested host snapshot that cannot establish reliable pressure
-  produces `HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED` rather than silently
-  presenting an extra worker candidate.
-- Without `--host-pressure`, `host_admission=NOT_REQUESTED`;
-  existing behavior and external release/claim gates remain unchanged.
-  A low-pressure reading yields `NO_ADDITIONAL_HOLD`, **not**
-  an authorization to add workers.
-- `admission_summary.held_by_optional_host_pressure` and
-  `host_admission` explain the visible result in text/JSON; offline
-  HTML reuses each lane's concrete HOLD label and the existing host
-  pressure section.
+  procfs/PSI is partial. Existing workers are never preempted.
+- Missing or unreliable host telemetry produces
+  `HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED`; a queued task is never presented
+  as a candidate when capacity was not observed.
+- A healthy/low-pressure reading yields `NO_ADDITIONAL_HOLD`, **not**
+  authorization to add workers. Current RAM, swap, CPU, PSI and root-disk
+  pressure are advisory evidence, not proof of cgroup headroom or runner
+  assignment.
+- `host_admission` explains the visible result in text/JSON; offline HTML
+  reuses each lane's concrete HOLD label and the existing host-pressure
+  section.
 
 No new processes, worker claims, governor writes, service actions,
-CI triggers or QA suites. This is a read-only, **conservative**
-owner decision; there is no inference about free cgroup capacity
-or an actual GitHub runner assignment.
+CI triggers or QA suites. This is a read-only, **conservative** owner
+decision; missing or partial resource evidence never grants admission.
 
 ### 21 October · actual four-worker cap required in the recovery desk
 
