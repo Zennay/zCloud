@@ -1971,9 +1971,10 @@ def main(argv=None):
                  args.live_focus_pr is not None, args.project_id,
                  args.incident_id, args.source_url, args.owner,
                  args.fail_on_hold))
-                or args.format not in ("json", "markdown", "html")):
+                or args.format not in ("json", "markdown", "html", "csv")
+                or (args.format == "csv" and not args.output)):
             parser.error(
-                "--live-inbox-repo is a standalone read-only JSON/Markdown/HTML mode"
+                "--live-inbox-repo requires JSON/Markdown/HTML or private --format csv --output" 
             )
     if args.live_issue_url:
         if (any((args.case_input, args.input, args.batch_input, args.template,
@@ -2030,6 +2031,7 @@ def main(argv=None):
             from zsentinel_live_issue_inbox import (
                 observe_repo_inbox, markdown as issue_inbox_markdown,
                 html_view as issue_inbox_html,
+                workorders_csv as issue_inbox_csv,
             )
             from zsentinel_pr_live_read import GitHubReadError
             report = observe_repo_inbox(
@@ -2038,6 +2040,7 @@ def main(argv=None):
             output = (
                 issue_inbox_html(report) if args.format == "html"
                 else issue_inbox_markdown(report) if args.format == "markdown"
+                else issue_inbox_csv(report) if args.format == "csv"
                 else json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
             )
             if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
