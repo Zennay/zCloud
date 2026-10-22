@@ -557,7 +557,15 @@ def project_operations_html(view: dict) -> str:
         '<p id="projectPacketScope" role="status">No project packet selected.</p>'
         '<div id="projectPacketPanel" hidden><pre id="projectPacketContent"></pre>'
         '<button type="button" id="downloadProjectPacket" disabled>'
-        'Download exactly this project packet (.json)</button></div></section>'
+        'Download exactly this project packet (.json)</button></div>'
+        '<label>Reopen project packet from THIS exact source board'
+        '<input id="projectPacketFile" type="file" accept=".json,application/json"></label>'
+        '<div id="projectPacketImportPanel" hidden>'
+        '<p id="projectPacketImportStatus" role="status"></p>'
+        '<pre id="projectPacketImportSummary"></pre>'
+        '<button type="button" id="applyProjectPacketImport" disabled>'
+        'Confirm import of local follow-up for this project only</button>'
+        '</div></section>'
         '<details id="recoveryLeads"><summary>Inspect <span id="recoveryVisibleCount">' +
         str(len(sections)) + '</span> project-level recovery leads (offline)' +
         '</summary>'
