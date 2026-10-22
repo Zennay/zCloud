@@ -141,7 +141,7 @@ def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES,
             ) from exc
         if exc.code == 404:
             raise GitHubReadError(
-                "GitHub PR inaccessible or not found; do not infer deletion"
+                "GitHub resource inaccessible or not found; do not infer deletion"
             ) from exc
         raise GitHubReadError(
             "GitHub read unavailable (HTTP " + str(exc.code) + ")"
