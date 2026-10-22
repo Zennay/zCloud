@@ -574,6 +574,13 @@ def project_operations_html(view: dict) -> str:
         '<p id="recoveryDuePulse" role="status">No locally saved manual review dates loaded.</p>'
         '<p id="recoveryQueueSummary" role="status" aria-live="polite">Project candidate queue not yet refreshed.</p>'
         '<button type="button" id="recoveryNextProject">Next non-parked project candidate (P0 first)</button>'
+        '<section class="brief" aria-label="Issue-independent project recovery CSV">'
+        '<h3>Issue-independent recovery leads · reviewed CSV</h3>'
+        '<p>Export the bounded project-level recovery observations, including projects with queue pressure but no sampled GitHub issue. This export is independent of issue filters and excludes local contact labels, private notes and opaque claim identifiers. It is a historical handoff, not proof of current ownership, failures or retry permission.</p>'
+        '<button type="button" id="previewProjectRecoveryCsv">Preview project recovery CSV</button>'
+        '<div id="projectRecoveryCsvPanel" hidden><pre id="projectRecoveryCsvContent"></pre>'
+        '<button type="button" id="downloadProjectRecoveryCsv" disabled>Download exactly this reviewed project CSV</button></div>'
+        '</section>'
         '<section class="brief" aria-label="Single-project owner recovery packet">'
         '<h3>One project · portable recovery packet</h3>'
         '<p>Select a project below to preview a source-bound JSON handoff. '
@@ -1184,6 +1191,7 @@ window.addEventListener('beforeunload',event=>{
  event.preventDefault();event.returnValue='';
 });
 let viewedBrief=null,viewedCsv=null,viewedDeltaCsv=null,viewedProjectDeltaCsv=null,viewedPrDesk=null,viewedPrManifest=null,viewedIssueHandoff=null,issueImportPreview=null;
+let viewedProjectRecoveryCsv=null;
 let viewedCalendar=null,viewedCalendarStamp=null;
 function invalidateBrief(){
  viewedPrManifest=null;
@@ -4876,6 +4884,59 @@ document.getElementById('downloadCsv').onclick=()=>{
  setTimeout(()=>URL.revokeObjectURL(uri),1000);
  invalidateBrief();
  status.textContent='Reviewed CSV saved locally. Original issue, CI and release states remain unverified.';
+};
+// Separate, source-pinned project recovery export. Unlike issue CSV, it keeps
+// queue-only project leads visible and never exports opaque claim IDs or local notes.
+function projectRecoveryCsvSource(){
+ const columns=['source_board_sha256','source_observed_at_utc','project',
+  'sampled_issue_coverage','sampled_P0_issues','sampled_P1_issues',
+  'sampled_P2_issues','sampled_unspecified_priority_issues',
+  'queue_observation_available','sampled_queue_active_items',
+  'sampled_high_claim_attempts','sampled_expired_active_leases',
+  'queue_source_observed_at_utc','claim_context',
+  'recommended_human_next_step','inventory_complete',
+  'claim_authorized','merge_authorized','deploy_authorized'];
+ const operations=Array.isArray(board.project_operations)?board.project_operations:[];
+ if(!operations.length)return null;
+ const rows=operations.map(row=>{
+  const q=row.queue_observation;
+  const counts=row.issue_counts_in_sample||{};
+  return [boardSha,board.observed_at_utc,row.project,row.issue_coverage,
+   counts.P0,counts.P1,counts.P2,counts.Unspecified,q!==null,
+   q===null?'UNKNOWN':q.active_items,
+   q===null?'UNKNOWN':q.high_claim_attempts,
+   q===null?'UNKNOWN':q.expired_active_leases,
+   row.queue_source_observed_at_utc||'UNKNOWN',row.claim_context,
+   row.recommended_next_step,'false','false','false','false'];
+ });
+ return [columns,...rows].map(row=>row.map(csvCell).join(',')).join('\\r\\n')+'\\r\\n';
+}
+document.getElementById('previewProjectRecoveryCsv').onclick=()=>{
+ viewedProjectRecoveryCsv=projectRecoveryCsvSource();
+ const panel=document.getElementById('projectRecoveryCsvPanel');
+ panel.hidden=!viewedProjectRecoveryCsv;
+ document.getElementById('projectRecoveryCsvContent').textContent=
+  viewedProjectRecoveryCsv||'';
+ document.getElementById('downloadProjectRecoveryCsv').disabled=
+  !viewedProjectRecoveryCsv;
+ status.textContent=viewedProjectRecoveryCsv?
+  'Review all bounded project-level recovery rows, source clocks and non-authorizing fields. Queue-only projects are included; no live source was contacted.':
+  'No project recovery rows exist in this saved board; no CSV generated.';
+};
+document.getElementById('downloadProjectRecoveryCsv').onclick=()=>{
+ if(!viewedProjectRecoveryCsv)return;
+ if(projectRecoveryCsvSource()!==viewedProjectRecoveryCsv){
+  viewedProjectRecoveryCsv=null;
+  document.getElementById('downloadProjectRecoveryCsv').disabled=true;
+  status.textContent='Saved project source changed. Preview the project recovery CSV again.';
+  return;
+ }
+ const uri=URL.createObjectURL(new Blob(['\\ufeff',viewedProjectRecoveryCsv],
+  {type:'text/csv;charset=utf-8'}));
+ const a=elem('a');a.href=uri;
+ a.download='zsentinel-project-recovery-'+boardSha.slice(0,12)+'.csv';a.click();
+ setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ status.textContent='Reviewed project recovery CSV saved locally. This source snapshot authorizes no claim, retry, merge or deployment.';
 };
 document.getElementById('calendarIncludeContact').addEventListener('change',()=>{
  invalidateBrief();
