@@ -6,8 +6,11 @@ expired claim, available branch, or permission to interrupt ongoing work.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 
 WINDOW_HOURS = 168
+PR_URL = re.compile(
+    r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}$")
 SIGNALS = {
     "source_clock_incoherent",
     "activity_timestamp_unknown",
@@ -49,20 +52,25 @@ def classify(issue_updated_at, linked_pr_urls, observed_prs, as_of,
              issue_reference_sample_complete):
     """Return one bounded, explicitly non-authorizing activity receipt."""
     if (type(linked_pr_urls) is not list or len(linked_pr_urls) > 5
-            or len(set(linked_pr_urls)) != len(linked_pr_urls)
             or type(observed_prs) is not list or len(observed_prs) > 48
             or type(source_clocks_coherent) is not bool
             or type(pr_sample_complete) is not bool
             or type(issue_reference_sample_complete) is not bool):
         raise ValueError("invalid bounded issue activity evidence")
+    # Validate element types and canonical identities before set/dict use:
+    # malformed arrays must fail closed with ValueError, not leak TypeError.
+    if any(type(url) is not str or len(url) > 240
+           or PR_URL.fullmatch(url) is None for url in linked_pr_urls):
+        raise ValueError("invalid linked PR activity identity")
+    if len(set(linked_pr_urls)) != len(linked_pr_urls):
+        raise ValueError("duplicate linked PR activity identity")
     ref = _clock(as_of)
     if ref is None:
         raise ValueError("invalid activity observation clock")
-    if any(type(url) is not str or len(url) > 240 for url in linked_pr_urls):
-        raise ValueError("invalid linked PR activity identity")
     pr_by_url = {}
     for pr in observed_prs:
-        if type(pr) is not dict or type(pr.get("url")) is not str:
+        if (type(pr) is not dict or type(pr.get("url")) is not str
+                or len(pr["url"]) > 240 or PR_URL.fullmatch(pr["url"]) is None):
             raise ValueError("invalid open PR activity source")
         url = pr["url"]
         if url in pr_by_url:
