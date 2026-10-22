@@ -530,7 +530,10 @@ def project_operations_html(view: dict) -> str:
             '" maxlength="500" rows="2" placeholder="Cause, owner input and next recheck"></textarea></label>' +
             '<button type="button" data-preview-recovery="' +
             escape(row["project"], quote=True) +
-            '">Preview private recovery handoff for this project</button></li>'
+            '">Preview portfolio briefing (current filters)</button> ' +
+            '<button type="button" data-project-packet="' +
+            escape(row["project"], quote=True) +
+            '">Create single-project owner packet</button></li>'
         )
     return (
         '<section class="portfolio" id="projectRecoveryDesk">'
@@ -542,6 +545,19 @@ def project_operations_html(view: dict) -> str:
         '<p id="recoveryDuePulse" role="status">No locally saved manual review dates loaded.</p>'
         '<p id="recoveryQueueSummary" role="status" aria-live="polite">Project candidate queue not yet refreshed.</p>'
         '<button type="button" id="recoveryNextProject">Next non-parked project candidate (P0 first)</button>'
+        '<section class="brief" aria-label="Single-project owner recovery packet">'
+        '<h3>One project · portable recovery packet</h3>'
+        '<p>Select a project below to preview a source-bound JSON handoff. '
+        'This includes only that project&#39;s saved issue/PR leads and bounded '
+        'queue observations. It does not inherit unrelated search, priority '
+        'or disposition filters, and never grants owner/claim/CI/merge rights.</p>'
+        '<label><input type="checkbox" id="projectPacketPrivate">'
+        'Explicitly include locally entered contact label, review date, '
+        'decision and private note (off by default)</label>'
+        '<p id="projectPacketScope" role="status">No project packet selected.</p>'
+        '<div id="projectPacketPanel" hidden><pre id="projectPacketContent"></pre>'
+        '<button type="button" id="downloadProjectPacket" disabled>'
+        'Download exactly this project packet (.json)</button></div></section>'
         '<details id="recoveryLeads"><summary>Inspect <span id="recoveryVisibleCount">' +
         str(len(sections)) + '</span> project-level recovery leads (offline)' +
         '</summary>'
