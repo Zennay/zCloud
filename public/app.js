@@ -804,6 +804,19 @@ function blockedQueuePanel(){
   const total=items.length;
   const snapshotFresh=blockedQueueSourceIsFresh();
   const unboundFieldsCount=items.filter(blockedQueueIsParked).length;
+  const summary=DATA?.portfolio_queue_health;
+  const observedStatus=typeof DATA?.time==='string'?Date.parse(DATA.time):NaN;
+  const statusCurrent=!DATA?.stale&&Number.isFinite(observedStatus)
+    &&observedStatus<=Date.now()+120000&&Date.now()-observedStatus<=90000;
+  const admissionSummary=summary&&Number.isSafeInteger(summary.owner_clear_queued)
+    &&Number.isSafeInteger(summary.owner_held_queued)
+    ?'<p class="blocked-queue-claim-summary" role="status">'
+      +(statusCurrent?'Latest status snapshot: ':'Historical status snapshot (NOT LIVE): ')
+      +summary.owner_clear_queued+' queued tasks have clear owner/claim fields; '
+      +summary.owner_held_queued+' remain held by queue or separate-claim evidence. '
+      +'These counts do not prove a runnable lane or authorize recovery.</p>'
+    :'<p class="blocked-queue-claim-summary" role="status">'
+      +'Queue owner-clearance breakdown unavailable; no safe allocation conclusion is possible.</p>';
   const claimStateSummary=loaded
     ?'<p class="blocked-queue-claim-summary">'
       +(snapshotFresh?'Current sampled queue/claim fields unbound: ':'Last-observed queue/claim fields unbound (NOT CURRENT): ')
@@ -897,7 +910,7 @@ function blockedQueuePanel(){
     (blockedQueueReloading||blockedResumesPending.size?' disabled':'')+
     '>Refresh queue source</button> <span role="status">'+esc(sourceWarning)+
     ' Read-only refresh; no claim, retry or release.</span></div>';
-  return '<section class="blocked-queue-panel"><div class="blocked-queue-head"><div><span class="eyebrow">DEPENDENCY HOLDS</span><h2>'+(loaded?(snapshotFresh?'':'Last observed: ')+total+' parked task'+(total===1?'':'s'):'Parked tasks')+'</h2><p>Only the dependent task is parked. Independent work can continue; resume requires an explicit operator note that the dependency is cleared.</p>'+claimStateSummary+'</div><span class="blocked-queue-count">'+(loaded?total:'—')+'</span></div>'
+  return '<section class="blocked-queue-panel"><div class="blocked-queue-head"><div><span class="eyebrow">DEPENDENCY HOLDS</span><h2>'+(loaded?(snapshotFresh?'':'Last observed: ')+total+' parked task'+(total===1?'':'s'):'Parked tasks')+'</h2><p>Only the dependent task is parked. Independent work can continue; resume requires an explicit operator note that the dependency is cleared.</p>'+claimStateSummary+admissionSummary+'</div><span class="blocked-queue-count">'+(loaded?total:'—')+'</span></div>'
     +reloadControl
     +(loaded&&total?'<div class="blocked-queue-state"><label class="blocked-queue-project-label">Project <select data-blocked-project aria-label="Filter parked tasks by project">'+projectOptions+'</select></label>'
       +'<label class="blocked-queue-search-label">Search <input type="search" data-blocked-search aria-label="Search loaded parked tasks by title, project or dependency" maxlength="120" autocomplete="off" placeholder="Task or dependency" value="'+esc(blockedQueueSearch)+'"></label>'
