@@ -210,10 +210,27 @@ def _parallel_owner_actions(report):
             "Restore read-only review visibility and inspect independent approval.",
             "REVIEW_SOURCE_UNKNOWN")
     elif reviews.get("sampled_count") == 0:
-        add("request_independent_review",
-            "No submitted reviews appeared in the sampled PR review source.",
-            "Request an independent review; verify approval, head relevance and threads.",
-            "ZERO_REVIEWS_IN_SAMPLE")
+        requested_users = observed.get("pending_reviewer_requests")
+        requested_teams = observed.get("pending_team_review_requests")
+        if requested_users is not None and requested_teams is not None:
+            if requested_users + requested_teams:
+                add("await_requested_independent_review",
+                    "No submitted reviews yet; GitHub has pending user/team review requests.",
+                    "Follow up on the existing review requests without issuing duplicates; "
+                    "independently check eventual approval on the exact HEAD and all threads.",
+                    "PENDING_REVIEW_REQUESTS")
+            else:
+                add("request_independent_review",
+                    "No submitted review or pending review request was observed.",
+                    "Ask the owner to request an independent review; verify approval, "
+                    "head relevance and unresolved threads before merge.",
+                    "ZERO_REVIEWS_AND_REQUESTS_IN_SAMPLE")
+        else:
+            add("inspect_review_request_source",
+                "No submitted reviews; pending reviewer request data is unavailable.",
+                "Open the PR review panel before requesting another reviewer; "
+                "missing data does not mean nobody has been asked.",
+                "REVIEW_REQUEST_SOURCE_UNKNOWN")
     elif reviews.get("exact_head_review_coverage") != "OBSERVED":
         add("reconcile_partial_review_coverage",
             "Some sampled review entries are unbound, unknown or truncated.",
@@ -361,6 +378,7 @@ def observe_exact_pr(pr_url, *, token=None):
     stable_keys = (
         "number", "observed_state", "observed_draft", "reported_merged",
         "target_branch", "base_sha", "exact_head_sha",
+        "pending_reviewer_requests", "pending_team_review_requests",
     )
     if any(first[k] != second[k] for k in stable_keys):
         return _unknown_pr(
@@ -509,6 +527,10 @@ def as_markdown(report):
         " of " + str(checks.get("provider_total_count", "UNKNOWN")),
         "- Sampled review states (all observed commits): " +
         json.dumps(reviews.get("observed_review_states", {}), sort_keys=True),
+        "- Pending requested individual reviewers (not approvals): " +
+        _known(observed.get("pending_reviewer_requests") if report.get("source_stable_between_reads") else None),
+        "- Pending requested team reviews (not approvals): " +
+        _known(observed.get("pending_team_review_requests") if report.get("source_stable_between_reads") else None),
         "- Reviews bound to exact HEAD: " + str(reviews.get("exact_head_review_count", "UNKNOWN")),
         "- Exact-HEAD review states: " +
         json.dumps(reviews.get("observed_review_states_exact_head", "UNKNOWN"), sort_keys=True),
@@ -576,6 +598,10 @@ def as_html(report):
         ("Check sample", str(checks.get("sampled_count", "UNKNOWN")) + " / " +
          str(checks.get("provider_total_count", "UNKNOWN"))),
         ("Review sample, all observed commits", json.dumps(reviews.get("observed_review_states", {}), sort_keys=True)),
+        ("Pending requested individual reviewers (not approvals)",
+         _known(observed.get("pending_reviewer_requests") if report.get("source_stable_between_reads") else None)),
+        ("Pending requested team reviews (not approvals)",
+         _known(observed.get("pending_team_review_requests") if report.get("source_stable_between_reads") else None)),
         ("Reviews bound to exact HEAD", reviews.get("exact_head_review_count", "UNKNOWN")),
         ("Exact-HEAD review states", json.dumps(reviews.get("observed_review_states_exact_head", "UNKNOWN"), sort_keys=True)),
         ("Reviews on other HEADs", reviews.get("other_head_review_count", "UNKNOWN")),
