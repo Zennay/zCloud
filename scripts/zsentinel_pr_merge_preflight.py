@@ -33,8 +33,9 @@ def _gate_cards(head, checks, reviews, stable, default_branch=None, default_bran
     """Operator workorders; read-only samples never satisfy release gates."""
     state = ("OBSERVED" if stable else "UNKNOWN")
     sample = ("UNKNOWN" if checks is None else
-              "OBSERVED_FAILURE" if checks["sampled_blocking_checks"] else
+              "OBSERVED_BLOCKING_NON_SUCCESS" if checks["sampled_blocking_checks"] else
               "OBSERVED_PENDING" if checks["sampled_pending_checks"] else
+              "OBSERVED_NEUTRAL_OR_SKIPPED" if checks["sampled_non_success_checks"] else
               "SAMPLE_ONLY")
     branch_gate = (
         "UNKNOWN" if not default_branch_stable or not default_branch else
@@ -171,6 +172,9 @@ def observe_exact_pr(pr_url, *, token=None):
     elif checks is not None and checks["sampled_pending_checks"]:
         next_step = "Wait for exact-head checks or resolve their actual runner/admission dependency."
         status = "OBSERVED_PENDING_CHECKS"
+    elif checks is not None and checks["sampled_non_success_checks"]:
+        next_step = "Inspect neutral/skipped terminal check conclusions against actual branch protection; they are not success evidence."
+        status = "OBSERVED_NON_SUCCESS_CHECKS"
     elif checks is None:
         next_step = "Restore check-source visibility before any merge eligibility decision."
         status = "CHECK_SOURCE_UNKNOWN"
@@ -261,7 +265,9 @@ def as_markdown(report):
         "", "## Observed exact-head check concerns", "",
     ])
     for label, field in (
-        ("Failure", "sampled_blocking_checks"), ("Pending", "sampled_pending_checks"),
+        ("Potentially blocking non-success", "sampled_blocking_checks"),
+        ("Neutral/skipped non-success", "sampled_non_success_checks"),
+        ("Pending", "sampled_pending_checks"),
     ):
         for entry in checks.get(field, []):
             lines.append("- " + label + ": `" + entry["name"].replace("`", "'") + "`" +
@@ -312,7 +318,7 @@ def as_html(report):
                      esc(gate["state"]) + "</strong>: " + esc(gate["next"]) + "</li>")
     for gap in report["secondary_source_gaps"]:
         parts.append("<li>" + esc(gap) + "</li>")
-    for key in ("sampled_blocking_checks", "sampled_pending_checks"):
+    for key in ("sampled_blocking_checks", "sampled_non_success_checks", "sampled_pending_checks"):
         for item in checks.get(key, []):
             parts.append("<li>" + esc(item["name"]) + " — " +
                          esc(item.get("conclusion") or item.get("status")) + "</li>")
