@@ -1917,6 +1917,8 @@ def main(argv=None):
     parser.add_argument("--case-input", help="private zSentinel portfolio recovery-case JSON export, file path or -")
     parser.add_argument("--live-issue-url",
                         help="read one canonical Zennay GitHub issue and its existing PRs directly; no saved case required")
+    parser.add_argument("--live-pr-url",
+                        help="read one exact Zennay GitHub PR with bounded HEAD/check/review observations; advisory only")
     parser.add_argument("--live-inbox-repo",
                         help="bounded read-only P0/P1-first recent issue inbox for one Zennay/<repo>")
     parser.add_argument("--portfolio-repo", action="append",
@@ -1964,6 +1966,41 @@ def main(argv=None):
     parser.add_argument("--max-age-minutes", type=int, default=60,
                         help="maximum accepted observation age (1..1440; default 60)")
     args = parser.parse_args(argv)
+    if args.live_pr_url:
+        if (any((args.input, args.batch_input, args.case_input, args.live_issue_url,
+                 args.live_inbox_repo, args.portfolio_repo,
+                 args.portfolio_previous_snapshot, args.portfolio_snapshot_output,
+                 args.portfolio_verify_missing_live, args.live_candidates,
+                 args.live_focus_pr is not None, args.discover_unlinked,
+                 args.template, args.project_id, args.incident_id, args.source_url,
+                 args.owner, args.view_project, args.view_issue is not None,
+                 args.prepare_merge_review, args.candidate_pr_number is not None,
+                 args.through_priority, args.inbox_all_sampled_csv, args.fail_on_hold))
+                or args.portfolio_view != "all" or args.portfolio_recheck_limit != 3
+                or args.inbox_page != 1 or args.max_age_minutes != 60
+                or args.format not in ("json", "markdown", "html")):
+            parser.error("--live-pr-url is a standalone advisory JSON/Markdown/HTML mode")
+        try:
+            from zsentinel_pr_merge_preflight import (
+                observe_exact_pr, as_markdown as pr_preflight_markdown,
+                as_html as pr_preflight_html,
+            )
+            from zsentinel_pr_live_read import GitHubReadError
+            preflight = observe_exact_pr(
+                args.live_pr_url, token=os.environ.get("GITHUB_TOKEN") or None,
+            )
+            output = (
+                pr_preflight_html(preflight) if args.format == "html"
+                else pr_preflight_markdown(preflight) if args.format == "markdown"
+                else json.dumps(preflight, ensure_ascii=False, indent=2, sort_keys=True) + "\\n"
+            )
+            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("live PR preflight exceeds output bound")
+            _emit_output(output, args.output, args.format)
+            return 0
+        except (OSError, UnicodeError, GitHubReadError, PolicyInputError) as exc:
+            print("zSentinel live PR preflight: " + str(exc), file=sys.stderr)
+            return 2
     if args.portfolio_view != "all" and not args.portfolio_repo:
         parser.error("--portfolio-view requires --portfolio-repo")
     if args.portfolio_previous_snapshot and not args.portfolio_repo:
