@@ -414,6 +414,34 @@ def saved_attention(snap: dict) -> list[dict]:
     )
 
 
+def historical_merge_attention(snap: dict) -> str:
+    """Show all admitted saved PR rows without claiming they are still open."""
+    items = snap.get("saved_pr_observations", {})
+    if not items:
+        return ("<p>Geen opgeslagen exacte-HEAD PR-gatewaarnemingen. "
+                "Dit betekent niet dat er geen open PR's zijn.</p>")
+    lines = []
+    for url, item in sorted(items.items(), key=lambda pair: (
+            pair[1]["observed_check_success"],
+            -len(pair[1]["blocking_unknowns"]), pair[0])):
+        status = ("check geslaagd bij opname" if item["observed_check_success"]
+                  else "check niet bewezen bij opname")
+        lines.append(
+            "<li><a href='" + escape(url, quote=True) +
+            "' target='_blank' rel='noopener noreferrer'>" +
+            escape(url) + "</a>: <code>" + escape(item["head_sha"][:12]) +
+            "</code> · " + status + " · approvals " +
+            str(item["observed_approvals"]) + " · onbekende gates " +
+            str(len(item["blocking_unknowns"])) + "</li>"
+        )
+    return ("<h3>Merge-first: opgeslagen PR-gates</h3><p>Maximaal vijf "
+            "brongebonden PR-waarnemingen. De opgeslagen waarden zijn "
+            "geen actuele merge-vrijgave, geen claim, geen releasebevel. "
+            "Controleer huidige HEAD, onafhankelijke review, CI en "
+            "branchbescherming opnieuw bij GitHub.</p><ul>" +
+            "".join(lines) + "</ul>")
+
+
 def historical_attention_html(snap: dict) -> str:
     """A first-screen handoff drawn only from the most recent saved board."""
     rows = []
@@ -440,7 +468,7 @@ def historical_attention_html(snap: dict) -> str:
         "</tr></thead><tbody>" +
         ("".join(rows) if rows else
          "<tr><td colspan='4'>Geen projecten in de opgeslagen steekproef</td></tr>") +
-        "</tbody></table></section>"
+        "</tbody></table>" + historical_merge_attention(snap) + "</section>"
     )
 
 
