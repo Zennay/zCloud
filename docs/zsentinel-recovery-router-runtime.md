@@ -3065,15 +3065,18 @@ geen run-ID, job-ID of SHA handmatig hoeft over te typen:
 ```sh
 python3 scripts/zsentinel_runner_triage.py --discover
 ```
-Dit gebruikt de bestaande begrensde queued-, in-progress- en failure-vensters
-(maximaal twaalf discovery-GETs voor één repo), kiest maximaal één
+Dit gebruikt de bestaande begrensde queued-, in-progress-, waiting- en
+failure-vensters (maximaal twaalf discovery-GETs voor één repo), kiest maximaal één
 brongebonden kandidaat en ververst daarna de exacte run/job/SHA met maximaal
 twee extra GETs vóór de lokale procescorrelatie. De privé JSON/HTML vermeldt
 de ontdekkingsdekking en het requestbudget; tekst blijft drie regels en
 neemt de dekking mee in de statusregel. Bij een onvolledige of geweigerde
 bron wordt geen kandidaat afwezig verklaard: de actie wordt `github_job_unavailable`
-en dekking blijft gedeeltelijk. Een complete steekproef zonder kandidaat
-blijft `no_actionable_job_in_sampled_windows`, nooit `all_clear`.
+en dekking blijft gedeeltelijk. Een steekproef zonder job maar met brongebonden wachtende GitHub-workflow
+krijgt `approval_wait_workflow_no_job_selected`: menselijke approval-/concurrency-
+controle, nooit runnerherstart. Een complete steekproef zonder kandidaat of
+waargenomen approval-wacht blijft `no_actionable_job_in_sampled_windows`,
+nooit `all_clear`.
 De handmatige exact-pinmodus blijft beschikbaar en is wederzijds exclusief
 met `--discover`. Beide routes blijven read-only en geven geen toestemming
 voor restart, retry, claim of release.
@@ -3117,7 +3120,12 @@ een afgekapt venster wordt nooit als volledige CI-inventaris getoond.
 
 De hoofdcockpit hergebruikt dezelfde gedeelde validator/renderer en toont
 die aanvullende links ook bij `--observe-local-runners` wanneer `cloud`
-geselecteerd is. De JSON bewaart dezelfde begrensde lijst; de drieregelige
+geselecteerd is. De gedeelde job-admissie accepteert inmiddels ook
+`waiting/pending`-jobs in het `waiting`-GitHub-venster. Voor zover er nog
+helemaal geen GitHub-job bestaat, toont de runnerkaart afzonderlijk maximaal
+twee SHA- en URL-geverifieerde `waiting`-workflowlinks. Ongeldige optionele
+approval-links leveren een eigen UNKNOWN-kaart zonder het primaire exacte
+job-/hostbeeld te verbergen. De JSON bewaart dezelfde begrensde lijst; de drieregelige
 tekst blijft compact en toont de primaire eigenaaractie.
 
 Een ongeldige optionele lijst aanvullende links wordt in de cockpit
