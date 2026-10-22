@@ -1127,6 +1127,82 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             card["queue_claim_failure_proven"] = False
             card["owner_lease_released_verified"] = False
             cards.append(card)
+    # Issue #677: blocked queue rows are a distinct work state. Expose a
+    # small P0/P1 *owner* inbox directly from the router's already-validated
+    # aggregate; do not infer failed retries, free workers or resume rights.
+    # One card per (project, priority) prevents high-volume projects from
+    # consuming all owner attention; never perform additional SQLite reads.
+    blocked = pressure.get("blocked_queue") if type(pressure) is dict else None
+    if blocked is not None:
+        if (type(blocked) is not dict
+                or any(blocked.get(flag) is not False for flag in (
+                    "claim_ownership_verified", "queue_write_authorized",
+                    "automatic_retry_authorized"))):
+            raise ValueError("untrusted or authorizing blocked queue evidence")
+        blocked_coverage = blocked.get("coverage")
+        groups = blocked.get("project_groups")
+        samples = blocked.get("work_items")
+        if (blocked_coverage not in ("not_supplied", "not_observed",
+                                     "complete", "partial", "stale")
+                or type(groups) is not list or len(groups) > 250
+                or type(samples) is not list or len(samples) > 24):
+            raise ValueError("untrusted blocked queue work sample")
+        if blocked_coverage in ("complete", "partial") and (
+                pressure.get("coverage") == "current" and queue_fresh):
+            groups_by_key = {}
+            for entry in groups:
+                if (type(entry) is not dict
+                        or entry.get("priority") not in ("P0", "P1", "P2", "P3")
+                        or type(entry.get("items")) is not int
+                        or not 1 <= entry["items"] <= 10**9):
+                    raise ValueError("invalid blocked queue project group")
+                pid = _project(entry.get("project_id"))
+                key = (pid, entry["priority"])
+                if key in groups_by_key:
+                    raise ValueError("duplicate blocked queue project group")
+                groups_by_key[key] = entry["items"]
+            sample_by_key = {}
+            for entry in samples:
+                if (type(entry) is not dict
+                        or entry.get("priority") not in ("P0", "P1", "P2", "P3")
+                        or entry.get("current_owner_verified") is not False
+                        or entry.get("resume_authorized") is not False
+                        or entry.get("automatic_retry_authorized") is not False):
+                    raise ValueError("untrusted blocked queue sample item")
+                pid = _project(entry.get("project_id"))
+                key = (pid, entry["priority"])
+                if key not in groups_by_key:
+                    # Partial aggregate cannot license a fabricated count.
+                    continue
+                if len(sample_by_key.get(key, [])) < 2:
+                    sample_by_key.setdefault(key, []).append(entry)
+            candidates = sorted(
+                ((pid, pri, count) for (pid, pri), count in groups_by_key.items()
+                 if pri in ("P0", "P1")),
+                key=lambda item: (0 if item[1] == "P0" else 1,
+                                  -item[2], item[0]),
+            )
+            for pid, pri, count in candidates[:8]:
+                example = sample_by_key.get((pid, pri), [])
+                title = (_short(example[0].get("title"), 65)
+                         if example else None)
+                action = (str(count) + " geblokkeerde queue-items (" + pri +
+                          ") in " + pid + ". Bevoegde taakeigenaar controleert "
+                          "originele blokkade, actuele claim en bestaande PR; "
+                          "GEEN automatische retry, vrijgave of overname.")
+                if title is not None:
+                    action += " Voorbeeld uit beperkte bron: " + title + "."
+                card = _card(
+                    pri, pid, "blocked_queue_owner_review", action,
+                    source="validated_readonly_blocked_queue_aggregate",
+                    ref="https://github.com/Zennay/zCloud/issues/677")
+                card["blocked_items_observed"] = count
+                card["queue_priority_observed"] = pri
+                card["queue_observed_at_utc"] = parsed.isoformat(timespec="seconds")
+                card["blocked_group_source_complete"] = blocked_coverage == "complete"
+                card["claim_owner_verified"] = False
+                card["blocked_work_resume_authorized"] = False
+                cards.append(card)
     issue = decision.get("open_product_issue_triage")
     issue_coverage = "not_requested_or_unavailable"
     if issue is not None:
@@ -1289,6 +1365,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                   "github_refresh_auth_owner_hold": 1,
                   "github_repository_access_owner_hold": 1,
                   "queue_current_owner_review": 2,
+                  "blocked_queue_owner_review": 2,
                   "queue_source_refresh_required": 6,
                   "queue_lease_window_review": 3,
                   "incident_dependency_owner_hold": 4,
