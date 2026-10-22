@@ -454,3 +454,64 @@ geen misleidend nul-label. De herstelwerkbank zelf laat de
 onderliggende taken en huidige worker-slots zien. Alleen de eigenaar
 van een bestaande claim kan die muteren. Geen automatische
 cancel/force/requeue-actie en geen privédataset op een nieuwe API-route.
+
+## 22 oktober · beschermde terminale blokkadesluiting en menselijke Attention
+
+Naast brongebonden hervatten kunnen geautoriseerde operators nu een
+**definitief achterhaalde geparkeerde taak afsluiten** met de expliciete
+knop **Close permanently…**. Dit is geen automatische herstelactie en
+mag alleen worden gebruikt wanneer het oorspronkelijke werk werkelijk
+niet meer hoeft te worden uitgevoerd; een nog bestaande dependency is
+op zichzelf geen sluitreden. De operator voert een concrete
+reden (minimaal 12 tekens) en een tweede bevestiging in.
+De reeds bestaande `POST /api/portfolio-queue`-actie `drop` krijgt
+daarbij de exact waargenomen `status=blocked`, `updated_at`,
+`blocker` en `evidence` mee. De client leest vóór de POST de
+geautoriseerde queue opnieuw en vergelijkt tevens de taakidentiteit,
+claimtijd, worker-slot, lease, prioriteit en oorspronkelijke bron.
+Een andere taakversie of onvolledige autorisatie weigert de sluiting.
+
+**Servercontract:** binnen dezelfde `BEGIN IMMEDIATE`-transactie
+controleert `portfolio_queue_drop` zelf de bronversie en
+afhankelijkheid, de te sluiten status en het ontbreken van iedere
+worker-slot, `claimed_at` of `claim_expires`. Daardoor kan geen
+huidige of inconsistente actieve claim via de generieke `drop`-API
+worden beëindigd. Ook oudere operatorclients zonder de optionele
+bronvelden mogen **alleen niet-geclaimde `queued`/`blocked`**
+taken terminal sluiten; afwijzingen geven HTTP 409 en veroorzaken geen
+refill. Er is geen nieuwe API-privilege: `action_request_allowed`
+en de bestaande netwerkauthorisatie blijven leidend.
+
+Een geldige terminale overgang naar `dropped` bewaart de vorige
+blokkade, vorige evidence en de handmatige actor-/sluitreden in de
+originele queue-evidence. Een afzonderlijke project-state-receipt
+met `source=portfolio_queue_drop` wordt **in diezelfde
+SQLite-transactie** geschreven. Dit is een taakannulering, geen
+bewering dat de volledige project-CI geannuleerd is: de
+`ci_status`-waarde van deze receipt blijft daarom leeg.
+De uitsluitend bijbehorende `queue:<queue_id>` Attention krijgt
+tegelijk `resolved`; alle andere Attention en lopende taken blijven
+onaangeroerd. Het API-antwoord vermeldt afzonderlijk
+`dropped=true`, `status=dropped`, `source_guarded=true` en
+`attention_resolved`. De client accepteert nooit alleen HTTP 200
+als bewijs van succesvolle sluiting.
+
+**Losse waarschuwingen kunnen niet worden weggedrukt:**
+`portfolio_attention_resolve` weigert voortaan een rechtstreeks
+`queue:<id>`-resolve zolang de oorspronkelijke taak nog
+`status=blocked` heeft. Alleen de transactionele hervat- of
+sluitroute ruimt de waarschuwing op. De resume-transactie zelf
+weigert nu ook een vergeten `claimed_at`/worker-slot/lease,
+zelfs bij een oudere client zonder optimistic source guards.
+De bestaande UI gebruikt dezelfde beschermingsvoorwaarden voor
+alle hervat- en sluitknoppen.
+
+**Levergrens:** bovenstaande veranderingen staan uitsluitend op
+bestaande PR #1565, niet automatisch op `main` of productie.
+Bestaande exact-head mandatory CI, onafhankelijke review,
+protected-main en release-autorisatie blijven verplicht. Er zijn
+geen QA- of regressiesuites toegevoegd/gedraaid, geen workflow
+geretriggerd, geen live queue-, Attention-, SQLite-, worker- of
+VPS-mutaties uitgevoerd. De definitieve annulering komt alleen tot
+stand wanneer een afzonderlijke geautoriseerde operator deze
+nieuwe interface ná release bewust gebruikt.
