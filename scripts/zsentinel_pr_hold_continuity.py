@@ -363,10 +363,18 @@ def text_summary(report):
                 or any(type(x) is not str or not 1 <= len(x) <= 150
                        or any(ord(ch) < 32 for ch in x) for x in transitions)):
             raise ValueError("invalid observed PR gate change details")
+        owner_action = row.get("observed_gate_owner_step")
+        if (owner_action is not None and
+                (type(owner_action) is not str
+                 or not 1 <= len(owner_action) <= 280
+                 or any(ord(ch) < 32 for ch in owner_action))):
+            raise ValueError("invalid observed gate owner next step")
         lines.append(row["pr_url"] + " · " + description +
                      (" · geobserveerd: " + ", ".join(labels[x] for x in families)
                       if families else "") +
-                     (" · " + "; ".join(transitions) if transitions else ""))
+                     (" · " + "; ".join(transitions) if transitions else "") +
+                     (" · eigenaaractie: " + owner_action
+                      if owner_action else ""))
     for url in report["previously_sampled_not_current_NOT_MERGED"]:
         lines.append(url + " · niet meer in beperkte steekproef, NIET bewezen gemerged")
     if not report["current_prs"] and not report["previously_sampled_not_current_NOT_MERGED"]:
@@ -419,6 +427,14 @@ def html_panel(report):
         delta = (" · gewijzigd: " + ", ".join(labels[x] for x in families)
                  if families else "")
         detail = (" · " + "; ".join(transitions) if transitions else "")
+        owner_action = item.get("observed_gate_owner_step")
+        if (owner_action is not None and
+                (type(owner_action) is not str or
+                 not 1 <= len(owner_action) <= 280 or
+                 any(ord(ch) < 32 for ch in owner_action))):
+            raise ValueError("invalid private gate owner followup")
+        if owner_action:
+            detail += " · eigenaaractie: " + owner_action
         cards.append(
             '<li><a target="_blank" rel="noopener noreferrer" href="' +
             escape(item["pr_url"], quote=True) + '">' +
