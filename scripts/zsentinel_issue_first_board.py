@@ -227,6 +227,12 @@ def issue_activity_evidence(source_issue, observed_at):
             "activity_age_band": band}
 
 
+def issue_activity_rank(issue):
+    """Tie-break only inside one severity/reuse/project bucket; UNKNOWN is neutral."""
+    return {"CLOCK_SKEW_OR_FUTURE": 0, "STALE": 1, "AGING": 2,
+            "RECENT": 3, "UNKNOWN": 3}.get(issue.get("activity_age_band"), 3)
+
+
 def issue_activity_label(issue):
     band = issue.get("activity_age_band", "UNKNOWN")
     timestamp = issue.get("last_activity_at_utc")
@@ -355,7 +361,7 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
             0 if item["priority"] == "P0" else 1,
             0 if item["linked_prs"] else
             1 if item["candidate_pr_numbers"] else 2,
-            item["repo"].casefold(), item["number"])):
+            item["repo"].casefold(), issue_activity_rank(item), item["number"])):
         level = 0 if issue["priority"] == "P0" else 1
         reuse = (0 if issue["linked_prs"] else
                  1 if issue["candidate_pr_numbers"] else 2)
