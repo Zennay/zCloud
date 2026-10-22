@@ -1,28 +1,30 @@
 {
-  "remote": "vpsarchive:zcloud-vps/archive",
+  "remote": "vpsarchive:zcloud-vps/automatic/cold-storage",
+  "rclone": "/home/ubuntu/.local/bin/rclone",
+  "enable_pruning": true,
   "projects": [
     {
       "name": "fuckball",
-      "root": "/srv/fuckball",
+      "root": "/opt/fuckball-league-training",
       "min_age_days": 30,
       "cold_directories": [
         "archive-ready",
-        "old-runs",
+        "completed-runs",
         "completed-experiments"
       ]
     },
     {
       "name": "haxlab",
-      "root": "/srv/haxlab",
+      "root": "/var/lib/haxlab",
       "min_age_days": 30,
       "cold_directories": [
         "archive-ready",
-        "completed-experiments"
+        "completed-exports"
       ]
     },
     {
       "name": "ftmo",
-      "root": "/srv/ftmo",
+      "root": "/home/ubuntu/Ftmo",
       "min_age_days": 45,
       "cold_directories": [
         "archive-ready",
@@ -31,7 +33,7 @@
     },
     {
       "name": "tradengine",
-      "root": "/srv/tradengine",
+      "root": "/home/ubuntu/tradengine",
       "min_age_days": 45,
       "cold_directories": [
         "archive-ready",
@@ -40,12 +42,12 @@
     },
     {
       "name": "zcloud",
-      "root": "/srv/zcloud",
+      "root": "/home/ubuntu/zennay-cloud",
       "min_age_days": 30,
       "cold_directories": [
         "archive-ready"
       ]
     }
   ],
-  "notes": "Example only. Verify real paths and active writer boundaries before enabling --apply. Keep databases, champions and active training outside cold directories."
+  "notes": "Only explicitly archived, cold, ubuntu-owned regular files are eligible. Never move champion/current/checkpoints, active work, SQLite or locks. Missing directories are skipped. Verify real host paths; configure additional projects in this registry."
 }
