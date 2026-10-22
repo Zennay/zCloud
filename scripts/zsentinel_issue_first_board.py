@@ -1521,7 +1521,10 @@ def main():
                       " uninspected_candidates=" +
                       str(issue_inbox["uninspected_pr_candidate_issues"]) +
                       " unlinked_within_sample=" + str(issue_inbox["unlinked_in_sample"]) +
-                      " coverage=" + issue_inbox["coverage"])
+                      " coverage=" + issue_inbox["coverage"] +
+                      " activity_bands=" + json.dumps(
+                          issue_inbox.get("issue_activity_bands_in_sample", {}),
+                          sort_keys=True))
                 for issue in issue_inbox["items"]:
                     prs = ",".join(
                         "#" + str(pr["number"]) + ":" + pr["status"] +
