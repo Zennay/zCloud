@@ -14,6 +14,8 @@ The first two use `runner_worker_targets(..., reconcile=False)`. The default `re
 
 The existing `GET /api/worker-scaling` report opens the telemetry database through SQLite `mode=ro`; it remains an observation-only report.
 
+**Scope boundary:** this document does not assert that every GET route in the server is read-only. On the current main branch, `GET /api/resource-governor` still calls the default cleanup-capable `resource_status(connection)`. Its separate non-mutating display option and route call are present in [PR #1549](https://github.com/Zennay/zCloud/pull/1549), which remains an independent, unmerged integration candidate. Do not treat that endpoint as fixed on main or live until its own required CI, review and release gates complete.
+
 This does **not** make a GET response proof of a live queue lease, file ownership, successful work completion, or runner recovery. Control paths that legitimately reconcile state retain their existing behavior; this change does not disable those write paths or change authorization.
 
 No queue/claim rows are changed, no worker is dispatched or restarted, and no CI workflow is manually retriggered by the diagnostic endpoints.
