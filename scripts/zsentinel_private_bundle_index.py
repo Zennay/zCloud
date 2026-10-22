@@ -78,12 +78,29 @@ def load_snapshot(directory: Path, stem: str) -> dict:
             "claim_context": row["claim_context"],
             "recommended_next_step": row["recommended_next_step"],
         }
+    # These bounded PR rows were already fully admitted by validated_view().
+    # Do not rely on issue-card links: an observed PR can have zero issue cards.
+    saved_prs = {
+        row["url"]: {
+            "url": row["url"],
+            "head_sha": row["head_sha"],
+            "observed_check_success": row["observed_check_success"],
+            "legacy_context_success": row.get("legacy_context_success"),
+            "observed_approvals": row["observed_approvals"],
+            "mergeable_observed": row["mergeable_observed"],
+            "blocking_unknowns": list(row["blocking_unknowns"]),
+            "source_observed_at_utc": view["project_source_observed_at_utc"].get("prs"),
+            "merge_authorized": False,
+        }
+        for row in board.get("pr_delivery_observations", [])
+    }
     return {
         "stem": stem, "observed": observed,
         "source_times": board["source_times_utc"],
         "source_fresh": board["fresh"],
         "sha256": proof["board_sha256"],
         "projects": projects,
+        "saved_pr_observations": saved_prs,
         "card_count": len(cards),
         "sample_truncated": bool(
             board.get("coverage", {}).get("cards_truncated", True)
@@ -281,6 +298,96 @@ def compare(previous: dict, current: dict) -> str:
     )
 
 
+def saved_pr_table(snapshot: dict) -> str:
+    """Merge-first historical evidence; not an executable release queue."""
+    items = snapshot.get("saved_pr_observations", {})
+    if not items:
+        return ("<p>Geen PR-gatewaarnemingen bewaard. Dit is geen bewijs "
+                "dat er geen open PR's zijn.</p>")
+    rows = []
+    for url, item in sorted(items.items()):
+        blockers = ", ".join(item["blocking_unknowns"]) or "geen in sample"
+        checks = "saved-success" if item["observed_check_success"] else "niet bewezen"
+        rows.append(
+            "<tr><td><a href='" + escape(url, quote=True) +
+            "' target='_blank' rel='noopener noreferrer'>" +
+            escape(url.rsplit("/", 1)[-1]) + "</a></td><td><code>" +
+            escape(item["head_sha"]) + "</code></td><td>" +
+            escape(checks) + "</td><td>" +
+            str(item["observed_approvals"]) + "</td><td>" +
+            escape(blockers) + "</td></tr>"
+        )
+    return (
+        "<details><summary>Opgeslagen exacte PR-gatewaarnemingen (" +
+        str(len(rows)) + "; niet live)</summary><p>Waargenomen checkstatus, "
+        "approvals en blocking unknowns zijn historisch. Zelfs een opgeslagen "
+        "success is geen huidige verplichte CI-, review- of mergevergunning.</p>"
+        "<table><thead><tr><th>PR</th><th>HEAD bij opname</th>"
+        "<th>Check bij opname</th><th>Approvals bij opname</th>"
+        "<th>Onbekende vereisten</th></tr></thead><tbody>" +
+        "".join(rows) + "</tbody></table></details>"
+    )
+
+
+def saved_pr_changes(previous: dict, current: dict) -> dict:
+    before = previous.get("saved_pr_observations", {})
+    after = current.get("saved_pr_observations", {})
+    new = sorted(after.keys() - before.keys())
+    missing = sorted(before.keys() - after.keys())
+    changed = {}
+    for url in sorted(before.keys() & after.keys()):
+        old, latest = before[url], after[url]
+        fields = ("head_sha", "observed_check_success", "legacy_context_success",
+                  "observed_approvals", "mergeable_observed", "blocking_unknowns")
+        differences = {
+            key: {"before": old[key], "after": latest[key]}
+            for key in fields if old[key] != latest[key]
+        }
+        if differences:
+            changed[url] = differences
+    return {
+        "newly_sampled_pr_urls": new,
+        "no_longer_sampled_pr_urls": missing,
+        "changed_pr_fields": changed,
+        "sample_is_current": False,
+        "absence_proves_merge_or_closure": False,
+    }
+
+
+def saved_pr_changes_html(previous: dict, current: dict) -> str:
+    changes = saved_pr_changes(previous, current)
+    new = changes["newly_sampled_pr_urls"]
+    missing = changes["no_longer_sampled_pr_urls"]
+    changed = changes["changed_pr_fields"]
+    def links(urls: list[str]) -> str:
+        return (", ".join("<a target='_blank' rel='noopener noreferrer' href='" +
+                          escape(url, quote=True) + "'>" +
+                          escape(url.rsplit("/", 1)[-1]) + "</a>"
+                          for url in urls) if urls else "geen")
+    lines = []
+    for url, diff in sorted(changed.items()):
+        details = ", ".join(
+            escape(key) + ": " + escape(str(values["before"])) + " → " +
+            escape(str(values["after"])) for key, values in sorted(diff.items())
+        )
+        lines.append("<li><a href='" + escape(url, quote=True) +
+                     "' rel='noopener noreferrer' target='_blank'>" +
+                     escape(url.rsplit("/", 1)[-1]) + "</a>: " +
+                     details + "</li>")
+    return (
+        "<details><summary>Opgeslagen PR-gateverandering (" +
+        str(len(new)) + " nieuw, " + str(len(missing)) +
+        " niet opnieuw gezien, " + str(len(changed)) + " gewijzigd)</summary>"
+        "<p>PR-gates zijn slechts in de opgeslagen steekproef vergeleken; "
+        "afwezig betekent niet gesloten of gemerged. Voer vóór iedere actie "
+        "live exacte-head CI, approvals, claims en branchbescherming na.</p>"
+        "<p>Nieuw gezien: " + links(new) + "</p><p>Niet opnieuw gezien: " +
+        links(missing) + "</p>" +
+        ("<ul>" + "".join(lines) + "</ul>" if lines else "") +
+        "</details>"
+    )
+
+
 def render(snapshots: list[dict], index_name: str) -> str:
     now = datetime.now(timezone.utc)
     # Explicit order by the saved UTC observation, not the caller's filename.
@@ -314,11 +421,13 @@ def render(snapshots: list[dict], index_name: str) -> str:
             ("sample gekort" if snap["sample_truncated"] else
              "sample niet gekort (bron nog steeds begrensd)") +
             "</p><p>" + companions + "</p>" + project_table(snap) +
+            saved_pr_table(snap) +
             "<details><summary>Bronidentiteit en historische bronklokken</summary>"
             "<p>Board SHA-256: <code>" + snap["sha256"] +
             "</code></p><p>" + freshness + "</p></details></article>"
         )
-    deltas = [compare(a, b) for a, b in zip(snapshots, snapshots[1:])]
+    deltas = [compare(a, b) + saved_pr_changes_html(a, b)
+              for a, b in zip(snapshots, snapshots[1:])]
     return (
         "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
