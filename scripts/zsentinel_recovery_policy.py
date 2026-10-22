@@ -389,9 +389,9 @@ def recommended_next_step(action, blockers, required_evidence):
     if "terminal_reason_missing" in codes:
         return "Explain why the exact task is permanently obsolete; an unresolved dependency alone is not a closure reason."
     if codes & {"source_guard_missing", "blocked_task_eligible", "blocked_source_not_parked"}:
-        return "Refresh the complete blocked-task identity, source version and original evidence before terminal action."
+        return "Re-read the exact blocked row, including eligible/status/version and original evidence, before resume or terminal review."
     if codes & {"queue_lease_not_clear", "task_claim_not_clear", "task_claim_source_unknown"}:
-        return "Have the existing owner reconcile queue leases and task claims; never retire an active or unknown claim."
+        return "Have the current owner reconcile both queue leases and separate task claims; never resume or retire an active or unknown claim."
     if codes & {"escalation_reason_missing", "permission_gate_unconfirmed",
                 "irreversible_risk_unconfirmed", "safe_routes_not_exhausted"}:
         return "Confirm the specific permission/risk reason and whether safe routes are exhausted before escalating."
@@ -424,7 +424,7 @@ def recommended_next_step(action, blockers, required_evidence):
         "route_root_fix": "Hand the confirmed root cause and narrow scope to the named owner; implementation remains a separate authorized action.",
         "assign_independent_work": "Have the owner recheck live claims, disjoint scope and capacity before admitting the independent task.",
         "park_blocker": "Have the owner park only the exact dependent task after confirming unrelated ready work; no queue mutation is performed here.",
-        "resume_blocked": "Have the owner recheck the exact task and cleared dependency before explicitly resuming it.",
+        "resume_blocked": "Have the owner recheck the exact blocked, non-eligible row, clear queue lease and separate task claim, and cleared dependency before explicitly resuming it.",
         "close_blocked": "Have the authorized operator re-read the parked task, confirm no claims, and explicitly confirm the terminal decision twice.",
         "escalate_human": "Route the specific permission or risk decision to the named human owner; preserve all existing claims.",
         "merge_pr": "Have the authorized owner recheck exact-head CI, review threads and branch protection before a normal GitHub merge.",
