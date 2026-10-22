@@ -3504,6 +3504,37 @@ def portfolio_queue_recovery_inspect(queue_id):
             "SELECT status,severity,updated_at FROM portfolio_attention WHERE attention_id=?",
             ('queue:'+queue_id,),
         ).fetchone() if row is not None else None)
+        # Bounded, same-snapshot receipt discovery is advisory only. A reply
+        # lost after COMMIT must be reconciled from durable source evidence,
+        # never by blindly repeating a human operator action.
+        receipt_source_available=True
+        recent_receipts=[]
+        if row is not None:
+            try:
+                recent_receipts=c.execute(
+                    """SELECT id,source,observed_at,evidence_json
+                       FROM project_state_receipts
+                       WHERE project_id=? AND source IN
+                         ('portfolio_queue_drop','portfolio_queue_resume_blocked')
+                       ORDER BY id DESC LIMIT 24""",
+                    (str(row['project_id'] or ''),),
+                ).fetchall()
+            except sqlite3.Error:
+                receipt_source_available=False
+    latest_operator_receipt=None
+    for event in recent_receipts:
+        try:
+            proof=json.loads(event['evidence_json'] or '{}')
+        except (ValueError,TypeError):
+            continue
+        if not isinstance(proof,dict) or str(proof.get('queue_id') or '')!=queue_id:
+            continue
+        latest_operator_receipt={
+            'id':int(event['id']),
+            'operation':'close' if event['source']=='portfolio_queue_drop' else 'resume',
+            'observed_at':str(event['observed_at'] or ''),
+        }
+        break
     ts=now()
     if row is None:
         return {'read_only':True,'observed_at':ts,'found':False,
@@ -3544,6 +3575,9 @@ def portfolio_queue_recovery_inspect(queue_id):
             'project_human_gated':human_gate,
             'linked_attention_status':str(attention['status'] or '') if attention is not None else 'not_linked',
             'linked_attention_updated_at':str(attention['updated_at'] or '') if attention is not None else '',
+            'latest_operator_receipt':latest_operator_receipt,
+            'receipt_source_available':receipt_source_available,
+            'receipt_scan_limited':len(recent_receipts)>=24,
             'resume_candidate':resume_candidate,'close_candidate':close_candidate,
             'reason_codes':reasons,
             'note':'Diagnostic snapshot only. A human dependency decision, new source read, '
