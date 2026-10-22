@@ -112,9 +112,17 @@ critical or high pressure. Every receipt includes
 advisory when root capacity is critical; it does not identify files or grant
 cleanup permission. `CAPACITY_THRESHOLDS_NOT_EXCEEDED_NOT_HEALTH_PROOF`
 explicitly prevents a normal capacity snapshot from being mistaken for a
-healthy runner or verified GitHub job assignment. These codes summarize the
-same bounded observation; they are not a task/claim inventory and never
-authorize mutation, takeover, service restart, release, or deployment.
+healthy runner or verified GitHub job assignment.
+
+Listener and worker service-cgroup summaries are evaluated independently.
+For example, a listener observed inside the expected unit does not hide a
+worker observed outside it: the receipt emits `OWNER_RECONCILIATION_REQUIRED`
+plus `WORKER_SERVICE_MEMBERSHIP_MISMATCH`. The corresponding listener code is
+`LISTENER_SERVICE_MEMBERSHIP_MISMATCH`. Mixed membership in either role also
+requires owner reconciliation. These codes do not prove executable identity
+or GitHub assignment. These codes summarize the same bounded observation;
+they are not a task/claim inventory and never authorize mutation, takeover,
+service restart, release, or deployment.
 
 
 
