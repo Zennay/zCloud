@@ -9,6 +9,7 @@ import enhancements
 import project_runtime
 from scripts import worker_scaling_report
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
+from capability_route import choose_execution_route
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -253,6 +254,12 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
         return project_runner_prompt(project_id, name)
     prompt = project_runner_prompt(project_id, name)
     work_package = _worker_work_package_brief(project_id, queue_item)
+    if isinstance(queue_item, dict):
+        route = choose_execution_route(queue_item)
+        if route["tool"] == "zssh_browser":
+            work_package += " Toolroute: zssh_browser via bestaande zSSH-verbinding; alleen gekoppelde target en operator-goedgekeurde acties."
+        elif route["tool"] == "zssh":
+            work_package += " Toolroute: zSSH voor VPS/Git/services; respecteer scopes, approvals en beschikbare connector."
     worker_total = max(1, int(total or 1))
     lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
     lane_id = str(lane.get('lane_id') or '').strip() if isinstance(lane, dict) else ''
