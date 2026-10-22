@@ -210,6 +210,9 @@ def inspect_source(data, repository):
 
 MAX_CROSS_WINDOW_CLUSTERS = 40
 MAX_CLUSTER_EXAMPLE_PATHS = 18
+MAX_CROSS_WINDOW_SCOPE_PAIRS = 80
+MAX_SCOPE_PATH_EXAMPLES = 8
+MAX_SCOPE_PATH_COMPARISONS = 2_000_000
 
 
 def connected_cross_window_groups(all_prs, owners):
@@ -331,6 +334,100 @@ def connected_cross_window_groups(all_prs, owners):
     return cards
 
 
+def cross_window_scope_conflicts(all_prs):
+    """Find bounded file/directory ancestor conflicts between separate snapshots.
+
+    A capped prefix walk keeps pathological portfolios finite. If the cap is
+    reached, reported counts are observations from the scanned prefix only;
+    unseen PR pairs are explicitly UNKNOWN rather than clean.
+    """
+    numbers = sorted(all_prs)
+    ancestors = {}
+    for number in numbers:
+        paths = sorted(all_prs[number]["files"])
+        ancestors[number] = {
+            path: tuple("/".join(path.split("/")[:index])
+                        for index in range(1, len(path.split("/"))))
+            for path in paths
+        }
+    candidates = [
+        (left, right) for index, left in enumerate(numbers)
+        for right in numbers[index + 1:]
+        if all_prs[left]["snapshot"] != all_prs[right]["snapshot"]
+    ]
+    candidates.sort(key=lambda pair: (
+        min(all_prs[pair[0]]["snapshot"], all_prs[pair[1]]["snapshot"]),
+        max(all_prs[pair[0]]["snapshot"], all_prs[pair[1]]["snapshot"]),
+        pair[0], pair[1]))
+    top = []
+    observed_pairs = 0
+    comparisons = 0
+    scan_complete = True
+    per_pr_counts = {number: {"pair_count": 0, "path_conflict_count": 0}
+                     for number in numbers}
+    for left_num, right_num in candidates:
+        left, right = all_prs[left_num], all_prs[right_num]
+        left_paths, right_paths = set(left["files"]), set(right["files"])
+        count, examples = 0, []
+        pair_complete = True
+        for right_path in right["files"]:
+            for ancestor in ancestors[right_num][right_path]:
+                if comparisons >= MAX_SCOPE_PATH_COMPARISONS:
+                    pair_complete = scan_complete = False
+                    break
+                comparisons += 1
+                if ancestor in left_paths:
+                    count += 1
+                    if len(examples) < MAX_SCOPE_PATH_EXAMPLES:
+                        examples.append({
+                            "left_path": ancestor, "right_path": right_path,
+                            "relation": "left_file_conflicts_with_right_descendant",
+                        })
+            if not pair_complete:
+                break
+        if pair_complete:
+            for left_path in left["files"]:
+                for ancestor in ancestors[left_num][left_path]:
+                    if comparisons >= MAX_SCOPE_PATH_COMPARISONS:
+                        pair_complete = scan_complete = False
+                        break
+                    comparisons += 1
+                    if ancestor in right_paths:
+                        count += 1
+                        if len(examples) < MAX_SCOPE_PATH_EXAMPLES:
+                            examples.append({
+                                "left_path": left_path, "right_path": ancestor,
+                                "relation": "right_file_conflicts_with_left_descendant",
+                            })
+                if not pair_complete:
+                    break
+        if count:
+            observed_pairs += 1
+            per_pr_counts[left_num]["pair_count"] += 1
+            per_pr_counts[right_num]["pair_count"] += 1
+            per_pr_counts[left_num]["path_conflict_count"] += count
+            per_pr_counts[right_num]["path_conflict_count"] += count
+            candidate_card = {
+                "left_url": left["url"], "right_url": right["url"],
+                "left_head_sha": left["head_sha"], "right_head_sha": right["head_sha"],
+                "left_base_ref": left["base_ref"], "right_base_ref": right["base_ref"],
+                "left_snapshot": left["snapshot"], "right_snapshot": right["snapshot"],
+                "path_conflict_count_observed": count,
+                "path_conflicts": examples,
+                "path_conflicts_truncated": (count > len(examples) or not pair_complete),
+                "pair_scan_complete": pair_complete,
+                "merge_conflict_verified": False,
+            }
+            top.append(candidate_card)
+            top.sort(key=lambda row: (-row["path_conflict_count_observed"],
+                                      row["left_url"], row["right_url"]))
+            del top[MAX_CROSS_WINDOW_SCOPE_PAIRS:]
+        if not scan_complete:
+            break
+    truncated = (not scan_complete or observed_pairs > MAX_CROSS_WINDOW_SCOPE_PAIRS)
+    return top, observed_pairs, scan_complete, comparisons, per_pr_counts, truncated
+
+
 def combine_sources(sources, repository):
     """One bounded source-reconciliation path for private files or live GETs."""
     if not REPO.fullmatch(repository) or not 2 <= len(sources) <= MAX_INPUTS:
@@ -405,6 +502,9 @@ def combine_sources(sources, repository):
     # Include within-window filename edges when forming a connected graph.
     # A-B within page 1 and B-C on page 2 is ONE product integration group.
     clusters = connected_cross_window_groups(all_prs, owners)
+    (scope_rows, scope_pairs_observed, scope_scan_complete,
+     scope_path_comparisons, scope_counts_by_pr, scope_pairs_truncated) = (
+        cross_window_scope_conflicts(all_prs))
     rows = []
     for (left, right), overlap_count in collisions[:MAX_PAIRS]:
         a, b = all_prs[left], all_prs[right]
@@ -434,6 +534,8 @@ def combine_sources(sources, repository):
             "snapshot": pr["snapshot"],
             "cross_window_file_pair_count": 0,
             "cross_window_shared_file_count": 0,
+            "cross_window_scope_pair_count": scope_counts_by_pr[number]["pair_count"],
+            "cross_window_scope_path_conflict_count": scope_counts_by_pr[number]["path_conflict_count"],
             "cross_window_number_hint_count": 0,
             "claim_authorized": False, "merge_authorized": False,
         }
@@ -448,9 +550,12 @@ def combine_sources(sources, repository):
     ranking = sorted(
         (row for row in by_pr.values()
          if row["cross_window_file_pair_count"]
+            or row["cross_window_scope_pair_count"]
             or row["cross_window_number_hint_count"]),
         key=lambda row: (-row["cross_window_file_pair_count"],
+                         -row["cross_window_scope_pair_count"],
                          -row["cross_window_shared_file_count"],
+                         -row["cross_window_scope_path_conflict_count"],
                          -row["cross_window_number_hint_count"],
                          row["pr_number"]))
 
@@ -471,6 +576,11 @@ def combine_sources(sources, repository):
             for t in (min(times), max(times))],
         "cross_snapshot_file_collision_pairs_observed": len(collisions),
         "shown_collision_pairs": rows,
+        "cross_window_scope_conflict_pairs_observed": scope_pairs_observed,
+        "shown_cross_window_scope_conflict_pairs": scope_rows,
+        "cross_window_scope_scan_complete": scope_scan_complete,
+        "cross_window_scope_path_comparisons": scope_path_comparisons,
+        "cross_window_scope_conflicts_truncated": scope_pairs_truncated,
         "connected_cross_window_groups_observed": len(clusters),
         "shown_connected_cross_window_groups": clusters[:MAX_CROSS_WINDOW_CLUSTERS],
         "connected_cross_window_groups_truncated":
