@@ -459,8 +459,14 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1):
         "display_omitted_sample_issues": len(issues) - len(chosen),
         "display_has_next_sample_page": display_page < sampled_display_pages,
         "display_has_previous_sample_page": display_page > 1,
+        # "full" means the recent issue inventory actually finished with
+        # stable coverage, not that the three-page budget was exhausted.
         "source_window_full": (
-            recent_window_truncated and source_error is None
+            pages_read > 0 and source_error is None
+            and not provider_incomplete and not recent_provider_count_drift
+            and not recent_window_truncated
+            and not recent_duplicate_issue_records
+            and not invalid_excluded
         ),
         "source_partial_or_unknown": (
             bool(source_error) or provider_incomplete or recent_provider_count_drift
