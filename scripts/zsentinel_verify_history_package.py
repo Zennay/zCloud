@@ -430,7 +430,7 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
     attention = latest.get("historical_attention_order")
     if project is not None:
         if (type(project) is not str or re.fullmatch(
-                r"Zennay/[A-Za-z0-9_.-]{1,100}", project) is None
+                r"[a-z][a-z0-9_-]{0,63}", project) is None
                 or project not in projects):
             raise ValueError("selected project absent from latest saved source")
         attention = [row for row in attention if row["project"] == project]
@@ -455,8 +455,14 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
         "",
         "Origineel opgeslagen bundelmoment: " +
             safe(latest["saved_board_observed_at_utc"]) + ".",
-        "Historische bronleeftijd: " + safe(age["source_age_hours"]) +
-            " uur; status: " + safe(age["source_age_status"]) + ".",
+        "Oudste onderliggende bron in laatste bundel: " +
+            safe(age["source_age_hours"]) + " uur; status: " +
+            safe(age["source_age_status"]) + ".",
+        "Leeftijd van de laatst gemaakte board: " +
+            safe(age["latest_board_age_hours"]) + " uur.",
+        "Verouderde of bij opname al onverse bronsoorten: " +
+            safe(", ".join(age["stale_or_not_fresh_at_capture_sources"])
+                 or "geen onder de aanwezige bronnen") + ".",
         "Bronbundel: `" + safe(latest["bundle"]) + "`.",
         "Bronboard SHA-256: `" + safe(latest["board_sha256"]) + "`.",
         "",
@@ -496,12 +502,54 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
                 " en bevoegdheid opnieuw.",
             "",
         ])
+        # Saved issue identifiers are canonical owner/repository#number, not
+        # live GitHub issue states. Build links only from this admitted shape.
+        issues = raw.get("sampled_issue_ids", [])
+        if type(issues) is not list or len(issues) > 60:
+            raise ValueError("invalid saved issue sample")
+        lines.append("Opgeslagen issueverwijzingen (niet bewezen actueel):")
+        for issue in issues[:20]:
+            if (type(issue) is not str or re.fullmatch(
+                    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}",
+                    issue) is None):
+                raise ValueError("invalid canonical saved issue identity")
+            repo_name, number = issue.rsplit("#", 1)
+            lines.append("- " + safe(issue) + " — https://github.com/" +
+                         repo_name + "/issues/" + number)
+        if len(issues) > 20:
+            lines.append("- " + str(len(issues) - 20) +
+                         " overige issueverwijzingen niet getoond.")
+        if not issues:
+            lines.append("- Geen issueverwijzing in dit opgeslagen sample;"
+                         " actuele backlog onbekend.")
+        lines.append("")
     prs = latest.get("saved_pr_observations")
     if type(prs) is not list or len(prs) > 5:
         raise ValueError("unbounded saved merge-first PR observations")
     if project is not None:
-        prs = [pr for pr in prs
-               if pr["url"].startswith("https://github.com/" + project + "/pull/")]
+        selected = projects[project]
+        # Project IDs are lowercase internal registry slugs (e.g. "supa"),
+        # never GitHub "Zennay/Supa". Bind relevant PRs only through actual
+        # sampled canonical issue and PR references from that project.
+        observed_repositories = set()
+        for issue in selected.get("sampled_issue_ids", []):
+            if type(issue) is not str or re.fullmatch(
+                    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}",
+                    issue) is None:
+                raise ValueError("invalid issue for selected project")
+            observed_repositories.add(issue.rsplit("#", 1)[0])
+        for candidate in selected.get("sampled_pr_candidate_urls", []):
+            if type(candidate) is not str:
+                raise ValueError("invalid selected PR candidate")
+            match = re.fullmatch(
+                r"https://github[.]com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"
+                r"/pull/[1-9][0-9]{0,8}", candidate)
+            if match is None:
+                raise ValueError("noncanonical selected PR candidate")
+            observed_repositories.add(match.group(1))
+        prs = [pr for pr in prs if any(
+            pr["url"].startswith("https://github.com/" + name + "/pull/")
+            for name in observed_repositories)]
     lines.extend([
         "## Historische merge-first kandidaten",
         "",
@@ -638,8 +686,8 @@ def main(argv=None):
                         help="Create one owner-private Markdown worklist from "
                              "verified saved source data; never print source notes")
     parser.add_argument("--owner-brief-project",
-                        help="Restrict owner brief to one canonical Zennay/project "
-                             "seen in the latest original source sample")
+                        help="Restrict owner brief to an exact internal project "
+                             "ID from the saved sample, e.g. supa or zcloud")
     args = parser.parse_args(argv)
     try:
         archive = private_archive_bytes(args.source)
