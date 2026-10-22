@@ -164,12 +164,16 @@ def owner_review_suggestions(portfolio, maximum=6):
 
 def psi_html_table(psi):
     """Private, bounded table of direct kernel stalls; UNKNOWN is not zero."""
-    if not isinstance(psi, dict) or psi.get("status") != "OBSERVED":
+    if not isinstance(psi, dict) or psi.get("status") not in ("OBSERVED", "PARTIAL"):
         return "<p class='warn'>PSI onvolledig/onbekend: kernelbron niet betrouwbaar.</p>"
     resources = psi.get("resources") or {}
     rows = []
     for key, label in (("cpu", "CPU"), ("memory", "Geheugen"), ("io", "I/O")):
         detail = resources.get(key) or {}
+        source_observed = (
+            detail.get("status") == "OBSERVED"
+            and isinstance(detail.get("measurements"), dict)
+        )
         values = detail.get("measurements") or {}
         some = values.get("some") or {}
         full = values.get("full") or {}
@@ -180,21 +184,45 @@ def psi_html_table(psi):
         contrasts = (psi.get("window_contrast") or {}).get(key) or {}
         delta = contrasts.get("some_delta_pp")
         short_long = (
-            f"{delta:+.2f} procentpunt" if type(delta) in (int, float)
-            and -100 <= delta <= 100 else "Onbekend"
+            f"{delta:+.2f} procentpunt" if source_observed
+            and type(delta) in (int, float) and -100 <= delta <= 100
+            else "Onbekend"
+        )
+        full_cell = (
+            "Niet gebruikt" if key == "cpu" and source_observed
+            else cell(full.get("avg60_pct")) if source_observed
+            else "Onbekend"
         )
         rows.append(
             "<tr><th scope='row'>" + label + "</th><td>"
-            + cell(some.get("avg10_pct")) + "</td><td>"
-            + cell(some.get("avg60_pct")) + "</td><td>"
-            + cell(some.get("avg300_pct")) + "</td><td>"
-            + (cell(full.get("avg60_pct")) if key != "cpu" else "Niet gebruikt")
-            + "</td><td>" + short_long + "</td></tr>"
+            + (cell(some.get("avg10_pct")) if source_observed else "Onbekend") + "</td><td>"
+            + (cell(some.get("avg60_pct")) if source_observed else "Onbekend") + "</td><td>"
+            + (cell(some.get("avg300_pct")) if source_observed else "Onbekend") + "</td><td>"
+            + full_cell + "</td><td>" + short_long + "</td></tr>"
         )
+    coverage_note = ""
+    if psi.get("status") == "PARTIAL":
+        hint = psi.get("pressure_hint", "UNKNOWN")
+        basis = [
+            item for item in psi.get("pressure_basis", [])
+            if item in ("cpu", "memory", "io")
+        ]
+        if hint in ("HIGH", "ELEVATED") and basis:
+            coverage_note = (
+                "<p class='warn'>PSI gedeeltelijk: waargenomen bron(nen) tonen "
+                + html.escape(hint) + " druk (" + html.escape(", ".join(basis))
+                + "); ontbrekende bronnen blijven onbekend. Dit is geen volledige hostmeting.</p>"
+            )
+        else:
+            coverage_note = (
+                "<p class='warn'>PSI gedeeltelijk: geen drukdrempel aangetoond "
+                "in de waargenomen bronnen; ontbrekende bronnen kunnen druk verbergen.</p>"
+            )
     return (
         "<p>Linux PSI: percentage tijd met taakvertraging. CPU-full is "
         "niet betrouwbaar vergelijkbaar en wordt niet als bewijs gebruikt.</p>"
-        "<div class='scroll'><table><thead><tr><th>Bron</th>"
+        + coverage_note
+        + "<div class='scroll'><table><thead><tr><th>Bron</th>"
         "<th>Deels wachtend 10s</th><th>Deels wachtend 60s</th>"
         "<th>Deels wachtend 300s</th><th>Volledig stil 60s</th>"
         "<th>Verschil 10s - 300s</th>"
