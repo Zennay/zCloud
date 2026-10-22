@@ -1029,6 +1029,10 @@ def main():
             notion_registry=args.registry,
             notion_export_path=args.notion_claims_export,
             observe_vps=args.observe_vps_capacity,
+            # Same opt-in archive target as the private disk readiness report.
+            # Explicitly pass it into the capacity evidence on this host;
+            # neither source grants offload, cleanup or restart authority.
+            archive_target=(args.archive_target if args.observe_vps_capacity else None),
             queue_snapshot=queue,
             pinned_issues=args.pin_issue,
             worker_events_database=args.worker_events_database,
