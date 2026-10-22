@@ -55,18 +55,28 @@ def observe_host_pressure():
             free_gib, unavailable_pct, mem_available_mib,
             mem_total_mib, swap_free_mib, swap_total_mib))
             or not 0 <= unavailable_pct <= 100
+            or swap_free_mib > swap_total_mib
             or (inode_pct is not None and not 0 <= inode_pct <= 100)):
         raise ValueError("invalid root capacity counters")
-    # Keep the severity strictly about the measured host headroom.
-    # It cannot establish which process filled disk or stalled a runner.
+    # A configured but nearly exhausted swap device is meaningful pressure;
+    # zero-sized swap is a configuration state, not a depleted resource.
+    swap_status = "NO_SWAP_CONFIGURED" if swap_total_mib == 0 else "OBSERVED"
+    swap_free_ratio = (
+        swap_free_mib / swap_total_mib if swap_total_mib > 0 else None)
+    critical_swap = (
+        swap_free_ratio is not None and swap_free_ratio <= 0.05)
+    constrained_swap = (
+        swap_free_ratio is not None and swap_free_ratio <= 0.15)
+    # Keep the severity strictly about measured host headroom. It cannot
+    # establish which process filled disk or stalled a runner.
     critical_inodes = inode_pct is not None and inode_pct >= 95
     constrained_inodes = inode_pct is not None and inode_pct >= 90
     pressure = ("critical_headroom_observed"
                 if free_gib < 2 or unavailable_pct >= 95 or critical_inodes
-                or mem_available_mib < 512 else
+                or mem_available_mib < 512 or critical_swap else
                 "constrained_headroom_observed"
                 if free_gib < 4 or unavailable_pct >= 90 or constrained_inodes
-                or mem_available_mib < 1024 else
+                or mem_available_mib < 1024 or constrained_swap else
                 "no_critical_pressure_in_this_sample")
     return {
         "schema": SCHEMA,
@@ -80,6 +90,7 @@ def observe_host_pressure():
         "mem_total_mib": math.floor(mem_total_mib),
         "swap_free_mib": math.floor(swap_free_mib),
         "swap_total_mib": math.floor(swap_total_mib),
+        "swap_status": swap_status,
         "github_assignment_verified": False,
         "runner_process_cause_verified": False,
         "runner_safe_idle_verified": False,
@@ -122,8 +133,12 @@ def owner_summary(observation):
     root_free = observation["root_available_gib"]
     memory = observation["mem_available_mib"]
     inodes = observation.get("root_inode_unavailable_percent")
-    if (root_used > 100 or observation["mem_total_mib"] < memory
-            or observation["swap_total_mib"] < observation["swap_free_mib"]
+    swap_total = observation["swap_total_mib"]
+    swap_free = observation["swap_free_mib"]
+    expected_swap_status = "NO_SWAP_CONFIGURED" if swap_total == 0 else "OBSERVED"
+    if (observation.get("swap_status", expected_swap_status) != expected_swap_status
+            or root_used > 100 or observation["mem_total_mib"] < memory
+            or swap_total < swap_free
             or inodes is not None and
             (type(inodes) not in (int, float) or
              not math.isfinite(inodes) or not 0 <= inodes <= 100)):
@@ -131,8 +146,12 @@ def owner_summary(observation):
     inode_label = (
         " · inodes niet beschikbaar"
         if inodes is None else " · inodes bezet " + str(inodes) + "%")
+    swap_label = (
+        " · swap niet geconfigureerd"
+        if expected_swap_status == "NO_SWAP_CONFIGURED"
+        else " · swap vrij " + str(swap_free) + "/" + str(swap_total) + " MiB")
     guidance = (
-        "Hosteigenaar controleert volumes, bezette ruimte en bestaande jobs "
+        "Hosteigenaar controleert rootdisk, inodes, geheugen/swap en bestaande jobs "
         "vóór een eventueel herstel; GEEN cleanup, jobstop of herstart vanuit deze kaart."
         if observation["pressure_observation"] == "critical_headroom_observed"
         else "Gebruik actuele GitHub runner-/jobidentiteit voor vervolgcontrole; "
@@ -141,7 +160,7 @@ def owner_summary(observation):
     return (
         "Hostdruk (" + observation["pressure_observation"] + "): "
         + str(root_free) + " GiB vrij, schijf bezet " + str(root_used)
-        + "%, geheugen vrij " + str(memory) + " MiB" + inode_label
+        + "%, geheugen vrij " + str(memory) + " MiB" + inode_label + swap_label
         + ". " + guidance
         + " Oorzaak, registratie en runner-herstel zijn NIET bewezen."
     )
