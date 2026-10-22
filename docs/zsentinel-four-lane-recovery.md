@@ -1,3 +1,20 @@
+## 22 October 2026 — onbekend runnerproces kan geen complete afwezigheidswaarneming opleveren
+
+De read-only `scripts/zsentinel_runner_presence.py` markeert de procfs-bron nu
+als **onvolledig** wanneer de kernel `comm` een `Runner.Listener` of
+`Runner.Worker` aanwijst, maar de begrensde `argv0`-fallback het proces niet
+aan een bekende runnerfamilie en dezelfde rol kan binden. Eerder werd zo'n
+proces stil overgeslagen, terwijl `source_complete=true` kon blijven en
+een lege listenersteekproef daardoor te sterk kon lijken.
+
+De operator ziet nu alleen een begrensd aantal niet-classificeerbare
+runnerprocessen en een vaste waarschuwing; er worden geen PID's,
+argumenten, omgevingsvariabelen of executable-paden getoond. De onvolledige
+bron verhindert conclusies over listener-afwezigheid en houdt de
+zCloud-servicecgroupwaarneming conservatief. Dit is observatie, geen bewijs
+van GitHub-registratie of jobtoewijzing en geen autorisatie voor restart,
+retry, claim of deploy. Er is geen QA-suite geschreven of gedraaid.
+
 ## 22 oktober 2026 · hostbrondekking als zelfstandige HTML-tabel
 
 De offline herstelcockpit toont nu een afzonderlijke tabel voor de vier vaste
