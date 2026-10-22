@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Read-only GitHub PR/merge/Actions activity for zCloud issue #1518.
+"""Read-only GitHub PR/merge/branch/commit/Actions activity for zCloud issue #1518.
 
+Branch refs are bounded and hashed; a tip commit timestamp is not a ref-update
+timestamp. See docs/zcloud-github-activity-source.md for coverage semantics.
 Run locally or in an approved backend process. No SQLite, queue, deploy, browser,
 credential persistence, HTML scraping, or runtime/owner mutation.
 """
@@ -335,6 +337,7 @@ def bounded_events(
             })["data"]
             if not isinstance(rows, list):
                 raise ValueError("github_branches_invalid")
+            coverage["pages"]["branches"] = page
             for branch in rows:
                 if not isinstance(branch, dict):
                     raise ValueError("github_branches_invalid")
@@ -363,7 +366,6 @@ def bounded_events(
                     url=f"https://github.com/{repo}/commit/{sha}",
                     deploy_verified=False, worker_resumed=False,
                 )
-            coverage["pages"]["branches"] = page
             if len(rows) < 100:
                 break
             if page == MAX_BRANCH_PAGES:
