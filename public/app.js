@@ -768,6 +768,11 @@ function blockedQueuePanel(){
   const items=loaded?BLOCKED_QUEUE.filter(item=>item&&item.status==='blocked').sort(
     (a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9)):[];
   const total=items.length;
+  const claimStateSummary=loaded
+    ?'<p class="blocked-queue-claim-summary">Queue and separate task-claim fields clear: '
+      +items.filter(blockedQueueIsParked).length+' · owner/claim/source review required: '
+      +(total-items.filter(blockedQueueIsParked).length)
+      +'. Clear fields are not a dependency-resolution or resume authorization.</p>':'';
   const observation=blockedQueueTime(blockedQueueObservedAt);
   const freshness=claimChurnSnapshotFreshness();
   const projectIds=[...new Set(items.map(item=>String(item.project_id||'')))].filter(Boolean).sort();
@@ -838,7 +843,7 @@ function blockedQueuePanel(){
               ?'No P0/P1 parked tasks were returned in this loaded queue sample.'
               :'No dependency-blocked tasks were returned in this queue sample.')
         +' A failed read is never shown as zero.</p>';
-  return '<section class="blocked-queue-panel"><div class="blocked-queue-head"><div><span class="eyebrow">DEPENDENCY HOLDS</span><h2>'+(loaded?total+' parked task'+(total===1?'':'s'):'Parked tasks')+'</h2><p>Only the dependent task is parked. Independent work can continue; resume requires an explicit operator note that the dependency is cleared.</p></div><span class="blocked-queue-count">'+(loaded?total:'—')+'</span></div>'
+  return '<section class="blocked-queue-panel"><div class="blocked-queue-head"><div><span class="eyebrow">DEPENDENCY HOLDS</span><h2>'+(loaded?total+' parked task'+(total===1?'':'s'):'Parked tasks')+'</h2><p>Only the dependent task is parked. Independent work can continue; resume requires an explicit operator note that the dependency is cleared.</p>'+claimStateSummary+'</div><span class="blocked-queue-count">'+(loaded?total:'—')+'</span></div>'
     +(loaded&&total?'<div class="blocked-queue-state"><label class="blocked-queue-project-label">Project <select data-blocked-project aria-label="Filter parked tasks by project">'+projectOptions+'</select></label>'
       +'<label class="blocked-queue-search-label">Search <input type="search" data-blocked-search aria-label="Search loaded parked tasks by title, project or dependency" maxlength="120" autocomplete="off" placeholder="Task or dependency" value="'+esc(blockedQueueSearch)+'"></label>'
       +'<button type="button" data-blocked-toggle-urgent aria-pressed="'+blockedQueueUrgentOnly+'">'
