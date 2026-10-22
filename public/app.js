@@ -761,7 +761,8 @@ function ownerIntegrityPanel(projectId=''){
     return '<article class="owner-integrity-item"><div class="owner-integrity-item-top">'
       +'<strong>'+esc(String(item.title||item.queue_id||'Unidentified queue task'))+'</strong>'
       +'<span>'+esc(item.priority||'UNKNOWN')+' · '+esc(item.status)+'</span></div>'
-      +'<small>'+esc(name)+' · '+signals.length+' warning'+(signals.length===1?'':'s')
+      +'<small>'+(freshness.state==='recent_observation'?'Current observation · ':'Historical/unknown observation · ')
+      +esc(name)+' · '+signals.length+' warning'+(signals.length===1?'':'s')
       +' · '+(Number.isSafeInteger(item.attempts)?item.attempts+' observed claims':'claim count unknown')+'</small>'
       +'<ul>'+signals.map(signal=>'<li><b>'+esc(signal.code.replaceAll('_',' '))+'</b>: '+esc(signal.description)+'</li>').join('')+'</ul>'
       +(source?'<a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Inspect original GitHub issue/PR ↗</a>':'')
@@ -769,9 +770,13 @@ function ownerIntegrityPanel(projectId=''){
   }).join('');
   return '<section class="owner-integrity-panel" aria-label="Queue owner integrity">'
     +'<div class="owner-integrity-head"><div><span class="eyebrow">OWNER INTEGRITY · READ ONLY</span>'
-    +'<h2>'+all.length+' task'+(all.length===1?'':'s')+' requiring owner review</h2>'
-    +'<p>Every queue item is screened, including first claims. Warnings are observations, not permission to take over.</p>'
-    +'</div><a href="https://github.com/Zennay/zCloud/issues/677" target="_blank" rel="noopener noreferrer">Queue lifecycle issue #677 ↗</a></div>'
+    +'<h2>'+(freshness.state==='recent_observation'?'':'Last observed: ')+all.length+' task'+(all.length===1?'':'s')+' with owner-integrity warning'+(all.length===1?'':'s')+'</h2>'
+    +'<p>Every loaded queue item is screened, including first claims. '
+      +(freshness.state==='recent_observation'
+        ?'Current snapshot warnings require the actual owner to review.'
+        :'This snapshot is stale/unknown. Current ownership cannot be inferred.')+
+      ' No warning permits a claim takeover or retry.</p>'
+    +'</div><span class="reduced">Canonical source links are per task only.</span></div>'
     +(projectId?'':'<div class="owner-integrity-filters"><label>Project <select data-owner-integrity-project aria-label="Filter owner-integrity warnings by project">'+projectOptions+'</select></label><button type="button" data-owner-integrity-priority aria-pressed="'
       +ownerIntegrityUrgentOnly+'">'+(ownerIntegrityUrgentOnly?'Show all priorities':'Only P0/P1')+'</button>'
       +'<button type="button" data-owner-integrity-export'+(matching.length?'':' disabled')+'>Export private owner handoff</button></div>')
