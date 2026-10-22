@@ -1,3 +1,12 @@
+## 22 oktober 2026 · lane-kaarten benoemen onvolledige hostbronnen
+
+De concrete toelichting op iedere wachtende lane bevat nu, naast de algemene
+hostdrukmelding, de exacte vaste broncategorieën die `UNKNOWN` of `PARTIAL`
+zijn. Dat maakt de HOLD direct bruikbaar vanaf de lane-kaart, zonder dat de
+operator eerst een apart rapport hoeft te openen. Bij volledig gemeten druk
+blijft de bestaande eigenaaractie ongewijzigd. Dit is alleen weergave/advies:
+geen worker-toelating, claim, queue, runner of service wordt aangepast.
+
 ## 22 oktober 2026 · urgente drukmelding toont óók ontbrekende bronnen
 
 Wanneer een bekende HIGH/ELEVATED-drukbron samengaat met gedeeltelijke
