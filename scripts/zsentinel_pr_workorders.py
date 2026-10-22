@@ -490,7 +490,10 @@ def _coordination_groups(cards):
         for peer_url in card["related_prs"]:
             # Unpinned overlap hints cannot be treated as exact collisions.
             if peer_url not in [row[0] for row in observed]:
-                external_peers[source].add(peer_url)
+                if peer_url not in by_url:
+                    external_peers[source].add(peer_url)
+                # A related selected PR without a pinned pair is still an
+                # unresolved source gap, not an external PR or safe wave.
                 missing_or_partial = True
 
     components = {}
