@@ -1078,3 +1078,30 @@ The dedicated CLI `scripts/zsentinel_portfolio_issue_desk.py` also accepts `--pr
 **Interpretation is intentionally conservative.** The comparison reports `NEWLY_OBSERVED_NOT_PROVEN_NEW`, `OBSERVED_PRIORITY_CHANGE`, `PERSISTENT_P0_P1_WITHOUT_GITHUB_ISSUE_UPDATE` (only if the same labelled P0/P1 issue is in both samples, its GitHub issue timestamp is unchanged, and observations are at least six hours apart), and `NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED`. Persistent GitHub issue metadata is not proof that coding, CI, review or worker activity stalled. A card disappearing from a limited window never means its issue was closed, its fix merged or its worker released. Both source windows must have been readable for a repository to compare it; an inaccessible repo stays UNKNOWN. The per-repository source transition also distinguishes GITHUB_SOURCE_LOST, GITHUB_SOURCE_RESTORED_NOT_BACKLOG_CLEARED, SOURCE_UNAVAILABLE_IN_BOTH_SNAPSHOTS, changed coverage and uninterrupted readable sources. Each transition has an explicit unexecuted human source action, including CSV source-transition rows. Returning GitHub access does not prove that blocked tasks or old issues have been resolved. The tool does not recheck historical issue state with extra GitHub API calls, infer claim ownership, retry workflows, grant reviews, merge, deploy or touch the VPS.
 
 A comparison has a bounded 100-card operator window, counts and explicit omitted-card totals. Its output is **advisory only**, with `issues_resolved_or_closed_verified=false`, `ownership_claims_verified=false`, `ci_or_review_verified=false`, `merge_or_deploy_authorized=false`, and `actions_executed=false`. It is a planning aid, not an authority source. For actual action, recheck present claims, the exact existing PR, its exact-head mandatory checks, review, branch protection and owner authorization directly.
+
+### Create the readable report and its next historical source in one pass
+
+A separate GitHub fetch is **not** necessary just to preserve the source for tomorrow's comparison. Use the canonical recovery CLI with a second, previously non-existing private JSON filename:
+
+```sh
+python3 scripts/zsentinel_recovery_policy.py \
+  --portfolio-repo Zennay/zCloud --portfolio-repo Zennay/Supa \
+  --portfolio-view explicit-critical \
+  --format html --output /private/path/desk-22.html \
+  --portfolio-snapshot-output /private/path/snapshot-22.json
+```
+
+On the next operator run, use the previous JSON and produce both the new visible report and another reusable snapshot from **one bounded source observation**:
+
+```sh
+python3 scripts/zsentinel_recovery_policy.py \
+  --portfolio-repo Zennay/zCloud --portfolio-repo Zennay/Supa \
+  --portfolio-view explicit-critical \
+  --portfolio-previous-snapshot /private/path/snapshot-22.json \
+  --format html --output /private/path/desk-23.html \
+  --portfolio-snapshot-output /private/path/snapshot-23.json
+```
+
+The direct `scripts/zsentinel_portfolio_issue_desk.py` command offers the equivalent `--snapshot-output` option. The two private outputs are produced from the **same** already bounded GitHub reads, with the raw source snapshot explicitly excluding any nested history comparison. JSON/HTML/Markdown/CSV are valid report formats; only `.json` is accepted for the paired snapshot. Both filenames must be distinct, be newly created (no overwrites), belong to safe existing owner-controlled directories, be size-bounded to 128 KiB, and be mode 0600. Output bytes and bounds are checked before creating either file. When the second artifact fails after the first snapshot was written (for example, because the report destination already exists), only the first snapshot may remain: this is preserved source evidence, **not** a successful paired report or a completed operational handoff. The command returns a failure and should be retried with new unused report filenames after resolving the path issue.
+
+This snapshot is **not a new GitHub permission or independent claim attestation**: it records what the bounded live issue reader observed, still limited to 2–6 explicit repositories and sample windows. Any source errors remain UNKNOWN; no issue disappearance is interpreted as closure. No runner, worker, notifier, queue writer, retry, CI workflow or production deploy is invoked.
