@@ -654,14 +654,17 @@ afwijzingen begrijpelijk uit en laat de actuele eigenaar beslissen.
 Eerdere queue-ID's, project- of bestandsclaims worden niet
 automatisch herverdeeld.
 
-De bestaande `resume_blocked` accepteert optionele broncontroles
-voor oudere clients, maar vereist **alle** drie velden
-(`expected_updated_at`, `expected_blocker`,
-`expected_evidence`) zodra een client er één levert.
-Zo kan geen gedeeltelijke hedendaagse hercontrole onopgemerkt een
-andere blocker bevestigen. Volledig onbewaakte legacyverzoeken blijven
-onder de bestaande beheerclientautorisatie; die compatibiliteitsroute
-vormt geen zelfstandige verificatie van een dependency.
+De bestaande `resume_blocked` accepteert volledig onbewaakte
+verzoeken van oudere, geautoriseerde beheerclients maar vereist bij
+**elke** brongebonden bevestiging dezelfde volledige
+bronversie en taakidentiteit:
+`expected_updated_at`, `expected_project_id`, `expected_title`,
+`expected_priority`, `expected_source_url`, `expected_blocker`
+en `expected_evidence`. Deze gegevens worden vóór hervatten
+in dezelfde SQLite-schrijftransactie vergeleken.
+Geen gedeeltelijke nieuwe broncontrole kan ongemerkt een andere
+taak of andere blocker bevestigen. De legacycompatibiliteitsroute
+vormt nog steeds geen zelfstandige verificatie van een dependency.
 Bij daadwerkelijk hervatten bevat de project-receipt niet langer
 `ci_status=queued`: een queueovergang is geen nieuw CI-resultaat.
 
