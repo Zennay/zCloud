@@ -1,5 +1,38 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · volledige PR-dekking is óók volledige conflictvoorvertoning
+
+De bestaande live scopegraph kon een **volledige PR-steekproef** melden
+terwijl het aantal waargenomen bestand/map-ancestorpaden de maximale
+24 voorbeelden per PR-paar overschreed. De volledige waarneming van PR's en
+filenames was dan wel beschikbaar, maar de operator kon een deel van de
+daadwerkelijk gevonden conflictparen niet zien. De oude
+`pr_file_scope_sample_complete=true` verhulde die grens.
+
+De productfix behandelt nu iedere afgekapt-geobserveerde padvoorvertoning
+als **ONVOLLEDIGE operatorbron**. De bron geeft een begrensde lijst
+`source_coverage_reasons` terug met de concrete oorzaak: verschoven
+PR-window, onvolledige gewijzigde bestanden, afgekapt gedeelde-bestandpaar,
+afgekapt padpaar of padvoorbeeld, afgekapt Unicode/case-alias of een
+veranderde/gedupliceerde PR-bron. Een 'vrij' lijkende ongepaarde PR wordt
+niet geadverteerd wanneer de bron onvolledig is.
+
+Dezelfde redenen staan nu in de directe tekst-, Markdown- en offline
+HTML-graph; het portfolio-board neemt ze per project over, maakt
+`source_status=partial_open_pr_sample` expliciet en toont een concrete
+menselijke inspectieactie. Het portfolio suggereert dus niet langer dat
+alleen **andere PRs** ontbreken: ook al bekende conflictdetails kunnen
+afgekapt zijn. Wanneer de bron volledig is, blijven de normale
+bestaande waarnemingen behouden.
+
+Dit is alleen een read-only herstel van de operatorweergave: ook volledige
+PR-dekking bewijst geen actieve Notion/workerlease, branch protection,
+independent review, echte Git-mergeconflicten of release-autorisatie.
+Deze wijzigingen starten geen CI, claim, queuewrite, workflow, merge,
+runnerrestart of deploy. Verplichte exact-head CI/reviews blijven bestaan.
+
+
+
 ## 22 oktober · cross-platform padaliaswaarschuwingen in de bestaande PR-scopewerkbak
 
 De bestaande PR-scopecollector maakt nu een **afzonderlijke, begrensde
