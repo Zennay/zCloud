@@ -34,6 +34,8 @@ MAX_MULTI_PAGES = 3
 MAX_MULTI_PRS = 48
 MAX_INSPECT = 48
 MAX_PATHS = 12
+MAX_COVERAGE_REASON_DISPLAY = 16
+MAX_COVERAGE_REASON_SCAN = 64
 MAX_SOURCE_FILES = 80
 SHA = re.compile(r"^[a-f0-9]{40}$")
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
@@ -88,12 +90,14 @@ COVERAGE_REASON_LABELS = {
 
 
 def coverage_reason_text(reasons):
-    """Render bounded machine reason codes as consistent Dutch operator text."""
+    """Render bounded reason codes without hiding display truncation or malformed entries."""
     if type(reasons) is not list:
         return "specifieke bronbeperking onbekend"
     labels = []
-    for raw in reasons[:16]:
+    invalid_count = 0
+    for raw in reasons[:MAX_COVERAGE_REASON_DISPLAY]:
         if type(raw) is not str or not 1 <= len(raw) <= 140:
+            invalid_count += 1
             continue
         prefix, separator, code = raw.partition(":")
         if separator and prefix in ("previous", "current"):
@@ -104,6 +108,12 @@ def coverage_reason_text(reasons):
         else:
             labels.append(COVERAGE_REASON_LABELS.get(
                 raw, "onbekende bronbeperking (" + raw + ")"))
+    if len(reasons) > MAX_COVERAGE_REASON_DISPLAY:
+        omitted = len(reasons) - MAX_COVERAGE_REASON_DISPLAY
+        labels.append(
+            f"{omitted} aanvullende bronreden(en) niet weergegeven; volledige broninspectie nodig")
+    if invalid_count:
+        labels.append(f"{invalid_count} ongeldige bronreden(en) niet weergegeven")
     return "; ".join(dict.fromkeys(labels)) if labels else "specifieke bronbeperking onbekend"
 
 
@@ -117,11 +127,19 @@ def coverage_recovery_steps(reasons):
         return ["Herlees de GitHub-PR-bron met bevoegde eigenaar; geen vrijgave."]
     if not reasons:
         return []  # A complete sample is not a source-recovery incident.
+    # Keep processing bounded, but never let the display cap silently erase
+    # the fact that the source contains more restrictions than we summarize.
     codes = {
-        value.split(":", 1)[-1] for value in reasons[:16]
-        if type(value) is str and len(value) <= 140
+        value.split(":", 1)[-1] for value in reasons[:MAX_COVERAGE_REASON_SCAN]
+        if type(value) is str and 1 <= len(value) <= 140
     }
     actions = []
+    if len(reasons) > MAX_COVERAGE_REASON_DISPLAY:
+        actions.append(
+            "De bronbeperkingenlijst is afgekapt; inspecteer de volledige actuele scopebron voordat een PR als conflictvrij wordt geselecteerd.")
+    if len(reasons) > MAX_COVERAGE_REASON_SCAN:
+        actions.append(
+            "Meer dan 64 bronredenen aangetroffen; niet alle codes zijn verwerkt, dus geen vrijgave op basis van deze samenvatting.")
     if "github_source_unavailable" in codes:
         actions.append(
             "Controleer GitHub-toegang en PR-bron; herhaal uitsluitend een toegestane read-only inspectie.")
