@@ -103,6 +103,13 @@ def _runner_pressure_context(packet):
         return " zCloud-runnerbron ontbreekt."
     listeners = _number(cloud.get("listeners"))
     workers = _number(cloud.get("workers"))
+    unclassified = _number(proc.get("unclassified_runner_processes_observed"))
+    unclassified_note = (
+        " Daarnaast zijn " + str(min(unclassified, 20000)) +
+        " runnerprocess(en) niet aan een bekende executable-familie gekoppeld; "
+        "de snapshot is onvolledig en bewijst geen listener-afwezigheid."
+        if unclassified else ""
+    )
     service = proc.get("zcloud_service_cgroup")
     if (listeners and isinstance(service, dict)
             and service.get("status") == "OBSERVED_COMPLETE"
@@ -116,18 +123,19 @@ def _runner_pressure_context(packet):
         return (
             " Er is lokaal een zCloud-listener gezien; dit bevestigt geen "
             "GitHub-registratie, toewijzing of succesvolle job."
+            + unclassified_note
         )
     if workers:
         return (
             " Er is lokaal een zCloud-worker zonder waargenomen listener; "
-            "onderbreek de actieve job niet."
+            "onderbreek de actieve job niet." + unclassified_note
         )
     if proc.get("source_complete") is True:
         return (
             " De complete lokale processnapshot zag geen zCloud-listener; "
             "remote runnerregistratie blijft apart te verifiëren."
         )
-    return " De lokale runnerprocesbron is onvolledig."
+    return " De lokale runnerprocesbron is onvolledig." + unclassified_note
 
 
 def suggested_actions(packet):
