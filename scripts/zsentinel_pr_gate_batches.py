@@ -21,6 +21,7 @@ from zsentinel_pr_gate_now import (
     MAX_PRS, REVIEW_MAX_PRS, REVIEW_SCHEMA,
     SCHEMA as GATE_SCHEMA, read_review_manifest,
     GATE_STEPS_NL as HUMAN_GATE_LABELS_NL,
+    SOURCE_PROBLEMS_NL,
 )
 
 SCHEMA = "zsentinel-pr-gate-batch-reconciliation-v1"
@@ -293,6 +294,10 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                     or item.get("status") not in (OBSERVED, UNKNOWN)):
                 raise ValueError("receipt PR identity, ordering or authority invalid")
             observed = item["status"] == OBSERVED
+            source_problem = item.get("source_problem_kind") if not observed else None
+            if source_problem is not None and (type(source_problem) is not str or
+                                               source_problem not in SOURCE_PROBLEMS_NL):
+                raise ValueError("unknown saved GitHub source failure category")
             if observed and (
                 type(item.get("head_sha_observed")) is not str
                 or not HEAD.fullmatch(item["head_sha_observed"])
@@ -352,6 +357,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 item, repo, item["head_sha_observed"]) if observed else [])
             rows.append({
                 "owner_check_links": owner_check_links,
+                "source_problem_kind": source_problem,
                 "url": url,
                 "target_branch_observed": (
                     item.get("base_ref_observed") if
@@ -413,6 +419,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
             "target_branch_identity_known": row["target_branch_identity_known"],
             "exact_head_observed": row["exact_head_observed"],
             "owner_check_links": row["owner_check_links"],
+            "source_problem_kind": row["source_problem_kind"],
             "receipt_old": row["saved_source_stale_over_15_minutes"],
             "current_head_verified": False,
             "owner_and_release_authorized": False,
@@ -524,6 +531,9 @@ def human(report, markdown=False):
                      (" · parallel: " + HUMAN_GATE_LABELS_NL[action["parallel_human_gate"]]
                       if action["parallel_human_gate"] else "") +
                      " · GEEN merge-/claimvrijgave")
+        if action["source_problem_kind"]:
+            lines.append("  ↳ Bronmelding: " +
+                         SOURCE_PROBLEMS_NL[action["source_problem_kind"]])
         for link in action["owner_check_links"]:
             label = {
                 "failed_check": "Historische mislukte Check Run",
@@ -616,6 +626,8 @@ def html(report):
             raise ValueError("unknown private owner attention lane")
         reason = escape(HUMAN_GATE_LABELS_NL.get(action["human_next_gate"],
                                                  "Herlees actuele GitHub-bron."))
+        source_hint = (escape(SOURCE_PROBLEMS_NL[action["source_problem_kind"]])
+                       if action["source_problem_kind"] else "")
         check_links_html = []
         for link in action["owner_check_links"]:
             label = {
@@ -633,6 +645,8 @@ def html(report):
                           "<a rel='noopener noreferrer' href='" + ref + "'>" +
                           str(action["manifest_position"]) + ". " + ref + "</a>" +
                           " · " + reason +
+                          (" · <em>Bronmelding: " + source_hint + "</em>"
+                           if source_hint else "") +
                           (" · <em>Parallel: " +
                            escape(HUMAN_GATE_LABELS_NL[action["parallel_human_gate"]]) +
                            "</em>" if action["parallel_human_gate"] else "") +
