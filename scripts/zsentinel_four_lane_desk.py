@@ -295,7 +295,7 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
     if state == "queued" and host_admission == "HOST_SOURCE_UNVERIFIED":
         return {
             "code": "HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED",
-            "label": "Gevraagde hostdrukmeting niet volledig betrouwbaar",
+            "label": "Hostdrukmeting ontbreekt of is niet volledig betrouwbaar",
             "next_step": "Laat de hosteigenaar betrouwbare host-/cgroup-bronnen bevestigen; start geen extra worker op basis van ontbrekende telemetrie.",
         }
     if state == "queued":
@@ -374,7 +374,7 @@ def observe_local_contract(path):
     return packet
 
 
-def collect(database, maximum, include_runner_processes=False, contracts_file=None, include_host_pressure=False):
+def collect(database, maximum, include_runner_processes=False, contracts_file=None, include_host_pressure=True):
     """Capture one bounded, read-only SQLite snapshot without owner identities."""
     path = Path(database).absolute()
     if not path.is_file():
@@ -557,7 +557,8 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
     # It never interrupts existing owners and cannot grant an extra slot.
     host_pressure = observe_host_pressure() if include_host_pressure else None
     if host_pressure is None:
-        host_admission = "NOT_REQUESTED"
+        # Missing telemetry is a HOLD, never an implicit capacity pass.
+        host_admission = "HOST_SOURCE_UNVERIFIED"
     elif host_pressure.get("pressure_hint") in (
         "HIGH_LOCAL_PRESSURE", "ELEVATED_LOCAL_PRESSURE"
     ):
@@ -1967,8 +1968,8 @@ def main():
     parser.add_argument("--max-rows", type=int, default=250)
     parser.add_argument("--runner-processes", action="store_true",
                         help="Read only local /proc listener presence; no job or online proof")
-    parser.add_argument("--host-pressure", action="store_true",
-                        help="Read bounded host RAM/swap/load and root disk headroom; never admits workers")
+    parser.add_argument("--host-pressure", action="store_true", default=True,
+                        help="Legacy compatibility alias; bounded host RAM/swap/load and root disk headroom are now always observed before candidate guidance")
     parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief", "owner-book", "owner-snapshot", "change-brief"), default="text")
     parser.add_argument("--owner-project", choices=tuple(sorted(PORTFOLIO_PROJECTS)),
                         help="Canonical project id for a private single-project owner brief")
@@ -1988,7 +1989,7 @@ def main():
         packet = collect(args.db, args.max_rows,
                          include_runner_processes=args.runner_processes,
                          contracts_file=args.contracts_file,
-                         include_host_pressure=args.host_pressure)
+                         include_host_pressure=True)
         packet["portfolio_previous_comparison"] = (
             owner_snapshot_changes(packet, read_owner_snapshot(
                 args.previous_owner_snapshot))
