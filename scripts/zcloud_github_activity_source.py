@@ -331,6 +331,11 @@ def bounded_events(
             item["sha"] for item in events
             if item.get("kind") == "main_commit" and isinstance(item.get("sha"), str)
         }
+        observed_pr_heads = {
+            item["pr_head_sha"] for item in events
+            if item.get("kind") in {"pr_created", "pr_updated", "pr_merged"}
+            and isinstance(item.get("pr_head_sha"), str)
+        }
         for page in range(1, MAX_BRANCH_PAGES + 1):
             rows = reader.get(repo, "branches", {
                 "per_page": 100, "page": page,
@@ -357,7 +362,7 @@ def bounded_events(
                 ).hexdigest()[:20]
                 # A tip already observed in main history is not counted twice
                 # as both a branch event and a main commit.
-                if sha in main_shas:
+                if sha in main_shas or sha in observed_pr_heads:
                     continue
                 add(
                     "branch_tip_commit", branch_key + ":" + sha,
