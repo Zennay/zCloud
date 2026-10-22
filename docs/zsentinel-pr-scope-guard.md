@@ -17,6 +17,14 @@ python3 scripts/zsentinel_pr_gate_now.py \
   via de bestaande create-only writer; nooit een stilzwijgende overschrijving.
   Zonder `--output` verschijnt dezelfde HTML op stdout. Het scherm laadt
   geen externe styles, scripts of fonts en heeft een restrictieve CSP.
+- In combinatie met `--from-review /eigen/private/merge-first-review.json`
+  toont de HTML-werkbak nadrukkelijk de **geselecteerde reviewbatch**, het
+  aantal kandidaat-PRs in het opgeslagen manifest, en de exacte SHA256 van
+  het privémanifest én oorspronkelijke board. Dit voorkomt dat een
+  vier-PR-venster wordt aangezien voor complete portfoliodekking. Andere
+  batches moeten apart worden gelezen met `--batch N`. Directe `--pr`
+  selectie wordt expliciet als onvolledige, claim-ongeverifieerde subset
+  weergegeven.
 - Per PR: actuele herlezen HEAD en doelbranch, expliciete mergeability-status,
   lopende/falende checks, historische statuscontexten, onafhankelijke
   exact-HEAD reviews, de concrete eerstvolgende bevoegde eigenaaractie en
