@@ -19,7 +19,7 @@ import unicodedata
 from zipfile import BadZipFile
 
 from zsentinel_operator_workbench import read_source_and_sha, validated_view
-from zsentinel_product_delivery_board import write_create_only
+from zsentinel_product_delivery_board import ISSUE_COVERAGE_NOTES, write_create_only
 from zsentinel_saved_dossier_timeline import build_timeline, source_freshness
 from zsentinel_saved_issue_timeline import issue_worklist
 
@@ -35,6 +35,7 @@ FIELDS = (
     "saved_peer_pr_count", "saved_peer_pr_urls", "saved_peer_inventory_current",
     "archive_only_issue_count", "archive_only_source_issue_urls",
     "board_issue_count", "board_issue_inventory_complete_verified",
+    "issue_source_coverage", "issue_source_coverage_note",
     "board_heads_observed", "archive_heads_observed",
     "head_variation_is_historical_not_merge_conflict",
     "historical_gate_labels", "sampled_board_unknown_gates",
@@ -144,6 +145,8 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
             "title": "Issue title not observed in bounded original board",
             "project": archived_issue["repository"],
             "priority": archived_issue["highest_source_priority"],
+            "issue_coverage": "unavailable",
+            "issue_coverage_note": "This archive-only issue was not observed in the current bounded board; issue-source coverage is UNKNOWN.",
             "open_pr_candidates": [], "pr_gate_observations": [],
             "_archive_only": True,
         })
@@ -178,7 +181,18 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
                 "unknown_gates": set(), "missing": False,
                 "lost_link": False, "truncated": False,
                 "archive_only_issues": set(), "board_issues": set(),
+                "issue_coverage_statuses": set(), "issue_coverage_notes": set(),
             })
+            coverage_status = card.get("issue_coverage", "unavailable")
+            coverage_note = card.get(
+                "issue_coverage_note",
+                "Issue coverage is UNKNOWN; backlog completeness cannot be inferred.")
+            if (coverage_status not in ("partial", "degraded", "unavailable")
+                    or type(coverage_note) is not str or not coverage_note
+                    or len(coverage_note) > 300):
+                raise ValueError("invalid issue source coverage in owner packet")
+            slot["issue_coverage_statuses"].add(coverage_status)
+            slot["issue_coverage_notes"].add(coverage_note)
             slot["issues"][card["issue"]] = (card, len(refs) > 1)
             if card.get("_archive_only"):
                 slot["archive_only_issues"].add(card["url"])
@@ -250,6 +264,8 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
             "archive_only_source_issue_urls": " | ".join(sorted(pr["archive_only_issues"])),
             "board_issue_count": len(pr["board_issues"]),
             "board_issue_inventory_complete_verified": False,
+            "issue_source_coverage": " | ".join(sorted(pr["issue_coverage_statuses"])),
+            "issue_source_coverage_note": " | ".join(sorted(pr["issue_coverage_notes"])),
             "pr_url": pr["url"], "linked_issue_count": len(issues),
             "multiple_issues_share_pr": len(issues) > 1,
             "issue_has_alternative_prs": alternative,
@@ -277,6 +293,10 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
             "archive_only_issue_count": 0, "archive_only_source_issue_urls": "",
             "board_issue_count": 1,
             "board_issue_inventory_complete_verified": False,
+            "issue_source_coverage": card.get("issue_coverage", "unavailable"),
+            "issue_source_coverage_note": card.get(
+                "issue_coverage_note",
+                "Issue coverage is UNKNOWN; backlog completeness cannot be inferred."),
             "pr_url": "", "linked_issue_count": 1,
             "multiple_issues_share_pr": False, "issue_has_alternative_prs": False,
             "saved_peer_pr_count": 0, "saved_peer_pr_urls": "",
@@ -313,6 +333,8 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
             "archive_only_issue_count": 0, "archive_only_source_issue_urls": "",
             "board_issue_count": 0,
             "board_issue_inventory_complete_verified": False,
+            "issue_source_coverage": "unavailable",
+            "issue_source_coverage_note": "No linked issue was observed for this PR in the saved source; issue-source coverage cannot be inferred from this PR-only record.",
             "pr_url": pr_url, "linked_issue_count": 0,
             "multiple_issues_share_pr": False,
             "issue_has_alternative_prs": False,
@@ -590,6 +612,10 @@ def render_private_html(rows, source_metadata=None):
                       'PR relationship UNKNOWN') + '</h2>')
         parts.append('<p><strong>' + escape(str(row["source_issue_titles"])) +
                      '</strong> · ' + escape(str(row["project_scope"])) + '</p>')
+        parts.append('<p><strong>Issue-source coverage:</strong> ' +
+                     escape(str(row["issue_source_coverage"])) + ' — ' +
+                     escape(str(row["issue_source_coverage_note"])) +
+                     ' This is bounded snapshot evidence, not a complete backlog.</p>')
         if not row["source_issue_urls"]:
             parts.append('<p>No linked source issue was observed for '
                          'this existing PR. Relation to a current issue '
@@ -783,6 +809,11 @@ def render_private_markdown(rows, source_metadata):
                       "PR relationship UNKNOWN"),
             "",
             "**Project:** " + _markdown_evidence(row["project_scope"]),
+            "",
+            "**Issue-source coverage:** " + _markdown_evidence(
+                row["issue_source_coverage"]) + " — " + _markdown_evidence(
+                row["issue_source_coverage_note"]) +
+                " (bounded snapshot, not a complete backlog).",
             "",
             "**Original issue titles:** " + _markdown_evidence(
                 row["source_issue_titles"]),
