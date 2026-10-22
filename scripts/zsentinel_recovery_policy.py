@@ -2121,6 +2121,7 @@ def merge_review_template_from_case(case_report, *, project, issue_number, pr_nu
 
 MERGE_REVIEW_CHECKS = (
     ("active_claim", "No active worker or owner claim remains (none)."),
+    ("pr_base_sync", "The PR base SHA matches the current default-branch HEAD (current)."),
     ("exact_head", "The reviewed commit is the current exact PR head (verified)."),
     ("required_ci", "Every mandatory check is green on that exact head (green)."),
     ("independent_review", "An independent reviewer has approved (approved)."),
