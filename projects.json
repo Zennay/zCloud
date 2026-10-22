@@ -714,5 +714,54 @@
         "progress": 0
       }
     ]
+  },
+  {
+    "id": "browseragent",
+    "name": "BrowserAgent",
+    "eyebrow": "VPS-NATIVE WEB AUTOMATION",
+    "goal": "Run permissioned browser workflows on the VPS using ChatGPT/OpenAI for planning and Playwright for bounded browser actions.",
+    "icon": "server",
+    "accent": "#74cfe8",
+    "notion_url": "https://app.notion.com/p/4019e19ac9558122ba7ce0c4e0264db4",
+    "phase": "M1 · Playwright browser API and OpenAI tool loop on main, live VPS session pending",
+    "status": "active",
+    "priority": "low",
+    "next_step": "Prove a Playwright Chromium session and authorized navigation on the VPS, configure separate OpenAI API key, and build the operator approval/dashboard interface with pause/resume before offering live tasks.",
+    "milestone_revision": "browseragent-m0-genesis-20261022",
+    "progress_basis": "Notion HQ and three queue tasks exist; private repo created; BrowserAgent PRs #1 and #2 merged; zCloud PRs #1580/#1581 merged; Node syntax checks passed. No live Chromium session, live OpenAI invocation or production deployment has been demonstrated.",
+    "milestones": [
+      {
+        "title": "M0 · Project HQ, repository foundation and zCloud registration",
+        "done": false,
+        "progress": 85
+      },
+      {
+        "title": "M1 · Isolated Playwright sessions and observable browser actions",
+        "done": false,
+        "progress": 55
+      },
+      {
+        "title": "M2 · OpenAI tool-calling control loop with bounded actions",
+        "done": false,
+        "progress": 45
+      },
+      {
+        "title": "M3 · Operator dashboard, streaming and task recovery",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M4 · Authorized forms and human-in-the-loop CAPTCHA handoff",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M5 · VPS deployment, audit and credential isolation",
+        "done": false,
+        "progress": 0
+      }
+    ],
+    "repo_url": "https://github.com/Zennay/BrowserAgent",
+    "handoff_url": "https://app.notion.com/p/4019e19ac95581fc854cda719267541a"
   }
 ]
