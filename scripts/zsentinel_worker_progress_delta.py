@@ -32,6 +32,7 @@ MAX_HOURS = 72
 OPERATOR_ORDER = {
     "missing_in_current_sample_not_resolved": 0,
     "claim_window_changed_requires_owner_recheck": 1,
+    "claim_window_unavailable_requires_owner_recheck": 1,
     "indexed_source_reset_or_regression": 1,
     "paused_or_draining_owner_hold": 2,
     "running_allocated_no_new_event": 3,
@@ -44,6 +45,7 @@ OPERATOR_ORDER = {
 OPERATOR_LABELS = {
     "missing_in_current_sample_not_resolved": "Niet meer waargenomen (geen herstel)",
     "claim_window_changed_requires_owner_recheck": "Queue-claimvenster gewijzigd; eigenaarcontrole nodig",
+    "claim_window_unavailable_requires_owner_recheck": "Queue-claimvenster ontbreekt; eigenaarcontrole nodig",
     "indexed_source_reset_or_regression": "Eventbron mogelijk gereset",
     "paused_or_draining_owner_hold": "Pauze/drain door eigenaar",
     "running_allocated_no_new_event": "Running, geen nieuw event gezien",
@@ -178,6 +180,7 @@ def compare(previous, current, now=None):
         "paused_or_draining_owner_hold": 0,
         "indexed_source_reset_or_regression": 0,
         "claim_window_changed_requires_owner_recheck": 0,
+        "claim_window_unavailable_requires_owner_recheck": 0,
         "new_in_bounded_sample_not_new_claim": 0,
         "missing_in_current_sample_not_resolved": 0,
         "other_bounded": 0,
@@ -206,6 +209,17 @@ def compare(previous, current, now=None):
             )
         )
         event_advanced = first is not None and last is not None and last > first
+        # Across missing/changed queue claims, raw indexed events may belong
+        # to a DIFFERENT task on the same browser worker slot. Suppress the
+        # misleading advanced flags even when the SQLite cursor increased.
+        comparable_claim_window = bool(
+            before is not None and after is not None
+            and before["claim_window_fingerprint"] is not None
+            and before["claim_window_fingerprint"] == after["claim_window_fingerprint"]
+        )
+        if not comparable_claim_window:
+            event_advanced = False
+            progress_advanced = False
         if before is None:
             stage = "new_in_bounded_sample_not_new_claim"
             action = "Controleer met eigenaar of dit een bestaande toewijzing is; geen claim of vrije capaciteit bewezen."
@@ -220,6 +234,14 @@ def compare(previous, current, now=None):
                 "Het waargenomen queue-claimvenster veranderde tussen snapshots; "
                 "vergelijk cursors niet alsof dit dezelfde taak is. Laat de bevoegde "
                 "eigenaar de actuele claim en voortgang handmatig verifiëren."
+            )
+        elif (before["claim_window_fingerprint"] is None
+              or after["claim_window_fingerprint"] is None):
+            stage = "claim_window_unavailable_requires_owner_recheck"
+            action = (
+                "Een of beide actuele queueclaimvensters ontbreken; browsercursors "
+                "kunnen niet aan dezelfde taak worden verbonden. Controleer eerst "
+                "de originele lease en eigenaar, zonder claimovername."
             )
         elif ((first is not None and last is not None and last < first)
                 or (pfirst is not None and plast is not None and plast < pfirst)
