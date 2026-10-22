@@ -536,6 +536,7 @@ def _host_capacity_observation() -> dict[str, object]:
                 archive["mount_detected"] = None
                 archive["mount_detection_basis"] = "unknown"
                 archive["separate_filesystem"] = None
+                archive["read_only"] = None
             if read_only_state_lost:
                 archive["read_only"] = None
             if path_identity_lost:
