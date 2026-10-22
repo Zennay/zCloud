@@ -27,7 +27,7 @@ from zsentinel_runner_route import runner_route
 UTC = timezone.utc
 MAX_TARGETS = 8
 STATUS = {"queued", "in_progress", "completed", "waiting", "pending"}
-CONCLUSION = {"success", "failure", "cancelled", "timed_out", "action_required"}
+CONCLUSION = {"success", "failure", "cancelled", "timed_out", "action_required", "neutral", "skipped", "stale", "startup_failure"}
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -207,7 +207,7 @@ def refresh(bundle, registry, token=None):
                         updated["no_job_steps"] = len(steps) == 0
                     else:
                         raise ValueError("github_job_steps_evidence_invalid")
-                if (conclusion in ("failure", "timed_out", "action_required")
+                if (conclusion in ("failure", "timed_out", "action_required", "startup_failure")
                         and updated.get("no_job_steps") is True
                         and not runner_id):
                     # This is NOT a billing verdict. Platform annotations
