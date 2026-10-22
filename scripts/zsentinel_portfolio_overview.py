@@ -175,6 +175,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             "github_ci_windows_not_scanned": [],
             "github_sampled_actionable_jobs": None,
             "github_sampled_queued_self_hosted_jobs_min": None,
+            "github_sampled_approval_wait_jobs_min": None,
             "github_other_jobs_list_truncated": False,
         }
     for entry in groups:
@@ -233,6 +234,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             summary[pid]["github_sampled_actionable_jobs"] = 1
             summary[pid]["github_sampled_queued_self_hosted_jobs_min"] = int(
                 observed_status == "queued" and route == "self_hosted")
+            summary[pid]["github_sampled_approval_wait_jobs_min"] = int(
+                observed_status in ("waiting", "pending"))
         # Refresh only proves the exact selected job; CI-source admission
         # metadata belongs to ci_discovery.coverage, never github_jobs.
     # CI discovery is distinct from exact-job refresh. Read its bounded
@@ -260,8 +263,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 "github_authentication_required", "github_rate_limit_confirmed",
                 "github_forbidden_or_rate_limit_unknown",
                 "repository_inaccessible", "github_network_unavailable")
-                or type(windows_skipped) is not list or len(windows_skipped) > 3
-                or any(w not in ("queued", "in_progress", "failure")
+                or type(windows_skipped) is not list or len(windows_skipped) > 4
+                or any(w not in ("queued", "in_progress", "waiting", "failure")
                        for w in windows_skipped)
                 or len(set(windows_skipped)) != len(windows_skipped)):
             raise ValueError("invalid canonical GitHub CI stop")
@@ -279,25 +282,28 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 or type(cut) is not bool
                 or cut != (count > len(extras) + 1)
                 or item.get("repository") != registry[pid]
-                or item.get("primary_job_status") not in ("queued", "completed")
+                or item.get("primary_job_status") not in ("queued", "waiting", "pending", "completed")
                 or item.get("primary_runner_route") not in (
                     "self_hosted", "hosted_or_custom", "unknown")):
             raise ValueError("untrusted multi-job CI inventory")
         self_hosted = int(item["primary_job_status"] == "queued"
                           and item["primary_runner_route"] == "self_hosted")
+        approval_waits = int(item["primary_job_status"] in ("waiting", "pending"))
         for extra in extras:
             if (type(extra) is not dict
                     or extra.get("action_authorized") is not False
                     or extra.get("observed_only") is not True
                     or extra.get("work_resumed_verified") is not False
-                    or extra.get("job_status") not in ("queued", "completed")
+                    or extra.get("job_status") not in ("queued", "waiting", "pending", "completed")
                     or extra.get("runner_route") not in (
                         "self_hosted", "hosted_or_custom", "unknown")):
                 raise ValueError("invalid sampled additional job")
             self_hosted += int(extra["job_status"] == "queued"
                                and extra["runner_route"] == "self_hosted")
+            approval_waits += int(extra["job_status"] in ("waiting", "pending"))
         summary[pid]["github_sampled_actionable_jobs"] = count
         summary[pid]["github_sampled_queued_self_hosted_jobs_min"] = self_hosted
+        summary[pid]["github_sampled_approval_wait_jobs_min"] = approval_waits
         summary[pid]["github_other_jobs_list_truncated"] = cut
     # Counts below are lower bounds in the bounded source window,
     # NEVER total open portfolio issue/incident inventory.
@@ -642,7 +648,8 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
                       else ('≥' + str(row["github_sampled_actionable_jobs"]) +
                             ' gevonden, waaronder ≥' +
                             str(row["github_sampled_queued_self_hosted_jobs_min"]) +
-                            ' wachtende self-hosted' +
+                            ' wachtende self-hosted; approval-wacht ≥' +
+                            str(row["github_sampled_approval_wait_jobs_min"]) +
                             (' · andere jobs deels verborgen'
                              if row["github_other_jobs_list_truncated"] else ''))) +
             '</td>'
@@ -1503,10 +1510,11 @@ def main():
                 if row["notion_verifying_status_min"] is not None:
                     lines.append("  Notion Verifying ≥%s · eigenaar hercontroleren; geen live leasebewijs." % (
                         row["notion_verifying_status_min"],))
-                lines.append("  GitHub jobs: %s; wachtend self-hosted ≥%s; aanvullende joblijst afgekapt=%s. "
+                lines.append("  GitHub jobs: %s; wachtend self-hosted ≥%s; approval/concurrency-wacht ≥%s; aanvullende joblijst afgekapt=%s. "
                              "Steekproef, geen volledig CI- of runnergezondheidsbewijs." % (
                     _count(row["github_sampled_actionable_jobs"]),
                     _count(row["github_sampled_queued_self_hosted_jobs_min"]),
+                    _count(row["github_sampled_approval_wait_jobs_min"]),
                     row["github_other_jobs_list_truncated"]))
                 lines.append("  GitHub bronpoging: %s (%s, huidige run: %s); historische poging is GEEN health." % (
                     row["github_last_attempt_at_utc"] or "ONBEKEND",
