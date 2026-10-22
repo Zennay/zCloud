@@ -100,6 +100,10 @@ def pressure_findings(sample: dict) -> list[dict[str, str]]:
                  "detail": "Host-pressure snapshot is unavailable; no headroom or clearance assertion."}]
 
     coverage_gaps: list[str] = []
+    source_scope = sample.get("source_scope_fingerprint")
+    if (type(source_scope) is not str or len(source_scope) != 64
+            or any(char not in "0123456789abcdef" for char in source_scope)):
+        coverage_gaps.append("source_scope_fingerprint")
     state = sample.get("state")
     if state != "observed":
         coverage_gaps.append(
