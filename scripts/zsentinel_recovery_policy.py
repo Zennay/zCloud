@@ -227,7 +227,7 @@ def _source_url(value):
             or parsed.username is not None or parsed.password is not None
             or parsed.hostname.lower() not in {
                 "github.com", "app.notion.com", "www.notion.so", "notion.so",
-            }):
+            } or parsed.netloc.lower() != parsed.hostname.lower()):
         raise PolicyInputError("source_url must use an approved HTTPS host")
     # Query strings and fragments are not part of the source identity. They may
     # contain auth tokens or tracking data, so never echo them into receipts.
@@ -352,7 +352,7 @@ def recommended_next_step(action, blockers, required_evidence):
         if codes & {"owner_missing", "human_owner_missing"}:
             return "Identify the current claim owner from live source evidence; do not preempt, reassign, or mutate the queue."
         return "Ask the current owner to confirm or release the exact claim; do not preempt, reassign, or mutate the queue."
-    if "competing_incident_routes" in codes:
+    if "competing_incident_routes" in codes or "competing_incident_actions" in codes:
         return "Ask the authorized owner to choose one recovery route for this incident before reviewing route-specific gates."
     if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
                 "main_state_not_open", "main_merge_unverified",
@@ -432,6 +432,15 @@ def evaluate(data, max_age_minutes, *, now=None):
             "source_not_verified", "The supplied source receipt is not marked verified.",
             ("evidence.source_verified",))
     action = data["action"]
+    # Approval booleans alone cannot identify the person accountable for an
+    # execution-impacting recommendation. A missing named owner is always HOLD.
+    if action in {
+        "retry_ci", "assign_independent_work", "park_blocker",
+        "merge_pr", "deploy", "restart_runner",
+    }:
+        require(data["owner"] is not None,
+                "owner_missing", "A named accountable owner is required.",
+                ("owner",))
 
     if action == "retry_ci":
         require(value("failure_kind") == "transient",
@@ -1992,7 +2001,7 @@ def main(argv=None):
             output = (
                 pr_preflight_html(preflight) if args.format == "html"
                 else pr_preflight_markdown(preflight) if args.format == "markdown"
-                else json.dumps(preflight, ensure_ascii=False, indent=2, sort_keys=True) + "\\n"
+                else json.dumps(preflight, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
             )
             if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
                 raise PolicyInputError("live PR preflight exceeds output bound")
