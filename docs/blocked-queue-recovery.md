@@ -961,6 +961,11 @@ The existing runtime now preserves that source boundary in the **same**
   prevents owner-bound rows from filling the bounded discovery window ahead
   of actually claim-clear tasks. Work must still pass lane, CPU, human
   authorization and project-capacity checks.
+  The shared execution-lane planning snapshot applies this identical
+  condition to its **queued** backlog input, so stale independently owned
+  queue rows do not consume planning capacity or hide a legitimately free
+  task. Already active claimed/running/verifying rows remain in the snapshot
+  for write-scope conflict detection. The live owner remains authoritative.
 - The exact final `status='claimed'` UPDATE repeats both owner-field
   and independent claim-record conditions. If ownership changed since the
   candidate snapshot, it does not increment attempts or allocate that slot;
