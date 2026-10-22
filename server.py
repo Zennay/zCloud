@@ -1593,11 +1593,11 @@ def _coordination_claims_fingerprint_locked(connection,project_id,exclude_owner=
     return hashlib.sha256(raw).hexdigest(),rows
 
 def _coordination_claim_rows(project_id, exclude_owner=None):
-    with connect() as c:
+    with connect_readonly() as c:
         return _coordination_claim_rows_locked(c,project_id,exclude_owner)
 
 def _coordination_claims_fingerprint(project_id, exclude_owner=None):
-    with connect() as c:
+    with connect_readonly() as c:
         return _coordination_claims_fingerprint_locked(c,project_id,exclude_owner)
 
 def coordination_vps_health(profile='default'):
@@ -1768,7 +1768,9 @@ def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=N
     }
 
 def worker_preflight_state(project_id,worker_id,owner_id):
-    with connect() as c:
+    # HTTP GET and post-creation state reads are observations, not renewals.
+    # Preflight CREATE/UPDATE uses the separate authorized writable path.
+    with connect_readonly() as c:
         return _worker_preflight_state_locked(c,project_id,worker_id,owner_id)
 
 def _normalize_conflict_scope(metadata):
