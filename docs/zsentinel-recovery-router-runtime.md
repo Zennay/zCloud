@@ -3003,6 +3003,13 @@ Alle routes zijn alleen-lezen en weigeren een automatische retry, runner-
 restart, claimwijziging of mergeconclusie. Een historische `success` is
 evenmin bewijs van de huidige listenergezondheid.
 
+De `--discover` CLI valideert vóór exact-job refresh ook de complete
+envelop: precies één `cloud`-coverage-rij, maximaal negen discovery-GETs,
+maximaal vijf aanvullende links en een consistente selectie-status ↔ exacte
+run/job/SHA. Een ontbrekende, tegenstrijdige of malforme receipt wordt
+omgezet naar `degraded_unavailable` met lege kandidaatset; ze veroorzaakt
+geen traceback of schijnbaar gezonde lege inventaris.
+
 De private HTML toont maximaal vijf aanvullende, canonieke exacte joblinks
 uit dezelfde discovery-steekproef (run/job/SHA/status/route gevalideerd).
 Deze extra jobs blijven observation-only, zonder dispatch- of herstelknoppen;
