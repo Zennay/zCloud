@@ -965,6 +965,56 @@ the current protected-main gate permits any merge.
 
 
 
+## 22 oktober · huidige bestaande PR rechtstreeks beoordelen (merge eerst)
+
+De oude `--prepare-merge-review` optie werkt uitsluitend vanuit een opgeslagen
+historische issue-case. Met `--live-pr-url` kun je **een bestaande product-PR
+rechtstreeks vanaf GitHub** openen, ook wanneer die PR geen issue-referentie
+in de opgeslagen case heeft. Zo worden nieuwe PR's niet gecreëerd puur omdat
+een vroegere issue-export de bestaande oplossing niet kon vinden.
+
+```sh
+python3 scripts/zsentinel_recovery_policy.py \\
+  --live-pr-url https://github.com/Zennay/zCloud/pull/1562 \\
+  --format markdown
+```
+
+Voor een lokaal privé-eigenarenoverzicht zonder nieuwe netwerkrequests of
+browsercode: `--format html --output /private/new-pr-preflight.html`. Ook
+`--format json` is beschikbaar voor alleen-lezen integraties. Bestanden
+krijgen de bestaande exclusieve `0600`-creatiegrenzen, geen overwrite.
+Gebruik `GITHUB_TOKEN` alleen voor normale leesrechten op private repos;
+de token wordt niet in de uitvoer gezet.
+
+De nieuwe `scripts/zsentinel_pr_merge_preflight.py` valideert een exacte
+`Zennay/<repo>/pull/<positief-nummer>` URL, gebruikt maximaal vier
+**read-only** GitHub API GETs (PR → HEAD-checks → reviews → dezelfde PR),
+en verifieert vóór het tonen van een stabiele exact-HEAD dat de laatste
+PR-status, base, draft, merged en SHA niet zijn veranderd. De check- en
+reviewpagina zijn **beperkte samples**; zelfs volledig geslaagde zichtbare
+checks bewijzen niet welke CI branch protection verplicht stelt. Reviewstatus,
+onopgeloste threads, owner claims en release-autorisatie blijven apart
+**UNKNOWN / HOLD** totdat een bevoegd persoon ze onafhankelijk controleert.
+Een mislukte check of een nog niet afgeronde check resulteert in een gerichte
+operatoractie, nooit een workflowdispatch of merge.
+
+GitHub 401/403/429 stopt onmiddellijk de verdere secundaire reads en levert
+`SOURCE_UNKNOWN`, niet een eerder opgeslagen head alsof die nog actueel is.
+Een verschoven PR HEAD of state tussen de eerste en laatste GET wordt eveneens
+`SOURCE_UNKNOWN`. Een algemene secundaire bronfout blijft zichtbaar en maakt
+CI/review UNKNOWN. De uitvoer heeft altijd
+`merge_authorized=false`, `merge_executed=false`,
+`active_claim_verified=false`, `branch_protection_verified=false` en
+`deployed=false`: alleen brontriage, geen toestemming.
+
+Ook de reeds bestaande policy-acties `retry_ci`, `assign_independent_work`,
+`park_blocker`, `merge_pr`, `deploy` en `restart_runner` houden nu
+expliciet op een **ontbrekende benoemde owner**. Een ingevulde
+`owner_authorized=true` zonder feitelijke owneridentiteit is onvoldoende.
+Bronlinks met extra poorten of niet-canonieke hosts worden afgewezen.
+Bestaande verplicht gestelde GitHub CI, branch protection en onafhankelijke
+reviews blijven intact; deze workflow voert geen QA-/regressietests uit.
+
 ## 21 oktober · privé-uitvoer voor recovery policy
 
 De recovery-policy CLI kan iedere bestaande JSON-, Markdown-, workorders-,
