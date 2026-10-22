@@ -1573,6 +1573,38 @@ def _md(value, limit=MAX_TEXT):
         value = value.replace(marker, "\\\\" + marker)
     return value
 
+def _blocked_queue_owner_note(report):
+    """Human-readable bounded blocked-work inventory, never a retry permit."""
+    row = report.get("blocked_queue_owner_summary")
+    if row is None:
+        return "Geblokkeerde queue niet in deze oudere export; status ONBEKEND."
+    if (type(row) is not dict
+            or row.get("coverage") not in (
+                "not_observed", "not_supplied", "not_current_unverified",
+                "complete", "partial", "stale", "bounded_current_readonly")
+            or row.get("resume_authorized") is not False
+            or type(row.get("priority_groups_shown")) is not int
+            or not 0 <= row["priority_groups_shown"] <= 8
+            or type(row.get("priority_groups_truncated")) is not bool):
+        raise ValueError("untrusted blocked-work owner overview")
+    if row["coverage"] != "bounded_current_readonly":
+        if (row.get("observed_blocked_count") is not None
+                or row.get("priority_groups_observed") is not None):
+            raise ValueError("unknown blocked queue source cannot report counts")
+        return ("Geblokkeerde queuebron " + _short(row["coverage"], 45) +
+                "; actuele blokkades ONBEKEND, geen hervatting.")
+    total, groups = row.get("observed_blocked_count"), row.get("priority_groups_observed")
+    if (type(total) is not int or not 0 <= total <= 10**9
+            or type(groups) is not int or not 0 <= groups <= 250
+            or row["priority_groups_shown"] != min(8, groups)):
+        raise ValueError("inconsistent current blocked-work overview")
+    return (str(total) + " geblokkeerde items in begrensde read-only bron; " +
+            str(row["priority_groups_shown"]) + "/" + str(groups) +
+            " P0/P1-projectgroepen getoond. GEEN retry, claim of hervatting." +
+            (" Overige groepen ONBEKEND door beperkte bron/kaarten."
+             if row["priority_groups_truncated"] else ""))
+
+
 def _current_queue_owner_note(report):
     """One bounded first-run queue read, never an owner or lease-release proof."""
     row = report.get("current_queue_lease_owner_summary")
@@ -1986,6 +2018,7 @@ def handoff_html(report):
             or (not compared and count is not None)):
         raise ValueError("untrusted queue comparison handoff provenance")
     current_queue_line = _current_queue_owner_note(report)
+    blocked_queue_line = _blocked_queue_owner_note(report)
     queue_line = ("Claimleasevergelijking niet aangeleverd; conflictstatus ONBEKEND."
                   if not compared else
                   str(count) + " tegenstrijdige leasevensters in de begrensde bron; "
@@ -2046,6 +2079,8 @@ def handoff_html(report):
             '<p class="small muted">Bronbereik: ' + sources + '</p>' +
             '<p class="small muted">Queue huidig: ' +
             escape(current_queue_line) + '</p>' +
+            '<p class="small muted">Geblokkeerd queuewerk: ' +
+            escape(blocked_queue_line) + '</p>' +
             '<p class="small muted">Queue #677: ' + escape(queue_line) + '</p>' +
             '<p class="small muted">Afhankelijke taken: ' + escape(dep_line) + '</p>' +
             '<p class="small muted">Uitvoergates: ' +
@@ -2085,6 +2120,7 @@ def markdown(report):
             or (not queue_known and queue_count is not None)):
         raise ValueError("unsafe queue source status in Markdown")
     lines.append("Queue nu: " + _md(_current_queue_owner_note(report), 350))
+    lines.append("Geblokkeerd queuewerk: " + _md(_blocked_queue_owner_note(report), 350))
     lines.append("Queue #677: " + (
         str(queue_count) + " tegenstrijdige leasevensters in begrensde bron."
         if queue_known else "geen bronvergelijking; leaseconflicten ONBEKEND."))
