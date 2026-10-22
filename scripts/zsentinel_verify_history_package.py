@@ -21,7 +21,7 @@ from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 from zsentinel_product_delivery_board import unique
 
-PACKAGE = re.compile(r"^[a-z][a-z0-9_-]{0,50}\\.index\\.zip$")
+PACKAGE = re.compile(r"^[a-z][a-z0-9_-]{0,50}\.index\.zip$")
 HEX = re.compile(r"^[a-f0-9]{64}$")
 MEMBERS = {"history.html", "history.json", "history.csv",
            "README.txt", "manifest.json"}
