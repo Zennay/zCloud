@@ -228,6 +228,13 @@
        commandAckStorageInvalid||pendingCommandAcks.size>0){
       await blocked("new-chat-context-changed-before-click");return true;
     }
+    // A replacement tab may have no in-memory dispatch history while the
+    // worker-private may-have-sent witness still identifies this queue.
+    // Preserve that potentially accepted original execution even if the
+    // current composer is empty: no rotation or auto-retry on lost evidence.
+    if(!sentInThisDocument&&sameQueueWasSentBeforeReload(queueId)){
+      await blocked("previous-queue-send-after-reload-manual-review");return true;
+    }
     // An operator may have started typing during the asynchronous lease
     // refresh. A browser rotation must not erase this independent draft.
     const editor=composer();
