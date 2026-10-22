@@ -3378,7 +3378,9 @@ def portfolio_queue_allocate():
                     """UPDATE portfolio_queue
                        SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                        WHERE queue_id=? AND worker_slot=?
-                         AND status IN ('claimed','running')""",
+                         AND status IN ('claimed','running')
+                         AND NOT EXISTS (SELECT 1 FROM task_claims
+                                         WHERE task_claims.claim_key=portfolio_queue.queue_id)""",
                     (ts,relief_queue_id,relief_slot),
                 )
                 if relief_update.rowcount:
@@ -3502,19 +3504,30 @@ def portfolio_queue_allocate():
             force_replacement=False
             if row and force_victim_slot==slot and force_pair:
                 previous_queue_id=str(row['queue_id'] or '')
-                c.execute(
+                released=c.execute(
                     """UPDATE portfolio_queue
                        SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                       WHERE queue_id=? AND status IN ('claimed','running','verifying')""",
+                       WHERE queue_id=? AND status IN ('claimed','running','verifying')
+                         AND NOT EXISTS (SELECT 1 FROM task_claims
+                                         WHERE task_claims.claim_key=portfolio_queue.queue_id)""",
                     (ts,previous_queue_id),
                 )
-                preempted.add(previous_queue_id)
-                row=None
-                force_replacement=True
-                lane_candidates=[
-                    pair for pair in _portfolio_eligible_lane_candidates_locked(c,ts,preempted)
-                    if str(pair[0]['queue_id'] or '')==force_queue_id
-                ]
+                if released.rowcount==1:
+                    preempted.add(previous_queue_id)
+                    row=None
+                    force_replacement=True
+                    lane_candidates=[
+                        pair for pair in _portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                        if str(pair[0]['queue_id'] or '')==force_queue_id
+                    ]
+                else:
+                    # Preserve the owner-bound row AND its physical browser slot;
+                    # a rejected force eviction cannot admit a replacement.
+                    force_pair=None
+                    force_project=''
+                    force_queue_id=''
+                    force_preferred_slot=0
+                    force_victim_slot=None
             if row and str(row['status']) == 'claimed':
                 row_project=str(row['project_id'] or '')
                 # Once a browser command is pending, the queue claim is part of an
@@ -3538,12 +3551,16 @@ def portfolio_queue_allocate():
                     continue
                 row_mode=str((_autonomy_config(row_project) or {}).get('mode') or 'manual').lower()
                 if row_mode in {'external_gate','manual'}:
-                    c.execute("""UPDATE portfolio_queue
+                    released=c.execute("""UPDATE portfolio_queue
                                  SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                                 WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
-                    preempted.add(str(row['queue_id']))
-                    row=None
-                    lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                                 WHERE queue_id=? AND status='claimed'
+                                   AND NOT EXISTS (SELECT 1 FROM task_claims
+                                                   WHERE task_claims.claim_key=portfolio_queue.queue_id)""",
+                                   (ts,row['queue_id']))
+                    if released.rowcount==1:
+                        preempted.add(str(row['queue_id']))
+                        row=None
+                        lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
                 else:
                     manual_candidates=[
                         pair for pair in lane_candidates
@@ -3592,12 +3609,16 @@ def portfolio_queue_allocate():
                         and not row_manual
                     )
                     if should_enforce_hard_cap or should_diversify or should_preempt_priority or should_preempt_manual:
-                        c.execute("""UPDATE portfolio_queue
+                        released=c.execute("""UPDATE portfolio_queue
                                      SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                                     WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
-                        preempted.add(str(row['queue_id']))
-                        row=None
-                        lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                                     WHERE queue_id=? AND status='claimed'
+                                       AND NOT EXISTS (SELECT 1 FROM task_claims
+                                                       WHERE task_claims.claim_key=portfolio_queue.queue_id)""",
+                                       (ts,row['queue_id']))
+                        if released.rowcount==1:
+                            preempted.add(str(row['queue_id']))
+                            row=None
+                            lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
             if row:
                 c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
                           (lease_until,ts,row['queue_id']))
