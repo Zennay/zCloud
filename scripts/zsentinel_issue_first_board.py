@@ -213,18 +213,18 @@ def issue_activity_follow_up(issue):
     """Suggest evidence-led follow-up without assigning or releasing ownership."""
     band = issue.get("activity_age_band", "UNKNOWN")
     if band == "STALE":
-        return ("Review the existing issue/PR timeline and exact-head gates; age "
-                "alone does not prove owner inactivity or an unresolved fix.")
+        return ("Bekijk de bestaande issue-/PR-tijdlijn en exact-head-gates; ouderdom "
+                "bewijst geen inactiviteit van de eigenaar of ontbrekende fix.")
     if band == "AGING":
-        return ("Inspect the current existing PR and its gates before deciding; "
-                "activity age is only a tie-breaker.")
+        return ("Bekijk de bestaande PR en gates voordat je beslist; "
+                "activiteitsleeftijd is alleen een tie-breaker.")
     if band == "CLOCK_SKEW_OR_FUTURE":
-        return ("Reconcile the source timestamp before interpreting freshness; "
-                "do not infer owner progress.")
+        return ("Controleer de brontijdstempel voordat je versheid interpreteert; "
+                "leid geen voortgang van de eigenaar af.")
     if band == "RECENT":
-        return ("Use current issue/PR evidence; recent activity is not proof of a fix.")
-    return ("Refresh the canonical issue source; missing or invalid timestamps "
-            "must remain UNKNOWN.")
+        return ("Gebruik actuele issue-/PR-bewijzen; recente activiteit bewijst geen fix.")
+    return ("Ververs de canonieke issuesource; ontbrekende of ongeldige tijdstempels "
+            "blijven UNKNOWN.")
 
 
 def issue_activity_evidence(source_issue, observed_at):
