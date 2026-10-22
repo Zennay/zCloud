@@ -24,6 +24,7 @@ MAX_PROC_STAT_BYTES = 4096
 MAX_PROC_ENV_BYTES = 65536
 MAX_TOTAL_PROC_ENV_BYTES = 4 * 1024 * 1024
 MAX_PROC_CANDIDATES = 64
+MAX_SOCKET_CANDIDATES = 64
 
 
 def cmd(argv: list[str], timeout: int = 4) -> tuple[int, str]:
@@ -244,6 +245,8 @@ def permitted_auth(path: str, uid: int) -> bool:
     finally:
         if fd is not None:
             os.close(fd)
+
+
 def main() -> int:
     _, name = cmd(["hostname"])
     if name != EXPECTED_HOST:
@@ -272,27 +275,80 @@ def main() -> int:
 
     print("=== X11 sockets ===")
     socket_path = Path("/tmp/.X11-unix")
-    socket_displays = set()
-    if socket_path.is_dir():
-        for file in socket_path.iterdir():
-            if re.fullmatch(r"X[0-9]{1,3}", file.name):
-                socket_displays.add(":" + file.name[1:])
+    socket_displays: set[str] = set()
+    socket_scan_complete = True
+    try:
+        socket_info = socket_path.lstat()
+        if stat.S_ISDIR(socket_info.st_mode):
+            with os.scandir(socket_path) as entries:
+                for index, entry in enumerate(entries, start=1):
+                    if index > MAX_SOCKET_CANDIDATES:
+                        socket_scan_complete = False
+                        break
+                    if re.fullmatch(r"X[0-9]{1,3}", entry.name):
+                        display = ":" + entry.name[1:]
+                        if display not in socket_displays and len(socket_displays) >= MAX_PROC_CANDIDATES:
+                            socket_scan_complete = False
+                            break
+                        socket_displays.add(display)
+        else:
+            socket_scan_complete = False
+    except FileNotFoundError:
+        pass
+    except OSError:
+        socket_scan_complete = False
     print(", ".join(sorted(socket_displays)) or "No X11 socket found")
+    if not socket_scan_complete:
+        print("X11 socket coverage: PARTIAL/UNKNOWN")
 
     print("=== Ubuntu X11 authorization (never prints Xauthority cookie) ===")
     proc_displays, proc_auths, proc_scan_complete = proc_display_auth(uid)
     print("Ubuntu process environment coverage:", "COMPLETE" if proc_scan_complete else "PARTIAL/UNKNOWN")
     if not proc_scan_complete:
         print("Coverage caveat: missing DISPLAY/XAUTHORITY values are unknown, not absent.")
-    auths = {str(HOME / ".Xauthority"), f"/run/user/{uid}/gdm/Xauthority"} | proc_auths
+
+    auth_candidates_complete = True
+    auths = {str(HOME / ".Xauthority"), f"/run/user/{uid}/gdm/Xauthority"}
+    for path in sorted(proc_auths):
+        if path in auths:
+            continue
+        if len(auths) >= MAX_PROC_CANDIDATES:
+            auth_candidates_complete = False
+            break
+        auths.add(path)
     runtime = Path(f"/run/user/{uid}")
-    if runtime.is_dir():
-        auths.update(str(path) for path in runtime.glob(".mutter-Xwaylandauth.*"))
+    try:
+        runtime_info = runtime.lstat()
+        if stat.S_ISDIR(runtime_info.st_mode):
+            with os.scandir(runtime) as entries:
+                for entry in entries:
+                    if not entry.name.startswith(".mutter-Xwaylandauth."):
+                        continue
+                    candidate = str(runtime / entry.name)
+                    if candidate in auths:
+                        continue
+                    if len(auths) >= MAX_PROC_CANDIDATES:
+                        auth_candidates_complete = False
+                        break
+                    auths.add(candidate)
+        else:
+            auth_candidates_complete = False
+    except FileNotFoundError:
+        pass
+    except OSError:
+        auth_candidates_complete = False
     owned_auths = sorted(path for path in auths if permitted_auth(path, uid))
     print(f"Ubuntu-owned candidate auth files: {len(owned_auths)}")
     displays = sorted(socket_displays | proc_displays)
     print("Ubuntu process display assignments:",
           ", ".join(sorted(proc_displays)) if proc_displays else "none")
+    probe_coverage_complete = (
+        proc_scan_complete and socket_scan_complete and auth_candidates_complete
+        and len(displays) <= LIMIT and len(owned_auths) <= LIMIT
+    )
+    print("Display/auth probe coverage:", "COMPLETE" if probe_coverage_complete else "PARTIAL/UNKNOWN")
+    if not probe_coverage_complete:
+        print("Coverage caveat: capped candidate lists or unreadable sources mean absence is not proved.")
     working: list[tuple[str, str]] = []
     for display in displays[:LIMIT]:
         for authority in owned_auths[:LIMIT]:
@@ -311,10 +367,10 @@ def main() -> int:
         print("RESULT: ubuntu can access at least one X display.")
         print("NEXT: verify it is the visible XRDP display and that no live Firefox profile is in use.")
         return 0
-    if proc_scan_complete:
+    if probe_coverage_complete:
         print("RESULT: NO AUTHORIZED UBUNTU DISPLAY. Do not start Firefox or change X access rules.")
     else:
-        print("RESULT: NO AUTHORIZED UBUNTU DISPLAY PROVED; procfs coverage is partial.")
+        print("RESULT: NO AUTHORIZED UBUNTU DISPLAY PROVED; candidate search coverage is partial.")
         print("Do not start Firefox or change X access rules from incomplete evidence.")
     print("If display is owned by desktop rather than ubuntu, use a proper ubuntu login session,")
     print("or migrate the worker under the intended display owner with explicit profile ownership.")
