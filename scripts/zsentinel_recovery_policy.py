@@ -1925,6 +1925,10 @@ def main(argv=None):
                         help="prior private portfolio JSON for source-conservative visible-card comparison")
     parser.add_argument("--portfolio-snapshot-output", type=Path,
                         help="second private .json artifact from the SAME bounded portfolio GitHub read")
+    parser.add_argument("--portfolio-verify-missing-live", action="store_true",
+                        help="opt-in at most six missing-issue GitHub detail GETs")
+    parser.add_argument("--portfolio-recheck-limit", type=int, default=3,
+                        help="max 1..6 extra GitHub detail reads, requires opt-in")
     parser.add_argument("--portfolio-view", choices=(
         "all", "explicit-critical", "critical-and-title-hints",
     ), default="all", help="source-only portfolio issue display focus")
@@ -1966,6 +1970,13 @@ def main(argv=None):
         parser.error("--portfolio-previous-snapshot requires --portfolio-repo")
     if args.portfolio_snapshot_output and not args.portfolio_repo:
         parser.error("--portfolio-snapshot-output requires --portfolio-repo")
+    if args.portfolio_verify_missing_live and not (
+            args.portfolio_repo and args.portfolio_previous_snapshot):
+        parser.error("--portfolio-verify-missing-live requires repos and previous snapshot")
+    if not args.portfolio_verify_missing_live and args.portfolio_recheck_limit != 3:
+        parser.error("--portfolio-recheck-limit requires --portfolio-verify-missing-live")
+    if args.portfolio_verify_missing_live and not 1 <= args.portfolio_recheck_limit <= 6:
+        parser.error("--portfolio-recheck-limit must be 1..6")
     if args.portfolio_repo and (
         not args.output or args.live_inbox_repo or args.live_issue_url
         or args.input or args.batch_input or args.case_input or args.template
@@ -2073,6 +2084,14 @@ def main(argv=None):
             )
             if previous is not None:
                 report["comparison"] = compare_snapshots(previous, report)
+                if args.portfolio_verify_missing_live:
+                    from zsentinel_issue_recheck import recheck_missing_live
+                    report["comparison"] = recheck_missing_live(
+                        report["comparison"],
+                        token=os.environ.get("GITHUB_TOKEN") or None,
+                        max_reads=args.portfolio_recheck_limit,
+                        source_read_admitted=not report["provider_stopped_early"],
+                    )
             write_private_portfolio_outputs(
                 report, format_name=args.format, output=args.output,
                 snapshot_output=args.portfolio_snapshot_output,
