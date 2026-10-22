@@ -18,9 +18,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from zsentinel_live_issue_inbox import (
-    REPO, MAX_PAGES, MAX_DISPLAY, observe_repo_inbox,
-)
+from zsentinel_live_issue_inbox import REPO, observe_repo_inbox
 from zsentinel_pr_live_read import GitHubReadError
 from zsentinel_recovery_policy import (
     MAX_OUTPUT_BYTES, PolicyInputError, _emit_output,
@@ -29,10 +27,17 @@ from zsentinel_recovery_policy import (
 MAX_REPOS = 6
 MAX_GLOBAL_CARDS = 120
 ALL_RANKS = range(7)
+VIEWS = {
+    "all": frozenset(ALL_RANKS),
+    "explicit-critical": frozenset((0, 1)),
+    "critical-and-title-hints": frozenset((0, 1, 2, 3)),
+}
 
 
-def observe_portfolio(repositories, *, token=None):
+def observe_portfolio(repositories, *, token=None, view="all"):
     """Read each explicitly selected repository once; never infer an absent issue."""
+    if type(view) is not str or view not in VIEWS:
+        raise ValueError("unknown bounded display view")
     if not isinstance(repositories, list) or not 2 <= len(repositories) <= MAX_REPOS:
         raise ValueError("choose 2–6 canonical Zennay repositories")
     if (any(type(name) is not str or REPO.fullmatch(name) is None
@@ -41,6 +46,10 @@ def observe_portfolio(repositories, *, token=None):
     recorded = []
     ranked = {}
     stopped_for_provider = False
+    all_priority_counts = {
+        "label_p0": 0, "label_p1": 0,
+        "unverified_title_hint": 0, "p2_p3": 0, "unknown": 0,
+    }
     for name in repositories:
         if stopped_for_provider:
             recorded.append({
@@ -50,12 +59,26 @@ def observe_portfolio(repositories, *, token=None):
                 "provider_issue_count": None, "get_attempts": 0,
                 "source_error": "previous_repo_source_unavailable",
                 "unknown_issue_absence": True,
+                "source_priority_counts": None,
             })
             continue
         source = observe_repo_inbox(
             name, token=token, display_all_sample=True,
         )
         error = source["source_error"]
+        rank_totals = {
+            "label_p0": sum(issue["triage_rank"] == 0 for issue in source["issues"]),
+            "label_p1": sum(issue["triage_rank"] == 1 for issue in source["issues"]),
+            "unverified_title_hint": sum(
+                issue["triage_rank"] in (2, 3) for issue in source["issues"]
+            ),
+            "p2_p3": sum(
+                issue["triage_rank"] in (4, 5) for issue in source["issues"]
+            ),
+            "unknown": sum(issue["triage_rank"] == 6 for issue in source["issues"]),
+        }
+        for category, count in rank_totals.items():
+            all_priority_counts[category] += count
         recorded.append({
             "repository": name,
             "state": "INCOMPLETE" if error or source["source_partial_or_unknown"]
@@ -68,6 +91,7 @@ def observe_portfolio(repositories, *, token=None):
             "get_attempts": source["get_attempts"],
             "source_error": "github_source_read_failed" if error else None,
             "unknown_issue_absence": True,
+            "source_priority_counts": rank_totals,
         })
         rows = {}
         for priority in ALL_RANKS:
@@ -84,7 +108,7 @@ def observe_portfolio(repositories, *, token=None):
     # P0/P1 first ACROSS repositories, round-robin for project fairness.
     # This cannot promote a title hint above an actual source label.
     selected = []
-    for priority in ALL_RANKS:
+    for priority in sorted(VIEWS[view]):
         while len(selected) < MAX_GLOBAL_CARDS:
             pending = False
             for name in repositories:
@@ -124,6 +148,11 @@ def observe_portfolio(repositories, *, token=None):
 
     source_sampled = sum((r["sampled_count"] or 0) for r in recorded)
     actual_gets = sum(r["get_attempts"] for r in recorded)
+    eligible_count = sum(
+        len([issue for issue in ranked.get(repo, {}).get(priority, [])
+             if issue["triage_rank"] == priority])
+        for repo in repositories for priority in VIEWS[view]
+    ) + len(selected)
     return {
         "schema_version": 1,
         "policy": "zsentinel-portfolio-github-issue-desk-v1",
@@ -137,7 +166,12 @@ def observe_portfolio(repositories, *, token=None):
         "bounded_get_attempts": actual_gets,
         "bounded_get_ceiling": 7 * len(repositories),
         "total_sampled_issues": source_sampled,
+        "source_priority_counts": all_priority_counts,
+        "display_view": view,
+        "total_eligible_in_view": eligible_count,
         "total_displayed_issues": len(selected),
+        "omitted_due_to_display_limit": eligible_count - len(selected),
+        "filtered_out_by_view": source_sampled - eligible_count,
         "omitted_sampled_issues": source_sampled - len(selected),
         "partial_or_unknown": (
             stopped_for_provider or any(
@@ -165,7 +199,18 @@ def as_markdown(result):
         "- Repositories read: " + str(result["read_count"]) + "/" +
         str(result["requested_count"]),
         "- Sampled across observed sources: " + str(result["total_sampled_issues"]),
+        "- Selected display view: " + result["display_view"],
+        "- Explicit P0 labels in sampled sources: " +
+        str(result["source_priority_counts"]["label_p0"]),
+        "- Explicit P1 labels in sampled sources: " +
+        str(result["source_priority_counts"]["label_p1"]),
+        "- Unverified title P0/P1 hints: " +
+        str(result["source_priority_counts"]["unverified_title_hint"]),
         "- Shown P0-first: " + str(result["total_displayed_issues"]),
+        "- Omitted due to display cap: " +
+        str(result["omitted_due_to_display_limit"]),
+        "- Not selected by current display view: " +
+        str(result["filtered_out_by_view"]),
         "- Omitted sampled cards: " + str(result["omitted_sampled_issues"]),
         "- Source partial or unknown: " + str(result["partial_or_unknown"]),
         "- Repositories sampled sequentially; not one atomic GitHub snapshot.",
@@ -178,7 +223,12 @@ def as_markdown(result):
             " · observed: " + (r["observed_at_utc"] or "UNKNOWN") +
             " · sampled: " + str(r["sampled_count"] if
                                     r["sampled_count"] is not None else "UNKNOWN") +
-            " · complete recent inventory: " + str(r["recent_window_complete"])
+            " · complete recent inventory: " + str(r["recent_window_complete"]) +
+            " · source P0/P1: " + (
+                str(r["source_priority_counts"]["label_p0"]) + "/" +
+                str(r["source_priority_counts"]["label_p1"])
+                if r["source_priority_counts"] is not None else "UNKNOWN"
+            )
         )
     rows += ["", "## Issue workorders · source P0/P1 first", ""]
     for issue in result["issues"]:
@@ -214,7 +264,16 @@ def as_html(result):
         esc(result["total_sampled_issues"]) + " · displayed: " +
         esc(result["total_displayed_issues"]) + " · omitted: " +
         esc(result["omitted_sampled_issues"]) +
-        " · partial/unknown: " + esc(result["partial_or_unknown"]) + "</p></header>",
+        " · partial/unknown: " + esc(result["partial_or_unknown"]) +
+        "</p><p>View " + esc(result["display_view"]) +
+        " · source labels P0/P1: " +
+        esc(result["source_priority_counts"]["label_p0"]) + "/" +
+        esc(result["source_priority_counts"]["label_p1"]) +
+        " · title-only hints: " +
+        esc(result["source_priority_counts"]["unverified_title_hint"]) +
+        " · filtered by view: " + esc(result["filtered_out_by_view"]) +
+        " · hidden by display cap: " +
+        esc(result["omitted_due_to_display_limit"]) + "</p></header>",
         "<section><h2>Original repository source coverage</h2><ul>",
     ]
     for r in result["repositories_observed"]:
@@ -224,6 +283,10 @@ def as_html(result):
             esc(r["observed_at_utc"] or "UNKNOWN") + " · sampled " +
             esc(r["sampled_count"] if r["sampled_count"] is not None else "UNKNOWN") +
             " · complete recent window: " + esc(r["recent_window_complete"]) +
+            " · sampled label P0/P1: " +
+            (esc(r["source_priority_counts"]["label_p0"]) + "/" +
+             esc(r["source_priority_counts"]["label_p1"])
+             if r["source_priority_counts"] is not None else "UNKNOWN") +
             "</li>"
         )
     rows.append("</ul></section><main><h2>P0-first human owner routes</h2>")
@@ -250,6 +313,7 @@ def as_csv(result):
     fields = (
         "row_kind", "source_repository", "source_observed_utc",
         "source_state", "sampled_issue_count", "source_partial_unknown",
+        "display_view", "source_label_p0", "source_label_p1",
         "issue_url", "priority_label", "title_hint_unverified",
         "human_action_code", "human_next_action", "status",
         "active_claim_verified", "required_ci_verified",
@@ -274,7 +338,10 @@ def as_csv(result):
         writer.writerow([inert(x) for x in (
             "source", r["repository"], r["observed_at_utc"],
             r["state"], r["sampled_count"],
-            r["source_partial_or_unknown"], "", "", "", "", "",
+            r["source_partial_or_unknown"], result["display_view"],
+            r["source_priority_counts"]["label_p0"] if r["source_priority_counts"] else None,
+            r["source_priority_counts"]["label_p1"] if r["source_priority_counts"] else None,
+            "", "", "", "", "",
             "SOURCE COVERAGE IS NOT LIVE OWNER AUTHORITY",
             False, False, False, False,
         )])
@@ -283,7 +350,9 @@ def as_csv(result):
         writer.writerow([inert(x) for x in (
             "issue", issue["repository"], r["observed_at_utc"],
             r["state"], r["sampled_count"],
-            r["source_partial_or_unknown"], issue["url"],
+            r["source_partial_or_unknown"], result["display_view"],
+            r["source_priority_counts"]["label_p0"],
+            r["source_priority_counts"]["label_p1"], issue["url"],
             issue["explicit_priority"], issue["title_hint_unverified"],
             issue["human_action_code"], issue["human_next_action"],
             issue["status"], False, False, False, False,
@@ -299,6 +368,8 @@ def main(argv=None):
         "--repo", action="append", required=True,
         help="Canonical Zennay/repo; repeat for 2–6 repositories."
     )
+    parser.add_argument("--view", choices=tuple(VIEWS), default="all",
+                        help="display-only priority slice; all source reads unchanged")
     parser.add_argument("--format", choices=("html", "markdown", "csv", "json"),
                         default="html")
     parser.add_argument("--output", type=Path, required=True,
@@ -307,6 +378,7 @@ def main(argv=None):
     try:
         report = observe_portfolio(
             args.repo, token=os.environ.get("GITHUB_TOKEN") or None,
+            view=args.view,
         )
         source = (
             as_html(report) if args.format == "html" else
