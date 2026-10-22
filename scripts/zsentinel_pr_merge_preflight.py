@@ -331,10 +331,19 @@ def _parallel_owner_actions(report):
     if len(ordered) <= MAX_PARALLEL_OWNER_ACTIONS - 1:
         return ordered + [authority_card]
     shown = ordered[:MAX_PARALLEL_OWNER_ACTIONS - 2]
-    omitted = len(ordered) - len(shown)
+    hidden = ordered[len(shown):]
+    hidden_codes = [item["code"] for item in hidden]
+    hidden_sample = hidden_codes[:8]
+    hidden_suffix = (" (+" + str(len(hidden_codes) - len(hidden_sample)) +
+                     " further)" if len(hidden_codes) > len(hidden_sample) else "")
     return shown + [{
         "code": "additional_owner_holds_omitted",
-        "problem": str(omitted) + " additional owner HOLD action(s) exceed the bounded display.",
+        "problem": (str(len(hidden)) + " additional owner HOLD action(s) exceed the "
+                    "bounded display. Hidden action codes: " +
+                    ", ".join(hidden_sample) + hidden_suffix + "."),
+        "omitted_action_count": len(hidden),
+        "omitted_action_codes_sample": hidden_sample,
+        "omitted_action_codes_truncated": len(hidden_codes) > len(hidden_sample),
         "owner_action": "Inspect the complete PR, GitHub checks, review requests, base/head history and source gaps; omitted cards are not clearances.",
         "evidence": "BOUNDED_DISPLAY_INCOMPLETE",
         "status": "HOLD_OWNER_REVIEW",
