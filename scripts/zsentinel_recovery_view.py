@@ -968,12 +968,40 @@ def html_view(decision, registry=None):
             if (not isinstance(item, dict)
                     or item.get("status") not in ("Claimed", "Running", "Verifying")):
                 raise ValueError("invalid Notion active/verification status")
+            metadata_fields = ("worker", "claimed_at", "claim_expires", "claim_metadata_status")
+            if any(field in item for field in metadata_fields):
+                worker = item.get("worker")
+                claimed_at = item.get("claimed_at")
+                claim_expires = item.get("claim_expires")
+                metadata_status = item.get("claim_metadata_status")
+                if (worker is not None and worker not in ("Worker 1", "Worker 2")
+                        or any(value is not None and
+                               (type(value) is not str or not 1 <= len(value) <= 45
+                                or any(ord(char) < 32 for char in value))
+                               for value in (claimed_at, claim_expires))
+                        or metadata_status not in ("observed_fields_present", "partial_or_missing")):
+                    raise ValueError("invalid observed Notion worker/lease metadata")
+                details = []
+                if worker:
+                    details.append("worker " + worker)
+                if claimed_at:
+                    details.append("Claimed At " + claimed_at)
+                if claim_expires:
+                    details.append("Claim Expires " + claim_expires)
+                details.append(
+                    "velden waargenomen; lease niet geverifieerd"
+                    if metadata_status == "observed_fields_present"
+                    else "worker-/leasevelden gedeeltelijk of ontbrekend"
+                )
+                metadata_html = '<br><span class="muted small">' + phrase(" · ".join(details), 230) + '</span>'
+            else:
+                metadata_html = '<br><span class="muted small">Worker-/leasemetadata niet opgenomen in deze momentopname.</span>'
             rows.append('<li class="word"><strong>' + phrase(item.get("work"), 35) +
                         ' · ' + phrase(item.get("status"), 12) +
                         ' · ' + phrase(item.get("project"), 80) +
                         '</strong>' +
                         (': ' + phrase(item.get("title"), 120) if item.get("title") else
-                         ' · titel bewust weggelaten') + '</li>')
+                         ' · titel bewust weggelaten') + metadata_html + '</li>')
         caveat = ("Handmatig opgeslagen query, NIET live; huidige eigenaar en herkomst ONBEKEND"
                   if notion["source"] ==
                   "user_supplied_notion_connector_export_unverified_origin" else
