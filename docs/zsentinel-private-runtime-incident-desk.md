@@ -526,3 +526,27 @@ De vorige snapshot wordt tevens gekoppeld aan de exacte canonieke
 cross-repo/cross-PR-omwisseling geen geldige operatie kan lijken.
 Geen QA-suite, CI-rerun, workergebruik of geautoriseerde productieactie
 wordt toegevoegd of aangeroepen.
+
+
+### Praktisch vervolg bij gewijzigde CI of review (22 oktober)
+
+De vergelijking geeft nu een **concrete, menselijke vervolgstap**
+(`observed_gate_owner_step`) bij gewijzigde exact-HEAD-statusbronnen.
+De eigenaar ziet relevante voor→na steekproefaantallen naast één advies:
+
+- Nieuwe geobserveerde falende check-runs: kijk op de bestaande PR
+  naar de echte falende job en stem een broncodeherstel af met de
+  bevoegde code-eigenaar. Geen CI-rerun of nieuw werkclaim.
+- Nieuwe falende klassieke statuscontext: inspecteer die status op de
+  exacte HEAD met de bestaande eigenaar.
+- Nieuw `CHANGES_REQUESTED` op die HEAD: behandel het wijzigingsverzoek
+  met de huidige PR-eigenaar, niet zelf goedkeuren of forceren.
+- Andere veranderingen in reviews of gedeeltelijke checkvensters:
+  lees de actuele reviews, verplichte CI-contexts en branch protection
+  opnieuw voordat een bestaande PR überhaupt voor merge in aanmerking komt.
+
+Deze actie en de geobserveerde voor→na verschillen komen ook terecht in
+de bestaande private HTML/Markdown/CSV-eigenaarshandoff en de
+afzonderlijke actiebriefing. De prioritering betreft **alleen de al
+geobserveerde bestaande PR**; er wordt geen claim overgenomen, geen
+nieuwe PR aangemaakt en geen runner of production service gestart.
