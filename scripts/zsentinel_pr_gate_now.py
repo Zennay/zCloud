@@ -171,7 +171,9 @@ def _closed_pr_lifecycle(repo, number, first, token):
     Pinned second PR read prevents a mixed head/state/merge-commit receipt.
     """
     head = _sha(first["head"].get("sha"))
-    target_base = _sha(first["base"].get("sha"))
+    # The target branch SHA can advance even after the PR has merged. It
+    # must not invalidate a confirmed merged=true + stable merge commit
+    # receipt; only pin the actual target branch identity.
     target_ref = _branch_ref(first["base"].get("ref"))
     target_repo = first["base"].get("repo")
     if (type(target_repo) is not dict or target_repo.get("full_name") != repo
@@ -188,7 +190,6 @@ def _closed_pr_lifecycle(repo, number, first, token):
             or last.get("state") != "closed" or last.get("merged") is not was_merged
             or type(last.get("head")) is not dict or
             last["head"].get("sha") != head or type(last.get("base")) is not dict
-            or last["base"].get("sha") != target_base
             or last["base"].get("ref") != target_ref
             or last.get("merge_commit_sha") != first.get("merge_commit_sha")):
         raise ValueError("PR head/base changed during observation")
