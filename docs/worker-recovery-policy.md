@@ -1104,7 +1104,7 @@ een volledige review, branch-protectionbeleid en eigenaarsmandaat
 zijn apart verplicht.
 
 De nieuwe `scripts/zsentinel_pr_merge_preflight.py` valideert een exacte
-`Zennay/<repo>/pull/<positief-nummer>` URL, gebruikt maximaal acht
+`Zennay/<repo>/pull/<positief-nummer>` URL, gebruikt maximaal negen
 **read-only** GitHub API GETs (PR → repository-default-branch → default-branch
 tip SHA → HEAD-checks → reviews → repository-default-branch opnieuw →
 default-branch tip opnieuw → dezelfde PR). Zowel de naam als de commit-SHA
@@ -1134,6 +1134,19 @@ en release-autorisatie blijven apart **UNKNOWN / HOLD** totdat een bevoegd
 persoon ze onafhankelijk controleert.
 Een mislukte check of een nog niet afgeronde check resulteert in een gerichte
 operatoractie, nooit een workflowdispatch of merge.
+
+Bij een complexe PR blijft het operatorbord maximaal twaalf kaarten tonen,
+maar laat het de verplichte `verify_authority_and_protection` HOLD nooit weg.
+De afzonderlijke CI-, review- en exacte-head-observaties krijgen voorrang
+boven minder dringende coördinatiekaarten. De onderliggende bronbewijzen zijn
+niet omgezet in geverifieerde mergevoorwaarden: onbekende verplichte checks,
+neutral/skipped conclusies, review-submissions zonder bewezen effectieve
+onafhankelijke goedkeuring en open reviewthreads blijven expliciet voor een
+menselijke eigenaar. Als meer kaarten bestaan dan de bounded werkbak kan
+weergeven, staat `additional_owner_holds_omitted` met het aantal verborgen
+HOLD-acties zichtbaar in JSON, Markdown en scriptvrije HTML. Afkappen is
+nooit een groen signaal en deze verbetering maakt geen GitHub-mutatie,
+workflow-rerun, queueclaim, merge of deploy mogelijk.
 
 #### Asynchrone GitHub-mergeability-hint
 
