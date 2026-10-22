@@ -1739,6 +1739,43 @@ def operator_text(result):
                          " project/prioriteitgroepen niet getoond in deze tekstweergave.")
         if blocked.get("sample_truncated") is True:
             lines.append("  Projectverdeling onvolledig; geen all-clear of dispatch.")
+    work = blocked.get("work_items", [])
+    coverage = blocked.get("work_items_coverage", "not_observed")
+    if (type(work) is not list or len(work) > 24
+            or coverage not in ("not_observed", "complete", "partial", "stale")):
+        raise ValueError("invalid individual blocked-queue text source")
+    if coverage in ("not_observed", "stale"):
+        if work:
+            raise ValueError("unavailable blocked work cannot be current")
+        lines.append("Geblokkeerde individuele taken: ONBEKEND"
+                     if coverage == "not_observed" else
+                     "Geblokkeerde individuele taken: bron VEROUDERD.")
+    else:
+        lines.append("Geblokkeerde taken P0/P1 eerst: " + str(len(work)) +
+                     " getoond; bron " + coverage + " (geen mutatierecht)")
+        seen = set()
+        for item in work:
+            ref, title, project, priority = (
+                item.get("queue_ref"), item.get("title"),
+                item.get("project_id"), item.get("priority"))
+            if (type(ref) is not str or re.fullmatch("[0-9a-f]{16}", ref) is None
+                    or ref in seen or type(title) is not str or len(title) > 180
+                    or any(ord(c) < 32 for c in title)
+                    or type(project) is not str or SLUG.fullmatch(project) is None
+                    or priority not in PRIORITY
+                    or type(item.get("claim_attempts")) is not int
+                    or not 0 <= item["claim_attempts"] <= 10**9
+                    or type(item.get("claim_fields_present_observed")) is not bool
+                    or item.get("resume_authorized") is not False
+                    or item.get("current_owner_verified") is not False):
+                raise ValueError("untrusted blocked task human handoff")
+            seen.add(ref)
+            lines.append(
+                "  - " + priority + " " + project + " #" + ref + " · " +
+                title + " · claimpogingen " + str(item["claim_attempts"]) +
+                (" · CLAIMVELDEN AANWEZIG; NIET HERVATTEN" if
+                 item["claim_fields_present_observed"] else
+                 " · claimvelden niet gezien, eigenaar nog onbekend"))
     lines.append("VPS resource admission: " + result["vps_resource_admission"]["state"] +
                  " / " + result["vps_resource_admission"]["reason"])
     triage = result["open_product_issue_triage"]
