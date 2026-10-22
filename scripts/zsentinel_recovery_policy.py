@@ -590,6 +590,33 @@ def evaluate(data, max_age_minutes, *, now=None):
                 "previous_blocker_evidence_missing",
                 "The original blocker and its evidence must be retained in the resume receipt.",
                 ("evidence.previous_blocker_preserved",))
+        # A generic active_claim=none can miss a separate task claim or an
+        # already resumed queue row. Require the same exact-row read boundary
+        # used by guarded terminal closure, before recommending any resume.
+        require(value("blocked_source_status") == "blocked",
+                "blocked_source_not_parked",
+                "The exact queue item must still be in blocked status.",
+                ("evidence.blocked_source_status",))
+        require(value("blocked_task_noneligible") is True,
+                "blocked_task_eligible",
+                "The parked queue item must still be eligible=0.",
+                ("evidence.blocked_task_noneligible",))
+        require(value("blocked_source_guarded") is True,
+                "source_guard_missing",
+                "The observed queue ID, status, version, blocker and evidence must match.",
+                ("evidence.blocked_source_guarded",))
+        require(value("queue_lease_state") == "clear",
+                "queue_lease_not_clear",
+                "Worker slot, claim timestamp and queue lease must all be clear.",
+                ("evidence.queue_lease_state",))
+        require(value("task_claim_source_available") is True,
+                "task_claim_source_unknown",
+                "The separate task-claim source must be readable for this item.",
+                ("evidence.task_claim_source_available",))
+        require(value("task_claim_state") == "none",
+                "task_claim_not_clear",
+                "The separate task-claim source must explicitly show no claim.",
+                ("evidence.task_claim_state",))
         require(value("operator_attestation") is True,
                 "operator_attestation_missing",
                 "An explicit operator must attest that the dependency is cleared.",
