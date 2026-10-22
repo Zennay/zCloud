@@ -992,14 +992,19 @@ Gebruik `GITHUB_TOKEN` alleen voor normale leesrechten op private repos;
 de token wordt niet in de uitvoer gezet.
 
 De nieuwe `scripts/zsentinel_pr_merge_preflight.py` valideert een exacte
-`Zennay/<repo>/pull/<positief-nummer>` URL, gebruikt maximaal zes
-**read-only** GitHub API GETs (PR → repository-default-branch → HEAD-checks →
-reviews → repository-default-branch opnieuw → dezelfde PR). Het vergelijkt
-de default branch vóór/na de observatie en geeft `DEFAULT_BRANCH_SOURCE_UNKNOWN`
-als die bron ontbreekt of verandert; `BASE_NOT_DEFAULT` markeert een PR die
-niet naar de waargenomen standaardbranch wijst. PR-status, base, draft,
-merged en SHA worden eveneens opnieuw gelezen vóór de stabiele exact-HEAD
-wordt getoond. De check-run samenvatting scheidt potentieel blokkerende
+`Zennay/<repo>/pull/<positief-nummer>` URL, gebruikt maximaal acht
+**read-only** GitHub API GETs (PR → repository-default-branch → default-branch
+tip SHA → HEAD-checks → reviews → repository-default-branch opnieuw →
+default-branch tip opnieuw → dezelfde PR). Zowel de naam als de commit-SHA
+van de standaardbranch moeten stabiel zijn tijdens de observatie. Het vergelijkt
+de PR-base-SHA met die stabiele tip: `DEFAULT_BRANCH_TIP_UNKNOWN` betekent
+dat de huidige tip niet stabiel kon worden vastgesteld; `BASE_TIP_OUTDATED`
+geeft aan dat de PR op een andere base-commit staat en eerst door de eigenaar
+moet worden bijgewerkt, zonder force of gate-bypass. `DEFAULT_BRANCH_SOURCE_UNKNOWN`
+blijft gelden als de branchnaambron ontbreekt of verandert; `BASE_NOT_DEFAULT`
+markeert een PR die niet naar de waargenomen standaardbranch wijst. PR-status,
+base-branch-SHA, draft, merged en HEAD worden opnieuw gelezen vóór een stabiele
+exact-HEAD wordt getoond. De check-run samenvatting scheidt potentieel blokkerende
 terminale non-success (failure/cancelled/stale/unknown), neutral/skipped en
 pending; neutral/skipped zijn uitdrukkelijk géén succesbewijs. Markdown en
 de scriptvrije offline HTML linken iedere zichtbare check naar het bestaande
