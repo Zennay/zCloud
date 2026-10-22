@@ -469,6 +469,7 @@ def main(argv=None):
             delta = recheck_missing_live(
                 delta, token=os.environ.get("GITHUB_TOKEN") or None,
                 max_reads=args.live_recheck_limit,
+                source_read_admitted=not (current.get("provider_stopped_early") is True),
             )
         output = (
             as_full_html(delta) if args.format == "html" else
