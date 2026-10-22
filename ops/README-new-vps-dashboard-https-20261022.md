@@ -22,6 +22,12 @@ Use loopback-only backend binding and authenticated HTTPS Caddy instead.
    Its local /api/status returns a current timestamp and projects array.
 3. The zcloud.zennay.nl DNS A record points only to 95.211.40.88. Any
    public AAAA record must be verified separately for the new host.
+   The zSSH repository's last observed authoritative nameservers for
+   zennay.nl are ns1.site.eu, ns2.site.nl, ns3.site.be and ns4.site.de,
+   **not Cloudflare**. Confirm current delegation with the DNS owner before
+   publication, update only the zcloud subdomain at its real provider, and
+   preserve apex and zssh records. Do not dispatch the historical Cloudflare
+   DNS publisher for a zone that Cloudflare does not host.
 4. The Caddy owner has approved an exact root Caddyfile import:
 
    ~~~caddyfile
