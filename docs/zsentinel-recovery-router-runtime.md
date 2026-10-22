@@ -4361,3 +4361,8 @@ De exacte runnertriage valideert de klok van de systemd-waarneming afzonderlijk 
 ### 22 oktober · Swapdruk telt mee in runner-hosttriage
 
 De optionele read-only runner-hostmeting classificeert nu ook **geconfigureerde maar bijna lege swap**: maximaal 5% vrij wordt `critical_headroom_observed`; maximaal 15% vrij wordt ten minste `constrained_headroom_observed`. De aparte `swap_status` is `OBSERVED` wanneer swap is geconfigureerd en `NO_SWAP_CONFIGURED` wanneer de totale swap nul is. Geen swap configureren wordt dus niet foutief als uitgeputte swap gerapporteerd. De private operatorregel toont vrije/totale swap en de vervolgstap noemt geheugen/swap naast disk/inodes. De operator-samenvatter berekent de ernst ook opnieuw uit de toegelaten disk-, inode-, RAM- en swapwaarden en weigert een tegenstrijdig statuslabel, zodat een foutieve receipt uitgeputte swap niet als gezonde headroom kan presenteren. Dit blijft alleen een hostdruksignaal: het bewijst niet dat swapdruk de runneroorzaak is en autoriseert geen cleanup, stop, restart, retry of claimwijziging.
+
+
+### 22 oktober · Begrensde /proc-runnersteekproef blijft bruikbaar
+
+De lokale runnerobserver stopt bij de 20.000-PID-budgetgrens zonder de volledige triage af te breken. De output markeert `process_inventory_truncated=true` en `process_inventory_complete=false`; de tekst/HTML noemt expliciet dat de limiet is bereikt. De getelde listener-/workerprocessen zijn dan uitsluitend een **gedeeltelijke steekproef**: een niet-waargenomen proces mag niet als afwezig worden beschouwd en de router gebruikt de incomplete bron niet voor een runnerherstelconclusie. Dit voorkomt dat hoge hostdruk of een uitzonderlijk grote proceslijst de hele operatorhulp laat crashen of een vals all-clear oplevert.
