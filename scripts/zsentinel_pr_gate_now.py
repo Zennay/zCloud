@@ -666,6 +666,45 @@ def observe_many(prs, token=None):
 PR_ARGUMENT = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}#[1-9][0-9]{0,8}$")
 
 
+def _closed_pr_message(item):
+    """Validated PR lifecycle observation, distinct from live deployment."""
+    state = item.get("status")
+    if state not in (
+            "github_confirmed_closed_without_merge",
+            "github_confirmed_merged_on_other_branch",
+            "github_confirmed_merged_on_default_branch"):
+        return None
+    head, target = item.get("head_sha_observed"), item.get("base_ref_observed")
+    if (type(head) is not str or SHA.fullmatch(head) is None
+            or _branch_ref(target) != target
+            or item.get("exact_head_stable_on_second_read") is not True
+            or item.get("merge_authorized") is not False
+            or item.get("deployment_authorized") is not False):
+        raise ValueError("incomplete closed PR source identity")
+    commit = item.get("github_merge_commit_sha_observed")
+    default = item.get("default_branch_ref_observed")
+    if state == "github_confirmed_closed_without_merge":
+        if item.get("github_merged_observed") is not False or commit is not None:
+            raise ValueError("closed PR falsely claims merge")
+        return ("GitHub bevestigt CLOSED zonder merge; niet naar main gebracht. "
+                "PR-HEAD " + head[:12] + ", doelbranch " + target + ".")
+    if (item.get("github_merged_observed") is not True
+            or type(commit) is not str or SHA.fullmatch(commit) is None
+            or _branch_ref(default) != default):
+        raise ValueError("merged PR has no exact GitHub commit proof")
+    if state == "github_confirmed_merged_on_default_branch":
+        if target != default:
+            raise ValueError("not actually merged onto default branch")
+        return ("GitHub merged=true naar default branch " + default +
+                " op exacte mergecommit " + commit +
+                "; deployment, runtime en huidige tip van main NIET geverifieerd.")
+    if target == default:
+        raise ValueError("other-branch merge has default branch target")
+    return ("GitHub merged=true naar doelbranch " + target +
+            " op mergecommit " + commit + "; default branch " + default +
+            " NIET gemerged door deze PR; deployment NIET geverifieerd.")
+
+
 def human_gate_summary(source: dict) -> str:
     """Compact offline operator view; observed receipts never authorize merging."""
     if (type(source) is not dict or source.get("schema") != SCHEMA
@@ -692,6 +731,10 @@ def human_gate_summary(source: dict) -> str:
     for item in source["items"]:
         lines.append("")
         lines.append("PR: " + item["url"])
+        lifecycle = _closed_pr_message(item)
+        if lifecycle is not None:
+            lines.append(lifecycle)
+            continue
         if item.get("status") != "observed_current_head_partial_gate_evidence":
             problem = item.get("source_problem_kind")
             lines.append(SOURCE_PROBLEMS_NL.get(
@@ -815,6 +858,11 @@ def html_gate_summary(source: dict) -> str:
             raise ValueError("invalid canonical source PR")
         url = "https://github.com/" + repository + "/pull/" + str(number)
         title = "<h2><a rel='noopener noreferrer' href='" + h(url) + "'>" + h(repository) + " #" + str(number) + "</a></h2>"
+        lifecycle = _closed_pr_message(item)
+        if lifecycle is not None:
+            cards.append("<article>" + title + "<p>" + h(lifecycle) +
+                         "</p><p>GitHub-status is geen live runtime- of deploybewijs.</p></article>")
+            continue
         if item.get("status") != "observed_current_head_partial_gate_evidence":
             problem = SOURCE_PROBLEMS_NL.get(
                 item.get("source_problem_kind"),
@@ -972,6 +1020,14 @@ def markdown_gate_summary(source: dict) -> str:
             raise ValueError("invalid pinned handoff repository")
         url = "https://github.com/" + repo + "/pull/" + str(number)
         lines.extend(["", "## [PR #" + str(number) + "](" + url + ")"])
+        lifecycle = _closed_pr_message(item)
+        if lifecycle is not None:
+            lines.extend([
+                "- Probleem: PR is niet meer open; controleer de GitHub-lifecycle.",
+                "- Actie: " + lifecycle,
+                "- Status: GitHub-lifecycle geobserveerd; live niet geverifieerd.",
+            ])
+            continue
         if item.get("status") != "observed_current_head_partial_gate_evidence":
             lines.extend([
                 "- Probleem: " + SOURCE_PROBLEMS_NL.get(
