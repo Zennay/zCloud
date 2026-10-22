@@ -6,8 +6,11 @@ The following GET endpoints are observations only:
 
 - `GET /api/worker-debug`
 - `GET /api/runner-targets`
+- `GET /api/task-claims`
 
-Both use `runner_worker_targets(..., reconcile=False)`. The default `reconcile=True` path can create missing `runner_workers` rows and update a provider field, so it must not be used from a GET diagnostic handler. The endpoints return explicit `read_only_observation: true`, `sqlite_reconciliation_performed: false`, and `queue_mutations_performed: false` metadata.
+The first two use `runner_worker_targets(..., reconcile=False)`. The default `reconcile=True` path can create missing `runner_workers` rows and update a provider field, so it must not be used from a GET diagnostic handler. Their responses explicitly report `read_only_observation: true`, `sqlite_reconciliation_performed: false`, and `queue_mutations_performed: false`.
+
+`GET /api/task-claims` is also read-only: it calls `task_claims(..., prune_expired=False)`, whose SELECT filters expired leases without deleting their rows. It reports `read_only_observation: true`, `sqlite_mutations_performed: false`, and `expired_claims_pruned: false`. Expired-lease cleanup remains with the scheduler/control paths, not a diagnostic GET. Its existing trusted-client authorization remains required.
 
 The existing `GET /api/worker-scaling` report opens the telemetry database through SQLite `mode=ro`; it remains an observation-only report.
 
