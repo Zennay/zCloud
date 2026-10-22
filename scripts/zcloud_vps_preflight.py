@@ -357,8 +357,8 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
         recommend("CAPACITY_FIRST", "VPS resource owner",
                   "Insufficient or unverified resource headroom can cause repeat OOM crashes or incomplete releases.",
                   "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
-    if codes & {"HOST_CPU_SATURATED", "HOST_CPU_BUSY", "HOST_MEMORY_STALL",
-                "HOST_IO_STALL", "HOST_PRESSURE_INCOMPLETE"}:
+    if codes & {"HOST_CPU_SATURATED", "HOST_CPU_BUSY", "HOST_CPU_STALL",
+                "HOST_MEMORY_STALL", "HOST_IO_STALL", "HOST_PRESSURE_INCOMPLETE"}:
         recommend("HOST_CONCURRENCY_OWNER", "Shared VPS training and runner scheduler owner",
                   "Read-only CPU or PSI evidence shows contention or an incomplete host sample, not attribution to a specific worker.",
                   "Preserve live training and jobs. Inspect who controls future concurrent admissions and resource budgets via the existing owner before scheduling heavy new work. Do not kill, renice, pause or restart workers from this report.")
