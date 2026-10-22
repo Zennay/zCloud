@@ -21,6 +21,24 @@ bestanden worden geweigerd; de index wordt nooit overschreven.
       --bundle zsentinel-20261022-b \
       --name recovery-history-october
 
+Gebruik voor een **machineleesbare privéhandoff** op dezelfde eerder opgeslagen
+bronnen een eigen create-only naam en expliciete JSON-keuze:
+
+    python3 scripts/zsentinel_private_bundle_index.py \
+      --directory "$HOME/zsentinel-private" \
+      --bundle zsentinel-20261021-a \
+      --bundle zsentinel-20261022-b \
+      --name recovery-history-machine --format json
+
+De JSON bevat per oorspronkelijke bundel bron-SHA-256, UTC-bronklokken,
+P0/P1-steekproeven en PR-kandidaten, plus per opeenvolgend paar expliciete
+nieuwe/niet opnieuw waargenomen issues, kandidaten en urgentieverhogingen.
+Het formaat zsentinel-saved-bundle-history-v1 bevat de velden
+current_live_source_checked=false, issue_closure_verified=false,
+current_claims_verified=false, required_ci_verified=false,
+independent_review_verified=false, merge_authorized=false en
+deploy_authorized=false. De JSON blijft net als de HTML 0600 en privé.
+
 Open vervolgens recovery-history-october.index.html in die privémap.
 De scriptvrije HTML koppelt lokaal door naar iedere oorspronkelijke
 interactieve desk.html en receipt.json. Identiteit en timestamps komen
