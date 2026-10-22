@@ -2864,3 +2864,21 @@ Exacte GitHub HEAD/CI, onafhankelijke review, Notion- en workerclaims,
 branch protection en productiebevoegdheid blijven afzonderlijke gates.
 Geen QA-/regressiesuite of automatische CI-rerun nodig om deze broncodewijziging
 uit te voeren; er is ook geen VPS/SQLite/runner-mutatie gedaan.
+
+## 22 oktober · expliciete doelbranch in iedere botsingswaarneming
+
+De scope-inventaris leest nu voor iedere PR ook de actuele `base.ref` naast
+de bestaande base-commit-SHA. Een ongeldige/lege doelbranch maakt de PR-identiteit
+onbruikbaar in plaats van de target stil weg te laten. Bij een expliciet
+geselecteerde bron-PR controleert de tweede GitHub-lezing zowel de base-SHA als
+de branchnaam; een retarget naar een andere branch maakt de bron onstabiel,
+ook wanneer beide branches toevallig naar dezelfde commit wijzen.
+
+De doelbranch staat nu in het JSON-bewijs, bron-PR-overzicht, overlapkaarten,
+verbonden bestands- en bestand/map-scopegroepen, operator-tekst, offline HTML,
+Markdown en private CSV (inclusief de branch van beide kanten van een paar).
+Dit verandert geen collision-signaal in een bewezen Git-conflict: twee PR's
+op verschillende doelbranches blijven zichtbaar als gedeelde bestands-/scope-
+waarneming, maar de operator ziet nu expliciet dat hun release-target verschilt.
+
+Deze toevoeging verandert geen bestaande claim-, merge-, CI- of deploybevoegdheid.
