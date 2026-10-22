@@ -4171,6 +4171,15 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                     'result':result,
                     'priority':str(row['priority'] or ''),
                     'evidence':str(evidence or '')[:3500],
+                    # A completed worker may have reused an existing identical
+                    # follow-up instead of adding a new queue item. Preserve the
+                    # actual admission receipt in project progress provenance.
+                    'next_task_queue_id':(
+                        str(created.get('queue_id') or '')[:160]
+                        if isinstance(created,dict) else None),
+                    'next_task_enqueue_admission':(
+                        str(created.get('enqueue_admission') or 'unknown')[:32]
+                        if isinstance(created,dict) else None),
                 },
             )
     except Exception:
