@@ -528,28 +528,21 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
         raise ValueError("unbounded saved merge-first PR observations")
     if project is not None:
         selected = projects[project]
-        # Project IDs are lowercase internal registry slugs (e.g. "supa"),
-        # never GitHub "Zennay/Supa". Bind relevant PRs only through actual
-        # sampled canonical issue and PR references from that project.
-        observed_repositories = set()
-        for issue in selected.get("sampled_issue_ids", []):
-            if type(issue) is not str or re.fullmatch(
-                    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}",
-                    issue) is None:
-                raise ValueError("invalid issue for selected project")
-            observed_repositories.add(issue.rsplit("#", 1)[0])
-        for candidate in selected.get("sampled_pr_candidate_urls", []):
-            if type(candidate) is not str:
-                raise ValueError("invalid selected PR candidate")
-            match = re.fullmatch(
-                r"https://github[.]com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"
-                r"/pull/[1-9][0-9]{0,8}", candidate)
-            if match is None:
-                raise ValueError("noncanonical selected PR candidate")
-            observed_repositories.add(match.group(1))
-        prs = [pr for pr in prs if any(
-            pr["url"].startswith("https://github.com/" + name + "/pull/")
-            for name in observed_repositories)]
+        # A repository may contain tasks from more than one internal
+        # project. A shared repo does not prove a PR belongs to this project.
+        # Admit ONLY exact saved project PR references, never repo-wide PRs.
+        candidates = selected.get("sampled_pr_candidate_urls", [])
+        if type(candidates) is not list or len(candidates) > 60:
+            raise ValueError("unbounded selected project PR sample")
+        project_pr_urls = set()
+        for candidate in candidates:
+            if type(candidate) is not str or re.fullmatch(
+                    r"https://github[.]com/[A-Za-z0-9_.-]+/"
+                    r"[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}",
+                    candidate) is None:
+                raise ValueError("noncanonical selected PR reference")
+            project_pr_urls.add(candidate)
+        prs = [pr for pr in prs if pr["url"] in project_pr_urls]
     lines.extend([
         "## Historische merge-first kandidaten",
         "",
