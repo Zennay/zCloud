@@ -394,7 +394,11 @@ Each candidate has a bounded current PR GET,
 a sample of at most 30 exact-HEAD check runs, at most 30 reviews, and a
 second PR GET to detect an intervening HEAD/target/state change:
 **at most 13 GETs in total** (one original-issue read plus four per
-referenced PR). If an initial PR read or the final HEAD/state re-read fails, the
+referenced PR). The review sample is bound to the first PR GET's exact HEAD
+and separates review states on that HEAD from older/different commits and
+reviews without a valid commit binding. This is source-freshness evidence only:
+it does not infer reviewer independence, latest-effective approval, resolved
+threads or merge authority. If an initial PR read or the final HEAD/state re-read fails, the
 candidate remains `UNKNOWN_PROVIDER`, not absent or merged. If the core
 PR source remains readable but a **secondary** check-run/review endpoint
 fails without an account-admission denial, the second PR read still
@@ -1010,11 +1014,15 @@ eerste waargenomen HEAD wordt dan niet als stabiel gepresenteerd. De check-run s
 terminale non-success (failure/cancelled/stale/unknown), neutral/skipped en
 pending; neutral/skipped zijn uitdrukkelijk géén succesbewijs. Markdown en
 de scriptvrije offline HTML linken iedere zichtbare check naar het bestaande
-exacte GitHub-runbewijs waar een canoniek run-ID beschikbaar is. De check- en
-reviewpagina zijn **beperkte samples**; zelfs volledig geslaagde zichtbare
-checks bewijzen niet welke CI branch protection verplicht stelt. Reviewstatus,
-onopgeloste threads, owner claims en release-autorisatie blijven apart
-**UNKNOWN / HOLD** totdat een bevoegd persoon ze onafhankelijk controleert.
+exacte GitHub-runbewijs waar een canoniek run-ID beschikbaar is. De check- en reviewpagina zijn **beperkte samples**; zelfs volledig
+geslaagde zichtbare checks bewijzen niet welke CI branch protection verplicht
+stelt. De reviewuitvoer onderscheidt nu aantallen/states die aan de exacte
+PR-HEAD zijn gebonden, reviews op andere commits en reviews zonder geldige
+commitbinding; bij ongebonden of afgekapt bewijs wordt de dekking `PARTIAL`.
+Dit bewijst nog steeds geen reviewer-onafhankelijkheid, laatste effectieve
+goedkeuring of opgeloste threads. Reviewstatus, branch protection, owner claims
+en release-autorisatie blijven apart **UNKNOWN / HOLD** totdat een bevoegd
+persoon ze onafhankelijk controleert.
 Een mislukte check of een nog niet afgeronde check resulteert in een gerichte
 operatoractie, nooit een workflowdispatch of merge.
 
