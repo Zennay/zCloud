@@ -1,3 +1,14 @@
+## 22 oktober 2026 · incomplete hosttelemetrie krijgt een expliciete eigenaaractie
+
+De vierbaan-herstelactie toont nu ook een concrete HOLD als de hostbron
+`HOST_PARTIAL` of `UNKNOWN` is zonder een bekende HIGH/ELEVATED-drempel.
+De actie somt alleen vaste broncategorieën op (`meminfo`, `loadavg`,
+`root_disk`, `psi`), noemt ontbrekende of gedeeltelijke dekking en vraagt
+de bevoegde hosteigenaar om herobservatie vóór nieuwe worker-toelating.
+Dit sluit aan op de nieuwe per-bron hostobserver: een onvolledige meting
+wordt niet stilzwijgend als gezond weergegeven. Bestaande jobs/claims blijven
+intact; de kaart voert geen restart, claim-, queue- of deploymentactie uit.
+
 ## 22 oktober 2026 · host-capaciteit vereist volledige brondekking voor een groen oordeel
 
 De gecombineerde hostobserver hield eerder alleen de RAM/swap- en loadavg-parsing
