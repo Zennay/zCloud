@@ -823,6 +823,22 @@ def output_text(report, markdown=False):
                              " (geen actuele merge-autorisatie)")
             for other in pr["overlap_with_open_prs"]:
                 lines.append("    Gedeeld bestandspad met " + other)
+            for peer in pr.get("file_directory_conflict_peers", []):
+                other = peer["url"]
+                peer_link = ("[" + other + "](" + other + ")" if markdown else other)
+                lines.append(
+                    "    Bestand/map-ancestorconflict met " + peer_link +
+                    " · peer HEAD " + peer["head_sha_observed"][:12] +
+                    " · waargenomen padparen " + str(peer["path_pairs_observed"]) +
+                    " · " + peer["own_path_sample"] + " ↔ " +
+                    peer["peer_path_sample"] +
+                    (" (extra padvoorbeelden verborgen)" if
+                     peer["path_examples_truncated"] else "") +
+                    " · eigenaar, actuele mergeconflicten en vrijgave NIET bewezen")
+            if pr.get("file_directory_conflict_peers_truncated"):
+                lines.append(
+                    "    Extra betrokken bestand/map-PR's verborgen; "
+                    "zie actuele begrensde GitHub-bron.")
     if report.get("historical_pr_delta"):
         lines.extend(["", render_delta(report["historical_pr_delta"],
                                        "markdown" if markdown else "text")])
