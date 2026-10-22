@@ -52,6 +52,19 @@ def utc_string(moment):
     return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _source_stamp(value):
+    """Parse a source clock without masking a future value as fresh."""
+    if type(value) is not str or len(value) > 45:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
 def bounded_path(path):
     if (not isinstance(path, str) or not SAFE_PATH.fullmatch(path)
             or path.startswith("/") or path.startswith("./")
@@ -946,8 +959,8 @@ def _blocked_queue_summary(source, source_coverage):
         elif not all(key in row for key in timestamp_keys):
             raise ValueError("partial blocked-work timestamp evidence")
         else:
-            observation_stamp = _stamp(raw.get("observed_at_utc"))
-            updated_stamp = _stamp(updated_at) if updated_at is not None else None
+            observation_stamp = _source_stamp(raw.get("observed_at_utc"))
+            updated_stamp = _source_stamp(updated_at) if updated_at is not None else None
             if (updated_at is not None and updated_stamp is None
                     or (age_seconds is not None and
                         (type(age_seconds) is not int or not 0 <= age_seconds <= 10**9))
