@@ -817,8 +817,15 @@ def blocked_work_owner_panel(decision):
                 raise ValueError("blocked row without timestamp has contradictory age")
             age_label = "leeftijd onbekend"
         else:
-            updated_stamp = _stamp(updated_at)
-            if (updated_stamp is None or type(future) is not bool
+            try:
+                # Parse without the incident-clock future guard: this row is
+                # specifically rendered so a future clock can be shown as a warning.
+                updated_stamp = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            except ValueError:
+                updated_stamp = None
+            if (updated_stamp is None or updated_stamp.tzinfo is None
+                    or updated_stamp.utcoffset() is None
+                    or type(future) is not bool
                     or type(clock_anomaly) is not bool
                     or (age_seconds is not None and
                         (type(age_seconds) is not int or not 0 <= age_seconds <= 10**9))
