@@ -1711,7 +1711,12 @@ def as_private_csv(board):
                  if triage_status == "unavailable" else
                  "Queued jobs with no assignment observed: " +
                  str(triage["unassigned_queued_jobs_observed"]) +
-                 ". This does not prove runner outage, permissions or CI result."))
+                 "; GitHub-reported workflow run totals (not jobs): " +
+                 ", ".join(window["status_requested"] + "=" +
+                           str(window["runs_reported_by_github"]) +
+                           " / sampled=" + str(window["rows_observed"])
+                           for window in triage["run_windows"]) +
+                 ". No proof of runner outage, permissions or CI result."))
         for job in triage.get("sampled_jobs", [])[:64]:
             emit("runner_queue_job", project, repo, triage_status,
                  check_name=job["name"], check_state=job["status_at_read"],
