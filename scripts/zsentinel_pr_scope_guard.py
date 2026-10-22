@@ -530,6 +530,8 @@ def operator_text(report):
         "Te wijzigen paden: " + ", ".join(report["requested_paths"]),
         "Bron-PR: " + (report["selected_source_pr"]["url"]
                         if report["selected_source_pr"] else "handmatige doelpaden"),
+        "Doelbranch bron-PR: " + (report["selected_source_pr"]["base_ref"]
+                                   if report["selected_source_pr"] else "n.v.t."),
         "Open PR-zoekpagina: " + str(report["open_pr_page_number"]) +
         " · posities " + str(report["open_pr_window_start"]) + "–" +
         str(report["open_pr_window_end"]) +
@@ -550,7 +552,8 @@ def operator_text(report):
     if report["selected_source_pr"] is not None:
         src = report["selected_source_pr"]
         lines.append(
-            "Bron-PR bestanden: " + str(src["source_file_count"]) +
+            "Bron-PR doelbranch: " + src["base_ref"] + "; bestanden: " +
+            str(src["source_file_count"]) +
             " paden uit " + str(src["source_file_pages_observed"]) +
             " gelezen pagina('s); uitgebreide bron: " +
             str(src["expanded_source_file_pages_requested"]) + ".")
@@ -561,6 +564,7 @@ def operator_text(report):
                 for item in hit["matching_path_relations"])
             lines.append("OVERLAP " + hit["path"] + " | PR #" +
                          str(hit["pr_number"]) + " | " + hit["pr_url"] +
+                         " | doelbranch " + hit["observed_base_ref"] +
                          " | " + ", ".join(hit["matching_files"]) +
                          " | relatie: " + relations)
     else:
@@ -592,7 +596,8 @@ def html_view(report):
             for item in hit["matching_path_relations"])
         rows.append("<tr><td>" + escape(hit["path"]) +
                     "</td><td><a rel='noreferrer noopener' href='" + link +
-                    "'>PR #" + str(hit["pr_number"]) + "</a></td><td>" +
+                    "'>PR #" + str(hit["pr_number"]) + "</a><br><small>Doelbranch: " +
+                    escape(hit["observed_base_ref"]) + "</small></td><td>" +
                     escape(", ".join(hit["matching_files"])) +
                     "<br><small>Relatie: " + escape(relations) +
                     "</small></td></tr>")
@@ -604,6 +609,7 @@ def html_view(report):
                    escape(source["url"], quote=True) + "'>#" +
                    str(source["number"]) + "</a> — exacte head " +
                    escape(source["head_sha"][:12]) +
+                   " · doelbranch " + escape(source["base_ref"]) +
                    " · " + str(source["source_file_count"]) + " paden uit " +
                    str(source["source_file_pages_observed"]) +
                    " pagina('s) · uitgebreid: " +
