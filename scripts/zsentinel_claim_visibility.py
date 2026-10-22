@@ -7,6 +7,7 @@ and workers outside this SQLite snapshot may still have active ownership.
 No raw owner_id, worker_id, claim_key, metadata or SQLite row leaves the tool.
 """
 import datetime as dt
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -30,6 +31,9 @@ def _empty(status):
     return {
         "source": "LOCAL_SQLITE_READ_ONLY",
         "status": status,
+        "observed_at_utc": None,
+        "source_identity_sha256_private": None,
+        "source_identity_verified": False,
         "active_local_leases_observed": None,
         "expired_local_leases_observed": None,
         "active_local_writers_observed": None,
@@ -50,9 +54,19 @@ def observe(db_path, projects):
     result = {project: _empty("LOCAL_SOURCE_UNAVAILABLE") for project in projects}
     con = None
     try:
-        path = Path(db_path).expanduser().resolve(strict=True)
-        if not path.is_file():
+        supplied_path = Path(db_path).expanduser()
+        # Reject a symlink at the selected database path before resolution;
+        # otherwise the read-only report could silently follow a replaced target.
+        if supplied_path.is_symlink():
             return result
+        path = supplied_path.resolve(strict=True)
+        before = path.stat()
+        if not path.is_file() or before.st_size <= 0:
+            return result
+        source_identity = hashlib.sha256(
+            (str(path) + "\\0" + str(before.st_dev) + "\\0" +
+             str(before.st_ino)).encode("utf-8")
+        ).hexdigest()
         uri = "file:" + quote(str(path), safe="/") + "?mode=ro&cache=private"
         con = sqlite3.connect(uri, uri=True, timeout=2)
         con.execute("PRAGMA query_only=ON")
@@ -65,8 +79,21 @@ def observe(db_path, projects):
             tuple(projects)
         ).fetchall()
         con.rollback()
+        after = path.stat()
+        if (supplied_path.is_symlink()
+                or supplied_path.resolve(strict=True) != path
+                or (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)):
+            return {p: _empty("LOCAL_SOURCE_CHANGED_DURING_OBSERVATION")
+                    for p in projects}
+        observed_at = dt.datetime.now(dt.timezone.utc).isoformat(
+            timespec="seconds").replace("+00:00", "Z")
         if len(rows) > MAX_CLAIMS:
-            return {p: _empty("CLAIM_INVENTORY_TRUNCATED") for p in projects}
+            return {p: {
+                **_empty("CLAIM_INVENTORY_TRUNCATED"),
+                "observed_at_utc": observed_at,
+                "source_identity_sha256_private": source_identity,
+                "source_identity_verified": True,
+            } for p in projects}
         now = dt.datetime.now(dt.timezone.utc)
         counts = {p: [0, 0, 0, 0] for p in projects}
         for project, lease_until, raw_metadata in rows:
@@ -113,6 +140,9 @@ def observe(db_path, projects):
                       else "NO_ACTIVE_LOCAL_CLAIMS_OBSERVED")
             result[project] = {
                 **_empty(status),
+                "observed_at_utc": observed_at,
+                "source_identity_sha256_private": source_identity,
+                "source_identity_verified": True,
                 "active_local_leases_observed": active,
                 "expired_local_leases_observed": expired,
                 "active_local_writers_observed": writers,
