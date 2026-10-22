@@ -131,6 +131,13 @@ def render_html(board, max_rows=20):
                         "observed_partial_no_release_permission",
                         "issue_source_stale", "source_clock_incoherent")
                     or type(other.get("file_overlap_observed")) is not bool
+                    or type(other.get("file_directory_overlap_observed")) is not bool
+                    or type(other.get("file_directory_conflict_peer_count_observed")) is not int
+                    or not 0 <= other["file_directory_conflict_peer_count_observed"] <= 16
+                    or other["file_directory_overlap_observed"] != (
+                        other["file_directory_conflict_peer_count_observed"] > 0)
+                    or (other["file_directory_overlap_observed"] and
+                        not other["file_overlap_observed"])
                     or type(other.get("source_movement_observed")) is not bool
                     or other.get("merge_authorized") is not False
                     or other.get("owner_verified") is not False
@@ -165,7 +172,10 @@ def render_html(board, max_rows=20):
                 "<li><a target='_blank' rel='noopener noreferrer' href='" +
                 h(url) + "'>PR " + h(url.rsplit("/", 1)[-1]) + " ↗</a> · " +
                 h(GATE_LABELS[state]) + ' (' + h(state) + ')' +
-                (" · bestandsoverlap" if data["file_overlap_observed"] else "") +
+                (" · bestand/map-ancestorconflict (" +
+                 str(data["file_directory_conflict_peer_count_observed"]) +
+                 " betrokken PRs)" if data["file_directory_overlap_observed"] else
+                 " · bestandscope-overlap" if data["file_overlap_observed"] else "") +
                 (" · bronbeweging" if data["source_movement_observed"] else "") +
                 "<br>" + source_head_link(url, data.get("source_head_observed")) +
                 " <button class='focus-alternative' type='button' data-focus-pr='" +
@@ -188,14 +198,27 @@ def render_html(board, max_rows=20):
         for candidate in full:
             source_head = candidate.get("source_head_observed")
             source_gate = candidate.get("gate_state")
-            if (source_gate not in GATE_LABELS or
-                    (source_head is not None and
+            if (source_gate not in GATE_LABELS
+                    or type(candidate.get("file_overlap_observed")) is not bool
+                    or type(candidate.get("file_directory_overlap_observed")) is not bool
+                    or type(candidate.get("file_directory_conflict_peer_count_observed")) is not int
+                    or not 0 <= candidate["file_directory_conflict_peer_count_observed"] <= 16
+                    or candidate["file_directory_overlap_observed"] != (
+                        candidate["file_directory_conflict_peer_count_observed"] > 0)
+                    or (candidate["file_directory_overlap_observed"] and
+                        not candidate["file_overlap_observed"])
+                    or (source_head is not None and
                      (type(source_head) is not str or
                       re.fullmatch(r"[0-9a-f]{40}", source_head) is None))):
                 raise ValueError("invalid source-bound issue PR receipt")
             candidate_receipts.append({
                 "url": candidate["url"], "head": source_head,
                 "gate": source_gate,
+                "file_overlap": candidate["file_overlap_observed"],
+                "file_directory_overlap": candidate["file_directory_overlap_observed"],
+                "file_directory_peer_count": candidate[
+                    "file_directory_conflict_peer_count_observed"],
+                "source_movement": candidate["source_movement_observed"],
             })
         pr_link = (
             "<a rel='noopener noreferrer' target='_blank' href='" + h(pr) +
@@ -287,7 +310,10 @@ def render_html(board, max_rows=20):
             escape(candidate["url"].rsplit("/", 1)[-1]) + "</a> · " +
             source_head_link(candidate["url"], candidate.get("source_head_observed")) +
             " · gate " + escape(GATE_LABELS[candidate["gate_state"]]) +
-            (" · bestandsoverlap gezien" if candidate["file_overlap_observed"] else "") +
+            (" · bestand/map-ancestorconflict (" +
+             str(candidate["file_directory_conflict_peer_count_observed"]) +
+             " PRs)" if candidate["file_directory_overlap_observed"] else
+             " · bestandscope-overlap gezien" if candidate["file_overlap_observed"] else "") +
             (" · historische beweging gezien" if candidate["source_movement_observed"] else "") +
             " <button type='button' class='focus-alternative' data-focus-pr='" +
             escape(candidate["url"], quote=True) +
@@ -1559,6 +1585,8 @@ refresh();
              tuple((candidate["url"], candidate["gate_state"],
                     candidate.get("source_head_observed"),
                     candidate["file_overlap_observed"],
+                    candidate["file_directory_overlap_observed"],
+                    candidate["file_directory_conflict_peer_count_observed"],
                     candidate["source_movement_observed"])
                    for candidate in row.get("all_existing_pr_candidates_in_sample", [])))
             for row in cards[:max_rows]
