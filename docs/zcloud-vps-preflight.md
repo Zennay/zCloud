@@ -170,6 +170,8 @@ HTML-rapport toont alle drie bronnen naast de bestaande eigenaar- en releasekaar
 - `memory.full` of `io.full` van minstens **10% van de laatste 10 seconden**
   is een blokkadesignaal voor gelijktijdige zware taken. Ontbrekende of
   ongeldige CPU-/PSI-bronnen worden **onbekend/partieel**, nooit nul druk.
+
+- Iedere `/proc/pressure/*`-bron wordt via één open filehandle tot maximaal 2048 bytes gelezen. Een te grote of niet-ASCII bron wordt onbekend/partieel; er wordt niet eerst de volledige inhoud ingelezen en daarna pas afgekapt.
 - Het gecombineerde `host_capacity`-beslisbord en het bestaande
   `CAPACITY_FIRST`-eigenaarsadvies gebruiken de nieuwe waarnemingen
   **uitsluitend wanneer de optie is opgegeven**. Zonder de optie blijven de
