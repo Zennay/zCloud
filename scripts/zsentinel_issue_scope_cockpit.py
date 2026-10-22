@@ -694,6 +694,8 @@ def output_text(report, markdown=False):
                                  str(live_gate["observed_checks_pending"]) +
                                  " · checks niet geslaagd: " +
                                  str(live_gate["observed_checks_not_successful"]) +
+                                 " · queued ≥30 min (onderzoek, geen runneruitval bewezen): " +
+                                 str(live_gate.get("queued_check_attention_30m_observed", "?")) +
                                  " · exact-head onafhankelijke approvals gezien: " +
                                  str(live_gate["observed_independent_exact_head_approvals"]) +
                                  " · review aangevraagd bij " +
@@ -933,6 +935,8 @@ def output_html(report):
                 str(live_gate["observed_checks_pending"]) +
                 " · checks niet geslaagd: " +
                 str(live_gate["observed_checks_not_successful"]) +
+                " · queued ≥30 min (geen runneruitval bewezen): " +
+                str(live_gate.get("queued_check_attention_30m_observed", "?")) +
                 " · onafhankelijke HEAD-approvals gezien: " +
                 str(live_gate["observed_independent_exact_head_approvals"]) +
                 " · review aangevraagd bij " +
