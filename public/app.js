@@ -310,6 +310,7 @@ let blockedQueueUrgentOnly=false;
 let blockedQueueProject='all';
 let blockedQueueSearch='';
 let blockedQueueFilterTimer=null;
+let blockedQueueObservedAt='';
 function blockedQueueSourceUrl(raw){
   // Queue evidence can contain user-supplied URLs. Only link exact GitHub
   // issues/PRs owned by this portfolio; never render arbitrary href schemes.
@@ -320,6 +321,11 @@ function blockedQueueSourceUrl(raw){
     return /^\/Zennay\/[A-Za-z0-9_.-]+\/(issues|pull)\/[1-9][0-9]*$/.test(url.pathname)?url.href:'';
   }catch(_){return ''}
 }
+function blockedQueueTime(value){
+  const timestamp=typeof value==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(value)?Date.parse(value):NaN;
+  if(!Number.isFinite(timestamp))return '';
+  return new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',dateStyle:'medium',timeStyle:'short'}).format(new Date(timestamp));
+}
 function blockedQueuePanel(){
   const loaded=Array.isArray(BLOCKED_QUEUE);
   // Important claims must not disappear below the twelve-card preview.
@@ -328,6 +334,7 @@ function blockedQueuePanel(){
   const items=loaded?BLOCKED_QUEUE.filter(item=>item&&item.status==='blocked').sort(
     (a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9)):[];
   const total=items.length;
+  const observation=blockedQueueTime(blockedQueueObservedAt);
   const projectIds=[...new Set(items.map(item=>String(item.project_id||'')))].filter(Boolean).sort();
   if(loaded&&blockedQueueProject!=='all'&&!projectIds.includes(blockedQueueProject)){
     blockedQueueProject='all';
@@ -357,12 +364,34 @@ function blockedQueuePanel(){
         const blocker=String(item.blocker||item.evidence||'No dependency evidence recorded').trim();
         const title=String(item.title||'Untitled blocked task').trim();
         const sourceLink=blockedQueueSourceUrl(item.source_url);
+        const lastUpdated=blockedQueueTime(item.updated_at);
+        const createdAt=blockedQueueTime(item.created_at);
+        const attempts=Number.isSafeInteger(item.attempts)&&item.attempts>=0?item.attempts:null;
+        const evidence=String(item.evidence||'').trim();
+        const attention=Array.isArray(DATA.attention_needed)
+          ?DATA.attention_needed.find(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'):null;
+        const eligibilityConflict=item.eligible!==false&&item.eligible!==0;
+        const action=attention?'Human action recorded — inspect its source and confirm the dependency has cleared.'
+          :'Review the original dependency and its evidence. No automatic resolution is established.';
+        const context='<details class="blocked-queue-context" data-disclosure="block-'+esc(item.queue_id)+'">'
+          +'<summary>Operator context and next step</summary>'
+          +'<p><strong>Next step:</strong> '+esc(action)+'</p>'
+          +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state inconsistent: parked task is still eligible. Inspect source before acting.</p>':'')
+          +'<dl>'
+          +'<div><dt>Queue update</dt><dd>'+esc(lastUpdated||'Unknown')+'</dd></div>'
+          +'<div><dt>Original queue entry</dt><dd>'+esc(createdAt||'Unknown')+'</dd></div>'
+          +'<div><dt>Claim attempts</dt><dd>'+esc(attempts===null?'Unknown':String(attempts)+' recorded; not a failure count')+'</dd></div>'
+          +'<div><dt>Operator attention</dt><dd>'+esc(attention?'Linked human attention present':'No linked attention in this loaded status snapshot')+'</dd></div>'
+          +'</dl>'
+          +(evidence&&evidence!==blocker?'<p><strong>Recorded evidence:</strong> '+esc(evidence.length>800?evidence.slice(0,797)+'…':evidence)+'</p>':'')
+          +'</details>';
         return '<article class="blocked-queue-item"><div class="blocked-queue-copy">'
           +'<div class="blocked-queue-meta"><span>'+esc(project?.name||item.project_id||'Unknown project')+'</span><b>'+esc(item.priority||'P2')+'</b></div>'
           +'<strong>'+esc(title)+'</strong><p>'+esc(blocker.length>360?blocker.slice(0,357)+'…':blocker)+'</p>'
           +'<small>Parked task · not assigned to a worker · source evidence is not an automatic resolution</small>'
           +(sourceLink?'<div class="blocked-queue-links"><a href="'+esc(sourceLink)+'" target="_blank" rel="noopener noreferrer">Open '+(sourceLink.includes('/pull/')?'pull request':'source issue')+' ↗</a></div>':'')
-          +'</div><button type="button" data-resume-blocked="'+esc(item.queue_id)+'">Resume after confirmation</button></article>';
+          +context
+          +'</div><button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="Inconsistent queue state"':'')+'>Resume after confirmation</button></article>';
       }).join('')+'</div>'
       :'<p class="blocked-queue-state">'+(search
           ?'No parked tasks match this search in the loaded queue sample.'
@@ -378,7 +407,7 @@ function blockedQueuePanel(){
       +'<button type="button" data-blocked-toggle-urgent aria-pressed="'+blockedQueueUrgentOnly+'">'
       +(blockedQueueUrgentOnly?'Show all priorities':'Only P0/P1')+'</button> '
       +(blockedQueueProject!=='all'||blockedQueueUrgentOnly||blockedQueueSearch?'<button type="button" data-blocked-clear-filters>Clear filters</button>':'')
-      +'<span role="status" aria-live="polite">Viewing '+count+' of '+total+' parked tasks from the loaded queue sample.</span></div>':'')
+      +'<span role="status" aria-live="polite">Viewing '+count+' of '+total+' parked tasks from the loaded queue sample. '+(observation?'Observed '+esc(observation)+'.':'Queue observation time unavailable.')+'</span></div>':'')
     +body+(loaded&&count>12?'<div class="blocked-queue-state" aria-live="polite">Showing '+Math.min(blockedQueueVisible,count)+' of '+count+' parked tasks in the loaded queue sample. '
     +(blockedQueueVisible<count?'<button type="button" data-blocked-show-more>Show next 12</button>':'<button type="button" data-blocked-show-less>Show first 12</button>')
     +'</div>':'')+'</section>';
@@ -416,6 +445,7 @@ async function resumeBlockedQueue(queueId,button){
     const freshItems=current.items.filter(row=>row&&row.status==='blocked');
     BLOCKED_QUEUE=freshItems;
     BLOCKED_QUEUE_ERROR='';
+    blockedQueueObservedAt=typeof current.time==='string'?current.time:'';
     const matches=freshItems.filter(row=>String(row.queue_id)===queueId);
     if(matches.length!==1||blockedResumeFingerprint(matches[0])!==blockedResumeFingerprint(item)){
       render();
@@ -458,8 +488,10 @@ async function resumeBlockedQueue(queueId,button){
       if(!Array.isArray(latest?.items))throw new Error('incomplete queue source');
       BLOCKED_QUEUE=latest.items.filter(row=>row&&row.status==='blocked');
       BLOCKED_QUEUE_ERROR='';
+      blockedQueueObservedAt=typeof latest.time==='string'?latest.time:'';
     }catch(_){
       BLOCKED_QUEUE=null;
+      blockedQueueObservedAt='';
       BLOCKED_QUEUE_ERROR='Could not refresh the parked queue; resume disabled until the source is available.';
     }
     render();
@@ -870,8 +902,10 @@ async function loadExtras(){
   if(queueResult?.status==='fulfilled'&&Array.isArray(queueResult.value?.items)){
     BLOCKED_QUEUE=queueResult.value.items.filter(item=>item&&item.status==='blocked');
     BLOCKED_QUEUE_ERROR='';
+    blockedQueueObservedAt=typeof queueResult.value.time==='string'?queueResult.value.time:'';
   }else{
     BLOCKED_QUEUE=null;
+    blockedQueueObservedAt='';
     BLOCKED_QUEUE_ERROR='Parked queue unavailable; access/read failure does not mean there are no blockers.';
   }
   const fails=historyResults.filter(r=>r.status==='rejected').length;
