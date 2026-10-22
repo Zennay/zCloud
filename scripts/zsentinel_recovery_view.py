@@ -944,6 +944,11 @@ def html_view(decision, registry=None):
         "disk_headroom_low": "Minder dan 2 GiB schijfruimte beschikbaar",
         "disk_unavailable_at_least_90_percent": "Schijf minstens 90% niet beschikbaar",
         "database_mount_inodes_unavailable_at_least_90_percent": "Minstens 90% inodes op databasemount niet beschikbaar",
+        "root_filesystem_headroom_below_2_gib": "Systeemschijf heeft minder dan 2 GiB ruimte",
+        "root_filesystem_unavailable_at_least_90_percent": "Systeemschijf minstens 90% niet beschikbaar",
+        "root_filesystem_inodes_unavailable_at_least_90_percent": "Systeemschijf minstens 90% inodes niet beschikbaar",
+        "root_filesystem_inode_capacity_unknown": "Inodes op systeemschijf niet betrouwbaar bekend; geen nieuw werk",
+        "legacy_root_filesystem_capacity_not_observed": "Oude VPS-meting zonder aparte systeemschijfdekking; geen nieuw werk",
         "legacy_vps_inode_capacity_not_observed": "Oude VPS-meting zonder inodegegevens; geen nieuw werk toelaten",
         "database_mount_inode_capacity_unknown": "Databasemount rapporteert geen bruikbare inodecapaciteit",
         "thresholds_met_not_release_authorization":
@@ -952,7 +957,7 @@ def html_view(decision, registry=None):
             "Schijfbezetting onbekend in oudere meting; geen startrecht",
     }
     raw_reason = capacity.get("reason")
-    if type(raw_reason) is not str or len(raw_reason) > 240:
+    if type(raw_reason) is not str or len(raw_reason) > 512:
         raise ValueError("invalid VPS admission reason")
     vps_reason = phrase(" · ".join(
         explanations.get(name, name) for name in raw_reason.split(",")
