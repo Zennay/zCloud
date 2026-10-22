@@ -723,12 +723,12 @@
     "icon": "server",
     "accent": "#74cfe8",
     "notion_url": "https://app.notion.com/p/4019e19ac9558122ba7ce0c4e0264db4",
-    "phase": "M0 browser runtime source on main · VPS first-session proof open",
+    "phase": "M1 · Playwright browser API and OpenAI tool loop on main, live VPS session pending",
     "status": "active",
     "priority": "low",
-    "next_step": "Install dependencies in a controlled, unprivileged VPS environment and prove one allowed-site browser session; then implement the OpenAI Responses API task loop and operator dashboard. Do not claim live connectivity yet.",
+    "next_step": "Prove a Playwright Chromium session and authorized navigation on the VPS, configure separate OpenAI API key, and build the operator approval/dashboard interface with pause/resume before offering live tasks.",
     "milestone_revision": "browseragent-m0-genesis-20261022",
-    "progress_basis": "Notion HQ/queue, standalone private repository, merged source PR #1 and zCloud registration are verified. Node parse check passed; no live Chromium session or OpenAI connection has been verified.",
+    "progress_basis": "Notion HQ and three queue tasks exist; private repo created; BrowserAgent PRs #1 and #2 merged; zCloud PRs #1580/#1581 merged; Node syntax checks passed. No live Chromium session, live OpenAI invocation or production deployment has been demonstrated.",
     "milestones": [
       {
         "title": "M0 · Project HQ, repository foundation and zCloud registration",
@@ -743,7 +743,7 @@
       {
         "title": "M2 · OpenAI tool-calling control loop with bounded actions",
         "done": false,
-        "progress": 0
+        "progress": 45
       },
       {
         "title": "M3 · Operator dashboard, streaming and task recovery",
