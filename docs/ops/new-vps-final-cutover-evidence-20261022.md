@@ -39,8 +39,9 @@ browser events, TLS/auth, and rollback availability.
 - `public_routes`: `name: zcloud_dashboard` and `name: zssh_plugin`,
   HTTPS `url`, `tls_verified`, `authentication_verified`,
   `new_vps_origin_verified` true, `checked_at` within one hour
-- `project_services`: one record for FTMO, Supa, LightUp, TradeEngine,
-  Tuddy, zSentinel, Fuckball-game, RaiseAI and zGuard. Each has `state`
+- `project_services`: one record for HaxLab, FTMO, TradeEngine, zCloud,
+  Supa, RaiseAI, uLab, zSSH, LightUp, zGuard/zBrowse, MixLab, Fuckball,
+  Tuddy, BrowserAgent and zSentinel. Each has `state`
   `healthy` or `intentionally_offline`, a recent `checked_at`, and
   nonempty `evidence` identifying the functional proof or explicit reason.
 - `rollback`: `old_host_preserved`, `restore_procedure_confirmed`,
