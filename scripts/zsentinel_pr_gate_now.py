@@ -505,6 +505,46 @@ def _one(repo, number, token):
     }
 
 
+# Error categories contain no exception text, URLs, tokens, response bodies or
+# user-provided descriptions. They point the operator toward a real owner
+# action without claiming that an inaccessible PR was closed or merged.
+SOURCE_PROBLEMS_NL = {
+    "github_authentication_or_access": "GitHub-toegang ontbreekt of is geweigerd; laat bevoegde eigenaar rechten controleren.",
+    "github_rate_limited": "GitHub heeft verzoeken begrensd; hervat volgens providerlimiet, zonder CI-herstart.",
+    "github_remote_unavailable": "GitHub gaf een server-/netwerkfout; bron later opnieuw lezen.",
+    "github_pr_or_source_missing": "PR of noodzakelijke GitHub-bron is niet gevonden; controleer bestaande referentie en toegang.",
+    "pr_changed_during_observation": "PR-HEAD, doelbasis, conceptstatus of reviewaanvragen veranderden tijdens lezen; actuele bron opnieuw vastleggen.",
+    "github_evidence_unavailable_or_invalid": "GitHub-bron ontbreekt, is onvolledig of onverwacht; inspecteer zonder aannames.",
+}
+
+
+def _source_problem_kind(error):
+    """Map recognized GitHub failures to safe operator categories only."""
+    code = getattr(error, "code", None)
+    if type(code) is int:
+        if code in (401, 403):
+            return "github_authentication_or_access"
+        if code == 429:
+            return "github_rate_limited"
+        if code in (404, 410):
+            return "github_pr_or_source_missing"
+        if code >= 500:
+            return "github_remote_unavailable"
+    if isinstance(error, OSError):
+        return "github_remote_unavailable"
+    # Only our own known self-contained validation messages qualify as a
+    # drift signal. Never print raw exception strings from a provider.
+    if isinstance(error, ValueError):
+        reason = str(error)
+        if reason in (
+                "PR head/base changed during observation",
+                "PR draft state missing or changed during observation",
+                "PR review requests changed during observation",
+                "check source head drift"):
+            return "pr_changed_during_observation"
+    return "github_evidence_unavailable_or_invalid"
+
+
 def observe_many(prs, token=None):
     if (type(prs) is not list or not 1 <= len(prs) <= MAX_PRS
             or len({tuple(p) for p in prs if type(p) in (tuple, list) and len(p) == 2})
@@ -519,11 +559,12 @@ def observe_many(prs, token=None):
         repo, number = entry
         try:
             result = _one(repo, number, token)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
             result = {
                 "url": "https://github.com/" + repo + "/pull/" + str(number),
                 "repository": repo, "number": number,
                 "status": "github_source_unavailable_or_head_changed",
+                "source_problem_kind": _source_problem_kind(error),
                 "required_branch_checks_and_rules_verified": False,
                 "required_review_policy_verified": False,
                 "merge_authorized": False, "deployment_authorized": False,
@@ -573,7 +614,10 @@ def human_gate_summary(source: dict) -> str:
         lines.append("")
         lines.append("PR: " + item["url"])
         if item.get("status") != "observed_current_head_partial_gate_evidence":
-            lines.append("GitHub-bron onbereikbaar of HEAD veranderd; PR niet vrijgeven.")
+            problem = item.get("source_problem_kind")
+            lines.append(SOURCE_PROBLEMS_NL.get(
+                problem, "GitHub-bron onbereikbaar of HEAD veranderd; PR niet vrijgeven."))
+            lines.append("Geen mergevrijgave zonder hernieuwde exacte HEAD-bron.")
             continue
         lines.append("Waargenomen HEAD: " + item["head_sha_observed"])
         lines.append("Doelbranch: " + item["base_ref_observed"])
@@ -693,8 +737,12 @@ def html_gate_summary(source: dict) -> str:
         url = "https://github.com/" + repository + "/pull/" + str(number)
         title = "<h2><a rel='noopener noreferrer' href='" + h(url) + "'>" + h(repository) + " #" + str(number) + "</a></h2>"
         if item.get("status") != "observed_current_head_partial_gate_evidence":
+            problem = SOURCE_PROBLEMS_NL.get(
+                item.get("source_problem_kind"),
+                "GitHub-bron niet beschikbaar of HEAD gewijzigd; herlees de bron.")
             cards.append("<article>" + title +
-                         "<p class='warning'>GitHub-bron niet beschikbaar of HEAD gewijzigd. Herlees bron; geen merge.</p></article>")
+                         "<p class='warning'>" + h(problem) +
+                         "</p><p>Geen mergevrijgave; claim en actuele HEAD opnieuw controleren.</p></article>")
             continue
         head = item.get("head_sha_observed")
         if type(head) is not str or SHA.fullmatch(head) is None:
@@ -847,7 +895,9 @@ def markdown_gate_summary(source: dict) -> str:
         lines.extend(["", "## [PR #" + str(number) + "](" + url + ")"])
         if item.get("status") != "observed_current_head_partial_gate_evidence":
             lines.extend([
-                "- Probleem: huidige GitHub-bron onbereikbaar of HEAD gewijzigd.",
+                "- Probleem: " + SOURCE_PROBLEMS_NL.get(
+                    item.get("source_problem_kind"),
+                    "GitHub-bron onbereikbaar of HEAD gewijzigd."),
                 "- Actie: herlees de actuele PR, eigenaarclaim en verplichte releasegates.",
                 "- Status: ONBEKEND; geen automatische actie of merge.",
             ])
