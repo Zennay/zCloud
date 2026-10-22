@@ -575,3 +575,28 @@ Er volgt geen automatische GitHub-merge, CI-rerun, reviewerapproval,
 claimverplaatsing of live deploy. Wanneer een eerdere PR alleen met
 onvolledige metadata gezien werd, is de verandering ONBEKEND in plaats
 van een verzonnen draft- of mergegereedheidsovergang.
+
+
+## 22 October · Individual blocked-task worklist and row-age evidence
+
+The live incident desk now renders the existing bounded work_items returned
+by the same read-only queue observation, instead of exposing only project-level
+blocked counts. Each displayed row contains priority/project, sanitized title,
+opaque one-way reference, claim-attempt count, eligibility as observed,
+row-update age at the source observation, and the next human owner check. A
+canonical GitHub issue/PR URL is labelled as an unverified navigation hint, not
+ownership or fix evidence.
+
+The source selection is portfolio-fair across priority/project groups and now
+uses deterministic SQLite rowid order inside each bounded project/priority
+slice. This stabilizes repeated shortlists without a new global sort or
+unbounded candidate read. Row age is calculated against the source observation
+clock; malformed timestamps remain unknown, and future timestamps are flagged
+instead of appearing fresh. Older saved bundles without row-age fields remain
+supported as age unknown.
+
+The worklist is explicitly partial when capped or incomplete. An empty sample
+does not imply an empty queue. Any observed claim/worker-slot metadata requires
+runtime-owner review; every row continues to carry current_owner_verified=false,
+resume_authorized=false, and automatic_retry_authorized=false. No queue
+writes, retry, claim release, lease change, or worker restart are performed.
