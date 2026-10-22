@@ -7,12 +7,18 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+MAX_PSI_BYTES = 2048
+
 
 def _psi_avg10(resource: str, category: str) -> float | None:
-    """Read only the aggregate ten-second percentage, not process details."""
+    """Read a bounded amount of aggregate ten-second PSI, not process details."""
     path = Path("/proc/pressure") / resource
     try:
-        lines = path.read_text(encoding="ascii")[:2048].splitlines()
+        with path.open("rb") as source:
+            raw = source.read(MAX_PSI_BYTES + 1)
+        if len(raw) > MAX_PSI_BYTES:
+            return None
+        lines = raw.decode("ascii").splitlines()
     except (OSError, UnicodeError):
         return None
     for line in lines[:4]:
