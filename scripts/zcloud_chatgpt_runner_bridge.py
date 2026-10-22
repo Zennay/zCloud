@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import re
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -210,6 +211,222 @@ def _occupancy_band(count: int, partial: bool = False) -> str:
     return "one_observed" if count == 1 else "multiple_observed"
 
 
+
+MAX_PROC_CAPACITY_BYTES = 16384
+ARCHIVE_MOUNT_PATH = "/home/ubuntu/VPS-Archief"
+
+
+def _read_bounded_proc_file(path: str, limit: int) -> bytes | None:
+    """Read one fixed procfs source with no-follow flags and a hard byte cap."""
+    fd = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+        fd = os.open(path, flags)
+        raw = os.read(fd, limit + 1)
+    except OSError:
+        return None
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if not raw or len(raw) > limit:
+        return None
+    return raw
+
+
+def _host_capacity_observation() -> dict[str, object]:
+    """Bounded resource pressure hints; never infer cause or authorize cleanup."""
+    result: dict[str, object] = {
+        "state": "partial",
+        "coverage": "partial",
+        "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "load_average": {"1m": None, "5m": None, "15m": None, "cpu_count": None,
+                         "max_load_per_cpu": None},
+        "root_filesystem": {"total_bytes": None, "available_bytes": None,
+                            "available_percent": None, "used_percent": None},
+        "memory": {"total_bytes": None, "available_bytes": None,
+                   "available_percent": None},
+        "swap": {"configured": None, "total_bytes": None, "free_bytes": None,
+                 "used_percent": None},
+        "archive_mount": {"configured": True, "mount_detected": None,
+                          "total_bytes": None, "available_bytes": None,
+                          "available_percent": None},
+        "warnings": [],
+        "operator_summary": "Capacity evidence is partial; do not infer runner health or authorize cleanup.",
+        "service_health_verified": False,
+        "runner_registration_verified": False,
+        "job_assignment_verified": False,
+        "causal_attribution_verified": False,
+        "cleanup_authorized": False,
+        "offload_authorized": False,
+        "restart_authorized": False,
+        "mutation_performed": False,
+    }
+    complete = True
+    warnings: list[str] = []
+
+    raw = _read_bounded_proc_file("/proc/loadavg", 256)
+    if raw is not None:
+        try:
+            values = [float(value) for value in raw.decode("ascii").split()[:3]]
+            if (len(values) != 3 or
+                    any(not math.isfinite(value) or value < 0 for value in values)):
+                raise ValueError("invalid_load_average")
+            cpu_count = os.cpu_count()
+            if type(cpu_count) is not int or not 1 <= cpu_count <= 1024:
+                cpu_count = None
+            result["load_average"] = {
+                "1m": round(values[0], 2), "5m": round(values[1], 2),
+                "15m": round(values[2], 2), "cpu_count": cpu_count,
+                "max_load_per_cpu": (
+                    round(max(values) / cpu_count, 2) if cpu_count else None
+                ),
+            }
+        except (ValueError, TypeError, UnicodeError, OverflowError):
+            complete = False
+    else:
+        complete = False
+
+    raw = _read_bounded_proc_file("/proc/meminfo", MAX_PROC_CAPACITY_BYTES)
+    if raw is not None:
+        try:
+            required = {"MemTotal", "MemAvailable", "SwapTotal", "SwapFree"}
+            values: dict[str, int] = {}
+            for line in raw.decode("ascii").splitlines():
+                fields = line.split()
+                if not fields or fields[0].rstrip(":") not in required:
+                    continue
+                key = fields[0].rstrip(":")
+                if key in values or len(fields) != 3 or fields[2] != "kB":
+                    raise ValueError("invalid_meminfo_field")
+                if not fields[1].isdigit():
+                    raise ValueError("invalid_meminfo_value")
+                value = int(fields[1])
+                if value > (1 << 50):
+                    raise ValueError("oversized_meminfo_value")
+                values[key] = value
+            if not required.issubset(values):
+                raise ValueError("incomplete_meminfo")
+            total = values["MemTotal"] * 1024
+            available = values["MemAvailable"] * 1024
+            swap_total = values["SwapTotal"] * 1024
+            swap_free = values["SwapFree"] * 1024
+            if (total <= 0 or available > total or swap_free > swap_total):
+                raise ValueError("inconsistent_meminfo")
+            result["memory"] = {
+                "total_bytes": total, "available_bytes": available,
+                "available_percent": round(100 * available / total, 1),
+            }
+            result["swap"] = {
+                "configured": swap_total > 0, "total_bytes": swap_total,
+                "free_bytes": swap_free,
+                "used_percent": (
+                    round(100 * (swap_total - swap_free) / swap_total, 1)
+                    if swap_total else None
+                ),
+            }
+        except (ValueError, TypeError, UnicodeError, OverflowError, ZeroDivisionError):
+            complete = False
+    else:
+        complete = False
+
+    try:
+        vfs = os.statvfs("/")
+        block_size = int(vfs.f_frsize or vfs.f_bsize)
+        total_blocks, free_blocks, available_blocks = (
+            int(vfs.f_blocks), int(vfs.f_bfree), int(vfs.f_bavail)
+        )
+        if (block_size <= 0 or total_blocks <= 0 or free_blocks > total_blocks
+                or available_blocks > total_blocks):
+            raise ValueError("invalid_root_filesystem_capacity")
+        total = block_size * total_blocks
+        free = block_size * free_blocks
+        available = block_size * available_blocks
+        used = max(0, total - free)
+        denominator = used + available
+        result["root_filesystem"] = {
+            "total_bytes": total,
+            "available_bytes": available,
+            "available_percent": round(100 * available / total, 1),
+            "used_percent": round(100 * used / denominator, 1) if denominator else 100.0,
+        }
+    except (OSError, ValueError, TypeError, OverflowError, AttributeError, ZeroDivisionError):
+        complete = False
+
+    try:
+        mount_info = os.lstat(ARCHIVE_MOUNT_PATH)
+        if not stat.S_ISDIR(mount_info.st_mode):
+            raise ValueError("archive_mount_path_not_directory")
+        mounted = os.path.ismount(ARCHIVE_MOUNT_PATH)
+        archive = result["archive_mount"]
+        archive["mount_detected"] = mounted
+        if mounted:
+            vfs = os.statvfs(ARCHIVE_MOUNT_PATH)
+            block_size = int(vfs.f_frsize or vfs.f_bsize)
+            total_blocks, available_blocks = int(vfs.f_blocks), int(vfs.f_bavail)
+            if block_size <= 0 or total_blocks <= 0 or available_blocks > total_blocks:
+                raise ValueError("invalid_archive_filesystem_capacity")
+            total, available = block_size * total_blocks, block_size * available_blocks
+            archive.update({
+                "total_bytes": total,
+                "available_bytes": available,
+                "available_percent": round(100 * available / total, 1),
+            })
+    except (OSError, ValueError, TypeError, OverflowError, AttributeError, ZeroDivisionError):
+        complete = False
+
+    root = result["root_filesystem"]
+    memory = result["memory"]
+    swap = result["swap"]
+    load = result["load_average"]
+    archive = result["archive_mount"]
+    if type(root.get("used_percent")) in (int, float) and root["used_percent"] >= 95:
+        warnings.append("root_filesystem_critical")
+    if type(swap.get("used_percent")) in (int, float) and swap["used_percent"] >= 90:
+        warnings.append("swap_pressure_high")
+    if type(memory.get("available_percent")) in (int, float) and memory["available_percent"] <= 10:
+        warnings.append("memory_pressure_high")
+    if type(load.get("max_load_per_cpu")) in (int, float) and load["max_load_per_cpu"] >= 2:
+        warnings.append("load_pressure_high")
+    if "root_filesystem_critical" in warnings and archive.get("mount_detected") is False:
+        warnings.append("archive_mount_not_detected")
+
+    if "root_filesystem_critical" in warnings:
+        if archive.get("mount_detected") is True and type(archive.get("available_bytes")) is int:
+            summary = (
+                "Root filesystem critically full and the configured archive mount reports capacity. "
+                "Verify file provenance, encryption/retention policy and active handles before owner-approved "
+                "offload; no deletion, move or restart is authorized by this snapshot."
+            )
+        else:
+            summary = (
+                "Root filesystem critically full. Preserve active work and obtain an authorized storage inventory; "
+                "do not delete files, move data or restart services from this snapshot."
+            )
+    elif warnings:
+        summary = (
+            "Resource pressure threshold(s) observed. This is not proof of runner/job failure; "
+            "reconcile service identity, GitHub registration and job assignment separately."
+        )
+    elif complete:
+        summary = (
+            "No configured capacity threshold was exceeded in this snapshot. "
+            "Runner health and job assignment remain unverified."
+        )
+    else:
+        summary = (
+            "Capacity evidence is partial or unavailable. Preserve active work and do not infer service health."
+        )
+    result.update({
+        "state": "observed" if complete else "partial",
+        "coverage": "complete" if complete else "partial",
+        "warnings": warnings,
+        "operator_summary": summary,
+    })
+    return result
+
+
+
 def _worker_age_bands(ages: list[int | None]) -> dict[str, int]:
     return {
         "under_5m": sum(age is not None and age < 300 for age in ages),
@@ -244,6 +461,7 @@ def runner_worker_snapshot() -> dict:
             "release_authorized": False,
             "mutation_performed": False,
             "runner_service_cgroup": _empty_service_cgroup_observation("unavailable"),
+            "host_capacity_observation": _host_capacity_observation(),
         }
 
     service_cgroup = _empty_service_cgroup_observation("not_observed")
@@ -420,6 +638,7 @@ def runner_worker_snapshot() -> dict:
         "listener_process_band_observed": _occupancy_band(listener_count, partial),
         "worker_age_bands_observed": _worker_age_bands(worker_ages),
         "runner_service_cgroup": service_cgroup,
+        "host_capacity_observation": _host_capacity_observation(),
         "claim_ownership_verified": False,
         "project_attribution_verified": False,
         "safe_to_take_over": False,

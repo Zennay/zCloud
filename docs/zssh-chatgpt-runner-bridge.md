@@ -100,6 +100,26 @@ active work, reconcile with the authorized owner, and never infer takeover or re
 authority from process presence. It is a convenience summary of the enum fields, not
 an independent source of evidence.
 
+
+
+The `/zssh workers` receipt also includes `host_capacity_observation`. It
+reads only bounded `/proc/loadavg` and `/proc/meminfo` data plus
+`statvfs` capacity counters for the root filesystem and the preconfigured
+archive mount. It returns aggregate load, memory/swap, free/used capacity,
+threshold warning codes, coverage, and a bounded operator summary. The archive
+is counted only if the configured path is a real mount point, not merely a
+directory or symlink.
+
+Warnings use conservative fixed thresholds (root filesystem >=95% used, swap
+>=90% used, available RAM <=10%, or maximum load average >=2x detected CPU
+count). Partial or unreadable fields stay unknown. The summary may recommend
+an owner-approved inventory/offload when root capacity is critical; it never
+identifies files to delete or move and does not establish encryption, retention,
+open-file, runner-health, registration, job-assignment, or causal evidence.
+The receipt always keeps cleanup, offload, restart and mutation authorization
+false. No shell command, file-content inventory, filesystem write, deletion,
+move, service inspection or restart is performed.
+
 ## Test & rollback
 
 `python3 -m unittest -v tests.test_zssh_chatgpt_runner_bridge`
