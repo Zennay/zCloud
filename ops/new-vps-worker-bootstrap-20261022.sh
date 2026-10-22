@@ -68,7 +68,7 @@ if [[ "$ACTION" == prepare ]]; then
     echo "EXISTING $TARGET_DB — untouched; reconcile the two databases before activation."
   else
     python3 - "$SOURCE_DB" "$TARGET_DB" <<'PY'
-import os, sqlite3, sys, tempfile
+import os, pwd, sqlite3, sys, tempfile
 from pathlib import Path
 src, dst = map(Path, sys.argv[1:])
 fd, tmp = tempfile.mkstemp(prefix='.history-migration-', suffix='.db', dir=dst.parent)
@@ -81,7 +81,8 @@ try:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if not {'portfolio_queue', 'runner_workers', 'runner_targets'} <= tables:
             raise RuntimeError(f"historical database lacks worker tables: {sorted(tables)}")
-    os.chown(tmp, 1000, 1000)  # verified standard ubuntu uid below by installation shell
+    identity = pwd.getpwnam("ubuntu")
+    os.chown(tmp, identity.pw_uid, identity.pw_gid)
     os.chmod(tmp, 0o600)
     os.replace(tmp, dst)
     print("STAGED", dst, dst.stat().st_size, "bytes")
