@@ -1,3 +1,35 @@
+### 22 oktober · gecombineerde VPS-/archiefcapaciteit en expliciete PR-bronkeuze
+
+De bestaande **live cockpit** geeft de optionele `--archive-target` nu expliciet
+door aan zijn read-only VPS-capaciteitsobserver. Dit herstelt de werkelijke
+`NameError` in `assemble()` wanneer beide opties samen werden gebruikt:
+een archive-mountsample verschijnt nu in hetzelfde incidentbesluit als root-,
+database-, inode-, CPU-, RAM- en swapdruk.
+
+```sh
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /pad/naar/bestaande/history.db \
+  --project cloud --observe-vps-capacity \
+  --archive-target /pad/naar/bestaande/externe/archiefmount \
+  --format html --output /eigenaar/prive/capaciteit.html
+```
+
+Het archiefpad moet absoluut zijn en naar de **bestaande externe mount**
+verwijzen; de observer controleert de mount en laat onzekere/onbereikbare
+headroom ONBEKEND. Dit is een eigenaaradvies, geen toestemming om bestanden
+te verwijderen, runners te herstarten, queues te wijzigen of een offload uit
+te voeren. Gebruik dit uitsluitend op de bevoegde VPS met toestemming.
+
+De operator-PR-selectie is eveneens expliciet: `--existing-pr`,
+`--pr-project` en `--previous-pr-report` werken alleen samen met
+`--inspect-existing-prs`. Zonder die vlag stopt het commando met een
+gerichte fout **vóór** GitHub-/queueobservatie of privé bestandswrites.
+Hiermee verdwijnt een echte foutmodus: PR-pins werden eerder stil genegeerd,
+en een vorige PR-bron kon zonder huidige PR-waarneming worden vergeleken.
+De exacte bron/HEAD, verplichte checks en eigenaar blijven altijd afzonderlijk
+te controleren. Gebruik nieuwe private 0600-outputpaden; de output is nooit
+een merge-/deployautorisatie.
+
 
 ### 21 oktober · volledige routegeschiedenis over meerdere bestaande bronvensters
 
