@@ -632,12 +632,12 @@ def runner_worker_snapshot() -> dict:
             service_cgroup["observation_summary"] = "listener_outside_expected_unit_comm_only"
         elif service_cgroup["listener_summary"] == "mixed_unit_membership_comm_only":
             service_cgroup["observation_summary"] = "mixed_listener_unit_membership_comm_only"
-        elif service_cgroup["listener_summary"] == "all_in_expected_unit_comm_only":
-            service_cgroup["observation_summary"] = "listener_in_expected_unit_comm_only"
         elif service_cgroup["worker_summary"] == "all_outside_expected_unit_comm_only":
             service_cgroup["observation_summary"] = "worker_outside_expected_unit_comm_only"
         elif service_cgroup["worker_summary"] == "mixed_unit_membership_comm_only":
             service_cgroup["observation_summary"] = "mixed_worker_unit_membership_comm_only"
+        elif service_cgroup["listener_summary"] == "all_in_expected_unit_comm_only":
+            service_cgroup["observation_summary"] = "listener_in_expected_unit_comm_only"
         elif service_cgroup["worker_summary"] == "all_in_expected_unit_comm_only":
             service_cgroup["observation_summary"] = "worker_in_expected_unit_comm_only"
         else:
@@ -666,11 +666,6 @@ def runner_worker_snapshot() -> dict:
             "Runner.Listener process-name matches have mixed service-cgroup membership; "
             "preserve all processes and request owner reconciliation. No restart is authorized."
         )
-    elif service_cgroup["observation_summary"] == "listener_in_expected_unit_comm_only":
-        service_cgroup["operator_summary"] = (
-            "A Runner.Listener process-name match is inside the expected service cgroup; "
-            "GitHub registration and job assignment remain unverified."
-        )
     elif service_cgroup["observation_summary"] == "worker_outside_expected_unit_comm_only":
         service_cgroup["operator_summary"] = (
             "A Runner.Worker process-name match is outside the expected service cgroup; "
@@ -680,6 +675,11 @@ def runner_worker_snapshot() -> dict:
         service_cgroup["operator_summary"] = (
             "Runner.Worker process-name matches have mixed service-cgroup membership; "
             "preserve active jobs and request owner reconciliation. No restart is authorized."
+        )
+    elif service_cgroup["observation_summary"] == "listener_in_expected_unit_comm_only":
+        service_cgroup["operator_summary"] = (
+            "A Runner.Listener process-name match is inside the expected service cgroup; "
+            "GitHub registration and job assignment remain unverified."
         )
     elif service_cgroup["observation_summary"] == "worker_in_expected_unit_comm_only":
         service_cgroup["operator_summary"] = (
