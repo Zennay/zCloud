@@ -677,6 +677,8 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 observed.get("observed_gate_families_changed", []))
             card["pr_continuity_transitions"] = list(
                 observed.get("observed_gate_transitions", []))
+            card["pr_continuity_owner_step"] = observed.get(
+                "observed_gate_owner_step")
     for item in incidents:
         if not isinstance(item, dict) or item.get("severity") not in ("P0", "P1", "P2"):
             raise ValueError("malformed fresh incident")
@@ -1128,10 +1130,16 @@ def _pr_continuity_label(card):
             or any(type(row) is not str or not 1 <= len(row) <= 150
                    or any(ord(ch) < 32 for ch in row) for row in transitions)):
         raise ValueError("untrusted observed current-vs-prior gate changes")
+    next_step = card.get("pr_continuity_owner_step")
+    if (next_step is not None
+            and (type(next_step) is not str or not 1 <= len(next_step) <= 280
+                 or any(ord(ch) < 32 for ch in next_step))):
+        raise ValueError("invalid private PR gate owner action")
     return (labels[state] +
             (" · veranderd: " + ", ".join(names[f] for f in families)
              if families else "") +
-            (" · " + "; ".join(transitions) if transitions else ""))
+            (" · " + "; ".join(transitions) if transitions else "") +
+            (" · eigenaaractie: " + next_step if next_step else ""))
 
 
 def _pr_gate_brief(card):
