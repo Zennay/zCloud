@@ -4905,7 +4905,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({'improvement':improvement_loop_state(q.get('project',[IMPROVEMENT_PROJECT_ID])[0] or IMPROVEMENT_PROJECT_ID),'time':now()})
         if u.path=='/api/task-claims':
             if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
-            return self.reply({'claims':task_claims(q.get('project',[''])[0] or None),'time':now()})
+            # GET is observational: hide expired leases without deleting claim rows.
+            # Lease cleanup remains owned by the scheduler/control paths.
+            claims=task_claims(q.get('project',[''])[0] or None,prune_expired=False)
+            return self.reply({
+                'claims':claims,
+                'time':now(),
+                'read_only_observation':True,
+                'sqlite_mutations_performed':False,
+                'expired_claims_pruned':False,
+            })
         if u.path=='/api/runner-commands':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             # Browser workers must never be starved by an old pending backlog.
