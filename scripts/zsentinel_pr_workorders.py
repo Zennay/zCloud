@@ -155,24 +155,36 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
     # looking collision-free merely because its pairs were not scanned.
     collision_pairs = view.get("shown_collision_pairs", [])
     scope_collision_pairs = view.get("shown_path_scope_collision_pairs", [])
+    scan_omissions = {
+        "shared_file_pairs_hidden": 0,
+        "path_scope_pairs_hidden": 0,
+        "focused_overlap_receipts_hidden": 0,
+        "malformed_source_list": False,
+    }
     if type(collision_pairs) is not list:
         collision_pairs = []
+        scan_omissions["malformed_source_list"] = True
         paths_limited = True
     elif len(collision_pairs) > 80:
+        scan_omissions["shared_file_pairs_hidden"] = len(collision_pairs) - 80
         paths_limited = True
     if type(scope_collision_pairs) is not list:
         scope_collision_pairs = []
+        scan_omissions["malformed_source_list"] = True
         paths_limited = True
     elif len(scope_collision_pairs) > 80:
+        scan_omissions["path_scope_pairs_hidden"] = len(scope_collision_pairs) - 80
         paths_limited = True
     # Focused overlaps are independently capped at 16 in this work order.
-    # Preserve an explicit incomplete flag if an upstream caller supplies
-    # more observations than this renderer can inspect.
+    # Preserve explicit omitted counts if an upstream caller supplies more
+    # observations than this renderer can inspect.
     if direct_overlaps is not None:
         if type(direct_overlaps) is not list:
             direct_overlaps = []
+            scan_omissions["malformed_source_list"] = True
             paths_limited = True
         elif len(direct_overlaps) > 16:
+            scan_omissions["focused_overlap_receipts_hidden"] = len(direct_overlaps) - 16
             paths_limited = True
     # An unstable before/after GitHub inventory is not evidence of a
     # collision at the selected exact HEAD. Suppress *positive* edges,
@@ -370,7 +382,7 @@ def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None
     # the caller records exact hidden counts and never silently drops peers.
     return (sorted(paths)[:MAX_PATHS],
             len(paths) > MAX_PATHS or paths_limited or project_scope_partial,
-            sorted(related), sorted(hinted_issues), scope_conflicts)
+            sorted(related), sorted(hinted_issues), scope_conflicts, scan_omissions)
 
 
 
@@ -823,7 +835,7 @@ def collect_workorders(board):
             }
         elif item.get("pending_review_requests") is not None:
             raise ValueError("unverified reviewer requests cannot enter work order")
-        paths, paths_cut, related, hints, scope_conflicts = _observed_overlap_paths(
+        paths, paths_cut, related, hints, scope_conflicts, scan_omissions = _observed_overlap_paths(
             projects[project], url, head if pinned else None, repo,
             live_gate.get("sampled_file_overlaps_observed"))
         if live_gate.get("sampled_file_overlaps_hidden"):
@@ -898,6 +910,17 @@ def collect_workorders(board):
         if hints_hidden:
             notes.append(
                 f"{hints_hidden} aanvullende onbevestigde issuehint(s) buiten de zichtbare lijst; herlees de actuele issue-/PR-tekst.")
+        if scan_omissions["shared_file_pairs_hidden"]:
+            notes.append(
+                f"{scan_omissions['shared_file_pairs_hidden']} aanvullende same-file botsingsparen buiten de 80-paren scan; overlapbron onvolledig.")
+        if scan_omissions["path_scope_pairs_hidden"]:
+            notes.append(
+                f"{scan_omissions['path_scope_pairs_hidden']} aanvullende file/directory botsingsparen buiten de 80-paren scan; overlapbron onvolledig.")
+        if scan_omissions["focused_overlap_receipts_hidden"]:
+            notes.append(
+                f"{scan_omissions['focused_overlap_receipts_hidden']} aanvullende gefocuste overlap-ontvangstbewijzen buiten de 16-item scan.")
+        if scan_omissions["malformed_source_list"]:
+            notes.append("Een overlapbronlijst had een ongeldige structuur; volledige scope is UNKNOWN.")
         alias_view = projects[project]
         alias_pairs = alias_view.get("shown_portable_path_alias_pairs", [])
         alias_matches = []
@@ -1255,6 +1278,7 @@ def collect_workorders(board):
             "source_open_pr_window_complete": (
                 projects[project].get("open_pr_window_complete") is True),
             "scope_path_conflicts": scope_conflicts,
+            "collision_scan_omissions": scan_omissions,
             "related_prs": related, "related_prs_hidden": related_hidden,
             "unverified_issue_hints": hints,
             "unverified_issue_hints_hidden": hints_hidden,
