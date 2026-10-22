@@ -1,5 +1,56 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · sluiting, merge en live-oplevering zijn drie verschillende feiten
+
+De bestaande `scripts/zsentinel_pr_gate_now.py` en
+`scripts/zsentinel_pr_gate_batches.py` hebben nu ook een **GitHub-lifecycle**
+als productuitkomst van een actuele of opgeslagen PR-bron.
+
+1. **Open PR:** de bestaande exacte-HEAD check-, review- en
+   eigenaarwerkbak blijft actief, zonder autonome releaseautorisatie.
+2. **Closed zonder merge:** GitHub meldt `state=closed, merged=false`.
+   De PR is **niet** geleverd op de default branch. Actie is een bevoegde
+   eigenaarbeslissing over heropenen of passende opvolging.
+3. **Merged naar andere branch:** GitHub meldt `merged=true` en een
+   exact geldig `merge_commit_sha`, maar de PR-doelbranch komt niet
+   overeen met de door de canonieke GitHub-repository aangewezen
+   `default_branch`. Dit **telt niet** als levering op default/main.
+4. **Merged naar default branch:** GitHub meldt `merged=true`,
+   exacte `merge_commit_sha` en een doelbranch identiek aan
+   `default_branch` vanuit de canonieke repository-API. Dezelfde PR
+   wordt twee keer gelezen met gebonden PR-nummer, head, target-repo,
+   target-ref, status en mergecommit. Een automatisch voortgeschoven
+   basis-SHA na een merge blokkeert dit bewijs niet. De nieuwe
+   default-branch mergecommit is vastgelegd; de actuele branch-tip
+   en live deployment blijven **niet** vastgesteld.
+
+Bij onbereikbare of veranderende bron blijft de waarneming **ONBEKEND**
+en wordt niet gegokt of een PR gemerged is. Extra repositorymetadata
+wordt uitsluitend read-only opgehaald via het canonieke endpoint
+`GET /repos/{owner}/{repo}` en alleen bij een GitHub-bevestigde merge.
+
+In de live tekst-/Markdown-/HTML-werkbak en de historische batchwerkbak
+zijn de lifecycle-uitkomsten afzonderlijk zichtbaar. Historische
+momentopnamen worden expliciet als historisch gelabeld. Uit de
+multi-PR bron verdwijnen gemergede PRs daardoor niet langer stilzwijgend
+als 'bron onbereikbaar' of 'nog een open CI-HOLD'; ook een gesloten
+maar niet-gemergede PR kan niet onterecht als `DONE` worden aangemerkt.
+
+**Niet geïmplementeerd / niet toegestaan:** claims, GitHub-writes,
+automatische merges, deploys, CI-retries, runnerrestarts of omzeilen van
+branch protection, onafhankelijke review en andere bestaande gates.
+Een GitHub-merge bewijst nooit dat de nieuwe code draait.
+
+### GitHub-HTTP-fouten vanaf de echte bron
+
+De canonieke `github_json`-transportlaag gooit voor HTTP-fouten nu een
+`GitHubSourceError(ValueError)`. Alleen de bounded HTTP-status en
+`x-ratelimit-remaining` / `retry-after` worden bewaard; geen token,
+URL, responsebody of ongefilterde fouttekst. Oude readers die
+`ValueError` afvangen blijven fail-closed, terwijl de PR-gate en
+portfolio-incidentpanel eindelijk het échte verschil tussen auth,
+rate-limit en netwerkuitval kunnen tonen.
+
 ## 22 oktober · directe foutlinks en bronoorzaken in bestaande herstelwerkbak
 
 De **bestaande** merge-first PR-gate- en portfoliowerkbakken blijven read-only,
