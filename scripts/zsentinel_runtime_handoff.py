@@ -1146,9 +1146,31 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                     "automatic_retry_authorized"))):
             raise ValueError("untrusted or authorizing blocked queue evidence")
         blocked_coverage = blocked.get("coverage")
+        # The blocked-task inventory is a distinct bounded SQLite read
+        # within the same snapshot. An invalid ACTIVE row makes the active
+        # queue coverage incomplete, but must not suppress otherwise-valid
+        # current blocked P0/P1 work from its independent owner inbox.
+        blocked_at = blocked.get("observed_at")
+        blocked_fresh = False
+        blocked_moment = None
+        if type(blocked_at) is str and 1 <= len(blocked_at) <= 45:
+            try:
+                blocked_moment = datetime.fromisoformat(
+                    blocked_at.replace("Z", "+00:00"))
+            except ValueError:
+                blocked_moment = None
+            if (blocked_moment is not None
+                    and blocked_moment.utcoffset() is not None
+                    and blocked_moment.utcoffset().total_seconds() == 0):
+                blocked_age = (datetime.now(timezone.utc) -
+                               blocked_moment).total_seconds()
+                blocked_fresh = -120 <= blocked_age <= 600
+        blocked_usable = (
+            pressure.get("coverage") in ("current", "incomplete")
+            and blocked_fresh
+        )
         blocked_summary["coverage"] = (
-            "not_current_unverified" if pressure.get("coverage") != "current"
-            else blocked_coverage
+            blocked_coverage if blocked_usable else "not_current_unverified"
         )
         groups = blocked.get("project_groups")
         samples = blocked.get("work_items")
@@ -1157,8 +1179,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 or type(groups) is not list or len(groups) > 250
                 or type(samples) is not list or len(samples) > 24):
             raise ValueError("untrusted blocked queue work sample")
-        if blocked_coverage in ("complete", "partial") and (
-                pressure.get("coverage") == "current" and queue_fresh):
+        if blocked_coverage in ("complete", "partial") and blocked_usable:
             groups_by_key = {}
             for entry in groups:
                 if (type(entry) is not dict
@@ -1203,6 +1224,8 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 "priority_groups_truncated": (
                     len(candidates) > 8 or blocked.get("sample_truncated") is True),
                 "resume_authorized": False,
+                "active_queue_inventory_incomplete": (
+                    pressure.get("coverage") == "incomplete"),
             }
             for pid, pri, count in candidates[:8]:
                 # A bounded sample may contain two entries from one group.
@@ -1278,7 +1301,9 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                     card["sample_only_cautions"] = hints[:6]
                 card["blocked_items_observed"] = count
                 card["queue_priority_observed"] = pri
-                card["queue_observed_at_utc"] = parsed.isoformat(timespec="seconds")
+                card["queue_observed_at_utc"] = blocked_moment.isoformat(timespec="seconds")
+                card["active_queue_inventory_incomplete"] = (
+                    pressure.get("coverage") == "incomplete")
                 card["blocked_group_source_complete"] = blocked_coverage == "complete"
                 card["claim_owner_verified"] = False
                 card["blocked_work_resume_authorized"] = False
