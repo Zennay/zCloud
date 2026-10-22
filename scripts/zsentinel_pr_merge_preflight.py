@@ -178,7 +178,7 @@ def as_markdown(report):
         json.dumps(reviews.get("observed_review_states", {}), sort_keys=True),
         "- GitHub GET attempts: " + str(report["get_attempts"]),
         "", "## Operator next step", "", report["next_human_step"], "",
-        "## Missing source segments", "",
+        "## Owner gate checklist — observation is not authorization", "",
     ]
     lines.extend("- " + item["gate"] + ": " + item["state"] + " — " + item["next"]
                  for item in report["operator_gates"])
@@ -193,7 +193,7 @@ def as_markdown(report):
         ("Failure", "sampled_blocking_checks"), ("Pending", "sampled_pending_checks"),
     ):
         for entry in checks.get(field, []):
-            lines.append("- " + label + ": " + entry["name"] +
+            lines.append("- " + label + ": `" + entry["name"].replace("`", "'") + "`" +
                          " (" + str(entry.get("conclusion") or entry.get("status")) + ")")
     lines.extend([
         "", "**Always recheck:** required exact-head CI, independent reviewer,",
