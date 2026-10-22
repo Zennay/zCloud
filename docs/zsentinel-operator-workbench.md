@@ -96,11 +96,12 @@ exact-HEAD verplichte CI, branchbescherming, onafhankelijke review en
 owner-/claimtoestemming noodzakelijk.
 
 De eerste sectie van de HTML toont vervolgens een **historische herstelprioriteit**
-voor projecten (P0-kaarten, waargenomen verlopen leases, P1-kaarten en hoge
-claimpogingen) met afzonderlijk een merge-first-lijst van alle opgenomen
+voor projecten (P0 uit gevalideerde opgeslagen projectsteekproeven, waargenomen
+verlopen leases, P1-steekproeven en hoge claimpogingen) met afzonderlijk een merge-first-lijst van alle opgenomen
 PR-gatewaarnemingen. Bij een ontbrekende queuebron staat expliciet
-"onbekend", niet nul. Dit overzicht geeft operators onmiddellijk brongebonden
-volgorde en context, maar **geen dispatch**, claimovername of mergeautorisatie.
+"onbekend", niet nul. De gebruikte bron per P0/P1-telling (projectsteekproef of alleen kaarten) staat
+erbij, zodat afgekorte kaarten geen stilzwijgende P0-verlaging veroorzaken.
+Dit overzicht geeft operators onmiddellijk brongebonden volgorde en context, maar **geen dispatch**, claimovername of mergeautorisatie.
 
 
 Open vervolgens recovery-history-october.index.html in die privémap.
