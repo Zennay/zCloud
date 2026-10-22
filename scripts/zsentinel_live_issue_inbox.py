@@ -219,7 +219,8 @@ def _operator_workflow(item):
     }
 
 
-def observe_repo_inbox(repo_full_name, *, token=None, display_page=1):
+def observe_repo_inbox(repo_full_name, *, token=None, display_page=1,
+                       display_all_sample=False):
     """Recent issue inventory plus bounded P0/P1 recall when recent window ends.
 
     The issue-only search preserves original GitHub source ordering; the
@@ -228,6 +229,9 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1):
     """
     if type(display_page) is not int or not 1 <= display_page <= MAX_SAMPLED_DISPLAY_PAGES:
         raise GitHubReadError("inbox display page must be 1 through 5")
+    if type(display_all_sample) is not bool or (
+            display_all_sample and display_page != 1):
+        raise GitHubReadError("full sampled export cannot select a display page")
     if not isinstance(repo_full_name, str):
         raise GitHubReadError("inbox repository must be owner/name")
     match = REPO.fullmatch(repo_full_name)
@@ -397,7 +401,7 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1):
         -(x["last_github_update_age_hours"] or 0),
     ))
     start = (display_page - 1) * MAX_DISPLAY
-    chosen = issues[start:start + MAX_DISPLAY]
+    chosen = issues if display_all_sample else issues[start:start + MAX_DISPLAY]
     sampled_display_pages = max(
         1, (len(issues) + MAX_DISPLAY - 1) // MAX_DISPLAY
     )
@@ -450,15 +454,20 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1):
         "priority_recall_not_authoritative": True,
         "invalid_or_inaccessible_rows_excluded": invalid_excluded,
         "total_issues_seen": len(issues), "displayed_issues": len(chosen),
-        "display_truncated": len(issues) > MAX_DISPLAY,
+        "display_truncated": len(issues) > len(chosen),
+        "all_sampled_issues_selected": display_all_sample,
         "display_page": display_page,
         "display_pages_in_sample": sampled_display_pages,
         "display_page_unavailable_in_sample": (
             display_page > sampled_display_pages
         ),
         "display_omitted_sample_issues": len(issues) - len(chosen),
-        "display_has_next_sample_page": display_page < sampled_display_pages,
-        "display_has_previous_sample_page": display_page > 1,
+        "display_has_next_sample_page": (
+            not display_all_sample and display_page < sampled_display_pages
+        ),
+        "display_has_previous_sample_page": (
+            not display_all_sample and display_page > 1
+        ),
         # "full" means the recent issue inventory actually finished with
         # stable coverage, not that the three-page budget was exhausted.
         "source_window_full": (
@@ -622,7 +631,7 @@ def markdown(report):
 
 
 
-def workorders_csv(report):
+def workorders_csv(report, *, compact_all=False):
     """Private, bounded source-only operator handoff; not an execution queue."""
     rows = io.StringIO(newline="")
     writer = csv.writer(rows, lineterminator=chr(10))
@@ -637,7 +646,8 @@ def workorders_csv(report):
         "source_issues_seen", "issue_claim_verified", "required_ci_verified",
         "merge_authorized", "deploy_authorized",
     )
-    writer.writerow(headings)
+    if not compact_all:
+        writer.writerow(headings)
 
     def safe(value):
         if isinstance(value, bool):
@@ -655,6 +665,38 @@ def workorders_csv(report):
         if field[i:].startswith(("=", "+", "-", "@")):
             return "'" + field
         return field
+
+    if compact_all:
+        # All sampled issues come from ONE provider read, not independent
+        # page reads with moving search boundaries. Compact source-only
+        # columns keep the largest 210-item sample within the 128-KiB
+        # private output ceiling; user text and worker contacts stay absent.
+        if report["all_sampled_issues_selected"] is not True:
+            raise ValueError("all-sample CSV requires full bounded source")
+        writer.writerow((
+            "observed_at_utc", "repository", "issue_url", "label_priority",
+            "human_action_code", "human_action", "source_conflict",
+            "sampled_issue_count", "source_partial_or_unknown",
+            "active_owner_verified", "main_merge_authorized",
+        ))
+        for item in report["issues"]:
+            step = item["operator_workflow"]
+            writer.writerow([safe(value) for value in (
+                report["observed_at_utc"], report["repository"], item["url"],
+                item["priority_from_explicit_labels"],
+                step["human_action_code"], step["action"],
+                item["source_window_identity_drift"],
+                report["total_issues_seen"],
+                report["source_partial_or_unknown"], False, False,
+            )])
+        if not report["issues"]:
+            writer.writerow([safe(value) for value in (
+                report["observed_at_utc"], report["repository"], "", "UNKNOWN",
+                "inspect_current_source_before_owner_action",
+                "No issues in bounded source; verify current GitHub issues",
+                False, 0, report["source_partial_or_unknown"], False, False,
+            )])
+        return rows.getvalue()
 
     for item in report["issues"]:
         workflow = item["operator_workflow"]
