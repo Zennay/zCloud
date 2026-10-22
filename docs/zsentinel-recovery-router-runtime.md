@@ -4293,3 +4293,18 @@ De routes worden uit de canonieke issue-URL gekozen, niet uit de issue-titel of
 een bewaarde eerdere tekst. Bestaande open PR's blijven eerste navigatiestap
 voor niet-human-gated issues; dit bord verleent geen claims, dispatch, merge of
 deployrechten.
+
+## 22 October 2026 · no-swap hosts are not falsely treated as exhausted swap
+
+The existing VPS resource receipt now carries `total_swap_mib` plus an explicit
+`swap_status` of `OBSERVED` or `NO_SWAP_CONFIGURED`. The recovery router
+validates the pair against available swap and used-percentage telemetry.
+When the kernel reports no configured swap, zero available swap and a null
+usage percentage no longer trigger `swap_headroom_low` by themselves.
+Low free swap remains a pressure signal when swap is configured.
+
+Older receipts without total-swap evidence keep the conservative behavior:
+zero available swap remains ambiguous and cannot be interpreted as proof that
+swap is absent. All independent CPU, memory, disk, inode and source-freshness
+checks remain unchanged. This is advisory capacity classification only; it
+does not authorize a worker, restart, retry, queue mutation or deployment.
