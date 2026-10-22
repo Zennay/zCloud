@@ -262,6 +262,11 @@ def _parallel_owner_actions(report):
                 "Some sampled exact-head checks are pending or queued.",
                 "Reconcile their actual runner/admission state; no blind workflow reruns.",
                 "OBSERVED_PENDING_CHECKS")
+        if checks.get("sampled_non_success_checks"):
+            add("inspect_neutral_or_skipped_checks",
+                "Some sampled exact-head checks are neutral, skipped or otherwise non-success.",
+                "Confirm the effective required-check contract in GitHub; neutral or skipped samples do not prove success.",
+                "OBSERVED_NON_SUCCESS_CHECKS")
         if checks.get("sample_incomplete"):
             add("review_unsampled_head_checks",
                 "GitHub reports more check runs than this bounded sample contains.",
@@ -299,15 +304,42 @@ def _parallel_owner_actions(report):
             "Some sampled review entries are unbound, unknown or truncated.",
             "Inspect effective reviewer decisions and unresolved threads on GitHub.",
             "PARTIAL_REVIEW_SAMPLE")
+    else:
+        add("verify_effective_independent_review",
+            "Review submissions were observed, but no effective independent approval or resolved-thread state is proven.",
+            "Inspect latest per-reviewer decisions on the exact HEAD and all unresolved review threads before seeking merge.",
+            "REVIEW_SUBMISSIONS_NOT_APPROVAL")
     add("verify_authority_and_protection",
         "Branch protection, current claims and release-owner permission remain unverified.",
         "Check all required CI, independent review, protection and current ownership before merge.",
         "HUMAN_GATES_UNKNOWN")
-    # Authority/protection is the final non-optional HOLD; preserving only
-    # the first N cards previously hid it on complex, highly blocked PRs.
-    # Reserve a slot rather than increasing the bounded operator payload.
+    # Preserve independent CI and reviewer gates when many issues compete for
+    # the bounded 12-card display. A truncated shortlist must explicitly say so.
+    # This remains a human-owned HOLD; it does not grant merge authority.
+    priority = {
+        "investigate_sampled_terminal_checks", "resolve_pending_head_checks",
+        "inspect_neutral_or_skipped_checks", "recover_head_check_source",
+        "request_independent_review", "await_requested_independent_review",
+        "reconcile_partial_review_coverage",
+        "verify_effective_independent_review", "recover_review_source",
+        "inspect_review_request_source",
+    }
     authority_card = cards[-1]
-    return cards[:MAX_PARALLEL_OWNER_ACTIONS - 1] + [authority_card]
+    candidates = cards[:-1]
+    ordered = ([card for card in candidates if card["code"] in priority] +
+               [card for card in candidates if card["code"] not in priority])
+    if len(ordered) <= MAX_PARALLEL_OWNER_ACTIONS - 1:
+        return ordered + [authority_card]
+    shown = ordered[:MAX_PARALLEL_OWNER_ACTIONS - 2]
+    omitted = len(ordered) - len(shown)
+    return shown + [{
+        "code": "additional_owner_holds_omitted",
+        "problem": str(omitted) + " additional owner HOLD action(s) exceed the bounded display.",
+        "owner_action": "Inspect the complete PR, GitHub checks, review requests, base/head history and source gaps; omitted cards are not clearances.",
+        "evidence": "BOUNDED_DISPLAY_INCOMPLETE",
+        "status": "HOLD_OWNER_REVIEW",
+        "execution_authorized": False,
+    }, authority_card]
 
 
 def _compare_summary(payload, expected_base_sha, expected_head_sha):
