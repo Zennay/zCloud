@@ -1145,6 +1145,18 @@ def render_html(bundle):
         " · bron onbekend: " +
         e(summary["review_request_source_unknown_prs"]) +
         ". Controleer GitHub voordat je iets aanvraagt of samenvoegt.</p></section>")
+    work = bundle.get("workstream_summary")
+    if (type(work) is not dict or work.get("all_actions_manual") is not True or
+            work.get("source_only_no_execution_authority") is not True):
+        raise ValueError("invalid operator work queue")
+    parts.append("<section class=\"notice\" aria-label=\"Actie-eerst werkvoorraad\">"
+                 "<strong>Wat is nu uitvoerbaar? (maximaal vier bron-PRs)</strong>"
+                 "<ol>")
+    for key in WORKSTREAM_ORDER:
+        parts.append("<li>" + e(WORKSTREAM_LABELS[key]) + ": <strong>" +
+                     e(work["counts"][key]) + "</strong> PRs</li>")
+    parts.append("</ol><p>Gebaseerd op bronmomenten, niet op actuele eigenaarclaims; "
+                 "geen automatische merge of workflowherstart.</p></section>")
     if bundle["items"]:
         change_labels = {
             "changed_gate_receipt": "Gatebewijs gewijzigd bij dezelfde HEAD",
@@ -1191,7 +1203,7 @@ def render_html(bundle):
                          e(summary["project"]) + " · PR #" +
                          e(summary["number"]) + "</a> — " +
                          e(summary["category"]) + " · " +
-                         e(summary["attention_label"]) + "</li>")
+                         e(summary["workstream_label"]) + "</li>")
         parts.append("</ol></nav><main>")
     for card in bundle["items"]:
         repo = card["repository"]
@@ -1211,11 +1223,15 @@ def render_html(bundle):
             (" · <strong>Ongewijzigde HOLD: laat liggen tot nieuw bewijs</strong>"
              if card["repeat_hold_deferred"] else "") +
             "</p>",
-            "<p><strong>Werkvolgorde:</strong> " + e(card["attention_label"]) +
-            " (bronobservatie)</p>" +
+            "<p><strong>Operatorwerk:</strong> " + e(card["workstream_label"]) +
+            " (handmatig; bronobservatie)</p>" +
+            "<p><strong>Bestaande gatevervolgstap:</strong> " +
+            e(card["attention_label"]) + "</p>" +
             "<p><strong>Blokkade:</strong> " + e(card["blocker"]) + "<br>"
             "<strong>Menselijke vervolgstap:</strong> " +
             e(card["human_next_step"]) + "</p>",
+            "<p><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+            e(card["operator_action_link"]) + "\">Bekijk volgende menselijke actie bij GitHub</a></p>",
             "<p><strong>GitHub bron bekijken:</strong> " +
             "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
             e(card["review_url"]) + "\">PR en reviews</a> · " +
