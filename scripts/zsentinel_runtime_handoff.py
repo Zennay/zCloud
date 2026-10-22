@@ -2015,12 +2015,18 @@ def _notion_review_summary(report):
         review = row.get("observed_verifying_min")
         in_progress = row.get("observed_in_progress_min")
         review_clocks = row.get("observed_claim_clock_recheck_min")
+        running_review_clocks = row.get("observed_in_progress_claim_clock_recheck_min")
         if (type(total) is not int or not 1 <= total <= 400
                 or type(review) is not int or not 0 <= review <= total
                 or type(in_progress) is not int or in_progress != total - review
                 or (review_clocks is not None and
                     (type(review_clocks) is not int or
-                     not 0 <= review_clocks <= total))):
+                     not 0 <= review_clocks <= total))
+                or (running_review_clocks is not None and
+                    (type(running_review_clocks) is not int
+                     or not 0 <= running_review_clocks <= in_progress
+                     or review_clocks is None
+                     or running_review_clocks > review_clocks))):
             raise ValueError("invalid Notion owner claim-clock triage counts")
         project_counts = row.get("claim_window_observation_counts")
         if project_counts is not None and (
@@ -2032,8 +2038,11 @@ def _notion_review_summary(report):
                     n for kind, n in project_counts.items()
                     if kind != "time_window_present_not_owner_verified")):
             raise ValueError("untrusted per-project Notion claim clock summary")
-        if project_counts is None and review_clocks is not None:
+        if project_counts is None and (
+                review_clocks is not None or running_review_clocks is not None):
             raise ValueError("Notion owner triage cannot invent lease counts")
+        if project_counts is not None and running_review_clocks is None:
+            raise ValueError("Notion live source lacks status-to-clock correlation")
         if (type(total) is not int or not 1 <= total <= 400
                 or type(review) is not int or not 0 <= review <= total
                 or row.get("live_owner_verified") is not False
@@ -2221,15 +2230,19 @@ def _notion_clock_card_detail(card, report):
     row = matches[0]
     concern = card.get("notion_claim_clock_recheck_min")
     working = card.get("notion_work_status_in_progress_min")
+    working_issues = card.get("notion_claimed_running_clock_recheck_min")
     if (type(concern) is not int or concern < 1
             or concern != row["observed_claim_clock_recheck_min"]
             or type(working) is not int
             or working != row["observed_in_progress_min"]
-            or card.get("priority") != ("P1" if working else "P2")):
+            or type(working_issues) is not int
+            or working_issues != row["observed_in_progress_claim_clock_recheck_min"]
+            or card.get("priority") != ("P1" if working_issues else "P2")):
         raise ValueError("Notion owner card contradicts its source")
     return ("Notion bron " + notion["observed_at_utc"] +
-            " · " + str(concern) + " verdachte/onbekende leaseklokken "
-            "binnen de waargenomen projectregels; "
+            " · " + str(concern) + " verdachte/onbekende leaseklokken, "
+            "waarvan " + str(working_issues) +
+            " bij Claimed/Running-statusregels; "
             "geen matching queueclaim of vrijgave bewezen.")
 
 def _linked_issue_pr_gates(card):
