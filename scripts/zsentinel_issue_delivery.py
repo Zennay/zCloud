@@ -345,11 +345,9 @@ def build_workboard(inbox, registry, token=None):
         "source_budget_maximum": len(project_names)*3 + MAX_PRS*5,
         "issue_count": len(sampled),
         "product_issue_count": sum(
-            x["next_step"] != "authorized_infrastructure_owner_required"
-            for x in sampled),
+            x["next_step"] not in HUMAN_ONLY_ROUTE_CODES for x in sampled),
         "human_owner_issue_count": sum(
-            x["next_step"] == "authorized_infrastructure_owner_required"
-            for x in sampled),
+            x["next_step"] in HUMAN_ONLY_ROUTE_CODES for x in sampled),
         "items": sampled,
         "recent_open_product_prs": pr_cards,
         "recent_open_product_pr_count": len(pr_cards),
@@ -860,10 +858,10 @@ def render_html(board):
                 pr_links + '</p>' + ('<details><summary>Exacte PR-bron</summary><ul>' +
                 evidence + '</ul></details>' if evidence else '') +
                 source_age_label + queue_notice + change_detail +
-                (packet_selector() if item["next_step"] !=
-                 "authorized_infrastructure_owner_required" else "") +
+                (packet_selector() if item["next_step"] not in
+                 HUMAN_ONLY_ROUTE_CODES else "") +
                 followup_controls() + '</article>')
-            if item["next_step"] == "authorized_infrastructure_owner_required":
+            if item["next_step"] in HUMAN_ONLY_ROUTE_CODES:
                 owner_cards.append(card)
             else:
                 cards.append(card)
@@ -1083,8 +1081,7 @@ def render_markdown(board):
                              "owner_next_step",
                              "Controleer actuele PR-HEAD en eigenaar.")))
     for item in sorted(board["items"],
-                       key=lambda row: row["next_step"] ==
-                                       "authorized_infrastructure_owner_required"):
+                       key=lambda row: row["next_step"] in HUMAN_ONLY_ROUTE_CODES):
         lines += ["", "## " + item["priority"] + " · [" +
                   _markdown_literal(item["title"]) + "](" + item["issue_url"] + ")",
                   "- **Probleem:** " + _markdown_literal(item["next_step"]),
