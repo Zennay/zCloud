@@ -876,8 +876,14 @@ def collect_workorders(board):
                                     "case_or_unicode_normalization_alias",
                                     "left_path_alias_conflicts_with_right_descendant",
                                     "right_path_alias_conflicts_with_left_descendant")):
-                            example = (_markdown(edit_path(first_alias.get("left_path"))) +
-                                       " ↔ " + _markdown(edit_path(first_alias.get("right_path"))))
+                            left_raw = edit_path(first_alias.get("left_path"))
+                            right_raw = edit_path(first_alias.get("right_path"))
+                            example = (_markdown(left_raw[:48]) +
+                                       ("…" if len(left_raw) > 48 else "") +
+                                       " ↔ " + _markdown(right_raw[:48]) +
+                                       ("…" if len(right_raw) > 48 else "") +
+                                       (" (padfragmenten)" if
+                                        len(left_raw) > 48 or len(right_raw) > 48 else ""))
                     peer_number = PR.fullmatch(peer_url).group(2)
                     alias_matches.append(
                         "POTENTIËLE cross-platform padalias met PR #" + peer_number +
