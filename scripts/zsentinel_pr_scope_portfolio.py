@@ -1720,10 +1720,13 @@ def as_private_csv(board):
                      (", ".join(job["labels_observed"]) or "ONBEKEND") +
                      "; runner health and release gates UNKNOWN."))
         if triage_status != "unavailable" and (
+                triage.get("run_state_drift_observed") is True or
                 any(not w["all_status_runs_sampled"] for w in triage["run_windows"])
                 or any(not r["jobs_sample_complete"] for r in triage["run_receipts"])):
             emit("source_warning", project, repo, triage_status,
-                 operator_notice="Additional GitHub Actions runs/jobs outside bounded snapshot.")
+                 operator_notice=(
+                     "GitHub run/job status changed between GETs or additional "
+                     "runs/jobs outside bounded snapshot; no runner conclusion."))
 
     for view in board["project_views"]:
         project = view["project"]
