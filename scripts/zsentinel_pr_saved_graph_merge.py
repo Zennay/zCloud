@@ -461,6 +461,10 @@ def combine_sources(sources, repository):
         "collection_mode": "private_saved_graph_files",
         "snapshot_count": len(sources),
         "total_observed_prs": len(all_prs),
+        "prs_with_unknown_target_branch": sum(
+            pr["base_ref"] is None for pr in all_prs.values()),
+        "target_branch_identity_complete": all(
+            pr["base_ref"] is not None for pr in all_prs.values()),
         "observed_source_page_numbers": sorted(all_pages),
         "observation_window_utc": [
             datetime.fromtimestamp(t, timezone.utc).isoformat()
@@ -678,7 +682,11 @@ def render(report, fmt):
         "Bronmodus: " + report["collection_mode"] +
         " (niet-atomair, geen owner- of mergevrijgave)",
         "Opgeslagen momentopnamen: " + str(report["snapshot_count"]) +
-        " · PRs: " + str(report["total_observed_prs"]),
+        " · PRs: " + str(report["total_observed_prs"]) +
+        " · PRs met onbekende doelbranch: " +
+        str(report["prs_with_unknown_target_branch"]) +
+        " · doelbranchidentiteit volledig: " +
+        ("ja" if report["target_branch_identity_complete"] else "nee"),
         "Geziene GitHub-PR-pagina's: " +
         ", ".join(map(str, report["observed_source_page_numbers"])),
         "Nieuwe OVER-PAGINA bestandsparen: " +
@@ -892,6 +900,8 @@ def render(report, fmt):
         "<p>Repository: " + escape(report["repository"]) +
         " · momentopnamen: " + str(report["snapshot_count"]) +
         " · onderzochte PRs: " + str(report["total_observed_prs"]) +
+        " · PRs met onbekende doelbranch: " +
+        str(report["prs_with_unknown_target_branch"]) +
         " · bron: " + escape(report["collection_mode"]) +
         "</p><aside>Geen atomische live bron, eigenaars- of mergevrijgave. "
         "Andere GitHub-pagina's blijven UNKNOWN.</aside>"
