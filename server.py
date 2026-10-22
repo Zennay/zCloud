@@ -4925,7 +4925,15 @@ class Handler(BaseHTTPRequestHandler):
             worker_id=str(q.get('worker',[''])[0] or '').strip()
             owner_id=str(q.get('owner',[''])[0] or '').strip()
             if not project_id or not worker_id or not owner_id:return self.reply({'error':'project, worker en owner zijn verplicht'},400)
-            return self.reply(worker_preflight_state(project_id,worker_id,owner_id))
+            # This GET only observes an existing preflight and the live claim
+            # fingerprint; it never creates/renews a preflight or prunes claims.
+            preflight=worker_preflight_state(project_id,worker_id,owner_id)
+            return self.reply({
+                **preflight,
+                'read_only_observation':True,
+                'sqlite_mutations_performed':False,
+                'expired_claims_pruned':False,
+            })
         if u.path=='/api/config-audit':
             if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
             try: limit=int(q.get('limit',['80'])[0])
