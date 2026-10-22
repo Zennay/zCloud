@@ -339,3 +339,19 @@ of meer dan twee minuten in de toekomst krijgt een expliciete
 De signalen blijven in de historische sample voor audit, maar mogen geen actuele
 queueclaim, werkhervatting of herstelautorisatie bewijzen. Er zijn geen
 actieve runner-, queue- of workerwijzigingen.
+
+
+## 22 oktober · historische workerincidenten blijven leesbaar, niet actueel
+
+De standalone worker-HTML en tekstweergave bepalen de geldigheid van het
+opgeslagen UTC-bronmoment bij het **tonen**. Bij ouder dan tien minuten of
+meer dan twee minuten in de toekomst wordt de vroegere urgentielijst als
+**historische signalen** gepresenteerd. De afzonderlijke workerkaarten blijven
+zichtbaar voor reconstructie, maar hun oude actiecodes worden niet als actuele
+blokkade-eigenaarschap gepresenteerd. De operator maakt een nieuwe toegestane
+read-only bronwaarneming alvorens een actuele herstelbeslissing te nemen.
+
+Wanneer de bron expliciet is aangevraagd maar tijdelijk onleesbaar blijkt,
+maakt de gebundelde runtime-handoff een P2 eigenaaractie voor verificatie van
+de SQLite-bron of het schema; hij leidt geen vrije slot of voltooide taak af.
+Geen QA-suites of handmatige workflows zijn onderdeel van deze implementatie.
