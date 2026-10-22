@@ -43,6 +43,8 @@ EVIDENCE_FIELDS = frozenset({
     "blocked_source_guarded", "blocked_task_noneligible", "closure_reason",
     "queue_lease_state", "task_claim_state", "task_claim_source_available",
     "blocked_source_status",
+    "blocked_source_observed_at_utc", "queue_lease_observed_at_utc",
+    "task_claim_observed_at_utc",
     "escalation_reason", "permission_required", "irreversible_risk",
     "safe_routes_exhausted", "capacity", "exact_head",
     "required_ci", "independent_review", "branch_protection", "owner_authorized",
@@ -290,6 +292,12 @@ def _validate(data):
         or any(ord(char) < 0x20 or ord(char) == 0x7f for char in reason)
     ):
         raise PolicyInputError("closure_reason must contain 12–1200 printable characters")
+    # Malformed provided source clocks fail closed at input admission; missing
+    # clocks are policy HOLDs, surfaced as exact owner-readable gaps.
+    for field in ("blocked_source_observed_at_utc",
+                  "queue_lease_observed_at_utc", "task_claim_observed_at_utc"):
+        if evidence.get(field) is not None:
+            _timestamp(evidence[field])
     for field in ("attempts", "retry_budget", "unresolved_review_threads"):
         value = evidence.get(field)
         if value is not None and (
@@ -302,7 +310,13 @@ def _validate(data):
 def recommended_next_step_code(action, blockers):
     """Stable machine-readable routing hint, not permission to execute the route."""
     codes = {item["code"] for item in blockers}
-    if codes & {"source_stale", "source_not_verified", "source_future_dated"}:
+    if codes & {"source_stale", "source_not_verified", "source_future_dated"} or any(
+        code.endswith(("_missing", "_after_receipt", "_stale"))
+        and code.startswith(("blocked_source_observed_at_utc",
+                             "queue_lease_observed_at_utc",
+                             "task_claim_observed_at_utc"))
+        for code in codes
+    ):
         return "refresh_source"
     if codes & {"claim_not_clear", "claim_state_unknown"}:
         if codes & {"owner_missing", "human_owner_missing"}:
@@ -368,8 +382,14 @@ def recommended_next_step_code(action, blockers):
 def recommended_next_step(action, blockers, required_evidence):
     """Give a deterministic safe handoff; never turn policy output into execution."""
     codes = {item["code"] for item in blockers}
-    if codes & {"source_stale", "source_not_verified", "source_future_dated"}:
-        return "Refresh or verify the original source observation and reevaluate; stale, unverified or future-dated evidence cannot clear a HOLD."
+    if codes & {"source_stale", "source_not_verified", "source_future_dated"} or any(
+        code.endswith(("_missing", "_after_receipt", "_stale"))
+        and code.startswith(("blocked_source_observed_at_utc",
+                             "queue_lease_observed_at_utc",
+                             "task_claim_observed_at_utc"))
+        for code in codes
+    ):
+        return "Reobserve the exact blocked row, queue lease and separate task claims at current source time; a fresh wrapper receipt cannot refresh older evidence."
     if codes & {"claim_not_clear", "claim_state_unknown"}:
         if codes & {"owner_missing", "human_owner_missing"}:
             return "Identify the current claim owner from live source evidence; do not preempt, reassign, or mutate the queue."
@@ -465,6 +485,32 @@ def evaluate(data, max_age_minutes, *, now=None):
             "source_not_verified", "The supplied source receipt is not marked verified.",
             ("evidence.source_verified",))
     action = data["action"]
+    # A fresh wrapper receipt does not refresh the distinct source reads
+    # used to justify an ownership-changing route. A missing/old/future-
+    # relative source clock is a HOLD; these remain supplied observations,
+    # not independent proof and never authorize a queue action.
+    if action in {"park_blocker", "resume_blocked", "close_blocked"}:
+        snapshot_sources = (
+            ("blocked_source_observed_at_utc", "blocked row"),
+            ("queue_lease_observed_at_utc", "queue lease"),
+            ("task_claim_observed_at_utc", "separate task claim"),
+        )
+        for field, label in snapshot_sources:
+            supplied = value(field)
+            if supplied is None:
+                require(False, field + "_missing",
+                        "Current " + label + " source observation clock is missing.",
+                        ("evidence." + field,))
+                continue
+            snapshot_at = _timestamp(supplied)
+            require(snapshot_at <= observed + timedelta(minutes=2),
+                    field + "_after_receipt",
+                    "The " + label + " observation postdates the reported source receipt.",
+                    ("evidence." + field, "observed_at_utc"))
+            require(now - snapshot_at <= timedelta(minutes=max_age_minutes),
+                    field + "_stale",
+                    "The " + label + " observation exceeds the configured source freshness window.",
+                    ("evidence." + field,))
     # Approval booleans alone cannot identify the person accountable for an
     # execution-impacting recommendation. A missing named owner is always HOLD.
     if action in {
