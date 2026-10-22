@@ -180,8 +180,9 @@ This is a producer-side correction only. It does not create a claim epoch or ind
 
 Every New chat action now performs a fresh read of /runner-targets immediately
 before the UI click. The engine captures the queue ID, global slot, normalized
-prompt, route and conversation before the asynchronous read; it refuses the
-click if the current lease/assignment differs, the tab was navigated meanwhile,
+prompt, base-project identity, local worker slot, route and conversation
+before the asynchronous read; it refuses the click if the current
+lease/assignment differs, the tab was navigated meanwhile,
 a response/send is active, a reset is already pending, or command acknowledgments
 are unresolved. The button is reacquired after the read rather than retaining a
 possibly stale DOM node.
