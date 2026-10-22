@@ -114,7 +114,7 @@ def read_live(registry: Path, project: str, kind: str = "activity") -> dict:
         while _RESERVATIONS and now-_RESERVATIONS[0][0] >= RATE_WINDOW_SECONDS:
             _RESERVATIONS.popleft()
         reserved = sum(cost for _,cost in _RESERVATIONS)
-        cost = 9 if kind == "activity" else 3
+        cost = 10 if kind == "activity" else 3
         if reserved+cost > MAX_PROVIDER_REQUESTS_PER_HOUR:
             answer = _envelope(project, kind, "rate_budget_wait")
             answer["retry_after_s"] = max(60,int(
