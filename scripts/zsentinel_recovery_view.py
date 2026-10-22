@@ -1087,6 +1087,7 @@ def html_view(decision, registry=None):
                         or rid in seen_approvals or type(sha) is not str
                         or not re.fullmatch(r"[a-f0-9]{40}", sha)
                         or workflow.get("action_authorized") is not False
+                        or workflow.get("workflow_status_observed") != "waiting"
                         or workflow.get("url") != "https://github.com/" +
                         repository + "/actions/runs/" + str(rid)):
                     raise ValueError("untrusted approval workflow link")
