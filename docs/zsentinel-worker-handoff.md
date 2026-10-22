@@ -274,3 +274,31 @@ venster tussen twee snapshots weigeren `zsentinel_worker_progress_delta.py`, `zs
 claimvensters als dezelfde taak en maken een afzonderlijke eigenaarcontrole
 zichtbaar. Productoplevering,
 claimovername, retry, restart en release blijven onbewezen en onbevoegd.
+
+
+## Toegewezen worker zonder betrouwbare queueclaim (22 oktober 2026)
+
+Een browser kan nog `heartbeat` of `generation-progress` melden nadat zijn
+queueclaim is vervallen of gewisseld. Een toegewezen `running` slot mag
+hierdoor niet automatisch als gezonde, taakgebonden voortgang verschijnen.
+De read-only observer meldt nu aparte eigenaaracties wanneer:
+
+- er **geen actieve claim** voor het toegewezen globale slot wordt gevonden;
+- er **meer dan één actieve claim** op hetzelfde slot wordt waargenomen;
+- de queue-bron ontbreekt of een benodigde kolom (`queue_id`,
+  `claimed_at`, `claim_expires`, `attempts` enz.) ontbreekt.
+
+Deze gevallen krijgen respectievelijk
+`allocated_no_active_claim_owner_review`,
+`allocated_multiple_active_claims_owner_review` en
+`allocated_queue_source_unavailable_owner_review`.
+De eigenaaractie verschijnt in de bestaande tekst-/HTML-inbox én in de
+historische continuïteitsweergave. `paused` en `draining` behouden hun
+bestaande owner-hold; een wel aanwezige maar vervallen of inconsistente lease
+blijft onder de bestaande specifieke leaseclassificatie.
+
+Dit is **geen** automatisch herstel: browser-events hebben nog steeds geen
+server-geverifieerde queue-ID/claim-epoch. De worker wordt niet vrijgegeven,
+herstart, geclaimd of herverdeeld. De bevoegde queue-/runtime-eigenaar
+controleert de echte lease en de oorspronkelijke PR voordat actie volgt.
+Geen QA-suite of workflowrerun is onderdeel van deze bronwijziging.
