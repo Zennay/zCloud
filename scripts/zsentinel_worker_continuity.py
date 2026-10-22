@@ -116,6 +116,18 @@ def observe_saved_workers(decision, source_time):
         if global_slot is not None and (
                 type(global_slot) is not int or not 1 <= global_slot <= 32):
             raise ValueError("invalid observed global assignment slot")
+        claim_fingerprint = row.get("claim_window_fingerprint")
+        claim_correlation = row.get("claim_window_correlation")
+        if claim_fingerprint is not None and (
+                type(claim_fingerprint) is not str or not SHA256.fullmatch(claim_fingerprint)):
+            raise ValueError("invalid private claim-window fingerprint")
+        if claim_correlation is not None and claim_correlation not in (
+                "time_window_only_not_identity_bound",
+                "unavailable_no_valid_current_lease"):
+            raise ValueError("invalid claim-window correlation")
+        if ((claim_correlation == "time_window_only_not_identity_bound")
+                != (claim_fingerprint is not None)):
+            raise ValueError("claim-window correlation/fingerprint mismatch")
         seen.add((pid, slot))
         latest = _cursor(row, "latest_indexed_event_id")
         progress = _cursor(row, "latest_indexed_progress_event_id")
@@ -130,6 +142,8 @@ def observe_saved_workers(decision, source_time):
             "queue_claim_status_observed": row["queue_claim_status_observed"],
             "latest_indexed_event_id": latest,
             "latest_indexed_progress_event_id": progress,
+            "claim_window_fingerprint": claim_fingerprint,
+            "claim_window_correlation": claim_correlation,
             "source_queue_lease_current_unverified": row["queue_lease_current_from_source"],
             "owner_claim_verified": False, "product_delivery_verified": False,
         })
@@ -174,6 +188,10 @@ def summarize_worker_windows(windows):
                 category = "UNKNOWN_event_cursor_or_source_rotation"
             elif (prog0 is not None and prog1 is not None and prog1 < prog0):
                 category = "UNKNOWN_progress_cursor_or_source_rotation"
+            elif (old["claim_window_fingerprint"] != new["claim_window_fingerprint"]
+                  and (old["claim_window_fingerprint"] is not None
+                       or new["claim_window_fingerprint"] is not None)):
+                category = "UNKNOWN_queue_claim_window_changed"
             elif old["desired_state"] != new["desired_state"]:
                 category = "UNKNOWN_worker_desired_state_changed"
             elif (old["allocated_global_slot"] != new["allocated_global_slot"]
@@ -201,6 +219,11 @@ def summarize_worker_windows(windows):
                 "worker_state_changed": old["classification"] != new["classification"],
                 "indexed_event_id_before": last0, "indexed_event_id_after": last1,
                 "indexed_progress_id_before": prog0, "indexed_progress_id_after": prog1,
+                "claim_window_changed_observed": (
+                    old["claim_window_fingerprint"] != new["claim_window_fingerprint"]
+                    and (old["claim_window_fingerprint"] is not None
+                         or new["claim_window_fingerprint"] is not None)),
+                "claim_window_correlation": new["claim_window_correlation"],
                 "owner_claim_verified": False, "worker_recovered_verified": False,
                 "product_delivery_verified": False,
             })
@@ -221,6 +244,7 @@ def summarize_worker_windows(windows):
                     and row["classification"] not in (
                         "UNKNOWN_event_cursor_or_source_rotation",
                         "UNKNOWN_progress_cursor_or_source_rotation",
+                        "UNKNOWN_queue_claim_window_changed",
                         "UNKNOWN_worker_desired_state_changed")):
                 attention.append({
                     "from_window": pair["from_window"],
