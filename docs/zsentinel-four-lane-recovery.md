@@ -1,3 +1,9 @@
+## 22 October 2026 · bind runner presence to one process lifetime
+
+The local runner observer now reads the bounded `/proc/<pid>/stat` start-time field before and after collecting a candidate runner's executable identity and, for zCloud, service-cgroup membership. It counts the candidate only when the numeric PID and kernel start-time ticks still match. If the process exits during the observation, that transient process is skipped; if identity cannot be established or the PID has been reused, the runner source stays incomplete rather than mixing evidence from two process lifetimes. The receipt never exports PIDs, start-time ticks, executable paths, argv or environment.
+
+Source commit: [1582530](https://github.com/Zennay/zCloud/commit/158253042283832f6572dae9775369d5242a2feb). No QA suite was written or run.
+
 ## 22 October 2026 — onbekend runnerproces kan geen complete afwezigheidswaarneming opleveren
 
 De read-only `scripts/zsentinel_runner_presence.py` markeert de procfs-bron nu
