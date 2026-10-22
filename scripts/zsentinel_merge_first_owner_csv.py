@@ -1031,6 +1031,10 @@ def main(argv=None):
                     "archive_only_source_issue_urls": "",
                     "board_issue_count": 0,
                     "board_issue_inventory_complete_verified": False,
+                    "issue_source_coverage": "unavailable",
+                    "issue_source_coverage_note": (
+                        "No owner row matched the selected filter; use the aggregate "
+                        "portfolio coverage counts in this metadata-only export."),
                     "pr_url": "",
                     "linked_issue_count": 0,
                     "multiple_issues_share_pr": False,
