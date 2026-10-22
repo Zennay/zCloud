@@ -20,8 +20,36 @@ from zsentinel_private_output import write_private_output
 SHA = re.compile(r"^[a-f0-9]{40}$")
 REGISTRY = {"cloud": "Zennay/zCloud"}
 
+def _attach_host_pressure(report, enabled):
+    """Optional local capacity context; never a queue or GitHub mutation."""
+    if not enabled:
+        return report
+    from zsentinel_runner_host_pressure import observe_host_pressure
+    try:
+        report["host_pressure"] = observe_host_pressure()
+        report["host_pressure_coverage"] = "same_host_readonly_observed"
+    except (OSError, ValueError, TypeError):
+        report["host_pressure"] = None
+        report["host_pressure_coverage"] = "unavailable_not_a_healthy_host_signal"
+    return report
 
-def observe_exact_job(run_id: int, job_id: int, sha: str, token=None):
+
+def _host_pressure_line(report):
+    """One validator shared by private HTML and operator text."""
+    state, sample = report.get("host_pressure_coverage"), report.get("host_pressure")
+    if state is None and sample is None:
+        return ""
+    if state == "unavailable_not_a_healthy_host_signal" and sample is None:
+        return "Hostdruk ONBEKEND; geen capaciteit- of herstartbewijs."
+    if state != "same_host_readonly_observed" or not isinstance(sample, dict):
+        raise ValueError("untrusted local host pressure evidence")
+    from zsentinel_runner_host_pressure import owner_summary
+    return owner_summary(sample)
+
+
+
+def observe_exact_job(run_id: int, job_id: int, sha: str, token=None,
+                      host_pressure=False):
     if (type(run_id) is not int or not 1 <= run_id <= 2**53 - 1
             or type(job_id) is not int or not 1 <= job_id <= 2**53 - 1
             or type(sha) is not str or not SHA.fullmatch(sha)):
@@ -42,7 +70,7 @@ def observe_exact_job(run_id: int, job_id: int, sha: str, token=None):
         raise ValueError("exact read-only GitHub receipt unavailable")
     local = observe_local_runner()
     combined = combine(local, github["refreshed_projects"])
-    return {
+    return _attach_host_pressure({
         "schema": "zsentinel-single-exact-runner-workbench-v1",
         "runner": combined,
         "github_receipt_coverage": github["github_coverage"],
@@ -57,11 +85,10 @@ def observe_exact_job(run_id: int, job_id: int, sha: str, token=None):
         "runner_restart_authorized": False,
         "queue_or_claims_changed": False,
         "vps_mutations_performed": False,
-    }
+    }, host_pressure)
 
 
-
-def observe_discovered_job(token=None):
+def observe_discovered_job(token=None, host_pressure=False):
     """Discover one bounded existing job, refresh its exact identity, then correlate locally."""
     from zsentinel_github_discovery import discover
 
@@ -190,7 +217,7 @@ def observe_discovered_job(token=None):
             detail += " (" + ",".join(safe_windows) + " onvolledig)"
     if len(report["runner"]["status"]) + len(detail) <= 320:
         report["runner"]["status"] += detail
-    return report
+    return _attach_host_pressure(report, host_pressure)
 
 def html_document(report):
     from html import escape
@@ -242,6 +269,9 @@ def html_document(report):
            escape(str(report.get("github_gets_discovery_observed", "unknown"))) +
            ' · volledige CI-inventaris: nee.</p>'
            if "github_discovery" in report else '')
+        + ('<p><strong>Read-only VPS headroom:</strong> ' +
+           escape(_host_pressure_line(report)) + '</p>'
+           if _host_pressure_line(report) else '')
         + '<p>Geen herstart, CI-retry, claimwijziging of registratiebewijs.</p>'
         + '</main></html>'
     )
@@ -251,6 +281,8 @@ def main():
     parser = argparse.ArgumentParser(description="Inspect one exact existing GitHub job and local runner; no mutation")
     parser.add_argument("--discover", action="store_true",
                         help="discover one bounded existing queued/running/failing job before exact refresh")
+    parser.add_argument("--observe-host-pressure", action="store_true",
+                        help="opt-in bounded read-only VPS root disk/inode/memory capacity")
     parser.add_argument("--run-id", type=int,
                         help="existing exact GitHub Actions run ID (use all three exact pin options together)")
     parser.add_argument("--job-id", type=int,
@@ -265,17 +297,22 @@ def main():
         if args.discover:
             if any(value is not None for value in pins):
                 raise ValueError("--discover cannot be combined with exact job pin options")
-            report = observe_discovered_job(token=os.environ.get("GITHUB_TOKEN"))
+            report = observe_discovered_job(
+                token=os.environ.get("GITHUB_TOKEN"),
+                host_pressure=args.observe_host_pressure)
         else:
             if any(value is None for value in pins):
                 raise ValueError("provide --discover or all of --run-id, --job-id and --head-sha")
             report = observe_exact_job(
                 args.run_id, args.job_id, args.head_sha,
-                token=os.environ.get("GITHUB_TOKEN"))
+                token=os.environ.get("GITHUB_TOKEN"),
+                host_pressure=args.observe_host_pressure)
         if args.format == "text":
             if args.output is not None:
                 raise ValueError("text output is stdout only; never writes a file")
-            print(as_text(report["runner"]))
+            print(as_text(report["runner"]) +
+                  ("\n" + _host_pressure_line(report)
+                   if _host_pressure_line(report) else ""))
             return 0
         if args.output is None:
             raise ValueError("JSON and HTML require an explicit private create-only output path")
