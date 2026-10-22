@@ -252,6 +252,25 @@ def issue_activity_label(issue):
     return band + " · " + age_text + " · " + timestamp
 
 
+def issue_activity_badge(issue):
+    """Render an escaped, fixed-style activity badge for offline HTML."""
+    band = issue.get("activity_age_band", "UNKNOWN")
+    styles = {
+        "RECENT": "background:#e8f5e9;color:#1b5e20;border:1px solid #a5d6a7;",
+        "AGING": "background:#fff8e1;color:#7a4f01;border:1px solid #ffe082;",
+        "STALE": "background:#ffebee;color:#8e1725;border:1px solid #ef9a9a;",
+        "CLOCK_SKEW_OR_FUTURE": "background:#f3e5f5;color:#4a148c;border:1px solid #ce93d8;",
+        "UNKNOWN": "background:#eceff1;color:#37474f;border:1px solid #b0bec5;",
+    }
+    style = styles.get(band, styles["UNKNOWN"])
+    label = html.escape(issue_activity_label(issue), quote=True)
+    return ("<span role='status' aria-label='Laatste GitHub-issueactiviteit; "
+            "geen bewijs van eigenaarschap of oplossingsvoortgang' "
+            "style='display:inline-block;margin:.15rem 0;padding:.18rem .48rem;"
+            "border-radius:999px;font-size:.85em;font-weight:600;" + style + "'>"
+            + label + "</span>")
+
+
 def observed_issue_inbox(rows, unlinked, partial, repo_projects,
                          source_inventory=None, limit=48, local_claims=None,
                          observed_at=None):
@@ -495,8 +514,8 @@ def render_issue_inbox(inbox):
             candidate_links + " · extra kandidaten buiten venster: " +
             esc(issue["candidate_prs_omitted"]) +
             local_summary +
-            "<br>Laatste issue-activiteit: " + esc(issue_activity_label(issue)) +
-            " · activiteit is geen bewijs van eigenaar- of oplossingsvoortgang."
+            "<br>Laatste issue-activiteit: " + issue_activity_badge(issue) +
+            "<br><small>Activiteit is geen bewijs van eigenaar- of oplossingsvoortgang.</small>"
             "<br>Volgende stap: " + esc(issue["operator_action"]) +
             ("<br>Lees bestaande PRs: <code>" +
              esc(issue["read_only_issue_command"]) + "</code>"
@@ -1193,8 +1212,8 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
             esc(targeted["priority"] + " #" + str(targeted["number"]) + " · "
                 + targeted["title"]) + "</a></p>"
             "<p><strong>Laatste issue-activiteit:</strong> " +
-            esc(issue_activity_label(target_activity)) +
-            " · activiteit is geen bewijs van eigenaar- of oplossingsvoortgang.</p>"
+            issue_activity_badge(target_activity) +
+            "<br><small>Activiteit is geen bewijs van eigenaar- of oplossingsvoortgang.</small></p>"
             "<p>Expliciete PR-body- of titelverwijzingen zijn alleen hints, "
             "geen ownership-, fix- of mergebewijs. Bij UNKNOWN mag de eerdere "
             "P0/P1-prioriteit niet als actueel bewezen gelden.</p>"
