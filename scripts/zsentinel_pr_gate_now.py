@@ -716,6 +716,9 @@ def html_gate_summary(source: dict) -> str:
             "<span><strong>" + h(item["observed_checks_pending"]) + "</strong> checks niet klaar</span>"
             "<span><strong>" + h(item["observed_checks_not_successful"]) + "</strong> checks niet geslaagd</span>"
             "<span><strong>" + h(item["observed_independent_exact_head_approvals"]) + "</strong> onafhankelijke reviews op HEAD</span>"
+            "<span><strong>" + h(item["pending_individual_review_requests_observed"]) + "</strong> reviewverzoeken aan personen</span>"
+            "<span><strong>" + h(item["pending_team_review_requests_observed"]) + "</strong> reviewverzoeken aan teams</span>"
+            "<span><strong>" + h(item["legacy_status_failure_or_error_observed"]) + "</strong> falende oude statuscontexten</span>"
             "<span><strong>" + h(item["queued_check_attention_30m_observed"]) + "</strong> queued ≥30 min</span>"
             "<span><strong>" + h(item["running_check_attention_60m_observed"]) + "</strong> actief ≥60 min</span>"
             "</div>")
