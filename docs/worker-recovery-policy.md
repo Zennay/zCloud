@@ -1,3 +1,22 @@
+## 22 October 2026 — pin both sides of the merge compare and link the exact diff
+
+The existing `scripts/zsentinel_pr_merge_preflight.py` exact-SHA GitHub
+compare now rejects responses whose `head_commit.sha` differs from the
+re-read PR's HEAD, just as it already rejects an unexpected
+`base_commit.sha`. A mismatched, cached or substituted comparison cannot
+be used as current branch history evidence. Missing or malformed head
+identity is also rejected fail-closed; required CI, reviews, branch protection,
+active claims and owner permission remain separate mandatory gates.
+
+When both exact identities are admitted, JSON adds
+`base_head_history.browser_url` pointing to GitHub's immutable
+`/compare/<base-sha>...<head-sha>` view. Static HTML exposes it as a
+reviewer navigation link; Markdown prints the same compare address. The
+link is not a mergeability, ownership, CI or release authorization and
+does not cause another GitHub GET. On unstable or missing source, the
+link is omitted/UNKNOWN. No CI jobs, QA suites, branches, claims, VPS
+services or deployments are operated by this observation.
+
 ## 22 October 2026 — source-stable reviewer follow-up in existing PR #1562
 
 The standalone `--live-pr-url` operator route now snapshots pending GitHub
