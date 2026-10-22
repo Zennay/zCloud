@@ -170,6 +170,7 @@ def observe_local_runner():
     if socket.gethostname().split(".", 1)[0].lower() != HOST:
         raise ValueError("different host; never infer the zCloud VPS runner")
     scanned = unreadable = 0
+    scan_limit_reached = False
     listeners = workers = 0
     listener_zombies = worker_zombies = 0
     # Listing /proc is non-atomic; a disappearing PID is a coverage gap, not
@@ -178,9 +179,12 @@ def observe_local_runner():
         for entry in entries:
             if not entry.name.isascii() or not entry.name.isdecimal():
                 continue
+            if scanned >= MAX_PIDS:
+                # Preserve a useful partial observation instead of aborting the
+                # whole triage; absence from a truncated sample proves nothing.
+                scan_limit_reached = True
+                break
             scanned += 1
-            if scanned > MAX_PIDS:
-                raise ValueError("process inventory exceeds bounded budget")
             process = PROC / entry.name
             try:
                 # Read at most 4097 bytes; never dump arguments or secrets.
@@ -224,7 +228,7 @@ def observe_local_runner():
     # unavailable systemd query must not invalidate the bounded /proc sample.
     service_observation = observe_systemd_service()
     # A zero count is explicitly never converted to "offline" or "idle".
-    complete = unreadable == 0
+    complete = unreadable == 0 and not scan_limit_reached
     return {
         "schema": "zsentinel-local-runner-observation-v1",
         "source": "local_proc_bounded_no_credentials",
@@ -234,6 +238,7 @@ def observe_local_runner():
         "scanned_pid_count": scanned,
         "unreadable_or_raced_pid_count": unreadable,
         "process_inventory_complete": complete,
+        "process_inventory_truncated": scan_limit_reached,
         "listener_processes_observed": listeners,
         "worker_processes_observed": workers,
         "zombie_listener_processes": listener_zombies,
@@ -256,12 +261,16 @@ def runner_text(report):
     """Clear operator-language boundary between /proc and GitHub scheduling."""
     if not isinstance(report, dict) or report.get("schema") != "zsentinel-local-runner-observation-v1":
         raise ValueError("invalid local runner observation")
+    truncated = report.get("process_inventory_truncated", False)
+    if type(truncated) is not bool:
+        raise ValueError("invalid process inventory coverage flag")
+    coverage = ("volledig" if report["process_inventory_complete"] else
+                "ONVOLLEDIG" + (" (20.000-PID-limiet bereikt)" if truncated else ""))
     return (
         "zSentinel runner op VPS: listenerprocessen=" +
         str(report["listener_processes_observed"]) +
         ", workerprocessen=" + str(report["worker_processes_observed"]) +
-        ", processdekking=" + ("volledig" if report["process_inventory_complete"] else
-                               "ONVOLLEDIG") +
+        ", processdekking=" + coverage +
         "; systemd-unit: " + _systemd_summary(report) +
         "; unit/proces-relatie: " + _systemd_process_relationship(report) +
         "; GitHub toegewezen job: NIET BEWEZEN; safe idle/herstel: NIET BEWEZEN;"
@@ -294,6 +303,8 @@ def main():
             print("zSentinel VPS listenerprocessen: " + str(result["listener_processes_observed"]))
             print("zSentinel VPS workerprocessen: " + str(result["worker_processes_observed"]))
             print("Bron volledig: " + str(result["process_inventory_complete"]))
+            print("Processteekproef afgekapt door 20.000-PID-limiet: " +
+                  str(result["process_inventory_truncated"]))
             print("Systemd zCloud-runnerunit: " + _systemd_summary(result))
             print("Unit/proces-relatie: " + _systemd_process_relationship(result))
             print("GitHub jobtoewijzing: ONBEKEND; idle, herstel en herstart NIET geautoriseerd.")
