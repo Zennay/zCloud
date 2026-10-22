@@ -26,6 +26,69 @@ JOB_CONCLUSIONS = {
     "neutral", "skipped", "startup_failure", "stale",
 }
 TERMINAL_CI_FAILURES = {"failure", "timed_out", "action_required"}
+SERVICE_SCHEMA = "zsentinel-systemd-service-observation-v1"
+SERVICE_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+SERVICE_PROPERTIES = ("LoadState", "ActiveState", "SubState", "UnitFileState", "Result")
+SERVICE_UNKNOWN_REASONS = {
+    "systemctl_unavailable", "query_timeout", "query_unavailable",
+    "query_failed", "malformed_output", "incomplete_output", "not_observed",
+}
+
+
+def _validated_service_observation(local):
+    raw = local.get("systemd_service_observation")
+    if raw is None:
+        return {
+            "schema": SERVICE_SCHEMA, "source": "fixed_systemctl_show_readonly",
+            "service_unit": SERVICE_UNIT, "status": "unknown",
+            "reason": "not_observed", "properties": None,
+            "mutations_performed": False, "restart_authorized": False,
+        }
+    if (type(raw) is not dict or raw.get("schema") != SERVICE_SCHEMA
+            or raw.get("source") != "fixed_systemctl_show_readonly"
+            or raw.get("service_unit") != SERVICE_UNIT
+            or raw.get("mutations_performed") is not False
+            or raw.get("restart_authorized") is not False
+            or raw.get("status") not in ("observed", "unknown")):
+        raise ValueError("untrusted read-only systemd observation")
+    if raw["status"] == "unknown":
+        if (raw.get("reason") not in SERVICE_UNKNOWN_REASONS
+                or raw.get("properties") is not None):
+            raise ValueError("invalid unknown systemd observation")
+        return {
+            "schema": SERVICE_SCHEMA, "source": raw["source"],
+            "service_unit": SERVICE_UNIT, "status": "unknown",
+            "reason": raw["reason"], "properties": None,
+            "mutations_performed": False, "restart_authorized": False,
+        }
+    properties = raw.get("properties")
+    if (raw.get("reason") is not None or type(properties) is not dict
+            or set(properties) != set(SERVICE_PROPERTIES)):
+        raise ValueError("incomplete systemd observation")
+    clean = {}
+    for key in SERVICE_PROPERTIES:
+        value = properties.get(key)
+        if (type(value) is not str or len(value) > 64
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]*", value)):
+            raise ValueError("invalid systemd property value")
+        clean[key] = value
+    return {
+        "schema": SERVICE_SCHEMA, "source": raw["source"],
+        "service_unit": SERVICE_UNIT, "status": "observed",
+        "reason": None, "properties": clean,
+        "mutations_performed": False, "restart_authorized": False,
+    }
+
+
+def _service_summary(service):
+    if service.get("status") != "observed":
+        return "ONBEKEND (" + service.get("reason", "not_observed") + ")"
+    p = service["properties"]
+    return ("ActiveState=" + (p["ActiveState"] or "unknown") + "/" +
+            (p["SubState"] or "unknown") + "; LoadState=" +
+            (p["LoadState"] or "unknown") + "; UnitFileState=" +
+            (p["UnitFileState"] or "unknown") + "; Result=" +
+            (p["Result"] or "unknown"))
 
 
 def _utc_clock(value, field):
@@ -42,6 +105,7 @@ def _utc_clock(value, field):
 
 def _action(stage, problem, next_action, local, *, pinned=None,
             source_freshness="unknown", job_status=None, job_conclusion=None):
+    service_observation = _validated_service_observation(local)
     status_line = "ALLEEN-LEZEN · GitHub-runner herstel NIET BEWEZEN · geen serviceactie"
     if job_status is not None:
         if type(job_status) is not str or job_status not in JOB_STATUSES:
@@ -65,6 +129,8 @@ def _action(stage, problem, next_action, local, *, pinned=None,
         "exact_zcloud_job_selected": pinned is not None,
         "exact_job_url": (pinned["url"] if pinned else None),
         "head_sha": (pinned["head_sha"] if pinned else None),
+        "systemd_service_observation": service_observation,
+        "systemd_service_summary": _service_summary(service_observation),
         "registered_runner_verified": False,
         "job_resumed_verified": False,
         "restart_authorized": False,
@@ -339,12 +405,18 @@ def as_html(result):
             type(observed_conclusion) is not str or
             observed_conclusion not in JOB_CONCLUSIONS):
         raise ValueError("invalid displayed job conclusion")
+    service = _validated_service_observation({
+        "systemd_service_observation": result.get("systemd_service_observation")
+    })
+    summary = _service_summary(service)
     return (
         '<section aria-label="zSentinel exacte runnerbron correlatie">'
-        '<h2>P0 runner · exacte job plus lokaal proces</h2>'
+        '<h2>P0 runner · exacte job plus lokale proces- en unitstatus</h2>'
         '<p><strong>PROBLEEM:</strong> ' + escape(result["problem"]) + '</p>'
         '<p><strong>ACTIE:</strong> ' + escape(result["next_action"]) + '</p>'
         '<p><strong>STATUS:</strong> ' + escape(result["status"]) + job_link + '</p>'
+        '<p><strong>Systemd-unit (alleen lezen):</strong> ' + escape(summary) + '</p>'
+        '<p>Unitstatus en lokale processen bewijzen geen GitHub-registratie, veilige idle of herstelautorisatie.</p>'
         '</section>'
     )
 
@@ -352,10 +424,15 @@ def as_html(result):
 def as_text(result):
     if result.get("schema") != SCHEMA or result.get("restart_authorized") is not False:
         raise ValueError("invalid read-only runner handoff")
+    service = _validated_service_observation({
+        "systemd_service_observation": result.get("systemd_service_observation")
+    })
     return "\n".join((
         "RUNNER · " + result["problem"],
         "ACTIE · " + result["next_action"],
         "STATUS · " + result["status"] +
         (" · exact GitHub: " + result["exact_job_url"]
          if result.get("exact_job_url") else ""),
+        "SYSTEMD-UNIT · alleen-lezen · " + _service_summary(service),
+        "HERSTARTAUTORISATIE · nee",
     ))
