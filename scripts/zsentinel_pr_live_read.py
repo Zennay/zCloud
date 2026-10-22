@@ -263,12 +263,18 @@ def _pr_summary(payload, full_name, number):
     if state not in ("open", "closed") or type(draft) is not bool or type(merged) is not bool:
         raise GitHubReadError("PR state incomplete or inconsistent")
     base_ref = base.get("ref")
-    if not isinstance(base_ref, str) or len(base_ref) > 120:
+    if (not isinstance(base_ref, str) or not base_ref or len(base_ref) > 255
+            or base_ref != base_ref.strip()
+            or any(not char.isprintable() or char.isspace() for char in base_ref)):
         raise GitHubReadError("PR target branch invalid")
+    base_sha = base.get("sha")
+    if not isinstance(base_sha, str) or not SHA.fullmatch(base_sha):
+        raise GitHubReadError("PR base SHA missing or invalid")
     return {
         "number": number, "url": "https://github.com/" + full_name + "/pull/" + str(number),
         "observed_state": state, "observed_draft": draft,
         "reported_merged": merged, "target_branch": base_ref,
+        "base_sha": base_sha,
         "exact_head_sha": sha, "head_verified_by_live_get": True,
         "exact_head_checks_url": "https://github.com/" + full_name + "/commit/" + sha + "/checks",
         "pr_files_url": "https://github.com/" + full_name + "/pull/" + str(number) + "/files",
