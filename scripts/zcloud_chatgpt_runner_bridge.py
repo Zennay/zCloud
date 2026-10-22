@@ -288,6 +288,60 @@ def _mountinfo_target_state(path: str) -> str:
     return "mounted" if matches == 1 else "not_mounted"
 
 
+BULK_ARCHIVE_MIN_FREE_BYTES = 30 * 1024 ** 3
+
+
+def _archive_bulk_storage_gate(archive: dict[str, object]) -> dict[str, object]:
+    """Advisory-only 30 GiB gate; never claim a physical external training disk.
+
+    The configured archive mount is not automatically the application's actual
+    training/output path. Kernel mount identity, device writability for the
+    current application user, and physical-drive independence are separate.
+    """
+    mount = archive.get("mount_detected")
+    separate = archive.get("separate_filesystem")
+    readonly = archive.get("read_only")
+    available = archive.get("available_bytes")
+    if mount is False:
+        state, next_code = "mount_missing", "INSPECT_ARCHIVE_MOUNT_WITH_OWNER"
+    elif mount is not True:
+        state, next_code = "mount_unknown", "REFRESH_ARCHIVE_MOUNT_EVIDENCE"
+    elif separate is False:
+        state, next_code = "root_filesystem_shared", "ATTACH_SEPARATE_STORAGE_WITH_OWNER"
+    elif separate is not True:
+        state, next_code = "filesystem_identity_unknown", "REFRESH_ARCHIVE_DEVICE_EVIDENCE"
+    elif readonly is True:
+        state, next_code = "read_only_mount", "REQUEST_WRITABLE_ARCHIVE_WITH_OWNER"
+    elif readonly is not False:
+        state, next_code = "mount_writability_unknown", "REFRESH_ARCHIVE_WRITABILITY_EVIDENCE"
+    elif type(available) is not int or available < 0:
+        state, next_code = "free_space_unknown", "REFRESH_ARCHIVE_CAPACITY_EVIDENCE"
+    elif available < BULK_ARCHIVE_MIN_FREE_BYTES:
+        state, next_code = "below_30_gib", "REQUEST_LARGER_ARCHIVE_WITH_OWNER"
+    else:
+        # Even separate + writable + 30 GiB does not prove a second physical
+        # drive, that the training path is mounted there, or app-user access.
+        state, next_code = (
+            "capacity_candidate_not_training_authorization",
+            "VERIFY_PHYSICAL_DRIVE_AND_TRAINING_PATH_WITH_OWNER",
+        )
+    return {
+        "state": state,
+        "minimum_free_bytes": BULK_ARCHIVE_MIN_FREE_BYTES,
+        "minimum_free_gib": 30,
+        "available_bytes_observed": (
+            available if type(available) is int and available >= 0 else None
+        ),
+        "physical_drive_separation_verified": False,
+        "training_output_path_verified": False,
+        "training_user_write_permission_verified": False,
+        "training_running_verified": False,
+        "training_start_authorized": False,
+        "archive_offload_authorized": False,
+        "next_step_code": next_code,
+    }
+
+
 def _host_capacity_observation() -> dict[str, object]:
     """Bounded resource pressure hints; never infer cause or authorize cleanup."""
     result: dict[str, object] = {
@@ -312,6 +366,7 @@ def _host_capacity_observation() -> dict[str, object]:
                           "read_only": None,
                           "total_bytes": None, "available_bytes": None,
                           "available_percent": None},
+        "bulk_storage_advisory": _archive_bulk_storage_gate({}),
         "warnings": [],
         "evidence_warnings": [],
         "operator_summary": "Capacity evidence is partial; do not infer runner health or authorize cleanup.",
@@ -647,6 +702,9 @@ def _host_capacity_observation() -> dict[str, object]:
         "high" if warnings else
         "normal" if complete else "unknown"
     )
+    # Capacity alone is never training admission. Compute one stable advisory
+    # after all mount, capacity, identity and read-only observations settle.
+    result["bulk_storage_advisory"] = _archive_bulk_storage_gate(archive)
     result.update({
         "state": "observed" if complete else "partial",
         "coverage": "complete" if complete else "partial",
