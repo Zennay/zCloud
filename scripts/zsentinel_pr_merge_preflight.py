@@ -109,7 +109,8 @@ def _parallel_owner_actions(report):
     def add(code, problem, action, evidence):
         cards.append({
             "code": code, "problem": problem, "owner_action": action,
-            "evidence": evidence, "execution_authorized": False,
+            "evidence": evidence, "status": "HOLD_OWNER_REVIEW",
+            "execution_authorized": False,
         })
 
     if not report.get("source_stable_between_reads"):
@@ -487,7 +488,8 @@ def as_markdown(report):
     lines.extend(["", "## Parallel owner actions — none executed", ""])
     for card in report.get("parallel_owner_actions", []):
         lines.extend(("- " + card["code"] + " · " + card["problem"],
-                      "  Action: " + card["owner_action"]))
+                      "  Action: " + card["owner_action"],
+                      "  Status: " + card["status"] + " · " + card["evidence"]))
     lines.extend(["", "## Missing sources", ""])
     lines.extend("- " + entry for entry in report["secondary_source_gaps"])
     if not report["secondary_source_gaps"]:
@@ -566,7 +568,7 @@ def as_html(report):
     for card in report.get("parallel_owner_actions", []):
         parts.append("<li><strong>" + esc(card["problem"]) + "</strong><br>" +
                      esc(card["owner_action"]) + " <small>(" + esc(card["code"]) +
-                     ")</small></li>")
+                     ) · " + esc(card["status"]) + "</small></li>")
     parts.extend(["</ul></section><section><h2>Source gaps and sampled checks</h2><ul>"])
     for gap in report["secondary_source_gaps"]:
         parts.append("<li>" + esc(gap) + "</li>")
