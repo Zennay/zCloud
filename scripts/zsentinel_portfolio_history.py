@@ -15,7 +15,7 @@ import os
 import sys
 from pathlib import Path
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from zsentinel_live_issue_inbox import ISSUE, REPO
 from zsentinel_recovery_policy import (
@@ -66,6 +66,9 @@ def _validate_snapshot(report):
         report.get("policy") != "zsentinel-portfolio-github-issue-desk-v1"
     ):
         raise PolicyInputError("previous report is not a portfolio issue desk snapshot")
+    generated = _timestamp(report.get("generated_at_utc"))
+    if generated > datetime.now(timezone.utc) + timedelta(minutes=2):
+        raise PolicyInputError("snapshot observation is from the future")
     repositories = report.get("repositories_requested")
     if (not isinstance(repositories, list) or not 2 <= len(repositories) <= 6
             or any(type(name) is not str or REPO.fullmatch(name) is None
@@ -85,8 +88,15 @@ def _validate_snapshot(report):
                 or row.get("state") not in VALID_STATES
                 or type(row.get("source_partial_or_unknown")) is not bool):
             raise PolicyInputError("snapshot source coverage is invalid")
-        if row["state"] in ("SAMPLED", "INCOMPLETE"):
-            _timestamp(row.get("observed_at_utc"))
+        readable = row["state"] in ("SAMPLED", "INCOMPLETE")
+        if row["state"] == "SAMPLED" and row["source_partial_or_unknown"]:
+            raise PolicyInputError("sampled source cannot claim partial coverage")
+        if row["state"] != "SAMPLED" and not row["source_partial_or_unknown"]:
+            raise PolicyInputError("incomplete or unread source must remain unknown")
+        if readable:
+            observed_at = _timestamp(row.get("observed_at_utc"))
+            if observed_at > generated + timedelta(minutes=2):
+                raise PolicyInputError("repository was observed after report creation")
         elif row.get("observed_at_utc") is not None:
             raise PolicyInputError("unread repository cannot have observation time")
         state_by_repo[name] = row["state"]
@@ -103,7 +113,9 @@ def _validate_snapshot(report):
         )
         issue_updated = item.get("issue_updated_at_utc")
         if issue_updated is not None:
-            _timestamp(issue_updated)
+            update_at = _timestamp(issue_updated)
+            if update_at > generated + timedelta(minutes=2):
+                raise PolicyInputError("issue update is later than source observation")
         if (type(repo) is not str or repo not in state_by_repo or state_by_repo[repo] not in
                 ("SAMPLED", "INCOMPLETE") or type(num) is not int or num < 1
                 or type(rank) is not int or rank not in range(7)
@@ -117,7 +129,7 @@ def _validate_snapshot(report):
         unique[url] = {"repository": repo, "number": num,
                        "url": url, "priority_rank": rank,
                        "issue_updated_at_utc": issue_updated}
-    return _timestamp(report.get("generated_at_utc")), repositories, state_by_repo, unique
+    return generated, repositories, state_by_repo, unique
 
 
 def load_previous_snapshot(path):
