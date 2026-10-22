@@ -5,7 +5,7 @@
 #        ZCLOUD_SQLITE_CUTOVER_CONFIRMED=yes sudo -E bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --apply
 set -Eeuo pipefail
 
-MODE="$1"
+MODE="${1:---status}"
 HOST='VM-7eb5ee16-2c71-440d-b7fd-8095d204e930'
 IP='95.211.40.88'
 DOMAIN='zcloud.zennay.nl'
@@ -107,16 +107,16 @@ chmod 0644 "$STAGED"
 ln "$STAGED" "$SITE" || die 'site already occupied (no overwrite)'
 unlink "$STAGED"
 if ! caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1; then
-  mv "$SITE" "/etc/caddy/zcloud-dashboard-validation-failed-$(date +%s)-$.caddy"
+  mv "$SITE" "/etc/caddy/zcloud-dashboard-validation-failed-$(date +%s)-$$.caddy"
   die 'Caddy validation failed; active import removed'
 fi
 if ! systemctl reload caddy; then
-  mv "$SITE" "/etc/caddy/zcloud-dashboard-reload-failed-$(date +%s)-$.caddy"
+  mv "$SITE" "/etc/caddy/zcloud-dashboard-reload-failed-$(date +%s)-$$.caddy"
   systemctl reload caddy || true
   die 'Caddy reload failed; new site removed from import'
 fi
 if ! public_requires_login; then
-  mv "$SITE" "/etc/caddy/zcloud-dashboard-auth-failed-$(date +%s)-$.caddy"
+  mv "$SITE" "/etc/caddy/zcloud-dashboard-auth-failed-$(date +%s)-$$.caddy"
   systemctl reload caddy || true
   die 'public HTTPS did not require authentication; site rolled back'
 fi
