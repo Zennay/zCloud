@@ -443,7 +443,7 @@ def overlap_relation(wanted, changed):
     raise ValueError("path pair does not overlap")
 def portable_path_key(path):
     """Conservative cross-platform alias key; advisory, not Git path identity."""
-    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", path).casefold())
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", path.rstrip("/")).casefold())
 
 
 def portable_path_alias_relation(left_path, right_path):
@@ -497,6 +497,8 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
         "observed_prs": len(rows),
     } for n, rows in zip(page_numbers, snapshots_before)]
     hits = []
+    alias_hits = []
+    alias_hits_truncated = False
     truncated_files = []
     for pr in selected:
         if source is not None and pr["number"] == source["number"]:
@@ -517,6 +519,29 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
                                   "relation": overlap_relation(candidate, changed)}
                                  for changed in matches[:32]],
                              "matches_truncated": len(matches) > 32})
+            # A distinct Git path may still alias a case-insensitive or
+            # Unicode-normalizing filesystem. Keep this advisory separate
+            # from exact Git path/ancestor overlaps.
+            aliases = [(file, portable_path_alias_relation(candidate, file))
+                       for file in files if not overlaps(candidate, file)]
+            aliases = [(file, relation) for file, relation in aliases if relation]
+            if aliases:
+                if len(alias_hits) < MAX_PORTABLE_ALIAS_HITS:
+                    alias_hits.append({
+                        "path": candidate, "pr_number": pr["number"],
+                        "pr_url": pr["url"], "observed_head_sha": pr["head_sha"],
+                        "observed_base_sha": pr["base_sha"],
+                        "observed_base_ref": pr["base_ref"],
+                        "alias_count_observed": len(aliases),
+                        "matching_aliases": [
+                            {"requested_path": candidate, "changed_path": changed,
+                             "relation": relation}
+                            for changed, relation in aliases[:32]],
+                        "matches_truncated": len(aliases) > 32,
+                        "heuristic": "unicode_nfc_casefold_advisory_not_git_identity",
+                    })
+                else:
+                    alias_hits_truncated = True
     snapshots_after = [open_prs(repo, token, page_size, page=p) for p in page_numbers]
     snapshot_stable = not duplicate_numbers and snapshots_before == snapshots_after
     source_stable = True
@@ -534,7 +559,9 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
                          and current_base.get("ref") == source["base_ref"])
     complete = (page_count == 1 and open_page == 1 and source_stable
                 and len(before) < page_size and len(before) <= limit
-                and not truncated_files and snapshot_stable)
+                and not truncated_files and snapshot_stable
+                and not alias_hits_truncated
+                and not any(hit["matches_truncated"] for hit in alias_hits))
     return {
         "schema": "zsentinel-pr-scope-observation-v1",
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -572,7 +599,10 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
         "open_pr_snapshot_stable": snapshot_stable,
         "pr_file_scope_sample_complete": complete,
         "observed_overlaps": hits,
+        "observed_portable_path_aliases": alias_hits,
+        "portable_path_aliases_truncated": alias_hits_truncated,
         "source_result": ("overlap_observed" if hits else
+                          "portable_path_aliases_advisory" if alias_hits else
                           "no_overlap_in_sample_only" if not complete else
                           "no_overlap_in_open_pr_inventory_only"),
         "notion_claims_verified": False,
@@ -716,6 +746,7 @@ MAX_SHARED_FILES_PER_PAIR = 24
 MAX_SCOPE_PATH_PAIRS_PER_PAIR = 24
 MAX_PORTABLE_ALIAS_PAIRS = 80
 MAX_PORTABLE_ALIAS_EXAMPLES_PER_PAIR = 8
+MAX_PORTABLE_ALIAS_HITS = 200
 MAX_REFERENCED_ISSUES = 32
 MAX_DUPLICATE_ISSUE_GROUPS = 80
 MAX_IDENTITY_LOOKUPS = 8
