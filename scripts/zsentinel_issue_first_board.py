@@ -393,6 +393,13 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
             "candidate_prs_omitted": 0, "candidate_pr_source": "NOT_OBSERVED",
             **issue_activity_evidence(ref, observed_at),
         }
+    # Keep the machine-readable contract consistent for every observed issue,
+    # including refs recovered only from a selected PR (which may lack the
+    # canonical timestamp). Unknown evidence gets an explicit next step too.
+    for issue in issue_map.values():
+        if not isinstance(issue.get("activity_follow_up"), str):
+            issue["activity_follow_up"] = issue_activity_follow_up(issue)
+
     # First prefer existing PRs for the same severity; source-unknown issues
     # are still explicitly shown, never silently assigned to a new worker.
     # Round-robin inside each priority and PR-reuse bucket. Without
