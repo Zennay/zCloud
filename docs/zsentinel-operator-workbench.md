@@ -1304,9 +1304,10 @@ localStorage persistence.
 Every cell is quoted; control bytes are normalized and leading spreadsheet
 formula markers (`=`, `+`, `-`, `@`) are neutralized with an apostrophe before
 CSV quoting, including when Unicode whitespace, zero-width or bidirectional
-format controls precede the marker. Detection ignores those prefixes without
-rewriting the underlying source text otherwise; untrusted GitHub issue titles
-and private notes use the same protection.
+format controls precede the marker. Detection ignores those prefixes and
+preserves ordinary leading/trailing whitespace; only existing control-byte
+normalization and a necessary protective apostrophe change the cell. Untrusted
+GitHub issue titles and private notes use the same protection.
 The private CSV may still be copied to a cloud provider by the chosen
 spreadsheet application: the workbench explains this and the private-note
 checkbox defaults off. Original ownership, exact-head checks, independent
