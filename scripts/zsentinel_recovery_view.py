@@ -1626,7 +1626,7 @@ def html_view(decision, registry=None):
     if owner_coverage == "complete":
         owner_heading = "Taken beschermd door een actieve eigenaar (" + str(owner_report["count"]) + ")"
         owner_status = (
-            '<p class="muted">Deze anderszins geschikte taken zijn bewust niet als vrij werk voorgesteld. '
+            '<p class="muted">Deze wachtrijtaken zijn door de bron gemarkeerd met een actieve eigenaar en worden bewust niet als vrij werk voorgesteld. Eventuele andere blokkades kunnen daarnaast bestaan. '
             'Controleer de actuele eigenaar/claim en stem overdracht af; deze weergave verleent geen eigendom of uitvoerrechten.</p>'
         )
         owner_empty = "Geen wachtrijtaak met een expliciet actieve eigenaar waargenomen."
