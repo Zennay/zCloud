@@ -196,3 +196,21 @@ are kept aligned. This is source-only work on existing PR #1552, not a live
 browser rollout or proof of task recovery; exact-head CI, independent review,
 extension/version coordination and the normal release owner remain mandatory.
 
+
+
+## 22 October · Preserve manual drafts during chat rotation
+
+New chat is also refused when the current visible composer has any non-whitespace
+text after the asynchronous exact-lease refresh. The status reason is
+new-chat-unsent-draft-preserved. A one-hour scheduled rotation, idle composer
+repair, or failed-conversation branch cannot overwrite an operator's unsent
+draft on the current tab. The check is performed immediately before locating
+and clicking the actual button; both the standalone engine and bundled
+userscript include it. Clearing or sending the draft is a deliberate user
+decision, never an automated worker action. The worker continues to require
+the original queue/slot/project/prompt/route identity, and does not create a
+fresh queue claim or infer current owner approval.
+
+This is a source-level product guard on existing PR #1552, not an installed
+browser release. The protected branch's required exact-head CI, reviewer
+approval, version-controlled distribution and release ownership still apply.
