@@ -253,7 +253,9 @@ def discover(registry, selected, token=None):
                     "approval_wait_workflows_sampled": len(approval_wait_runs),
                     "status": (
                         "degraded_unavailable" if incomplete_windows
-                        else "no_actionable_job_in_sampled_windows"),
+                        else "approval_wait_workflow_no_job_selected"
+                        if approval_wait_runs else
+                        "no_actionable_job_in_sampled_windows"),
                     "run_pages_checked": checked,
                     "incomplete_windows": incomplete_windows,
                     "not_scanned_windows": [
