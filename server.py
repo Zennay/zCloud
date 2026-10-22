@@ -3312,8 +3312,13 @@ def portfolio_queue_health():
         'ready':int(ready),'queued':int(queued),'projects':int(projects),
         'owner_clear_queued':int(owner_clear_queued),
         'owner_held_queued':int(queued-owner_clear_queued),
+        # An occupied queue row can still represent real working capacity;
+        # an unassigned yet independently claimed row cannot be dispatched.
+        'owner_effective_ready':int(ready-(queued-owner_clear_queued)),
         'blocked':int(blocked),'dropped':int(dropped),
-        'healthy':int(ready)>=min(target,max(1,len([p for p in PROJECT_INDEX.values() if str(p.get('queue_mode') or '').lower()!='human-gated']))),
+        'healthy':int(ready-(queued-owner_clear_queued))>=min(
+            target,max(1,len([p for p in PROJECT_INDEX.values()
+                              if str(p.get('queue_mode') or '').lower()!='human-gated']))),
         'notion_attention_url':PORTFOLIO_ATTENTION_NOTION_URL,
     }
 
