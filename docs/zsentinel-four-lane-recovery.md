@@ -1508,3 +1508,14 @@ The earlier dated section describing `ai_worker_cap=4` records an intermediate c
 ### 22 October · worker cgroup mismatch remains a protected owner HOLD
 
 The runner presence summary now calls out a zCloud `Runner.Worker` observed outside the expected service cgroup (or mixed worker membership) separately from listener membership. This does not label the worker stale or idle: the action explicitly preserves the job and asks the authorized runtime owner to reconcile service/cgroup identity with an actual GitHub job receipt. It never terminates, pauses, or restarts a worker.
+
+## 22 October 2026 · SQLite-queue bronpad accepteert geen directe symlink
+
+De vierbaanoperator leest de bestaande `portfolio_queue` uitsluitend via
+SQLite `mode=ro` en `query_only`. De bronadmissie weigert nu ook een
+directe symlink op het opgegeven databasepad, en de nacontrole gebruikt
+`lstat` zodat een vervangen symlink niet als hetzelfde reguliere bestand
+wordt behandeld. De device-/inode-identiteitscontrole blijft behouden.
+Dit voorkomt dat een verkeerd of omgeleid pad stilzwijgend als de bedoelde
+queuebron wordt gepresenteerd. Bij een onbetrouwbaar pad stopt de snapshot
+zonder claim-, queue-, worker- of serviceactie.
