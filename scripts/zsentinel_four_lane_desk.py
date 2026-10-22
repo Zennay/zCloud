@@ -7,7 +7,9 @@ production actions. Queue occupancy and ownership are deliberately distinct.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
+import io
 from datetime import datetime, timezone
 import html
 import json
@@ -1759,6 +1761,64 @@ def project_owner_brief(data, project_id):
     return "\n".join(lines)
 
 
+def owner_actions_csv(data):
+    """Export all canonical project owner-actions from one read-only snapshot.
+
+    Unlike the six-entry on-screen shortlist, this handoff never drops a project.
+    Missing group rows are UNKNOWN externally, never permission to take over.
+    It contains no raw queue IDs, worker slots, claims, titles or file scopes.
+    """
+    counts = {row["project"]: row for row in data["portfolio_urgent_local"]}
+    if len(counts) != len(data["portfolio_urgent_local"]):
+        raise ValueError("Duplicate source project in local owner handoff")
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\r\n")
+    writer.writerow((
+        "project", "priority_hint_local", "queued_p0_local", "queued_p1_local",
+        "eligible_hint_p0_local", "eligible_hint_p1_local",
+        "in_flight_p0_local", "in_flight_p1_local",
+        "owner_action", "next_human_step",
+        "existing_open_prs_url", "existing_open_issues_url",
+        "snapshot_utc", "local_source_key_sha256",
+        "local_source_complete", "portfolio_groups_complete",
+        "external_github_issue_coverage", "external_notion_claim_coverage",
+        "owner_verified", "claim_authorized", "merge_authorized",
+        "deploy_authorized",
+    ))
+    portfolio_groups_complete = (
+        not data["portfolio_priority_partial"]
+        and not bool(data["portfolio_unknown_project_groups"])
+    )
+    for project_id, project_name in sorted(
+        PORTFOLIO_PROJECTS.items(), key=lambda pair: pair[1].casefold()
+    ):
+        row = counts.get(project_name)
+        action = data["project_owner_decisions"][project_id]
+        links = github_inbox_urls(project_name)
+        if links is None:
+            raise ValueError("Missing verified project GitHub navigation mapping")
+        rank = ("P0" if row and row["queued_p0"] else
+                "P1" if row and row["queued_p1"] else "UNKNOWN")
+        # These are fixed product enums and canonical project names; never
+        # interpolate untrusted row titles or GitHub issue body into Excel.
+        writer.writerow((
+            project_name, rank,
+            row["queued_p0"] if row else "UNKNOWN",
+            row["queued_p1"] if row else "UNKNOWN",
+            row["eligible_queued_p0"] if row else "UNKNOWN",
+            row["eligible_queued_p1"] if row else "UNKNOWN",
+            row["in_flight_p0"] if row else "UNKNOWN",
+            row["in_flight_p1"] if row else "UNKNOWN",
+            action["code"], action["next_step"],
+            links[0], links[1],
+            data["observed_utc"], data["portfolio_source_key"],
+            str(bool(data["source_complete"])).lower(),
+            str(portfolio_groups_complete).lower(),
+            "UNKNOWN", "UNKNOWN", "false", "false", "false", "false",
+        ))
+    return buffer.getvalue()
+
+
 def portfolio_owner_book(data):
     """Portable complete private owner brief for all canonical real projects."""
     partial = not data["source_complete"] or data["portfolio_priority_partial"]
@@ -1972,7 +2032,7 @@ def main():
                         help="Read only local /proc listener presence; no job or online proof")
     parser.add_argument("--host-pressure", action="store_true", default=True,
                         help="Legacy compatibility alias; bounded host RAM/swap/load and root disk headroom are now always observed before candidate guidance")
-    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief", "owner-book", "owner-snapshot", "change-brief"), default="text")
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief", "owner-book", "owner-snapshot", "change-brief", "owner-actions-csv"), default="text")
     parser.add_argument("--owner-project", choices=tuple(sorted(PORTFOLIO_PROJECTS)),
                         help="Canonical project id for a private single-project owner brief")
     parser.add_argument("--output", help="New owner-private file: .html, .md or .json")
@@ -1981,7 +2041,7 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.max_rows <= MAX_ROWS:
         parser.error("--max-rows must be between 1 and 500")
-    if (args.format in ("html", "markdown", "owner-brief", "owner-book", "owner-snapshot", "change-brief")) != bool(args.output):
+    if (args.format in ("html", "markdown", "owner-brief", "owner-book", "owner-snapshot", "change-brief", "owner-actions-csv")) != bool(args.output):
         parser.error("Private HTML/Markdown requires --output, other formats cannot write files")
     if (args.format == "owner-brief") != bool(args.owner_project):
         parser.error("--format owner-brief requires --owner-project; other modes reject it")
@@ -1997,7 +2057,10 @@ def main():
                 args.previous_owner_snapshot))
             if args.previous_owner_snapshot else None
         )
-        if args.format == "owner-snapshot":
+        if args.format == "owner-actions-csv":
+            save_private(args.output, owner_actions_csv(packet), ".csv")
+            print("Privé portfolio-eigenaaracties geëxporteerd (0600); geen claim, CI of release.")
+        elif args.format == "owner-snapshot":
             snapshot_json = json.dumps(owner_snapshot(packet), ensure_ascii=False,
                                        indent=2, sort_keys=True) + "\n"
             save_private(args.output, snapshot_json, ".json")
