@@ -150,6 +150,38 @@ def _date_start(prop, field):
     return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+
+def classify_notional_claim_window(worker, claimed_at, claim_expires, observed_at):
+    """Classify metadata consistency, never Notion/runtime ownership.
+
+    A Running/Verifying status is not a lease. Even a bounded time window
+    remains a Notion field observation, never a claim or dispatch grant.
+    """
+    if not worker or not claimed_at or not claim_expires:
+        return "missing_worker_or_lease_fields"
+    if len(claimed_at) == 10 or len(claim_expires) == 10:
+        return "date_only_not_a_lease"
+    try:
+        start = datetime.fromisoformat(claimed_at.replace("Z", "+00:00"))
+        expires = datetime.fromisoformat(claim_expires.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return "invalid_lease_timestamp"
+    if (start.tzinfo is None or start.utcoffset() is None
+            or expires.tzinfo is None or expires.utcoffset() is None):
+        return "invalid_lease_timestamp"
+    start = start.astimezone(timezone.utc)
+    expires = expires.astimezone(timezone.utc)
+    observed = observed_at.astimezone(timezone.utc)
+    duration = (expires - start).total_seconds()
+    if duration <= 0 or duration > 7 * 86400:
+        return "invalid_lease_interval"
+    if start > observed:
+        return "future_claim_start"
+    if expires <= observed:
+        return "expired_claim_window"
+    return "time_window_present_not_owner_verified"
+
+
 def fair_active_samples(rows, limit=30):
     """Bound visible examples fairly across the three observed work statuses.
 
@@ -281,6 +313,8 @@ def observe_claims(data_source_id, token, known_projects=None):
                 worker = _worker_name(props.get("Worker"))
                 claimed_at = _date_start(props.get("Claimed At"), "Claimed At")
                 claim_expires = _date_start(props.get("Claim Expires"), "Claim Expires")
+                window = classify_notional_claim_window(
+                    worker, claimed_at, claim_expires, datetime.now(timezone.utc))
                 rows.append({
                     "work": ("PWQ-" + str(number) if number else "Werk-ID onbekend"),
                     "title": title, "status": state,
@@ -292,6 +326,8 @@ def observe_claims(data_source_id, token, known_projects=None):
                         "observed_fields_present" if worker and claimed_at and claim_expires
                         else "partial_or_missing"
                     ),
+                    "claim_window_observation": window,
+                    "claim_authorized": False,
                 })
             more = data.get("has_more")
             if type(more) is not bool:
@@ -315,6 +351,11 @@ def observe_claims(data_source_id, token, known_projects=None):
             "read_only": True,
             "claim_scope_verified": False,
         })
+    # Histograms cover all read rows, not just visible sample rows.
+    window_counts = {}
+    for item in rows:
+        cls = item["claim_window_observation"]
+        window_counts[cls] = window_counts.get(cls, 0) + 1
     counts, verifying_counts = {}, {}
     for row in rows:
         label = row["project"]
@@ -332,6 +373,8 @@ def observe_claims(data_source_id, token, known_projects=None):
         "active_project_counts": dict(sorted(counts.items())),
         "verifying_project_counts": dict(sorted(verifying_counts.items())),
         "verifying_count": sum(verifying_counts.values()),
+        "claim_window_observation_counts": dict(sorted(window_counts.items())),
+        "claim_window_verified": False,
         "status_source_windows": status_source_windows,
         "total_pages_read": sum(row["pages_read"] for row in status_source_windows),
         "items": fair_active_samples(rows),
