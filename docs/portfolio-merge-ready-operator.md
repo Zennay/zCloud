@@ -601,7 +601,7 @@ eigenaarcontrole.
 
 ## P0/P1 issue activity age in the issue-first recovery inbox
 
-The issue-first board now preserves GitHub's canonical `updated_at` timestamp for each P0/P1 issue returned by the bounded issue inventory and adds a last-activity hint to its HTML and text cards plus JSON output. The issue-inventory observation timestamp is captured once and shared by the inbox classification. The targeted `--issue` path carries the same activity evidence in its HTML, text and `targeted_issue_activity` JSON field. This makes the age visible at generation time instead of leaving an old open issue visually indistinguishable from a recently active one.
+The issue-first board now preserves GitHub's canonical `updated_at` timestamp for each P0/P1 issue returned by the bounded issue inventory and adds a last-activity hint to its HTML and text cards plus JSON output. Offline HTML renders the activity band as a fixed, accessible visual badge; the same badge is used for the targeted `--issue` view. The issue-inventory observation timestamp is captured once and shared by the inbox classification. The targeted `--issue` path carries the same activity evidence in its HTML, text and `targeted_issue_activity` JSON field. This makes the age visible at generation time instead of leaving an old open issue visually indistinguishable from a recently active one.
 
 Bands are intentionally descriptive, not ownership or severity overrides:
 
