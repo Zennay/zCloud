@@ -726,7 +726,7 @@ def html_view(report):
         esc(report["source_partial_or_unknown"]) +
         " · output truncated: " + esc(report["display_truncated"]) +
         " · source error: " + esc(report["source_error"] or "none") + "</p>",
-        "</header><main><section><h2>P0/P1-first recent issues</h2><ol>",
+        "</header><main>",
     ]
     if report["priority_recall_performed"]:
         rows.append(
@@ -746,9 +746,31 @@ def html_view(report):
                 esc(scope["provider_incomplete"]) + "</li>"
             )
         rows.append("</ul></section>")
-    for item in report["issues"]:
-        workflow = item["operator_workflow"]
-        rows.append(
+    priority_groups = (
+        ("p0", "Explicit P0-labelled issues", lambda rank: rank == 0),
+        ("p1", "Explicit P1-labelled issues", lambda rank: rank == 1),
+        ("hint", "Unverified P0/P1 title hints", lambda rank: rank in (2, 3)),
+        ("lower", "Explicit P2/P3-labelled issues", lambda rank: rank in (4, 5)),
+        ("unknown", "Unknown or conflicting source priority", lambda rank: rank == 6),
+    )
+    grouped = [(key, title, [
+        item for item in report["issues"] if match(item["triage_rank"])
+    ]) for key, title, match in priority_groups]
+    rows.append("<nav aria-label='Issue priority groups'><p>Jump to observed issue groups: ")
+    rows.append(" · ".join(
+        "<a href='#" + key + "'>" + esc(title) + " (" +
+        str(len(items)) + ")</a>"
+        for key, title, items in grouped if items
+    ) or "No issue rows observed")
+    rows.append("</p></nav>")
+    for key, title, items in grouped:
+        if not items:
+            continue
+        rows.append("<section id='" + key + "'><h2>" + esc(title) +
+                    " (" + str(len(items)) + ")</h2><ol>")
+        for item in items:
+            workflow = item["operator_workflow"]
+            rows.append(
             "<li><a rel='noopener noreferrer' href='" + esc(item["url"]) +
             "'>Issue #" + esc(item["number"]) + "</a>"
             " · source label <strong>" +
@@ -775,13 +797,14 @@ def html_view(report):
             "<br><code>" + esc(item["followup_command"]) +
             "</code> <small>(not executed)</small></li>"
         )
+        rows.append("</ol></section>")
     if not report["issues"]:
         rows.append(
-            "<li>No recent issue observed in the bounded window. "
-            "Absence has NOT been verified.</li>"
+            "<section><p>No recent issue observed in the bounded window. "
+            "Absence has NOT been verified.</p></section>"
         )
     rows.extend([
-        "</ol></section><section><h2>Inspect one issue next</h2>",
+        "<section><h2>Inspect one issue next</h2>",
         "<p>Use <code>--live-issue-url &lt;issue URL&gt;</code> with the "
         "existing zSentinel CLI for source-linked PR discovery. Neither "
         "this inbox nor a title hint authorizes ownership, retries, "
