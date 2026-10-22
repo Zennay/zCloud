@@ -761,8 +761,10 @@ van een actieve workerlease plaats.
 
 ### Source-linked recovery receipt visibility
 
-Dezelfde read-only inspectie leest binnen de coherente SQLite-
-transactie naast de taak en diens exacte `queue:<id>`-Attention ook
+Dezelfde read-only inspectie opent expliciet een SQLite-URI
+met `mode=ro` en `PRAGMA query_only=ON`, zodat deze route nooit
+zelf een ontbrekende database mag aanmaken of schrijfrechten krijgt.
+Binnen dezelfde coherente SQLite-leestransactie leest hij naast de taak en diens exacte `queue:<id>`-Attention ook
 maximaal **24 recente** `project_state_receipts` voor
 `portfolio_queue_drop` en `portfolio_queue_resume_blocked` van
 datzelfde project. Alleen receipts met hetzelfde `queue_id` in
