@@ -402,6 +402,10 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                     gate["queued_check_attention_30m_observed"],
                 "queued_check_age_unknown_observed":
                     gate["queued_check_age_unknown_observed"],
+                "running_check_attention_60m_observed":
+                    gate["running_check_attention_60m_observed"],
+                "running_check_age_unknown_observed":
+                    gate["running_check_age_unknown_observed"],
                 "observed_checks_not_successful": gate["observed_checks_not_successful"],
                 "observed_legacy_pending": gate["legacy_status_pending_observed"],
                 "legacy_contexts_observed": gate["legacy_status_contexts_observed"],
@@ -430,6 +434,10 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "observed_exact_head_changes_requested":
                     gate["observed_exact_head_changes_requested"],
                 "human_next_gate_step": gate["human_next_gate_step"],
+                "parallel_independent_review_step":
+                    gate.get("parallel_independent_review_step"),
+                "automation_review_events_excluded_from_independent_approval":
+                    gate.get("automation_review_events_excluded_from_independent_approval"),
                 "check_page_complete": gate["check_runs_page_complete"],
                 "check_runs_sample_complete_and_terminal":
                     gate["check_runs_sample_complete_and_terminal"],
