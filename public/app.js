@@ -310,6 +310,16 @@ let blockedQueueUrgentOnly=false;
 let blockedQueueProject='all';
 let blockedQueueSearch='';
 let blockedQueueFilterTimer=null;
+function blockedQueueSourceUrl(raw){
+  // Queue evidence can contain user-supplied URLs. Only link exact GitHub
+  // issues/PRs owned by this portfolio; never render arbitrary href schemes.
+  try{
+    const url=new URL(String(raw||''));
+    if(url.protocol!=='https:'||url.hostname!=='github.com'||url.port||
+       url.username||url.password||url.search||url.hash)return '';
+    return /^\/Zennay\/[A-Za-z0-9_.-]+\/(issues|pull)\/[1-9][0-9]*$/.test(url.pathname)?url.href:'';
+  }catch(_){return ''}
+}
 function blockedQueuePanel(){
   const loaded=Array.isArray(BLOCKED_QUEUE);
   // Important claims must not disappear below the twelve-card preview.
@@ -330,7 +340,7 @@ function blockedQueuePanel(){
   // Only search the already-loaded queue sample; this never infers a global zero.
   const visibleItems=search?priorityItems.filter(item=>{
     const project=DATA.projects.find(p=>p.id===item.project_id);
-    return [project?.name,item.project_id,item.title,item.blocker,item.evidence,item.priority]
+    return [project?.name,item.project_id,item.title,item.blocker,item.evidence,item.priority,item.source_url]
       .some(value=>String(value??'').toLocaleLowerCase().includes(search));
   }):priorityItems;
   const count=visibleItems.length;
@@ -346,10 +356,12 @@ function blockedQueuePanel(){
         const project=DATA.projects.find(p=>p.id===item.project_id);
         const blocker=String(item.blocker||item.evidence||'No dependency evidence recorded').trim();
         const title=String(item.title||'Untitled blocked task').trim();
+        const sourceLink=blockedQueueSourceUrl(item.source_url);
         return '<article class="blocked-queue-item"><div class="blocked-queue-copy">'
           +'<div class="blocked-queue-meta"><span>'+esc(project?.name||item.project_id||'Unknown project')+'</span><b>'+esc(item.priority||'P2')+'</b></div>'
           +'<strong>'+esc(title)+'</strong><p>'+esc(blocker.length>360?blocker.slice(0,357)+'…':blocker)+'</p>'
           +'<small>Parked task · not assigned to a worker · source evidence is not an automatic resolution</small>'
+          +(sourceLink?'<div class="blocked-queue-links"><a href="'+esc(sourceLink)+'" target="_blank" rel="noopener noreferrer">Open '+(sourceLink.includes('/pull/')?'pull request':'source issue')+' ↗</a></div>':'')
           +'</div><button type="button" data-resume-blocked="'+esc(item.queue_id)+'">Resume after confirmation</button></article>';
       }).join('')+'</div>'
       :'<p class="blocked-queue-state">'+(search
