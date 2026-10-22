@@ -1,5 +1,50 @@
 # zSentinel · Private Product Delivery Workbench
 
+## 22 oktober · Eén project als veilig overdraagbaar herstelpakket
+
+In de bestaande interactieve offline `zsentinel_operator_workbench.py` kan de
+operator bij **Project recovery** voor één project op **Create single-project
+owner packet** klikken. Dit levert een expliciet te beoordelen JSON-export op
+met de oorspronkelijke board SHA-256, bronmoment, bronklokken, de
+issue-steekproef van alléén dat project (inclusief bestaande PR-referenties),
+een eigen read-only wachtrij-samenvatting en de brongebonden menselijke
+vervolgstap. Ook een project met **nul sampled issues maar zichtbare
+queue-druk** kan nu onafhankelijk worden overgedragen. Zoek-, prioriteits-
+en dispositionfilters uit de issuebrowser kunnen zo geen projectissue
+stilzwijgend uit de pakketbron verwijderen.
+
+Privécontactlabel, handmatige herbeoordelingsdatum, decision en notitie
+worden **standaard uitgesloten**. Alleen het expliciete vinkje voor
+`projectPacketPrivate` neemt de lokale privénotitie van dit **ene project**
+mee. In de preview staat de exacte inhoud; download doet nogmaals een
+vergelijking met de huidige notitie en het bronpakket en weigert als de
+preview inmiddels verouderd is. De JSON heeft een grens van **256 KiB
+UTF-8**, wordt uitsluitend lokaal met de browser gedownload en geeft
+`source_is_live=false`, `current_owner_verified=false` en de vier
+autorisaties `false` mee. Het dossier geeft geen echte task-ID's,
+raw gesprekken, andere projectnotities of claims vrij.
+
+De ontvangende werkbank kan een `.json` projectpakket onder
+**Reopen project packet from THIS exact source board** lezen. Import
+controleert de **volledige brongebonden, niet-private projectinhoud**
+tegen haar eigen originele board, niet alleen een aangeleverde naam of
+checksum. Afwijkende oorspronkelijke issue-/PR-/queuegegevens of een
+ander board weigeren. Alleen een optioneel, strikt begrensd
+`private_operator_handoff` met lokale contact/date/note mag na
+**expliciete bevestiging** het bestaande lokale vervolg van exact dat project
+vervangen. De oorspronkelijke bronbestanden, overige projecten, de
+actuele GitHub/Notion-status, de queue en alle releasevoorwaarden blijven
+ongewijzigd. Ook een import zonder de originele bron kan geen bevoegdheid
+construeren; de ontvanger moet dezelfde boardbron hebben.
+
+**Bediening:** open het bestaande privé HTML-artefact uit
+`zsentinel_operator_bundle.py`, klap **Project recovery** uit, kies het
+project, controleer de optionele privacykeuze, preview en download. De
+ontvanger opent dezelfde originele board met dezelfde werkbank en importeert
+het pakket; bij een ander board eerst opnieuw live bronnen verzamelen en
+een nieuwe, bij die bron passende handoff laten maken. Geen testsuite,
+CI-trigger, actieve claim, remote action, merge of deploy is toegevoegd.
+
 ## 21 oktober · één opdracht voor board, dashboard en merge-first overdracht
 
 De operator hoefde voor dezelfde opgeslagen bronnen drie zelfstandige CLI's uit
