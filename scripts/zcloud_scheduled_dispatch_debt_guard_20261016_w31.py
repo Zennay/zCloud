@@ -1,0 +1,527 @@
+#!/usr/bin/env python3
+"""Deny NEW scheduled GitHub Actions workflow-dispatch sites.
+
+Source-only, monotone debt guard. Existing recovery workflows are neither
+modified nor approved by a passing result. Never mutates VPS or GitHub state.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import hashlib
+import os
+import posixpath
+import re
+import selectors
+import subprocess
+import time
+from collections import Counter
+from itertools import chain
+from pathlib import Path
+
+SHA = re.compile(r"[0-9a-f]{40}\Z")
+WORKFLOW = re.compile(r"\.github/workflows/[^/\0]+\.(?:yml|yaml)\Z")
+ACTION = re.compile(r"\.github/actions/(?:[^/\0]+/)+action\.ya?ml\Z")
+ACTION_CODE = re.compile(r"\.github/actions/(?:[^/\0]+/)+[^/\0]+\.(?:js|mjs|cjs|py|sh)\Z")
+# Action-local Dockerfile variants are source dependencies of Docker Actions.
+# Their content is compared as immutable Git blobs, never built or executed.
+ACTION_DOCKERFILE = re.compile(
+    r"\.github/actions/(?:[^/\0]+/)+Dockerfile(?:\.[A-Za-z0-9_.-]+)?\Z"
+)
+# Docker build contexts also consume non-executable text configuration files.
+# Only bounded Git blobs from an explicit extension/name allowlist are scanned,
+# never secrets, remote files, filesystem state, or unbounded binary assets.
+ACTION_DOCKER_ASSET = re.compile(
+    r"\.github/actions/(?:[^/\0]+/)+(?:\.dockerignore|Makefile|Gemfile|go\.mod|go\.sum|"
+    r"[^/\0]+\.(?:json|jsonc|ya?ml|toml|ini|cfg|conf|properties|txt|xml|lock|"
+    r"env|ts|tsx|jsx|ps1|psm1|go|rb|rs))\Z"
+)
+DOCKER_USING = re.compile(
+    r"""(?:\busing|['"]using['"])\s*:\s*['"]?docker['"]?(?=\s*(?:[,}#]|$))""",
+    re.MULTILINE,
+)
+HELPER_CODE = re.compile(r"(?:scripts|\.github/scripts)/(?:[^/\0]+/)*[^/\0]+\.(?:js|mjs|cjs|py|sh)\Z")
+ACTION_ENTRY = re.compile(
+    r"""(?m)^[ \t]{2,}(?:main|pre|post|['\"](?:main|pre|post)['\"])\s*:[ \t]*['\"]?([^'\"\s#]+)['\"]?[ \t]*(?:#.*)?$"""
+)
+ON = re.compile(r"^(?:on|'on'|\"on\")\s*:(.*)$")
+SCHEDULE = re.compile(r"(?i)(?:^|[\s,{\[])['\"]?schedule['\"]?\s*(?:[:,}\]]|$)")
+DISPATCH = re.compile(
+    r"(?i)\bgh(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+workflow"
+    r"(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+run\b"
+    # A dynamic workflow ID can be passed as a shell/environment variable.
+    r"|/actions/workflows/[^\s'\"\n]{1,256}/dispatches\b"
+    # POST repos/owner/repo/dispatches invokes repository_dispatch.
+    r"|\brepos/[^\s'\"\n]{1,256}/dispatches\b"
+    r"|\bcreateDispatchEvent\b"
+    r"|\bcreateRepositoryDispatch\b"
+    r"|\b[\w.-]+\.ya?ml/dispatches\b"
+    r"|\bcreateWorkflowDispatch\b"
+    r"|\bcreate_workflow_dispatch\b"
+)
+# Recognise job-level reusable-workflow dependencies without executing YAML.
+# References are review-requiring in scheduled ancestry even if the helper is
+# currently inert: a later helper edit could activate another dispatch path.
+REUSABLE = re.compile(
+    r"""(?m)^\s+(?:-\s*)?(?:uses|['\"]uses['\"])\s*:\s*['\"]?"""
+    r"""((?:\./\.github/workflows/|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/)"""
+    r"""[A-Za-z0-9_.-]+\.ya?ml(?:@[^\s'"#]+)?)['"]?\s*(?:#.*)?$"""
+)
+LOCAL_ACTION = re.compile(
+    r"""(?m)^\s+(?:-\s*)?(?:uses|['\"]uses['\"])\s*:\s*['\"]?"""
+    r"""(\./\.github/actions/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)"""
+    r"""['"]?\s*(?:#.*)?$"""
+)
+# YAML alias/tag and expression-valued action references can conceal an
+# indirect workflow dispatch. Count new opaque scheduled edges for review.
+# Flow-style YAML maps can contain valid "uses" edges on the same line.
+# Parse local/remote literal references, but never evaluate YAML or shell code.
+INLINE_REUSABLE = re.compile(
+    r"""(?m)[{,]\s*(?:uses|['"]uses['"])\s*:\s*['"]?"""
+    r"""((?:\./\.github/workflows/|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/)"""
+    r"""[A-Za-z0-9_.-]+\.ya?ml(?:@[^\s'"#,}\]]+)?)['"]?(?=\s*[,}\]])"""
+)
+INLINE_LOCAL_ACTION = re.compile(
+    r"""(?m)[{,]\s*(?:uses|['"]uses['"])\s*:\s*['"]?"""
+    r"""(\./\.github/actions/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)['"]?(?=\s*[,}\]])"""
+)
+# Local GitHub Actions can live outside .github/actions. An unscanned local
+# action must NEVER be classified as safe merely because it is outside the
+# standard folder. Fingerprint its new reference as review-requiring; do not
+# execute its manifest, inspect the working tree or grant deploy authority.
+OTHER_LOCAL_USES = re.compile(
+    r"""(?m)^[ \t]+(?:-[ \t]*)?(?:uses|['"]uses['"])\s*:\s*['"]?"""
+    r"""(\./[^\s'"#,}\]]+)['"]?\s*(?:#.*)?$"""
+)
+INLINE_OTHER_LOCAL_USES = re.compile(
+    r"""(?m)[{,]\s*(?:uses|['"]uses['"])\s*:\s*['"]?"""
+    r"""(\./[^\s'"#,}\]]+)['"]?(?=\s*[,}\]])"""
+)
+
+INLINE_RUNS = re.compile(r"""(?m)^[ \t]*runs:[ \t]*\{([^}\n]*)\}""")
+INLINE_ACTION_ENTRY = re.compile(
+    r"""(?:^|,)\s*(?:main|pre|post|['"](?:main|pre|post)['"])\s*:\s*"""
+    r"""['"]?([^,'"\s}]+)"""
+)
+
+OPAQUE_USES = re.compile(
+    r"""(?m)^[ \t]+(?:-[ \t]*)?(?:uses|['"]uses['"])[ \t]*:[ \t]*"""
+    r"""(?:['"])?([*&!][^\s#'"]*|\$\{\{[^\n]*)"""
+)
+
+
+# Trace literal relative Node imports reached from scheduled local actions.
+# Ignore built-in/package imports; never evaluate imported JavaScript.
+NODE_LOCAL_IMPORT = re.compile(
+    r"""(?m)(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bimport\s+|\bfrom\s+)"""
+    r"""['"](\.{1,2}/[^'"\r\n]+)['"]"""
+)
+NODE_DYNAMIC_IMPORT = re.compile(
+    r"""(?m)\b(?:require|import)\s*\(\s*(?!['"])([^)\n]{1,256})\)"""
+)
+NODE_SUFFIXES = (".js", ".mjs", ".cjs")
+
+# The same opaque uses references can appear inside YAML flow collections.
+INLINE_OPAQUE_USES = re.compile(
+    r"""(?m)[{,]\s*(?:uses|['"]uses['"])\s*:\s*['"]?"""
+    r"""([*&!][^\s,'"}\]]+|\$\{\{[^}\r\n]*\}\})"""
+)
+
+# Literal root-relative Python/shell/Node invocations from scheduled ancestry.
+# Never execute scripts or trust missing/out-of-tree helper source.
+LOCAL_HELPER_EXEC = re.compile(
+    r"""(?m)(?:\b(?:python(?:3(?:\.\d+)?)?|bash|sh|node)\s+"""
+    r"""(?:-[uBES]\s+)*|\./)"""
+    r"""(\.?/?(?:scripts|\.github/scripts)/[A-Za-z0-9_./-]+\.(?:py|sh|js|mjs|cjs))\b"""
+)
+
+MAX_MANIFESTS = 2048
+MAX_BLOB = 1024 * 1024
+MAX_TOTAL = 16 * 1024 * 1024
+
+
+def git(repo: Path, *args: str) -> bytes:
+    """Read Git stdout with a hard streaming cap and an overall deadline.
+
+    Silencing Git stderr keeps repository-local path/credential details out of
+    CI errors; any nonzero return is a non-authorizing failure.
+    """
+    command = ["git", "-C", str(repo), *args]
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    )
+    output = bytearray()
+    deadline = time.monotonic() + 20
+    try:
+        assert process.stdout is not None
+        with selectors.DefaultSelector() as reader:
+            reader.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not reader.select(remaining):
+                    raise subprocess.TimeoutExpired(command, 20)
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > MAX_TOTAL:
+                    raise ValueError("Git output exceeds streaming bounds")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, 20)
+        if process.wait(timeout=remaining) != 0:
+            raise ValueError("Git source inventory failed closed")
+        return bytes(output)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        if process.stdout is not None:
+            process.stdout.close()
+
+
+def manifest_map(repo: Path, sha: str) -> dict[str, str]:
+    if not SHA.fullmatch(sha):
+        raise ValueError("exact 40-character lowercase Git SHA required")
+    entries = git(repo, "ls-tree", "-r", "-z", sha, "--", ".github/workflows", ".github/actions", ".github/scripts", "scripts").split(b"\0")
+    result: dict[str, str] = {}
+    total = 0
+    docker_context_candidates: list[tuple[str, str, str, str]] = []
+    for record in entries:
+        if not record:
+            continue
+        try:
+            meta, path_bytes = record.split(b"\t", 1)
+            mode, kind, oid = meta.decode("ascii").split(" ")
+            path = path_bytes.decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError("invalid Git tree entry") from exc
+        if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path) or ACTION_CODE.fullmatch(path) or ACTION_DOCKERFILE.fullmatch(path) or ACTION_DOCKER_ASSET.fullmatch(path) or HELPER_CODE.fullmatch(path)):
+            # Keep nonstandard context sources for reachable local Docker
+            # actions. An arbitrary file extension or binary cannot be
+            # assumed inert when a Dockerfile copies the entire context.
+            if path.startswith(".github/actions/"):
+                docker_context_candidates.append((path, mode, kind, oid))
+            continue
+        # A newline, terminal escape or delimiter hidden in a Git pathname
+        # must never be folded into apparently ordinary evidence filenames.
+        if any(ord(char) < 32 or ord(char) == 127 for char in path):
+            raise ValueError("unsafe manifest path")
+        if path in result or len(result) >= MAX_MANIFESTS:
+            raise ValueError("duplicate or excessive workflow entry")
+        if mode not in {"100644", "100755"}:
+            raise ValueError("non-regular workflow source rejected")
+        if kind != "blob" or not SHA.fullmatch(oid):
+            raise ValueError("invalid workflow blob reference")
+        size = int(git(repo, "cat-file", "-s", oid).decode("ascii").strip())
+        total += size
+        if size < 0 or size > MAX_BLOB or total > MAX_TOTAL:
+            raise ValueError("workflow blob bound exceeded")
+        blob = git(repo, "cat-file", "blob", oid)
+        if len(blob) != size:
+            raise ValueError("workflow blob length drift")
+        try:
+            result[path] = blob.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("non-UTF8 workflow source") from exc
+
+    # Docker build contexts are not restricted to script/config extensions.
+    # For Docker action directories only, fingerprint EVERY tracked Git blob,
+    # including binary files or files with extensionless names. Byte contents
+    # are never included in policy reports. No Docker build or remote fetch.
+    docker_prefixes = tuple(
+        path.rsplit("/", 1)[0] + "/"
+        for path, value in result.items()
+        if ACTION.fullmatch(path) and DOCKER_USING.search(value)
+    )
+    for path, mode, kind, oid in docker_context_candidates:
+        if not any(path.startswith(prefix) for prefix in docker_prefixes):
+            continue
+        if any(ord(char) < 32 or ord(char) == 127 for char in path):
+            raise ValueError("unsafe Docker context path")
+        if path in result or len(result) >= MAX_MANIFESTS:
+            raise ValueError("duplicate or excessive Docker context source")
+        if mode not in {"100644", "100755"} or kind != "blob" or not SHA.fullmatch(oid):
+            raise ValueError("non-regular Docker context source rejected")
+        size = int(git(repo, "cat-file", "-s", oid).decode("ascii").strip())
+        total += size
+        if size < 0 or size > MAX_BLOB or total > MAX_TOTAL:
+            raise ValueError("Docker context blob bound exceeded")
+        blob = git(repo, "cat-file", "blob", oid)
+        if len(blob) != size:
+            raise ValueError("Docker context blob length drift")
+        # Use a domain-prefixed digest, never the source contents, for opaque
+        # context assets; readable scripts/configs remain in the normal map.
+        result[path] = "docker-blob-sha256:" + hashlib.sha256(blob).hexdigest()
+    return result
+
+
+def scheduled(text: str) -> bool:
+    """Detect actual top-level schedule trigger, including opaque aliases."""
+    lines = text.splitlines()
+    for pos, line in enumerate(lines):
+        match = ON.match(line)
+        if not match:
+            continue
+        inline = match.group(1).strip()
+        if inline:
+            if SCHEDULE.search(inline):
+                return True
+            if inline.startswith(("*", "!", "&")):
+                return True
+        for next_line in lines[pos + 1:]:
+            if next_line and not next_line[0].isspace() and not next_line.startswith("#"):
+                break
+            if next_line.lstrip().startswith("#"):
+                continue
+            if SCHEDULE.search(next_line) and re.match(r"^\s{2,}", next_line):
+                return True
+    return False
+
+
+def dispatch_sites(text: str, *, assume_scheduled: bool = False) -> Counter[str]:
+    """Count stable site fingerprints, never disclose source or credentials."""
+    if not assume_scheduled and not scheduled(text):
+        return Counter()
+    active = "\n".join(line for line in text.splitlines()
+                       if not line.lstrip().startswith("#"))
+    # Join shell continuations before looking for a command.
+    active = active.replace("\\\n", "")
+    result: Counter[str] = Counter()
+    for match in DISPATCH.finditer(active):
+        start = active.rfind("\n", 0, match.start()) + 1
+        end = active.find("\n", match.end())
+        if end == -1:
+            end = len(active)
+        # A changed target, method or argument is new risk, even if the old
+        # invocation disappeared and the total number of sites did not grow.
+        site = active[start:end].strip()
+        signature = hashlib.sha256(site.encode("utf-8")).hexdigest()
+        result[signature] += 1
+    return result
+
+
+def dispatch_count(text: str) -> int:
+    return sum(dispatch_sites(text).values())
+
+
+def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
+    """Trace scheduled callers into local reusable-workflow definitions.
+
+    Each reachable workflow is visited once, so local cycles are bounded. The
+    site identity also includes the providing workflow path, distinguishing
+    otherwise identical dispatch commands in different helper workflows.
+    """
+    report: dict[str, Counter[str]] = {}
+    for root, source in workflows.items():
+        if not WORKFLOW.fullmatch(root) or not scheduled(source):
+            continue
+        sites: Counter[str] = Counter()
+        visiting = [root]
+        seen: set[str] = set()
+        while visiting:
+            path = visiting.pop()
+            if path in seen:
+                continue
+            seen.add(path)
+            text = workflows.get(path)
+            if text is None:
+                # Missing reusable definitions cannot be independently trusted.
+                fingerprint = hashlib.sha256(("missing:" + path).encode()).hexdigest()
+                sites[fingerprint] += 1
+                continue
+            for signature, count in dispatch_sites(
+                text, assume_scheduled=True
+            ).items():
+                fingerprint = hashlib.sha256(
+                    ("site:" + path + ":" + signature).encode()
+                ).hexdigest()
+                sites[fingerprint] += count
+            for match in LOCAL_HELPER_EXEC.finditer(text):
+                reference = match.group(1)
+                target = posixpath.normpath(reference)
+                sites[hashlib.sha256(
+                    ("helper-exec:" + path + ":" + reference).encode()
+                ).hexdigest()] += 1
+                if not HELPER_CODE.fullmatch(target):
+                    sites[hashlib.sha256(
+                        ("opaque-helper-exec:" + path + ":" + reference).encode()
+                    ).hexdigest()] += 1
+                elif target not in workflows:
+                    sites[hashlib.sha256(
+                        ("missing-helper-exec:" + path + ":" + reference).encode()
+                    ).hexdigest()] += 1
+                else:
+                    visiting.append(target)
+            for match in chain(REUSABLE.finditer(text), INLINE_REUSABLE.finditer(text)):
+                target = match.group(1)
+                # Every newly introduced/replaced delegation is risky even if
+                # its target currently has no explicit dispatch command.
+                edge = hashlib.sha256(
+                    ("uses:" + path + ":" + target).encode()
+                ).hexdigest()
+                sites[edge] += 1
+                if target.startswith("./.github/workflows/"):
+                    visiting.append(target[2:])
+            for match in chain(LOCAL_ACTION.finditer(text), INLINE_LOCAL_ACTION.finditer(text)):
+                action_root = match.group(1)[2:]
+                edge = hashlib.sha256(
+                    ("action:" + path + ":" + action_root).encode()
+                ).hexdigest()
+                sites[edge] += 1
+                found = False
+                for suffix in ("/action.yml", "/action.yaml"):
+                    manifest = action_root + suffix
+                    if manifest in workflows:
+                        visiting.append(manifest)
+                        found = True
+                if not found:
+                    fingerprint = hashlib.sha256(
+                        ("missing-action:" + action_root).encode()
+                    ).hexdigest()
+                    sites[fingerprint] += 1
+            for match in chain(OTHER_LOCAL_USES.finditer(text),
+                               INLINE_OTHER_LOCAL_USES.finditer(text)):
+                target = match.group(1)
+                if (target.startswith("./.github/actions/")
+                        or target.startswith("./.github/workflows/")):
+                    # These are already represented by the normal graph
+                    # traversal; avoid counting them as two risk edges.
+                    continue
+                sites[hashlib.sha256(
+                    ("opaque-local-action:" + path + ":" + target).encode()
+                ).hexdigest()] += 1
+            for match in chain(OPAQUE_USES.finditer(text), INLINE_OPAQUE_USES.finditer(text)):
+                edge = hashlib.sha256(
+                    ("opaque-action:" + path + ":" + match.group(1)).encode()
+                ).hexdigest()
+                sites[edge] += 1
+            if ACTION.fullmatch(path):
+                if DOCKER_USING.search(text):
+                    # A Docker action is opaque to this source-only scanner.
+                    # Snapshot its manifest AND action-local Dockerfiles so a
+                    # change, removal or addition cannot bypass the ratchet.
+                    # No Docker build, remote resolution or runtime execution.
+                    prefix = path.rsplit("/", 1)[0] + "/"
+                    action_sources = sorted(
+                        (name, hashlib.sha256(source.encode("utf-8")).hexdigest())
+                        for name, source in workflows.items()
+                        if name.startswith(prefix) and name != path
+                    )
+                    docker_signature = hashlib.sha256(json.dumps(
+                        [text, action_sources], ensure_ascii=True
+                    ).encode("utf-8")).hexdigest()
+                    sites[hashlib.sha256(
+                        ("docker-action-source:" + path + ":" + docker_signature).encode()
+                    ).hexdigest()] += 1
+                entries = [match.group(1) for match in ACTION_ENTRY.finditer(text)]
+                for flow in INLINE_RUNS.finditer(text):
+                    entries.extend(match.group(1) for match in
+                                   INLINE_ACTION_ENTRY.finditer(flow.group(1)))
+                for raw_entry in entries:
+                    entry = raw_entry[2:] if raw_entry.startswith("./") else raw_entry
+                    parts = entry.split("/")
+                    if (any(part in {"", ".", ".."} for part in parts)
+                            or not re.fullmatch(r"[A-Za-z0-9_./-]+\.(?:js|mjs|cjs|py|sh)", entry)):
+                        raise ValueError("unsafe action entrypoint")
+                    # A Node/Python/shell action may dispatch from its entrypoint
+                    # while the surrounding scheduled workflow has no dispatch.
+                    target = path.rsplit("/", 1)[0] + "/" + entry
+                    edge = hashlib.sha256(
+                        ("action-script:" + path + ":" + entry).encode()
+                    ).hexdigest()
+                    sites[edge] += 1
+                    visiting.append(target)
+            if (ACTION_CODE.fullmatch(path) or HELPER_CODE.fullmatch(path)) and path.endswith(NODE_SUFFIXES):
+                # JavaScript in root-level scheduled helpers can import more
+                # JS; it is as relevant as action entrypoint dependencies.
+                boundary = (".github/actions/" if ACTION_CODE.fullmatch(path)
+                            else ".github/scripts/" if path.startswith(".github/scripts/")
+                            else "scripts/")
+                # Nonliteral require/import calls cannot prove which local
+                # code executes. Conservatively fingerprint new unknown edges.
+                for match in NODE_DYNAMIC_IMPORT.finditer(text):
+                    sites[hashlib.sha256(
+                        ("dynamic-node-import:" + path + ":" + match.group(1)).encode()
+                    ).hexdigest()] += 1
+                for match in NODE_LOCAL_IMPORT.finditer(text):
+                    reference = match.group(1)
+                    # Preserve original source identity even when imports use
+                    # different aliases for the same relative file.
+                    edge = hashlib.sha256(
+                        ("node-import:" + path + ":" + reference).encode()
+                    ).hexdigest()
+                    sites[edge] += 1
+                    resolved = posixpath.normpath(
+                        posixpath.join(posixpath.dirname(path), reference)
+                    )
+                    if not resolved.startswith(boundary):
+                        # Imports leaving the respective immutable source tree
+                        # are opaque. Do not infer safety or read outside scope.
+                        sites[hashlib.sha256(
+                            ("opaque-node-import:" + path + ":" + reference).encode()
+                        ).hexdigest()] += 1
+                        continue
+                    if resolved.endswith(NODE_SUFFIXES):
+                        targets = (resolved,)
+                    else:
+                        targets = tuple(
+                            resolved + suffix for suffix in NODE_SUFFIXES
+                        ) + tuple(
+                            resolved + "/index" + suffix for suffix in NODE_SUFFIXES
+                        )
+                    matched = [target for target in targets if target in workflows]
+                    if not matched:
+                        sites[hashlib.sha256(
+                            ("missing-node-import:" + path + ":" + reference).encode()
+                        ).hexdigest()] += 1
+                    else:
+                        visiting.extend(matched)
+        if sites:
+            report[root] = sites
+    return report
+
+
+def evaluate(repo: Path, base: str, candidate: str) -> dict[str, object]:
+    before = findings(manifest_map(repo, base))
+    after = findings(manifest_map(repo, candidate))
+    # Multiset subtraction prevents offsetting newly introduced dispatches
+    # with a deletion or an unrelated existing occurrence in the same file.
+    growth = {
+        path: sum((sites - before.get(path, Counter())).values())
+        for path, sites in sorted(after.items())
+    }
+    growth = {path: count for path, count in growth.items() if count > 0}
+    return {
+        "policy": "zcloud-scheduled-dispatch-no-new-debt-v1",
+        "base_sha": base, "candidate_sha": candidate,
+        "baseline_sites": sum(sum(x.values()) for x in before.values()),
+        "candidate_sites": sum(sum(x.values()) for x in after.values()),
+        "new_sites": sum(growth.values()),
+        "changed_workflows_with_new_sites": sorted(growth),
+        "status": "reject" if growth else "pass",
+        "mutation_performed": False, "deploy_authorized": False,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=Path("."))
+    parser.add_argument("--base", required=True)
+    parser.add_argument("--candidate", required=True)
+    args = parser.parse_args()
+    try:
+        result = evaluate(args.repo, args.base, args.candidate)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(json.dumps({
+            "policy": "zcloud-scheduled-dispatch-no-new-debt-v1",
+            "status": "error", "reason": type(exc).__name__,
+            "mutation_performed": False, "deploy_authorized": False,
+        }, sort_keys=True))
+        return 2
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["status"] == "pass" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

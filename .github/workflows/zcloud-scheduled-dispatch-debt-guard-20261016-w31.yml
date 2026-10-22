@@ -1,0 +1,80 @@
+name: zCloud scheduled dispatch no-new-debt (hosted-only)
+
+on:
+  # A change to ANY workflow must be checked, not only changes to this guard.
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  # Main pushes are audited AFTER the write. This is not branch protection.
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-scheduled-dispatch-guard-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source-only:
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'push') &&
+      github.repository == 'Zennay/zCloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      # A skipped job may be treated as a successful required check.
+      # Untrusted forks MUST explicitly fail before any source checkout.
+      - name: Reject fork or unknown source before checkout
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          BASE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          test "$BASE_REPO" = "Zennay/zCloud"
+          test "$HEAD_REPO" = "$BASE_REPO"
+      - name: Checkout exact candidate without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+      - name: Test fail-closed policy and immutable source delta
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EXPECTED_MAIN: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git cat-file -t "$EXPECTED_BASE")" = commit
+          # Main must not drift while we compare immutable Git source.
+          expected_main="$EXPECTED_MAIN"$'\t'"refs/heads/main"
+          current_main="$(timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main)"
+          test "$current_main" = "$expected_main"
+          python3 -m py_compile scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py
+          python3 -m unittest -v tests.test_zcloud_scheduled_dispatch_debt_guard_20261016_w31
+          # On subsequent PRs execute the immutable scanner from trusted main,
+          # never the candidate-provided checker. New guard bootstrap is
+          # explicitly provisional until this workflow has landed on main.
+          source_path="scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py"
+          base_entry="$(git ls-tree "$EXPECTED_BASE" -- "$source_path")"
+          if [[ -n "$base_entry" ]]; then
+            [[ "$base_entry" =~ ^100(644|755)[[:space:]]blob[[:space:]][0-9a-f]{40}[[:space:]]scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py$ ]]
+            trusted_guard="$RUNNER_TEMP/zcloud_trusted_scheduled_dispatch_guard.py"
+            git show "$EXPECTED_BASE:$source_path" > "$trusted_guard"
+            python3 -m py_compile "$trusted_guard"
+            python3 "$trusted_guard" --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"
+          else
+            echo "::warning::BOOTSTRAP ONLY: no immutable guard exists on base; candidate scanner is not independently trusted"
+            python3 "$source_path" --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"
+          fi
+          current_main="$(timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main)"
+          test "$current_main" = "$expected_main"
