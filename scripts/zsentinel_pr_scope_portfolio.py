@@ -1576,6 +1576,7 @@ def as_private_csv(board):
         "related_pr_url", "related_pr_head_sha", "cluster_number",
         "shared_filename", "shared_files_observed",
         "scope_conflict_pairs_observed", "scope_conflict_relation", "scope_conflict_left_path", "scope_conflict_right_path",
+        "portable_alias_pair_count", "portable_alias_relation", "portable_alias_left_path", "portable_alias_right_path",
         "issue_number_hint", "current_exact_head_gate_status",
         "check_name", "check_state", "check_conclusion", "check_url",
         "prior_gate_blocker", "current_gate_blocker", "gate_episode_change",
@@ -1668,6 +1669,27 @@ def as_private_csv(board):
         if view.get("path_scope_collision_pairs_truncated"):
             emit("source_warning", project, repo, source_status, **summary,
                  operator_notice="Additional file/directory PR pairs beyond bounded output cap.")
+        for pair in view.get("shown_portable_path_alias_pairs", []):
+            for alias in pair["path_aliases"]:
+                emit("portable_path_alias", project, repo, source_status,
+                     **summary, pr_number=pair["left"]["number"],
+                     pr_url=pair["left"]["url"],
+                     pr_head_sha=pair["left"]["head_sha"],
+                     related_pr_url=pair["right"]["url"],
+                     related_pr_head_sha=pair["right"]["head_sha"],
+                     portable_alias_pair_count=pair["path_alias_count_observed"],
+                     portable_alias_relation=alias["relation"],
+                     portable_alias_left_path=alias["left_path"],
+                     portable_alias_right_path=alias["right_path"],
+                     operator_notice="NFC/casefold possible filesystem alias; not a Git merge conflict or owner proof.")
+            if pair["path_aliases_truncated"]:
+                emit("source_warning", project, repo, source_status, **summary,
+                     pr_number=pair["left"]["number"],
+                     related_pr_url=pair["right"]["url"],
+                     operator_notice="Additional portable path aliases for this PR pair are not shown.")
+        if view.get("portable_path_alias_pairs_truncated") or view.get("portable_path_alias_examples_truncated"):
+            emit("source_warning", project, repo, source_status, **summary,
+                 operator_notice="Portable path alias inventory is truncated; unseen aliases remain unknown.")
         for issue in view["shown_duplicate_issue_groups"]:
             for pr in issue["shown_pr_sources"]:
                 emit("unverified_issue_number", project, repo, source_status,
