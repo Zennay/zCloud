@@ -4707,3 +4707,7 @@ en `deploy_authorized` zijn expliciet `false`: dit is een overdraagbare
 historische handoff, geen live status, eigenaarschapsbewijs of toestemming om
 een taak opnieuw te claimen, te retriggeren, te mergen of te deployen. Er wordt
 geen extern spreadsheet, netwerkendpoint of queuewriter aangeroepen.
+
+## 22 October · Resuming interrupted private bundle publication
+
+The private multi-file operator bundle now supports `--resume-partial`. A hidden owner-only checkpoint pins exact input SHA-256/byte fingerprints, output-affecting options, the original UTC generation clock and expected artifact/receipt digests. Resume is allowed only with the same saved source bytes and options; every existing artifact must be a stable current-user-owned regular file with mode `0600` and exact expected bytes. Missing files are created without clobbering, and the receipt remains last. The checkpoint is retained as private recovery metadata and never represents live state or release authority. Legacy partial bundles without a checkpoint are not guessed or deleted; use a new name. See [private bundle recovery](zsentinel-operator-bundle-resume.md) for the operator procedure.
