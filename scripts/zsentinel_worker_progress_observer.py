@@ -46,13 +46,23 @@ def _source_current(moment):
 
 
 def _age(value, now):
+    """Return age only for a valid event timestamp that is not in the future."""
     timestamp = _utc_datetime(value)
     if timestamp is None:
         return None
-    seconds = (now - timestamp).total_seconds()
-    if seconds < -120:
+    seconds = (now.astimezone(UTC) - timestamp).total_seconds()
+    # Future event clocks are untrusted; never clamp them to age zero.
+    if seconds < 0:
         return None
-    return max(0, int(seconds))
+    return int(seconds)
+
+
+def _timestamp_status(value, now):
+    """Expose only a bounded timestamp-quality enum, never the raw event clock."""
+    timestamp = _utc_datetime(value)
+    if timestamp is None:
+        return "UNKNOWN"
+    return "FUTURE" if timestamp > now.astimezone(UTC) else "OBSERVED"
 
 
 def _utc_datetime(value):
@@ -67,12 +77,15 @@ def _utc_datetime(value):
     return timestamp.astimezone(UTC)
 
 
-def _in_claim_window(value, start, expires):
-    if not isinstance(start, datetime) or not isinstance(expires, datetime):
+def _in_claim_window(value, start, expires, now):
+    if (not isinstance(start, datetime) or not isinstance(expires, datetime)
+            or not isinstance(now, datetime) or now.tzinfo is None):
         return None
     timestamp = _utc_datetime(value)
-    return bool(timestamp is not None and start <= timestamp < expires)
-
+    if timestamp is None or timestamp > now.astimezone(UTC):
+        # Invalid/future event timestamps cannot correlate to the current claim.
+        return None
+    return bool(start <= timestamp < expires)
 
 def _bounded_timeline(con, project, slot, last_id, prompt_id, now,
                       claim_start=None, claim_expires=None):
@@ -103,10 +116,11 @@ def _bounded_timeline(con, project, slot, last_id, prompt_id, now,
     for ident, stamp, kind, generating, sending in rows[:MAX_TIMELINE_EVENTS]:
         if type(ident) is not int or not 1 <= ident <= last_id:
             raise ValueError("invalid worker timeline event identifier")
+        timestamp_status = _timestamp_status(stamp, now)
         age = _age(stamp, now)
         safe_kind = kind if isinstance(kind, str) and kind in SAFE_EVENT else "other_event"
         in_claim_window = (
-            _in_claim_window(stamp, claim_start, claim_expires)
+            _in_claim_window(stamp, claim_start, claim_expires, now)
             if claim_window_available else None
         )
         if in_claim_window is True:
@@ -130,6 +144,7 @@ def _bounded_timeline(con, project, slot, last_id, prompt_id, now,
         events.append({
             "event": safe_kind,
             "age_seconds": age,
+            "timestamp_status": timestamp_status,
             "after_latest_prompt": bool(after_prompt),
             "within_current_claim_window": in_claim_window,
             "browser_generating": generating == 1,
@@ -303,6 +318,8 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             "latest_event_in_current_claim_window": False if claim_window_available else None,
             "latest_progress_event_in_current_claim_window": False if claim_window_available else None,
             "last_event_type": None, "event_age_seconds": None,
+            "event_timestamp_status": "NOT_OBSERVED",
+            "progress_timestamp_status": "NOT_OBSERVED",
             "latest_indexed_event_id": None, "latest_indexed_progress_event_id": None,
             "progress_age_seconds": None, "assistant_character_count": None,
             "browser_generating": False, "browser_sending": False,
@@ -386,6 +403,7 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         (project, slot, max(1, last_id-MAX_WORKER_EVENT_LOOKBACK))).fetchone()
     latest_progress_id = None
     progress = None
+    progress_timestamp_status = "NOT_OBSERVED"
     progress_event_in_window = False if claim_window_available else None
     progress_timestamp_in_window = False if claim_window_available else None
     if progress_row is not None:
@@ -394,13 +412,14 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
                 or not 1 <= candidate_id <= last_id):
             raise ValueError("invalid indexed progress event identity")
         progress_event_in_window = (
-            _in_claim_window(event_ts, claim_window_start, claim_window_expires)
+            _in_claim_window(event_ts, claim_window_start, claim_window_expires, now)
             if claim_window_available else None
         )
         if not claim_window_available or progress_event_in_window is True:
             progress_signal = reported_progress if reported_progress is not None else event_ts
+            progress_timestamp_status = _timestamp_status(progress_signal, now)
             progress_timestamp_in_window = (
-                _in_claim_window(progress_signal, claim_window_start, claim_window_expires)
+                _in_claim_window(progress_signal, claim_window_start, claim_window_expires, now)
                 if claim_window_available else None
             )
             if not claim_window_available or progress_timestamp_in_window is True:
@@ -419,11 +438,11 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         args + BLOCKED).fetchone()
     block_age = _age(blocked[1], now) if blocked is not None else None
     prompt_in_window = (
-        _in_claim_window(prompt[1], claim_window_start, claim_window_expires)
+        _in_claim_window(prompt[1], claim_window_start, claim_window_expires, now)
         if prompt is not None and claim_window_available else None
     )
     blocked_in_window = (
-        _in_claim_window(blocked[1], claim_window_start, claim_window_expires)
+        _in_claim_window(blocked[1], claim_window_start, claim_window_expires, now)
         if blocked is not None and claim_window_available else None
     )
     # Old prompt/block receipts cannot be attributed to a newer queue claim
@@ -469,7 +488,7 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             (project, slot, blocked[0]),
         ).fetchone()
     later_progress_in_window = (
-        _in_claim_window(later_progress[1], claim_window_start, claim_window_expires)
+        _in_claim_window(later_progress[1], claim_window_start, claim_window_expires, now)
         if later_progress is not None and claim_window_available else None
     )
     newer_signal = bool(
@@ -484,7 +503,7 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         claim_window_start if claim_window_available else None,
         claim_window_expires if claim_window_available else None)
     event_in_window = (
-        _in_claim_window(timestamp, claim_window_start, claim_window_expires)
+        _in_claim_window(timestamp, claim_window_start, claim_window_expires, now)
         if claim_window_available else None
     )
     if paused_with_claim:
@@ -550,6 +569,8 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         "progress_timestamp_in_current_claim_window": progress_timestamp_in_window,
         "last_event_type": event if event in SAFE_EVENT else "other_event",
         "event_age_seconds": event_age,
+        "event_timestamp_status": _timestamp_status(timestamp, now),
+        "progress_timestamp_status": progress_timestamp_status,
         "latest_indexed_event_id": last_id,
         "latest_indexed_progress_event_id": latest_progress_id,
         "progress_age_seconds": progress_age,
@@ -771,7 +792,9 @@ def operator_text(source):
             f" · event_in_claim_window={row.get('latest_event_in_current_claim_window', 'ONBEKEND')}"
             f" · progress_event_in_claim_window={row.get('latest_progress_event_in_current_claim_window', 'ONBEKEND')}"
             f" · event_age_s={row['event_age_seconds']}"
+            f" · event_clock={row.get('event_timestamp_status', 'UNKNOWN')}"
             f" · progress_age_s={row['progress_age_seconds']}"
+            f" · progress_clock={row.get('progress_timestamp_status', 'UNKNOWN')}
             f" · indexed_event_cursor={row.get('latest_indexed_event_id', 'ONBEKEND')}"
             f" · indexed_progress_event_cursor={row.get('latest_indexed_progress_event_id', 'ONBEKEND')}"
             f" · last_12_blocks_after_prompt={(row.get('timeline') or {}).get('recent_block_events_after_last_prompt_in_sample', 'ONBEKEND')}"
@@ -1084,6 +1107,9 @@ def worker_progress_html(source):
                         type(point["age_seconds"]) is not int
                         or point["age_seconds"] < 0))):
                 raise ValueError("invalid worker chronology entry")
+            timestamp_status = point.get("timestamp_status", "UNKNOWN")
+            if timestamp_status not in ("OBSERVED", "FUTURE", "UNKNOWN"):
+                raise ValueError("invalid event timestamp status")
             ago = (str(point["age_seconds"]) + " sec geleden"
                    if point["age_seconds"] is not None else "leeftijd onbekend")
             window_label = (
@@ -1093,6 +1119,7 @@ def worker_progress_html(source):
             )
             event_items.append("<li><strong>" + escape(point["event"]) +
                                "</strong> · " + ago +
+                               " · tijdklok=" + escape(timestamp_status) +
                                (" · na laatste prompt" if point["after_latest_prompt"]
                                 else " · vóór laatste prompt / geen prompt") +
                                " · " + window_label + "</li>")
