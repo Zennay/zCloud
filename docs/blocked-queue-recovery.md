@@ -564,3 +564,65 @@ ongewijzigd. Dit betreft alleen broncode op [PR #1565](https://github.com/Zennay
 geen merge of productiedeploy. Exact-head CI, onafhankelijke review,
 branch protection en runtime-/releaseeigenaar blijven leidend.
 Er zijn geen QA-/regressietests of workflow-reruns gestart.
+
+## 22 oktober · onafhankelijk Owner Integrity-overzicht voor iedere queueclaim
+
+De eerdere **Claim Churn**-inbox detecteerde eigenaar-/leasewaarschuwingen
+alleen op `attempts >= 3`. Daardoor konden een nieuwe actieve claim
+zonder owner-slot, een onmogelijke lease bij de eerste claim, of een
+ongebruikte `blocked`-taak met overgebleven leasevelden buiten het
+overzicht vallen. De nieuwe **Owner Integrity**-werkbank gebruikt
+rechtstreeks dezelfde al geautoriseerde `GET /api/portfolio-queue`,
+zonder nieuwe backend-route of bevoegdheden.
+
+De werkbank beoordeelt alle in de bron aanwezige `queued`, `blocked`,
+`claimed`, `running` en `verifying`-taken, ongeacht attempts.
+Hij signaleert afzonderlijk:
+
+- non-active taken met achtergebleven owner-slot/claimtijd/lease;
+- `blocked` die niet veilig `eligible=0` en volledig ongeclaimd zijn;
+- actieve taken zonder geldig positief worker-slot;
+- ontbrekende of niet parseerbare claimtijd/lease-expiry;
+- expiry die niet later is dan claimtijd, of een claimtijd die onmogelijk
+  voorbij het geobserveerde bronmoment ligt;
+- expiry die **op het oorspronkelijke bronmoment** al was verlopen;
+- ontbrekende/ongeldige bronklok, zodat leasebeoordeling niet als
+  bewezen gezond verschijnt.
+
+De resultaten zijn **advisory source-observaties**: geen enkel
+waarschuwingslabel is autorisatie om een claim, lease, taak, scheduler
+of worker te muteren. Ook een verlopen lease blijft van de huidige
+eigenaar totdat de bestaande autorisatie- en transactieregels een
+overgang expliciet toestaan.
+
+**Complete operatorworkflow:** een aparte responsive lijst op portfolio
+en projectdetail, P0/P1 eerst, canonieke GitHub-issue/PR-link indien
+veilig, waarschuwingen per taak, paginering, P0/P1- en projectkeuze,
+directe sprong vanaf projectdetail naar die projectfilter en
+eigenaarwaarschuwingsbadges op de projectkaarten. De teller betreft
+*taken met minimaal één waarneming*; een taak kan meerdere signalen
+hebben. Een ontbrekende queuebron is **UNKNOWN**, nooit nul.
+Een gevonden nulresultaat betreft uitsluitend de geladen queue-snapshot,
+geen volledig database- of continu leaseonderzoek.
+
+**Veilige menselijke overdracht:** via bewuste bevestiging maakt de
+browser `zsentinel.owner-integrity.readonly-handoff.v1` aan, beperkt
+tot 100 waargenomen records en maximaal 100 KB. Het JSON-document
+bevat het oorspronkelijke queuebronmoment, source freshness,
+scope-/afkapgegevens, veilige canonieke bronlink, exacte geselecteerde
+queue-/project-ID, optionele worker-slot en begrensde waarschuwingcodes.
+Onbeheerde titels, blockers, vrije evidence en ruwe runtime-logs komen
+**niet** in de privé-export. Oudere bronmomenten worden expliciet
+als STALE gemarkeerd; de export is geen toestemming voor actie.
+
+**Bestanden en bronversie:** `public/app.js` blob
+`c3c4d81b8542b49a6e94fef654665992a9dd1e4b`,
+`public/style.css` blob
+`cf7eee51415b330fa8f306dd16ecaf5b188deb66`; beide exact
+uit `public/index.html` geladen op PR #1565. Geen handmatige
+workflowdispatch, QA-suites, database/claim/runner- of releaseactie.
+De productbron is nog niet op main en niet live geverifieerd; originele
+exact-head CI, onafhankelijke review, protected-main en geautoriseerde
+runtime-deploy blijven verplicht. Native retry/backoff/writer van
+[issue #677](https://github.com/Zennay/zCloud/issues/677) is **niet**
+geïmplementeerd en behoudt zijn eigen control-plane eigenaarschap.
