@@ -4963,7 +4963,21 @@ function projectRecoveryCsvSource(){
   'queue_source_observed_at_utc','claim_context',
   'recommended_human_next_step','inventory_complete',
   'claim_authorized','merge_authorized','deploy_authorized'];
- const operations=Array.isArray(board.project_operations)?board.project_operations:[];
+ const operations=(Array.isArray(board.project_operations)?board.project_operations:[])
+  .slice().sort((a,b)=>{
+   const rank=row=>{
+    const counts=row.issue_counts_in_sample||{},queue=row.queue_observation||{};
+    return counts.P0?0:counts.P1?1:queue.expired_active_leases?2:
+     queue.high_claim_attempts?3:4;
+   };
+   const count=(row,key)=>Number(row.issue_counts_in_sample?.[key]||0);
+   const queueCount=(row,key)=>Number(row.queue_observation?.[key]||0);
+   return rank(a)-rank(b)||count(b,'P0')-count(a,'P0')||
+    count(b,'P1')-count(a,'P1')||
+    queueCount(b,'expired_active_leases')-queueCount(a,'expired_active_leases')||
+    queueCount(b,'high_claim_attempts')-queueCount(a,'high_claim_attempts')||
+    a.project.localeCompare(b.project);
+  });
  if(!operations.length)return null;
  const rows=operations.map(row=>{
   const q=row.queue_observation;
