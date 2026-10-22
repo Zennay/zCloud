@@ -154,7 +154,7 @@ def _observed_blocked_queue(queue, sampled, source_fresh_when_saved):
 
 
 def observed_queue(decision, source_time):
-    """Retain only aggregate, non-authorizing source-bound observations."""
+    """Retain bounded, non-authorizing queue aggregates and positive task receipts."""
     queue = decision.get("live_queue_pressure")
     if type(queue) is not dict:
         raise ValueError("missing canonical queue observation")
@@ -395,9 +395,11 @@ def _blocked_queue_delta(left, right, allow_comparison=True):
 
 
 def summarize_queue_windows(source_windows):
-    """Compare only ADJACENT fully observed aggregate snapshots.
+    """Compare only ADJACENT source-bound queue observations.
 
-    Unknown snapshots break continuity; trends never imply repaired tasks.
+    Aggregate deltas require matching source identities; individual blocked
+    references are positive observations. Absence only compares fully
+    enumerated blocked windows and still never proves repair or release.
     """
     if type(source_windows) is not list or not 2 <= len(source_windows) <= 8:
         raise ValueError("queue history needs two through eight source windows")
