@@ -626,3 +626,58 @@ exact-head CI, onafhankelijke review, protected-main en geautoriseerde
 runtime-deploy blijven verplicht. Native retry/backoff/writer van
 [issue #677](https://github.com/Zennay/zCloud/issues/677) is **niet**
 geïmplementeerd en behoudt zijn eigen control-plane eigenaarschap.
+
+## 22 oktober · volledig transactioneel broncontract voor Resume en Close
+
+Een geautoriseerde operator ziet een taak in de bestaande Dependency
+Holds-werkbank. De browser haalt vóór een mutatie de queue opnieuw op
+en stuurt bij **Close permanently** nu óók de project-ID, exacte titel,
+prioriteit en oorspronkelijke bron-URL mee. De backend controleert
+deze velden samen met `status=blocked`, `eligible=0`,
+`updated_at`, `blocker` en `evidence` in **dezelfde**
+`BEGIN IMMEDIATE`-transactie die de terminale UPDATE doet.
+Een inkompleet guard-pakket wordt vóór de mutatie geweigerd; een
+veranderde bron geeft `dependency-source-changed-reconfirm`.
+Ook de SQL UPDATE zelf eist bij zo'n brongebonden sluiting nogmaals
+een werkelijk `blocked/eligible=0` item zonder worker-slot,
+claimtijd of lease. Ongewijzigde, geauthenticeerde oudere clients
+behouden de strengere ongeclaimd-only legacyroute.
+
+Een onbekende project-ID wordt bij terminale sluiting niet langer
+stilzwijgend gepasseerd. Zonder actuele projectregistratie kan de
+beloofde gelijktijdige project-state-receipt niet worden aangemaakt:
+het item behoudt dan zijn bestaande evidence en de API geeft
+`missing-project-receipt-context`, zonder refill.
+Een misvormde `blocked/eligible`-bron geeft
+`blocked-task-not-parked`. De dashboardclient legt beide
+afwijzingen begrijpelijk uit en laat de actuele eigenaar beslissen.
+Eerdere queue-ID's, project- of bestandsclaims worden niet
+automatisch herverdeeld.
+
+De bestaande `resume_blocked` accepteert optionele broncontroles
+voor oudere clients, maar vereist **alle** drie velden
+(`expected_updated_at`, `expected_blocker`,
+`expected_evidence`) zodra een client er één levert.
+Zo kan geen gedeeltelijke hedendaagse hercontrole onopgemerkt een
+andere blocker bevestigen. Volledig onbewaakte legacyverzoeken blijven
+onder de bestaande beheerclientautorisatie; die compatibiliteitsroute
+vormt geen zelfstandige verificatie van een dependency.
+Bij daadwerkelijk hervatten bevat de project-receipt niet langer
+`ci_status=queued`: een queueovergang is geen nieuw CI-resultaat.
+
+Tot slot volgt na een geldige permanente sluiting de bestaande
+queue-audit/refill **buiten de al gecommitteerde transactie**. Een
+uitzondering in deze latere vervolgstap kan het definitief gesloten
+item niet terugdraaien. De API geeft nu alsnog de ware
+`dropped=true`-receipt met
+`queue_audit_deferred=true` en registreert de schedulerfout;
+de dashboardclient meldt dat de eigenaar de normale toelating moet
+onderzoeken en **niet** dezelfde sluiting herhalen.
+Een afgewezen/no-op-sluiting triggert nooit refill.
+
+Dit is productbron op [PR #1565](https://github.com/Zennay/zCloud/pull/1565),
+geen geautoriseerde live SQL-, scheduler-, claim- of releaseactie.
+Verplichte exacte-head CI, onafhankelijke review, protected-main en
+release-eigenaarschap blijven intact. De eerder gemelde
+`blocked` versus `dropped` OOM-guard-afwijking is hiermee
+niet verhuld of omzeild; contractbesluit en CI blijven noodzakelijk.
