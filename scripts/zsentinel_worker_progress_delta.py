@@ -92,6 +92,10 @@ def _cursor(value):
     return value
 
 
+def _progress_window_label(value):
+    return "JA" if value is True else "NEE" if value is False else "ONBEKEND"
+
+
 def _source(r):
     if (type(r) is not dict or r.get("schema") != SOURCE_SCHEMA
             or r.get("source") != SOURCE
@@ -131,6 +135,10 @@ def _source(r):
                  or not HEX64.fullmatch(claim_window_fingerprint))):
             raise ValueError("invalid private claim-window fingerprint")
         claim_window_correlation = row.get("claim_window_correlation")
+        progress_timestamp_window = row.get("progress_timestamp_in_current_claim_window")
+        if (progress_timestamp_window is not None
+                and type(progress_timestamp_window) is not bool):
+            raise ValueError("invalid progress timestamp claim-window flag")
         if claim_window_correlation is not None and claim_window_correlation not in (
                 "time_window_only_not_identity_bound",
                 "unavailable_no_valid_current_lease"):
@@ -156,6 +164,7 @@ def _source(r):
                                  in ("claimed", "running", "verifying"),
             "claim_lease_current_from_source": row.get("queue_lease_current_from_source") is True,
             "claim_window_fingerprint": claim_window_fingerprint,
+            "progress_timestamp_window": progress_timestamp_window,
         }
     return identity, _utc(r.get("observed_at_utc")), tuple(projects), observed
 
@@ -193,6 +202,22 @@ def compare(previous, current, now=None):
     shared = old.keys() & new.keys()
     for project, slot in sorted(old.keys() | new.keys()):
         before, after = old.get((project, slot)), new.get((project, slot))
+        previous_progress_window = (before["progress_timestamp_window"]
+                                   if before is not None else None)
+        current_progress_window = (after["progress_timestamp_window"]
+                                  if after is not None else None)
+        if before is None or after is None:
+            progress_window_observation = "not_comparable_missing_worker_card"
+        elif previous_progress_window is None or current_progress_window is None:
+            progress_window_observation = "unknown_legacy_or_claim_window"
+        elif previous_progress_window == current_progress_window:
+            progress_window_observation = ("unchanged_in_claim_window"
+                                           if current_progress_window
+                                           else "unchanged_outside_claim_window")
+        else:
+            progress_window_observation = ("changed_to_in_claim_window"
+                                           if current_progress_window
+                                           else "changed_outside_claim_window")
         first = before["latest"] if before is not None else None
         last = after["latest"] if after is not None else None
         pfirst = before["progress"] if before is not None else None
@@ -280,6 +305,11 @@ def compare(previous, current, now=None):
             "source_claim_lease_current_but_not_authority":
                 after["claim_lease_current_from_source"] if after is not None else False,
             "claim_window_changed_observed": bool(
+            "previous_progress_timestamp_in_claim_window": (
+                previous_progress_window if type(previous_progress_window) is bool else None),
+            "current_progress_timestamp_in_claim_window": (
+                current_progress_window if type(current_progress_window) is bool else None),
+            "progress_timestamp_window_observation": progress_window_observation,
                 before is not None and after is not None
                 and before["claim_window_fingerprint"] != after["claim_window_fingerprint"]
                 and (before["claim_window_fingerprint"] is not None
@@ -306,6 +336,10 @@ def compare(previous, current, now=None):
         "disappeared_worker_slots_unpaired": len(old.keys() - new.keys()),
         "counts": counts,
         "items": items,
+        "progress_timestamp_window_changes_observed": sum(
+            item["progress_timestamp_window_observation"] in (
+                "changed_to_in_claim_window", "changed_outside_claim_window")
+            for item in items),
         "event_is_not_product_delivery": True,
         "claim_epoch_verified": False,
         "task_completion_verified": False,
