@@ -1020,3 +1020,22 @@ only a genuinely created row is included in audit `created` results.
 The scheduler's claim-safe queue admission and source freshness rules remain
 separate from actual lane execution, independent review, branch protection
 and production release permissions.
+
+## Prioriteitstriage vanuit dezelfde geladen wachtrijbron
+
+De operatorcockpit heeft nu afzonderlijke, toetsenbordtoegankelijke filters
+voor **All, P0, P1, P2, P3 en Unknown**. Elke knop toont het aantal werkelijk
+geladen `blocked`-rijen in die klasse, zonder een tweede netwerkverzoek.
+De sortering P0-eerst binnen de selectie, de project-/tekst-/human-filter,
+en de bestaande paginering blijven intact. Een prioriteitsselectie wist
+een eventueel actief P0/P1-verzamelfilter, zodat de selectie niet stilzwijgend
+P2 of P3 uitsluit. De gebruikersactie reset alleen de zichtbare pagina;
+geen claim, queue, Attention of projectstatus verandert.
+
+De bestaande **Export selected handoff** neemt de gekozen prioriteitsklasse
+op in het private lokale snapshot. Bronbereik blijft expliciet een geladen
+**steekproef**, geen bewering over het totale queuebestand. Unknown omvat
+onbekende of niet-canonieke prioriteiten zonder deze naar een veilige P0/P1
+classificatie te promoveren. De nieuwste JS- en CSS-blobversies worden vanuit
+`public/index.html` geladen. Alleen na de bestaande verplichte CI, review,
+branch protection, merge en geautoriseerde release kan dit live gedrag zijn.
