@@ -172,3 +172,10 @@ move, service inspection or restart is performed.
 The existing zCloud regression smoke also discovers this test. To disable the
 bridge, disable its Actions workflow or revert its workflow file on protected
 main; unrelated runners and the existing zSSH MCP path are unaffected.
+
+
+## zSentinel archive-mount evidence
+
+The `/zssh workers` capacity receipt treats the configured `/home/ubuntu/VPS-Archief` path as an expected mount, not merely a directory. If the path is not a detected mount, or its mount/capacity cannot be observed, the receipt sets `coverage=partial`, includes an `evidence_warnings` reason (`archive_mount_not_detected` or `archive_mount_observation_unavailable`), and emits `ARCHIVE_MOUNT_UNAVAILABLE_NO_OFFLOAD`. A detected mount with no reported free capacity emits `ARCHIVE_MOUNT_NO_CAPACITY_NO_OFFLOAD`.
+
+These are **evidence/offload constraints**, separate from the resource-pressure `warnings` and `severity` fields. Missing archive storage does not itself claim high CPU/RAM/disk pressure, and it never authorizes moving or deleting files. If root storage is critical, preserve active work and obtain an owner-authorized storage inventory; do not treat the mere existence of the archive directory as proof that external storage is mounted.
