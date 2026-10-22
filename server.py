@@ -786,6 +786,24 @@ def connect():
     finally:
         c.close()
 
+@contextmanager
+def connect_readonly():
+    """Open an existing SQLite database in hard read-only mode.
+
+    Diagnostics must not create a missing database file, modify persistent
+    tables, or silently commit writes when reused by a GET handler. Unlike
+    immutable=1 this connection still observes live SQLite/WAL updates.
+    """
+    uri=Path(DB).resolve().as_uri()+'?mode=ro'
+    c=sqlite3.connect(uri,uri=True,timeout=DB_BUSY_TIMEOUT_SECONDS)
+    try:
+        c.execute(f'PRAGMA busy_timeout={DB_BUSY_TIMEOUT_MS}')
+        c.execute('PRAGMA query_only=ON')
+        c.row_factory=sqlite3.Row
+        yield c
+    finally:
+        c.close()
+
 def request_actor(handler):
     addr=str((handler.client_address or ["unknown"])[0] or "unknown")
     hinted=str(handler.headers.get("X-ZCloud-Actor") or "").strip()
@@ -1841,7 +1859,9 @@ def task_claims(project_id=None, *, prune_expired=True):
     authorized scheduler/control paths retain explicit cleanup ownership.
     """
     ts=now()
-    with connect() as c:
+    # Read-only listing cannot create or write SQLite. Explicit pruning keeps
+    # the prior control/scheduler behavior under the normal writable connection.
+    with (connect() if prune_expired else connect_readonly()) as c:
         if prune_expired:
             c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
             if project_id:
@@ -3880,7 +3900,7 @@ def runner_worker_targets(allocation=None, base=None, *, reconcile=True):
         if snapshot_bound else _current_global_slot_map()
     )
     out={}
-    with connect() as c:
+    with (connect() if reconcile else connect_readonly()) as c:
         for project_id,cfg in base.items():
             allocated_count=sum(1 for key in global_slots if key.startswith(project_id+'::'))
             count=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,max(int(cfg.get('worker_count') or 1),allocated_count)))
@@ -4335,7 +4355,7 @@ def worker_debug_report():
     marks = ','.join('?' * len(WORKER_BLOCK_EVENTS))
     rows = []
     summary = {}
-    with connect() as c:
+    with connect_readonly() as c:
         for key, cfg in workers.items():
             if cfg.get('global_worker_slot') is None: continue
             base = cfg['base_project_id']; slot = int(cfg['worker_slot'])
