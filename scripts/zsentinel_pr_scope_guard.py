@@ -187,7 +187,10 @@ class GitHubSourceError(ValueError):
 
 
 def github_json(repo, suffix, token):
-    if not REPO.fullmatch(repo) or not suffix.startswith("/") or "//" in suffix:
+    # Empty suffix is the canonical repository metadata endpoint needed to
+    # distinguish a GitHub merged PR's target from the default branch.
+    if (not REPO.fullmatch(repo) or type(suffix) is not str
+            or (suffix and not suffix.startswith("/")) or "//" in suffix):
         raise ValueError("invalid GitHub request")
     url = "https://api.github.com/repos/" + repo + suffix
     headers = {
