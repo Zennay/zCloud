@@ -321,3 +321,21 @@ De claimvingerafdruk is slechts een privaat, temporeel leasevenster; het
 browser-event zelf draagt nog geen betrouwbare queue-ID. Zelfs twee gelijke
 vingerafdrukken zijn daarom **geen** productoplevering, geverifieerde
 claim-eigendom of toestemming om te herstellen of te deployen.
+
+
+## 22 oktober · einde-tot-einde incidentkaarten zonder ontbrekende vertaling
+
+De observer classificeert drie concrete gevallen afzonderlijk: geen actieve queueclaim
+op een toegewezen slot, twee actieve claims op hetzelfde slot, en een ontbrekende
+queuebron/vereiste schemakolom. De bestaande HTML-validator accepteert alle drie
+classificaties en hun bijpassende Nederlandstalige eigenaarvervolgstappen; de
+visuele kaarten krijgen de waarschuwingstijl. De private runtime-handoff hergebruikt
+**dezelfde bronvalidatie**, zodat deze incidenten geen blanco pagina of afgewezen
+operatoroverzicht meer opleveren en de actiekaart geen willekeurige broncode toont.
+
+Bij weergave wordt het UTC-bronmoment opnieuw beoordeeld: ouder dan tien minuten
+of meer dan twee minuten in de toekomst krijgt een expliciete
+**historisch/onbetrouwbaar-bron**-waarschuwing, ook in de zelfstandige tekstuitvoer.
+De signalen blijven in de historische sample voor audit, maar mogen geen actuele
+queueclaim, werkhervatting of herstelautorisatie bewijzen. Er zijn geen
+actieve runner-, queue- of workerwijzigingen.
