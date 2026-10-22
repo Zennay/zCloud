@@ -1322,7 +1322,11 @@ def as_html(board):
                     "</a></td><td>" + str(pair["path_alias_count_observed"]) +
                     "</td><td>" + examples + "</td></tr>")
         if not alias_rows:
-            alias_rows = ["<tr><td colspan='3'>Geen mogelijke cross-platform padaliases in deze steekproef.</td></tr>"]
+            alias_rows = [
+                "<tr><td colspan='3'>BRON ONBESCHIKBAAR: padaliasinventaris onbekend.</td></tr>"
+                if view["source_status"] == "unavailable" else
+                "<tr><td colspan='3'>Geen mogelijke cross-platform padaliases in deze steekproef.</td></tr>"
+            ]
         if not rows:
             if view["source_status"] == "unavailable":
                 rows = ["<tr><td colspan='3'>BRON ONBESCHIKBAAR: er is geen "
