@@ -730,7 +730,7 @@ de huidige eigenaar tot een onafhankelijke bevoegde overgang.
 Geïntegreerde bestanden:
 `server.py`, `public/app.js`, `public/style.css` en
 `public/index.html`. De HTML laadt expliciet de exact gepinde
-GitHub-blobs  `app.js=fbe663500ab8` en
+GitHub-blobs  `app.js=d7db6a119af1` en
 `style.css=87b0cd17c5a2`. Dit blijft werk op de bestaande
 [PR #1565](https://github.com/Zennay/zCloud/pull/1565),
 niet op `main` en niet op productie. De bestaande falende OOM-guard,
@@ -758,3 +758,23 @@ transactionele projectreceipt ontvangt de oorspronkelijke blocker
 de expliciete notitie. De bestaande receipt-UTF-8-limiet en afwijzing
 bij overmaat blijven leidend; er vindt geen stille overschrijving
 van een actieve workerlease plaats.
+
+### Source-linked recovery receipt visibility
+
+Dezelfde read-only inspectie leest binnen de coherente SQLite-
+transactie naast de taak en diens exacte `queue:<id>`-Attention ook
+maximaal **24 recente** `project_state_receipts` voor
+`portfolio_queue_drop` en `portfolio_queue_resume_blocked` van
+datzelfde project. Alleen receipts met hetzelfde `queue_id` in
+gestructureerde evidence tellen mee; een titelmatch is onvoldoende.
+De UI toont uitsluitend type besluit (`resume`/`close`),
+receipt-ID en observatietijd. Geen vrije operatornotitie, actor,
+bronevidence of geheime runtimevelden worden opnieuw gepubliceerd.
+
+Dit helpt een operator bij onzekere netwerkuitkomsten, maar een recente
+receipt is **niet** automatisch bewijs dat diens eigen niet-beantwoorde
+verzoek slaagde. Als de receipts niet beschikbaar zijn, meldt de
+read-only inspectie dat expliciet. Als het bounded venster vol is, wordt
+de dekking als beperkt gemarkeerd. De actie knoppen hebben nog steeds
+hun eigen verse broncontrole, onafhankelijke menselijke beslissing,
+bestaande beveiligingscontrole en transactionele writercontract.
