@@ -1568,6 +1568,7 @@ def as_markdown(report):
             " uit " + str(selected["source_file_pages_observed"]) +
             " pagina('s). Uitgebreide bron: " +
             str(selected["expanded_source_file_pages_requested"]) + ".",
+            "Doelbranch: " + selected["base_ref"] + ".",
             "",
         ])
     lines.extend([
@@ -1596,6 +1597,7 @@ def as_markdown(report):
         lines.append("- [PR #" + str(hit["pr_number"]) + "](" + hit["pr_url"] +
                      ") raakt `" + hit["path"].replace("`", "\\`") +
                      "`; gevonden bestanden: " + str(len(hit["matching_files"])) +
+                     "; doelbranch: " + hit["observed_base_ref"] +
                      "; relatie: " + relations +
                      (" (gedeeltelijke weergave)" if hit["matches_truncated"] else ""))
     lines.extend([
