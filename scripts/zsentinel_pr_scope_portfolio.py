@@ -96,6 +96,9 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10, pages=1):
         pairs = source["shown_file_collision_pairs"][:MAX_VISIBLE_PAIRS]
         scope_pairs = source["shown_path_scope_collision_pairs"][:MAX_VISIBLE_PAIRS]
         display_truncated = (source["collision_cards_truncated"] or
+                             source["shared_file_examples_truncated"] or
+                             source["path_scope_collision_clusters_truncated"] or
+                             source["path_scope_cluster_examples_truncated"] or
                              len(source["shown_file_collision_pairs"]) > MAX_VISIBLE_PAIRS or
                              source["path_scope_collision_pairs_truncated"] or
                              source["path_scope_examples_truncated"] or
@@ -128,6 +131,11 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10, pages=1):
             "sampled_open_pr_heads": source["inspected_pr_heads"],
             "source_sample_complete": source["pr_file_scope_sample_complete"],
             "shown_collision_pairs": pairs,
+            "shared_file_examples_truncated": source["shared_file_examples_truncated"],
+            "path_scope_collision_clusters_truncated":
+                source["path_scope_collision_clusters_truncated"],
+            "path_scope_cluster_examples_truncated":
+                source["path_scope_cluster_examples_truncated"],
             "shown_path_scope_collision_pairs": scope_pairs,
             "observed_path_scope_collision_pairs": source["observed_path_scope_collision_pairs"],
             "shown_portable_path_alias_pairs": source["shown_portable_path_alias_pairs"][:MAX_VISIBLE_PAIRS],
