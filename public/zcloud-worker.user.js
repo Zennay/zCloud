@@ -246,6 +246,12 @@
        commandAckStorageInvalid||pendingCommandAcks.size>0){
       await blocked("new-chat-context-changed-before-click");return true;
     }
+    // An operator may have started typing during the asynchronous lease
+    // refresh. A browser rotation must not erase this independent draft.
+    const editor=composer();
+    if(visible(editor)&&composerText(editor).trim()){
+      await blocked("new-chat-unsent-draft-preserved");return true;
+    }
     const button=newChatButton();
     if(!button){await blocked("new-chat-button-missing");return false}
     resetRoute=location.pathname;
