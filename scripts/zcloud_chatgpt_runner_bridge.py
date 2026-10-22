@@ -464,31 +464,28 @@ def _host_capacity_observation() -> dict[str, object]:
         elif (archive.get("mount_detected") is True
               and archive.get("separate_filesystem") is False):
             summary = (
-                "Root filesystem critically full, but the configured archive path shares the root filesystem; "
+                "Root storage is critically constrained by filesystem bytes or inodes, but the configured archive "
+                "path shares the root filesystem; "
                 "it is not a separate offload target. Preserve active work and obtain an authorized storage "
                 "inventory; no deletion, move or restart is authorized by this snapshot."
             )
         elif archive.get("mount_detected") is True:
             summary = (
-                "Root filesystem critically full, but the configured archive mount has no verified separate "
+                "Root storage is critically constrained by filesystem bytes or inodes, but the configured archive "
+                "mount has no verified separate "
                 "available capacity. Preserve active work and obtain an authorized storage inventory; no deletion, "
                 "move or restart is authorized by this snapshot."
             )
         else:
             summary = (
-                "Root filesystem critically full. Preserve active work and obtain an authorized storage inventory; "
+                "Root storage is critically constrained by filesystem bytes or inodes. Preserve active work and "
+                "obtain an authorized storage inventory; "
                 "do not delete files, move data or restart services from this snapshot."
             )
     elif warnings:
         summary = (
             "Resource pressure threshold(s) observed. This is not proof of runner/job failure; "
             "reconcile service identity, GitHub registration and job assignment separately."
-        )
-    elif evidence_warnings:
-        summary = (
-            "Host pressure thresholds are not exceeded in this snapshot, but one or more capacity evidence sources "
-            "are incomplete or the configured archive path is not verified as a separate offload target. Do not "
-            "offload data or infer safe storage until the missing evidence and independent capacity are verified."
         )
     elif complete:
         summary = (
@@ -498,6 +495,11 @@ def _host_capacity_observation() -> dict[str, object]:
     else:
         summary = (
             "Capacity evidence is partial or unavailable. Preserve active work and do not infer service health."
+        )
+    if evidence_warnings:
+        summary += (
+            " Capacity evidence caveat(s): " + ", ".join(evidence_warnings)
+            + ". Do not offload or infer safe storage until verified by the authorized owner."
         )
     severity = (
         "critical" if root_storage_critical else
