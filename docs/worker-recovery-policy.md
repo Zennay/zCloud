@@ -1,3 +1,27 @@
+## 22 October 2026 — pending review requests are not missing approvals
+
+The existing source-bound exact-PR merge preflight now records separate, bounded
+**individual and team review-request counts** from GitHub's two PR detail reads,
+without copying reviewer identities to the private operator report. The counts
+are shown in the JSON, Markdown and offline HTML; an absent or malformed provider
+field is **UNKNOWN**, never zero. Request changes across the two source reads
+invalidate the stable PR observation instead of silently preserving stale advice.
+
+When there are zero submitted reviews, the parallel owner workorder now
+distinguishes three real operator situations:
+
+- **Requests already pending:** follow up on the existing reviewer request;
+  do not send duplicate review requests.
+- **No requests observed in a complete source:** request an independent review
+  through the existing PR owner.
+- **Request source unavailable:** open the GitHub PR review panel first;
+  absence of source is not absence of reviewers.
+
+Requested reviews are **not approval**. All required exact-head CI, independent
+approval, unresolved threads, protected-main, claim/owner authorization, merge
+and deployment gates remain unchanged. The preflight reads no new endpoints
+and does not edit claims, queues, CI or repository state.
+
 # Autonomous blocker recovery contract
 
 This document specifies the intended scheduler behavior; it does not claim the runtime already implements it.
