@@ -293,3 +293,18 @@ Dit is een niet-ondertekende bronsteekproef, geen toestemming,
 claimbevestiging, queue-retry, workerhervatting of productie-release.
 Bij onbeschikbare bron of ontbrekende geldige waarnemingstijd weigert
 de export. Er is geen extra API-writer, workflowdispatch of VPS-actie.
+
+### Menselijke Attention afzonderlijk filteren
+
+De Dependency Holds-werkbank biedt aanvullend **Only human Attention**.
+Dit gebruikt uitsluitend `attention_needed` uit het reeds geladen
+zCloud-statusantwoord en matcht uitsluitend de exacte `queue:<queue_id>`
+Attention-koppeling bij een geparkeerde taak. Zonder bruikbare
+Attention-bron wordt de filteractie uitgeschakeld; er wordt nooit
+geconcludeerd dat menselijke blokkades ontbreken omdat de bron
+ontbreekt. De filter combineert met P0/P1, projectkeuze en zoeken.
+**Clear filters** wist alle vier keuzes. Een handmatige privé-export
+neemt dezelfde geselecteerde rijen en noteert de actieve
+Attention-filter in het niet-autoriserende bronpakket.
+Geen nieuw achtergrondproces, alert, claim, queue-write of automatische
+hervatting.
