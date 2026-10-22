@@ -103,7 +103,9 @@ def compare_host_pressure(previous: object, current: object,
             result["source_gaps"].append("previous.cpu_count")
         if type(after_cpus) is not int or not 1 <= after_cpus <= 4096:
             result["source_gaps"].append("current.cpu_count")
-        if not result["source_gaps"]:
+        if (type(before_cpus) is int and type(after_cpus) is int and
+                1 <= before_cpus <= 4096 and 1 <= after_cpus <= 4096 and
+                before_cpus != after_cpus):
             result["source_gaps"].append("cpu_capacity_changed")
         result["status"] = "different_or_unknown_cpu_capacity"
         return result
