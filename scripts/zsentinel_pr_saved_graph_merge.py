@@ -1106,6 +1106,7 @@ def render(report, fmt):
         "<p>Bestand/map-scope is een afzonderlijk signaal, geen bewezen Git-conflict. Scanvolledigheid: " +
         ("volledig" if report["cross_window_scope_scan_complete"] else "ONVOLLEDIG") +
         "; waargenomen PR-paren: " + str(report["cross_window_scope_conflict_pairs_observed"]) +
+        (" · scan/weergave ONVOLLEDIG" if report["cross_window_scope_conflicts_truncated"] else "") +
         ".</p><table><thead><tr><th>Open PRs</th><th>Padparen waargenomen</th><th>Padrelaties</th></tr></thead><tbody>" +
         scope_rows + "</tbody></table><h2>Zelfde nummer in PR-titel of body over vensters</h2>"
         "<p>Niet geverifieerd als bestaand issue of bewezen fix. Controleer GitHub.</p>"
