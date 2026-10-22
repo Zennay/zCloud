@@ -885,20 +885,47 @@ def markdown_gate_summary(source: dict) -> str:
             if parallel not in GATE_STEPS_NL:
                 raise ValueError("invalid parallel owner action")
             lines.append("- Parallel: " + GATE_STEPS_NL[parallel])
-        # Keep specific problematic jobs actionable, but do not mistake
-        # provider-controlled names/URLs for Markdown-safe trusted anchors.
-        for job in item.get("observed_actionable_check_runs", [])[:8]:
-            if not (job.get("running_attention_60m") is True
-                    or job.get("queued_attention_30m") is True):
-                continue
-            job_id = job.get("check_run_id")
+        # Show the actual failing GitHub check directly, rather than only
+        # describing a check failure with no navigable owner work item.
+        # Never interpolate provider-supplied names into Markdown link syntax.
+        check_rows = item.get("observed_actionable_check_runs", [])
+        if type(check_rows) is not list or len(check_rows) > 12:
+            raise ValueError("unbounded current-head check preview")
+        for job in check_rows:
+            job_id = job.get("check_run_id") if type(job) is dict else None
             if type(job_id) is not int or job_id <= 0:
                 raise ValueError("invalid current check run ID")
             check_url = "https://github.com/" + repo + "/runs/" + str(job_id)
-            reason = ("in_progress >60 minuten" if job.get("running_attention_60m")
-                      else "queued >30 minuten")
-            lines.append("- Onderzoek CI: [" + reason + "](" + check_url +
-                         ") (geen runneruitval bewezen).")
+            if job.get("state") == "completed":
+                status = "Controleer niet-geslaagde actuele check"
+            elif job.get("running_attention_60m") is True:
+                status = "Onderzoek in-progress check >60 min"
+            elif job.get("queued_attention_30m") is True:
+                status = "Onderzoek queued check >30 min"
+            else:
+                continue
+            lines.append("- CI-eigenaarlink: [" + status + "](" + check_url +
+                         "); directe GitHub-check, geen automatische herstart.")
+        legacy_rows = item.get("observed_actionable_legacy_contexts", [])
+        if type(legacy_rows) is not list or len(legacy_rows) > 12:
+            raise ValueError("unbounded legacy context preview")
+        for legacy in legacy_rows:
+            if type(legacy) is not dict or legacy.get("state") not in (
+                    "failure", "error", "pending"):
+                raise ValueError("invalid legacy status state")
+            context = legacy.get("context")
+            if type(context) is not str or not 1 <= len(context) <= 200:
+                raise ValueError("invalid legacy check context")
+            if legacy["state"] in ("failure", "error"):
+                lines.append("- Oude GitHub-status met fout: [bekijk exacte HEAD-status](" +
+                             "https://github.com/" + repo + "/commit/" + head +
+                             "/checks) (legacy context apart van Check Runs).")
+        hidden = item.get("observed_actionable_check_runs_hidden", 0)
+        if type(hidden) is not int or hidden < 0:
+            raise ValueError("invalid bounded check preview remainder")
+        if hidden:
+            lines.append("- Meer CI-items buiten dit beperkte venster: " + str(hidden) +
+                         "; geen volledige required-check-dekking.")
         if (item.get("legacy_status_source_may_be_truncated") is True
                 or item.get("check_runs_page_complete") is not True
                 or item.get("review_page_may_be_truncated") is True):
