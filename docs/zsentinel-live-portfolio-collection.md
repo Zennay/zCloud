@@ -378,3 +378,32 @@ read-only raadpleging mislukt, dan verschijnt uitdrukkelijk **Notion
 bron ONBEKEND**, niet "geen actieve werkitems". Alleen een daadwerkelijk
 geobserveerde bron mag positieve per-project statusondergrenzen tonen;
 zelfs dan is dit geen huidig worker-, lease- of bestandsclaimbewijs.
+
+
+## Root, queue-database and archive capacity in one live observation
+
+On the intended Linux VPS, `--observe-vps-capacity` already reports root
+filesystem capacity separately from the queue database mount. You can now
+supply the existing configured archive mount with `--archive-target` without
+starting a file hotspot scan. This reports aggregate free GiB, unavailable
+space percentage and inode headroom for that same opened mount.
+
+```sh
+python3 scripts/zsentinel_live_cockpit.py \
+  --database "$ZCLOUD_DB" \
+  --project Zennay/zCloud \
+  --observe-vps-capacity \
+  --archive-target /home/ubuntu/VPS-Archief \
+  --format html --output "$ZCLOUD_PRIVATE/capacity-current.html"
+```
+
+Use an existing database and a private output directory. The archive target
+must be an explicit absolute path and is opened with no-follow directory flags;
+the report marks it as an external mount only when mount-point detection
+succeeds and its filesystem differs from root. It also states whether the
+target shares a device with the queue database. Missing/unreadable archive
+metadata degrades only the optional archive sub-observation and does not erase
+root/database capacity evidence. No file names or contents are read. The
+report does not prove any file is cold, private, unreferenced, encrypted or
+safe to transfer; it authorizes no copy, move, delete, service restart, queue
+write or claim change.

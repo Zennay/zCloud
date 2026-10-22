@@ -29,8 +29,101 @@ def _memory_values():
     return seen["MemAvailable:"], seen["SwapFree:"]
 
 
-def observe_vps_capacity(database: Path):
-    """Read-only sample of the host running this command, never a remote VPS."""
+
+def _archive_mount_capacity(archive_target: Path | None, root_device: int,
+                            database_device: int) -> dict[str, object]:
+    """Report aggregate archive-mount capacity only from a pinned directory fd."""
+    result: dict[str, object] = {
+        "configured": archive_target is not None,
+        "state": "not_requested" if archive_target is None else "unavailable",
+        "mount_point_detected": None,
+        "same_device_as_root": None,
+        "same_device_as_database": None,
+        "free_disk_gib": None,
+        "disk_unavailable_percent": None,
+        "inode_available": None,
+        "inode_total": None,
+        "inode_unavailable_percent": None,
+        "source": "same_archive_mount_fstatvfs" if archive_target is not None else "not_requested",
+        "source_files_inspected": False,
+        "offload_candidate_verified": False,
+        "offload_authorized": False,
+        "mutation_performed": False,
+    }
+    if archive_target is None:
+        return result
+    if not isinstance(archive_target, Path) or not archive_target.is_absolute():
+        raise ValueError("archive capacity target must be an explicit absolute path")
+
+    fd = None
+    try:
+        flags = (os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
+                 getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0))
+        fd = os.open(archive_target, flags)
+        opened = os.fstat(fd)
+        path_info = os.stat(archive_target, follow_symlinks=False)
+        if (not stat.S_ISDIR(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != (path_info.st_dev, path_info.st_ino)):
+            raise ValueError("archive target identity changed")
+        fs = os.fstatvfs(fd)
+        if (fs.f_blocks <= 0 or fs.f_frsize <= 0
+                or not 0 <= fs.f_bavail <= fs.f_blocks):
+            raise ValueError("invalid archive target capacity")
+        if any(type(x) is not int or x < 0 for x in
+               (fs.f_files, fs.f_ffree, fs.f_favail)):
+            raise ValueError("invalid archive target inode counters")
+        if fs.f_files > 0 and (
+                fs.f_ffree > fs.f_files or fs.f_favail > fs.f_ffree):
+            raise ValueError("contradictory archive target inode counters")
+
+        mount_detected = os.path.ismount(archive_target)
+        same_root = opened.st_dev == root_device
+        same_database = opened.st_dev == database_device
+        free_gib = fs.f_bavail * fs.f_frsize / (1024 ** 3)
+        unavailable_percent = 100 * (1 - fs.f_bavail / fs.f_blocks)
+        if (not math.isfinite(free_gib) or free_gib < 0 or free_gib > 100000
+                or not math.isfinite(unavailable_percent)
+                or not 0 <= unavailable_percent <= 100):
+            raise ValueError("invalid archive target observation")
+        if fs.f_files > 0:
+            inode_available = fs.f_favail
+            inode_total = fs.f_files
+            inode_unavailable = round(100 * (1 - inode_available / inode_total), 2)
+        else:
+            inode_available = inode_total = inode_unavailable = None
+
+        if mount_detected and not same_root:
+            state = "observed_external_mount"
+        elif same_root:
+            state = "same_as_root_filesystem"
+        else:
+            state = "mount_point_not_verified"
+        result.update({
+            "state": state,
+            "mount_point_detected": mount_detected,
+            "same_device_as_root": same_root,
+            "same_device_as_database": same_database,
+            "free_disk_gib": round(free_gib, 3),
+            "disk_unavailable_percent": round(unavailable_percent, 2),
+            "inode_available": inode_available,
+            "inode_total": inode_total,
+            "inode_unavailable_percent": inode_unavailable,
+        })
+    except (OSError, ValueError, TypeError, OverflowError, AttributeError, ZeroDivisionError):
+        # An optional archive probe must not erase a valid root/database sample.
+        result["state"] = "unavailable"
+    finally:
+        if fd is not None:
+            os.close(fd)
+    return result
+
+
+
+def observe_vps_capacity(database: Path, *, archive_target: Path | None = None):
+    """Read-only sample of host and optional archive capacity; never a remote VPS."""
+    if archive_target is not None and (
+            not isinstance(archive_target, Path) or not archive_target.is_absolute()):
+        raise ValueError("archive capacity target must be an explicit absolute path")
     if os.name != "posix" or not Path("/proc/meminfo").is_file():
         raise ValueError("Linux /proc resource counters required")
     if not isinstance(database, Path):
@@ -118,6 +211,8 @@ def observe_vps_capacity(database: Path):
             or not math.isfinite(root_unavailable_pct)
             or not 0 <= root_unavailable_pct <= 100):
         raise ValueError("invalid VPS root mount observation")
+    archive_capacity = _archive_mount_capacity(
+        archive_target, root_identity.st_dev, db_stat.st_dev)
     vals = (load, available, swap, free, unavailable_percent)
     if any(not math.isfinite(value) or value < 0 for value in vals):
         raise ValueError("invalid host resource observation")
@@ -140,6 +235,7 @@ def observe_vps_capacity(database: Path):
             "root_inode_source": root_inode_source,
             "root_mount_same_device_as_database": (
                 root_identity.st_dev == db_stat.st_dev),
+            "archive_target": archive_capacity,
             "inode_available": inode_available,
             "inode_total": inode_total,
             "inode_unavailable_percent": inode_unavailable_percent,

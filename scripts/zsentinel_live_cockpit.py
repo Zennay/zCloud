@@ -135,7 +135,8 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         # Only a deliberate operator invocation on the intended Linux VPS
         # may supply local capacity. This never authorizes a worker or runner.
         from zsentinel_vps_resource_observer import observe_vps_capacity
-        bundle["resources"] = observe_vps_capacity(queue_path)
+        bundle["resources"] = observe_vps_capacity(
+            queue_path, archive_target=args.archive_target)
     source = {
         "vps_capacity": ("same_host_readonly_opt_in" if observe_vps
                          else "unknown_not_sampled"),
@@ -294,8 +295,9 @@ def main():
     try:
         if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
             raise ValueError("disk hotspot scan requires both root and private output")
-        if args.archive_target is not None and args.disk_hotspots_root is None:
-            raise ValueError("--archive-target requires private disk scan")
+        if (args.archive_target is not None and args.disk_hotspots_root is None
+                and not args.observe_vps_capacity):
+            raise ValueError("--archive-target requires --observe-vps-capacity or a private disk scan")
         if args.disk_sqlite and args.disk_hotspots_root is None:
             raise ValueError("--disk-sqlite requires root and private disk output")
         if args.disk_inspect_unlinked_files and args.disk_hotspots_root is None:
