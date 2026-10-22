@@ -306,6 +306,8 @@ def vps_capacity(bundle, now):
     load = metrics.get("load_5m")
     memory = metrics.get("available_memory_mib")
     swap = metrics.get("available_swap_mib")
+    total_swap = metrics.get("total_swap_mib")
+    swap_status = metrics.get("swap_status")
     disk = metrics.get("free_disk_gib")
     unavailable_disk_pct = metrics.get("disk_unavailable_percent")
     inode_available = metrics.get("inode_available")
@@ -367,6 +369,30 @@ def vps_capacity(bundle, now):
     ):
         if type(value) not in (int, float) or not 0 <= value <= maximum:
             raise ValueError(f"invalid VPS resource: {key}")
+    # Zero free swap is ambiguous unless the same bounded receipt also records
+    # total swap. Preserve the conservative legacy behavior when that evidence
+    # is absent; do not label a host with no configured swap as overloaded.
+    total_swap_present = "total_swap_mib" in metrics
+    swap_status_present = "swap_status" in metrics
+    swap_configured = None
+    if swap_status_present and not total_swap_present:
+        raise ValueError("swap status lacks total swap capacity")
+    if total_swap_present:
+        if (type(total_swap) not in (int, float) or not math.isfinite(total_swap)
+                or not 0 <= total_swap <= 1048576):
+            raise ValueError("invalid total swap capacity")
+        if swap_status_present and swap_status not in ("OBSERVED", "NO_SWAP_CONFIGURED"):
+            raise ValueError("invalid swap configuration status")
+        if total_swap == 0:
+            if swap != 0 or metrics.get("swap_used_percent") is not None:
+                raise ValueError("unconfigured swap carries usage counters")
+            if swap_status_present and swap_status != "NO_SWAP_CONFIGURED":
+                raise ValueError("swap status disagrees with total swap capacity")
+            swap_configured = False
+        else:
+            if swap > total_swap or (swap_status_present and swap_status != "OBSERVED"):
+                raise ValueError("swap status disagrees with total swap capacity")
+            swap_configured = True
     # Older read-only resource receipts did not provide disk occupancy.
     # Missing percent is UNKNOWN, not zero or proof of a spacious mount.
     if unavailable_disk_pct is not None:
@@ -509,7 +535,7 @@ def vps_capacity(bundle, now):
 
     overloaded = load > 1.5 * cores
     low_memory = memory < 1024
-    low_swap = swap < 256
+    low_swap = swap_configured is not False and swap < 256
     low_disk = disk < 2
     database_disk_below_5_gib = disk < 5
     almost_full_disk = unavailable_disk_pct is not None and unavailable_disk_pct >= 90
