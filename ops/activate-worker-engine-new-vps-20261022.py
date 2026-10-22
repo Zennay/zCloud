@@ -222,10 +222,8 @@ def main() -> int:
                 "chatgpt-firefox.service", env=env, timeout=45)
     if not is_active("chatgpt-firefox.service", user=True, env=env):
         raise Refused("managed Firefox is not active; SQLite snapshot retained")
-    # These existing timers are rearmed, not restarted; no legacy watchdogs.
-    for timer in ("zcloud-firefox-supervisor.timer", "zcloud-self-heal.timer"):
-        command("sudo", "-n", "systemctl", "enable", "--now", timer, timeout=25)
-
+    # Do not enable crash/self-heal timers until all ten browser sessions
+    # have genuinely checked in: early watchdog recovery can destroy startup.
     start = datetime.now(timezone.utc)
     deadline = time.monotonic() + args.wait_seconds
     allocated = set()
@@ -260,11 +258,19 @@ def main() -> int:
     state["allocated"] = sorted(allocated)
     state["fresh_heartbeat_slots"] = sorted(observed)
     state["heartbeats_verified"] = len(observed) == 10
-    print(json.dumps(state, indent=2, sort_keys=True))
     if len(observed) != 10:
+        print(json.dumps(state, indent=2, sort_keys=True))
         raise Refused(f"only {len(observed)}/10 fresh worker events; tabs/login need inspection")
     # HTTP status is a separate piece of evidence, not an invented live count.
     api("GET", "/api/runner-live")
+    # Arm existing recovery timers only after browser and slot proof. Never
+    # stop/restart a live browser or queue worker as part of fleet activation.
+    for timer in ("zcloud-firefox-supervisor.timer", "zcloud-self-heal.timer"):
+        command("sudo", "-n", "systemctl", "enable", "--now", timer, timeout=25)
+        if not is_active(timer):
+            raise Refused(f"{timer} failed to become active")
+    state["supervisor_and_self_heal_active"] = True
+    print(json.dumps(state, indent=2, sort_keys=True))
     print("ACTIVATED: ten allocated ChatGPT workers with fresh per-slot browser events")
     return 0
 
