@@ -503,6 +503,19 @@ def main(argv=None) -> int:
         return 0
     except (OSError, ValueError, KeyError, TypeError, UnicodeError) as exc:
         print("zSentinel operator bundle refused: " + str(exc), file=sys.stderr)
+        if isinstance(exc, OSError) and NAME.fullmatch(args.name):
+            try:
+                checkpoint = args.output_dir / ("." + args.name + ".checkpoint.json")
+                if _exists(checkpoint):
+                    print(
+                        "A private recovery checkpoint may remain. If publication was "
+                        "interrupted, rerun the identical command with --resume-partial; "
+                        "it will verify exact source bytes and refuse mismatched existing "
+                        "files. Existing files are never deleted or overwritten.",
+                        file=sys.stderr,
+                    )
+            except OSError:
+                pass
         return 2
 
 
