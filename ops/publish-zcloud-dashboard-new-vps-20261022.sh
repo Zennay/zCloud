@@ -45,8 +45,7 @@ import_ready() {
 auth_ready() {
   [[ -f "$AUTH" && ! -L "$AUTH" ]] || return 1
   [[ "$(stat -c '%U' "$AUTH")" = root ]] || return 1
-  [[ "$(stat -c '%G:%a' "$AUTH")" = caddy:640 ||
-     "$(stat -c '%a' "$AUTH")" = 644 ]] || return 1
+  [[ "$(stat -c '%G:%a' "$AUTH")" = caddy:640 ]] || return 1
   # Single bcrypt basic_auth block only; other Caddy directives are rejected.
   python3 - "$AUTH" <<'PY'
 import pathlib, re, sys
@@ -108,16 +107,16 @@ chmod 0644 "$STAGED"
 ln "$STAGED" "$SITE" || die 'site already occupied (no overwrite)'
 unlink "$STAGED"
 if ! caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1; then
-  mv "$SITE" /etc/caddy/zcloud-dashboard-validation-failed.caddy
+  mv "$SITE" "/etc/caddy/zcloud-dashboard-validation-failed-$(date +%s)-$.caddy"
   die 'Caddy validation failed; active import removed'
 fi
 if ! systemctl reload caddy; then
-  mv "$SITE" /etc/caddy/zcloud-dashboard-reload-failed.caddy
+  mv "$SITE" "/etc/caddy/zcloud-dashboard-reload-failed-$(date +%s)-$.caddy"
   systemctl reload caddy || true
   die 'Caddy reload failed; new site removed from import'
 fi
 if ! public_requires_login; then
-  mv "$SITE" /etc/caddy/zcloud-dashboard-auth-failed.caddy
+  mv "$SITE" "/etc/caddy/zcloud-dashboard-auth-failed-$(date +%s)-$.caddy"
   systemctl reload caddy || true
   die 'public HTTPS did not require authentication; site rolled back'
 fi
