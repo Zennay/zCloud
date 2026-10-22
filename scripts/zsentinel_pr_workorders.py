@@ -816,10 +816,12 @@ def collect_workorders(board):
         overdue_queued_jobs.sort(
             key=lambda job: (-job["queued_minutes_at_read"], job["name"]))
         old_queued_action = bool(
-            overdue_queued_jobs and not direct_failure and
-            not parallel_review and
-            item.get("blocker") == "checks_still_running" and
-            live_gate.get("observed_legacy_failure_or_error") == 0)
+            overdue_queued_jobs and not direct_failure and not parallel_review
+            and history_state not in (
+                "changed_or_uncertain_head", "incomplete_gate_source",
+                "newly_selected_not_new_pr")
+            and item.get("blocker") == "checks_still_running"
+            and live_gate.get("observed_legacy_failure_or_error") == 0)
         if old_queued_action:
             workstream = "owner_action_now"
             attention_status = "inspect_changed_evidence"
@@ -871,7 +873,8 @@ def collect_workorders(board):
             "aged_queued_job_attention": overdue_queued_jobs[:8],
             "aged_queued_job_attention_hidden": (
                 max(0, live_gate.get("queued_check_attention_30m_observed", 0) -
-                       len(overdue_queued_jobs)) if pinned else None),
+                       min(8, len(overdue_queued_jobs)))
+                if pinned and not source_stale else None),
             "parallel_review_request_possible_at_observation": parallel_review,
             "project": project, "repository": repo, "number": num,
             "url": url, "files_url": url + "/files",
