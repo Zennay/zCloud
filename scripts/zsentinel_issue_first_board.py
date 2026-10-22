@@ -1160,7 +1160,8 @@ def render_claim_visibility(source):
 
 
 def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=None,
-            local_claims=None, issue_inbox=None, targeted_project=None):
+            local_claims=None, issue_inbox=None, targeted_project=None,
+            observed_at=None):
     raw = board.render(rows, observed)
     esc = lambda x: html.escape(str(x), quote=True)
     cards = []
@@ -1179,6 +1180,11 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
                "".join(cards) + "</section>") if cards else ""
     target_section = ""
     if targeted:
+        target_activity_clock = (observed_at if isinstance(observed_at, dt.datetime)
+                                 and observed_at.tzinfo is not None
+                                 and observed_at.utcoffset() is not None
+                                 else dt.datetime.now(dt.timezone.utc))
+        target_activity = issue_activity_evidence(targeted, target_activity_clock)
         target_section = (
             "<section aria-label='Gericht issue'><h2>Gericht issue (bronwaarneming)</h2>"
             "<p><strong>Actuele issue-status: " +
@@ -1186,6 +1192,9 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
             "<p><a href='" + esc(targeted["url"]) + "'>" +
             esc(targeted["priority"] + " #" + str(targeted["number"]) + " · "
                 + targeted["title"]) + "</a></p>"
+            "<p><strong>Laatste issue-activiteit:</strong> " +
+            esc(issue_activity_label(target_activity)) +
+            " · activiteit is geen bewijs van eigenaar- of oplossingsvoortgang.</p>"
             "<p>Expliciete PR-body- of titelverwijzingen zijn alleen hints, "
             "geen ownership-, fix- of mergebewijs. Bij UNKNOWN mag de eerdere "
             "P0/P1-prioriteit niet als actueel bewezen gelden.</p>"
@@ -1459,7 +1468,8 @@ def main():
                                         target_coverage=target_coverage,
                                         local_claims=local_claims,
                                         issue_inbox=issue_inbox,
-                                        targeted_project=args.project[0] if targeted else None))
+                                        targeted_project=args.project[0] if targeted else None,
+                                        observed_at=observed_time))
         payload = {
             "observed_utc": observed,
             "project_ids": args.project,
@@ -1469,6 +1479,8 @@ def main():
             "selection": ("TARGETED_OPEN_ISSUE" if args.issue is not None
                           else "P0_P1_OBSERVED_PR_LINK_FIRST"),
             "targeted_issue": targeted,
+            "targeted_issue_activity": (
+                issue_activity_evidence(targeted, observed_time) if targeted else None),
             "targeted_local_claim_evidence": (
                 issue_local_claim_evidence(args.project[0], local_claims)
                 if targeted else None),
@@ -1572,6 +1584,7 @@ def main():
                       " owner_free=NOT_INFERABLE authorization=NOT_GRANTED")
                 print(f"TARGET_ISSUE {targeted['priority']} #{targeted['number']} "
                       f"{targeted['url']} state={targeted.get('current_state', 'UNKNOWN')} "
+                      f"activity={issue_activity_label(issue_activity_evidence(targeted, observed_time))} "
                       "(issue priority may be stale if state is UNKNOWN; not fix proof)")
                 if target_coverage.get("source") == "EXPLICIT_PR_CANONICAL_GET":
                     for item in target_coverage.get("candidate_outcomes", []):
