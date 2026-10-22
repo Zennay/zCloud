@@ -35,21 +35,71 @@ HUMAN_GATE_STEPS = frozenset(HUMAN_GATE_LABELS_NL)
 
 
 def _load_regular(path: Path, max_bytes: int) -> dict:
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    """Read one private, stable saved receipt without blocking on pipes.
+
+    The operator's offline gate bundles may include sensitive PR/claim
+    context. Treat all paths and saved JSON as untrusted: the old open-before-
+    fstat reader could wait forever on a FIFO and had no race/owner checks.
+    """
+    if not isinstance(path, Path):
+        raise ValueError("private receipt path must be explicit")
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        raise ValueError("safe private receipt opening unavailable")
+    before = path.lstat()
+    def identity(meta):
+        return (meta.st_dev, meta.st_ino, meta.st_size, meta.st_mtime_ns)
+    if (not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or before.st_mode & 0o077
+            or not 2 <= before.st_size <= max_bytes):
+        raise ValueError("saved receipt must be private, owned, regular and bounded")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or not 2 <= info.st_size <= max_bytes:
-            raise ValueError("source must be a bounded regular file")
-        with os.fdopen(fd, "rb", closefd=False) as stream:
+        meta = os.fstat(fd)
+        if (not stat.S_ISREG(meta.st_mode)
+                or meta.st_uid != os.geteuid() or meta.st_mode & 0o077
+                or identity(meta) != identity(before)):
+            raise ValueError("saved receipt changed before read")
+        with os.fdopen(os.dup(fd), "rb") as stream:
             raw = stream.read(max_bytes + 1)
+        after = os.fstat(fd)
+        try:
+            path_after = path.lstat()
+        except OSError:
+            raise ValueError("saved receipt disappeared during read") from None
+        if (len(raw) != meta.st_size
+                or identity(meta) != identity(after)
+                or identity(meta) != identity(path_after)
+                or after.st_mode & 0o077 or path_after.st_mode & 0o077
+                or after.st_uid != os.geteuid()
+                or path_after.st_uid != os.geteuid()
+                or not stat.S_ISREG(path_after.st_mode)):
+            raise ValueError("saved receipt changed during read")
     finally:
         os.close(fd)
-    if len(raw) > max_bytes:
-        raise ValueError("oversized saved receipt")
+
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate saved receipt JSON key")
+            result[key] = value
+        return result
+
+    def reject_nonfinite(value):
+        raise ValueError("non-finite receipt JSON value")
+
     try:
-        return json.loads(raw.decode("utf-8", "strict"))
-    except (UnicodeError, ValueError):
-        raise ValueError("invalid UTF-8 saved JSON") from None
+        parsed = json.loads(raw.decode("utf-8", "strict"),
+                            object_pairs_hook=unique_fields,
+                            parse_constant=reject_nonfinite)
+        # Escaped lone surrogates cannot encode back to canonical UTF-8.
+        json.dumps(parsed, ensure_ascii=False).encode("utf-8", "strict")
+        if type(parsed) is not dict:
+            raise ValueError("saved receipt JSON must be an object")
+        return parsed
+    except (ValueError, UnicodeError, RecursionError):
+        raise ValueError("invalid or ambiguous private saved receipt JSON") from None
 
 
 def _utc(value):
