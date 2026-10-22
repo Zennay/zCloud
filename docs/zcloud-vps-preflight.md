@@ -173,12 +173,16 @@ HTML-rapport toont alle drie bronnen naast de bestaande eigenaar- en releasekaar
   ontbreekt, blijven geldige CPU-, memory- en I/O-stall-signalen zichtbaar naast
   `HOST_PRESSURE_INCOMPLETE`.
 - De incomplete melding noemt nu de precieze ontbrekende of ongeldige velden
-  (`load_per_cpu`, `cpu_some_avg10_pct`, `memory_full_avg10_pct`,
-  `io_full_avg10_pct`) en een ongeldige/partiële snapshotstatus. Ook wanneer
-  een aangeleverde snapshot ten onrechte `state=observed` zegt, blijven
-  ontbrekende, niet-numerieke, niet-eindige of buiten 0–100 vallende PSI-counters
-  expliciet onbekend; geldige stallmeldingen voor andere bronnen blijven behouden.
-  Ontbrekende of ongeldige bronnen worden **nooit nul druk**.
+  (`cpu_count`, `load_1m`, `load_per_cpu`, `load_per_cpu_mismatch`,
+  `cpu_some_avg10_pct`, `memory_full_avg10_pct`, `io_full_avg10_pct`)
+  en een ongeldige/partiële snapshotstatus. De CPU-loadclassificatie wordt
+  alleen gebruikt wanneer CPU-count, ruwe 1-minuut-load en de afgeleide
+  load-per-CPU-verhouding geldig en onderling consistent zijn; een mismatch
+  wordt expliciet als incomplete bron gerapporteerd. Ook wanneer een aangeleverde
+  snapshot ten onrechte `state=observed` zegt, blijven ontbrekende, niet-numerieke,
+  niet-eindige of buiten 0–100 vallende PSI-counters expliciet onbekend; geldige
+  stallmeldingen voor andere bronnen blijven behouden. Ontbrekende of ongeldige
+  bronnen worden **nooit nul druk**.
 
 - Iedere `/proc/pressure/*`-bron wordt via één open filehandle tot maximaal 2048 bytes gelezen. Een te grote of niet-ASCII bron wordt onbekend/partieel; er wordt niet eerst de volledige inhoud ingelezen en daarna pas afgekapt.
 - Het gecombineerde `host_capacity`-beslisbord en het bestaande
