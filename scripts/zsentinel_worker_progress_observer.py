@@ -712,6 +712,8 @@ def observe_worker_progress(database, projects, *, now=None):
             "classification": row["classification"],
             "safe_followup": row["safe_followup"],
             "current_queue_lease_observed": row["queue_lease_current_from_source"],
+            "progress_timestamp_in_current_claim_window":
+                row["progress_timestamp_in_current_claim_window"],
             "recent_block_events_after_prompt_in_sample":
                 row["timeline"]["recent_block_events_after_last_prompt_in_sample"],
             "recent_progress_events_after_prompt_in_sample":
@@ -780,6 +782,7 @@ def operator_text(source):
             f" · {row['project_id']} worker {row['worker_slot']}"
             f" · {row['classification']} · actie={row['safe_followup']}"
             f" · recente_blocks={row['recent_block_events_after_prompt_in_sample']}"
+            f" · progress_timestamp_in_claim_window={('JA' if row.get('progress_timestamp_in_current_claim_window') is True else 'NEE' if row.get('progress_timestamp_in_current_claim_window') is False else 'ONBEKEND')}"
             f" · claim_niet_geverifieerd")
     for row in source["entries"]:
         lines.append(
@@ -791,6 +794,7 @@ def operator_text(source):
             f" · claim_window={row.get('claim_window_correlation', 'ONBEKEND')}"
             f" · event_in_claim_window={row.get('latest_event_in_current_claim_window', 'ONBEKEND')}"
             f" · progress_event_in_claim_window={row.get('latest_progress_event_in_current_claim_window', 'ONBEKEND')}"
+            f" · progress_timestamp_in_claim_window={('JA' if row.get('progress_timestamp_in_current_claim_window') is True else 'NEE' if row.get('progress_timestamp_in_current_claim_window') is False else 'ONBEKEND')}"
             f" · event_age_s={row['event_age_seconds']}"
             f" · event_clock={row.get('event_timestamp_status', 'UNKNOWN')}"
             f" · progress_age_s={row['progress_age_seconds']}"
@@ -890,7 +894,11 @@ def worker_progress_html(source):
                 or entry.get("recovery_authorized") is not False
                 or entry.get("continuation_verified") is not False
                 or entry.get("current_queue_lease_observed") is not
-                    matching.get("queue_lease_current_from_source")):
+                    matching.get("queue_lease_current_from_source")
+                 or entry.get("progress_timestamp_in_current_claim_window") !=
+                    matching.get("progress_timestamp_in_current_claim_window")
+                 or (entry.get("progress_timestamp_in_current_claim_window") is not None
+                     and type(entry.get("progress_timestamp_in_current_claim_window")) is not bool)):
             raise ValueError("inconsistent worker owner followup identity")
         already.add(key)
         count = entry.get("recent_block_events_after_prompt_in_sample")
@@ -909,6 +917,10 @@ def worker_progress_html(source):
             escape(entry["safe_followup"]) +
             " · blokkades binnen beperkte sample: " + str(count) +
             " · voortgangssignalen: " + str(progress) +
+             " · progress-tijdstip in claimvenster: " +
+             ("JA" if entry.get("progress_timestamp_in_current_claim_window") is True
+              else "NEE" if entry.get("progress_timestamp_in_current_claim_window") is False
+              else "ONBEKEND") +
             (" · HISTORISCHE BRON; huidige blokkade ONBEKEND" if not source_current else "") +
             " · claim NIET geverifieerd.</li>"
         )
@@ -1171,6 +1183,10 @@ def worker_progress_html(source):
             ('JA' if row.get("latest_progress_event_in_current_claim_window") is True
              else 'NEE' if row.get("latest_progress_event_in_current_claim_window") is False
              else 'ONBEKEND') +
+             ' · Voortgangstijdstip in huidig claimvenster: ' +
+             ('JA' if row.get("progress_timestamp_in_current_claim_window") is True
+              else 'NEE' if row.get("progress_timestamp_in_current_claim_window") is False
+              else 'ONBEKEND') +
             ' · Eventleeftijd: ' +
             (str(age) + ' sec' if age is not None else 'ONBEKEND') +
             ' · Eventklok: ' + escape(row.get('event_timestamp_status', 'UNKNOWN')) +
