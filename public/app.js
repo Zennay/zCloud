@@ -933,6 +933,38 @@ const BLOCKED_INSPECT_REASON_TEXT={
   project_human_gated:'The project requires human admission rather than worker allocation.',
   operator_decision_and_fresh_source_required:'A human must verify the dependency or closure reason; a new guarded transaction is required.'
 };
+async function requireBlockedRecoveryPreflight(queueId,original,action){
+  // Advisory diagnostic read: no queue, claim, service, or Attention write.
+  // The final GET and backend transaction remain separate authoritative gates.
+  const response=await fetch('/api/portfolio-queue',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'inspect_blocked',queue_id:queueId}),
+    signal:AbortSignal.timeout(10000)
+  });
+  const packet=await response.json().catch(()=>({}));
+  if(!response.ok||packet.ok!==true||packet.result?.read_only!==true){
+    throw new Error('Read-only recovery inspection unavailable. No action sent.');
+  }
+  const state=packet.result;
+  const observed=typeof state.observed_at==='string'?Date.parse(state.observed_at):NaN;
+  if(!Number.isFinite(observed)||observed>Date.now()+120000||Date.now()-observed>120000){
+    throw new Error('Recovery inspection observation is stale or unknown. Refresh the source.');
+  }
+  if(state.found!==true||state.queue_id!==queueId||
+     state.project_id!==original.project_id||state.queue_status!=='blocked'||
+     state.queue_updated_at!==original.updated_at){
+    throw new Error('The original task, project, status or version changed during inspection. No mutation sent.');
+  }
+  const approved=action==='resume'?state.resume_candidate===true:state.close_candidate===true;
+  if(!approved){
+    const reasons=Array.isArray(state.reason_codes)
+      ?state.reason_codes.filter(code=>code!=='operator_decision_and_fresh_source_required').slice(0,3)
+      :[];
+    const message=reasons.map(code=>BLOCKED_INSPECT_REASON_TEXT[String(code)]||'Owner review required').join(' ');
+    throw new Error('Recovery inspection refused this action. '+(message||'Check the current owner, claim and project gate.'));
+  }
+  return state;
+}
 async function inspectBlockedQueue(queueId,button){
   if(blockedResumesPending.has(queueId))return;
   const card=button.closest('.blocked-queue-item');
@@ -1010,6 +1042,9 @@ async function resumeBlockedQueue(queueId,button){
   button.disabled=true;
   button.textContent='Checking latest task…';
   try{
+    // Verify that the current project is active and that the existing separate
+    // claim/receipt guard actually admits operator consideration before any write.
+    await requireBlockedRecoveryPreflight(queueId,item,'resume');
     // The confirmation may have been open for minutes. Observe the CURRENT
     // authorized queue read before sending any operator attestation.
     const current=await api('/api/portfolio-queue');
@@ -1125,6 +1160,7 @@ async function closeBlockedQueue(queueId,button){
   button.disabled=true;
   button.textContent='Checking queue identity…';
   try{
+    await requireBlockedRecoveryPreflight(queueId,item,'close');
     const current=await api('/api/portfolio-queue');
     if(!Array.isArray(current?.items))throw new Error('Current source not readable. Terminal closure refused.');
     BLOCKED_QUEUE=current.items.filter(row=>row&&row.status==='blocked');
