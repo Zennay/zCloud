@@ -654,11 +654,11 @@ def main():
                         "status": discovery_status,
                         "incomplete_windows": [
                             value for value in incomplete_windows
-                            if value in ("queued", "in_progress", "failure")
+                            if value in ("queued", "in_progress", "waiting", "failure")
                         ] if isinstance(incomplete_windows, list) else [],
                         "not_scanned_windows": [
                             value for value in not_scanned_windows
-                            if value in ("queued", "in_progress", "failure")
+                            if value in ("queued", "in_progress", "waiting", "failure")
                         ] if isinstance(not_scanned_windows, list) else [],
                         "request_count": discovery_source.get("request_count"),
                         "additional_job_links": secondary_links,
