@@ -79,6 +79,7 @@ def compare_host_pressure(previous: object, current: object,
         result["status"] = "untrusted_source"
         result["source_gaps"] = ["previous_or_current_snapshot_shape"]
         return result
+    fingerprints = []
     for label, sample in (("previous", previous), ("current", current)):
         if sample.get("source") != "local_procfs":
             result["source_gaps"].append(label + ".source")
@@ -86,8 +87,17 @@ def compare_host_pressure(previous: object, current: object,
             result["source_gaps"].append(label + ".release_authorized")
         if sample.get("changes_host") is not False:
             result["source_gaps"].append(label + ".changes_host")
+        fingerprint = sample.get("source_scope_fingerprint")
+        if (type(fingerprint) is not str or len(fingerprint) != 64
+                or any(char not in "0123456789abcdef" for char in fingerprint)):
+            result["source_gaps"].append(label + ".source_scope_fingerprint")
+        fingerprints.append(fingerprint if isinstance(fingerprint, str) else None)
     if result["source_gaps"]:
         result["status"] = "untrusted_source"
+        return result
+    if fingerprints[0] != fingerprints[1]:
+        result["status"] = "different_source_scope"
+        result["source_gaps"] = ["source_scope_mismatch"]
         return result
     if not elapsed_valid:
         result["status"] = "stale_or_inverted_window"
