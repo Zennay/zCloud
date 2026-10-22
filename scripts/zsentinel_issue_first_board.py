@@ -209,6 +209,17 @@ def issue_local_claim_evidence(project, local_claims):
     }
 
 
+def issue_activity_follow_up_code(issue):
+    """Stable machine-readable next-step code; never grants authority."""
+    return {
+        "STALE": "REVIEW_EXISTING_ISSUE_PR_AND_EXACT_HEAD_GATES",
+        "AGING": "INSPECT_EXISTING_PR_AND_GATES",
+        "CLOCK_SKEW_OR_FUTURE": "RECONCILE_SOURCE_TIMESTAMP",
+        "RECENT": "INSPECT_CURRENT_SOURCE_EVIDENCE",
+        "UNKNOWN": "REFRESH_CANONICAL_ISSUE_TIMESTAMP",
+    }.get(issue.get("activity_age_band"), "REFRESH_CANONICAL_ISSUE_TIMESTAMP")
+
+
 def issue_activity_follow_up(issue):
     """Suggest evidence-led follow-up without assigning or releasing ownership."""
     band = issue.get("activity_age_band", "UNKNOWN")
@@ -234,6 +245,7 @@ def issue_activity_evidence(source_issue, observed_at):
         unknown = {"last_activity_at_utc": None, "activity_age_seconds": None,
                    "activity_age_band": "UNKNOWN"}
         unknown["activity_follow_up"] = issue_activity_follow_up(unknown)
+        unknown["activity_follow_up_code"] = issue_activity_follow_up_code(unknown)
         return unknown
     normalized = parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
     delta = (observed_at - parsed).total_seconds()
@@ -241,6 +253,7 @@ def issue_activity_evidence(source_issue, observed_at):
         anomalous = {"last_activity_at_utc": normalized, "activity_age_seconds": None,
                      "activity_age_band": "CLOCK_SKEW_OR_FUTURE"}
         anomalous["activity_follow_up"] = issue_activity_follow_up(anomalous)
+        anomalous["activity_follow_up_code"] = issue_activity_follow_up_code(anomalous)
         return anomalous
     age = max(0, int(delta))
     band = ("RECENT" if age < 86400 else
@@ -248,6 +261,7 @@ def issue_activity_evidence(source_issue, observed_at):
     evidence = {"last_activity_at_utc": normalized, "activity_age_seconds": age,
                 "activity_age_band": band}
     evidence["activity_follow_up"] = issue_activity_follow_up(evidence)
+    evidence["activity_follow_up_code"] = issue_activity_follow_up_code(evidence)
     return evidence
 
 
@@ -399,6 +413,7 @@ def observed_issue_inbox(rows, unlinked, partial, repo_projects,
     for issue in issue_map.values():
         if not isinstance(issue.get("activity_follow_up"), str):
             issue["activity_follow_up"] = issue_activity_follow_up(issue)
+        issue["activity_follow_up_code"] = issue_activity_follow_up_code(issue)
 
     # First prefer existing PRs for the same severity; source-unknown issues
     # are still explicitly shown, never silently assigned to a new worker.
@@ -1598,7 +1613,8 @@ def main():
                           " uninspected_pr_candidates=" + hinted +
                           " next=" + issue["operator_action"] +
                           " activity=" + issue_activity_label(issue) +
-                           " activity_next=" + issue.get("activity_follow_up", "UNKNOWN")
+                           " activity_next_code=" + issue.get("activity_follow_up_code", "UNKNOWN") +
+                          " activity_next=" + issue.get("activity_follow_up", "UNKNOWN")
                           " local_claims=" +
                           str((issue.get("local_claim_evidence") or {}).get("status", "UNKNOWN")) +
                           "(active=" + str((issue.get("local_claim_evidence") or {}).get("active_local_leases_observed")
