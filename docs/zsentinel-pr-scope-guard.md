@@ -70,6 +70,30 @@ De historie wordt read-only uit opgeslagen bronnen afgeleid. Er is geen
 QA-suite geschreven of uitgevoerd en geen CI, claim, queue, runner of
 deployment gestart of gewijzigd.
 
+## 22 oktober · bestand/map-ancestorconflicten over opgeslagen PR-vensters
+
+De bestaande `scripts/zsentinel_pr_saved_graph_merge.py` detecteert nu ook
+cross-window bestand/map-ancestorrelaties, zoals een PR met het bestandspad
+`src` en een andere PR met `src/app.py`. Dit staat los van de bestaande
+exacte bestandsnaam-overlap: een scope-relatie is een waarschuwing, geen
+bewezen Git-mergeconflict of bewijs van eigenaarschap.
+
+- De scan vergelijkt alleen PR's uit verschillende opgeslagen bronvensters.
+- Per PR-paar worden maximaal acht padvoorbeelden weergegeven; de werklijst
+  en private CSV nemen de scopeparen en hun padrelaties apart op.
+- De ancestor-prefixscan heeft een vaste limiet van 2.000.000 padvergelijkingen.
+  Als die grens of de weergavelimiet wordt bereikt, wordt de dekking expliciet
+  als onvolledig gemarkeerd en zijn niet-gescande PR-paren **ONBEKEND**.
+  Getoonde tellingen uit een afgebroken paar zijn alleen waargenomen
+  ondergrenzen.
+- De tekst-, Markdown-, HTML-, JSON- en private CSV-uitvoer blijven
+  niet-autoriserend. Geen merge-, claim-, CI-, runner- of deployactie wordt
+  uitgevoerd.
+
+Dit sluit een productgat tussen de live scopegrafiek en de offline
+multi-window-handoff zonder historische steekproeven als atomair te behandelen.
+Geen QA-suite geschreven of uitgevoerd.
+
 ## 22 oktober · sluiting, merge en live-oplevering zijn drie verschillende feiten
 
 De bestaande `scripts/zsentinel_pr_gate_now.py` en
