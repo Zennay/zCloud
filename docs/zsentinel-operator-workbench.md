@@ -39,6 +39,23 @@ current_claims_verified=false, required_ci_verified=false,
 independent_review_verified=false, merge_authorized=false en
 deploy_authorized=false. De JSON blijft net als de HTML 0600 en privé.
 
+Wanneer je niet alle bundelnamen wilt overtypen, kan een onafhankelijke
+**bounded lokale ontdekking** maximaal 24 recent aangemaakte private receipts
+kiezen. De directorylisting stopt na 512 entries en weigert afwijkende
+eigenaar/rechten, symlinks en ongeldige namen. Iedere geselecteerde volledige
+bundel wordt vervolgens gewoon via het bestaande bron-/hashcontract
+gecontroleerd. De ontvangsttijd (receipt mtime) bepaalt uitsluitend de
+selectie; de **historische vergelijking wordt opnieuw op echte opgeslagen
+board-UTC gesorteerd**. Een recente receipt betekent niet verse GitHub-data.
+
+    python3 scripts/zsentinel_private_bundle_index.py \
+      --directory "$HOME/zsentinel-private" \
+      --latest 8 --name recovery-last-eight
+
+De flags --latest en --bundle kunnen niet tegelijk worden gebruikt.
+De uitvoer blijft een create-only lokaal indexbestand; ongeldige bronnen
+leiden niet tot het publiceren van een onvolledige selectie.
+
 Open vervolgens recovery-history-october.index.html in die privémap.
 De scriptvrije HTML koppelt lokaal door naar iedere oorspronkelijke
 interactieve desk.html en receipt.json. Identiteit en timestamps komen
