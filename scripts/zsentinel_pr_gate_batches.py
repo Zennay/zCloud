@@ -33,6 +33,31 @@ UNKNOWN = "github_source_unavailable_or_head_changed"
 # Never render arbitrary instructions embedded in a local receipt as advice.
 HUMAN_GATE_STEPS = frozenset(HUMAN_GATE_LABELS_NL)
 
+# Saved observations can guide a human without inventing current readiness.
+# Distinguish source-refresh, real owner work, review requests and external
+# waits so a large portfolio does not strand actionable defects behind CI.
+OWNER_LANES = {
+    "refresh_source": "Bron vernieuwen: huidige PR/HEAD opnieuw lezen",
+    "fix_source": "Actie eigenaar: bestaande productcode of gate herstellen",
+    "request_review": "Onafhankelijke reviewer aanvragen",
+    "external_wait": "Externe CI/review afhankelijkheid parkeren",
+    "release_handoff": "Bevoegde release-eigenaar laat geldende gates controleren",
+}
+OWNER_LANE_ORDER = tuple(OWNER_LANES)
+
+
+def _owner_lane(category):
+    if category in ("source_unavailable", "saved_evidence_stale", "source_incomplete"):
+        return "refresh_source"
+    if category in ("saved_draft", "observed_merge_conflict", "observed_check_failure",
+                    "observed_review_changes"):
+        return "fix_source"
+    if category == "saved_review_needed":
+        return "request_review"
+    if category in ("observed_checks_waiting", "saved_review_requested_waiting"):
+        return "external_wait"
+    return "release_handoff"
+
 
 def _load_regular(path: Path, max_bytes: int) -> dict:
     """Read one private, stable saved receipt without blocking on pipes.
@@ -317,6 +342,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
             "manifest_position": pos,
             "url": row["url"],
             "historic_gate_category": row["historic_gate_category"],
+            "owner_lane": _owner_lane(row["historic_gate_category"]),
             "human_next_gate": row["next_human_gate"],
             "pending_individual_review_requests_observed":
                 row["pending_individual_review_requests_observed"],
@@ -333,6 +359,17 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
         for pos, row in all_rows
     ]
     first_actions = manual_queue[:24]
+    lane_totals = {lane: sum(action["owner_lane"] == lane for action in manual_queue)
+                   for lane in OWNER_LANE_ORDER}
+    # Separate *prioritized operator attention* from the original P0/P1-first
+    # manifest order. Within each category, preserve source manifest order.
+    # The prioritization is a visual handoff, not a merge/claim decision.
+    owner_priority = ("fix_source", "refresh_source", "request_review",
+                      "release_handoff", "external_wait")
+    attention_queue = sorted(manual_queue,
+                             key=lambda action: (owner_priority.index(action["owner_lane"]),
+                                                 action["manifest_position"]))
+    first_attention = attention_queue[:24]
     return {
         "schema": SCHEMA,
         "generated_at_utc": observed_at.isoformat(),
@@ -355,6 +392,9 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
         "cross_batch_observation_within_10_minutes": source_window_coherent,
         "manual_review_queue_preview": first_actions,
         "manual_review_queue_hidden_after_24": max(0, len(manual_queue) - len(first_actions)),
+        "owner_attention_lane_counts": lane_totals,
+        "owner_attention_queue_preview": first_attention,
+        "owner_attention_queue_hidden_after_24": max(0, len(manual_queue) - len(first_attention)),
         "all_saved_batches_present": not missing,
         "all_observations_present_and_recent": (
             not missing and not unavailable and not stale and source_window_coherent
