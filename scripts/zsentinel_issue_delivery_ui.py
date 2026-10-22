@@ -6,7 +6,10 @@ Source data is escaped by the caller; browser user notes stay in the tab.
 """
 from __future__ import annotations
 
+import json
 from html import escape
+
+from zsentinel_owner_routes import HUMAN_ONLY_ROUTE_CODES, HUMAN_ONLY_ROUTE_LABELS
 
 
 def controls(projects):
@@ -14,6 +17,10 @@ def controls(projects):
         raise ValueError("untrusted project selector")
     options = "".join('<option value="' + escape(pid, quote=True) +
                       '">' + escape(pid) + '</option>' for pid in projects)
+    owner_route_options = "".join(
+        '<option value="' + escape(route, quote=True) + '">' +
+        escape(label) + '</option>'
+        for route, label in HUMAN_ONLY_ROUTE_LABELS.items())
     return (
         '<section class="operator" aria-label="Persoonlijk productwerkoverzicht">'
         '<h2>Filter & volg lokaal op</h2><p id="issue-freshness" '
@@ -27,10 +34,8 @@ def controls(projects):
         '<label>Prioriteit <select id="issue-priority"><option value="">Alle</option>'
         '<option>P0</option><option>P1</option><option>P2</option>'
         '<option value="Unspecified">Onbekend</option></select></label>'
-        '<label>Route <select id="issue-route"><option value="">Alle</option>'
-        '<option value="authorized_infrastructure_owner_required">Menselijke infrablokkade</option>'
-        '<option value="authorized_zcloud_runner_owner_required">zCloud-runnerbeheerder nodig</option>'
-        '<option value="authorized_github_billing_owner_required">GitHub-billingeigenaar nodig</option>'
+        '<label>Route <select id="issue-route"><option value="">Alle</option>' +
+        owner_route_options +
         '<option value="review_existing_pr_first">Bestaande PR eerst</option>'
         '<option value="verify_ownership_and_scope">Eerst eigendom/scope</option>'
         '<option value="check_assignee_and_current_claim">Assignee controleren</option>'
@@ -96,6 +101,7 @@ INTERACTIVE_CSS = """
 # never innerHTML, storage, automatic network requests or hidden downloads.
 INTERACTIVE_JS = r"""
 "use strict";
+const humanGatedRoutes = new Set(__HUMAN_GATED_ROUTE_CODES__);
 const boardItems=Array.from(document.querySelectorAll("article.issue[data-issue-url]"));
 const input=id=>document.getElementById(id);
 const preview=input("issue-handoff");
@@ -191,9 +197,7 @@ input("preview-packet").addEventListener("click",()=>{
     if(parts.hostname!=="github.com"||parts.protocol!=="https:"||
        tokens.length!==4||tokens[0]!=="Zennay"||tokens[2]!=="issues"||
        !/^[1-9][0-9]*$/.test(tokens[3])||seen.has(raw)||
-       ["authorized_infrastructure_owner_required",
-        "authorized_zcloud_runner_owner_required",
-        "authorized_github_billing_owner_required"].includes(item.dataset.route)){
+       humanGatedRoutes.has(item.dataset.route)){
       invalidatePacket();
       packetFeedback.textContent="Onbetrouwbare, dubbele of human-gated issuebron; geen werkpakket.";
       return;
@@ -413,7 +417,7 @@ download.addEventListener("click",()=>{
 refresh();
 freshness();
 setInterval(freshness,60*1000);
-"""
+""".replace("__HUMAN_GATED_ROUTE_CODES__", json.dumps(sorted(HUMAN_ONLY_ROUTE_CODES)))
 
 
 def script_tag():
