@@ -30,6 +30,7 @@ PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 MAX_ROWS = 2500
 MAX_SAMPLES = 20
 MAX_BLOCKED_GROUPS = 250
+MAX_BLOCKED_WORK_ITEMS = 24
 MAX_BYTES_PER_TEXT = 180
 UTC = timezone.utc
 
@@ -69,6 +70,18 @@ def _read_sqlite(path):
             "WHERE status='blocked' GROUP BY project_id,priority "
             "ORDER BY project_id,priority LIMIT ?", (MAX_BLOCKED_GROUPS + 1,)
         )]
+        # Human worklist only: select bounded, P0/P1-first blocked tasks.
+        # A blocked queue row is not a failed job or free worker claim.
+        blocked_work = [dict(row) for row in connection.execute(
+            "SELECT queue_id,project_id,priority,attempts,eligible,"
+            "updated_at,claimed_at,claim_expires,title FROM portfolio_queue "
+            "WHERE status='blocked' "
+            "ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 "
+            "WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END, "
+            "CASE WHEN claimed_at IS NOT NULL OR claim_expires IS NOT NULL "
+            "THEN 0 ELSE 1 END, updated_at DESC, queue_id ASC LIMIT ?",
+            (MAX_BLOCKED_WORK_ITEMS + 1,)
+        )]
         connection.execute("ROLLBACK")
     finally:
         connection.close()
@@ -84,7 +97,8 @@ def _read_sqlite(path):
         (os.uname().nodename + "\\0" + str(location.absolute()) + "\\0" +
          str(before.st_dev) + "\\0" + str(before.st_ino)).encode("utf-8")
     ).hexdigest()
-    return rows, source_key, {"total_items": blocked_total, "groups": blocked_groups}
+    return rows, source_key, {"total_items": blocked_total,
+                              "groups": blocked_groups, "work": blocked_work}
 
 
 def _stamp(value):
@@ -118,6 +132,53 @@ def _blocked_queue_observation(raw, observed_at):
         groups.append({"project_id": project, "priority": priority, "items": items})
     complete = (not truncated and invalid == 0
                 and sum(row["items"] for row in groups) == total)
+    work_source = raw.get("work")
+    if type(work_source) is not list or len(work_source) > MAX_BLOCKED_WORK_ITEMS + 1:
+        raise ValueError("invalid bounded blocked-work source")
+    work = []
+    seen_refs = set()
+    invalid_work = 0
+    for row in work_source[:MAX_BLOCKED_WORK_ITEMS]:
+        if type(row) is not dict:
+            invalid_work += 1
+            continue
+        pid, priority, attempts = row.get("project_id"), row.get("priority"), row.get("attempts")
+        queue_id, title = row.get("queue_id"), row.get("title")
+        eligible = row.get("eligible")
+        if (type(pid) is not str or not PROJECT.fullmatch(pid)
+                or priority not in PRIORITY
+                or type(queue_id) is not str or not 0 < len(queue_id) <= 250
+                or type(attempts) is not int or not 0 <= attempts <= 10**9
+                or eligible not in (0, 1)):
+            invalid_work += 1
+            continue
+        queue_ref = hashlib.sha256(queue_id.encode("utf-8")).hexdigest()[:16]
+        if queue_ref in seen_refs:
+            raise ValueError("repeated blocked-queue reference")
+        seen_refs.add(queue_ref)
+        title_text = (" ".join(title.split())[:MAX_BYTES_PER_TEXT]
+                      if type(title) is str else "Unlabeled queue item")
+        # Nonempty claim fields mean a blocked task is NOT automatically safe
+        # to resume. Preserve the warning without copying owner identifiers.
+        claim_fields_present = any(row.get(key) is not None for key in
+                                   ("claimed_at", "claim_expires"))
+        work.append({
+            "queue_ref": queue_ref, "project_id": pid, "priority": priority,
+            "title": title_text, "claim_attempts": attempts,
+            "eligible_observed": bool(eligible),
+            "claim_fields_present_observed": claim_fields_present,
+            "current_owner_verified": False,
+            "resume_authorized": False, "automatic_retry_authorized": False,
+            "human_next_step": (
+                "Blocked task has claim metadata: verify with runtime owner; do not resume or drop."
+                if claim_fields_present else
+                "Inspect current owner, exact queue status and dependency before authorized resume."),
+        })
+    work_truncated = len(work_source) > MAX_BLOCKED_WORK_ITEMS
+    # 0 blocked rows can only be called fully listed if aggregate coverage
+    # was complete. A limited top-N sample never proves other rows are absent.
+    work_complete = (not work_truncated and invalid_work == 0
+                     and complete and len(work) == total)
     return {
         "schema": "zsentinel-blocked-queue-observation-v1",
         "status_filter": "blocked",
@@ -125,6 +186,10 @@ def _blocked_queue_observation(raw, observed_at):
         "observed_at_utc": observed_at,
         "total_items_observed": total,
         "project_groups": groups,
+        "work_items": work,
+        "work_items_coverage": "complete" if work_complete else "partial",
+        "work_items_truncated": work_truncated or invalid_work > 0,
+        "invalid_work_rows": invalid_work,
         "sample_truncated": truncated or invalid > 0,
         "invalid_group_rows": invalid,
         "claim_ownership_verified": False,
@@ -282,6 +347,8 @@ def explicitly_unobserved_queue():
             "observed_at_utc": None,
             "total_items_observed": None,
             "project_groups": [],
+            "work_items": [], "work_items_coverage": "not_observed",
+            "work_items_truncated": True, "invalid_work_rows": None,
             "sample_truncated": True,
             "invalid_group_rows": None,
             "claim_ownership_verified": False,
