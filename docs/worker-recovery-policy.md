@@ -500,7 +500,25 @@ from explicit labels). Filters change only local displayed cards; the
 original full bounded source counts, omitted-by-filter and hidden-by-output
 numbers remain present. Per-repository source scorecards show actual
 observed explicit P0/P1 counts and freshness/partial status, independent
-of whether the cards fit the global P0-first display.
+of whether the cards fit the global P0-first display. The portable HTML
+groups P0, P1, unverified hints, P2/P3 and unknown source records under
+accessible in-page anchors; the grouping never upgrades a title hint to
+a verified GitHub label. Each issue card and each exported Markdown,
+CSV or JSON workorder also carries the **canonical next existing-PR
+inspection command** from the original issue reader:
+
+```sh
+python3 scripts/zsentinel_recovery_policy.py \\
+  --live-issue-url https://github.com/Zennay/zCloud/issues/1326 \\
+  --format html --output /your/owned/private/issue-1326.html
+```
+
+This is a human-selected follow-up example and **is not executed** by
+the portfolio tool. Any subsequent PR merge must still be independently
+authorized from current branch/review/CI/owner evidence, not an inbox
+card. The display reports omitted cards separately for the view filter
+and the global 120-card ceiling; hidden cards remain part of the bounded
+source sample and are not implicitly resolved.
 
 **Source and safety bounds:** 2–6 distinct canonical `Zennay/<repo>`
 arguments; one sequential bounded GitHub observation per repo,
