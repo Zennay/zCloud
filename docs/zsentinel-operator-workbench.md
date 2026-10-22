@@ -4465,7 +4465,10 @@ projectdekking, bemonsterde P0/P1/P2/onbekende issue-aantallen, queue-
 observatietijd en bounded aantallen actieve items/hoge claimcycli/verlopen
 leases. De kolommen `source_inbox_fresh`, `source_retry_fresh`,
 `source_branches_fresh` en `source_prs_fresh` behouden ook de expliciete
-freshnessvlaggen en bronklokken per bron. Ontbrekende broninformatie en
+freshnessvlaggen en bronklokken per bron. De globale flags
+`snapshot_inbox_truncated`, `snapshot_cards_truncated` en
+`snapshot_github_denial` blijven ook per rij behouden, zodat sample-aantallen
+niet als volledige inventaris worden gelezen. Ontbrekende broninformatie en
 queuegegevens worden als `UNKNOWN` weergegeven. De
 export bevat geen opaque claim-ID's, lokale contactlabels of privénotities en
 is bewust onafhankelijk van issuezoek-, prioriteits- en projectfilters.
