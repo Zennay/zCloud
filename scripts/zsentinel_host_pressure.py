@@ -35,11 +35,7 @@ def _proc_source(name):
 
 
 def observe_host_pressure():
-    """Return a deliberately incomplete, non-authorizing host snapshot.
-
-    The four thresholds are *operator review hints*, not worker admission
-    or service health decisions. Fail closed on malformed/partial sources.
-    """
+    """Return bounded per-source host evidence; partial data never means healthy."""
     report = {
         "observed_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "source": "linux_procfs_host_only",
@@ -59,6 +55,24 @@ def observe_host_pressure():
         "root_disk": observe_root_disk(),
         "psi": observe_psi(),
     }
+    root_disk = report["root_disk"]
+    psi = report["psi"]
+    psi_status = psi.get("status")
+    coverage = {
+        "meminfo": "UNKNOWN",
+        "loadavg": "UNKNOWN",
+        "root_disk": (
+            "OBSERVED" if root_disk.get("status") == "ROOT_STATVFS_OBSERVED"
+            else "UNKNOWN"
+        ),
+        "psi": psi_status if psi_status in ("OBSERVED", "PARTIAL") else "UNKNOWN",
+    }
+    memory_available_pct = None
+    swap_used_pct = None
+    one_per_cpu = None
+
+    # Read RAM/swap independently from loadavg. A broken loadavg must not
+    # erase correctly observed memory, swap, disk or PSI evidence.
     try:
         rows = {}
         for line in _proc_source("meminfo").splitlines():
@@ -79,6 +93,27 @@ def observe_host_pressure():
         if not (0 < total <= 10**11 and 0 <= available <= total
                 and 0 <= swap_total <= 10**11 and 0 <= swap_free <= swap_total):
             raise ValueError("invalid memory counters")
+        memory_available_pct = 100.0 * available / total
+        swap_status = "OBSERVED" if swap_total else "NO_SWAP_CONFIGURED"
+        swap_used_pct = (
+            100.0 * (swap_total - swap_free) / swap_total
+            if swap_total else None
+        )
+        report.update({
+            "host_memory_total_mib": total // 1024,
+            "host_memory_available_mib": available // 1024,
+            "host_memory_available_percent": round(memory_available_pct, 1),
+            "swap_used_percent": (
+                round(swap_used_pct, 1) if swap_used_pct is not None else None
+            ),
+            "swap_status": swap_status,
+        })
+        coverage["meminfo"] = "OBSERVED"
+    except (OSError, ValueError, UnicodeError, OverflowError):
+        pass
+
+    # Load is its own source; keep a failed/partial read explicitly UNKNOWN.
+    try:
         load_parts = _proc_source("loadavg").split()
         if len(load_parts) < 3:
             raise ValueError("loadavg source incomplete")
@@ -87,104 +122,92 @@ def observe_host_pressure():
         if not (math.isfinite(load) and 0 <= load <= 100000
                 and isinstance(cpus, int) and 1 <= cpus <= 1024):
             raise ValueError("invalid host load or core count")
-        memory_available_pct = 100.0 * available / total
-        swap_status = "OBSERVED" if swap_total else "NO_SWAP_CONFIGURED"
-        swap_used_pct = (
-            100.0 * (swap_total - swap_free) / swap_total
-            if swap_total else None
-        )
         one_per_cpu = load / cpus
-        root_disk = report["root_disk"]
-        disk_high = root_disk.get("pressure_hint") == "HIGH"
-        disk_elevated = root_disk.get("pressure_hint") == "ELEVATED"
-        psi = report["psi"]
-        psi_high = psi.get("pressure_hint") == "HIGH"
-        psi_elevated = psi.get("pressure_hint") == "ELEVATED"
-        # Review hints only. No claim, RAM promise or admission decision.
-        hint = (
-            "HIGH_LOCAL_PRESSURE" if (
-                memory_available_pct < 15 or
-                (swap_total > 0 and swap_used_pct >= 90) or
-                one_per_cpu >= 2 or disk_high or psi_high
-            ) else
-            "ELEVATED_LOCAL_PRESSURE" if (
-                memory_available_pct < 25 or
-                (swap_total > 0 and swap_used_pct >= 70) or
-                one_per_cpu >= 1.25 or disk_elevated or psi_elevated
-            ) else "NO_LOCAL_THRESHOLD_CROSSED"
-        )
-        basis = []
+        report["load_one_per_cpu"] = round(one_per_cpu, 2)
+        coverage["loadavg"] = "OBSERVED"
+    except (OSError, ValueError, UnicodeError, OverflowError):
+        pass
+
+    basis = []
+    high = False
+    elevated = False
+    if memory_available_pct is not None:
         if memory_available_pct < 15:
+            high = True
             basis.append("ram_available_high")
         elif memory_available_pct < 25:
+            elevated = True
             basis.append("ram_available_elevated")
-        if swap_total > 0 and swap_used_pct is not None:
-            if swap_used_pct >= 90:
-                basis.append("swap_usage_high")
-            elif swap_used_pct >= 70:
-                basis.append("swap_usage_elevated")
+    if swap_used_pct is not None:
+        if swap_used_pct >= 90:
+            high = True
+            basis.append("swap_usage_high")
+        elif swap_used_pct >= 70:
+            elevated = True
+            basis.append("swap_usage_elevated")
+    if one_per_cpu is not None:
         if one_per_cpu >= 2:
+            high = True
             basis.append("load_per_cpu_high")
         elif one_per_cpu >= 1.25:
+            elevated = True
             basis.append("load_per_cpu_elevated")
-        if disk_high:
-            basis.append("root_disk_high")
-        elif disk_elevated:
-            basis.append("root_disk_elevated")
-        if psi.get("pressure_hint") in ("HIGH", "ELEVATED"):
-            psi_level = psi["pressure_hint"].lower()
-            psi_sources = [
-                item for item in psi.get("pressure_basis", [])
-                if item in ("cpu", "memory", "io")
-            ]
-            basis.extend(f"psi_{item}_{psi_level}" for item in psi_sources)
-            if not psi_sources:
-                basis.append("psi_pressure_" + psi_level)
-        report.update({
-            "status": "HOST_SNAPSHOT_OBSERVED",
-            "host_memory_total_mib": total // 1024,
-            "host_memory_available_mib": available // 1024,
-            "host_memory_available_percent": round(memory_available_pct, 1),
-            "swap_used_percent": (
-                round(swap_used_pct, 1) if swap_used_pct is not None else None
-            ),
-            "swap_status": swap_status,
-            "load_one_per_cpu": round(one_per_cpu, 2),
-            "pressure_hint": hint,
-            "pressure_basis": basis,
-            "pressure_scope": "HOST_METRICS_AND_KNOWN_KERNEL_SOURCES",
-        })
-    except (OSError, ValueError, UnicodeError, OverflowError):
-        # A transient/malformed meminfo or loadavg must not erase real severe
-        # kernel PSI or disk evidence. Remain explicitly PARTIAL: neither
-        # missing RAM data nor missing CPU count may be treated as healthy.
-        disk_hint = report["root_disk"].get("pressure_hint")
-        psi_hint = report["psi"].get("pressure_hint")
-        if disk_hint != "UNKNOWN" or psi_hint != "UNKNOWN":
-            report["status"] = "HOST_PARTIAL"
-            basis = []
-            if disk_hint == "HIGH":
-                basis.append("root_disk_high")
-            elif disk_hint == "ELEVATED":
-                basis.append("root_disk_elevated")
-            if psi_hint in ("HIGH", "ELEVATED"):
-                psi_level = psi_hint.lower()
-                psi_sources = [
-                    item for item in (report["psi"].get("pressure_basis") or [])
-                    if item in ("cpu", "memory", "io")
-                ]
-                basis.extend(f"psi_{item}_{psi_level}" for item in psi_sources)
-                if not psi_sources:
-                    basis.append("psi_pressure_" + psi_level)
-            report["pressure_basis"] = basis
-            report["pressure_scope"] = "OBSERVED_DISK_AND_PSI_ONLY"
-            if disk_hint == "HIGH" or psi_hint == "HIGH":
-                report["pressure_hint"] = "HIGH_LOCAL_PRESSURE"
-            elif disk_hint == "ELEVATED" or psi_hint == "ELEVATED":
-                report["pressure_hint"] = "ELEVATED_LOCAL_PRESSURE"
-        return report
-    return report
 
+    disk_hint = root_disk.get("pressure_hint")
+    if disk_hint == "HIGH":
+        high = True
+        basis.append("root_disk_high")
+    elif disk_hint == "ELEVATED":
+        elevated = True
+        basis.append("root_disk_elevated")
+
+    if psi.get("pressure_hint") in ("HIGH", "ELEVATED"):
+        psi_level = psi["pressure_hint"].lower()
+        psi_sources = [
+            item for item in (psi.get("pressure_basis") or [])
+            if item in ("cpu", "memory", "io")
+        ]
+        basis.extend(f"psi_{item}_{psi_level}" for item in psi_sources)
+        if not psi_sources:
+            basis.append("psi_pressure_" + psi_level)
+        if psi["pressure_hint"] == "HIGH":
+            high = True
+        else:
+            elevated = True
+
+    sources_complete = all(value == "OBSERVED" for value in coverage.values())
+    any_source_observed = any(
+        value in ("OBSERVED", "PARTIAL") for value in coverage.values()
+    )
+    hint = (
+        "HIGH_LOCAL_PRESSURE" if high else
+        "ELEVATED_LOCAL_PRESSURE" if elevated else
+        "NO_LOCAL_THRESHOLD_CROSSED" if sources_complete else
+        "UNKNOWN"
+    )
+    report.update({
+        "status": (
+            "HOST_SNAPSHOT_OBSERVED" if sources_complete else
+            "HOST_PARTIAL" if any_source_observed else "UNKNOWN"
+        ),
+        "pressure_hint": hint,
+        "pressure_basis": basis,
+        "pressure_scope": (
+            "HOST_METRICS_AND_KERNEL_SOURCES"
+            if sources_complete else "OBSERVED_SOURCES_ONLY"
+        ),
+        "source_coverage": coverage,
+        "observed_sources": sorted(
+            key for key, value in coverage.items() if value == "OBSERVED"
+        ),
+        "partial_sources": sorted(
+            key for key, value in coverage.items() if value == "PARTIAL"
+        ),
+        "missing_sources": sorted(
+            key for key, value in coverage.items() if value == "UNKNOWN"
+        ),
+    })
+    return report
 
 def pressure_sentence(report):
     """Concise, private operator-visible resource fact; no admission claim."""
@@ -220,40 +243,62 @@ def pressure_sentence(report):
             "Geen lokale drempelbron overschreden. "
         )
 
-    if report.get("status") != "HOST_SNAPSHOT_OBSERVED":
-        disk = report.get("root_disk") or {}
-        disk_note = (
-            f"root beschikbaar {disk['available_gib']} GiB, "
-            f"{disk['unavailable_percent']}% onbeschikbaar"
-            if disk.get("status") == "ROOT_STATVFS_OBSERVED"
-            else "root-schijfruimte onbekend"
-        )
-        return (
-            f"Hostdruk: PARTIËLE BRON ({report.get('pressure_hint', 'UNKNOWN')}); "
-            "RAM/load onbekend; " + disk_note + ". "
-            + basis_text() + psi_sentence(report.get("psi"))
-            + " Geen autorisatie voor nieuwe workers of herstarts."
-        )
     disk = report.get("root_disk") or {}
-    disk_line = (
-        "root beschikbaar " + str(disk["available_gib"]) + " GiB; "
-        + str(disk["unavailable_percent"]) + "% voor proces onbeschikbaar"
+    disk_note = (
+        f"root beschikbaar {disk['available_gib']} GiB, "
+        f"{disk['unavailable_percent']}% onbeschikbaar"
         if disk.get("status") == "ROOT_STATVFS_OBSERVED"
-        else "root-schijfruimte ONBEKEND"
+        else "root-schijfruimte onbekend"
     )
     swap_line = (
         f"swap gebruikt {report['swap_used_percent']}%"
         if report.get("swap_status") == "OBSERVED"
         else "swap niet geconfigureerd"
         if report.get("swap_status") == "NO_SWAP_CONFIGURED"
-        else "swapgebruik ONBEKEND"
+        else "swapgebruik onbekend"
     )
+    memory_line = (
+        f"RAM beschikbaar {report['host_memory_available_mib']} MiB "
+        f"({report['host_memory_available_percent']}%)"
+        if report.get("host_memory_available_mib") is not None
+        else "RAM-beschikbaarheid onbekend"
+    )
+    load_line = (
+        f"load/CPU {report['load_one_per_cpu']}"
+        if report.get("load_one_per_cpu") is not None
+        else "load/CPU onbekend"
+    )
+
+    if report.get("status") != "HOST_SNAPSHOT_OBSERVED":
+        labels = {
+            "meminfo": "RAM/swap", "loadavg": "load/CPU",
+            "root_disk": "root-schijf", "psi": "PSI",
+        }
+        coverage = report.get("source_coverage") or {}
+        incomplete = [
+            labels.get(key, key) + "=" + value
+            for key, value in sorted(coverage.items())
+            if value != "OBSERVED"
+        ]
+        coverage_note = (
+            "Brondekking onvolledig: " + ", ".join(incomplete) + ". "
+            if incomplete else "Brondekking onbekend. "
+        )
+        status_label = (
+            "PARTIËLE BRON" if report.get("status") == "HOST_PARTIAL"
+            else "ONBEKEND"
+        )
+        return (
+            f"Hostdruk: {status_label} ({report.get('pressure_hint', 'UNKNOWN')}); "
+            + memory_line + "; " + swap_line + "; " + load_line + "; "
+            + disk_note + ". " + coverage_note + basis_text()
+            + psi_sentence(report.get("psi"))
+            + " Geen autorisatie voor nieuwe workers of herstarts."
+        )
     return (
         f"Hostdruk: {report['pressure_hint']}; "
-        f"RAM beschikbaar {report['host_memory_available_mib']} MiB "
-        f"({report['host_memory_available_percent']}%); "
-        + swap_line + "; "
-        f"load/CPU {report['load_one_per_cpu']}; {disk_line}. "
-        + basis_text() + psi_sentence(report.get("psi")) + " "
+        + memory_line + "; " + swap_line + "; " + load_line + "; "
+        + disk_note + ". " + basis_text()
+        + psi_sentence(report.get("psi")) + " "
         "Alleen hostbron; geen cgroup-, claim- of nieuwe-worker-toelating."
     )
