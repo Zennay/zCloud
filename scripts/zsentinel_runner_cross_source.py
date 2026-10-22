@@ -401,11 +401,11 @@ def validate_additional_jobs(rows):
                 or type(job.get("head_sha")) is not str
                 or not SHA.fullmatch(job["head_sha"])
                 or type(job.get("job_status")) is not str
-                or job["job_status"] not in ("queued", "in_progress", "completed")
+                or job["job_status"] not in ("queued", "in_progress", "waiting", "pending", "completed")
                 or type(job.get("runner_route")) is not str
                 or job["runner_route"] not in ("self_hosted", "hosted_or_custom", "unknown")
                 or type(job.get("source_window")) is not str
-                or job["source_window"] not in ("queued", "in_progress", "failure")
+                or job["source_window"] not in ("queued", "in_progress", "waiting", "failure")
                 or job.get("observed_only") is not True
                 or job.get("work_resumed_verified") is not False
                 or job.get("action_authorized") is not False
