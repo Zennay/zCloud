@@ -1,6 +1,6 @@
 ### 22 oktober · samenhangende privé-uitvoer zonder bestandsconflicten
 
-De live herstelcockpit en de portfolio-cockpit gebruiken nu één gedeelde
+De live herstelcockpit, portfolio-cockpit en de losse recovery-refresh CLI gebruiken nu één gedeelde
 **preflight voor alle expliciet gekozen bron-, rapport- en ledgersporen**:
 `scripts/zsentinel_private_path_admission.py`. Voor de eerste GitHub-/Notion-/
 SQLite-observatie of cursor-/ledgerlock controleren beide ingangen of twee
@@ -8,7 +8,12 @@ uitvoerbestanden dezelfde uiteindelijke padnaam hebben, of een uitvoerpad
 samenvalt met een inputbestand, database, vorige snapshot, archiefmount of
 scandirectory. Deze check omvat onder andere de privé HTML/JSON/tekstexport,
 incident desk, diskrapport, owner handoff, agenda, merge-first briefing,
-portfolio CSV/JSON/ZIP, `--state` en `--window-state`.
+portfolio CSV/JSON/ZIP, `--state` en `--window-state`. De recovery-refresh CLI beschermt
+ook het originele bundlebestand en zijn opgeslagen PR-bron. Alle
+create-only uitvoerbestanden worden vóór de eerste observatie op bestaande
+bestanden gecontroleerd, inclusief achtergebleven en gebroken symlinks.
+Bestaande `--state`- en `--window-state`-ledgers mogen wél in hun
+eigen beheerpad blijven staan, nooit als alias van een ander rapport.
 
 Voorheen waren enkele onafhankelijke guards onvolledig: zo werd een live
 `--agenda-output` niet met `--action-output` vergeleken en kon in de
