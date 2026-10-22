@@ -51,7 +51,7 @@ NUMBER = re.compile(r"^[1-9][0-9]{0,8}$")
 # GitHub App actors have logins like dependabot[bot]. They may open PRs
 # and leave reviews; neither their casing nor their automation identity
 # is evidence of an independent human approval.
-GITHUB_ACTOR = re.compile(r"^[A-Za-z0-9-]{1,39}(?:\\[bot\\])?$")
+GITHUB_ACTOR = re.compile(r"^[A-Za-z0-9-]{1,39}(?:\[bot\])?$")
 OK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 # Owner attention only; this is not a required CI gate or proof of runner failure.
 QUEUED_CHECK_ATTENTION_AFTER_SECONDS = 30 * 60
