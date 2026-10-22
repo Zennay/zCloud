@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import unicodedata
 
 SCHEMA = "zsentinel-portfolio-pr-snapshot-delta-v1"
 BOARD = "zsentinel-portfolio-pr-collision-board-v1"
@@ -122,7 +123,26 @@ def _pins(view, repo):
     return result
 
 
-def _pairs(view, repo):
+def _validate_pair_heads(row, repo, pins):
+    """A saved collision edge is valid only for its sampled exact PR heads.
+
+    Stable open-PR listings alone do not make a stale or mixed pair receipt
+    current: enforce the same head, base commit and target branch at both
+    ends before showing collision changes to an operator.
+    """
+    for side in ("left", "right"):
+        pr = row.get(side)
+        if type(pr) is not dict:
+            raise ValueError("collision pair PR missing")
+        number = pr.get("number")
+        if (type(number) is not int or number not in pins
+                or pr.get("url") != f"https://github.com/{repo}/pull/{number}"
+                or (pr.get("head_sha"), pr.get("base_sha"), pr.get("base_ref"))
+                    != pins[number]):
+            raise ValueError("collision pair not bound to sampled PR HEAD and base")
+
+
+def _pairs(view, repo, pins):
     pairs = set()
     rows = view.get("shown_collision_pairs")
     if type(rows) is not list or len(rows) > 80:
@@ -130,15 +150,8 @@ def _pairs(view, repo):
     for row in rows:
         if type(row) is not dict:
             raise ValueError("collision row invalid")
-        numbers = []
-        for side in ("left", "right"):
-            pr = row.get(side)
-            if type(pr) is not dict or type(pr.get("number")) is not int:
-                raise ValueError("collision PR invalid")
-            number = pr["number"]
-            if pr.get("url") != f"https://github.com/{repo}/pull/{number}":
-                raise ValueError("collision source URL mismatch")
-            numbers.append(number)
+        _validate_pair_heads(row, repo, pins)
+        numbers = [row["left"]["number"], row["right"]["number"]]
         if numbers[0] == numbers[1]:
             raise ValueError("collision cannot refer to same PR")
         key = tuple(sorted(numbers))
@@ -152,12 +165,14 @@ def _scope_path(value):
     if (type(value) is not str or not 1 <= len(value) <= 180
             or value.startswith("/") or "\\" in value or "//" in value
             or any(part in ("", ".", "..") for part in value.split("/"))
-            or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+            or any(ord(char) < 32 or ord(char) == 127
+                   or unicodedata.category(char).startswith("C")
+                   for char in value)):
         raise ValueError("scope conflict path invalid")
     return value
 
 
-def _scope_pairs(view, repo):
+def _scope_pairs(view, repo, pins):
     """Return optional path-pair identities; None means a pre-feature snapshot."""
     rows = view.get("shown_path_scope_collision_pairs")
     if rows is None:
@@ -174,10 +189,9 @@ def _scope_pairs(view, repo):
         if type(left) is not dict or type(right) is not dict:
             raise ValueError("scope collision PR invalid")
         a, b = left.get("number"), right.get("number")
-        if (type(a) is not int or type(b) is not int or not 0 < a < b < 100000000
-                or left.get("url") != f"https://github.com/{repo}/pull/{a}"
-                or right.get("url") != f"https://github.com/{repo}/pull/{b}"):
-            raise ValueError("scope collision source URL mismatch")
+        if (type(a) is not int or type(b) is not int or not 0 < a < b < 100000000):
+            raise ValueError("scope collision source PR ordering invalid")
+        _validate_pair_heads(row, repo, pins)
         conflicts = row.get("path_conflicts")
         count = row.get("path_conflict_count_observed")
         truncated = row.get("path_conflicts_truncated")
@@ -285,14 +299,12 @@ def compare(previous, current):
         # A busy repository rarely yields a complete sample. Preserve
         # positive *sample-only* overlap movement without pretending it is
         # a newly introduced or truly resolved full-repository collision.
-        old_seen_pairs = _pairs(old, repo) if old_stable else set()
-        new_seen_pairs = _pairs(new, repo) if new_stable else set()
+        old_seen_pairs = _pairs(old, repo, old_pins) if old_stable else set()
+        new_seen_pairs = _pairs(new, repo, new_pins) if new_stable else set()
         old_pairs = old_seen_pairs if both_complete else set()
         new_pairs = new_seen_pairs if both_complete else set()
-        old_seen_scope = (_scope_pairs(old, repo)
-                          if old.get("source_status") != "unavailable" else None)
-        new_seen_scope = (_scope_pairs(new, repo)
-                          if new.get("source_status") != "unavailable" else None)
+        old_seen_scope = (_scope_pairs(old, repo, old_pins) if old_stable else None)
+        new_seen_scope = (_scope_pairs(new, repo, new_pins) if new_stable else None)
         # PR inventory completeness does not imply all *path examples*
         # were retained. Two 100-file PRs can exceed the per-pair display
         # cap even when every open PR itself was sampled. Comparing capped
