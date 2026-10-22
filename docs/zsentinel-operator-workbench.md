@@ -37,6 +37,21 @@ board-SHA-256's. Links vanuit HTML naar originele privébundels werken
 alleen als die originele bestanden naast de uitgepakte HTML blijven staan;
 de ZIP kopieert die originele bundels niet.
 
+**Bruikbare offline operatorcockpit:** de eerste pagina van `history.html`
+laat nu expliciet per bron zien of de oorspronkelijke GitHub-issue-inbox,
+queue, claims, PR-gates en PR-loze branchinventaris bij het opslaan recent,
+verouderd of **niet opgenomen** waren. Een verse boardaanmaak maakt oudere
+onderliggende broninformatie nooit opnieuw vers. De pagina bevat directe,
+alleen historische links naar de maximaal drie hoogste opgeslagen issues
+per project, een paar bestaande PR-kandidaten en het opgeslagen
+eigenaarvervolgadvies. In de detailkaart staan de overige brongebonden
+issues en PR-kandidaten met prioriteitslabels. Hiermee kan de eigenaar
+naar de **huidige** GitHub-status navigeren; er worden geen claims
+genomen, workflows gestart, merges uitgevoerd of actuele statussen
+gesuggereerd. De HTML gebruikt geen scripts, netwerkverzoeken of
+tracking; verwijzingen naar GitHub zijn gewone, expliciet aan te klikken
+uitgaande hyperlinks.
+
 Bij overdracht kan de ontvanger de pakketchecksums en de
 bronbinding van de CSV aan de JSON ook **zelf offline inspecteren** met
 [de nieuwe verificatie-CLI](../scripts/zsentinel_verify_history_package.py):
