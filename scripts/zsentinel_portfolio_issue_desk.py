@@ -134,6 +134,8 @@ def observe_portfolio(repositories, *, token=None, view="all"):
                     "problem": workflow["problem"],
                     "human_next_action": workflow["action"],
                     "status": workflow["status"],
+                    "single_issue_live_pr_review_command": issue["followup_command"],
+                    "live_pr_review_command_executed": False,
                     "claim_authorized": False,
                     "required_ci_verified": False,
                     "merge_authorized": False,
@@ -240,7 +242,10 @@ def as_markdown(result):
             "- **Problem:** " + issue["problem"],
             "- **Human action:** " + issue["human_next_action"] +
             " · code: " + issue["human_action_code"],
-            "- **Status:** " + issue["status"], "",
+            "- **Status:** " + issue["status"],
+            "- **Next existing-PR live desk:** `" +
+            issue["single_issue_live_pr_review_command"] +
+            "` (not executed)", "",
         ]
     if not result["issues"]:
         rows.append(
@@ -299,7 +304,10 @@ def as_html(result):
             " · unverified title hint: " + esc(issue["title_hint_unverified"]) + "</p>",
             "<p><strong>Problem:</strong> " + esc(issue["problem"]) + "<br>" +
             "<strong>Human action:</strong> " + esc(issue["human_next_action"]) +
-            "<br><strong>Status:</strong> " + esc(issue["status"]) + "</p></section>",
+            "<br><strong>Status:</strong> " + esc(issue["status"]) +
+            "</p><p><strong>Inspect existing PRs:</strong> <code>" +
+            esc(issue["single_issue_live_pr_review_command"]) +
+            "</code> (not executed)</p></section>",
         ]
     if not result["issues"]:
         rows.append("<section>No issues observed in the selected bounded windows. Live backlog absence is NOT verified.</section>")
@@ -316,6 +324,7 @@ def as_csv(result):
         "display_view", "source_label_p0", "source_label_p1",
         "issue_url", "priority_label", "title_hint_unverified",
         "human_action_code", "human_next_action", "status",
+        "single_issue_live_pr_review_command", "command_executed",
         "active_claim_verified", "required_ci_verified",
         "merge_authorized", "deploy_authorized",
     )
@@ -343,7 +352,7 @@ def as_csv(result):
             r["source_priority_counts"]["label_p1"] if r["source_priority_counts"] else None,
             "", "", "", "", "",
             "SOURCE COVERAGE IS NOT LIVE OWNER AUTHORITY",
-            False, False, False, False,
+            "", False, False, False, False, False,
         )])
     for issue in result["issues"]:
         r = known[issue["repository"]]
@@ -355,7 +364,8 @@ def as_csv(result):
             r["source_priority_counts"]["label_p1"], issue["url"],
             issue["explicit_priority"], issue["title_hint_unverified"],
             issue["human_action_code"], issue["human_next_action"],
-            issue["status"], False, False, False, False,
+            issue["status"], issue["single_issue_live_pr_review_command"],
+            False, False, False, False, False,
         )])
     return sink.getvalue()
 
