@@ -332,7 +332,7 @@ let blockedQueueFilterTimer=null;
 let blockedQueueObservedAt='';
 function blockedQueueIsParked(item){
   return !!item&&item.status==='blocked'&&(item.eligible===false||item.eligible===0)
-    &&item.worker_slot==null&&item.claim_expires==null;
+    &&item.worker_slot==null&&item.claimed_at==null&&item.claim_expires==null;
 }
 function blockedQueueSourceUrl(raw){
   // Queue evidence can contain user-supplied URLs. Only link exact GitHub
@@ -581,7 +581,7 @@ function blockedQueuePanel(){
         const context='<details class="blocked-queue-context" data-disclosure="block-'+esc(item.queue_id)+'">'
           +'<summary>Operator context and next step</summary>'
           +'<p><strong>Next step:</strong> '+esc(action)+'</p>'
-          +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state inconsistent: eligibility, worker slot or claim lease is not cleared. Inspect source before acting.</p>':'')
+          +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state inconsistent: eligibility, worker slot, claim timestamp or lease is still bound. Inspect source before acting.</p>':'')
           +'<dl>'
           +'<div><dt>Queue update</dt><dd>'+esc(lastUpdated||'Unknown')+'</dd></div>'
           +'<div><dt>Original queue entry</dt><dd>'+esc(createdAt||'Unknown')+'</dd></div>'
@@ -635,7 +635,8 @@ function blockedResumeFingerprint(item){
     String(item?.status??''),String(item?.eligible??''),
     String(item?.blocker??''),String(item?.evidence??''),
     String(item?.updated_at??''),String(item?.worker_slot??''),
-    String(item?.claim_owner??''),String(item?.claim_expires??'')
+    String(item?.claimed_at??''),String(item?.claim_owner??''),
+    String(item?.claim_expires??''),String(item?.source_url??'')
   ]);
 }
 async function resumeBlockedQueue(queueId,button){
@@ -680,7 +681,16 @@ async function resumeBlockedQueue(queueId,button){
       expected_evidence:String(matches[0].evidence||'')
     }),signal:AbortSignal.timeout(10000)});
     const result=await response.json().catch(()=>({}));
-    if(!response.ok||!result.ok)throw new Error(result.error||result.result?.reason||'Could not resume the parked task');
+    if(!response.ok||!result.ok){
+      const reason=result.result?.reason||result.error||'';
+      if(reason==='parked-task-still-bound-to-worker'){
+        throw new Error('Resume refused: the parked task still carries a worker claim or lease. Ask the current owner to settle it; no task was changed.');
+      }
+      if(reason==='dependency-source-changed-reconfirm'){
+        throw new Error('The dependency source changed. Review the refreshed task and confirm again before resuming.');
+      }
+      throw new Error(reason||'Could not resume the parked task');
+    }
     // HTTP 200 / ok:true may be an idempotent no-op if another worker moved
     // the row. Require the exact successful transaction receipt.
     if(result.result?.resumed!==true||result.result?.status!=='queued'||
@@ -1086,7 +1096,7 @@ function projectBlockedQueuePanel(project){
         attention?'Human Attention linked':'No human Attention in loaded snapshot')+'</small>'
       +(source?'<div class="blocked-queue-links"><a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Open source issue / PR ↗</a></div>':'')
       +'</div><button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'
-      +(parked?'':' disabled title="Current parked-task owner or lease state inconsistent"')
+      +(parked?'':' disabled title="Current parked-task owner, claim timestamp or lease state inconsistent"')
       +'>Confirm dependency cleared</button></article>';
   }).join('');
   return '<section class="blocked-queue-panel blocked-project-panel">'
