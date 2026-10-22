@@ -74,6 +74,9 @@
  
 /* Dependency holds are preserved queue work, separate from terminal drops and human gates. */
 
+.card-hold-tag{display:inline-flex;align-items:center;gap:5px;border:1px solid #7b5877;border-radius:999px;background:#342032;color:#f8c9ec;font-size:10px;font-weight:700;line-height:1.25;padding:5px 8px}
+.project-card-link:focus-visible .card-hold-tag{outline:2px solid #f8c9ec;outline-offset:2px}
+@media(max-width:760px){.card-hold-tag{font-size:10px;padding:5px 7px}}
 /* Project-level recovery mirrors the portfolio's exact-source queue controls. */
 .blocked-project-panel{margin:0 0 20px;padding:16px 18px}
 .blocked-project-panel .blocked-queue-head h2{font-size:17px}
