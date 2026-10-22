@@ -404,18 +404,18 @@ def _one(repo, number, token):
         # an unrelated exact-head CI job is still queued. Do not hide it
         # behind a generic "wait for CI" message.
         gate_step = "owner_address_exact_head_review_changes"
-    elif not approved and not (requested_people or requested_teams):
-        # An independent review request is actionable while existing CI is
-        # queued. Do not artificially serialize review behind an unrelated
-        # slow or unassigned runner; no review is submitted by this observer.
-        gate_step = "request_independent_current_head_review"
-    elif (statuses["pending_observed"] or statuses["other_observed"] or
-          legacy_states["pending"]):
-        gate_step = "wait_for_existing_current_head_checks"
     elif not check_rows and not latest_context:
         gate_step = "verify_missing_current_head_checks_and_rules"
     elif mergeable is None:
         gate_step = "wait_for_github_mergeability_evaluation"
+    elif not approved and not (requested_people or requested_teams):
+        # An independent review request is actionable while existing CI is
+        # queued. Never hide missing CI sources or unknown mergeability.
+        # This observer itself does not submit a review or a workflow job.
+        gate_step = "request_independent_current_head_review"
+    elif (statuses["pending_observed"] or statuses["other_observed"] or
+          legacy_states["pending"]):
+        gate_step = "wait_for_existing_current_head_checks"
     elif not approved and (requested_people or requested_teams):
         gate_step = "wait_for_requested_independent_review"
     elif not approved:
