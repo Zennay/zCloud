@@ -628,7 +628,7 @@ def main():
                         ),
                         "full_repo_ci_inventory": False,
                     }
-                except (OSError, ValueError, TypeError):
+                except (OSError, ValueError, TypeError, KeyError, AttributeError):
                     decision["runner_cross_source_unavailable"] = {
                         "stage": "local_source_unavailable",
                         "problem": "De exacte lokale zCloud-runnerbron is niet beschikbaar.",
@@ -694,9 +694,21 @@ def main():
                     if rendered.count("<main>") != 1:
                         raise ValueError("incompatible exact runner correlation view")
                     discovery_view = decision.get("runner_cross_source_discovery", {})
-                    extra_jobs = additional_jobs_html(
-                        discovery_view.get("additional_job_links", [])
-                        if isinstance(discovery_view, dict) else [])
+                    try:
+                        extra_jobs = additional_jobs_html(
+                            discovery_view.get("additional_job_links", [])
+                            if isinstance(discovery_view, dict) else None)
+                    except (ValueError, TypeError, KeyError, AttributeError):
+                        # Corrupt optional secondary links must not suppress the
+                        # primary exact-job/host report, and must never be trusted.
+                        extra_jobs = (
+                            '<section class="panel warn"><h2>Aanvullende GitHub-jobs</h2>'
+                            '<p>ONBEKEND · Bron bevat geen geldige begrensde exacte joblinks; '
+                            'deze links zijn niet weergegeven.</p>'
+                            '<p>Geen retry-, merge- of runnerautorisatie.</p></section>')
+                        if isinstance(discovery_view, dict):
+                            discovery_view["additional_job_links"] = []
+                            discovery_view["additional_links_coverage"] = "degraded_untrusted_receipt"
                     rendered = rendered.replace(
                         "<main>", "<main>" + runner_cross_source_html(
                             decision["runner_cross_source"]) + extra_jobs, 1)
