@@ -62,9 +62,28 @@ def observe_portfolio(repositories, *, token=None, view="all"):
                 "source_priority_counts": None,
             })
             continue
-        source = observe_repo_inbox(
-            name, token=token, display_all_sample=True,
-        )
+        try:
+            source = observe_repo_inbox(
+                name, token=token, display_all_sample=True,
+            )
+        except GitHubReadError:
+            # A provider authorization/rate-limit error may be raised
+            # *before* the first source page is returned. Preserve prior
+            # projects in the private handoff, stop future API calls, and
+            # never classify the unread repository as having no incidents.
+            recorded.append({
+                "repository": name, "state": "SOURCE_UNAVAILABLE",
+                "observed_at_utc": None, "sampled_count": None,
+                "recent_window_complete": False,
+                "source_partial_or_unknown": True,
+                "provider_issue_count": None,
+                "get_attempts": None,
+                "source_error": "github_source_read_failed",
+                "unknown_issue_absence": True,
+                "source_priority_counts": None,
+            })
+            stopped_for_provider = True
+            continue
         error = source["source_error"]
         rank_totals = {
             "label_p0": sum(issue["triage_rank"] == 0 for issue in source["issues"]),
@@ -149,7 +168,15 @@ def observe_portfolio(repositories, *, token=None, view="all"):
             break
 
     source_sampled = sum((r["sampled_count"] or 0) for r in recorded)
-    actual_gets = sum(r["get_attempts"] for r in recorded)
+    # Unknown failed-request counts must not be misrepresented as a
+    # measured total. The absolute budget still holds across 2–6 sources.
+    attempts_known = all(
+        type(r["get_attempts"]) is int for r in recorded
+    )
+    actual_gets = (
+        sum(r["get_attempts"] for r in recorded)
+        if attempts_known else None
+    )
     eligible_count = sum(
         len([issue for issue in ranked.get(repo, {}).get(priority, [])
              if issue["triage_rank"] == priority])
@@ -166,6 +193,7 @@ def observe_portfolio(repositories, *, token=None, view="all"):
         "read_count": sum(x["observed_at_utc"] is not None for x in recorded),
         "provider_stopped_early": stopped_for_provider,
         "bounded_get_attempts": actual_gets,
+        "bounded_get_attempts_unknown": not attempts_known,
         "bounded_get_ceiling": 7 * len(repositories),
         "total_sampled_issues": source_sampled,
         "source_priority_counts": all_priority_counts,
