@@ -4216,7 +4216,7 @@ python3 scripts/zsentinel_verify_operator_bundle.py \\
   --format markdown
 ```
 
-The bundle's original stem is the same `--name` passed when creating it.
+The bundle's original stem is the same `--name` passed when creating it.\nFor a new bundle, the original one-shot command also accepts optional\n`--verify-after-write` to read back its receipt and all artifacts before\nreporting `delivery_integrity_verified=true`. The default creation flow\nremains unchanged; if requested verification fails, the command refuses\nto report success, but does not remove previously created user files.
 The verifier opens its user-owned private (0700) directory and the exact
 create-only, regular, single-link 0600 files through descriptor-bound,
 non-following reads. It refuses missing, replaced, oversized, non-private or
