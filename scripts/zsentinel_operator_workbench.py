@@ -3524,6 +3524,90 @@ document.getElementById('downloadProjectPacket').addEventListener('click',()=>{
   clearProjectPacketPreview('Owner packet not exported: '+err.message);
  }
 });
+// Imported project packets can restore a LOCAL human follow-up only.
+// The original board never changes, and imported issue/PR/queue evidence
+// must byte-for-byte represent the same current saved board projection.
+let pendingProjectPacketImport=null;
+function clearProjectPacketImport(message){
+ pendingProjectPacketImport=null;
+ document.getElementById('projectPacketImportPanel').hidden=true;
+ document.getElementById('projectPacketImportSummary').textContent='';
+ document.getElementById('applyProjectPacketImport').disabled=true;
+ if(message)document.getElementById('projectPacketScope').textContent=message;
+}
+document.getElementById('projectPacketFile').addEventListener('change',async event=>{
+ const file=event.target.files?.[0];
+ if(!file)return;
+ clearProjectPacketImport();
+ try{
+  if(file.size<4||file.size>262144)
+   throw Error('Private packet must be bounded to 256 KiB');
+  const raw=await file.arrayBuffer();
+  const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));
+  if(!value||typeof value!=='object'||Array.isArray(value)||
+     value.kind!=='zsentinel-single-project-recovery-packet'||
+     value.schema_version!==1||typeof value.project!=='string')
+   throw Error('Unsupported project packet format');
+  const project=value.project;
+  if(!board.project_operations.some(row=>row.project===project))
+   throw Error('Project does not exist in this exact source board');
+  const original={...value};
+  delete original.private_operator_handoff;
+  if(JSON.stringify(original)!==JSON.stringify(projectRecoveryPacket(project,false)))
+   throw Error('Original source board or project evidence differs. No import.');
+  const note=value.private_operator_handoff;
+  if(!note||typeof note!=='object'||Array.isArray(note)||
+     Object.keys(note).sort().join('|')!==
+     ['contact_label','decision','local_annotation_only','no_owner_claim_granted',
+      'note','review_date_utc'].sort().join('|')||
+     note.local_annotation_only!==true||note.no_owner_claim_granted!==true||
+     !recoveryDecisions.has(note.decision)||
+     typeof note.contact_label!=='string'||note.contact_label.length>80||
+     contactLabel(note.contact_label)!==note.contact_label||
+     typeof note.note!=='string'||note.note.length>500||
+     Array.from(note.note).some(ch=>ch.codePointAt(0)<32&&ch!=='\\n'&&ch!=='\\r')||
+     !validFollowupDate(note.review_date_utc))
+   throw Error('Packet contains no valid opt-in local project handoff');
+  const old=recoveryHandoffs.get(project)||null;
+  const next={decision:note.decision,owner:note.contact_label,
+              due:note.review_date_utc,note:note.note};
+  pendingProjectPacketImport={
+   project,prior:JSON.stringify(old),next,
+   source_sha256:boardSha
+  };
+  document.getElementById('projectPacketImportPanel').hidden=false;
+  document.getElementById('projectPacketImportSummary').textContent=
+   'Project: '+project+'\\nSource board SHA256: '+boardSha+
+   '\\nLocal follow-up will be replaced for THIS project only.'+
+   '\\nDecision: '+next.decision+'; contact label: '+
+   (next.owner||'(empty)')+'; review date: '+(next.due||'(none)')+
+   '\\nPrivate note: '+(next.note||'(empty)')+
+   '\\nNo claim, issue, PR, queue, CI, review or release status will change.';
+  document.getElementById('projectPacketImportStatus').textContent=
+   'Review contents carefully. Import affects local human notes only.';
+  document.getElementById('applyProjectPacketImport').disabled=false;
+ }catch(err){
+  clearProjectPacketImport('Project packet rejected: '+err.message);
+ }finally{
+  event.target.value='';
+ }
+});
+document.getElementById('applyProjectPacketImport').addEventListener('click',()=>{
+ const pending=pendingProjectPacketImport;
+ if(!pending)return;
+ const prior=JSON.stringify(recoveryHandoffs.get(pending.project)||null);
+ if(prior!==pending.prior||pending.source_sha256!==boardSha){
+  clearProjectPacketImport('Existing project note changed; import cancelled.');
+  return;
+ }
+ recoveryHandoffs.set(pending.project,pending.next);
+ clearProjectPacketImport('Single-project private follow-up restored locally.');
+ clearProjectPacketPreview('Imported notes changed. Preview project before exporting.');
+ syncRecoveryControls();drawList();drawDetail();
+ setUnsaved(true);invalidateBrief();
+ status.textContent='Imported human note for '+pending.project+
+  ' only; export private handoff to preserve changes. No remote action.';
+});
 document.getElementById('projectRecoveryDesk').addEventListener('input',event=>{
  const target=event.target;
  const project=target?.dataset?.recoveryChoice||target?.dataset?.recoveryNote||
