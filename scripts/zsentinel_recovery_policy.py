@@ -41,7 +41,8 @@ EVIDENCE_FIELDS = frozenset({
     "dependency_unchanged", "dependency_cleared", "blocked_task_id",
     "blocked_task_preserved", "previous_blocker_preserved", "operator_attestation",
     "blocked_source_guarded", "blocked_task_noneligible", "closure_reason",
-    "queue_lease_state", "task_claim_state",
+    "queue_lease_state", "task_claim_state", "task_claim_source_available",
+    "blocked_source_status",
     "escalation_reason", "permission_required", "irreversible_risk",
     "safe_routes_exhausted", "capacity", "exact_head",
     "required_ci", "independent_review", "branch_protection", "owner_authorized",
@@ -63,6 +64,7 @@ ENUMS = {
     "running_jobs": {"none", "active", "unknown"},
     "dependency_kind": {"external", "internal", "unknown"},
     "queue_lease_state": {"clear", "bound", "unknown"},
+    "blocked_source_status": {"blocked", "queued", "claimed", "running", "verifying", "dropped", "unknown"},
     "task_claim_state": {"none", "active", "unknown"},
     "dependency_scope": {"single_task", "project_wide", "unknown"},
     "escalation_reason": {"permission_required", "irreversible_risk", "safe_routes_exhausted", "unknown"},
@@ -72,6 +74,7 @@ BOOL_FIELDS = {
     "scope_disjoint", "dependency_unchanged", "dependency_cleared",
     "blocked_task_preserved", "previous_blocker_preserved", "operator_attestation",
     "blocked_source_guarded", "blocked_task_noneligible",
+    "task_claim_source_available",
     "permission_required", "irreversible_risk", "safe_routes_exhausted",
     "owner_authorized", "root_cause_confirmed", "release_approval",
     "runtime_owner_authorized", "human_approval",
@@ -319,9 +322,9 @@ def recommended_next_step_code(action, blockers):
         return "identify_exact_blocked_task"
     if "terminal_reason_missing" in codes:
         return "obtain_concrete_terminal_reason"
-    if codes & {"source_guard_missing", "blocked_task_eligible"}:
+    if codes & {"source_guard_missing", "blocked_task_eligible", "blocked_source_not_parked"}:
         return "refresh_exact_blocked_source"
-    if codes & {"queue_lease_not_clear", "task_claim_not_clear"}:
+    if codes & {"queue_lease_not_clear", "task_claim_not_clear", "task_claim_source_unknown"}:
         return "resolve_claim_with_owner"
     if codes & {"escalation_reason_missing", "permission_gate_unconfirmed",
                 "irreversible_risk_unconfirmed", "safe_routes_not_exhausted"}:
@@ -385,9 +388,9 @@ def recommended_next_step(action, blockers, required_evidence):
         return "Identify the exact blocked queue item from current source evidence; do not change an entire project lane."
     if "terminal_reason_missing" in codes:
         return "Explain why the exact task is permanently obsolete; an unresolved dependency alone is not a closure reason."
-    if codes & {"source_guard_missing", "blocked_task_eligible"}:
+    if codes & {"source_guard_missing", "blocked_task_eligible", "blocked_source_not_parked"}:
         return "Refresh the complete blocked-task identity, source version and original evidence before terminal action."
-    if codes & {"queue_lease_not_clear", "task_claim_not_clear"}:
+    if codes & {"queue_lease_not_clear", "task_claim_not_clear", "task_claim_source_unknown"}:
         return "Have the existing owner reconcile queue leases and task claims; never retire an active or unknown claim."
     if codes & {"escalation_reason_missing", "permission_gate_unconfirmed",
                 "irreversible_risk_unconfirmed", "safe_routes_not_exhausted"}:
@@ -618,6 +621,9 @@ def evaluate(data, max_age_minutes, *, now=None):
         require(value("blocked_task_noneligible") is True,
                 "blocked_task_eligible", "The blocked row must be eligible=0.",
                 ("evidence.blocked_task_noneligible",))
+        require(value("blocked_source_status") == "blocked",
+                "blocked_source_not_parked", "The observed queue status must be blocked.",
+                ("evidence.blocked_source_status",))
         require(value("blocked_source_guarded") is True,
                 "source_guard_missing",
                 "Fresh full identity, status, version, blocker and evidence must match.",
@@ -639,6 +645,10 @@ def evaluate(data, max_age_minutes, *, now=None):
                 "queue_lease_not_clear",
                 "Worker slot, claim timestamp and lease must all be clear.",
                 ("evidence.queue_lease_state",))
+        require(value("task_claim_source_available") is True,
+                "task_claim_source_unknown",
+                "The separate task-claim source must be available.",
+                ("evidence.task_claim_source_available",))
         require(value("task_claim_state") == "none",
                 "task_claim_not_clear",
                 "Separate task-claim source must explicitly show none.",
@@ -792,8 +802,8 @@ def evaluate(data, max_age_minutes, *, now=None):
 # Human-review ordering only; never infer incident severity or live authority.
 WORKORDER_ORDER = {
     "merge_pr": 0, "restart_runner": 1, "resume_blocked": 2,
-    "close_blocked": 3, "route_root_fix": 4, "retry_ci": 4, "deploy": 5,
-    "escalate_human": 6, "park_blocker": 7, "assign_independent_work": 8,
+    "close_blocked": 3, "route_root_fix": 4, "retry_ci": 5, "deploy": 6,
+    "escalate_human": 7, "park_blocker": 8, "assign_independent_work": 9,
 }
 
 
