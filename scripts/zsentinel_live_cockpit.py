@@ -576,7 +576,7 @@ def main():
             decision["local_runner_processes"] = admit_local_runners(observe_local_runners())
             if "cloud" in args.project:
                 from zsentinel_local_runner_observer import observe_local_runner
-                from zsentinel_runner_cross_source import combine
+                from zsentinel_runner_cross_source import combine, validate_additional_jobs
                 github_source = provenance.get("github_jobs")
                 refreshed = (
                     github_source.get("refreshed_projects", [])
@@ -596,6 +596,13 @@ def main():
                     else "unknown")
                 incomplete_windows = cloud_coverage.get("incomplete_windows", [])
                 not_scanned_windows = cloud_coverage.get("not_scanned_windows", [])
+                raw_secondary_links = cloud_coverage.get("additional_job_links", [])
+                try:
+                    secondary_links = validate_additional_jobs(raw_secondary_links)
+                    secondary_links_coverage = "bounded_observed"
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    secondary_links = []
+                    secondary_links_coverage = "degraded_untrusted_receipt"
                 if (not refreshed and discovery_status == "degraded_unavailable"
                         or not refreshed and bool(incomplete_windows)
                         or not refreshed and bool(not_scanned_windows)):
@@ -621,11 +628,8 @@ def main():
                             if value in ("queued", "in_progress", "failure")
                         ] if isinstance(not_scanned_windows, list) else [],
                         "request_count": discovery_source.get("request_count"),
-                        "additional_job_links": (
-                            cloud_coverage.get("additional_job_links", [])
-                            if isinstance(cloud_coverage.get("additional_job_links", []), list)
-                            else None
-                        ),
+                        "additional_job_links": secondary_links,
+                        "additional_links_coverage": secondary_links_coverage,
                         "full_repo_ci_inventory": False,
                     }
                 except (OSError, ValueError, TypeError, KeyError, AttributeError):
@@ -694,11 +698,8 @@ def main():
                     if rendered.count("<main>") != 1:
                         raise ValueError("incompatible exact runner correlation view")
                     discovery_view = decision.get("runner_cross_source_discovery", {})
-                    try:
-                        extra_jobs = additional_jobs_html(
-                            discovery_view.get("additional_job_links", [])
-                            if isinstance(discovery_view, dict) else None)
-                    except (ValueError, TypeError, KeyError, AttributeError):
+                    if (isinstance(discovery_view, dict) and
+                            discovery_view.get("additional_links_coverage") == "degraded_untrusted_receipt"):
                         # Corrupt optional secondary links must not suppress the
                         # primary exact-job/host report, and must never be trusted.
                         extra_jobs = (
@@ -706,9 +707,10 @@ def main():
                             '<p>ONBEKEND · Bron bevat geen geldige begrensde exacte joblinks; '
                             'deze links zijn niet weergegeven.</p>'
                             '<p>Geen retry-, merge- of runnerautorisatie.</p></section>')
-                        if isinstance(discovery_view, dict):
-                            discovery_view["additional_job_links"] = []
-                            discovery_view["additional_links_coverage"] = "degraded_untrusted_receipt"
+                    else:
+                        extra_jobs = additional_jobs_html(
+                            discovery_view.get("additional_job_links", [])
+                            if isinstance(discovery_view, dict) else [])
                     rendered = rendered.replace(
                         "<main>", "<main>" + runner_cross_source_html(
                             decision["runner_cross_source"]) + extra_jobs, 1)
