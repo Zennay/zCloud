@@ -39,6 +39,12 @@ MAX_TIMELINE_EVENTS = 12
 MAX_WORKER_EVENT_LOOKBACK = 240
 
 
+def _source_current(moment):
+    """Display-time freshness is advisory, never queue/worker authorization."""
+    age = (datetime.now(UTC) - moment.astimezone(UTC)).total_seconds()
+    return -120 <= age <= 600
+
+
 def _age(value, now):
     timestamp = _utc_datetime(value)
     if timestamp is None:
@@ -742,6 +748,10 @@ def operator_text(source):
     lines = ["WORKER VOORTGANG · bronmoment " + observed +
              " · dekking " + coverage + " · projecten " + ",".join(projects) +
              " · read-only eventbewijs; GEEN bewezen product-/claimhervatting."]
+    if not _source_current(moment):
+        lines.append("HISTORISCHE/ONBETROUWBARE BRONKLOK · ouder dan tien minuten "
+                     "of >2 minuten in de toekomst. Geen actuele eigenaaractie "
+                     "bewezen; vernieuw eerst de read-only bron.")
     for row in source.get("owner_followup_candidates", []):
         lines.append(
             f"  PRIORITEIT eigenaarcontrole · {row['project_id']} worker {row['worker_slot']}"
@@ -829,6 +839,7 @@ def worker_progress_html(source):
         raise ValueError("invalid worker source timestamp") from exc
     if moment.tzinfo is None or moment.utcoffset() is None:
         raise ValueError("worker source timestamp must have timezone")
+    source_current = _source_current(moment)
     # Archived v1 decisions may predate the additive chronology fields.
     # Preserve their historical cards while clearly marking newer evidence
     # UNKNOWN. Never interpret missing inbox data as zero problems.
@@ -873,6 +884,7 @@ def worker_progress_html(source):
             escape(entry["safe_followup"]) +
             " · blokkades binnen beperkte sample: " + str(count) +
             " · voortgangssignalen: " + str(progress) +
+            (" · HISTORISCHE BRON; huidige blokkade ONBEKEND" if not source_current else "") +
             " · claim NIET geverifieerd.</li>"
         )
     inbox_html = (
@@ -1152,7 +1164,11 @@ def worker_progress_html(source):
         '<section aria-label="Read-only browserworker voortgang">'
         '<h2>Browserworkers · werkelijk eventbewijs</h2>'
         '<p>Bronmoment: ' + escape(observed) + ' · dekking: ' + escape(coverage) +
-        ' · projecten: ' + escape(", ".join(projects)) + '.</p>'
+        ' · projecten: ' + escape(", ".join(projects)) + '.</p>' +
+        ('<p class="banner">HISTORISCHE OF ONBETROUWBARE BRONKLOK: ouder '
+         'dan tien minuten of meer dan twee minuten in de toekomst. '
+         'Actuele blokkades/claims zijn ONBEKEND; ververs de read-only bron.</p>'
+         if not source_current else '') +
         '<p>Dringende eigenaarcontrole eerst: gepauzeerd met claim, herhaalde'
         ' actuele browserblokkades en ontbreken van voortgang. Iedere worker'
         ' bevat maximaal 12 recente metadata-events en een begrensde'
