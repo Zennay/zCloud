@@ -168,8 +168,10 @@ HTML-rapport toont alle drie bronnen naast de bestaande eigenaar- en releasekaar
   voor aanvullende eigenaarbeoordeling. Dit is **runnable/I/O-vraag**,
   niet werkelijk CPU-gebruik of een bewezen individuele schuldige worker.
 - `memory.full` of `io.full` van minstens **10% van de laatste 10 seconden**
-  is een blokkadesignaal voor gelijktijdige zware taken. Ontbrekende of
-  ongeldige CPU-/PSI-bronnen worden **onbekend/partieel**, nooit nul druk.
+  is een blokkadesignaal voor gelijktijdige zware taken. CPU-load en elke PSI-meting
+  worden onafhankelijk beoordeeld: als load-average ontbreekt, blijven geldige
+  memory-/I/O-stall-signalen zichtbaar naast `HOST_PRESSURE_INCOMPLETE`.
+  Ontbrekende of ongeldige CPU-/PSI-bronnen worden **onbekend/partieel**, nooit nul druk.
 
 - Iedere `/proc/pressure/*`-bron wordt via één open filehandle tot maximaal 2048 bytes gelezen. Een te grote of niet-ASCII bron wordt onbekend/partieel; er wordt niet eerst de volledige inhoud ingelezen en daarna pas afgekapt.
 - Het gecombineerde `host_capacity`-beslisbord en het bestaande
