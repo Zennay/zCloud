@@ -3044,6 +3044,7 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
     ts=now()
     criteria=str(completion_criteria or '')
     source=str(source_url or '')
+    admission='created'
     with connect() as c:
         # One explicit writer transaction protects the identity inspection and
         # its subsequent insert/update. A duplicate queue ID must NEVER rewrite
@@ -3068,7 +3069,9 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
             if (existing['title']==title and existing['priority']==priority and
                     existing['completion_criteria']==criteria and
                     existing['source_url']==source):
-                return _portfolio_queue_row(existing)
+                item=_portfolio_queue_row(existing)
+                item['enqueue_admission']='existing_unchanged'
+                return item
             # Queued does not mean untouched: a worker may previously have
             # claimed it and returned CONTINUE. Rewriting its source after any
             # receipt or attempt would disconnect that evidence from the work.
@@ -3084,6 +3087,7 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
                       (title,priority,criteria,source,ts,queue_id,project_id))
             if c.execute('SELECT changes()').fetchone()[0]!=1:
                 raise ValueError('Queue-admission status veranderde; enqueue geweigerd')
+            admission='updated_unclaimed'
         else:
             c.execute("""INSERT INTO portfolio_queue(
                 queue_id,project_id,title,priority,status,eligible,completion_criteria,source_url,
@@ -3092,7 +3096,9 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
                 (queue_id,project_id,title,priority,'queued',1,criteria,
                  source,ts,ts,parent_queue_id))
         row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(queue_id,)).fetchone()
-    return _portfolio_queue_row(row)
+    item=_portfolio_queue_row(row)
+    item['enqueue_admission']=admission
+    return item
 
 def portfolio_write_continuation(project_id,parent_queue_id=None):
     project_id=str(project_id or '').strip().lower()
