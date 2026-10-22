@@ -1921,6 +1921,8 @@ def main(argv=None):
                         help="bounded read-only P0/P1-first recent issue inbox for one Zennay/<repo>")
     parser.add_argument("--portfolio-repo", action="append",
                         help="repeat 2–6 canonical repos for one private P0-first portfolio desk")
+    parser.add_argument("--portfolio-previous-snapshot",
+                        help="prior private portfolio JSON for source-conservative visible-card comparison")
     parser.add_argument("--portfolio-view", choices=(
         "all", "explicit-critical", "critical-and-title-hints",
     ), default="all", help="source-only portfolio issue display focus")
@@ -1958,6 +1960,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.portfolio_view != "all" and not args.portfolio_repo:
         parser.error("--portfolio-view requires --portfolio-repo")
+    if args.portfolio_previous_snapshot and not args.portfolio_repo:
+        parser.error("--portfolio-previous-snapshot requires --portfolio-repo")
     if args.portfolio_repo and (
         not args.output or args.live_inbox_repo or args.live_issue_url
         or args.input or args.batch_input or args.case_input or args.template
@@ -2051,11 +2055,22 @@ def main(argv=None):
                 as_markdown as portfolio_markdown,
                 as_csv as portfolio_csv,
             )
+            previous = None
+            if args.portfolio_previous_snapshot:
+                from zsentinel_portfolio_history import (
+                    load_previous_snapshot, compare_snapshots,
+                )
+                previous = load_previous_snapshot(args.portfolio_previous_snapshot)
+                if (previous["repositories_requested"] != args.portfolio_repo or
+                        previous["display_view"] != args.portfolio_view):
+                    raise PolicyInputError("previous snapshot requires same repo order and view")
             report = observe_portfolio(
                 args.portfolio_repo,
                 token=os.environ.get("GITHUB_TOKEN") or None,
                 view=args.portfolio_view,
             )
+            if previous is not None:
+                report["comparison"] = compare_snapshots(previous, report)
             output = (
                 portfolio_html(report) if args.format == "html" else
                 portfolio_markdown(report) if args.format == "markdown" else
