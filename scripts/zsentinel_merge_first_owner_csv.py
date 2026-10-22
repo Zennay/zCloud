@@ -186,7 +186,9 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
             coverage_status = card.get("issue_coverage", "unavailable")
             coverage_note = card.get(
                 "issue_coverage_note",
-                "Issue coverage is UNKNOWN; backlog completeness cannot be inferred.")
+                ISSUE_COVERAGE_NOTES.get(
+                    coverage_status,
+                    "Issue coverage is UNKNOWN; backlog completeness cannot be inferred."))
             if (coverage_status not in ("partial", "degraded", "unavailable")
                     or type(coverage_note) is not str or not coverage_note
                     or len(coverage_note) > 300):
@@ -295,8 +297,7 @@ def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None
             "board_issue_inventory_complete_verified": False,
             "issue_source_coverage": card.get("issue_coverage", "unavailable"),
             "issue_source_coverage_note": card.get(
-                "issue_coverage_note",
-                "Issue coverage is UNKNOWN; backlog completeness cannot be inferred."),
+                "issue_coverage_note", ISSUE_COVERAGE_NOTES["unavailable"]),
             "pr_url": "", "linked_issue_count": 1,
             "multiple_issues_share_pr": False, "issue_has_alternative_prs": False,
             "saved_peer_pr_count": 0, "saved_peer_pr_urls": "",
