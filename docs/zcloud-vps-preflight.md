@@ -303,7 +303,8 @@ python3 scripts/zcloud_vps_preflight.py \
 ```
 
 The snapshot reports:
-- `queued_claims`: number of currently **claimed** queue rows, conservatively counting stale claims rather than assuming it is safe to interrupt them. This is not the total number of runnable workers.
+- `active_queue_items`: queue rows whose status is `claimed`, `running` or `verifying`. These are all treated as active work even when browser events are stale; ordinary `queued` work is not yet admitted and is not included.
+- `queued_claims`: backward-compatible count of rows whose status is exactly `claimed`; it is a subset of `active_queue_items`, not the total number of active queue rows.
 - `durable_claims`: outstanding entries in the separate `task_claims` table, again counted conservatively.
 - `fresh_generating_slots`: distinct project+slot keys whose latest event among a bounded read-only snapshot is no older than 300 seconds and whose browser-declared generating flag is true.
 - `events_sample_complete`: whether the bounded sample covers the recent observation window; when the source is unavailable, malformed, in the future, or sampling is incomplete, the report **blocks instead of guessing idle**.
