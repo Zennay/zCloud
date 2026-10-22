@@ -1,3 +1,25 @@
+## 22 oktober 2026 · partiële PSI verbergt geen bekende hostdruk meer
+
+De read-only Linux PSI-waarnemer gaf bij één ontbrekende kernelbron `status=PARTIAL`
+terug met `pressure_hint=UNKNOWN`, ook als een andere correct gelezen bron
+bijvoorbeeld zware CPU-stalls meldde. Daardoor verdween een bestaand
+signaal uit de gecombineerde hostdruk en de eigenaaractie.
+
+De waarnemer classificeert nu ook bij onvolledige dekking de **bekende bronnen
+afzonderlijk**: een bekende HIGH/ELEVATED-drempel wordt behouden met
+`pressure_scope=OBSERVED_SOURCES_ONLY` en `pressure_basis`. Ontbrekende
+bronnen blijven UNKNOWN. Als geen bekende bron een drempel overschrijdt,
+blijft de algemene hint UNKNOWN in plaats van een onterechte
+`NO_LOCAL_THRESHOLD_CROSSED`. Bij volledige dekking blijven de bestaande
+drempels van kracht.
+
+De offline HTML-druktafel toont nu de bekende meetwaarden naast expliciete
+UNKNOWN-cellen en een waarschuwingsregel over de ontbrekende dekking.
+De tekstuele samenvatting en de prioritaire eigenaaractie noemen dezelfde
+waargenomen PSI-druk, maar verklaren geen specifieke GitHub-job geblokkeerd
+en verlenen geen worker-, claim-, restart- of deployrechten. Er is geen
+queue-/service-mutatie of QA-suite aan gekoppeld.
+
 ## 22 oktober 2026 · P0-eigenaarwerk blijft zichtbaar, ook zonder nieuwe wachtrijtaak
 
 De bestaande vier-lane cockpit had een functionele volgordefout: de
