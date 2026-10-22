@@ -467,6 +467,28 @@ def project_operations_html(view: dict) -> str:
     Deliberately never embed opaque claim identifiers or runtime task titles.
     """
     sections = []
+    freshness = view.get("source_freshness", {})
+    source_clocks = view.get("project_source_observed_at_utc", {})
+    source_labels = (
+        ("inbox", "GitHub issue inbox"),
+        ("retry", "Queue/retry observation"),
+        ("branches", "Branch inventory"),
+        ("prs", "PR gate observations"),
+    )
+    freshness_rows = []
+    for key, label in source_labels:
+        value = freshness.get(key)
+        state = ("fresh at capture" if value is True else
+                 "not fresh at capture" if value is False else "UNKNOWN")
+        freshness_rows.append(
+            '<li><strong>' + escape(label) + '</strong> · ' +
+            escape(state) + ' · observed UTC: ' +
+            escape(source_clocks.get(key, "UNKNOWN")) + '</li>')
+    source_freshness_html = (
+        '<details><summary>Original source freshness and clocks (snapshot)</summary>'
+        '<p>These are the saved board’s independent source flags and timestamps, '
+        'not a live refresh. UNKNOWN means no admitted clock/flag was available.</p>'
+        '<ul>' + ''.join(freshness_rows) + '</ul></details>')
     def rank(row):
         queue = row["queue_observation"] or {}
         counts = row["issue_counts_in_sample"]
@@ -571,7 +593,8 @@ def project_operations_html(view: dict) -> str:
         '<p>The saved issue sample may contain zero issues for a project '
         'while a bounded queue observation still shows claim pressure. '
         'These are historical human investigation leads, never worker '
-        'availability, confirmed failures or permission to retry.</p>'
+        'availability, confirmed failures or permission to retry.</p>' +
+        source_freshness_html +
         '<p id="recoveryDuePulse" role="status">No locally saved manual review dates loaded.</p>'
         '<p id="recoveryQueueSummary" role="status" aria-live="polite">Project candidate queue not yet refreshed.</p>'
         '<button type="button" id="recoveryNextProject">Next non-parked project candidate (P0 first)</button>'
