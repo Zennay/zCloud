@@ -281,7 +281,14 @@ def compare(previous: dict, current: dict) -> str:
         if old_coverage != new_coverage:
             op_changes.append("Dekking: " + str(old_coverage or "niet waargenomen") +
                               " → " + str(new_coverage or "niet waargenomen"))
-        if old_queue != new_queue:
+        # A freshness flip is a material per-project change even when
+        # bounded queue counts happened to stay equal. Never infer recovery
+        # or completion solely from a newer snapshot with identical totals.
+        retry_quality_changed = (
+            old_fresh.get("retry") != new_fresh.get("retry")
+            and (old_queue is not None or new_queue is not None)
+        )
+        if old_queue != new_queue or retry_quality_changed:
             op_changes.append(
                 "Queue: " + queue_summary(
                     old_queue, source_fresh=old_fresh.get("retry")) +
