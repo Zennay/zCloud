@@ -714,5 +714,52 @@
         "progress": 0
       }
     ]
+  },
+  {
+    "id": "browseragent",
+    "name": "BrowserAgent",
+    "eyebrow": "VPS-NATIVE WEB AUTOMATION",
+    "goal": "Run permissioned browser workflows on the VPS using ChatGPT/OpenAI for planning and Playwright for bounded browser actions.",
+    "icon": "server",
+    "accent": "#74cfe8",
+    "notion_url": "https://app.notion.com/p/4019e19ac9558122ba7ce0c4e0264db4",
+    "phase": "M0 · standalone runtime genesis and zCloud registration",
+    "status": "active",
+    "priority": "low",
+    "next_step": "Create the standalone BrowserAgent repository and build a minimum Playwright browser session with safe DOM snapshots, domain-scoped navigation and interactive operator approvals. Do not route CAPTCHA bypasses.",
+    "milestone_revision": "browseragent-m0-genesis-20261022",
+    "progress_basis": "Only Notion project creation and zCloud registration are evidenced; no browser runtime, model connection or production deployment is yet claimed.",
+    "milestones": [
+      {
+        "title": "M0 · Project HQ, repository foundation and zCloud registration",
+        "done": false,
+        "progress": 30
+      },
+      {
+        "title": "M1 · Isolated Playwright sessions and observable browser actions",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M2 · OpenAI tool-calling control loop with bounded actions",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M3 · Operator dashboard, streaming and task recovery",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M4 · Authorized forms and human-in-the-loop CAPTCHA handoff",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M5 · VPS deployment, audit and credential isolation",
+        "done": false,
+        "progress": 0
+      }
+    ]
   }
 ]
