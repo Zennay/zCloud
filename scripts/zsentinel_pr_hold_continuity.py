@@ -276,6 +276,20 @@ def _metadata_transition(item, old, names):
     return result
 
 
+
+def _metadata_owner_action(changes):
+    if "target_base_sha_changed" in changes:
+        return ("Herlees de actuele PR-basis, exacte HEAD-checks en branch "
+                "protection met de bevoegde integratie-eigenaar; geen merge.")
+    if "draft_state_changed" in changes:
+        return ("Beoordeel de nieuwe draft-/reviewstatus met de PR-eigenaar "
+                "en een onafhankelijke reviewer; geen automatische approval.")
+    if "github_mergeability_hint_changed" in changes:
+        return ("Controleer de werkelijke vereiste CI, reviewerregels en "
+                "mergeconflicten op GitHub; mergeable-hint is geen vrijgave.")
+    return None
+
+
 def compare(current, previous, previous_sha256, now=None):
     """Summarize only observed gate changes in two private PR report windows."""
     if type(previous_sha256) is not str or not FINGERPRINT.fullmatch(previous_sha256):
@@ -348,7 +362,8 @@ def compare(current, previous, previous_sha256, now=None):
                 if gate_fields_changed else []),
             "observed_gate_owner_step": (
                 _operator_step_for_sample(item, old, gate_fields_changed)
-                if gate_fields_changed else None),
+                if gate_fields_changed else
+                _metadata_owner_action(metadata_fields_changed)),
             "gate_changed_proven": state in (
                 "exact_head_changed_REINSPECT_GATE",
                 "same_head_owner_step_changed_REVIEW_GATE",
