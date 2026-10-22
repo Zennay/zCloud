@@ -203,6 +203,28 @@ def _parallel_owner_actions(report):
             "The current default-branch base could not be established.",
             "Recover the stable branch-name and tip source.",
             "DEFAULT_BRANCH_TIP_UNKNOWN")
+    history = report.get("base_head_history")
+    if history is None:
+        add("refresh_exact_base_head_compare",
+            "Exact base/head commit history could not be established.",
+            "Refresh the bounded compare for the observed immutable base and head SHAs; do not infer a clean branch history.",
+            "BRANCH_HISTORY_UNKNOWN")
+    elif history["status"] == "diverged":
+        add("reconcile_diverged_pr_history",
+            "The PR head and base have unique commits on both sides (ahead_by=" +
+            str(history["ahead_by"]) + ", behind_by=" + str(history["behind_by"]) + ").",
+            "Coordinate a non-force update with the existing branch owner, then refresh the exact compare and all head-bound gates.",
+            "BRANCH_HISTORY_DIVERGED")
+    elif history["status"] == "behind":
+        add("update_pr_head_from_current_base",
+            "The PR head is behind its observed base.",
+            "Update the existing branch with its owner and refresh exact-head gates before reconsidering merge.",
+            "BRANCH_HISTORY_BEHIND")
+    elif history["status"] == "identical":
+        add("confirm_pr_has_unique_commits",
+            "The PR head is identical to its observed base and has no unique commits.",
+            "Confirm whether the product change is already present; do not merge an empty candidate.",
+            "BRANCH_HAS_NO_UNIQUE_COMMITS")
     if observed.get("observed_draft") is True:
         add("finish_existing_draft",
             "The PR is still draft.",
@@ -285,8 +307,45 @@ def _parallel_owner_actions(report):
     return cards[:MAX_PARALLEL_OWNER_ACTIONS]
 
 
+def _compare_summary(payload, expected_base_sha, expected_head_sha):
+    """Validate the bounded exact-SHA GitHub compare response."""
+    if type(payload) is not dict:
+        raise GitHubReadError("base/head compare response is not an object")
+    base = payload.get("base_commit")
+    if type(base) is not dict or base.get("sha") != expected_base_sha:
+        raise GitHubReadError("base/head compare base identity changed")
+    status = payload.get("status")
+    ahead = payload.get("ahead_by")
+    behind = payload.get("behind_by")
+    total = payload.get("total_commits")
+    if (status not in ("ahead", "behind", "diverged", "identical")
+            or type(ahead) is not int or not 0 <= ahead <= 10**9
+            or type(behind) is not int or not 0 <= behind <= 10**9
+            or type(total) is not int or not 0 <= total <= 10**9):
+        raise GitHubReadError("base/head compare counters or status are invalid")
+    consistent = (
+        (status == "ahead" and ahead > 0 and behind == 0)
+        or (status == "behind" and ahead == 0 and behind > 0)
+        or (status == "diverged" and ahead > 0 and behind > 0)
+        or (status == "identical" and ahead == 0 and behind == 0)
+    )
+    if not consistent:
+        raise GitHubReadError("base/head compare status disagrees with its counters")
+    return {
+        "schema": "zsentinel-exact-pr-history-v1",
+        "status": status,
+        "ahead_by": ahead,
+        "behind_by": behind,
+        "total_commits": total,
+        "base_sha": expected_base_sha,
+        "head_sha": expected_head_sha,
+        "comparison_source": "github_compare_exact_commit_shas",
+        "merge_authorized": False,
+    }
+
+
 def observe_exact_pr(pr_url, *, token=None):
-    """At most eight bounded GETs; pin PR, default-branch name and tip to stable reads."""
+    """At most nine bounded GETs; pin PR, default-branch name and tip to stable reads."""
     match = REPO_URL.fullmatch(pr_url) if isinstance(pr_url, str) else None
     if match is None or len(pr_url) > 250:
         raise GitHubReadError("provide one canonical Zennay GitHub pull-request URL")
@@ -437,6 +496,29 @@ def observe_exact_pr(pr_url, *, token=None):
              "source reads; re-observe without re-requesting review"], attempted,
         )
 
+    history_comparison = None
+    if first["target_branch"] == default_branch:
+        comparison_base_sha = (
+            default_branch_sha if default_branch_sha_stable else None
+        )
+    else:
+        comparison_base_sha = first["base_sha"]
+    if comparison_base_sha is None:
+        missing.append("exact base/head compare: stable comparison base unavailable")
+    else:
+        attempted += 1
+        compare_path = (
+            api + "/compare/" + quote(comparison_base_sha, safe="") + "..." +
+            quote(first["exact_head_sha"], safe="") + "?per_page=1"
+        )
+        try:
+            history_comparison = _compare_summary(
+                _limited_json(compare_path, token=token),
+                comparison_base_sha, first["exact_head_sha"],
+            )
+        except GitHubReadError as exc:
+            missing.append("exact base/head compare: " + str(exc))
+
     if first["reported_merged"]:
         next_step = "Verify GitHub merged=true and the exact default-branch commit; release is separate."
         status = "ALREADY_REPORTED_MERGED"
@@ -461,6 +543,22 @@ def observe_exact_pr(pr_url, *, token=None):
     elif first["observed_draft"]:
         next_step = "Finish the existing draft with its owner; keep independent review and CI gates."
         status = "DRAFT"
+    elif history_comparison is None:
+        next_step = "The exact base/head commit comparison is unavailable. Refresh the stable base/head compare before considering merge."
+        status = "BRANCH_HISTORY_UNKNOWN"
+    elif history_comparison["status"] == "diverged":
+        next_step = (
+            "The exact PR head and its current base have diverged (ahead_by=" +
+            str(history_comparison["ahead_by"]) + ", behind_by=" +
+            str(history_comparison["behind_by"]) + "). Reconcile the existing branch with its owner without force-push or gate bypass."
+        )
+        status = "BRANCH_HISTORY_DIVERGED"
+    elif history_comparison["status"] == "behind":
+        next_step = "The PR head is behind its current base. Update the existing branch with its owner and refresh exact-head gates; do not merge stale history."
+        status = "BRANCH_HISTORY_BEHIND"
+    elif history_comparison["status"] == "identical":
+        next_step = "The PR head has no unique commits relative to its current base. Confirm the intended product diff and reuse/close an empty candidate rather than treating it as deliverable."
+        status = "BRANCH_HAS_NO_UNIQUE_COMMITS"
     elif checks is not None and checks["sampled_blocking_checks"]:
         next_step = "Investigate potentially blocking terminal non-success conclusions (failure/cancelled/stale/unknown); repair confirmed causes without bypassing required checks."
         status = "OBSERVED_BLOCKING_NON_SUCCESS"
@@ -502,8 +600,17 @@ def observe_exact_pr(pr_url, *, token=None):
         "repository_default_branch_sha": default_branch_sha,
         "repository_default_branch_sha_stable": default_branch_sha_stable,
         "base_tip_matches_default": base_tip_matches_default,
+        "base_head_history": history_comparison,
         "merge_policy_input_hint": {
             "pr_base_sync": pr_base_sync,
+            "pr_history_sync": (
+                history_comparison["status"] if history_comparison is not None
+                else "unknown"
+            ),
+            "ahead_by": history_comparison.get("ahead_by") if history_comparison else None,
+            "behind_by": history_comparison.get("behind_by") if history_comparison else None,
+            "comparison_base_sha": comparison_base_sha,
+            "comparison_head_sha": first["exact_head_sha"],
             "source_stable_between_reads": True,
             "default_branch_tip_stable": default_branch_sha_stable,
             "advisory_only": True,
@@ -549,8 +656,14 @@ def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None,
         "repository_default_branch_sha": None,
         "unconfirmed_default_branch_sha": default_branch_sha,
         "repository_default_branch_sha_stable": False,
+        "base_head_history": None,
         "merge_policy_input_hint": {
             "pr_base_sync": "unknown",
+            "pr_history_sync": "unknown",
+            "ahead_by": None,
+            "behind_by": None,
+            "comparison_base_sha": None,
+            "comparison_head_sha": None,
             "source_stable_between_reads": False,
             "default_branch_tip_stable": False,
             "advisory_only": True,
@@ -605,6 +718,10 @@ def as_markdown(report):
         "- Base tip matches current default: " + _known(report.get("base_tip_matches_default")),
         "- Recovery-policy input hint evidence.pr_base_sync: " +
         str((report.get("merge_policy_input_hint") or {}).get("pr_base_sync", "unknown")),
+        "- Recovery-policy input hint evidence.pr_history_sync: " +
+        str((report.get("merge_policy_input_hint") or {}).get("pr_history_sync", "unknown")) +
+        " (ahead_by=" + _known((report.get("merge_policy_input_hint") or {}).get("ahead_by")) +
+        ", behind_by=" + _known((report.get("merge_policy_input_hint") or {}).get("behind_by")) + ")",
         "- Base is current default: " + _known(report.get("target_is_default_branch")),
         "- Sampled checks: " + str(checks.get("sampled_count", "UNKNOWN")) +
         " of " + str(checks.get("provider_total_count", "UNKNOWN")),
@@ -680,6 +797,10 @@ def as_html(report):
         ("Base tip matches current default", _known(report.get("base_tip_matches_default"))),
         ("Recovery-policy input hint evidence.pr_base_sync",
          (report.get("merge_policy_input_hint") or {}).get("pr_base_sync", "unknown")),
+        ("Recovery-policy input hint evidence.pr_history_sync",
+         str((report.get("merge_policy_input_hint") or {}).get("pr_history_sync", "unknown")) +
+         " (ahead_by=" + _known((report.get("merge_policy_input_hint") or {}).get("ahead_by")) +
+         ", behind_by=" + _known((report.get("merge_policy_input_hint") or {}).get("behind_by")) + ")"),
         ("Base is current default", _known(report.get("target_is_default_branch"))),
         ("Reported merged", observed.get("reported_merged", "UNKNOWN")),
         ("Check sample", str(checks.get("sampled_count", "UNKNOWN")) + " / " +
