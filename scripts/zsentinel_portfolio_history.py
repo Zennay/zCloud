@@ -11,6 +11,7 @@ import csv
 import html
 import io
 import json
+import os
 import sys
 from pathlib import Path
 import re
@@ -272,6 +273,17 @@ def as_markdown(delta):
     for name, count in delta["counts"].items():
         rows.append("- " + name + ": " + str(count))
     rows += ["- Hidden change cards: " + str(delta["omitted_change_cards"]), ""]
+    if delta.get("live_issue_recheck"):
+        live = delta["live_issue_recheck"]
+        rows += [
+            "- Explicit live issue state reads: " + str(live["attempted_gets"]) +
+            "/" + str(live["maximum_reads"]),
+            "- GitHub OPEN observed: " + str(live["open_at_recheck"]) +
+            " · GitHub CLOSED observed: " + str(live["closed_at_recheck"]),
+            "- Source error stopped further reads: " +
+            str(live["provider_reads_stopped_after_error"]),
+            "- A CLOSED state is not proof of a landed fix or deploy.",
+        ]
     for coverage in delta["repositories_compared"]:
         rows.append("- " + coverage["repository"] + ": " + coverage["previous_state"] +
                     " → " + coverage["current_state"] + " · comparison possible: " +
@@ -288,6 +300,10 @@ def as_markdown(delta):
             " → current rank " + str(change["current_priority_rank"]) +
             " · **Human next:** " + change["human_followup"] +
             " · code: " + change["human_followup_code"] +
+            (" · GitHub detail: " + change["live_issue_recheck_state"] +
+             (" (" + change["live_issue_recheck_observed_at_utc"] + ")"
+              if change.get("live_issue_recheck_observed_at_utc") else "")
+             if "live_issue_recheck_state" in change else "") +
             " · **NOT EXECUTED**"
         )
     if not delta["changes"]:
@@ -307,6 +323,16 @@ def as_html(delta):
                           for k, v in delta["counts"].items()) + "</p>",
         "<p>Hidden change cards: " + esc(delta["omitted_change_cards"]) + "</p><ul>",
     ]
+    if delta.get("live_issue_recheck"):
+        live = delta["live_issue_recheck"]
+        rows.append("<p><strong>Opt-in GitHub detail recheck:</strong> " +
+                    esc(live["attempted_gets"]) + "/" +
+                    esc(live["maximum_reads"]) + " GETs · open " +
+                    esc(live["open_at_recheck"]) + " · closed " +
+                    esc(live["closed_at_recheck"]) +
+                    " · stopped after provider error " +
+                    esc(live["provider_reads_stopped_after_error"]) +
+                    ". GitHub CLOSED does not prove a merged fix or deployment.</p>")
     for c in delta["repositories_compared"]:
         rows.append("<li>" + esc(c["repository"]) + ": " + esc(c["previous_state"]) +
                     " → " + esc(c["current_state"]) + " · comparable: " +
@@ -322,7 +348,12 @@ def as_html(delta):
             esc(c["number"]) + "</a> · " + esc(c["change"]) +
             " · prior rank " + esc(c["prior_priority_rank"]) + " → current " +
             esc(c["current_priority_rank"]) + " · human next: " +
-            esc(c["human_followup"]) + " · NOT EXECUTED</li>"
+            esc(c["human_followup"]) +
+            (" · GitHub detail: " + esc(c["live_issue_recheck_state"]) +
+             (" · " + esc(c["live_issue_recheck_observed_at_utc"])
+              if c.get("live_issue_recheck_observed_at_utc") else "")
+             if "live_issue_recheck_state" in c else "") +
+            " · NOT EXECUTED</li>"
         )
     rows.append("</ol></section>")
     return "\n".join(rows)
@@ -346,7 +377,9 @@ def append_csv(base, delta):
         row[12] = c["url"]
         row[15] = c["human_followup_code"]
         row[16] = c["human_followup"]
-        row[17] = "SAMPLED CHANGE; NO ISSUE CLOSURE, CLAIM OR MERGE VERIFIED"
+        row[17] = ("GitHub issue detail " + c["live_issue_recheck_state"] +
+                   " (NOT A FIX OR MERGE)" if "live_issue_recheck_state" in c
+                   else "SAMPLED CHANGE; NO ISSUE CLOSURE, CLAIM OR MERGE VERIFIED")
         writer.writerow(row)
     return base + sink.getvalue()
 
@@ -361,12 +394,13 @@ def as_delta_csv(delta):
         "source_transition", "human_source_action_code",
         "human_issue_action_code", "human_issue_followup",
         "issue_closure_verified", "actions_executed",
+        "live_github_issue_detail", "live_observed_at_utc",
     ))
     for row in delta["repositories_compared"]:
         writer.writerow((
             "source", row["repository"], "", "", "", "",
             row["source_transition"], row["human_source_action_code"],
-            "", "", False, False,
+            "", "", False, False, "", "",
         ))
     for row in delta["changes"]:
         writer.writerow((
@@ -374,6 +408,8 @@ def as_delta_csv(delta):
             row["prior_priority_rank"], row["current_priority_rank"],
             "", "", row["human_followup_code"], row["human_followup"],
             False, False,
+            row.get("live_issue_recheck_state", ""),
+            row.get("live_issue_recheck_observed_at_utc") or "",
         ))
     return stream.getvalue()
 
@@ -393,8 +429,11 @@ def as_full_html(delta):
         "border-radius:.5rem}a{color:#13549b}li{margin:1rem 0;"
         "overflow-wrap:anywhere}a:focus-visible{outline:3px solid #13549b}"
         "</style></head><body><h1>zSentinel · Offline issue changes</h1>"
-        "<p>Both snapshots were supplied by an operator; no new GitHub read "
-        "or issue closure check occurred.</p>" + as_html(delta) +
+        ("<p>GitHub issue-detail reads were explicitly requested; the "
+         "observed GitHub issue state is not fix, claim, merge or deploy proof.</p>"
+         if delta.get("live_issue_recheck") else
+         "<p>Both snapshots were supplied by an operator; no new GitHub read "
+         "or issue closure check occurred.</p>") + as_html(delta) +
         "</body></html>\n"
     )
 
@@ -412,11 +451,25 @@ def main(argv=None):
                         default="html")
     parser.add_argument("--output", type=Path, required=True,
                         help="new private 0600 output, never overwritten")
+    parser.add_argument("--verify-missing-live", action="store_true",
+                        help="opt-in at most six GitHub issue-only GETs for vanished cards")
+    parser.add_argument("--live-recheck-limit", type=int, default=3,
+                        help="max live GETs on opt-in; 1..6, default 3")
     args = parser.parse_args(argv)
+    if not args.verify_missing_live and args.live_recheck_limit != 3:
+        parser.error("--live-recheck-limit requires --verify-missing-live")
+    if args.verify_missing_live and not 1 <= args.live_recheck_limit <= 6:
+        parser.error("--live-recheck-limit must be 1..6")
     try:
         previous = load_previous_snapshot(args.previous)
         current = load_previous_snapshot(args.current)
         delta = compare_snapshots(previous, current)
+        if args.verify_missing_live:
+            from zsentinel_issue_recheck import recheck_missing_live
+            delta = recheck_missing_live(
+                delta, token=os.environ.get("GITHUB_TOKEN") or None,
+                max_reads=args.live_recheck_limit,
+            )
         output = (
             as_full_html(delta) if args.format == "html" else
             as_markdown(delta) if args.format == "markdown" else
