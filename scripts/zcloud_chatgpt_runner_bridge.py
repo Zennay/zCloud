@@ -455,7 +455,8 @@ def _worker_age_bands(ages: list[int | None]) -> dict[str, int]:
 
 
 def _worker_operator_action_codes(state: str, service_cgroup: dict,
-                                  capacity: dict) -> list[str]:
+                                  capacity: dict,
+                                  self_worker_excluded: bool) -> list[str]:
     """Stable advisory codes for downstream operators; never grant authority."""
     codes = [
         "PRESERVE_ACTIVE_WORK",
@@ -489,10 +490,11 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
         or worker_summary == "all_in_expected_unit_comm_only"
     ):
         codes.append("REGISTRATION_AND_JOB_ASSIGNMENT_UNVERIFIED")
-    if state == "no_other_worker_observed_not_clearance":
-        codes.append("ZERO_WORKERS_IS_NOT_CLAIM_CLEARANCE")
-    elif state == "current_worker_not_identified":
+    if not self_worker_excluded:
+        # Keep identity uncertainty visible even when a partial scan masks state.
         codes.append("CURRENT_WORKER_NOT_IDENTIFIED")
+    elif state == "no_other_worker_observed_not_clearance":
+        codes.append("ZERO_WORKERS_IS_NOT_CLAIM_CLEARANCE")
     if capacity.get("coverage") != "complete":
         codes.append("CAPACITY_EVIDENCE_PARTIAL")
     severity = capacity.get("severity")
@@ -536,7 +538,9 @@ def runner_worker_snapshot() -> dict:
             "mutation_performed": False,
             "runner_service_cgroup": service_cgroup,
             "host_capacity_observation": capacity,
-            "operator_action_codes": _worker_operator_action_codes(state, service_cgroup, capacity),
+            "operator_action_codes": _worker_operator_action_codes(
+                state, service_cgroup, capacity, self_worker_excluded=False
+            ),
         }
 
     service_cgroup = _empty_service_cgroup_observation("not_observed")
@@ -715,7 +719,9 @@ def runner_worker_snapshot() -> dict:
         "worker_age_bands_observed": _worker_age_bands(worker_ages),
         "runner_service_cgroup": service_cgroup,
         "host_capacity_observation": capacity,
-        "operator_action_codes": _worker_operator_action_codes(state, service_cgroup, capacity),
+        "operator_action_codes": _worker_operator_action_codes(
+            state, service_cgroup, capacity, self_worker_excluded=self_worker_excluded
+        ),
         "claim_ownership_verified": False,
         "project_attribution_verified": False,
         "safe_to_take_over": False,
