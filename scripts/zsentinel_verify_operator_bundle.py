@@ -152,6 +152,13 @@ def verify_bundle(directory: Path, name: str) -> dict:
                 or board.get("observed_at_utc") !=
                     receipt.get("source_board_observed_at_utc")):
             raise BundleInvalid("board provenance does not match the receipt")
+        # The manifest's claimed card count and provenance must describe
+        # the exact serialized board, not merely bytes with matching hashes.
+        cards = board.get("cards")
+        if (not isinstance(cards, list)
+                or len(cards) != card_count
+                or board.get("fresh") != receipt.get("original_source_freshness")):
+            raise BundleInvalid("board sample/provenance disagrees with receipt")
         board_hash = hashes["product_delivery_board"].encode("ascii")
         if board_hash not in payloads["interactive_private_operator_desk"]:
             raise BundleInvalid("HTML desk lacks original board hash binding")
