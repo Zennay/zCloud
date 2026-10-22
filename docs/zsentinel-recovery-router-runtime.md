@@ -3037,6 +3037,8 @@ item naar een vaste allowlist van run/job/SHA/status/route/venster en drie
 niet-autorisatieve flags; provider-extra velden komen niet mee in het cockpit-
 JSON. `additional_links_coverage` wordt al bij bronadmissie gezet, zodat
 HTML, JSON en tekst dezelfde degradatiestatus behouden.
+Een ontbrekend veld `additional_job_links` wordt net als `null` of een
+ongeldige lijst als onbekend behandeld, niet als een bewezen lege lijst.
 
 Voor [P0 GitHub-hosted billing/admission #1523](https://github.com/Zennay/zCloud/issues/1523)
 is daarnaast `scripts/zsentinel_hosted_gate_triage.py` op dezelfde PR
