@@ -242,6 +242,25 @@ claimpoging is geen gefaalde uitvoering en geen toestemming voor een retry.**
 Een daling is niet automatisch herstel: records kunnen door andere,
 niet-waargenomen processen verdwijnen of van status veranderen.
 
+### Native retrycontract — expliciete ownergrens
+
+De herstelcockpit en de tekst/JSON-handoff tonen nu een aparte
+`native_retry_contract_boundary`. De status
+`not_verified_by_read_only_queue_view` betekent nadrukkelijk niet dat de
+native writer ontbreekt of al correct is geïmplementeerd: de read-only
+queue-observatie kan dat niet bewijzen. Het paneel maakt zichtbaar welke
+semantiek de native owner moet kunnen aantonen: expliciete
+`FAILED_RETRYABLE/NEEDS_AI/FAILED_FINAL`-dispositie, duurzame
+retry-not-before/backoff, een eindig retrybudget en behoud van
+claim-/correlatie-identiteit. De verwijzing naar [issue #677](https://github.com/Zennay/zCloud/issues/677)
+is alleen navigatie en geen live issue-statusbewijs.
+
+De contractgrens wordt niet uit claimpogingen afgeleid en voert geen extra
+SQLite-query, queuewrite, counter-reset, leasevrijgave, retry of dispatch uit.
+De bestaande serialized control-plane writer-ownership blijft gelden; alleen
+de bevoegde queue-writereigenaar kan de native implementatie na het bestaande
+write window integreren.
+
 Als de oorspronkelijke projectgroepinventaris volledig is, toont de offline
 HTML ook een P0-eerst openklapbaar overzicht per project en prioriteit:
 veranderingen in wachtenden, hoge claimpogingen en verlopen lease-rijen.
