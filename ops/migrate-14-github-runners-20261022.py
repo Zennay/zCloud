@@ -43,11 +43,20 @@ assert len(RUNNERS) == 14 and len({r[0] for r in RUNNERS}) == 14
 
 def call(args: list[str], *, cwd: Path | None = None, user: str | None = None) -> str:
     command = ["runuser", "-u", user, "--", *args] if user else args
-    result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=150)
+    # config.sh receives a short-lived registration token in argv. Treat any
+    # config.sh/--token invocation as sensitive even when runuser wraps argv[0].
+    sensitive = "--token" in command or any(Path(part).name == "config.sh" for part in command)
+    try:
+        result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=150)
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired embeds the full command (including the token) in its
+        # string form. Never let the outer HOLD handler print that object.
+        raise RuntimeError("Command timed out; arguments and output redacted") from None
     if result.returncode:
-        # Never dump command/argv: config.sh includes the short-lived registration token.
-        raise RuntimeError(f"Command failed in {cwd or 'cwd'}: exit {result.returncode}; "
-                           f"stderr tail: {result.stderr[-250:] if 'config.sh' not in args[0] else '[hidden]'}")
+        detail = "[redacted]" if sensitive else result.stderr[-250:]
+        raise RuntimeError(
+            f"Command failed in {cwd or 'cwd'}: exit {result.returncode}; stderr tail: {detail}"
+        )
     return result.stdout
 
 def api(path: str, *, post: bool = False) -> dict:
