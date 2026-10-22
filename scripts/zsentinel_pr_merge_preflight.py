@@ -104,7 +104,7 @@ def observe_exact_pr(pr_url, *, token=None):
     except GitHubReadError as exc:
         missing.append("check-runs: " + str(exc))
         if "authentication, quota or provider admission" in str(exc):
-            return _unknown_pr(pr_url, first, missing, attempted)
+            return _unknown_pr(pr_url, first, missing, attempted, default_branch=default_branch)
 
     try:
         attempted += 1
@@ -114,7 +114,7 @@ def observe_exact_pr(pr_url, *, token=None):
     except GitHubReadError as exc:
         missing.append("reviews: " + str(exc))
         if "authentication, quota or provider admission" in str(exc):
-            return _unknown_pr(pr_url, first, missing, attempted)
+            return _unknown_pr(pr_url, first, missing, attempted, default_branch=default_branch)
 
     if default_branch is not None:
         try:
@@ -241,6 +241,7 @@ def as_markdown(report):
         "- GitHub merged hint: " + str(observed.get("reported_merged", "UNKNOWN")),
         "- Base branch: " + str(observed.get("target_branch", "UNKNOWN")),
         "- Repository default branch: " + str(report.get("repository_default_branch") or "UNKNOWN"),
+        "- Default branch stable across reads: " + str(report.get("repository_default_branch_stable", False)),
         "- Base is current default: " + str(report.get("target_is_default_branch", "UNKNOWN")),
         "- Sampled checks: " + str(checks.get("sampled_count", "UNKNOWN")) +
         " of " + str(checks.get("provider_total_count", "UNKNOWN")),
@@ -284,6 +285,7 @@ def as_html(report):
         ("Stable exact HEAD", observed.get("exact_head_sha", "UNKNOWN")),
         ("Base", observed.get("target_branch", "UNKNOWN")),
         ("Repository default branch", report.get("repository_default_branch") or "UNKNOWN"),
+        ("Default branch stable across reads", report.get("repository_default_branch_stable", False)),
         ("Base is current default", report.get("target_is_default_branch", "UNKNOWN")),
         ("Reported merged", observed.get("reported_merged", "UNKNOWN")),
         ("Check sample", str(checks.get("sampled_count", "UNKNOWN")) + " / " +
