@@ -167,6 +167,9 @@ def _empty_service_cgroup_observation(coverage: str) -> dict[str, object]:
         # /proc stat comm is only a process-name hint, not executable identity.
         "process_name_match_basis": "proc_stat_comm_only",
         "membership_coverage": coverage,
+        "observation_summary": "unknown_source_unavailable" if coverage == "unavailable" else "not_observed",
+        "listener_summary": "unknown_source_unavailable" if coverage == "unavailable" else "not_observed",
+        "worker_summary": "unknown_source_unavailable" if coverage == "unavailable" else "not_observed",
         "process_scan_partial": coverage != "unavailable",
         "listener_processes_observed": 0,
         "listener_in_expected_unit": 0,
@@ -308,6 +311,42 @@ def runner_worker_snapshot() -> dict:
         service_cgroup["membership_coverage"] = "partial_cgroup_metadata"
     else:
         service_cgroup["membership_coverage"] = "complete_for_comm_matched_processes"
+
+    def role_summary(role: str) -> str:
+        if service_cgroup["membership_coverage"] != "complete_for_comm_matched_processes":
+            return "unknown_" + str(service_cgroup["membership_coverage"])
+        observed = int(service_cgroup[f"{role}_processes_observed"])
+        if observed == 0:
+            return "no_process_name_match_observed"
+        expected = int(service_cgroup[f"{role}_in_expected_unit"])
+        outside = int(service_cgroup[f"{role}_outside_expected_unit"])
+        if expected and outside:
+            return "mixed_unit_membership_comm_only"
+        if outside == observed:
+            return "all_outside_expected_unit_comm_only"
+        if expected == observed:
+            return "all_in_expected_unit_comm_only"
+        return "unknown_membership"
+
+    service_cgroup["listener_summary"] = role_summary("listener")
+    service_cgroup["worker_summary"] = role_summary("worker")
+    if service_cgroup["membership_coverage"] == "complete_for_comm_matched_processes":
+        if service_cgroup["listener_summary"] == "all_outside_expected_unit_comm_only":
+            service_cgroup["observation_summary"] = "listener_outside_expected_unit_comm_only"
+        elif service_cgroup["listener_summary"] == "mixed_unit_membership_comm_only":
+            service_cgroup["observation_summary"] = "mixed_listener_unit_membership_comm_only"
+        elif service_cgroup["listener_summary"] == "all_in_expected_unit_comm_only":
+            service_cgroup["observation_summary"] = "listener_in_expected_unit_comm_only"
+        elif service_cgroup["worker_summary"] == "all_outside_expected_unit_comm_only":
+            service_cgroup["observation_summary"] = "worker_outside_expected_unit_comm_only"
+        elif service_cgroup["worker_summary"] == "mixed_unit_membership_comm_only":
+            service_cgroup["observation_summary"] = "mixed_worker_unit_membership_comm_only"
+        elif service_cgroup["worker_summary"] == "all_in_expected_unit_comm_only":
+            service_cgroup["observation_summary"] = "worker_in_expected_unit_comm_only"
+        else:
+            service_cgroup["observation_summary"] = "no_runner_processes_observed"
+    else:
+        service_cgroup["observation_summary"] = "unknown_" + str(service_cgroup["membership_coverage"])
 
     worker_band = _occupancy_band(len(worker_ages), partial)
     observed_band = _occupancy_band(

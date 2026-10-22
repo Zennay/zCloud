@@ -81,6 +81,18 @@ is not claim clearance, and the receipt always sets ownership verification,
 takeover safety, and release authority to false. Use it as a privacy-safe
 capacity hint before the human/Notion/GitHub ownership check.
 
+
+The receipt also includes `runner_service_cgroup`: counts and enum-only summaries
+for `Runner.Listener`/`Runner.Worker` process-name matches inside or outside
+`actions.runner.Zennay-zCloud.zcloud-vps-1.service`. The bounded
+`/proc/<pid>/cgroup` reader never returns the raw path. Summaries deliberately
+end in `comm_only`: `/proc/<pid>/stat`'s process name is not verified executable
+identity. `complete_for_comm_matched_processes` means the bounded process scan
+and observed cgroup files were complete; it does **not** prove GitHub runner
+registration, labels, job assignment, service health, claim ownership, or restart
+permission. Partial/inaccessible metadata stays UNKNOWN. No process is stopped,
+no service is inspected/restarted, and no queue or lease is modified.
+
 ## Test & rollback
 
 `python3 -m unittest -v tests.test_zssh_chatgpt_runner_bridge`
