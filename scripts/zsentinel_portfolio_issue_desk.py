@@ -594,9 +594,19 @@ def main(argv=None):
                         help="Create-only private output path; no stdout mode.")
     parser.add_argument("--snapshot-output", type=Path,
                         help="optional second create-only .json snapshot from same GitHub reads")
+    parser.add_argument("--verify-missing-live", action="store_true",
+                        help="opt-in bounded missing-issue GitHub detail reads, requires prior snapshot")
+    parser.add_argument("--live-recheck-limit", type=int, default=3,
+                        help="max 1..6 extra read-only GitHub detail GETs")
     parser.add_argument("--previous-snapshot", type=Path,
                         help="Prior private JSON desk output for conservative offline visible-card comparison")
     args = parser.parse_args(argv)
+    if args.verify_missing_live and args.previous_snapshot is None:
+        parser.error("--verify-missing-live requires --previous-snapshot")
+    if not args.verify_missing_live and args.live_recheck_limit != 3:
+        parser.error("--live-recheck-limit requires --verify-missing-live")
+    if args.verify_missing_live and not 1 <= args.live_recheck_limit <= 6:
+        parser.error("--live-recheck-limit must be 1..6")
     try:
         previous = (load_previous_snapshot(args.previous_snapshot)
                     if args.previous_snapshot is not None else None)
@@ -609,6 +619,14 @@ def main(argv=None):
         )
         if previous is not None:
             report["comparison"] = compare_snapshots(previous, report)
+            if args.verify_missing_live:
+                from zsentinel_issue_recheck import recheck_missing_live
+                report["comparison"] = recheck_missing_live(
+                    report["comparison"],
+                    token=os.environ.get("GITHUB_TOKEN") or None,
+                    max_reads=args.live_recheck_limit,
+                    source_read_admitted=not report["provider_stopped_early"],
+                )
         write_private_portfolio_outputs(
             report, format_name=args.format, output=args.output,
             snapshot_output=args.snapshot_output,
