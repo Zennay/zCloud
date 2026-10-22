@@ -1624,7 +1624,8 @@ def as_private_csv(board):
     writer = csv.writer(output, dialect="excel", lineterminator="\r\n")
     columns = (
         "record_type", "project", "repository", "source_status",
-        "source_complete_for_sample", "pr_number", "pr_url", "pr_head_sha",
+        "source_complete_for_sample", "open_pr_pages_read", "open_pr_window_complete",
+        "pr_number", "pr_url", "pr_head_sha",
         "pr_base_sha", "previous_pr_base_sha",
         "related_pr_url", "related_pr_head_sha", "cluster_number",
         "shared_filename", "shared_files_observed",
@@ -1671,6 +1672,8 @@ def as_private_csv(board):
         source_status = view["source_status"]
         summary = {
             "source_complete_for_sample": "true" if view["sample_complete"] else "false",
+            "open_pr_pages_read": str(view["open_pr_pages_read"]),
+            "open_pr_window_complete": "true" if view["open_pr_window_complete"] else "false",
         }
         emit("project_summary", project, repo, source_status, **summary,
              operator_notice=(
