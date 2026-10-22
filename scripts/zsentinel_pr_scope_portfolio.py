@@ -1717,6 +1717,14 @@ def as_private_csv(board):
                            " / sampled=" + str(window["rows_observed"])
                            for window in triage["run_windows"]) +
                  ". No proof of runner outage, permissions or CI result."))
+        for wait in triage.get("workflow_waits", [])[:2]:
+            emit("runner_queue_workflow_wait", project, repo, triage_status,
+                 check_name="Workflow #" + str(wait["run_id"]),
+                 check_state="waiting", check_url=wait["url"],
+                 operator_notice=(
+                     "Workflowstatus waiting · HEAD " + wait["head_sha"][:12] +
+                     " · geen aangemaakte job of runnerstoring bewezen; " +
+                     "uitsluitend bevoegde workflow-eigenaar kan beoordelen."))
         for job in triage.get("sampled_jobs", [])[:64]:
             emit("runner_queue_job", project, repo, triage_status,
                  check_name=job["name"], check_state=job["status_at_read"],
@@ -2017,7 +2025,7 @@ def main(argv=None):
                              "in bestaande PR-steekproef (max 20 extra GETs)")
     parser.add_argument("--inspect-runner-queue", action="store_true",
                         help="Opt-in bounded read-only Actions runner-assignment evidence; "
-                             "max 6 extra GET per project, no restart or dispatch")
+                             "max 9 extra GETs per project, no restart or dispatch")
     parser.add_argument("--format", choices=("text", "json", "html", "markdown", "csv", "workorders", "workorders-json", "workorders-html", "workorders-csv"),
                         default="text")
     args = parser.parse_args(argv)
@@ -2035,7 +2043,7 @@ def main(argv=None):
                 except (ValueError, OSError):
                     receipt = runner_queue_unavailable(repo)
                 board["runner_queue_observations"][project] = receipt
-            board["maximum_github_gets"] += 6 * len(args.project)
+            board["maximum_github_gets"] += 9 * len(args.project)
         if args.gate_pr and not args.inspect_current_pr_gates:
             raise ValueError("--gate-pr requires --inspect-current-pr-gates")
         if args.format in ("workorders", "workorders-json", "workorders-html", "workorders-csv"):
