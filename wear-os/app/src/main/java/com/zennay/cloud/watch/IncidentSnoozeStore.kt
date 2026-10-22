@@ -29,7 +29,7 @@ object IncidentSnoozeStore {
     fun notificationTag(alert: AlertItem): String = projectKey(alert) + ":" + alert.id
 
     fun legacyEpisodeKey(alert: AlertItem): String =
-        alert.id + "\\u001f" + alert.occurredAt.orEmpty()
+        alert.id + "\u001f" + alert.occurredAt.orEmpty()
 
     fun episodeKey(alert: AlertItem): String =
         // Project-scoped: the same provider incident ID in two projects must
