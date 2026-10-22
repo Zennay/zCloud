@@ -2853,8 +2853,82 @@ def _attention_action_for_blocker(project_id,title,evidence):
         return f'{name}: complete the external review/submission step'
     return f'{name}: your input is needed to unblock this step'
 
+def _portfolio_task_claim_state(lease_until, observed_at=None):
+    """Classify a persisted task claim without pruning or releasing it."""
+    if (not isinstance(lease_until, str) or not lease_until or len(lease_until) > 80):
+        return 'unknown'
+    try:
+        expiry = datetime.fromisoformat(lease_until.replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return 'unknown'
+    if expiry.tzinfo is None or expiry.utcoffset() is None:
+        return 'unknown'
+    observed_at = observed_at or datetime.now(timezone.utc)
+    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        return 'unknown'
+    return 'active' if expiry.astimezone(timezone.utc) > observed_at.astimezone(timezone.utc) else 'expired-record'
+
+
+def _portfolio_queue_task_claim_guard(connection, project_id, queue_id, observed_at=None):
+    """Observe the separate task_claims lease for one queue item; never mutate it."""
+    try:
+        claim = connection.execute(
+            'SELECT lease_until FROM task_claims WHERE project_id=? AND claim_key=?',
+            (str(project_id or ''), str(queue_id or '')),
+        ).fetchone()
+    except sqlite3.Error:
+        return {'source_available': False, 'state': 'source-unavailable', 'lease_until': None}
+    if claim is None:
+        return {'source_available': True, 'state': 'none', 'lease_until': None}
+    lease_until = claim['lease_until']
+    return {
+        'source_available': True,
+        'state': _portfolio_task_claim_state(lease_until, observed_at),
+        'lease_until': lease_until if isinstance(lease_until, str) else None,
+    }
+
+
+def _portfolio_queue_task_claim_snapshot(connection, rows, observed_at=None):
+    """Batch-read task_claims for blocked queue rows from the same SQLite snapshot."""
+    blocked = [row for row in rows if str(row['status'] or '') == 'blocked']
+    keys = {(str(row['project_id'] or ''), str(row['queue_id'] or '')) for row in blocked}
+    states = {key: {'source_available': True, 'state': 'none', 'lease_until': None}
+              for key in keys}
+    if not keys:
+        return states
+    queue_ids = sorted({queue_id for _, queue_id in keys if queue_id})
+    try:
+        for offset in range(0, len(queue_ids), 180):
+            chunk = queue_ids[offset:offset + 180]
+            if not chunk:
+                continue
+            placeholders = ','.join('?' for _ in chunk)
+            claims = connection.execute(
+                'SELECT project_id,claim_key,lease_until FROM task_claims WHERE claim_key IN (' +
+                placeholders + ')', chunk,
+            ).fetchall()
+            for claim in claims:
+                key = (str(claim['project_id'] or ''), str(claim['claim_key'] or ''))
+                if key not in states:
+                    continue
+                lease_until = claim['lease_until']
+                states[key] = {
+                    'source_available': True,
+                    'state': _portfolio_task_claim_state(lease_until, observed_at),
+                    'lease_until': lease_until if isinstance(lease_until, str) else None,
+                }
+    except sqlite3.Error:
+        return {key: {'source_available': False, 'state': 'source-unavailable',
+                      'lease_until': None} for key in keys}
+    return states
+
+
 def portfolio_queue_items(include_done=False):
     with connect() as c:
+        # Queue and task-claim rows are observed in one read-only snapshot.
+        # Missing claim-source coverage must disable recovery controls, not imply
+        # that a parked task is free to resume or close.
+        c.execute('BEGIN')
         if include_done:
             rows=c.execute("""SELECT * FROM portfolio_queue
                               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
@@ -2864,7 +2938,20 @@ def portfolio_queue_items(include_done=False):
                               WHERE status NOT IN ('done','dropped')
                               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                                        created_at, queue_id""").fetchall()
-    return [_portfolio_queue_row(row) for row in rows]
+        claim_snapshot=_portfolio_queue_task_claim_snapshot(
+            c, rows, datetime.now(timezone.utc))
+    items=[]
+    for row in rows:
+        item=_portfolio_queue_row(row)
+        if str(row['status'] or '')=='blocked':
+            claim=claim_snapshot.get(
+                (str(row['project_id'] or ''),str(row['queue_id'] or '')),
+                {'source_available':False,'state':'source-unavailable','lease_until':None})
+            item['task_claim_source_available']=claim['source_available']
+            item['task_claim_state']=claim['state']
+            item['task_claim_lease_until']=claim['lease_until']
+        items.append(item)
+    return items
 
 def portfolio_queue_current_for_slot(global_slot):
     try: slot=int(global_slot)
