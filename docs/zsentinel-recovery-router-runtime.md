@@ -3969,3 +3969,46 @@ slechts een historische waarneming, nooit bewezen actuele vrijheid:
 de operator moet nog steeds de huidige queue-state, overige leases,
 runtime-dependencies en expliciete rechten controleren.
 Geen claim, worker-slot of queue-record is gewijzigd.
+
+
+## 22 oktober · fair blocked-P0 sampling en herstelcontinuïteit per taak
+
+De P0/P1-blocked-werkbak is projectoverstijgend: de eerder uit dezelfde
+read-only SQLite-transactie gelezen project/prioriteitgroepen worden
+per prioriteit begrensd en **round-robin** uitgevouwen. Een project met
+duizenden geblokkeerde P0-taken verdringt niet automatisch alle andere
+P0-projecten. Maximaal **24** projectscoped `LIMIT`-opvragingen en
+hoogstens **24×24** kandidaatrijen worden ingelezen, zonder een nieuwe
+onbegrensde globale SQLite-sortering. De al bestaande aggregaatbron blijft
+beperkt tot 250 groepen; bij ontbrekende projectgroepen of meer dan
+24 geblokkeerde taken is de selectie expliciet **partieel**. Geen
+chronologische of volledige wachtrij-indeling wordt geclaimd.
+
+Elke getoonde taak kan optioneel verwijzen naar een strikt
+`https://github.com/Zennay/<repo>/issues/<nummer>`- of `pull/<nummer>`
+URL uit het bestaande `source_url`-veld. De observer geeft andere
+URL's niet door; router en HTML bewaken dezelfde host/organisation- en
+padgrenzen. Een toegelaten link is **enkel navigatie naar onbevestigde
+wachtrijbron**, geen bevestiging van issue-openstatus, werkbezit of
+veilig hervatten. Oude schema's zonder `source_url` blijven bruikbaar.
+
+Daarnaast bewaren de al bestaande privé-router-tijdlijn en de
+offline HTML-/Markdown-historie een minimale, niet-identificerende
+momentopname van maximaal 24 blocked-taakreferenties. Alleen bij
+dezelfde gepinde databasebron, opeenvolgende verse momenten en gelijke
+project/prioriteit kan de operator zien dat **dezelfde referentie in
+beide perioden nog `blocked` was**. Bij afgekapt bronvenster tellen
+uitsluitend zulke positief aangetroffen overeenkomsten. Pas wanneer
+**beide** blocked-inventarissen aantoonbaar volledig zijn, worden
+`nieuw in blocked` en `niet meer in blocked` als historische
+observaties getoond. Dat laatste betekent uitdrukkelijk
+**niet** `opgelost`, `gemerged`, `afgerond` of `vrijgegeven`.
+Door bronhiaten of afwijkende database-identiteit is het oordeel
+`ONBEKEND`, nooit nul.
+
+Een vergelijking verstrekt geen ruwe queue-identiteit, claimtoken,
+vrije blockerinhoud, SQLite-schema, worker-slotnummer, eigenaar of
+privébronpad. Een bevoegde operator moet actuele bron, claimrechten,
+exacte PR-HEAD/review/CI en eventuele runtime-dependency apart
+vaststellen. Dit werk wijzigt geen queue-row, lease, SQLite-writer,
+worker, runner, workflow of deployment.
