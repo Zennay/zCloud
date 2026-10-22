@@ -44,11 +44,11 @@ def _action(stage, problem, next_action, local, *, pinned=None,
             source_freshness="unknown", job_status=None, job_conclusion=None):
     status_line = "ALLEEN-LEZEN · GitHub-runner herstel NIET BEWEZEN · geen serviceactie"
     if job_status is not None:
-        if job_status not in JOB_STATUSES:
+        if type(job_status) is not str or job_status not in JOB_STATUSES:
             raise ValueError("invalid observed exact job status")
         status_line += " · GitHub-job=" + job_status
         if job_conclusion is not None:
-            if job_conclusion not in JOB_CONCLUSIONS:
+            if type(job_conclusion) is not str or job_conclusion not in JOB_CONCLUSIONS:
                 raise ValueError("invalid observed exact job conclusion")
             status_line += "/" + job_conclusion
     result = {
@@ -152,7 +152,8 @@ def combine(local, refreshed_projects):
     status = receipt.get("job_status")
     route = receipt.get("runner_route")
     assigned = receipt["runner_assigned"]
-    if (status not in JOB_STATUSES
+    if (type(status) is not str or status not in JOB_STATUSES
+            or type(route) is not str
             or route not in ("self_hosted", "hosted_or_custom", "unknown")):
         raise ValueError("incomplete canonical job route")
     if status in ("waiting", "pending"):
@@ -193,7 +194,7 @@ def combine(local, refreshed_projects):
             local, pinned=pinned, source_freshness="bounded_recent")
     if status == "completed":
         conclusion = receipt.get("conclusion")
-        if conclusion not in JOB_CONCLUSIONS:
+        if type(conclusion) is not str or conclusion not in JOB_CONCLUSIONS:
             conclusion = None
         if conclusion in TERMINAL_CI_FAILURES:
             return _action(
@@ -240,9 +241,12 @@ def as_html(result):
                 escape(link, quote=True) + '">Exacte GitHub-job</a>') if link else ''
     observed_status = result.get("observed_job_status")
     observed_conclusion = result.get("observed_job_conclusion")
-    if observed_status is not None and observed_status not in JOB_STATUSES:
+    if observed_status is not None and (
+            type(observed_status) is not str or observed_status not in JOB_STATUSES):
         raise ValueError("invalid displayed job status")
-    if observed_conclusion is not None and observed_conclusion not in JOB_CONCLUSIONS:
+    if observed_conclusion is not None and (
+            type(observed_conclusion) is not str or
+            observed_conclusion not in JOB_CONCLUSIONS):
         raise ValueError("invalid displayed job conclusion")
     return (
         '<section aria-label="zSentinel exacte runnerbron correlatie">'
