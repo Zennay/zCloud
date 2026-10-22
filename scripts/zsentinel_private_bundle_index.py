@@ -177,13 +177,13 @@ def pr_links(items: set[str]) -> str:
 def compare(previous: dict, current: dict) -> str:
     rows = []
     for project in sorted(set(previous["projects"]) | set(current["projects"])):
-        before = previous["projects"].get(project, {}).get("issues", {})
-        after = current["projects"].get(project, {}).get("issues", {})
+        old_data = previous["projects"].get(project, {})
+        new_data = current["projects"].get(project, {})
+        before = old_data.get("issues", {})
+        after = new_data.get("issues", {})
         newly = {key: after[key] for key in after.keys() - before.keys()}
         absent = {key: before[key] for key in before.keys() - after.keys()}
         continued = len(after.keys() & before.keys())
-        old_data = previous["projects"].get(project, {})
-        new_data = current["projects"].get(project, {})
         new_prs = new_data.get("prs", set()) - old_data.get("prs", set())
         missing_prs = old_data.get("prs", set()) - new_data.get("prs", set())
         old_priority = old_data.get("issue_priorities", {})
@@ -193,8 +193,43 @@ def compare(previous: dict, current: dict) -> str:
             if PRIORITIES.index(new_priority[issue]) <
                PRIORITIES.index(old_priority[issue])
         }
-        if not newly and not absent and not new_prs and not missing_prs and not escalated:
+        old_ops = old_data.get("operations") or {}
+        new_ops = new_data.get("operations") or {}
+        old_coverage = old_ops.get("issue_coverage")
+        new_coverage = new_ops.get("issue_coverage")
+        old_queue = old_ops.get("queue_observation")
+        new_queue = new_ops.get("queue_observation")
+        old_clock = old_ops.get("queue_source_observed_at_utc")
+        new_clock = new_ops.get("queue_source_observed_at_utc")
+        old_advice = old_ops.get("recommended_next_step")
+        new_advice = new_ops.get("recommended_next_step")
+        old_claim_context = old_ops.get("claim_context")
+        new_claim_context = new_ops.get("claim_context")
+        op_changes = []
+        if old_coverage != new_coverage:
+            op_changes.append("Dekking: " + str(old_coverage or "niet waargenomen") +
+                              " → " + str(new_coverage or "niet waargenomen"))
+        if old_queue != new_queue:
+            op_changes.append("Queue: " + queue_summary(old_queue) +
+                              " → " + queue_summary(new_queue))
+        if old_clock != new_clock and (old_clock is not None or new_clock is not None):
+            op_changes.append("Queuebronklok: " + str(old_clock or "geen verse bron") +
+                              " → " + str(new_clock or "geen verse bron"))
+        if old_claim_context != new_claim_context:
+            op_changes.append("Claimcontext: " + str(old_claim_context or "onbekend") +
+                              " → " + str(new_claim_context or "onbekend"))
+        if old_advice != new_advice:
+            op_changes.append("Vervolgadvies gewijzigd")
+        if not (newly or absent or new_prs or missing_prs or escalated or op_changes):
             continue
+        advice_detail = ""
+        if old_advice != new_advice:
+            advice_detail = (
+                "<details><summary>Vervolgadvies oud → nieuw</summary><p>Oud: " +
+                escape(str(old_advice or "geen opgeslagen advies")) +
+                "</p><p>Nieuw: " + escape(str(new_advice or "geen opgeslagen advies")) +
+                "</p></details>"
+            )
         rows.append(
             "<tr><th scope='row'>" + escape(project) + "</th><td>" +
             str(len(newly)) + "<br>" + issue_links(newly) + "</td><td>" +
@@ -203,21 +238,25 @@ def compare(previous: dict, current: dict) -> str:
             str(len(escalated)) + "<br>" + issue_links(escalated) + "</td><td>" +
             "+" + str(len(new_prs)) + ": " + pr_links(new_prs) +
             "<br>Niet opnieuw waargenomen " + str(len(missing_prs)) + ": " +
-            pr_links(missing_prs) + "</td></tr>"
+            pr_links(missing_prs) + "</td><td>" +
+            ("; ".join(escape(value) for value in op_changes) or
+             "Geen opgeslagen queue-/advieswijziging") + advice_detail +
+            "</td></tr>"
         )
     return (
         "<section class='delta'><h3>" + escape(previous["stem"]) +
         " → " + escape(current["stem"]) + "</h3><p>Nieuwe / niet meer "
-        "waargenomen issues en PR-kandidaten gelden uitsluitend binnen "
-        "twee begrensde samples. Niet opnieuw waargenomen betekent "
-        "<strong>niet</strong> gesloten, gemerged of eigenaarsvrij.</p>"
+        "waargenomen issues, PR-kandidaten en queue-/adviesveranderingen gelden "
+        "uitsluitend binnen twee begrensde samples. Niet meer waargenomen betekent "
+        "<strong>niet</strong> gesloten, gemerged of eigenaarsvrij. Ontbrekende "
+        "queuewaarneming is onbekend, niet nul.</p>"
         "<table><thead><tr><th>Project</th><th>Nieuw issue</th>"
         "<th>Issue niet opnieuw gezien</th><th>In beide</th>"
         "<th>Urgentie gestegen in sample</th><th>PR-kandidaten gewijzigd</th>"
-        "</tr></thead><tbody>" + ("".join(rows) if rows else
-                      "<tr><td colspan='6'>Geen verschil in de "
-                      "bewaarde issue- of PR-kaarten</td></tr>") + "</tbody></table>"
-        "</section>"
+        "<th>Queue, dekking en vervolgadvies</th></tr></thead><tbody>" +
+        ("".join(rows) if rows else
+         "<tr><td colspan='7'>Geen verschil in de bewaarde issue-, PR- of "
+         "queue-/advieswaarnemingen</td></tr>") + "</tbody></table></section>"
     )
 
 
@@ -294,6 +333,7 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
     for snap in ordered:
         projects = []
         for project, data in sorted(snap["projects"].items()):
+            operations = data.get("operations") or {}
             projects.append({
                 "project": project,
                 "sampled_issue_count": len(data["issues"]),
@@ -302,6 +342,14 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
                 },
                 "sampled_issue_ids": sorted(data["issues"]),
                 "sampled_pr_candidate_urls": sorted(data["prs"]),
+                "saved_project_operations": {
+                    "issue_coverage": operations.get("issue_coverage"),
+                    "issue_counts_in_sample": operations.get("issue_counts_in_sample"),
+                    "queue_observation": operations.get("queue_observation"),
+                    "queue_source_observed_at_utc": operations.get("queue_source_observed_at_utc"),
+                    "claim_context": operations.get("claim_context", "not_verified"),
+                    "recommended_next_step": operations.get("recommended_next_step"),
+                },
             })
         entries.append({
             "bundle": snap["stem"],
@@ -331,6 +379,12 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
                 if PRIORITIES.index(new_priority[issue]) <
                    PRIORITIES.index(old_priority[issue])
             )
+            old_ops = previous.get("operations") or {}
+            new_ops = current.get("operations") or {}
+            old_queue = old_ops.get("queue_observation")
+            new_queue = new_ops.get("queue_observation")
+            old_advice = old_ops.get("recommended_next_step")
+            new_advice = new_ops.get("recommended_next_step")
             projects.append({
                 "project": project,
                 "newly_sampled_issue_ids": sorted(new_issues.keys() - old_issues.keys()),
@@ -339,6 +393,19 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
                 "higher_sampled_priority_issue_ids": raised,
                 "newly_sampled_pr_candidates": sorted(new_prs - old_prs),
                 "no_longer_sampled_pr_candidates": sorted(old_prs - new_prs),
+                "source_coverage_before": old_ops.get("issue_coverage"),
+                "source_coverage_after": new_ops.get("issue_coverage"),
+                "queue_observation_before": old_queue,
+                "queue_observation_after": new_queue,
+                "queue_observation_changed": old_queue != new_queue,
+                "queue_source_clock_before": old_ops.get("queue_source_observed_at_utc"),
+                "queue_source_clock_after": new_ops.get("queue_source_observed_at_utc"),
+                "claim_context_before": old_ops.get("claim_context", "not_verified"),
+                "claim_context_after": new_ops.get("claim_context", "not_verified"),
+                "recommended_next_step_changed": old_advice != new_advice,
+                "recommended_next_step_before": old_advice,
+                "recommended_next_step_after": new_advice,
+                "current_live_queue_verified": False,
             })
         transitions.append({
             "from_bundle": old["stem"], "to_bundle": new["stem"],
@@ -350,6 +417,8 @@ def render_machine(snapshots: list[dict], index_name: str) -> str:
         "generated_at_local_utc": datetime.now(timezone.utc).isoformat(),
         "saved_bundle_integrity_verified": True,
         "observations_are_historical_and_bounded": True,
+        "queue_history_is_historical_and_bounded": True,
+        "retry_policy_authorized": False,
         "current_live_source_checked": False,
         "issue_closure_verified": False,
         "current_claims_verified": False,
