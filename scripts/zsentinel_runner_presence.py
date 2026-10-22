@@ -138,6 +138,7 @@ def observe_local_runners(proc_root="/proc"):
             "listener_outside_expected_unit": 0,
             "worker_outside_expected_unit": 0,
             "membership_unknown": 0,
+            "process_identity_unverified": 0,
             "source_complete": False,
             "restart_authorized": False,
         },
@@ -200,6 +201,10 @@ def observe_local_runners(proc_root="/proc"):
                 if family == "zCloud":
                     service = observation["zcloud_service_cgroup"]
                     service["processes_observed"] += 1
+                    if lower_assurance:
+                        # argv[0] is only a fallback identity, never enough to
+                        # certify membership in the expected systemd unit.
+                        service["process_identity_unverified"] += 1
                     role_key = "listener" if role == "Runner.Listener" else "worker"
                     membership = _zcloud_service_cgroup_membership(process_dir)
                     if membership == "EXPECTED_UNIT":
@@ -224,7 +229,9 @@ def observe_local_runners(proc_root="/proc"):
     service = observation["zcloud_service_cgroup"]
     if service["processes_observed"]:
         service["source_complete"] = (
-            observation["source_complete"] and service["membership_unknown"] == 0
+            observation["source_complete"]
+            and service["membership_unknown"] == 0
+            and service["process_identity_unverified"] == 0
         )
         service["status"] = (
             "OBSERVED_COMPLETE" if service["source_complete"] else "PARTIAL"
