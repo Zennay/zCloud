@@ -767,3 +767,29 @@ retry, workflowdispatch of restart is toegestaan vanuit de kaart.
 De release blijft afhankelijk van exacte-head verplichte CI, onafhankelijke
 review, branch protection en eigenaarstoestemming. Er zijn geen QA- of
 testsuites geschreven of uitgevoerd.
+
+
+## 22 oktober · echte geblokkeerde queuewerkbak en onbeschikbare bronnen
+
+De bestaande read-only runtime-handoff verwerkt nu de al door de router
+gevalideerde `live_queue_pressure.blocked_queue`-bron tot maximaal acht
+P0/P1 eigenaaracties. Iedere kaart staat voor één project en prioriteitsgroep,
+vermeldt het waargenomen aantal geblokkeerde items en hoogstens één
+voorbeeldtitel uit de begrensde bron. De uitkomst is **nooit** een scheduler-
+of resume-opdracht: `claim_authorized=false`, `retry_authorized=false`,
+`merge_authorized=false`, `deploy_authorized=false` blijven op elke kaart.
+
+Toelating vereist een actuele read-only queuebron, dezelfde reeds gevalideerde
+SQLite-waarneming en niet-autorisende geblokkeerde werkbron. Verouderde,
+onvolledige of niet-bestaande bronnen leveren geen fictieve P0/P1-werkkaarten.
+Een expliciet aangevraagde maar onbereikbare queuebron of workerbron leidt
+uitsluitend tot een P2-actie voor broneigenaar en nieuwe veilige read-only
+waarneming; niet tot het oordeel dat er nul actieve workers of claims zijn.
+
+De eigenaarhandshake voegt nu een afzonderlijke `blocked_queue_owner_summary`
+toe met het geobserveerde totaal, zichtbare/geobserveerde P0/P1-groepen en
+afkapwaarschuwing. HTML en Markdown tonen dit ook als afzonderlijke
+Nederlandstalige statusregel, zodat verborgen werk niet verdwijnt zodra
+`priority_items` de bestaande limiet bereikt. Labels zijn brongebonden,
+geen vrijgave voor herverdeling. De bron blijft read-only; geen extra SQLite-
+GET, queue-write, retry, workerrestart of deployment.
