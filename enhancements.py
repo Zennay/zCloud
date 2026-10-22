@@ -54,6 +54,21 @@ def _db_connect(db_path):
     finally:
         c.close()
 
+@contextmanager
+def _db_connect_readonly(db_path):
+    """Observe the existing live SQLite/WAL state without a write-capable handle.
+
+    Alert/incident GET requests must not create an absent database or implicitly
+    COMMIT a read; only the sampler and explicit incident producers may write.
+    """
+    uri = Path(db_path).resolve().as_uri() + "?mode=ro"
+    c = sqlite3.connect(uri, uri=True)
+    try:
+        c.execute("PRAGMA query_only=ON")
+        yield c
+    finally:
+        c.close()
+
 def _json(path, sudo=False):
     p = str(path)
     try:
@@ -892,7 +907,7 @@ def _claim_conflict_is_active(db_path, alert, now_ts):
         # Backward-compatible for legacy alerts without structured claim detail.
         return True
     try:
-        with _db_connect(db_path) as c:
+        with _db_connect_readonly(db_path) as c:
             c.row_factory=sqlite3.Row
             if not c.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_claims'"
@@ -995,7 +1010,7 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
 
 def list_alerts(db_path, limit=20, important_only=False):
     try:
-        with _db_connect(db_path) as c:
+        with _db_connect_readonly(db_path) as c:
             c.row_factory = sqlite3.Row
             where = "WHERE important=1" if important_only else ""
             rows = c.execute("SELECT * FROM alerts %s ORDER BY ts DESC LIMIT ?" % where, (limit,)).fetchall()
