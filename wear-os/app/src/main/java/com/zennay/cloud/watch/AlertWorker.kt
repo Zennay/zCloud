@@ -62,17 +62,18 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             delivered.retainAll(currentEpisodes)
             val currentNotificationTags = urgent
                 .map { IncidentSnoozeStore.notificationTag(it) }.toSet()
-            val postedNotificationTags = prefs
-                .getStringSet("posted_notification_tags", emptySet())
-                .orEmpty().toMutableSet()
             val manager = applicationContext.getSystemService(NotificationManager::class.java)
 
-            // Only a fresh current-blocker snapshot may retire a notification.
-            // If an incident resolved or no longer needs human action, remove
-            // its old OS notification rather than leaving stale urgency visible.
-            val resolvedTags = postedNotificationTags.filterNot { it in currentNotificationTags }
-            resolvedTags.forEach { manager.cancel(it, 0) }
-            postedNotificationTags.removeAll(resolvedTags.toSet())
+            // The dedicated channel is the authoritative local inventory, so
+            // resolved notifications can be retired even after app upgrades.
+            // Do not persist raw incident IDs merely to remember OS notification tags.
+            manager.activeNotifications.forEach { posted ->
+                val tag = posted.tag
+                if (posted.notification.channelId == CHANNEL &&
+                    tag != null && tag !in currentNotificationTags) {
+                    manager.cancel(tag, posted.id)
+                }
+            }
 
             val permissionGranted = Build.VERSION.SDK_INT < 33 ||
                 applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
@@ -167,7 +168,6 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                             manager.notify(tag, 0, notification)
                             // Persist only after posting succeeded.
                             delivered += IncidentSnoozeStore.episodeKey(alert)
-                            postedNotificationTags += tag
                         }
                 }
             } finally {
@@ -175,10 +175,6 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                 // when permission is denied or a later notification fails.
                 prefs.edit()
                     .putStringSet("delivered_ids", delivered.toList().takeLast(200).toSet())
-                    .putStringSet(
-                        "posted_notification_tags",
-                        postedNotificationTags.toList().takeLast(200).toSet()
-                    )
                     .apply()
             }
         }
