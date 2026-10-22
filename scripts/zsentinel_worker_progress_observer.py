@@ -40,7 +40,17 @@ MAX_WORKER_EVENT_LOOKBACK = 240
 
 
 def _age(value, now):
-    if not isinstance(value, str) or len(value) > 55:
+    timestamp = _utc_datetime(value)
+    if timestamp is None:
+        return None
+    seconds = (now - timestamp).total_seconds()
+    if seconds < -120:
+        return None
+    return max(0, int(seconds))
+
+
+def _utc_datetime(value):
+    if type(value) is not str or not 1 <= len(value) <= 55:
         return None
     try:
         timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -48,14 +58,18 @@ def _age(value, now):
         return None
     if timestamp.tzinfo is None or timestamp.utcoffset() is None:
         return None
-    seconds = (now - timestamp.astimezone(UTC)).total_seconds()
-    if seconds < -120:
+    return timestamp.astimezone(UTC)
+
+
+def _in_claim_window(value, start, expires):
+    if not isinstance(start, datetime) or not isinstance(expires, datetime):
         return None
-    return max(0, int(seconds))
+    timestamp = _utc_datetime(value)
+    return bool(timestamp is not None and start <= timestamp < expires)
 
 
-
-def _bounded_timeline(con, project, slot, last_id, prompt_id, now):
+def _bounded_timeline(con, project, slot, last_id, prompt_id, now,
+                      claim_start=None, claim_expires=None):
     """Minimal indexed worker event chronology, no payloads or ownership claim.
 
     The recent history is an explicitly bounded window. Fewer observed
@@ -69,16 +83,37 @@ def _bounded_timeline(con, project, slot, last_id, prompt_id, now):
         (project, slot, last_id, MAX_TIMELINE_EVENTS + 1),
     ).fetchall()
     truncated = len(rows) > MAX_TIMELINE_EVENTS
+    claim_window_available = (
+        isinstance(claim_start, datetime) and isinstance(claim_expires, datetime)
+        and claim_start < claim_expires
+    )
     events = []
     recent_blocks = 0
     recent_progress = 0
     after_prompt_seen = 0
+    claim_window_events = 0
+    claim_window_blocks = 0
+    claim_window_progress = 0
     for ident, stamp, kind, generating, sending in rows[:MAX_TIMELINE_EVENTS]:
         if type(ident) is not int or not 1 <= ident <= last_id:
             raise ValueError("invalid worker timeline event identifier")
         age = _age(stamp, now)
         safe_kind = kind if isinstance(kind, str) and kind in SAFE_EVENT else "other_event"
-        after_prompt = prompt_id is not None and ident > prompt_id
+        in_claim_window = (
+            _in_claim_window(stamp, claim_start, claim_expires)
+            if claim_window_available else None
+        )
+        if in_claim_window is True:
+            claim_window_events += 1
+            if safe_kind in BLOCKED and age is not None and age <= 900:
+                claim_window_blocks += 1
+            if (safe_kind in ("generation-progress", "generation-finished")
+                    and age is not None and age <= 900):
+                claim_window_progress += 1
+        after_prompt = (
+            prompt_id is not None and ident > prompt_id
+            and (not claim_window_available or in_claim_window is True)
+        )
         if after_prompt:
             after_prompt_seen += 1
         if safe_kind in BLOCKED and after_prompt and age is not None and age <= 900:
@@ -90,6 +125,7 @@ def _bounded_timeline(con, project, slot, last_id, prompt_id, now):
             "event": safe_kind,
             "age_seconds": age,
             "after_latest_prompt": bool(after_prompt),
+            "within_current_claim_window": in_claim_window,
             "browser_generating": generating == 1,
             "browser_sending": sending == 1,
         })
@@ -100,6 +136,14 @@ def _bounded_timeline(con, project, slot, last_id, prompt_id, now):
         "events_after_last_prompt_in_sample": after_prompt_seen,
         "recent_block_events_after_last_prompt_in_sample": recent_blocks,
         "recent_progress_events_after_last_prompt_in_sample": recent_progress,
+        "claim_window_correlation": (
+            "time_window_only_not_identity_bound" if claim_window_available
+            else "unavailable_no_valid_current_lease"
+        ),
+        "claim_window_event_count_in_sample": claim_window_events if claim_window_available else None,
+        "claim_window_recent_block_count_in_sample": claim_window_blocks if claim_window_available else None,
+        "claim_window_recent_progress_count_in_sample": claim_window_progress if claim_window_available else None,
+        "claim_window_counts_sample_only": True,
         "claim_epoch_bound": False,
         "progress_is_product_delivery_proof": False,
     }
@@ -135,45 +179,67 @@ def _safe_followup(state, assignment):
 def _active_queue_assignment(con, project, global_slot, now, queue_available):
     """Observe claim/lease state for one actual allocated global slot.
 
-    No queue IDs, titles, claims, expiry timestamps or owner identity escape.
-    A running claim without a fresh unambiguous lease is NOT permission to
-    move, reset or resume the worker.
+    No queue IDs, titles, raw timestamps or owner identity escape. The hashed
+    fingerprint identifies the observed queue claim window across snapshots;
+    runner events have no queue ID, so event correlation remains time-window
+    only and never becomes claim-epoch or recovery authority.
     """
+    empty = {
+        "coverage": "not_currently_allocated",
+        "current_lease": False,
+        "status": None,
+        "claim_window_start": None,
+        "claim_window_expires": None,
+        "claim_window_fingerprint": None,
+    }
     if global_slot is None:
-        return {"coverage": "not_currently_allocated", "current_lease": False,
-                "status": None}
+        return empty
     if not queue_available:
-        return {"coverage": "queue_source_unavailable", "current_lease": False,
-                "status": None}
+        return {**empty, "coverage": "queue_source_unavailable"}
     rows = con.execute(
-        "SELECT status,claim_expires FROM portfolio_queue "
+        "SELECT queue_id,status,claimed_at,claim_expires FROM portfolio_queue "
         "WHERE project_id=? AND worker_slot=? "
         "AND status IN ('claimed','running','verifying') "
         "ORDER BY updated_at DESC LIMIT 2",
         (project, global_slot)).fetchall()
     if len(rows) > 1:
-        return {"coverage": "multiple_active_claims_owner_review",
-                "current_lease": False, "status": None}
+        return {**empty, "coverage": "multiple_active_claims_owner_review"}
     if not rows:
-        return {"coverage": "no_active_claim_for_slot",
-                "current_lease": False, "status": None}
-    status, expires_at = rows[0]
-    try:
-        if type(expires_at) is not str or len(expires_at) > 55:
-            raise ValueError("missing lease clock")
-        expiry = datetime.fromisoformat(
-            expires_at.replace("Z", "+00:00"))
-        if expiry.tzinfo is None or expiry.utcoffset() is None:
-            raise ValueError("lease timezone missing")
-        seconds = (expiry.astimezone(UTC) - now).total_seconds()
-        current = 0 < seconds <= 7 * 86400
-    except ValueError:
-        current = False
+        return {**empty, "coverage": "no_active_claim_for_slot"}
+    queue_id, status, claimed_at, expires_at = rows[0]
+    claim_start = _utc_datetime(claimed_at)
+    claim_expires = _utc_datetime(expires_at)
+    queue_id_valid = (
+        type(queue_id) is str and 1 <= len(queue_id) <= 160
+        and not any(ord(char) < 32 for char in queue_id)
+    )
+    duration = (
+        (claim_expires - claim_start).total_seconds()
+        if claim_start is not None and claim_expires is not None else None
+    )
+    current = bool(
+        queue_id_valid and status in ("claimed", "running", "verifying")
+        and claim_start is not None and claim_expires is not None
+        and claim_start <= now < claim_expires
+        and duration is not None and 0 < duration <= 7 * 86400
+    )
+    fingerprint = None
+    if current:
+        # Exclude the rolling expiry so lease renewals do not masquerade as a
+        # new claim epoch. Queue ID + claimed_at distinguish slot reuse without
+        # exposing either value in the operator artifact.
+        fingerprint = hashlib.sha256("\\0".join((
+            project, str(global_slot), queue_id,
+            claim_start.isoformat(timespec="seconds"),
+        )).encode("utf-8")).hexdigest()
     return {
         "coverage": ("bounded_current_claim" if current
                      else "lease_expired_or_invalid_owner_recheck"),
-        "current_lease": bool(current),
+        "current_lease": current,
         "status": status if status in ("claimed", "running", "verifying") else None,
+        "claim_window_start": claim_start if current else None,
+        "claim_window_expires": claim_expires if current else None,
+        "claim_window_fingerprint": fingerprint,
     }
 
 
@@ -181,6 +247,14 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
     args = (project, slot)
     assignment = _active_queue_assignment(
         con, project, global_slot, now, queue_available)
+    claim_window_start = assignment.get("claim_window_start")
+    claim_window_expires = assignment.get("claim_window_expires")
+    claim_window_available = (
+        assignment["current_lease"]
+        and isinstance(claim_window_start, datetime)
+        and isinstance(claim_window_expires, datetime)
+    )
+    claim_window_fingerprint = assignment.get("claim_window_fingerprint")
     paused_with_claim = bool(
         desired_state == "paused" and global_slot is not None
         and assignment["current_lease"] and assignment["status"] is not None)
@@ -200,6 +274,13 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             "queue_claim_status_observed": assignment["status"],
             "queue_assignment_coverage": assignment["coverage"],
             "queue_lease_current_from_source": assignment["current_lease"],
+            "claim_window_fingerprint": claim_window_fingerprint,
+            "claim_window_correlation": (
+                "time_window_only_not_identity_bound" if claim_window_available
+                else "unavailable_no_valid_current_lease"
+            ),
+            "latest_event_in_current_claim_window": False if claim_window_available else None,
+            "latest_progress_event_in_current_claim_window": False if claim_window_available else None,
             "last_event_type": None, "event_age_seconds": None,
             "latest_indexed_event_id": None, "latest_indexed_progress_event_id": None,
             "progress_age_seconds": None, "assistant_character_count": None,
@@ -245,6 +326,14 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
                 "events_after_last_prompt_in_sample": 0,
                 "recent_block_events_after_last_prompt_in_sample": 0,
                 "recent_progress_events_after_last_prompt_in_sample": 0,
+                "claim_window_correlation": (
+                    "time_window_only_not_identity_bound" if claim_window_available
+                    else "unavailable_no_valid_current_lease"
+                ),
+                "claim_window_event_count_in_sample": 0 if claim_window_available else None,
+                "claim_window_recent_block_count_in_sample": 0 if claim_window_available else None,
+                "claim_window_recent_progress_count_in_sample": 0 if claim_window_available else None,
+                "claim_window_counts_sample_only": True,
                 "claim_epoch_bound": False,
                 "progress_is_product_delivery_proof": False,
             },
@@ -271,17 +360,29 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         "ORDER BY id DESC LIMIT 1",
         (project, slot, max(1, last_id-MAX_WORKER_EVENT_LOOKBACK))).fetchone()
     latest_progress_id = None
+    progress = None
+    progress_event_in_window = False if claim_window_available else None
+    progress_timestamp_in_window = False if claim_window_available else None
     if progress_row is not None:
         candidate_id, event_ts, reported_progress, progress_chars = progress_row
         if (type(candidate_id) is not int
                 or not 1 <= candidate_id <= last_id):
             raise ValueError("invalid indexed progress event identity")
-        latest_progress_id = candidate_id
-        progress = reported_progress if reported_progress is not None else event_ts
-        if chars is None:
-            chars = progress_chars
-    else:
-        progress = None
+        progress_event_in_window = (
+            _in_claim_window(event_ts, claim_window_start, claim_window_expires)
+            if claim_window_available else None
+        )
+        if not claim_window_available or progress_event_in_window is True:
+            progress_signal = reported_progress if reported_progress is not None else event_ts
+            progress_timestamp_in_window = (
+                _in_claim_window(progress_signal, claim_window_start, claim_window_expires)
+                if claim_window_available else None
+            )
+            if not claim_window_available or progress_timestamp_in_window is True:
+                latest_progress_id = candidate_id
+                progress = progress_signal
+                if chars is None:
+                    chars = progress_chars
     progress_age = _age(progress, now)
     prompt = con.execute(
         "SELECT id,ts FROM runner_events WHERE project_id=? "
@@ -292,17 +393,43 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         "AND worker_slot=? AND event IN (?,?,?,?) ORDER BY id DESC LIMIT 1",
         args + BLOCKED).fetchone()
     block_age = _age(blocked[1], now) if blocked is not None else None
-    # No prior prompt is NOT evidence of a post-prompt failure. Keep
-    # orphaned browser errors visible but do not attribute them to a task.
-    blocked_after_prompt = bool(
-        blocked is not None and prompt is not None
-        and blocked[0] > prompt[0]
-        and block_age is not None and block_age <= 900
+    prompt_in_window = (
+        _in_claim_window(prompt[1], claim_window_start, claim_window_expires)
+        if prompt is not None and claim_window_available else None
     )
-    unbound_recent_block = bool(
-        blocked is not None and prompt is None
-        and block_age is not None and block_age <= 900
+    blocked_in_window = (
+        _in_claim_window(blocked[1], claim_window_start, claim_window_expires)
+        if blocked is not None and claim_window_available else None
     )
+    # Old prompt/block receipts cannot be attributed to a newer queue claim
+    # merely because the same local worker slot was reused. runner_events has
+    # no queue ID, so this is timestamp-window correlation, not exact binding.
+    timeline_prompt_id = (
+        prompt[0] if prompt is not None and
+        (not claim_window_available or prompt_in_window is True) else None
+    )
+    if claim_window_available:
+        blocked_after_prompt = bool(
+            blocked is not None and blocked_in_window is True
+            and prompt is not None and prompt_in_window is True
+            and blocked[0] > prompt[0]
+            and block_age is not None and block_age <= 900
+        )
+        unbound_recent_block = bool(
+            blocked is not None and blocked_in_window is True
+            and (prompt is None or prompt_in_window is not True)
+            and block_age is not None and block_age <= 900
+        )
+    else:
+        blocked_after_prompt = bool(
+            blocked is not None and prompt is not None
+            and blocked[0] > prompt[0]
+            and block_age is not None and block_age <= 900
+        )
+        unbound_recent_block = bool(
+            blocked is not None and prompt is None
+            and block_age is not None and block_age <= 900
+        )
     # A later progress/finish event is NOT product delivery, but an old
     # block must not remain displayed as an unanswered current failure.
     # Retain the original failure receipt and require owner verification.
@@ -316,15 +443,25 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             "AND id>? ORDER BY id DESC LIMIT 1",
             (project, slot, blocked[0]),
         ).fetchone()
+    later_progress_in_window = (
+        _in_claim_window(later_progress[1], claim_window_start, claim_window_expires)
+        if later_progress is not None and claim_window_available else None
+    )
     newer_signal = bool(
         later_progress is not None and type(later_progress[0]) is int
         and later_progress[0] > blocked[0]
         and _age(later_progress[1], now) is not None
         and _age(later_progress[1], now) <= 900
+        and (not claim_window_available or later_progress_in_window is True)
     )
     timeline = _bounded_timeline(
-        con, project, slot, last_id,
-        prompt[0] if prompt is not None else None, now)
+        con, project, slot, last_id, timeline_prompt_id, now,
+        claim_window_start if claim_window_available else None,
+        claim_window_expires if claim_window_available else None)
+    event_in_window = (
+        _in_claim_window(timestamp, claim_window_start, claim_window_expires)
+        if claim_window_available else None
+    )
     if paused_with_claim:
         state = "allocated_paused_with_claimed_queue_owner_gate"
     elif stale_queue_claim:
@@ -348,8 +485,15 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         state = "recent_client_block_event_owner_review"
     elif unbound_recent_block:
         state = "recent_browser_block_without_prompt_context_owner_review"
+    elif claim_window_available and event_in_window is not True:
+        # Recent heartbeats/events from a previous queue task are not evidence
+        # of progress for the current lease window.
+        state = "worker_event_stale_or_unknown"
     elif (generating and event_age is not None and event_age <= 180
-          and progress_age is not None and progress_age <= 180):
+          and progress_age is not None and progress_age <= 180
+          and (not claim_window_available or
+               (progress_event_in_window is True
+                and progress_timestamp_in_window is True))):
         state = "generation_progress_timestamp_observed"
     elif generating and event_age is not None and event_age <= 180:
         state = "generating_but_progress_unverified_or_stale"
@@ -367,6 +511,14 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         "queue_claim_status_observed": assignment["status"],
         "queue_assignment_coverage": assignment["coverage"],
         "queue_lease_current_from_source": assignment["current_lease"],
+        "claim_window_fingerprint": claim_window_fingerprint,
+        "claim_window_correlation": (
+            "time_window_only_not_identity_bound" if claim_window_available
+            else "unavailable_no_valid_current_lease"
+        ),
+        "latest_event_in_current_claim_window": event_in_window,
+        "latest_progress_event_in_current_claim_window": progress_event_in_window,
+        "progress_timestamp_in_current_claim_window": progress_timestamp_in_window,
         "last_event_type": event if event in SAFE_EVENT else "other_event",
         "event_age_seconds": event_age,
         "latest_indexed_event_id": last_id,
@@ -574,6 +726,9 @@ def operator_text(source):
             f" · global_slot={row['allocated_global_slot'] if row['allocated_global_slot'] is not None else 'NIET TOEGEWEZEN'}"
             f" · queue_claim={row['queue_claim_status_observed'] or 'ONBEKEND/GEEN'}"
             f" · current_lease={row['queue_lease_current_from_source']}"
+            f" · claim_window={row.get('claim_window_correlation', 'ONBEKEND')}"
+            f" · event_in_claim_window={row.get('latest_event_in_current_claim_window', 'ONBEKEND')}"
+            f" · progress_event_in_claim_window={row.get('latest_progress_event_in_current_claim_window', 'ONBEKEND')}"
             f" · event_age_s={row['event_age_seconds']}"
             f" · progress_age_s={row['progress_age_seconds']}"
             f" · indexed_event_cursor={row.get('latest_indexed_event_id', 'ONBEKEND')}"
@@ -756,6 +911,16 @@ def worker_progress_html(source):
         progress_id = row.get("latest_indexed_progress_event_id")
         if latest_id is not None and progress_id is not None and progress_id > latest_id:
             raise ValueError("progress cursor newer than last event")
+        claim_fingerprint = row.get("claim_window_fingerprint")
+        if (claim_fingerprint is not None and
+                (type(claim_fingerprint) is not str
+                 or not re.fullmatch(r"[0-9a-f]{64}", claim_fingerprint))):
+            raise ValueError("invalid private claim-window fingerprint")
+        for name in ("latest_event_in_current_claim_window",
+                     "latest_progress_event_in_current_claim_window",
+                     "progress_timestamp_in_current_claim_window"):
+            if name in row and row[name] is not None and type(row[name]) is not bool:
+                raise ValueError("invalid claim-window event flag")
         age = row.get("event_age_seconds")
         progress = row.get("progress_age_seconds")
         if any(value is not None and (type(value) is not int or value < 0)
@@ -771,6 +936,11 @@ def worker_progress_html(source):
             "events_after_last_prompt_in_sample": 0,
             "recent_block_events_after_last_prompt_in_sample": 0,
             "recent_progress_events_after_last_prompt_in_sample": 0,
+            "claim_window_correlation": "unavailable_no_valid_current_lease",
+            "claim_window_event_count_in_sample": None,
+            "claim_window_recent_block_count_in_sample": None,
+            "claim_window_recent_progress_count_in_sample": None,
+            "claim_window_counts_sample_only": True,
         }
         if (type(timeline) is not dict
                 or timeline.get("timeline_scope") not in (
@@ -783,6 +953,26 @@ def worker_progress_html(source):
                 or type(timeline.get("recent_events_newest_first")) is not list
                 or len(timeline["recent_events_newest_first"]) > MAX_TIMELINE_EVENTS):
             raise ValueError("untrusted bounded worker event chronology")
+        claim_correlation = timeline.get(
+            "claim_window_correlation", "unavailable_no_valid_current_lease")
+        if claim_correlation not in (
+                "time_window_only_not_identity_bound",
+                "unavailable_no_valid_current_lease"):
+            raise ValueError("invalid claim-window correlation")
+        window_counts = (
+            timeline.get("claim_window_event_count_in_sample"),
+            timeline.get("claim_window_recent_block_count_in_sample"),
+            timeline.get("claim_window_recent_progress_count_in_sample"),
+        )
+        if (timeline.get("claim_window_counts_sample_only") is not True
+                or any(v is not None and
+                       (type(v) is not int or not 0 <= v <= MAX_TIMELINE_EVENTS)
+                       for v in window_counts)
+                or (claim_correlation == "time_window_only_not_identity_bound"
+                    and any(type(v) is not int for v in window_counts))
+                or (claim_correlation == "unavailable_no_valid_current_lease"
+                    and any(v is not None for v in window_counts))):
+            raise ValueError("invalid bounded claim-window coverage")
         counts = (
             timeline.get("events_after_last_prompt_in_sample"),
             timeline.get("recent_block_events_after_last_prompt_in_sample"),
@@ -827,23 +1017,34 @@ def worker_progress_html(source):
                     or type(point.get("after_latest_prompt")) is not bool
                     or type(point.get("browser_generating")) is not bool
                     or type(point.get("browser_sending")) is not bool
+                    or point.get("within_current_claim_window") not in (True, False, None)
                     or (point.get("age_seconds") is not None and (
                         type(point["age_seconds"]) is not int
                         or point["age_seconds"] < 0))):
                 raise ValueError("invalid worker chronology entry")
             ago = (str(point["age_seconds"]) + " sec geleden"
                    if point["age_seconds"] is not None else "leeftijd onbekend")
+            window_label = (
+                "binnen huidig claimvenster" if point["within_current_claim_window"] is True
+                else "buiten huidig claimvenster" if point["within_current_claim_window"] is False
+                else "claimvenster onbekend"
+            )
             event_items.append("<li><strong>" + escape(point["event"]) +
                                "</strong> · " + ago +
                                (" · na laatste prompt" if point["after_latest_prompt"]
-                                else " · vóór laatste prompt / geen prompt")
-                               + "</li>")
+                                else " · vóór laatste prompt / geen prompt") +
+                               " · " + window_label + "</li>")
         timeline_html = (
             '<details><summary>Recente worker-events · maximaal twaalf'
             + (" · afgekapt" if timeline["timeline_truncated"] else "")
-            + '</summary><p class="small">Alleen geïndexeerde metadata,'
-            ' niet aan een verifieerbare claimepoch gebonden. Een afwezig'
-            ' event betekent niet dat eerdere blokkades ontbraken.</p><ol>'
+            + '</summary><p class="small">Claim-windowcorrelatie: '
+            + escape(claim_correlation) + '. Events worden alleen op tijdvenster'
+            ' vergeleken; runner_events bevat geen queue-ID, dus dit is geen'
+            ' exacte claimepoch-binding. Een afwezig event betekent niet dat'
+            ' eerdere blokkades ontbraken. Venster-events/blokkades/voortgang'
+            ' in sample: '
+            + escape(" / ".join(str(v) if v is not None else "ONBEKEND" for v in window_counts))
+            + '.</p><ol>'
             + "".join(event_items or ["<li>Geen events waargenomen.</li>"])
             + '</ol></details>'
         )
@@ -866,6 +1067,14 @@ def worker_progress_html(source):
             ' · Queueclaim: ' + escape(claimed or 'GEEN / ONBEKEND') +
             ' · Lease momenteel aantoonbaar geldig: ' +
             ('JA' if lease else 'ONBEKEND/NEE') +
+            ' · Event in huidig claimvenster: ' +
+            ('JA' if row.get("latest_event_in_current_claim_window") is True
+             else 'NEE' if row.get("latest_event_in_current_claim_window") is False
+             else 'ONBEKEND') +
+            ' · Voortgangsevent in huidig claimvenster: ' +
+            ('JA' if row.get("latest_progress_event_in_current_claim_window") is True
+             else 'NEE' if row.get("latest_progress_event_in_current_claim_window") is False
+             else 'ONBEKEND') +
             ' · Eventleeftijd: ' +
             (str(age) + ' sec' if age is not None else 'ONBEKEND') +
             ' · Laatste bronvoortgang: ' +
