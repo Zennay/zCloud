@@ -2660,7 +2660,7 @@ def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
 
 def portfolio_execution_lanes(project_id=None):
     ids=[str(project_id).strip().lower()] if project_id else None
-    with connect() as c:
+    with connect_readonly() as c:
         return _portfolio_lane_snapshot_locked(c,ids,now())
 
 def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
@@ -2768,7 +2768,7 @@ def _portfolio_queue_execution_capable(title,completion_criteria=''):
     return True
 
 def portfolio_attention_items(include_resolved=False):
-    with connect() as c:
+    with connect_readonly() as c:
         if include_resolved:
             rows=c.execute("""SELECT * FROM portfolio_attention
                               ORDER BY CASE severity WHEN 'urgent' THEN 0 WHEN 'attention' THEN 1 ELSE 2 END,
@@ -4965,7 +4965,7 @@ class Handler(BaseHTTPRequestHandler):
             # always visible without returning an unbounded command history.
             try: command_limit=max(10,min(200,int(q.get('limit',['100'])[0])))
             except Exception: command_limit=100
-            with connect() as c:
+            with connect_readonly() as c:
                 rows=c.execute(
                     "SELECT id,project_id,action,created_at,result FROM ("
                     "SELECT id,project_id,action,created_at,result FROM runner_commands "
@@ -5011,11 +5011,11 @@ class Handler(BaseHTTPRequestHandler):
                 days={'24h':1,'7d':7,'30d':30,'all':0}.get(q.get('range',['7d'])[0],7)
                 return self.reply(history(pid,days))
             if u.path=='/api/activity':
-                with connect() as c:
+                with connect_readonly() as c:
                     rows=c.execute('SELECT * FROM events WHERE (?="" OR project=?) ORDER BY ts DESC LIMIT 80',(pid,pid)).fetchall()
                 return self.reply([dict(r) for r in rows])
             if u.path=='/api/host-history':
-                with connect() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
+                with connect_readonly() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
                 return self.reply([dict(r) for r in reversed(rows)])
             return self.reply({'error':'Niet gevonden'},404)
         files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/enhancements.js':'enhancements.js','/style.css':'style.css','/enhancements.css':'enhancements.css','/ftmo-readiness.css':'ftmo-readiness.css','/favicon.svg':'favicon.svg','/manifest.webmanifest':'manifest.webmanifest','/zcloud-worker.user.js':'zcloud-worker.user.js'}
