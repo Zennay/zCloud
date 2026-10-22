@@ -1416,6 +1416,11 @@ def render_csv(bundle):
         status = queue.get("source_status", "sampled_nonatomic")
         add("runner_queue_overview", project=project, detail=(
             "GitHub Actions: " + status +
+            "; GitHub-reported run counts (NOT jobs): " +
+            ", ".join(window["status_requested"] + "=" +
+                      str(window["runs_reported_by_github"]) +
+                      " / sampled=" + str(window["rows_observed"])
+                      for window in queue.get("run_windows", [])) +
             "; no runner health, workflow/claim, CI or merge authority."))
         for job in queue.get("sampled_jobs", [])[:64]:
             add("runner_queue_job", project=project, link=job["job_url"],
