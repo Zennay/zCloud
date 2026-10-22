@@ -423,6 +423,11 @@ function downloadBlockedQueueHandoff(){
       priority:['P0','P1','P2','P3'].includes(item.priority)?item.priority:'UNKNOWN',
       status:'blocked',
       updated_at:typeof item.updated_at==='string'?item.updated_at.slice(0,80):null,
+      task_claim_source_available:item.task_claim_source_available===true,
+      task_claim_state:['none','active','expired-record','unknown','source-unavailable'].includes(item.task_claim_state)
+        ?item.task_claim_state:'unknown',
+      task_claim_lease_until:typeof item.task_claim_lease_until==='string'
+        ?item.task_claim_lease_until.slice(0,80):null,
       source_url:blockedQueueSourceUrl(item.source_url)||null,
       human_attention:!!(DATA.attention_needed||[]).find(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'),
       recommended_owner_step:'Review exact source and dependency; do not resume without authorization and fresh evidence'
