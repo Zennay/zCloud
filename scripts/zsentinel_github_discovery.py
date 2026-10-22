@@ -187,6 +187,7 @@ def discover(registry, selected, token=None):
         canonical_repository = registry[pid]
         root = f"https://api.github.com/repos/{canonical_repository}"
         candidates = []
+        approval_wait_runs = []
         checked = 0
         incomplete_windows = []
         attempted_windows = []
@@ -203,6 +204,16 @@ def discover(registry, selected, token=None):
                         root, canonical_repository, token, status)
                     if partial_runs and status not in incomplete_windows:
                         incomplete_windows.append(status)
+                    if status == "waiting":
+                        # A GitHub approval-gated workflow may have no job
+                        # object yet. Preserve bounded canonical RUN links for
+                        # human triage without inventing a queued runner job.
+                        approval_wait_runs = [{
+                            "run_id": rid, "head_sha": sha,
+                            "url": "https://github.com/" + canonical_repository +
+                                   "/actions/runs/" + str(rid),
+                            "action_authorized": False,
+                        } for rid, sha in run_ids]
                     for run_id, sha in run_ids:
                         request_count += 1
                         checked += 1
@@ -237,7 +248,10 @@ def discover(registry, selected, token=None):
                     break
             if not candidates:
                 coverage.append({
-                    "project_id": pid, "status": (
+                    "project_id": pid, "repository": canonical_repository,
+                    "approval_wait_workflows": approval_wait_runs,
+                    "approval_wait_workflows_sampled": len(approval_wait_runs),
+                    "status": (
                         "degraded_unavailable" if incomplete_windows
                         else "no_actionable_job_in_sampled_windows"),
                     "run_pages_checked": checked,
@@ -279,6 +293,8 @@ def discover(registry, selected, token=None):
                 "run_id": run_id, "job_id": job_id,
                 "primary_head_sha": sha,
                 "repository": canonical_repository,
+                "approval_wait_workflows": approval_wait_runs,
+                "approval_wait_workflows_sampled": len(approval_wait_runs),
                 "run_pages_checked": checked, "workflow_status_window": window,
                 "primary_job_status": status,
                 "primary_runner_route": route["runner_route"],
@@ -293,7 +309,10 @@ def discover(registry, selected, token=None):
             })
         except (OSError, ValueError):
             coverage.append({
-                "project_id": pid, "status": "degraded_unavailable",
+                "project_id": pid, "repository": canonical_repository,
+                "approval_wait_workflows": approval_wait_runs,
+                "approval_wait_workflows_sampled": len(approval_wait_runs),
+                "status": "degraded_unavailable",
                 "run_pages_checked": checked,
                 "not_scanned_windows": [
                     win for win in RUN_WINDOWS if win not in attempted_windows],
