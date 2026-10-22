@@ -1160,7 +1160,7 @@ If the current portfolio discovery already recorded `provider_stopped_early=true
 
 Every two-snapshot history comparison now includes a `zsentinel-portfolio-human-workorders-v1` board. It is computed **only** from the previously admitted bounded source, without another network read, worker claim or background task. The board unifies:
 
-- changed issues sorted by explicit *observed* priority rank (P0/P1 first); a missing issue uses only its **historical** rank as a navigation hint;
+- changed issues sorted by observed reader rank (P0/P1 first), with distinct source metadata for **current explicit GitHub P0/P1 label**, **current unverified title hint**, **current explicit P2/P3**, **current unknown** and **historical sampled rank only**. Only ranks 0/1 from the current observation set `critical_priority_verified_from_current_label=true`; a missing issue uses only its historical rank as a navigation hint;
 - the original canonical issue URL, GitHub issue-detail state if explicitly rechecked, and an action code suitable for a human owner;
 - source-access loss, restoration and partial-coverage transitions as separate **source** workorders, without assigning them a fabricated issue severity;
 - counts for workorders by repository, plus explicit `omitted_issue_workorders` and `hidden_historical_changes_not_classified` counts.
