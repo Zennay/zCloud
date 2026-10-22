@@ -1120,3 +1120,21 @@ python3 scripts/zsentinel_portfolio_history.py \
 The offline compare command also supports JSON, Markdown and a compact CSV schema, with the same create-only private output requirements. Both snapshots are read under the regular-file/no-symlink bounded admission contract. A comparison requires identical canonical project names/order and display view, a strictly later snapshot, and validated issue links, ranks and UTC times. The result explicitly distinguishes newly observed and re-ranked source cards, old cards absent from the new bounded window, >=6-hour unchanged P0/P1 GitHub update metadata, and source-coverage transitions. Every changed issue includes a distinct, non-executed human follow-up workorder: check existing PR/claims, verify a priority change, inspect present owner/CI activity before declaring a stall, or recheck the original issue before considering closure. These codes appear in private JSON and CSV alongside clear advisory-only HTML/Markdown guidance.
 
 **Not a live audit:** an offline output states clearly that it is based only on operator-supplied observations. It cannot establish current issue closure, current worker state, rights to merge or deploy, or present GitHub availability. A source-access failure means the next live GitHub read must be checked by an authorized owner, rather than interpreting the last successful report as current.
+
+### Optional source-bound GitHub closure-state reconciliation for missing issue cards
+
+A prior issue card can disappear from the **bounded display window** even while its GitHub issue remains open. The private offline history command now has a deliberately **opt-in, read-only** detail source check for just those missing cards, not an automatic retry or fix:
+
+```sh
+python3 scripts/zsentinel_portfolio_history.py \
+  --previous /private/path/snapshot-22.json \
+  --current /private/path/snapshot-23.json \
+  --verify-missing-live --live-recheck-limit 3 \
+  --format html --output /private/path/rechecked-issues.html
+```
+
+Default is strictly offline (zero GitHub requests). When explicitly enabled, zSentinel makes at most `--live-recheck-limit` (1–6; default 3) sequential canonical single-issue **GET** requests to the existing fixed-host, no-redirect GitHub reader. It checks the most urgent previously observed missing cards first, using only the old rank as a **historical triage hint**, not a live priority. The request admits canonical `Zennay/<repo>` and positive issue numbers already validated in both snapshots. If the source rejects access, returns an unexpected identity or has any quota, network or body-cap problem, the card becomes `SOURCE_UNAVAILABLE_AT_LIVE_RECHECK`, remaining candidates become `NOT_CHECKED_AFTER_SOURCE_ERROR`, and no additional request is made. A request limit yields `NOT_CHECKED_READ_LIMIT`, never a false closed status.
+
+One successful detail response may establish `OPEN_AT_LIVE_RECHECK` or `CLOSED_AT_LIVE_RECHECK` with a fresh source-observation timestamp and normalized GitHub state reason. A GitHub closed issue is **not evidence** that a fix was coded, reviewed, merged to the default branch, deployed, or verified live. The original sampled change remains `NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED`; the observed present-day issue state is an additional independent field, not a rewrite of source history. JSON, script-free HTML, Markdown and private CSV distinguish checked, uncheckable and not-checked states and show the bounded provider-read count. No worker claim, queue write, notification, PR action, CI dispatch or runner/service restart is ever performed.
+
+For private GitHub issues a valid `GITHUB_TOKEN` may be supplied through the host environment rather than command arguments; no token, raw response body, issue body or private issue title is emitted into an operator report. Use this opt-in source read only when the appropriate owner has ordinary read access; an unavailable private repository is UNKNOWN rather than a request to escalate privileges.
