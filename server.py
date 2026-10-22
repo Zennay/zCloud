@@ -3181,7 +3181,8 @@ def portfolio_queue_audit(refill=True):
     removed=[]
     protected_active=[]
     with connect() as c:
-        rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria,status,worker_slot
+        rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria,
+                                 status,worker_slot,claimed_at,claim_expires
                           FROM portfolio_queue
                           WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchall()
         for row in rows:
@@ -3191,18 +3192,33 @@ def portfolio_queue_audit(refill=True):
                 # Never let a periodic audit revoke an active claim, running
                 # worker or verification lease. Owner-driven completion/parking
                 # is the only safe transition for an already-assigned task.
-                if str(row['status'])!='queued' or row['worker_slot'] is not None:
+                if (str(row['status'])!='queued' or row['worker_slot'] is not None or
+                        row['claimed_at'] is not None or row['claim_expires'] is not None):
+                    protected_active.append(str(row['queue_id']))
+                    continue
+                # Even an unassigned queue row can have a separate owner claim.
+                # Never interpret claim expiry, an inconsistent project, or a
+                # missing claims source as permission for audit retirement.
+                claim=_portfolio_queue_task_claim_guard(
+                    c,row['project_id'],row['queue_id'],datetime.now(timezone.utc))
+                if not claim['source_available'] or claim['state']!='none':
                     protected_active.append(str(row['queue_id']))
                     continue
                 cur=c.execute("""UPDATE portfolio_queue SET status='dropped',eligible=0,worker_slot=NULL,
                              claimed_at=NULL,claim_expires=NULL,blocker=?,updated_at=?
                              WHERE queue_id=? AND status='queued' AND eligible=1
-                               AND worker_slot IS NULL""",
+                               AND worker_slot IS NULL AND claimed_at IS NULL AND claim_expires IS NULL
+                               AND NOT EXISTS (
+                                   SELECT 1 FROM task_claims
+                                   WHERE task_claims.claim_key=portfolio_queue.queue_id
+                               )""",
                           ('queue-audit: non-executable or human-gated task',now(),row['queue_id']))
-                # A simultaneous allocator may have claimed it after SELECT.
-                # In that case the guarded UPDATE does nothing; no takeover.
+                # Predicate rechecks both ownership sources at the exact write,
+                # including a claim created after the earlier read.
                 if cur.rowcount:
                     removed.append(str(row['queue_id']))
+                else:
+                    protected_active.append(str(row['queue_id']))
     if not refill:
         with connect() as c:
             ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
