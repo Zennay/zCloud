@@ -365,6 +365,13 @@ def blocked_queue_panel(source):
             row.get("queue_ref"), row.get("title"),
             row.get("project_id"), row.get("priority"))
         count = row.get("claim_attempts")
+        link = row.get("canonical_github_source_link_unverified")
+        if (link is not None and (
+                type(link) is not str or len(link) > 220
+                or re.fullmatch(
+                    r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/(?:issues|pull)/[1-9][0-9]{0,8}",
+                    link) is None)):
+            raise ValueError("untrusted canonical blocked-source link")
         if (type(ref) is not str or re.fullmatch(r"[0-9a-f]{16}", ref) is None
                 or ref in seen_items or type(pid) is not str
                 or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", pid) is None
@@ -386,6 +393,10 @@ def blocked_queue_panel(source):
                 or row.get("automatic_retry_authorized") is not False):
             raise ValueError("untrusted individual blocked queue evidence")
         seen_items.add(ref)
+        link_cell = (
+            '<a target="_blank" rel="noopener noreferrer" href="' +
+            escape(link, quote=True) + '">Open bron (niet geverifieerd)</a>'
+            if link else "Geen canonieke GitHub-bron in deze snapshot")
         work_rows.append(
             "<tr><td>" + phrase(priority, 3) + "</td><td>" +
             phrase(pid, 65) + "</td><td><code>" + phrase(ref, 16) +
@@ -398,7 +409,7 @@ def blocked_queue_panel(source):
             ("Bezet gezien" if row["worker_slot_present_observed"] is True
              else "Leeg in bron" if row["worker_slot_present_observed"] is False
              else "ONBEKEND") +
-            "</td><td>" +
+            "</td><td>" + link_cell + "</td><td>" +
             ("Ja, bronvlag; GEEN hervatrecht" if row["eligible_observed"]
              else "Nee, bronvlag") + "</td></tr>")
     if total is not None and len(work_rows) > total:
@@ -410,12 +421,15 @@ def blocked_queue_panel(source):
          else '<p>ONVOLLEDIGE taaksteekproef: meer taken mogelijk.'
          if work_coverage == "partial"
          else '<p>Geen actuele individuele taakbron beschikbaar.') +
-        ' Queue-id is alleen een afgeleide referentie; controleer de '
+        ' P0 eerst, binnen een prioriteit gespreid over projecten. '
+        'De steekproef garandeert GEEN volledigheid of chronologische volgorde. '
+        'Queue-id is alleen een afgeleide referentie; bronlinks uit de queue '
+        'zijn NIET onafhankelijk geverifieerd. Controleer de '
         'actuele echte taak via bevoegde beheertoegang.</p>' +
         ('<div class="wrap"><table><thead><tr><th>Prioriteit</th><th>Project</th>'
          '<th>Opaak kenmerk</th><th>Taak</th><th>Claims</th>'
          '<th>Claimvelden</th><th>Worker-slot aanwezig?</th>'
-         '<th>Eligible?</th></tr></thead><tbody>' +
+         '<th>Bronverwijzing</th><th>Eligible?</th></tr></thead><tbody>' +
          "".join(work_rows) + '</tbody></table></div>' if work_rows else '') +
         '<p class="muted">Een blocked status is geen mislukte job of '
         'automatische retry. Alleen bevoegde eigenaar kan na actuele '
