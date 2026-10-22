@@ -2998,6 +2998,11 @@ uit dezelfde discovery-steekproef (run/job/SHA/status/route gevalideerd).
 Deze extra jobs blijven observation-only, zonder dispatch- of herstelknoppen;
 een afgekapt venster wordt nooit als volledige CI-inventaris getoond.
 
+De hoofdcockpit hergebruikt dezelfde gedeelde validator/renderer en toont
+die aanvullende links ook bij `--observe-local-runners` wanneer `cloud`
+geselecteerd is. De JSON bewaart dezelfde begrensde lijst; de drieregelige
+tekst blijft compact en toont de primaire eigenaaractie.
+
 Voor [P0 GitHub-hosted billing/admission #1523](https://github.com/Zennay/zCloud/issues/1523)
 is daarnaast `scripts/zsentinel_hosted_gate_triage.py` op dezelfde PR
 geïmplementeerd. Deze leest alleen één bestaande exacte GitHub-run/job/SHA
