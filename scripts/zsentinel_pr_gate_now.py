@@ -36,6 +36,9 @@ GATE_STEPS_NL = {
         "Mislukte huidige checks; bevoegde PR-eigenaar onderzoekt de oorzaak.",
     "wait_for_existing_current_head_checks":
         "Bestaande exact-head checks lopen nog; niet opnieuw starten.",
+    "owner_triage_observed_slow_current_head_checks":
+        "Onderzoek de getoonde langdurige queued/lopende checks en hun runner-/toewijzingsstatus "
+        "met de bevoegde eigenaar; geen automatische herstart of CI-retry.",
     "owner_address_exact_head_review_changes":
         "Onafhankelijke reviewer heeft wijzigingen gevraagd; eigenaar handelt die af.",
     "verify_missing_current_head_checks_and_rules":
@@ -409,10 +412,14 @@ def _one(repo, number, token):
         gate_step = "verify_missing_current_head_checks_and_rules"
     elif mergeable is None:
         gate_step = "wait_for_github_mergeability_evaluation"
+    elif (running_over_attention or queued_over_attention):
+        # A concrete long-wait CI source deserves owner triage now, not a
+        # generic passive wait, even while a review is still outstanding.
+        # Still only an observation; the owner must inspect real runner state.
+        gate_step = "owner_triage_observed_slow_current_head_checks"
     elif not approved and not (requested_people or requested_teams):
-        # An independent review request is actionable while existing CI is
-        # queued. Never hide missing CI sources or unknown mergeability.
-        # This observer itself does not submit a review or a workflow job.
+        # Review can be requested while other CI is queued. This helper does
+        # not submit a review or a workflow run.
         gate_step = "request_independent_current_head_review"
     elif (statuses["pending_observed"] or statuses["other_observed"] or
           legacy_states["pending"]):
@@ -423,6 +430,18 @@ def _one(repo, number, token):
         gate_step = "request_independent_current_head_review"
     else:
         gate_step = "verify_required_rules_ownership_and_release_separately"
+    # Parallel owner work is separate from the primary blocked-CI action.
+    # It never weakens an existing failure, CHANGES_REQUESTED or source HOLD.
+    parallel_review_action = (
+        "request_independent_current_head_review"
+        if not last["draft"] and mergeable is True and not approved
+        and not requested_people and not requested_teams
+        and not requested and not statuses["failure_observed"]
+        and not legacy_states["failure"] and not legacy_states["error"]
+        and not legacy_partial and len(check_rows) == checks["total_count"]
+        and len(reviews) < 100 and (check_rows or latest_context)
+        and gate_step != "request_independent_current_head_review"
+        else None)
     return {
         "url": "https://github.com/" + repo + "/pull/" + str(number),
         "repository": repo, "number": number,
@@ -466,6 +485,7 @@ def _one(repo, number, token):
         "legacy_status_source_may_be_truncated": legacy_partial,
         "legacy_status_and_checks_required_set_verified": False,
         "human_next_gate_step": gate_step,
+        "parallel_independent_review_step": parallel_review_action,
         "legacy_status_sample_complete_and_terminal": (
             not legacy_partial and legacy_states["pending"] == 0),
         "observed_independent_exact_head_approvals": approved,
@@ -607,6 +627,9 @@ def human_gate_summary(source: dict) -> str:
             str(item["pending_team_review_requests_observed"]) + " teams (geen approvals).")
         lines.append("Volgende menselijke actie: " +
                      GATE_STEPS_NL[item["human_next_gate_step"]])
+        if item.get("parallel_independent_review_step"):
+            lines.append("Parallel mogelijk: " +
+                         GATE_STEPS_NL[item["parallel_independent_review_step"]])
         if (item["legacy_status_source_may_be_truncated"] or
                 not item["check_runs_page_complete"] or
                 item["review_page_may_be_truncated"]):
@@ -649,6 +672,9 @@ def html_gate_summary(source: dict) -> str:
         if step not in GATE_STEPS_NL:
             raise ValueError("unknown owner gate step")
         action = GATE_STEPS_NL[step]
+        parallel_step = item.get("parallel_independent_review_step")
+        if parallel_step is not None and parallel_step not in GATE_STEPS_NL:
+            raise ValueError("unknown parallel review step")
         state = (
             "CONCEPT: eigenaar moet reviewklaar maken" if item["draft_at_read"] else
             "MERGECONFLICT: eigenaar moet oplossen" if item["merge_conflict_observed"] else
@@ -711,6 +737,8 @@ def html_gate_summary(source: dict) -> str:
             h(head[:12]) + "</code></a> · doel: " + h(item["base_ref_observed"]) + "</p>" +
             "<p class='warning'>" + h(state) + "</p>" + badges +
             "<p class='action'><strong>Volgende eigenaaractie:</strong> " + h(action) + "</p>" +
+            ("<p class='action'><strong>Daarnaast parallel:</strong> " + h(GATE_STEPS_NL[parallel_step]) + "</p>"
+             if parallel_step else "") +
             ("<h3>Actuele checkacties (begrensde bron)</h3><ul>" + "".join(jobs) + "</ul>" if jobs else "") +
             ("<h3>Legacy statuscontexten</h3><ul>" + "".join(legacy) + "</ul>" if legacy else "") +
             ("<p class='muted'>" + " · ".join(h(x) for x in unknown) + "</p>" if unknown else "") +
