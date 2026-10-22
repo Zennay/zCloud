@@ -12,6 +12,7 @@ comment on [zCloud issue #1278](https://github.com/Zennay/zCloud/issues/1278).
 Supported comment bodies (one line, no extra Markdown):
 
 - `/zssh status` — bounded host uptime, root-disk usage, memory (read-only)
+- `/zssh workers` — privacy-preserving Runner.Worker/Runner.Listener occupancy bands and worker-age bands (read-only)
 - `/zssh project cloud` — current deployed zCloud Git revision (read-only)
 - `/zssh service zennay-cloud` — systemd state (read-only)
 - `/zssh service zssh` — systemd state (read-only)
@@ -61,6 +62,24 @@ boundary and scope the runner to that repository before enabling raw commands.
 No GitHub runner is an SSH daemon: the runner executes isolated, bounded jobs
 on the VPS itself, so there is no need to open TCP 22 or store SSH keys in
 ChatGPT. Interactive terminal sessions are not part of this design.
+
+## Runner occupancy snapshot
+
+`/zssh workers` reads only bounded `/proc/<pid>/stat` identity fields and
+`/proc/uptime`. It never reads command lines, environments, process IDs in the
+receipt, private files, or GitHub tokens; it does not invoke a shell, change
+services, or write queue/lease state. The output uses occupancy bands rather
+than exact worker IDs, excludes the current `Runner.Worker` when its ancestry
+is observable, and marks partial or unavailable observations explicitly.
+Worker age bands are an operational clue, not proof that a job is stuck or
+safe to interrupt. If the current worker cannot be excluded, the separate
+"other workers" field stays unknown.
+
+This is deliberately **not** a task-ownership inventory: it does not map a
+process to a branch, PR, Notion claim, or queue lease. A zero-worker observation
+is not claim clearance, and the receipt always sets ownership verification,
+takeover safety, and release authority to false. Use it as a privacy-safe
+capacity hint before the human/Notion/GitHub ownership check.
 
 ## Test & rollback
 
