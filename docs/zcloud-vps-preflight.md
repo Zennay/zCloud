@@ -140,11 +140,14 @@ python3 scripts/zcloud_vps_preflight.py --host-pressure --previous-report /secur
 Het nieuwe `host_pressure_trend`-object vergelijkt CPU-vraag per core,
 CPU-some-PSI en geheugen-/I/O-full-PSI. Alleen eindige, begrensde cijfers uit
 twee expliciete `local_procfs`-bronrecords met hetzelfde aantal CPU's worden
-gebruikt; ontbrekende waarden blijven onbekend. Een stijgende, dalende, stabiele
-of gemengde trend is uitsluitend **menselijke observatie**. Een oude
-momentopname, CPU-configuratiewissel, ontbrekend meetmoment of ontbrekende
-bronvelden produceren een duidelijke coverage-status, **nooit een impliciete
-herstelscore**. Dit maakt de bestaande private HTML-werkbak direct geschikt om
+gebruikt; de ruwe load, CPU-count en afgeleide load-per-CPU moeten onderling
+consistent zijn. De totale trend wordt alleen als rising/falling/stable/mixed
+samengevat wanneer **alle vier metrics** geldig zijn en beide snapshotstatussen
+`observed` zijn. Bij gedeeltelijke overlap blijven beschikbare deltas per
+metric zichtbaar, maar de geaggregeerde trend blijft `unknown`; het rapport
+noemt de ontbrekende/ongeldige bronvelden en de coverage. Ook ongeldige
+meetvensters worden fail-closed behandeld. Dit is uitsluitend **menselijke
+observatie**, nooit een impliciete herstelscore. Dit maakt de bestaande private HTML-werkbak direct geschikt om
 belasting over twee eigenaar-gecontroleerde snapshots te vergelijken. De bron
 is operator-aangeleverd, niet cryptografisch hostgebonden of een toestemming
 om een training te stoppen, runner te herstarten of te deployen.
