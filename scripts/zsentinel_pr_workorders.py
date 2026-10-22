@@ -904,7 +904,8 @@ def render_csv(bundle):
         "attention_status", "attention_label", "workstream", "workstream_label",
         "operator_action_link",
         "head_sha_at_observation", "current_source_verified", "rank",
-        "category", "blocker", "human_next_step", "source_observed_at_utc",
+        "category", "blocker", "human_next_step", "operator_primary_step",
+        "parallel_review_possible", "source_observed_at_utc",
         "source_sha256", "link", "detail",
         "pending_review_individuals", "pending_review_teams",
         "pending_review_request_sha256",
@@ -951,6 +952,9 @@ def render_csv(bundle):
                 "rank": card["rank"], "category": card["category"],
                 "blocker": card["blocker"],
                 "human_next_step": card["human_next_step"],
+                "operator_primary_step": card["operator_primary_step"],
+                "parallel_review_possible": (
+                    card["parallel_review_request_possible_at_observation"]),
                 "attention_status": card["attention_status"],
                 "attention_label": card["attention_label"],
                 "workstream": card["workstream"],
@@ -1006,7 +1010,7 @@ def render_csv(bundle):
             "CURRENT STATUS NOT VERIFIED" if not card["source_current"]
             else "EXACT HEAD AT SOURCE MOMENT; NOT MERGE AUTHORITY"))
         add("operator_next_action", card, link=card["operator_action_link"],
-            detail="Human-only next step: " + card["human_next_step"] +
+            detail="Human-only next step: " + card["operator_primary_step"] +
                    "; source is not a claim or merge clearance")
         add("open_existing_checks", card, link=card["checks_url"],
             detail="Reopen GitHub PR Checks; verify required exact-head CI, do not retrigger")
@@ -1181,6 +1185,8 @@ def render_html(bundle):
         e(summary["no_open_review_request_observed_prs"]) +
         " · bron onbekend: " +
         e(summary["review_request_source_unknown_prs"]) +
+        " · parallel review aan te vragen terwijl CI loopt: " +
+        e(summary["parallel_review_action_prs"]) +
         ". Controleer GitHub voordat je iets aanvraagt of samenvoegt.</p></section>")
     work = bundle.get("workstream_summary")
     if (type(work) is not dict or work.get("all_actions_manual") is not True or
@@ -1265,8 +1271,13 @@ def render_html(bundle):
             "<p><strong>Bestaande gatevervolgstap:</strong> " +
             e(card["attention_label"]) + "</p>" +
             "<p><strong>Blokkade:</strong> " + e(card["blocker"]) + "<br>"
-            "<strong>Menselijke vervolgstap:</strong> " +
-            e(card["human_next_step"]) + "</p>",
+            "<strong>Menselijke vervolgstap volgens bron:</strong> " +
+            e(card["human_next_step"]) + "</p>" +
+            ("<p><strong>Nu onafhankelijk uitvoerbaar:</strong> " +
+             e(card["operator_primary_step"]) +
+             " (geen automatische reviewaanvraag)</p>"
+             if card["parallel_review_request_possible_at_observation"]
+             else ""),
             "<p><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
             e(card["operator_action_link"]) + "\">Bekijk volgende menselijke actie bij GitHub</a></p>",
             "<p><strong>GitHub bron bekijken:</strong> " +
@@ -1480,6 +1491,8 @@ def render_markdown(bundle):
         str(summary["no_open_review_request_observed_prs"]) +
         " PRs · onbekende bron: " +
         str(summary["review_request_source_unknown_prs"]) + " PRs.",
+        "Parallelle reviewactie beschikbaar naast bestaande CI: " +
+        str(summary["parallel_review_action_prs"]) + " PRs (alleen eigenaar).",
         "Een aangevraagde review is nooit een onafhankelijke goedkeuring.",
         "",
     ]
@@ -1521,7 +1534,8 @@ def render_markdown(bundle):
             "](" + card["url"] + ")",
             "",
             "**Huidige blokkade:** " + card["blocker"],
-            "**Eerstvolgende menselijke actie:** " + card["human_next_step"],
+            "**Eerstvolgende menselijke actie:** " + card["operator_primary_step"],
+            "**Brongebaseerde gateactie:** " + card["human_next_step"],
             "**Werkstroom:** " + card["workstream_label"] +
             " (uitvoeren alleen na eigenaarstoestemming)",
             "**Open menselijke actie bij GitHub:** " + card["operator_action_link"],
