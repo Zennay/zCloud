@@ -71,18 +71,37 @@ def validated_view(source: dict) -> dict:
     # A board generated later is not proof that older retry evidence is live.
     source_clocks = source.get("source_times_utc")
     source_fresh = source.get("fresh")
+    source_freshness_status = source.get("freshness_status")
+    allowed_sources = {"inbox", "retry", "branches", "claims", "prs"}
     if (type(source_clocks) is not dict or type(source_fresh) is not dict
             or "inbox" not in source_clocks
-            or set(source_clocks) - {"inbox", "retry", "branches", "claims", "prs"}
-            or set(source_fresh) - {"inbox", "retry", "branches", "claims", "prs"}):
+            or set(source_clocks) - allowed_sources
+            or set(source_fresh) - allowed_sources):
         raise ValueError("Missing bounded independent source clocks")
+    # Older saved boards contain only boolean freshness. New boards may
+    # explicitly preserve a future-dated source as UNKNOWN rather than
+    # refusing the entire private workbench bundle.
+    if source_freshness_status is None:
+        source_freshness_status = {}
+    elif (type(source_freshness_status) is not dict
+          or set(source_freshness_status) != set(source_clocks)
+          or any(value not in {
+              "fresh", "stale", "future_dated", "outside_inbox_window"
+          } for value in source_freshness_status.values())):
+        raise ValueError("Invalid explicit source freshness status")
     admitted_clocks = {}
     for name, stamp in source_clocks.items():
         parsed = when(stamp)
-        if parsed > board_moment:
-            raise ValueError("A source cannot be newer than its captured board")
-        if source_fresh.get(name) is not True and source_fresh.get(name) is not False:
+        fresh_flag = source_fresh.get(name)
+        if fresh_flag is not True and fresh_flag is not False:
             raise ValueError("Source freshness must be explicit")
+        status = source_freshness_status.get(name)
+        if status is not None and ((status == "fresh") != (fresh_flag is True)):
+            raise ValueError("Source freshness status disagrees with its boolean flag")
+        if parsed > board_moment and not (
+            fresh_flag is False and status == "future_dated"
+        ):
+            raise ValueError("A source cannot be newer than its captured board unless explicitly marked future-dated")
         admitted_clocks[name] = stamp
     if set(source_fresh) != set(admitted_clocks):
         raise ValueError("Freshness flags and original source clocks disagree")
@@ -271,6 +290,7 @@ def validated_view(source: dict) -> dict:
             "project_operations": project_operations,
             "project_source_observed_at_utc": admitted_clocks,
             "source_freshness": dict(source_fresh),
+            "source_freshness_status": dict(source_freshness_status),
             "projects": sorted(projects | {r["project"] for r in chosen}),
             "global_gate": "live claims, exact-head CI, review and release authority unverified"}
 
@@ -472,6 +492,7 @@ def project_operations_html(view: dict) -> str:
     """
     sections = []
     freshness = view.get("source_freshness", {})
+    freshness_status = view.get("source_freshness_status", {})
     source_clocks = view.get("project_source_observed_at_utc", {})
     source_labels = (
         ("inbox", "GitHub issue inbox"),
@@ -482,8 +503,15 @@ def project_operations_html(view: dict) -> str:
     freshness_rows = []
     for key, label in source_labels:
         value = freshness.get(key)
-        state = ("fresh at capture" if value is True else
-                 "not fresh at capture" if value is False else "UNKNOWN")
+        explicit_status = freshness_status.get(key)
+        state = (
+            explicit_status.replace("_", " ") + " at capture"
+            if explicit_status in {
+                "fresh", "stale", "future_dated", "outside_inbox_window"
+            } and (explicit_status == "fresh") == (value is True)
+            else "fresh at capture" if value is True
+            else "not fresh at capture" if value is False else "UNKNOWN"
+        )
         freshness_rows.append(
             '<li><strong>' + escape(label) + '</strong> · ' +
             escape(state) + ' · observed UTC: ' +
