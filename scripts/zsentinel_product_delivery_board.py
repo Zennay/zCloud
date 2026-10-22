@@ -443,7 +443,22 @@ def markdown(data):
             queue.get("expired_active_leases", "unknown"),
             row["recommended_next_step"],
         ))) + " |")
-    return "\n".join(lines + ["", data["operator_note"], ""])
+    lines.extend(["", "## Three-line incident handoffs (human-only)", ""])
+    for row in data["cards"]:
+        # Keep each portable escalation to exactly Problem / Action / Status.
+        # The summary is advisory and cannot release ownership or gates.
+        lines.extend([
+            "Problem: " + safe(row["priority"]) + " · " +
+            safe(row["project"]) + " · " + safe(row["issue"]) + " — " +
+            safe(row["title"]),
+            "Action: " + safe(row["recommended_next_step"]) +
+            " (human-only; no automatic claim, retry or merge).",
+            "Status: HOLD · source coverage=" + safe(row["issue_coverage"]) +
+            "; current claim, exact-head CI, independent review and release " +
+            "authority UNKNOWN.",
+            "",
+        ])
+    return "\\n".join(lines + ["", data["operator_note"], ""])
 
 
 def html(data):
