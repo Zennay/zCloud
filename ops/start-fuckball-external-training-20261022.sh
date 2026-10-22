@@ -19,7 +19,7 @@ system_disk="$(lsblk -nrpo PKNAME "$system_source" 2>/dev/null | head -n1 || tru
 # An rclone/FUSE archive is not a safe training disk: its VFS cache can fill /.
 # Only deliberately named, separately mounted, block-backed volumes qualify.
 set -- /mnt/external /mnt/storage /mnt/data /mnt/training /srv/external /srv/storage /data /media/storage /mnt/VPS-Archief
-if [[ -n "$FUCKBALL_EXTERNAL_MOUNT" ]]; then set -- "$FUCKBALL_EXTERNAL_MOUNT"; fi
+if [[ -n "${FUCKBALL_EXTERNAL_MOUNT:-}" ]]; then set -- "$FUCKBALL_EXTERNAL_MOUNT"; fi
 MOUNT=''
 for candidate in "$@"; do
   [[ -d "$candidate" && ! -L "$candidate" ]] || continue
@@ -71,6 +71,7 @@ trap 'rm -rf -- "$stage"' EXIT
 sha="$(git ls-remote "$REPO" refs/heads/main | awk '{print $1}')"
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Could not pin upstream main SHA'; exit 30; }
 release="$ROOT/releases/$sha"
+if [[ -e "$release" && ! -d "$release/.git" ]]; then echo "Refuse incomplete release path"; exit 34; fi
 if [[ ! -d "$release/.git" ]]; then
   git clone --quiet --depth 1 --branch main "$REPO" "$stage/repo"
   [[ "$(git -C "$stage/repo" rev-parse HEAD)" == "$sha" ]] || { echo 'Source changed during clone'; exit 31; }
