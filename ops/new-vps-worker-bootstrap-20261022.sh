@@ -31,7 +31,16 @@ status() {
   msg "Existing services (do not conflate an installed unit with active workers)"
   systemctl is-active zennay-cloud.service 2>/dev/null || true
   systemctl --user -M ubuntu@ is-active chatgpt-firefox.service 2>/dev/null || true
-  systemctl list-unit-files 'actions.runner.*.service' --no-legend 2>/dev/null || true
+  echo "Runner registration state (enabled does not mean running):"
+  while read -r unit _; do
+    [[ -n "$unit" ]] || continue
+    state="$(systemctl show "$unit" --property=ActiveState --value 2>/dev/null || true)"
+    case "$unit" in
+      *vps-bb300bba*|*zcloud-vps-1*|*zssh-vps-1*) origin="OLD-IDENTITY";;
+      *) origin="NEW-IDENTITY";;
+    esac
+    printf '%s %s %s\n' "$origin" "${state:-unknown}" "$unit"
+  done < <(systemctl list-unit-files --no-legend 'actions.runner.*.service' 2>/dev/null || true)
   msg "Browser prerequisites"
   for path in "$ZHOME/.Xauthority" "$ZHOME/snap/firefox/common/chatgpt-webext-profile" \
     "$ZHOME/.local/bin/web-ext" "$ROOT/firefox-extension"; do
@@ -170,14 +179,27 @@ systemctl cat zennay-cloud.service >/dev/null 2>&1 ||
   die "system zennay-cloud.service not installed; reconcile any existing ubuntu user unit first"
 while read -r unit _; do
   [[ -n "$unit" ]] || continue
-  if systemctl is-active --quiet "$unit"; then
-    die "already-active GitHub runner on new VPS: $unit; avoid cloned identity collisions"
-  fi
+  case "$unit" in
+    *vps-bb300bba*|*zcloud-vps-1*|*zssh-vps-1*)
+      state="$(systemctl show "$unit" --property=ActiveState --value 2>/dev/null || true)"
+      [[ "$state" != active && "$state" != activating && "$state" != reloading ]] ||
+        die "cloned old-VPS GitHub runner is live: $unit"
+      ;;
+  esac
 done < <(systemctl list-unit-files --no-legend 'actions.runner.*.service' 2>/dev/null || true)
-! systemctl is-active --quiet zennay-cloud.service ||
-  die "zCloud service is already running; refuse to rewrite active queue state"
-! systemctl --user -M ubuntu@ is-active --quiet chatgpt-firefox.service ||
-  die "worker Firefox already active; refuse a second browser instance"
+# Fresh vm-7eb5ee16 GitHub runner identities are independent and may keep working.
+for scope in system user; do
+  if [[ "$scope" == system ]]; then
+    state="$(systemctl show zennay-cloud.service -p ActiveState --value 2>/dev/null || true)"
+  else
+    state="$(systemctl --user -M ubuntu@ show zennay-cloud.service -p ActiveState --value 2>/dev/null || true)"
+  fi
+  [[ "$state" != active && "$state" != activating && "$state" != reloading ]] ||
+    die "zCloud $scope service already $state; refuse competing scheduler"
+done
+firefox_state="$(systemctl --user -M ubuntu@ show chatgpt-firefox.service -p ActiveState --value 2>/dev/null || true)"
+[[ "$firefox_state" != active && "$firefox_state" != activating && "$firefox_state" != reloading ]] ||
+  die "Firefox worker service already $firefox_state; inspect without launching duplicate sessions"
 msg "Validate desired fleet against copied state (no fabricated workers)"
 runuser -u "$ZUSER" -- python3 "$ROOT/scripts/apply_worker_fleet.py"
 msg "Apply fleet desired state while API is stopped"
