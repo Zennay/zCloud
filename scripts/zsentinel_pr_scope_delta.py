@@ -504,7 +504,13 @@ def render_delta(delta, format="text"):
                             ("Twee volledige stabiele open-PR snapshots; claims NIET gecontroleerd."
                              if row["complete_open_pr_inventory_comparable"] else
                              "ONVOLLEDIGE dekking: geen bewijs dat PR's gesloten zijn of botsingen verdwenen.") +
-                            "</p><ul>" + ("".join(links) or
+                            " Doelbranchidentiteit onbekend: " +
+                            (str(row["target_branch_identity_unknown_count"])
+                             if row["target_branch_identity_unknown_count"] is not None else "ONBEKEND") +
+                            "; retargets: " +
+                            (str(row["target_branch_retarget_count"])
+                             if row["target_branch_retarget_count"] is not None else "ONBEKEND") +
+                            ".</p><ul>" + ("".join(links) or
                             "<li>Geen verandering aantoonbaar in deze bron.</li>") +
                             "</ul></section>")
         return ("<section><h2>Historische PR-verandering (niet-autoriserend)</h2><p>" +
