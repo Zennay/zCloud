@@ -472,6 +472,12 @@ def _coordination_groups(cards):
                 or type(card.get("overlap_paths_hidden")) is not bool):
             raise ValueError("invalid PR coordination freshness flags")
         coverage_reasons = card.get("source_coverage_reasons", [])
+        recovery_steps = card.get("source_recovery_steps", [])
+        if (type(recovery_steps) is not list or len(recovery_steps) > 5
+                or any(type(step) is not str or not 1 <= len(step) <= 240
+                       or any(ord(char) < 32 or ord(char) == 127 for char in step)
+                       for step in recovery_steps)):
+            raise ValueError("invalid bounded source recovery actions")
         page_count = card.get("source_open_pr_pages", 1)
         window_complete = card.get("source_open_pr_window_complete", False)
         if (type(page_count) is not int or not 1 <= page_count <= 3
@@ -1138,6 +1144,12 @@ def collect_workorders(board):
                 projects[project].get("open_pr_snapshot_stable") is not True or
                 projects[project].get("source_truncated") is True) and not coverage_reasons:
             coverage_reasons = ["open_pr_inventory_incomplete"]
+        recovery_steps = projects[project].get("source_recovery_steps", [])
+        if (type(recovery_steps) is not list or len(recovery_steps) > 5
+                or any(type(step) is not str or not 1 <= len(step) <= 240
+                       or any(ord(char) < 32 or ord(char) == 127 for char in step)
+                       for step in recovery_steps)):
+            raise ValueError("invalid project source recovery actions")
         source_warnings = list(notes)
         if coverage_reasons:
             source_warnings.append("PR-overlapbrondekking onvolledig: " +
@@ -1194,6 +1206,7 @@ def collect_workorders(board):
             "overlap_paths": [_markdown(p) for p in paths],
             "overlap_paths_hidden": paths_cut,
             "source_coverage_reasons": coverage_reasons,
+            "source_recovery_steps": recovery_steps,
             "source_open_pr_pages": projects[project].get("open_pr_pages_read", 1),
             "source_open_pr_window_complete": (
                 projects[project].get("open_pr_window_complete") is True),
@@ -1528,6 +1541,8 @@ def render_csv(bundle):
             add("issue_hint_unverified", card,
                 link="https://github.com/" + repo + "/issues/" + str(number),
                 detail="PR text only; link identity/status/fix unverified")
+        for action in card.get("source_recovery_steps", []):
+            add("source_recovery_action", card, detail=action)
         for warning in card["source_warnings"][:16]:
             add("source_warning", card, detail=warning)
     data = "\ufeff" + stream.getvalue()
@@ -1973,6 +1988,11 @@ def render_html(bundle):
                      "<li>Bevoegde releaser beslist over merge/deploy; geen "
                      "automatische acties vanuit dit dossier.</li>"
                      "</ol></details>")
+        if card.get("source_recovery_steps"):
+            parts.append("<h3>Veilige volgende bronacties</h3><ul>")
+            for action in card["source_recovery_steps"]:
+                parts.append("<li>" + e(action) + "</li>")
+            parts.append("</ul><p class='meta'>Geen wijziging van claims, CI of mergebeleid.</p>")
         if card.get("source_warnings"):
             parts.append("<h3>Bronwaarschuwingen</h3><ul>")
             for warning in card["source_warnings"]:
@@ -2250,6 +2270,8 @@ def render_markdown(bundle):
                          ", ".join(issue_links) +
                          " (tekstverwijzingen, link kan naar PR of ontbrekend "
                          "nummer leiden; geen fixbewijs).\n")
+        for action in card.get("source_recovery_steps", []):
+            lines.append("**Volgende bronactie (handmatig):** " + action)
         for warning in card["source_warnings"]:
             lines.append("**Let op:** " + warning)
         lines += ["", "---", ""]
