@@ -81,7 +81,7 @@
     if(DATA.stale===true)return {unconfirmed:true,code:'SERVER_MARKED_STALE',label:'Server marked the snapshot stale'};
     var rawTimestamp=typeof DATA.time==='string'?DATA.time.trim():'';
     if(!rawTimestamp)return {unconfirmed:true,code:'TIMESTAMP_MISSING',label:'Snapshot timestamp is missing'};
-    if(!/(?:Z|[+-]\\d{2}:\\d{2})$/i.test(rawTimestamp))return {unconfirmed:true,code:'TIMESTAMP_TIMEZONE_MISSING',label:'Snapshot timestamp has no explicit timezone'};
+    if(!/(?:Z|[+-]\d{2}:\d{2})$/i.test(rawTimestamp))return {unconfirmed:true,code:'TIMESTAMP_TIMEZONE_MISSING',label:'Snapshot timestamp has no explicit timezone'};
     var stamp=Date.parse(rawTimestamp);
     if(!Number.isFinite(stamp))return {unconfirmed:true,code:'TIMESTAMP_INVALID',label:'Snapshot timestamp is invalid'};
     var age=Date.now()-stamp;
