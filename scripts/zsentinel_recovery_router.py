@@ -1201,12 +1201,34 @@ def _blocked_queue_summary(source, source_coverage):
     }
 
 
+def _native_retry_contract_boundary():
+    """Static contract boundary; never claim this read-only view proves implementation state."""
+    return {
+        "schema": "zsentinel-native-retry-contract-boundary-v1",
+        "status": "not_verified_by_read_only_queue_view",
+        "source_issue_url": "https://github.com/Zennay/zCloud/issues/677",
+        "source_issue_link_is_navigation_only": True,
+        "attempts_are_claims_not_failures": True,
+        "required_native_semantics": [
+            "explicit_failure_disposition",
+            "durable_retry_not_before_backoff",
+            "finite_retry_budget",
+            "claim_identity_continuity",
+        ],
+        "owner_route": "authorized_queue_writer_owner_after_serialized_write_window",
+        "automatic_retry_authorized": False,
+        "queue_write_authorized": False,
+        "historical_attempt_reset_authorized": False,
+    }
+
+
 def queue_pressure_summary(source, now):
     """Read-only SQLite pressure in reports only, never a lease or retry claim."""
     if source is None:
         return {"coverage":"not_supplied", "totals":{}, "samples":[],
                 "sample_is_complete":False, "project_groups":[],
                 "project_groups_truncated":False, "claim_ownership_verified":False,
+                "native_retry_contract_boundary": _native_retry_contract_boundary(),
                 "blocked_queue": {
                     "coverage": "not_supplied", "aggregate_coverage": "not_supplied",
                     "source_coverage": "not_supplied", "observed_at": None,
@@ -1354,6 +1376,7 @@ def queue_pressure_summary(source, now):
         })
     return {"coverage":coverage,"observed_at":utc_string(observed),
             "source_file_identity_sha256_private": queue_source_identity,
+            "native_retry_contract_boundary": _native_retry_contract_boundary(),
             "totals":safe_totals,"samples":safe_samples if coverage=="current" else [],
             "sample_is_complete":source["sample_is_complete"],
             "project_groups":safe_groups[:18] if coverage=="current" else [],
@@ -1984,6 +2007,28 @@ def operator_text(result):
                      str(len(result["reclassified_exact_jobs"])))
     queue_report = result["live_queue_pressure"]
     lines.append("Read-only queue pressure: " + queue_report["coverage"])
+    retry_contract = queue_report.get("native_retry_contract_boundary")
+    required_retry_semantics = [
+        "explicit_failure_disposition", "durable_retry_not_before_backoff",
+        "finite_retry_budget", "claim_identity_continuity",
+    ]
+    if (type(retry_contract) is not dict
+            or retry_contract.get("schema") != "zsentinel-native-retry-contract-boundary-v1"
+            or retry_contract.get("status") != "not_verified_by_read_only_queue_view"
+            or retry_contract.get("source_issue_url") != "https://github.com/Zennay/zCloud/issues/677"
+            or retry_contract.get("source_issue_link_is_navigation_only") is not True
+            or retry_contract.get("attempts_are_claims_not_failures") is not True
+            or retry_contract.get("required_native_semantics") != required_retry_semantics
+            or retry_contract.get("owner_route") != "authorized_queue_writer_owner_after_serialized_write_window"
+            or retry_contract.get("automatic_retry_authorized") is not False
+            or retry_contract.get("queue_write_authorized") is not False
+            or retry_contract.get("historical_attempt_reset_authorized") is not False):
+        raise ValueError("untrusted native retry-contract boundary")
+    lines.append(
+        "Native retry contract: NOT VERIFIED by read-only view · required semantics "
+        "failure disposition/backoff/finite budget/claim continuity · attempts are claims, "
+        "not failures · issue #677 link is navigation only · no retry, queue write or counter reset."
+    )
     if queue_report["totals"]:
         values = queue_report["totals"]
         lines.append("Queued " + str(values["queued_items"]) + " · Owned " +
