@@ -42,14 +42,14 @@ sudo ZCLOUD_OLD_VPS_FENCED=yes ZCLOUD_FINAL_DB_SYNCED=yes \
 
 The two flags are explicit cutover attestations, **not** synchronization tools. Never set them merely because a 657 MB file exists. The script refuses active local zCloud services, active cloned Actions runner identities, missing schema, missing targets, and unexpired queue claims. It updates the desired fleet using the existing host-bound `scripts/apply_worker_fleet.py`, then starts zCloud locally. It starts the Firefox worker supervisor only when the original browser prerequisites and X display are verified.
 
-The checked-in `worker-fleet.json` currently requests **10 workers** across zSentinel (5), Tuddy (1), FTMO (1), FuckBall (1), TradeEngine (1), LightUp (1). This is *planned capacity*; `/api/runner-live`, actual recent heartbeats and project queue transitions must confirm which workers are executing. It is not an instruction to claim 10 logged-in sessions exist.
+During operator prepare on 22 October 2026 the Firefox user unit reported `activating`, the system zCloud API was `inactive`, `/api/status` and `/api/runner-live` returned HTTP `000`, and several **new VM runner units were enabled** alongside disabled old identities. Those facts do not establish that workers/runner listeners are actually running. Recheck `ActiveState`, `SubState`, `Result` and `ExecMainStatus` before any activation.\n\nThe checked-in `worker-fleet.json` currently requests **10 workers** across zSentinel (5), Tuddy (1), FTMO (1), FuckBall (1), TradeEngine (1), LightUp (1). This is *planned capacity*; `/api/runner-live`, actual recent heartbeats and project queue transitions must confirm which workers are executing. It is not an instruction to claim 10 logged-in sessions exist.
 
 ## 4. Independent acceptance
 
 - `systemctl status zennay-cloud.service` and `systemctl --user -M ubuntu@ status chatgpt-firefox.service` are healthy.
 - From the VPS, `curl -i http://127.0.0.1:8765/api/status` and `curl -i http://127.0.0.1:8765/api/runner-live` show expected status and live worker heartbeats. A 401, 404, a nonzero HTTP code, or empty/stale heartbeats is **not** evidence of running workers.
 - Firefox must remain authenticated and persist tabs across disconnect/reboot without generating duplicate sessions; verify this in the appropriate XRDP login.
-- Register new unique GitHub Actions runner identities with valid repo/group scope; then update trusted workflow host admission under its existing release-owner gates, and confirm a job has `runner_id > 0`. Do not reuse the old `zcloud-vps-1` registration.
+- Existing VM-specific GitHub Actions runner services (such as `vm-7eb5ee16-haxlab`, `vm-7eb5ee16-fuckball`, `vm-7eb5ee16-lightup`) may already be installed and enabled. Preserve these identities; an enabled unit is not necessarily active or connected to GitHub. Register only missing repository-scoped runners under **fresh unique new-VPS identities**; then update trusted workflow host admission under its existing release-owner gates, and confirm a job has `runner_id > 0`. Do not reuse the old `zcloud-vps-1` registration.
 - Only once the new system actually executes jobs, retire old server and runner services; keep backups.
 
 Never publish registration tokens, browser sessions, private profile bytes or SQLite files in CI logs or GitHub.
