@@ -1036,6 +1036,15 @@ function oneIssueHandoff(t){
    '- PR-groep in werkbak: '+(p?'JA':'NEE, geen actuele bronconclusie'));
   if(/^[0-9a-f]{40}$/.test(head))lines.push(
    '- Exact broncommit: [GitHub commit]('+url.split('/pull/')[0]+'/commit/'+head+')');
+  if(receipt){
+   lines.push(
+    '- PR-bestandscope-overlap waargenomen: '+(receipt.file_overlap?'JA':'NEE IN DEZE BRON'),
+    '- Bestand/map-ancestorconflict waargenomen: '+
+     (receipt.file_directory_overlap?'JA, '+receipt.file_directory_peer_count+
+      ' betrokken PRs':'NEE IN DEZE BRON'),
+    '- Waargenomen conflict is geen bewijs van een Git merge failure of eigenaar.',
+    '- Historische bronbeweging: '+(receipt.source_movement?'GEZIEN':'NIET GEZIEN'));
+  }
   if(p){
    lines.push(
     '- Gatevervolgstap uit bron: '+safeText(p.dataset.next),
