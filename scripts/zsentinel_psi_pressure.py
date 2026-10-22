@@ -66,6 +66,9 @@ def observe_psi():
         "source_complete": False,
         "resources": {},
         "pressure_hint": "UNKNOWN",
+        "observed_sources": [],
+        "pressure_basis": [],
+        "pressure_scope": "UNKNOWN",
         "job_blocked": "NOT_INFERABLE",
         "new_worker_authorized": False,
         "restart_authorized": False,
@@ -81,12 +84,49 @@ def observe_psi():
                 "status": "UNKNOWN",
                 "measurements": None,
             }
-    if not all(row["status"] == "OBSERVED" for row in result["resources"].values()):
-        result["status"] = "PARTIAL"
-        return result
+    observed = {
+        source: row["measurements"]
+        for source, row in result["resources"].items()
+        if row.get("status") == "OBSERVED" and isinstance(row.get("measurements"), dict)
+    }
+    result["observed_sources"] = sorted(observed)
 
     def average(source, label="some"):
-        return result["resources"][source]["measurements"][label]["avg60_pct"]
+        return observed[source][label]["avg60_pct"]
+
+    def source_pressure(source, measurements):
+        some = measurements["some"]["avg60_pct"]
+        full = measurements.get("full", {}).get("avg60_pct")
+        if source == "cpu":
+            high = some >= 70
+            elevated = some >= 25
+        else:
+            high = some >= 30 or (full is not None and full >= 10)
+            elevated = some >= 5 or (full is not None and full >= 1)
+        return "HIGH" if high else "ELEVATED" if elevated else "NO_LOCAL_THRESHOLD_CROSSED"
+
+    if len(observed) != len(SOURCES):
+        high_sources = sorted(
+            source for source, measurements in observed.items()
+            if source_pressure(source, measurements) == "HIGH"
+        )
+        elevated_sources = sorted(
+            source for source, measurements in observed.items()
+            if source_pressure(source, measurements) == "ELEVATED"
+        )
+        result["status"] = "PARTIAL"
+        result["source_complete"] = False
+        result["pressure_scope"] = "OBSERVED_SOURCES_ONLY"
+        # A missing PSI source cannot erase a severe observation from a known
+        # source. Conversely, absent threshold crossings in partial data are
+        # not evidence of low pressure: retain UNKNOWN.
+        if high_sources:
+            result["pressure_hint"] = "HIGH"
+            result["pressure_basis"] = high_sources
+        elif elevated_sources:
+            result["pressure_hint"] = "ELEVATED"
+            result["pressure_basis"] = elevated_sources
+        return result
 
     cpu_some = average("cpu")
     memory_some = average("memory")
@@ -103,6 +143,17 @@ def observe_psi():
             or io_some >= 5 or io_full >= 1
         ) else "NO_LOCAL_THRESHOLD_CROSSED"
     )
+    if severity == "HIGH":
+        result["pressure_basis"] = sorted(
+            source for source, measurements in observed.items()
+            if source_pressure(source, measurements) == "HIGH"
+        )
+    elif severity == "ELEVATED":
+        result["pressure_basis"] = sorted(
+            source for source, measurements in observed.items()
+            if source_pressure(source, measurements) == "ELEVATED"
+        )
+    result["pressure_scope"] = "ALL_REQUIRED_SOURCES"
     window_contrast = {}
     all_differences = []
     for source in SOURCES:
@@ -141,15 +192,35 @@ def psi_sentence(packet):
     """Short read-only evidence summary for operator text/HTML/Markdown."""
     if not isinstance(packet, dict):
         return "PSI: NIET GEVRAAGD."
+    resources = packet.get("resources") or {}
+
+    def source_line(key):
+        detail = resources.get(key) or {}
+        values = detail.get("measurements") or {}
+        some = values.get("some") or {}
+        full = values.get("full") or {}
+        if detail.get("status") != "OBSERVED":
+            return key + " UNKNOWN"
+        return f"{key} some {some.get('avg60_pct')}%" + (
+            f", full {full.get('avg60_pct')}%" if key != "cpu" else ""
+        )
+
+    if packet.get("status") == "PARTIAL":
+        visible = [source_line(key) for key in SOURCES]
+        hint = packet.get("pressure_hint", "UNKNOWN")
+        conclusion = (
+            f"bekende bronnen tonen {hint}"
+            if hint in ("HIGH", "ELEVATED") else
+            "geen drukdrempel aangetoond in bekende bronnen; ontbrekende bronnen kunnen druk verbergen"
+        )
+        return (
+            "PSI PARTIEEL: " + conclusion + "; "
+            + "; ".join(visible) + ". "
+            "Ontbrekende bronnen blijven UNKNOWN; dit is geen volledige hostmeting "
+            "of bewijs van GitHub-jobstatus, cgroup-ruimte of herstartrecht."
+        )
     if packet.get("status") != "OBSERVED":
         return "PSI: ONVOLLEDIG/ONBEKEND; kernelbron niet bruikbaar voor classificatie."
-    resources = packet["resources"]
-    def source_line(key):
-        values = resources[key]["measurements"]
-        return f"{key} some {values['some']['avg60_pct']}%" + (
-            f", full {values['full']['avg60_pct']}%"
-            if key != "cpu" else ""
-        )
     return (
         "PSI (60s kernel-stallpercentages): " +
         "; ".join(source_line(key) for key in SOURCES)
