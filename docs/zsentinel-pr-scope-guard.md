@@ -3479,3 +3479,31 @@ gestructureerde brondata.
 
 Hierdoor krijgt de eigenaar zowel de concrete reden als het juiste meetmoment,
 zonder extra bronverzoeken of impliciete claim-/merge-/releasebesluiten.
+
+## 22 oktober · meerpagina-open-PR-inventaris in de bestaande portfolio-opdracht
+
+De operator kan voor één tot drie geregistreerde projecten de bestaande
+portfolio-opdracht gebruiken met `--max-prs 16 --pages 3`. Daarmee leest de
+read-only grafiek maximaal drie **opeenvolgende** GitHub-pagina's van zestien
+open PR's per project (maximaal 48 PR's/project). De standaard blijft
+`--pages 1` en `--max-prs 10`, zodat oude aanroepen hun lage
+GitHub-verzoekbudget behouden.
+
+Een open-PR-inventaris telt uitsluitend als volledig bij een stabiele dubbele
+bronlezing vanaf pagina 1, zonder dubbele nummers, wanneer een kortere
+terminale pagina is gevonden en alle later expliciet opgevraagde pagina's
+leeg zijn. Dat geldt ook als de lijst eerder stopt dan de derde
+opgevraagde pagina. Een geheel volle laatste pagina, ontbrekende middenpagina
+of afwijkende tweede bronlezing blijft onvolledig. De bestaande afzonderlijke
+grenzen voor bestandslijsten, bestand/map-paarvoorbeelden en padaliassen
+blijven van kracht; een volledige PR-lijst kan daarom nog steeds een
+onvolledige *conflictbron* opleveren.
+
+De historische vergelijking accepteert maximaal 48 brongebonden PR-identiteiten.
+De private operatorweergaven en CSV tonen nu `open_pr_pages_read` en
+`open_pr_window_complete` naast de onafhankelijke
+`source_complete_for_sample`. De gate-inspectie selecteert nog steeds
+hoogstens vier exacte-HEAD PR's per run: 48 PR's lezen betekent niet dat
+48 CI/review-gates beoordeeld zijn. Noch volledige paginering noch
+afwezigheid van overlappende paden verleent een actieve claim,
+branch-recht, merge- of deployautorisatie.
