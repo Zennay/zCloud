@@ -67,6 +67,7 @@ def classify(issue_updated_at, linked_pr_urls, observed_prs, as_of,
     ref = _clock(as_of)
     if ref is None:
         raise ValueError("invalid activity observation clock")
+    event_clock_incoherent = False
     pr_by_url = {}
     for pr in observed_prs:
         if (type(pr) is not dict or type(pr.get("url")) is not str
@@ -77,13 +78,15 @@ def classify(issue_updated_at, linked_pr_urls, observed_prs, as_of,
             raise ValueError("duplicate open PR activity source")
         stamp = _clock(pr.get("updated_at"))
         if stamp is not None and stamp > ref:
-            # A PR update after the observation clock cannot prove activity
-            # at the time of that observation.
+            # Retain the anomaly explicitly instead of silently converting a
+            # future event clock into ordinary partial coverage.
             stamp = None
+            event_clock_incoherent = True
         pr_by_url[url] = stamp
     issue_stamp = _clock(issue_updated_at)
     if issue_stamp is not None and issue_stamp > ref:
         issue_stamp = None
+        event_clock_incoherent = True
     observed_linked = [pr_by_url[url] for url in linked_pr_urls
                        if url in pr_by_url and pr_by_url[url] is not None]
     latest_pr = max(observed_linked) if observed_linked else None
@@ -98,7 +101,7 @@ def classify(issue_updated_at, linked_pr_urls, observed_prs, as_of,
         if pr_sample_complete and issue_reference_sample_complete and all_linked_observed
         else "partial_or_unverified"
     )
-    if not source_clocks_coherent:
+    if not source_clocks_coherent or event_clock_incoherent:
         signal = "source_clock_incoherent"
     elif issue_hours is not None and issue_hours < WINDOW_HOURS:
         signal = "recent_issue_activity_observed"
@@ -121,6 +124,7 @@ def classify(issue_updated_at, linked_pr_urls, observed_prs, as_of,
         "linked_pr_activity_coverage": coverage,
         "window_hours": WINDOW_HOURS,
         "as_of_utc": ref.isoformat(timespec="seconds"),
+        "event_clock_incoherent": event_clock_incoherent,
         "active_claims_verified": False,
         "prless_branch_owners_verified": False,
         "stalled_project_proven": False,
