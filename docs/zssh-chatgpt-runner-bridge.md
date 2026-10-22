@@ -184,3 +184,10 @@ These are **evidence/offload constraints**, separate from the resource-pressure 
 ## zSentinel process identity and PID reuse
 
 The current `Runner.Worker` is identified through the bounded parent chain and excluded from the other-worker count using the pair `PID + /proc/<pid>/stat start_ticks`, not PID alone. This prevents a process that reuses the same PID between ancestry discovery and the inventory scan from being silently treated as the current worker. The public receipt exposes only the basis label `pid_and_start_ticks` or `unknown`; it never returns raw PIDs or start ticks. A missing self-identity remains unknown and does not authorize takeover.
+
+
+## zSentinel root inode pressure
+
+The host-capacity receipt includes root inode totals, free/available counts and percentages alongside byte capacity. It classifies inode pressure separately: `root_inode_pressure_high` at ≤5% available or ≥95% used, and `root_inodes_critical` at ≤1% available or ≥99% used. Critical inode exhaustion emits `HOLD_STORAGE_WRITES_REQUEST_OWNER_INVENTORY`; byte exhaustion retains `HOLD_DISK_WRITES_REQUEST_OWNER_INVENTORY`. If the filesystem cannot report inode counters, the receipt marks capacity coverage partial rather than claiming inode headroom is healthy.
+
+Resource-pressure `warnings`/severity remain separate from evidence warnings for missing archive storage. The operator summary preserves both when they occur together, so high CPU/swap pressure cannot hide a missing offload mount, and a missing mount alone does not inflate pressure severity.
