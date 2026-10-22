@@ -280,6 +280,7 @@ def _notion_owner_status_summary(observed, source_mode, registry):
         "observed_at_utc": None,
         "source_age_seconds": None,
         "status_windows": [],
+        "claim_window_observation_counts": None,
         "projects": [],
         "unregistered_work_status_min": None,
         "items_truncated": False,
@@ -343,6 +344,22 @@ def _notion_owner_status_summary(observed, source_mode, registry):
             or sum(counts.values()) != count
             or sum(verifying.values()) != verifying_total):
         raise ValueError("inconsistent Notion owner status aggregates")
+    window_counts = observed.get("claim_window_observation_counts")
+    allowed_windows = {
+        "missing_worker_or_lease_fields", "date_only_not_a_lease",
+        "invalid_lease_timestamp", "invalid_lease_interval",
+        "future_claim_start", "expired_claim_window",
+        "time_window_present_not_owner_verified",
+    }
+    if mode[0] == "notion_readonly_data_source_pages":
+        if (type(window_counts) is not dict
+                or observed.get("claim_window_verified") is not False
+                or any(category not in allowed_windows or type(n) is not int
+                       or n < 1 for category, n in window_counts.items())
+                or sum(window_counts.values()) != count):
+            raise ValueError("untrusted Notion claim window observations")
+    elif window_counts is not None:
+        raise ValueError("saved connector cannot supply live lease evidence")
     windows = observed.get("status_source_windows")
     status_windows = []
     if windows is not None:
@@ -407,6 +424,8 @@ def _notion_owner_status_summary(observed, source_mode, registry):
         "observed_at_utc": when.astimezone(timezone.utc).isoformat(timespec="seconds"),
         "source_age_seconds": max(0, age),
         "status_windows": status_windows,
+        "claim_window_observation_counts": (
+            dict(sorted(window_counts.items())) if window_counts is not None else None),
         "projects": known[:12],
         "unregistered_work_status_min": unknown_total,
         "items_truncated": len(known) > 12,
@@ -1830,6 +1849,20 @@ def _notion_review_summary(report):
     unknown = value.get("unregistered_work_status_min")
     if unknown is not None and (type(unknown) is not int or not 0 <= unknown <= 400):
         raise ValueError("invalid unregistered Notion work count")
+    lease_categories = {
+        "missing_worker_or_lease_fields", "date_only_not_a_lease",
+        "invalid_lease_timestamp", "invalid_lease_interval",
+        "future_claim_start", "expired_claim_window",
+        "time_window_present_not_owner_verified",
+    }
+    lease_counts = value.get("claim_window_observation_counts")
+    if lease_counts is not None and (
+            value["coverage"] not in ("live_readonly_bounded", "live_readonly_incomplete")
+            or type(lease_counts) is not dict or len(lease_counts) > 7
+            or any(k not in lease_categories or type(n) is not int or not 1 <= n <= 400
+                   for k, n in lease_counts.items())
+            or sum(lease_counts.values()) > 400):
+        raise ValueError("untrusted Notion lease-window handoff summary")
     status_windows = value.get("status_windows", [])
     if type(status_windows) is not list or len(status_windows) > 3:
         raise ValueError("untrusted handoff Notion query windows")
@@ -1886,6 +1919,19 @@ def _notion_review_html(report):
              if row["observed_verifying_min"] else "") +
             " · " + escape(row["next_step"]) + "</li>")
     source_windows = source["status_windows"]
+    claim_windows = source.get("claim_window_observation_counts")
+    ambiguous = (sum(n for kind, n in claim_windows.items()
+                     if kind != "time_window_present_not_owner_verified")
+                 if claim_windows is not None else None)
+    claim_window_html = (
+        '<p><strong>Notion claimklokken:</strong> ' + str(ambiguous) +
+        ' regels met ontbrekende, verlopen, toekomstige of ongeldige '
+        'leasevelden; ' +
+        str(claim_windows.get("time_window_present_not_owner_verified", 0)) +
+        ' met tijdvenster, maar ook die zijn GEEN eigenaarbewijs.</p>'
+        if ambiguous is not None else
+        '<p>Leasevensters niet geleverd door deze Notion-bron; ONBEKEND.</p>'
+    )
     coverage_lines = "".join(
         "<li>" + escape(win["status"]) + ": ≥" +
         str(win["observed_rows"]) + " geobserveerd, " +
@@ -1900,7 +1946,7 @@ def _notion_review_html(report):
         '<p>Bron: ' + escape(source["coverage"]) +
         (" · VEROUDERD/ONBEKEND" if old else " · recent gelezen") +
         '. Observaties zijn GEEN actuele workerlease, bestandsclaim of '
-        'toestemming om werk over te nemen.</p>' +
+        'toestemming om werk over te nemen.</p>' + claim_window_html +
         ('<details><summary>Brondekking per Notion-status</summary><ul>' +
          coverage_lines + '</ul></details>' if source_windows else '') +
         ('<ul>' + "".join(lines) + '</ul>' if lines else
