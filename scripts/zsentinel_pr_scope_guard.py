@@ -930,6 +930,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
                 issue_links.append({
                     "issue_number": issue_number,
                     "pr_url": pr["url"], "pr_head_sha": pr["head_sha"],
+                    "pr_base_ref": pr["base_ref"],
                     "mentioned_in": pr["issue_reference_provenance"].get(
                         str(issue_number), []),
                     "relation": "unverified_title_or_body_mention_only",
@@ -945,6 +946,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
     for link in issue_links:
         by_issue.setdefault(link["issue_number"], {})[link["pr_url"]] = {
             "url": link["pr_url"], "head_sha": link["pr_head_sha"],
+            "base_ref": link["pr_base_ref"],
             "mentioned_in": link["mentioned_in"]}
     duplicate_issue_groups = sorted(
         [(issue, sorted(prs.values(), key=lambda item: item["url"]))
@@ -1772,8 +1774,8 @@ def graph_private_csv(report):
     header = (
         "record_type", "repository", "source_page", "source_complete",
         "cluster_number", "shared_filename", "pr_number", "pr_url",
-        "pr_head_sha", "related_pr_url", "related_pr_head_sha",
-        "shared_files_observed", "scope_conflict_pairs_observed", "scope_conflict_relation",
+        "pr_head_sha", "pr_base_ref", "related_pr_url", "related_pr_head_sha",
+        "related_pr_base_ref", "shared_files_observed", "scope_conflict_pairs_observed", "scope_conflict_relation",
         "scope_conflict_left_path", "scope_conflict_right_path",
         "unverified_issue_number", "issue_identity_status", "observed_issue_priority",
         "owner_verified", "merge_authorized", "operator_notice"
@@ -1818,7 +1820,7 @@ def graph_private_csv(report):
                     cluster_number=cluster["component_number"],
                     shared_filename=file_row["path"],
                     pr_number=pr["number"], pr_url=pr["url"],
-                    pr_head_sha=pr["head_sha"],
+                    pr_head_sha=pr["head_sha"], pr_base_ref=pr["base_ref"],
                     operator_notice=("Exact PR path observation; owner NOT verified. " +
                         ("PR source files partial." if not pr["source_file_list_complete"]
                          else "PR file sample complete.")))
@@ -1829,8 +1831,10 @@ def graph_private_csv(report):
         row("shared_file_pr_pair", pr_number=pair["left"]["number"],
             pr_url=pair["left"]["url"],
             pr_head_sha=pair["left"]["head_sha"],
+            pr_base_ref=pair["left"]["base_ref"],
             related_pr_url=pair["right"]["url"],
             related_pr_head_sha=pair["right"]["head_sha"],
+            related_pr_base_ref=pair["right"]["base_ref"],
             shared_files_observed=pair["shared_file_count_observed"],
             operator_notice="Same filename is NOT a proven merge conflict.")
     for pair in report["shown_path_scope_collision_pairs"]:
@@ -1839,8 +1843,10 @@ def graph_private_csv(report):
                 pr_number=pair["left"]["number"],
                 pr_url=pair["left"]["url"],
                 pr_head_sha=pair["left"]["head_sha"],
+                pr_base_ref=pair["left"]["base_ref"],
                 related_pr_url=pair["right"]["url"],
                 related_pr_head_sha=pair["right"]["head_sha"],
+                related_pr_base_ref=pair["right"]["base_ref"],
                 scope_conflict_pairs_observed=pair["path_conflict_count_observed"],
                 scope_conflict_relation=conflict["relation"],
                 scope_conflict_left_path=conflict["left_path"],
@@ -1853,7 +1859,7 @@ def graph_private_csv(report):
     for group in report["shown_duplicate_issue_groups"]:
         for pr in group["shown_pr_sources"]:
             row("unverified_issue_number", pr_url=pr["url"],
-                pr_head_sha=pr["head_sha"],
+                pr_head_sha=pr["head_sha"], pr_base_ref=pr["base_ref"],
                 unverified_issue_number=group["issue_number"],
                 issue_identity_status=group["identity_status"],
                 observed_issue_priority=group["observed_issue_priority"],
