@@ -1275,6 +1275,7 @@ def as_html(board):
     for view in board["project_views"]:
         rows = []
         scope_rows = []
+        alias_rows = []
         if view["source_status"] != "unavailable":
             for pair in view["shown_collision_pairs"]:
                 left, right = pair["left"], pair["right"]
@@ -1304,6 +1305,24 @@ def as_html(board):
                     "' rel='noopener noreferrer'>#" + str(right["number"]) +
                     "</a></td><td>" + str(pair["path_conflict_count_observed"]) +
                     "</td><td>" + examples + "</td></tr>")
+            for pair in view.get("shown_portable_path_alias_pairs", []):
+                left, right = pair["left"], pair["right"]
+                examples = "<br>".join(
+                    "<code>" + escape(alias["left_path"]) + "</code> ↔ <code>" +
+                    escape(alias["right_path"]) + "</code><br><small>" +
+                    escape(alias["relation"]) + "</small>"
+                    for alias in pair["path_aliases"])
+                if pair["path_aliases_truncated"]:
+                    examples += "<br><small>Extra aliasvoorbeelden afgekapt.</small>"
+                alias_rows.append(
+                    "<tr><td><a href='" + escape(left["url"], quote=True) +
+                    "' rel='noopener noreferrer'>#" + str(left["number"]) +
+                    "</a> ↔ <a href='" + escape(right["url"], quote=True) +
+                    "' rel='noopener noreferrer'>#" + str(right["number"]) +
+                    "</a></td><td>" + str(pair["path_alias_count_observed"]) +
+                    "</td><td>" + examples + "</td></tr>")
+        if not alias_rows:
+            alias_rows = ["<tr><td colspan='3'>Geen mogelijke cross-platform padaliases in deze steekproef.</td></tr>"]
         if not rows:
             if view["source_status"] == "unavailable":
                 rows = ["<tr><td colspan='3'>BRON ONBESCHIKBAAR: er is geen "
@@ -1371,6 +1390,13 @@ def as_html(board):
             "</tbody></table>" +
             ("<p><strong>ONVOLLEDIG:</strong> overige bestand/map-conflicpparen kunnen ontbreken.</p>"
              if view.get("path_scope_collision_pairs_truncated") else "") +
+            "<h3>Mogelijke cross-platform padaliases (" +
+            str(view.get("observed_portable_path_alias_pairs", "ONBEKEND")) + ")</h3>"
+            "<p>NFC/casefold-heuristiek voor case-insensitive of Unicode-normaliserende filesystems; geen bewezen alias op elk platform, Git-mergeconflict of eigenaarsbewijs.</p>"
+            "<table><thead><tr><th>Open PR's</th><th>Mogelijke aliases</th><th>Paden en relatie</th></tr></thead><tbody>" +
+            "".join(alias_rows) + "</tbody></table>" +
+            ("<p><strong>ONVOLLEDIG:</strong> extra aliasparen of voorbeelden ontbreken.</p>"
+             if view.get("portable_path_alias_pairs_truncated") or view.get("portable_path_alias_examples_truncated") else "") +
             "<h3>Meerdere open PR's noemen hetzelfde issue</h3>"
             "<p>De links zijn tekstverwijzingen, geen bewezen oplossings-/eigenaarsrelatie.</p><ul>" +
             ("".join(duplicates) or "<li>Geen dubbele issue-vermeldingen in gelezen steekproef.</li>") +
