@@ -24,7 +24,7 @@ ISSUE_ROUTE_ACTIONS = {
     "authorized_infrastructure_owner_required":
         "Bevoegde infrastructuureigenaar nodig; geen runner-restart, betaling of claim.",
     "authorized_zcloud_runner_owner_required":
-        "Bevoegde zCloud-runnerbeheerder verifieert registratie, labels, actuele job en Listener/Worker-status via toegestane bronnen; geen restart zolang actieve worker of identiteit onzeker is.",
+        "Bevoegde zCloud-runnerbeheerder verifieert registratie, labels, actuele job en Listener/Worker-status via toegestane bronnen; geen restart zolang actieve worker of identiteit onzeker is, en geen cleanup/reset van een vervuilde checkout zonder goedgekeurd behoud van werk en bewijs.",
     "authorized_github_billing_owner_required":
         "Bevoegde GitHub-accountbillingeigenaar controleert billing/spend-admission; geen betaalde retry, billingwijziging of runneractie.",
     "review_existing_pr_first":
