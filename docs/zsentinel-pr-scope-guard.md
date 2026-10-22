@@ -3580,3 +3580,19 @@ runnerrestart, claim, merge of deployment.
 Voor P0 [#1326](https://github.com/Zennay/zCloud/issues/1326) blijft
 de bevoegde infrastructuureigenaar verantwoordelijk voor het echte herstel
 en de live-verificatie van runnerregistratie en uitgevoerde jobs.
+
+### Niet-atomaire GitHub-runnerstatus blijft herkenbaar
+
+GitHub kan tussen het lezen van de wachtrij en het ophalen van jobdetails
+een run afronden of van status laten wisselen. De optionele diagnose blijft
+dan bruikbare andere waarnemingen tonen, maar zet
+`run_state_drift_observed=true` en meldt dat de bron niet stabiel was.
+Dat signaal staat zowel in de operatorweergave als in de private CSV.
+Afgeronde of dubbel geobserveerde runidentiteiten worden niet als
+concurrerende actieve jobs geteld. Onbekende jobnamen worden vervangen
+door een lokaal afgeleid numeriek GitHub-joblabel; ingebedde controlecodes
+worden niet in terminal-/HTML-tekst overgenomen.
+
+De waarneming is geen globale GitHub runnerinventaris en bewijst geen
+verplichte CI-success, actieve Notion-claim, runneruitval, restarttoestemming
+of production release. Herstel blijft onder de echte eigenaar van issue #1326.
