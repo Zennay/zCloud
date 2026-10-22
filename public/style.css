@@ -198,6 +198,9 @@
 .owner-integrity-head p,.owner-integrity-empty{color:#b7c7d6;font-size:12px;line-height:1.65;margin:5px 0}
 .owner-integrity-head>a,.owner-integrity-item>a{color:#c3dfff;text-decoration:underline;text-underline-offset:3px;font-size:12px}
 .owner-integrity-filters{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}
+.owner-integrity-filters label{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#d6e5f4;font-weight:600}
+.owner-integrity-filters select{background:#253344;border:1px solid #6c8298;color:#e5f0ff;border-radius:8px;padding:7px 9px;min-height:40px;max-width:70vw}
+.owner-integrity-filters select:focus-visible{outline:2px solid #b9dbff;outline-offset:3px}
 .owner-integrity-filters button,.owner-integrity-foot button{background:#263548;border:1px solid #61778f;border-radius:8px;color:#e4f0ff;padding:8px 12px;font-size:12px;min-height:40px;cursor:pointer}
 .owner-integrity-filters button[aria-pressed="true"],.owner-integrity-filters button:hover,.owner-integrity-foot button:hover{background:#364960}
 .owner-integrity-filters button:disabled{opacity:.6;cursor:not-allowed}
