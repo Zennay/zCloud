@@ -826,3 +826,35 @@ This ships on the existing zSentinel PR #1565 branch until all exact-head requir
 - Project overview badges, parked-task headline and claim summaries distinguish **current** versus **last observed** queue evidence. A stale historical warning does not imply an active owner, current claim, confirmed incident or release authorization.
 - Source-only changes are integrated on the existing PR branch. The historically recorded OOM-guard `blocked` versus `dropped` acceptance mismatch remains a separate required-CI/reviewer HOLD; do not edit or bypass the required test gate to hide it.
 
+
+## Observation-coherent claim triage and release asset pinning
+
+The existing dependency-hold dashboard and its linked Attention cards are joined
+to the **same** read-only portfolio queue source. Repeated-claim telemetry is a
+per-task allocation counter; three or more recorded claims **does not** identify
+a production retry bug or establish that [zCloud issue #677](https://github.com/Zennay/zCloud/issues/677)
+affects that task. The operator screen only links that task's own allowlisted
+issue/PR when the queue record provides one; it never attaches #677 by default.
+
+Queue observation timestamps must be RFC3339/ISO8601 with an explicit timezone.
+Invalid timestamps, an observation clock more than two minutes in the future
+and observations older than fifteen minutes cannot authorize UI recovery controls.
+Unknown and stale snapshots are labeled as historical in the blocked worklist,
+project summaries, repeated-claim panel and private export confirmations.
+Read-only historical owner/lease counters do not prove a current owner, current
+failure or recovered worker. Operators may fetch a fresh source using the scoped
+queue refresh; the existing backend transaction still decides whether any
+authenticated action is accepted.
+
+The dashboard entrypoint `public/index.html` points its `/app.js?...&sha=`
+cache key at the **first 12 hex characters of the Git content blob SHA**
+for the exact bundled `public/app.js`. When the JavaScript source changes,
+update that pin alongside the product change; this prevents the browser from
+reusing a previously cached script after an authorized deployment. The CSS pin
+is not changed when its source blob is unchanged. A source-only pin change is
+not evidence of a deployed website.
+
+These are source-side changes to the existing integration PR #1565. Required
+exact-head CI, independent review, protected-main merge, authorized runtime
+admission and live verification remain separate. No operator claim, queue,
+runner, VPS, release workflow or billing setting was changed by this work.
