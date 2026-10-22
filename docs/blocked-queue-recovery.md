@@ -57,6 +57,12 @@ claim record exists (including expired-but-not-reconciled entries),
 the claim source is unavailable, or its project identity is ambiguous.
 Those entries appear in the existing `protected_active` response list;
 this is a safety hold, **not** proof that the worker is currently active.
+The audit also emits a `protected_reasons` summary with bounded counters for
+`assigned_or_queue_lease`, `separate_claim_record`,
+`claim_source_unknown` and `changed_before_atomic_update`.
+These are source-admission categories, not live worker verdicts. They contain
+no owner ID, token or raw task content; a missing/read-error claim source
+remains UNKNOWN rather than being reported as zero.
 
 When the source is clear, the SQL `UPDATE` still uses a fail-closed
 `NOT EXISTS` predicate on the claim table alongside the queue status,
