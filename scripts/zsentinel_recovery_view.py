@@ -1136,6 +1136,27 @@ def html_view(decision, registry=None):
                 raise ValueError("invalid Notion observed lease window totals")
         elif window_totals is not None:
             raise ValueError("saved Notion snapshot cannot claim live lease windows")
+        project_totals = notion.get("active_project_counts")
+        project_windows = notion.get("active_project_claim_window_counts")
+        if live_notion:
+            if (type(project_totals) is not dict or len(project_totals) > 50
+                    or type(project_windows) is not dict
+                    or set(project_windows) != set(project_totals)):
+                raise ValueError("missing Notion project claim window breakdown")
+            combined = {}
+            for project, buckets in project_windows.items():
+                if (type(project) is not str or not 1 <= len(project) <= 100
+                        or type(buckets) is not dict or len(buckets) > 7
+                        or any(key not in claim_windows or type(count) is not int
+                               or count < 1 for key, count in buckets.items())
+                        or sum(buckets.values()) != project_totals[project]):
+                    raise ValueError("untrusted per-project Notion lease metadata")
+                for key, count in buckets.items():
+                    combined[key] = combined.get(key, 0) + count
+            if combined != window_totals:
+                raise ValueError("Notion lease portfolio and project totals disagree")
+        elif project_windows is not None:
+            raise ValueError("saved Notion snapshot cannot claim live project lease totals")
         rows = []
         for item in notion["items"]:
             if (not isinstance(item, dict)
@@ -1247,11 +1268,30 @@ def html_view(decision, registry=None):
                 ': ' + str(window_totals[status]) + ' werkregels</li>'
                 for status in claim_windows if status in window_totals
             ]
+            ranked_projects = sorted(
+                project_windows.items(),
+                key=lambda row: (-sum(n for k, n in row[1].items()
+                                      if k != "time_window_present_not_owner_verified"),
+                                 row[0]))
+            project_rows = []
+            for project, buckets in ranked_projects[:12]:
+                irregular = sum(n for k, n in buckets.items()
+                                if k != "time_window_present_not_owner_verified")
+                project_rows.append(
+                    '<li>' + phrase(project, 100) + ': ' + str(irregular) +
+                    ' ontbrekende/verlopen/ongeldige klokken, ' +
+                    str(buckets.get("time_window_present_not_owner_verified", 0)) +
+                    ' tijdvensters alleen als metadata</li>')
             window_counts_html = (
                 '<details><summary>Notion-leasevelden · géén bewezen actuele claims</summary>'
                 '<ul>' + ''.join(observed_parts) +
                 '</ul><p>Ook een actueel ogend tijdvenster is geen eigenaarbewijs, '
-                'queueclaim of toestemming tot herverdeling.</p></details>')
+                'queueclaim of toestemming tot herverdeling.</p>'
+                '<h3>Per project · eigenaarcontrole</h3><ul>' +
+                ''.join(project_rows) + '</ul>' +
+                ('<p>Projectverdeling afgekapt na 12; overige projecten ONBEKEND '
+                 'binnen de zichtbare werkbak.</p>' if len(ranked_projects) > 12 else '') +
+                '</details>')
         notion_panel = (
             '<p>' + phrase(caveat, 80) + ' · onafgeronde werkregels: ' +
             str(notion["active_count"]) + ' · geen bestandsscope, claimvrijgave of dispatch.</p>' +
