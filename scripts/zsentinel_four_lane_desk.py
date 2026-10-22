@@ -162,6 +162,59 @@ def owner_review_suggestions(portfolio, maximum=6):
     return suggestions[:maximum], len(suggestions) > maximum
 
 
+def host_source_coverage_table(host):
+    """Show fixed host-source coverage without turning missing data into zero."""
+    coverage = (
+        host.get("source_coverage")
+        if isinstance(host, dict) else None
+    )
+    if not isinstance(coverage, dict):
+        return (
+            "<h3>Hostbrondekking</h3><p class='warn'>"
+            "Brondekking ontbreekt; hostcapaciteit is UNKNOWN en nieuwe workers "
+            "blijven achter de bestaande toelatingspoorten.</p>"
+        )
+    labels = (
+        ("meminfo", "RAM / swap"),
+        ("loadavg", "CPU-load"),
+        ("root_disk", "Root-schijfruimte"),
+        ("psi", "Linux PSI"),
+    )
+    display = {
+        "OBSERVED": "Waargenomen",
+        "PARTIAL": "Gedeeltelijk",
+        "UNKNOWN": "Onbekend",
+    }
+    rows = []
+    incomplete = []
+    for key, label in labels:
+        state = coverage.get(key)
+        state_label = display.get(state, "Onbekend")
+        rows.append(
+            "<tr><th scope='row'>" + label + "</th><td>"
+            + state_label + "</td></tr>"
+        )
+        if state != "OBSERVED":
+            incomplete.append(label + "=" + state_label)
+    if incomplete:
+        note = (
+            "<p class='warn'>Onvolledige hostbrondekking: "
+            + html.escape(", ".join(incomplete))
+            + ". Nieuwe workers blijven op HOLD; bekende metingen blijven "
+            "informatief maar bewijzen geen vrije cgroup- of runnercapaciteit.</p>"
+        )
+    else:
+        note = (
+            "<p>Alle vier vaste hostbronnen zijn waargenomen. Dit bewijst op "
+            "zichzelf geen vrije cgroup-, claim-, worker- of runnercapaciteit.</p>"
+        )
+    return (
+        "<h3>Hostbrondekking</h3><div class='scroll'><table>"
+        "<thead><tr><th>Bron</th><th>Status</th></tr></thead><tbody>"
+        + "".join(rows) + "</tbody></table></div>" + note
+    )
+
+
 def psi_html_table(psi):
     """Private, bounded table of direct kernel stalls; UNKNOWN is not zero."""
     if not isinstance(psi, dict) or psi.get("status") not in ("OBSERVED", "PARTIAL"):
@@ -1320,7 +1373,8 @@ def html_view(data):
         host_section = (
             "<section class='notice'><h2>Hostdruk (adviserend)</h2><p>"
             + html.escape(pressure_sentence(host))
-            + "</p>" + psi_html_table(host.get("psi"))
+            + "</p>" + host_source_coverage_table(host)
+            + psi_html_table(host.get("psi"))
             + "<p>Deze hostmeting bewijst geen vrije cgroup-, "
             "worker-, Notion- of runnercapaciteit; nieuwe workers blijven "
             "achter bestaande resource- en eigenaarspoorten.</p></section>"
