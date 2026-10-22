@@ -11,26 +11,14 @@ from __future__ import annotations
 import re
 from html import escape
 
+from zsentinel_owner_routes import HUMAN_ONLY_ROUTES, ISSUE_ROUTE_ACTIONS
+
 MAX_NEXT = 8
 ISSUE_URL = re.compile(r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
 PR_URL = re.compile(r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}$")
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
-# Explicitly known owner-only gates must never monopolize the product
-# shortlist or masquerade as free worker tasks. Keep distinct owner routes.
-OWNER_GATED_ISSUE_ROUTES = {
-    "https://github.com/Zennay/zCloud/issues/1326": (
-        "authorized_zcloud_runner_owner_required",
-        "Bevoegde zCloud-runnerbeheerder verifieert registratie, labels en "
-        "actieve Listener/Worker-status; geen restart bij onzekere identiteit "
-        "of actieve job.",
-    ),
-    "https://github.com/Zennay/zCloud/issues/1523": (
-        "authorized_github_billing_owner_required",
-        "Bevoegde GitHub-accountbillingeigenaar controleert spend/admission; "
-        "geen betaalde retry, billingwijziging of runneractie.",
-    ),
-}
-OWNER_GATED_ISSUES = frozenset(OWNER_GATED_ISSUE_ROUTES)
+# Canonical human-gated issue URLs are shared with the issue delivery board.
+OWNER_GATED_ISSUES = frozenset(HUMAN_ONLY_ROUTES)
 
 
 def next_problems(summary, decision, selected):
@@ -86,7 +74,8 @@ def next_problems(summary, decision, selected):
                 raise ValueError("invalid candidate PR reference")
             seen.add(url)
             if url in OWNER_GATED_ISSUES:
-                route, action = OWNER_GATED_ISSUE_ROUTES[url]
+                route = HUMAN_ONLY_ROUTES[url]
+                action = ISSUE_ROUTE_ACTIONS[route]
                 held_issues.append({
                     "project_id": pid,
                     "priority": tier,
