@@ -170,7 +170,7 @@ def inspect_history_package(path: Path) -> dict:
             expected.add(key)
 
     csv_text = parts["history.csv"].decode("utf-8-sig")
-    if not parts["history.csv"].startswith(b"\\xef\\xbb\\xbf"):
+    if not parts["history.csv"].startswith(b"\xef\xbb\xbf"):
         raise ValueError("missing spreadsheet UTF-8 BOM")
     reader = csv.DictReader(StringIO(csv_text), delimiter=";")
     required = ("record_kind", "source_bundle", "previous_bundle",
