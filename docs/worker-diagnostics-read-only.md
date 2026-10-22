@@ -34,3 +34,39 @@ The existing `GET /api/worker-scaling` report opens the telemetry database throu
 This does **not** make a GET response proof of a live queue lease, file ownership, successful work completion, or runner recovery. Control paths that legitimately reconcile state retain their existing behavior; this change does not disable those write paths or change authorization.
 
 No queue/claim rows are changed, no worker is dispatched or restarted, and no CI workflow is manually retriggered by the diagnostic endpoints.
+
+
+## Source-backed alert and live-runner diagnostics
+
+A standalone `runner_worker_statuses(...)` lookup now defaults to
+`runner_worker_targets(reconcile=False)`. Earlier, only aggregate
+`runner_statuses()` explicitly opted out, while the standalone status helper
+could still INSERT/UPDATE `runner_workers` when used from a diagnostic path.
+`GET /api/runner-live` preserves its existing runner and Firefox fields and
+additionally reports `read_only_observation=true`,
+`sqlite_reconciliation_performed=false`, and
+`expired_claims_pruned=false`. Authorized POST runner-control and preflight
+writers retain their explicit reconciliation behavior.
+
+`GET /api/status` constructs the operator incident panel from
+`enhancements.incident_center()`. The alert list and stale-claim
+verification inside that panel previously opened the generic commit-capable
+SQLite connection. The incident/alert observers now use their own existing-file
+SQLite URI (`mode=ro`) plus `PRAGMA query_only=ON`; they close the
+connection without committing. The incident emission and sampler paths retain
+`_db_connect()` with authorized writes.
+
+If the alerts table/database is missing, unreadable or corrupt, the operator
+incident response exposes `alerts_source_status="unavailable"`,
+`alerts_source_complete=false` and an explicit recovery instruction; an
+unavailable alert source is **not** a clean zero-alert observation.
+`GET /api/v1/alerts` exposes the same source status and completeness fields
+while preserving the existing `time` and `alerts` fields. A normal empty
+source is `observed` with an empty array. The legacy `GET /api/alerts`
+remains an array for backward compatibility and does not carry a source
+receipt; use the incident panel or v1 route when completeness matters.
+
+No GET here renews, expires or releases a claim, authorizes a worker, or writes
+an incident. These changes are source-only on this PR until independent review,
+exact-head mandatory CI, protected-main integration and authorized deployment
+are completed.
