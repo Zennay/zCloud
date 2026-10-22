@@ -482,9 +482,13 @@ taken terminal sluiten; afwijzingen geven HTTP 409 en veroorzaken geen
 refill. Er is geen nieuwe API-privilege: `action_request_allowed`
 en de bestaande netwerkauthorisatie blijven leidend.
 
-Een geldige terminale overgang naar `dropped` bewaart de vorige
-blokkade, vorige evidence en de handmatige actor-/sluitreden in de
-originele queue-evidence. Een afzonderlijke project-state-receipt
+Een geldige terminale overgang naar `dropped` plaatst de
+handmatige actor en sluitreden **vooraan** in de maximaal 4000 tekens
+tellende queue-evidence, met daarachter een beknopte bronhistorie.
+De **volledige, oorspronkelijk opgeslagen blocker/evidence** (maximaal
+respectievelijk 2000 en 4000 tekens), eerdere `updated_at` en
+`source_url` blijven afzonderlijk in de project-state-receipt
+traceerbaar. Een afzonderlijke project-state-receipt
 met `source=portfolio_queue_drop` wordt **in diezelfde
 SQLite-transactie** geschreven. Dit is een taakannulering, geen
 bewering dat de volledige project-CI geannuleerd is: de
