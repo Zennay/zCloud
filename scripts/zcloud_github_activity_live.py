@@ -60,14 +60,18 @@ def _cached_envelope(project: str, kind: str, state: str,
     result["retry_after_s"] = max(0, int(retry_after_s))
     return result
 
-def _collect(registry: Path, project: str, kind: str) -> dict:
+def _collect(registry: Path, project: str, kind: str) -> tuple[dict, str, float]:
     # Explicit, public-only requests. Never read server GitHub credentials,
     # accept a provider URL, persist a secret or request GitHub write scopes.
     if kind == "activity":
-        return source.collect(registry, [project], 48, 100,
+        data = source.collect(registry, [project], 48, 100,
                               token=None, previous=None)
-    return inbox.collect(inbox.canonical_projects(registry), [project],
-                         token=None, max_items=90)
+    else:
+        data = inbox.collect(inbox.canonical_projects(registry), [project],
+                             token=None, max_items=90)
+    # Capture the actual completion clocks in the worker, not when a later
+    # HTTP request happens to consume the completed Future.
+    return data, source.stamp(source.utc_now()), time.monotonic()
 
 
 def _valid_receipt(receipt: object, kind: str) -> bool:
@@ -111,7 +115,14 @@ def read_live(registry: Path, project: str, kind: str = "activity") -> dict:
                     )
                 entry["future"] = None
                 try:
-                    data = future.result()
+                    collected = future.result()
+                    if not isinstance(collected, tuple) or len(collected) != 3:
+                        raise ValueError("activity_collection_invalid")
+                    data, successful_sync_at, successful_sync_monotonic = collected
+                    if (not isinstance(successful_sync_at, str)
+                            or source.instant(successful_sync_at) is None
+                            or not isinstance(successful_sync_monotonic, (int, float))):
+                        raise ValueError("activity_collection_clock_invalid")
                 except Exception:
                     # Keep the last successful bounded receipt; never expose
                     # provider exceptions, URLs, response bodies or credentials.
@@ -133,8 +144,8 @@ def read_live(registry: Path, project: str, kind: str = "activity") -> dict:
                     receipt=data,
                     expires=completed + CACHE_SECONDS,
                     stale=False,
-                    last_successful_sync_at=source.stamp(source.utc_now()),
-                    last_success_monotonic=completed,
+                    last_successful_sync_at=successful_sync_at,
+                    last_success_monotonic=float(successful_sync_monotonic),
                 )
             if now < entry.get("expires", 0):
                 if entry.get("receipt") is not None:
