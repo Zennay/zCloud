@@ -80,7 +80,7 @@ ENUMS = {
     "queue_lease_state": {"clear", "bound", "unknown"},
     "blocked_source_status": {"blocked", "queued", "claimed", "running", "verifying", "dropped", "unknown"},
     "independent_task_status": {"queued", "claimed", "running", "verifying", "blocked", "dropped", "done", "unknown"},
-    "task_claim_state": {"none", "active", "unknown"},
+    "task_claim_state": {"none", "active", "expired-record", "unknown"},
     "dependency_scope": {"single_task", "project_wide", "unknown"},
     "escalation_reason": {"permission_required", "irreversible_risk", "safe_routes_exhausted", "unknown"},
 }
@@ -354,6 +354,8 @@ def recommended_next_step_code(action, blockers):
         for code in codes
     ):
         return "refresh_source"
+    if "task_claim_expired_record" in codes:
+        return "reconcile_expired_task_claim_with_owner"
     if codes & {"independent_task_id_missing", "independent_task_project_missing",
                 "independent_task_source_url_missing", "independent_task_source_unverified",
                 "independent_task_source_not_guarded", "independent_task_version_unknown",
@@ -467,6 +469,8 @@ def recommended_next_step(action, blockers, required_evidence):
         for code in codes
     ):
         return "Reobserve the exact blocked row, queue lease and separate task claims at current source time; a fresh wrapper receipt cannot refresh older evidence."
+    if "task_claim_expired_record" in codes:
+        return "Ask the current owner to reconcile the expired task-claim record from a fresh source observation; expiry alone is not proof of release. Do not admit, park, resume or retire the task while the record remains."
     if codes & {"claim_not_clear", "claim_state_unknown", "queue_lease_not_clear", "task_claim_not_clear"}:
         if codes & {"owner_missing", "human_owner_missing"}:
             return "Identify the current claim owner from live source evidence; do not preempt, reassign, or mutate the queue."
@@ -560,6 +564,21 @@ def evaluate(data, max_age_minutes, *, now=None):
 
     def value(name):
         return evidence.get(name)
+
+    def require_task_claim_clear(message):
+        # An expired lease can still leave an independently persisted claim row.
+        # Never normalize that state to "none": the current owner must reconcile it.
+        if value("task_claim_state") == "expired-record":
+            require(
+                False,
+                "task_claim_expired_record",
+                "An expired separate task-claim record remains. Lease expiry alone is not proof that the owner reconciled or released it.",
+                ("evidence.task_claim_state",),
+            )
+            return
+        require(value("task_claim_state") == "none",
+                "task_claim_not_clear", message,
+                ("evidence.task_claim_state",))
 
     require(age <= timedelta(minutes=max_age_minutes),
             "source_stale", "Source observation is older than the configured freshness window.",
@@ -732,10 +751,7 @@ def evaluate(data, max_age_minutes, *, now=None):
                 "task_claim_source_unknown",
                 "The separate task-claim source must be readable before admitting independent work.",
                 ("evidence.task_claim_source_available",))
-        require(value("task_claim_state") == "none",
-                "task_claim_not_clear",
-                "The separate task-claim source must explicitly show no owner.",
-                ("evidence.task_claim_state",))
+        require_task_claim_clear("The separate task-claim source must explicitly show no owner.")
         require(value("active_claim") == "none",
                 "claim_not_clear", "An active or unknown claim must not be displaced.",
                 ("evidence.active_claim",))
@@ -770,10 +786,7 @@ def evaluate(data, max_age_minutes, *, now=None):
                 "task_claim_source_unknown",
                 "Parking requires a readable separate task-claim source.",
                 ("evidence.task_claim_source_available",))
-        require(value("task_claim_state") == "none",
-                "task_claim_not_clear",
-                "The separate task-claim source must show no owner.",
-                ("evidence.task_claim_state",))
+        require_task_claim_clear("The separate task-claim source must show no owner.")
         require(value("dependency_kind") == "external",
                 "dependency_not_external", "Only an external dependency may be parked by this action.",
                 ("evidence.dependency_kind",))
@@ -849,10 +862,7 @@ def evaluate(data, max_age_minutes, *, now=None):
                 "task_claim_source_unknown",
                 "The separate task-claim source must be readable for this item.",
                 ("evidence.task_claim_source_available",))
-        require(value("task_claim_state") == "none",
-                "task_claim_not_clear",
-                "The separate task-claim source must explicitly show no claim.",
-                ("evidence.task_claim_state",))
+        require_task_claim_clear("The separate task-claim source must explicitly show no claim.")
         require(value("operator_attestation") is True,
                 "operator_attestation_missing",
                 "An explicit operator must attest that the dependency is cleared.",
@@ -916,10 +926,7 @@ def evaluate(data, max_age_minutes, *, now=None):
                 "task_claim_source_unknown",
                 "The separate task-claim source must be available.",
                 ("evidence.task_claim_source_available",))
-        require(value("task_claim_state") == "none",
-                "task_claim_not_clear",
-                "Separate task-claim source must explicitly show none.",
-                ("evidence.task_claim_state",))
+        require_task_claim_clear("Separate task-claim source must explicitly show none.")
         require(value("active_claim") == "none",
                 "claim_not_clear",
                 "Never retire an actively owned or unknown work item.",
