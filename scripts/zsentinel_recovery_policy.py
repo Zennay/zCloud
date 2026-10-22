@@ -302,7 +302,7 @@ def _validate(data):
 def recommended_next_step_code(action, blockers):
     """Stable machine-readable routing hint, not permission to execute the route."""
     codes = {item["code"] for item in blockers}
-    if codes & {"source_stale", "source_not_verified"}:
+    if codes & {"source_stale", "source_not_verified", "source_future_dated"}:
         return "refresh_source"
     if codes & {"claim_not_clear", "claim_state_unknown"}:
         if codes & {"owner_missing", "human_owner_missing"}:
@@ -368,8 +368,8 @@ def recommended_next_step_code(action, blockers):
 def recommended_next_step(action, blockers, required_evidence):
     """Give a deterministic safe handoff; never turn policy output into execution."""
     codes = {item["code"] for item in blockers}
-    if codes & {"source_stale", "source_not_verified"}:
-        return "Refresh or verify the original source observation and reevaluate; stale/unverified evidence cannot clear a HOLD."
+    if codes & {"source_stale", "source_not_verified", "source_future_dated"}:
+        return "Refresh or verify the original source observation and reevaluate; stale, unverified or future-dated evidence cannot clear a HOLD."
     if codes & {"claim_not_clear", "claim_state_unknown"}:
         if codes & {"owner_missing", "human_owner_missing"}:
             return "Identify the current claim owner from live source evidence; do not preempt, reassign, or mutate the queue."
@@ -456,6 +456,10 @@ def evaluate(data, max_age_minutes, *, now=None):
 
     require(age <= timedelta(minutes=max_age_minutes),
             "source_stale", "Source observation is older than the configured freshness window.",
+            ("observed_at_utc",))
+    require(observed <= now + timedelta(minutes=2),
+            "source_future_dated",
+            "Source observation timestamp is more than two minutes in the future.",
             ("observed_at_utc",))
     require(value("source_verified") is True,
             "source_not_verified", "The supplied source receipt is not marked verified.",
