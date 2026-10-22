@@ -487,7 +487,14 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
             codes.append("LISTENER_SERVICE_MEMBERSHIP_MISMATCH")
         if worker_mismatch:
             codes.append("WORKER_SERVICE_MEMBERSHIP_MISMATCH")
-    if summary == "no_runner_processes_observed":
+    observed_process_matches = (
+        int(service_cgroup.get("listener_processes_observed", 0) or 0)
+        + int(service_cgroup.get("worker_processes_observed", 0) or 0)
+    )
+    if (
+        observed_process_matches == 0
+        and coverage in ("no_runner_processes_observed", "partial_process_scan")
+    ):
         codes.append("NO_PROCESS_MATCH_IS_NOT_REGISTRATION_PROOF")
     if (
         listener_summary == "all_in_expected_unit_comm_only"
@@ -674,6 +681,16 @@ def runner_worker_snapshot() -> dict:
             service_cgroup["operator_summary"] = (
                 "No Runner.Listener/Worker process-name match was observed in the bounded scan; "
                 "this does not prove GitHub registration or job assignment."
+            )
+        elif (
+            service_cgroup["membership_coverage"] == "partial_process_scan"
+            and int(service_cgroup.get("listener_processes_observed", 0) or 0)
+            + int(service_cgroup.get("worker_processes_observed", 0) or 0) == 0
+        ):
+            service_cgroup["operator_summary"] = (
+                "The partial runner process scan observed no Listener/Worker process-name match; "
+                "the scan is incomplete and this does not prove absence, registration or job assignment. "
+                "Preserve active work and request owner reconciliation."
             )
         else:
             service_cgroup["operator_summary"] = (
