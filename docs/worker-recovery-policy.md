@@ -543,10 +543,28 @@ arguments; one sequential bounded GitHub observation per repo,
 maximum 7 GET per repo and 42 overall, no arbitrary remote hosts,
 and at most 120 P0-first issue cards in a source-bound snapshot.
 The input repo list is explicit rather than inferred from a historical
-Notion claim. Observations across repositories are **not atomic**;
-provider refusal/quota failure marks the affected repo incomplete and
-does not retry or read subsequent repositories. Source failures do not
-mean no issues. No raw titles, bodies, contact data or tokens are included;
+Notion claim. Observations across repositories are **not atomic**.
+Authentication, rate-limit or unknown provider failures are isolated as
+`SOURCE_UNAVAILABLE` and stop further API calls for the run; earlier
+repository issue cards remain available in the private output. Projects
+not read after a global provider error become
+`NOT_READ_AFTER_SOURCE_ERROR`, never implicitly empty. An explicit
+repository-local not-found/inaccessible GitHub response affects **only that
+repository**, so other independently requested projects can still be read
+without repeating the blocked repo request. Project source observations
+include a human follow-up action (`human_source_followup_code`) and
+distinct `source_error_scope` for repository-only versus provider/unknown
+errors; follow-ups are never executed by the CLI. The report separates
+unread/incomplete provider sources (`source_partial_or_unknown`) from
+issues deliberately omitted by the local view/display cap
+(`display_partial`); the combined legacy `partial_or_unknown` flag
+continues to communicate either kind of incomplete handoff. The boolean
+`all_repositories_covered` is true **only when every requested repository
+actually produced a source observation**, not merely when a global
+provider failure did not occur. Actual GitHub GET count is reported UNKNOWN
+when a raised provider error makes attempted-request accounting uncertain,
+while the absolute 7-per-repo ceiling remains unchanged.
+Source failures do not mean no issues. No raw titles, bodies, contact data or tokens are included;
 original GitHub issue URLs and human-only follow-up codes remain present.
 All formats require a user-owned private destination, created exclusively
 under the existing secure output guard (non-following, 0600, no overwrite,
