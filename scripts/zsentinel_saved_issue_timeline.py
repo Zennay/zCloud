@@ -47,7 +47,7 @@ def issue_worklist(report, *, stale_after_hours=6):
         issue_priorities = {}
         latest_issue_link_sources = {}
         for seen in candidate["observations"]:
-            if seen["priority"] not in RANK:
+            if type(seen.get("priority")) is not str or seen["priority"] not in RANK:
                 raise ValueError("Unrecognized historical PR priority")
             for url in seen["linked_issue_urls"]:
                 issue_seen_at.setdefault(url, set()).add(seen["snapshot_index"])
@@ -194,7 +194,7 @@ def filter_issue_page(report, *, priority=None, issue_url=None,
     Project/attention are display scopes, not evidence that omitted work
     is completed, unowned or safe for parallel implementation.
     """
-    if priority is not None and priority not in RANK:
+    if priority is not None and (type(priority) is not str or priority not in RANK):
         raise ValueError("Invalid source-PR priority")
     if project is not None and (
         type(project) is not str or REPO.fullmatch(project) is None
