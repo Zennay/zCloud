@@ -453,6 +453,8 @@ def as_html(result):
     for key in ("problem", "next_action", "status"):
         if type(result.get(key)) is not str or not 1 <= len(result[key]) <= 320:
             raise ValueError("untrusted runner correlation detail")
+    if type(result.get("stage")) is not str or not 1 <= len(result["stage"]) <= 100:
+        raise ValueError("untrusted runner owner route")
     link = result.get("exact_job_url")
     if link is not None and (type(link) is not str or not re.fullmatch(
             r"https://github[.]com/Zennay/zCloud/actions/runs/[1-9][0-9]*/job/[1-9][0-9]*",
@@ -482,6 +484,7 @@ def as_html(result):
     return (
         '<section aria-label="zSentinel exacte runnerbron correlatie">'
         '<h2>P0 runner · exacte job plus lokale proces- en unitstatus</h2>'
+        '<p><strong>OWNER-ROUTE:</strong> ' + escape(result["stage"]) + '</p>'
         '<p><strong>PROBLEEM:</strong> ' + escape(result["problem"]) + '</p>'
         '<p><strong>ACTIE:</strong> ' + escape(result["next_action"]) + '</p>'
         '<p><strong>STATUS:</strong> ' + escape(result["status"]) + job_link + '</p>'
@@ -496,6 +499,8 @@ def as_html(result):
 def as_text(result):
     if result.get("schema") != SCHEMA or result.get("restart_authorized") is not False:
         raise ValueError("invalid read-only runner handoff")
+    if type(result.get("stage")) is not str or not 1 <= len(result["stage"]) <= 100:
+        raise ValueError("invalid runner owner route")
     service = _validated_service_observation({
         "systemd_service_observation": result.get("systemd_service_observation")
     })
@@ -506,6 +511,7 @@ def as_text(result):
     if type(listener_count) is not int or not 0 <= listener_count <= 20000:
         raise ValueError("invalid local listener count")
     return "\n".join((
+        "OWNER-ROUTE · " + result["stage"],
         "RUNNER · " + result["problem"],
         "ACTIE · " + result["next_action"],
         "STATUS · " + result["status"] +
