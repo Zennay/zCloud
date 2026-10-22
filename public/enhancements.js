@@ -109,6 +109,7 @@
   }
 
   function resourcePanel(){
+    var sourceUnconfirmed=DATA.stale===true;
     var list=(DATA.projects||[]).filter(function(p){return !!p.resource});
     if(!list.length)return '';
     var weights={background:100,normal:400,high:800,turbo:3000};
@@ -128,8 +129,9 @@
       var unattributed=summary.unattributed_cpu_percent==null?'being measured':num(summary.unattributed_cpu_percent)+'%';
       summaryRow='<div class="resource-tech-row resource-tech-summary"><strong>VPS total</strong><span>CPU '+num(summary.host_cpu_percent)+'% · attributed '+attributed+' · system/unattributed '+unattributed+' · '+esc(summary.cores||'?')+' cores</span></div>';
     }
-    var details='<section class="resource-tech-panel" aria-labelledby="resource-tech-title"><div class="resource-tech-heading"><h3 id="resource-tech-title">Technical details</h3><span>Live allocation</span></div><div class="resource-tech-list">'+summaryRow+tech.join('')+'</div><p>Project CPU is normalized to the same 0–100% host scale as VPS CPU. System/unattributed is CPU that is real on the VPS but cannot yet be assigned to a project. Weights: Background 100 · Normal 400 · High 800 · Turbo 3000.</p></section>';
-    return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Resource usage</h2><div class="panel-subtitle">Live CPU, memory and worker allocation by project</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div>'+details+'</div>';
+    var details='<section class="resource-tech-panel" aria-labelledby="resource-tech-title"><div class="resource-tech-heading"><h3 id="resource-tech-title">Technical details</h3><span>'+(sourceUnconfirmed?'Last-known allocation':'Live allocation')+'</span></div><div class="resource-tech-list">'+summaryRow+tech.join('')+'</div><p>Project CPU is normalized to the same 0–100% host scale as VPS CPU. System/unattributed is CPU that is real on the VPS but cannot yet be assigned to a project. Weights: Background 100 · Normal 400 · High 800 · Turbo 3000.</p></section>';
+    var sourceNotice=sourceUnconfirmed?'<div class="alert-empty" role="status">Monitoring data is stale. Resource values below are last-known, not live. <a class="events-link" href="/">Dashboard opnieuw laden</a></div>':'';
+    return '<div class="panel resource-panel'+(sourceUnconfirmed?' source-unconfirmed':'')+'"><div class="panel-header"><div><h2>Resource usage</h2><div class="panel-subtitle">'+(sourceUnconfirmed?'Last-known CPU, memory and worker allocation · monitoring data is stale':'Live CPU, memory and worker allocation by project')+'</div></div>'+icon('cpu')+'</div>'+sourceNotice+'<div class="resource-grid">'+rows+'</div>'+details+'</div>';
   }
   function incidentPanel(){
     var center=DATA.incidents||{items:[],recovery:null},items=center.items||[];
