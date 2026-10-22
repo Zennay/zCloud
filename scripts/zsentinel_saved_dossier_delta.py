@@ -18,7 +18,7 @@ import re
 import sys
 from zipfile import BadZipFile
 
-from zsentinel_saved_gate_dossier import open_dossier, saved_queue
+from zsentinel_saved_gate_dossier import CATEGORIES, ISSUE_URL, open_dossier, saved_queue
 
 MAX_BYTES = 1024 * 1024
 SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -82,8 +82,21 @@ def admit_record(report):
                 if value is not None and (type(value) is not str or HEAD.fullmatch(value) is None):
                     raise ValueError("Invalid PR HEAD observation")
             elif name in ("linked_issue_urls", "concurrent_gates"):
-                if type(value) is not list or len(value) > 60 or len(set(value)) != len(value):
+                if (type(value) is not list or len(value) > 60
+                        or any(type(item) is not str or not 1 <= len(item) <= 300
+                               or any(ord(char) < 32 or ord(char) == 127 for char in item)
+                               for item in value)
+                        or len(set(value)) != len(value)):
+                    # Reject unhashable/malformed entries before set/sort so
+                    # damaged private snapshots fail closed with a bounded error.
                     raise ValueError("Contradictory saved PR link/gate evidence")
+                if (name == "linked_issue_urls" and any(
+                        ISSUE_URL.fullmatch(item) is None
+                        or not item.startswith("https://github.com/" + repo + "/issues/")
+                        for item in value)):
+                    raise ValueError("Cross-repository or invalid saved issue reference")
+                if name == "concurrent_gates" and any(item not in CATEGORIES for item in value):
+                    raise ValueError("Unknown saved concurrent gate category")
                 value = sorted(value)
             elif name == "gate_observations" and value is not None:
                 if (type(value) is not dict
