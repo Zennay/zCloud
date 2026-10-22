@@ -1973,7 +1973,9 @@ def _notion_review_summary(report):
         review = row.get("observed_verifying_min")
         in_progress = row.get("observed_in_progress_min")
         review_clocks = row.get("observed_claim_clock_recheck_min")
-        if (type(in_progress) is not int or in_progress != total - review
+        if (type(total) is not int or not 1 <= total <= 400
+                or type(review) is not int or not 0 <= review <= total
+                or type(in_progress) is not int or in_progress != total - review
                 or (review_clocks is not None and
                     (type(review_clocks) is not int or
                      not 0 <= review_clocks <= total))):
