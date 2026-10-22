@@ -108,7 +108,10 @@ unknown capacity evidence. Partial coverage is reported separately with
 `CAPACITY_EVIDENCE_PARTIAL`, even when another field already indicates
 critical or high pressure. Every receipt includes
 `PRESERVE_ACTIVE_WORK`, `TAKEOVER_NOT_AUTHORIZED`, and
-`RESTART_NOT_AUTHORIZED`. `HOLD_DISK_WRITES_REQUEST_OWNER_INVENTORY` is
+`RESTART_NOT_AUTHORIZED`. `CURRENT_WORKER_NOT_IDENTIFIED` is emitted from the
+explicit self-exclusion field, even if a partial scan uses
+`partial_observation` as its top-level state; an incomplete scan therefore
+cannot hide uncertainty about which worker is making the request. `HOLD_DISK_WRITES_REQUEST_OWNER_INVENTORY` is
 advisory when root capacity is critical; it does not identify files or grant
 cleanup permission. `CAPACITY_THRESHOLDS_NOT_EXCEEDED_NOT_HEALTH_PROOF`
 explicitly prevents a normal capacity snapshot from being mistaken for a
