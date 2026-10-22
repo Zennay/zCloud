@@ -3886,3 +3886,47 @@ workflowdispatch, facturatie, schoonmaakactie of deployment. Ook
 `advisory_headroom` blijft uitsluitend bronadvies en verleent geen
 eigenaars-, CI-, review- of releasebevoegdheid. Voor productie-impact zijn
 nog de bestaande PR-mergegates en een bevoegde VPS runtime-owner nodig.
+
+
+## 22 oktober · geblokkeerde P0/P1-taken als concrete read-only werkbak (#677, PWQ-433)
+
+De eerdere SQLite-wachtrijbron bood een afzonderlijk aantal `status=blocked`
+taken en groepen per project/prioriteit. Operators konden daardoor zien
+**dat** productwerk vastzat, maar niet **welke** P0/P1-taak handmatige
+hulp nodig had. De zSentinel-read-only observator selecteert nu maximaal
+24 individuele geblokkeerde taken. Die worden eerst per P0, dan P1,
+P2 en P3 geselecteerd. De bronvraag blijft één read-only
+`mode=ro`/`query_only=ON` SQLite-transactie.
+
+Een volledige `ORDER BY` over een grote geblokkeerde wachtrij kan op
+een volle VPS onverwachte tijdelijke SQLite-sorteerbestanden vragen. De
+implementatie gebruikt daarom maximaal vier `WHERE priority=? LIMIT ?`
+prioriteitsvensters, **zonder onbegrensde SQL-sortering**. De werkbak
+belooft geen chronologisch/fair totaaloverzicht binnen een prioriteit:
+zichtbare taken zijn een beperkte bronsteekproef, tenzij de onafhankelijk
+getelde hoeveelheid geblokkeerde taken daadwerkelijk in het venster past.
+
+Elke kaart toont alleen project, P-prioriteit, geschoonde titel,
+aantal eerdere **claimpogingen** (nooit foutenaantal), `eligible` als
+bronvlag, een afgeleide 16-cijferige queue-referentie en het feit of
+`claimed_at`/`claim_expires` nog gegevens bevatten. Geen ruwe ID,
+claim-token, eigenaarnaam, vrije foutdetails of volledig DB-pad verschijnt
+in de operatoruitvoer. De downstream herstelrouter valideert de grenzen,
+de niet-autoriserende vlaggen en de aantallen opnieuw en vertaalt elk
+verdacht claimveld in een verplichte eigenaarcontrole.
+
+De Nederlandse HTML-cockpit heeft nu een uitklapbare **Geblokkeerde taken
+· individuele P0/P1-eerst werkvolgorde**, naast de bestaande
+projectaggregaten. Bij >24 taken toont hij expliciet ONVOLLEDIG;
+oude snapshotformaten blijven leesbaar maar leveren
+`work_items_coverage=not_observed` in plaats van een vals lege lijst.
+Verouderde bronmomenten verbergen alle individuele taakdetails.
+
+**Veiligheidsgrens:** blocked is geen bewijs van mislukte uitvoering,
+en `attempts` tellen claims, geen retries/failures. Een taak zonder
+claimvelden is nog niet vrijgegeven. Er is geen SQL writer, queue-drop,
+leasevrijgave, automatisch hervatten, worker-dispatch, GitHub CI-rerun,
+VPS-serviceherstart of deploy. Alleen de bevoegde runtime-eigenaar mag
+na een actuele bron-/claim- en dependencycontrole een echte mutatie doen.
+De open writer-afhankelijkheid van #677 blijft apart; deze werkbak
+verandert geen native queue-retrycontract.
