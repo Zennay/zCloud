@@ -1234,6 +1234,13 @@ def graph_operator_text(report):
                       str(receipt["first_position"]) + "–" +
                       str(receipt["last_position"]) + " · gezien " +
                       str(receipt["observed_prs"]))
+    result.append("Geobserveerde PR's in dit begrensde venster (geen claim- of mergevrijgave):")
+    for pr in report["inspected_pr_heads"]:
+        result.append("  PR #" + str(pr["number"]) + " | " + pr["url"] +
+                      " | HEAD " + pr["head_sha"][:12] +
+                      " | doelbranch " + pr["base_ref"] +
+                      " | bestanden " + str(pr["file_count_observed"]) +
+                      " (" + ("volledig" if pr["file_list_complete"] else "gedeeltelijk") + ")")
     if report["cross_page_duplicate_prs_observed"]:
         result.append("WAARSCHUWING: PR dubbel op pagina's; bron mogelijk verschoven.")
     for cluster in report["linked_pr_collision_clusters"]:
