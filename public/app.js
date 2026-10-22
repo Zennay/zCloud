@@ -709,7 +709,7 @@ function ownerIntegrityPanel(projectId=''){
   }).join('');
   return '<section class="owner-integrity-panel" aria-label="Queue owner integrity">'
     +'<div class="owner-integrity-head"><div><span class="eyebrow">OWNER INTEGRITY · READ ONLY</span>'
-    +'<h2>'+all.length+' queue owner/lease warning'+(all.length===1?'':'s')+'</h2>'
+    +'<h2>'+all.length+' task'+(all.length===1?'':'s')+' requiring owner review</h2>'
     +'<p>Every queue item is screened, including first claims. Warnings are observations, not permission to take over.</p>'
     +'</div><a href="https://github.com/Zennay/zCloud/issues/677" target="_blank" rel="noopener noreferrer">Queue lifecycle issue #677 ↗</a></div>'
     +(projectId?'':'<div class="owner-integrity-filters"><button type="button" data-owner-integrity-priority aria-pressed="'
