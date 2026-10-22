@@ -113,6 +113,34 @@ def fresh_events(keys: list[tuple[str, int]], since: datetime) -> list[str]:
     return present
 
 
+def local_cutover_gate() -> dict:
+    """Read-only host handoff fence, independent of writer version."""
+    with sqlite3.connect(f"file:{ROOT / 'history.db'}?mode=ro", uri=True,
+                         timeout=10) as conn:
+        tables = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+        required = {"portfolio_queue", "task_claims", "runner_commands", "runner_events"}
+        missing = sorted(required - tables)
+        if missing:
+            return {"clear": False, "missing_tables": missing}
+        queue_count = conn.execute(
+            "SELECT count(*) FROM portfolio_queue "
+            "WHERE status IN ('claimed','running','verifying')"
+        ).fetchone()[0]
+        claim_count = conn.execute(
+            "SELECT count(*) FROM task_claims "
+            "WHERE lease_until IS NULL OR julianday(lease_until) IS NULL "
+            "OR julianday(lease_until) >= julianday(?)",
+            (datetime.now(timezone.utc).isoformat(),),
+        ).fetchone()[0]
+        return {
+            "clear": queue_count == 0 and claim_count == 0,
+            "unresolved_queue_rows": queue_count,
+            "live_or_unknown_project_leases": claim_count,
+        }
+
+
 def _ensure_private_backup_directory() -> Path:
     home = Path("/home/ubuntu")
     try:
@@ -297,8 +325,14 @@ def main() -> int:
     dry = json.loads(preflight)
     if dry.get("requested_active") != 10 or dry.get("maximum") != 20:
         raise Refused("existing fleet writer reports unexpected capacity")
-    # Old main lacks the atomic queue/lease cutover gate.
-    cutover_gate = dry.get("cutover_gate")
+    # Independently check project leases and every unresolved queue row.
+    # The writer must also acquire an SQLite write reservation before its
+    # own admission check; source without that atomic fence cannot be used.
+    writer_source = (ROOT / "scripts/apply_worker_fleet.py").read_text(encoding="utf-8")
+    if ("BEGIN IMMEDIATE" not in writer_source
+            or "'claimed','running','verifying'" not in writer_source):
+        raise Refused("atomic claimed-queue fleet writer not installed; integrate PR #1595 first")
+    cutover_gate = local_cutover_gate()
     managed = is_active("chatgpt-firefox.service", user=True, env=env)
     standalone = browser_running() and not managed
     state = {
