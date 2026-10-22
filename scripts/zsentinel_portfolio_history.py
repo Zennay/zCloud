@@ -302,7 +302,9 @@ def as_markdown(delta):
             " · code: " + change["human_followup_code"] +
             (" · GitHub detail: " + change["live_issue_recheck_state"] +
              (" (" + change["live_issue_recheck_observed_at_utc"] + ")"
-              if change.get("live_issue_recheck_observed_at_utc") else "")
+              if change.get("live_issue_recheck_observed_at_utc") else "") +
+             " · human next: " + change["live_next_action"] +
+             " (" + change["live_next_action_code"] + ")"
              if "live_issue_recheck_state" in change else "") +
             " · **NOT EXECUTED**"
         )
@@ -351,7 +353,8 @@ def as_html(delta):
             esc(c["human_followup"]) +
             (" · GitHub detail: " + esc(c["live_issue_recheck_state"]) +
              (" · " + esc(c["live_issue_recheck_observed_at_utc"])
-              if c.get("live_issue_recheck_observed_at_utc") else "")
+              if c.get("live_issue_recheck_observed_at_utc") else "") +
+             " · human next: " + esc(c["live_next_action"])
              if "live_issue_recheck_state" in c else "") +
             " · NOT EXECUTED</li>"
         )
@@ -378,6 +381,7 @@ def append_csv(base, delta):
         row[15] = c["human_followup_code"]
         row[16] = c["human_followup"]
         row[17] = ("GitHub issue detail " + c["live_issue_recheck_state"] +
+                   " · human next: " + c["live_next_action_code"] +
                    " (NOT A FIX OR MERGE)" if "live_issue_recheck_state" in c
                    else "SAMPLED CHANGE; NO ISSUE CLOSURE, CLAIM OR MERGE VERIFIED")
         writer.writerow(row)
@@ -395,12 +399,13 @@ def as_delta_csv(delta):
         "human_issue_action_code", "human_issue_followup",
         "issue_closure_verified", "actions_executed",
         "live_github_issue_detail", "live_observed_at_utc",
+        "live_human_action_code",
     ))
     for row in delta["repositories_compared"]:
         writer.writerow((
             "source", row["repository"], "", "", "", "",
             row["source_transition"], row["human_source_action_code"],
-            "", "", False, False, "", "",
+            "", "", False, False, "", "", "",
         ))
     for row in delta["changes"]:
         writer.writerow((
@@ -410,6 +415,7 @@ def as_delta_csv(delta):
             False, False,
             row.get("live_issue_recheck_state", ""),
             row.get("live_issue_recheck_observed_at_utc") or "",
+            row.get("live_next_action_code", ""),
         ))
     return stream.getvalue()
 
