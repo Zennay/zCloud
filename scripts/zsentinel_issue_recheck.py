@@ -44,10 +44,6 @@ LIVE_FOLLOWUP = {
         "defer_after_portfolio_provider_stop",
         "Earlier portfolio read stopped on provider error; retain UNKNOWN without additional GETs.",
     ),
-    "NOT_CHECKED_SOURCE_ADMISSION_DENIED": (
-        "request_explicit_live_read_admission",
-        "Optional GitHub live reads were not admitted; retain UNKNOWN and ask the operator to opt in.",
-    ),
     "NOT_CHECKED_READ_LIMIT": (
         "recheck_manually_if_priority_warrants",
         "This issue exceeded the bounded read allowance; check directly if still urgent.",
@@ -111,7 +107,7 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
         item["live_issue_priority_label"] = None
         item["live_issue_closed_does_not_prove_fix_merged"] = True
         if not source_read_admitted:
-            _set_status(item, "NOT_CHECKED_SOURCE_ADMISSION_DENIED")
+            _set_status(item, "NOT_CHECKED_PRIOR_PROVIDER_STOP")
             continue
         if stopped:
             _set_status(item, "NOT_CHECKED_AFTER_SOURCE_ERROR")
@@ -185,8 +181,7 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
         "source_errors": source_errors,
         "repository_local_source_gaps": sorted(inaccessible_repositories),
         "provider_reads_stopped_after_error": stopped,
-        "prior_provider_stop_suppressed_reads": False,
-        "live_read_admission_denied": not source_read_admitted,
+        "prior_provider_stop_suppressed_reads": not source_read_admitted,
         "not_displayed_cards_not_checked": report.get("omitted_change_cards", 0),
         "sample_absence_never_proves_closure": True,
         "github_closed_not_proof_of_fix_or_main": True,
