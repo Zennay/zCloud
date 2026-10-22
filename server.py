@@ -3031,10 +3031,16 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
         raise ValueError('Project is human-gated; gebruik Attention Needed in plaats van de workerqueue')
     if not _portfolio_queue_execution_capable(title,completion_criteria):
         raise ValueError('Alleen uitvoerbare write/build/test/deploy taken mogen in de workerqueue')
-    if not queue_id:
+    if queue_id is None or queue_id=='':
         digest=hashlib.sha256((project_id+'\n'+title+'\n'+str(parent_queue_id or '')).encode()).hexdigest()[:16]
         queue_id=project_id+'-'+digest
-    queue_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(queue_id).strip())[:160]
+    # Never silently sanitize or truncate a caller-supplied identity into a
+    # DIFFERENT queue_id. Previously, Unicode, whitespace, punctuation and
+    # overlong strings could alias an existing item on an upsert. Enforce the
+    # same canonical ASCII identity that worker receipts and claim keys use.
+    if (not isinstance(queue_id,str) or not 1<=len(queue_id)<=160 or
+            re.fullmatch(r'[A-Za-z0-9._:-]+',queue_id,flags=re.ASCII) is None):
+        raise ValueError('Queue-ID moet uniek en canoniek ASCII zijn (maximaal 160 tekens)')
     ts=now()
     criteria=str(completion_criteria or '')
     source=str(source_url or '')
