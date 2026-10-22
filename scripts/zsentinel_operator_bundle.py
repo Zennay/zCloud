@@ -73,7 +73,7 @@ def _read_private_file(path: Path, max_bytes: int) -> bytes:
             or stat.S_IMODE(before.st_mode) != 0o600
             or before.st_size > max_bytes):
         raise ValueError("private bundle file is not an owner-only bounded regular file")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW |
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK |
                  getattr(os, "O_CLOEXEC", 0))
     try:
         opened = os.fstat(fd)
@@ -109,7 +109,7 @@ def _fingerprint_source(role: str, path: Path) -> dict:
     if (not stat.S_ISREG(before.st_mode)
             or before.st_size > MAX_SOURCE_FINGERPRINT_BYTES):
         raise ValueError("bundle source is not a bounded regular file")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW |
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK |
                  getattr(os, "O_CLOEXEC", 0))
     digest = hashlib.sha256()
     total = 0
