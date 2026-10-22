@@ -1018,8 +1018,9 @@ de scriptvrije offline HTML linken iedere zichtbare check naar het bestaande
 exacte GitHub-runbewijs waar een canoniek run-ID beschikbaar is. De check- en reviewpagina zijn **beperkte samples**; zelfs volledig
 geslaagde zichtbare checks bewijzen niet welke CI branch protection verplicht
 stelt. De reviewuitvoer onderscheidt nu aantallen/states die aan de exacte
-PR-HEAD zijn gebonden, reviews op andere commits en reviews zonder geldige
-commitbinding; bij ongebonden of afgekapt bewijs wordt de dekking `PARTIAL`.
+PR-HEAD zijn gebonden, reviews op andere commits, reviews zonder geldige
+commitbinding en reviewrecords met een onbekende/ontbrekende status. Bij
+ongebonden, afgekapt of onbekend statusbewijs wordt de dekking `PARTIAL`.
 Dit bewijst nog steeds geen reviewer-onafhankelijkheid, laatste effectieve
 goedkeuring of opgeloste threads. Reviewstatus, branch protection, owner claims
 en release-autorisatie blijven apart **UNKNOWN / HOLD** totdat een bevoegd
