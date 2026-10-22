@@ -146,7 +146,7 @@ def portfolio_delta(previous, current, *, stale_after_hours=6, evaluated_at=None
 def selected_page(report, *, priority=None, repository=None,
                   change_only=False, page=1, page_size=30):
     """Retain honest global counts while rendering only chosen rows."""
-    if priority is not None and priority not in RANK:
+    if priority is not None and (type(priority) is not str or priority not in RANK):
         raise ValueError("Invalid priority filter")
     if repository is not None and (
             type(repository) is not str or PROJECT.fullmatch(repository) is None):
