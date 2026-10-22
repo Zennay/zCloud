@@ -979,7 +979,9 @@ def html_view(decision, registry=None):
                                (type(value) is not str or not 1 <= len(value) <= 45
                                 or any(ord(char) < 32 for char in value))
                                for value in (claimed_at, claim_expires))
-                        or metadata_status not in ("observed_fields_present", "partial_or_missing")):
+                        or metadata_status not in ("observed_fields_present", "partial_or_missing")
+                        or (metadata_status == "observed_fields_present") !=
+                           bool(worker and claimed_at and claim_expires)):
                     raise ValueError("invalid observed Notion worker/lease metadata")
                 details = []
                 if worker:
