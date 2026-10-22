@@ -490,7 +490,7 @@ function claimChurnSnapshotFreshness(){
   // Treat missing timezone and implausible server clock as UNKNOWN.
   const raw=blockedQueueObservedAt;
   const valid=typeof raw==='string'&&
-    /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$/.test(raw);
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(raw);
   const observed=valid?Date.parse(raw):NaN;
   if(!Number.isFinite(observed))
     return {state:'unknown',age_seconds:null,reason:'invalid-or-untimed-source'};
