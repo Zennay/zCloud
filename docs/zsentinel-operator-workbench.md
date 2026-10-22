@@ -56,6 +56,21 @@ De flags --latest en --bundle kunnen niet tegelijk worden gebruikt.
 De uitvoer blijft een create-only lokaal indexbestand; ongeldige bronnen
 leiden niet tot het publiceren van een onvolledige selectie.
 
+De index bewaart ook de **operationele samenvatting van dezelfde bronboard**:
+brondekking, P0/P1-brontellingen, alleen-geaggregeerde queue-druk
+(active_items, high_claim_attempts, expired_active_leases), bronklok,
+claimcontext en de vastgelegde menselijke vervolgstap. De HTML toont dit per
+project en markeert verschillen tussen snapshots, ook als er geen nieuwe
+issuekaart verschijnt. De JSON exporteert deze brongebonden waarden en
+expliciete voor/na-velden voor queue, dekking en vervolgstap. Een ontbrekende
+queuebron blijft null/onbekend; deze wordt nooit als nul actieve taken
+gepresenteerd. Geen raw queue-ID's of claim-eigenaars worden toegevoegd.
+
+Een toekomstig opgeslagen tijdstempel wordt nu apart gemarkeerd als mogelijke
+klokdrift; negatieve leeftijd wordt ook expliciet bewaard in de JSON. Zo kan
+een snapshot met een verkeerde klok niet stilzwijgend als vers worden gelezen.
+
+
 Open vervolgens recovery-history-october.index.html in die privémap.
 De scriptvrije HTML koppelt lokaal door naar iedere oorspronkelijke
 interactieve desk.html en receipt.json. Identiteit en timestamps komen
