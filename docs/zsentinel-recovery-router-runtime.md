@@ -8,7 +8,7 @@ database-, inode-, CPU-, RAM- en swapdruk.
 
 ```sh
 python3 scripts/zsentinel_live_cockpit.py \
-  --database /pad/naar/bestaande/history.db \
+  --database /pad/naar/bestaande/zcloud.sqlite3 \
   --project cloud --observe-vps-capacity \
   --archive-target /pad/naar/bestaande/externe/archiefmount \
   --format html --output /eigenaar/prive/capaciteit.html
@@ -19,6 +19,25 @@ verwijzen; de observer controleert de mount en laat onzekere/onbereikbare
 headroom ONBEKEND. Dit is een eigenaaradvies, geen toestemming om bestanden
 te verwijderen, runners te herstarten, queues te wijzigen of een offload uit
 te voeren. Gebruik dit uitsluitend op de bevoegde VPS met toestemming.
+
+Ook het **portfoliodashboard** ontvangt en toont nu de optionele
+archiefmount-capaciteit uit precies dezelfde read-only VPS-meting. Dit kan
+zonder dure bestands-/hotspotscan; de aparte privéscan blijft alleen vereist
+voor kandidaat-bestanden en archiveringsplannen.
+
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /pad/naar/bestaande/zcloud.sqlite3 \
+  --window 0 --observe-vps-capacity \
+  --archive-target /pad/naar/bestaande/externe/archiefmount \
+  --format html --output /eigenaar/prive/portfolio-capaciteit.html
+```
+
+De portfolioweergave transporteert de brongebonden meting naar dezelfde
+capaciteitskaart als de live cockpit, in plaats van alleen een globaal
+belastingsoordeel. Afwezige mount, twijfelachtige bron en onvolledige
+scheduler-/Notionclaims blijven UNKNOWN en verlenen nooit offload- of
+workerherstelrecht.
 
 De operator-PR-selectie is eveneens expliciet: `--existing-pr`,
 `--pr-project` en `--previous-pr-report` werken alleen samen met
