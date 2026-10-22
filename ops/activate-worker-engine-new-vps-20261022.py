@@ -29,10 +29,8 @@ ROOT = Path("/home/ubuntu/zennay-cloud")
 PROFILE = Path("/home/ubuntu/snap/firefox/common/chatgpt-webext-profile")
 SESSION_SOCKET = Path("/tmp/.X11-unix/X10")
 API = "http://127.0.0.1:8765"
-APPROVED_EVENTS = {
-    "heartbeat", "generation-progress", "prompt-sent",
-    "generation-started", "generation-finished",
-}
+# A prompt event proves activity, not that the browser remains connected.
+APPROVED_EVENTS = {"heartbeat"}
 
 
 class Refused(RuntimeError):
@@ -281,6 +279,11 @@ def main() -> int:
     runtime_dir = f"/run/user/{ubuntu_uid}"
     env.update({"XDG_RUNTIME_DIR": runtime_dir,
                 "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime_dir}/bus"})
+    # Existing X11 socket/cookie files do not prove access; verify ubuntu's
+    # real display before starting the managed Firefox service.
+    command("xdotool", "getdisplaygeometry",
+            env={**env, "DISPLAY": ":10",
+                 "XAUTHORITY": "/home/ubuntu/.Xauthority"}, timeout=5)
     if system_state("chatgpt-firefox.service", user=True, env=env) != "loaded":
         raise Refused("chatgpt-firefox user service not installed")
     if system_state("zennay-cloud.service") != "loaded":
@@ -294,6 +297,8 @@ def main() -> int:
     dry = json.loads(preflight)
     if dry.get("requested_active") != 10 or dry.get("maximum") != 20:
         raise Refused("existing fleet writer reports unexpected capacity")
+    # Old main lacks the atomic queue/lease cutover gate.
+    cutover_gate = dry.get("cutover_gate")
     managed = is_active("chatgpt-firefox.service", user=True, env=env)
     standalone = browser_running() and not managed
     state = {
@@ -302,6 +307,7 @@ def main() -> int:
         "extension_present": True, "browser_managed_active": managed,
         "standalone_browser_present": standalone,
         "backend_active": is_active("zennay-cloud.service"),
+        "cutover_gate": cutover_gate,
     }
     if standalone:
         raise Refused("standalone Firefox is live: preserve its tabs; owner must reconcile service")
@@ -309,16 +315,25 @@ def main() -> int:
         print(json.dumps(state, sort_keys=True, indent=2))
         return 0
 
+    if os.environ.get("ZCLOUD_OLD_VPS_FENCED") != "yes":
+        raise Refused("old VPS scheduler/workers must be fenced before --apply")
+    if os.environ.get("ZCLOUD_FINAL_DB_SYNCED") != "yes":
+        raise Refused("final consistent SQLite handoff must be confirmed before --apply")
+    if not isinstance(cutover_gate, dict) or cutover_gate.get("clear") is not True:
+        raise Refused("atomic fleet cutover gate absent or blocked; integrate guarded writer first")
+    if state["backend_active"]:
+        raise Refused("zCloud backend already active; do not rewrite live scheduler state")
+
     snapshot = backup()
     state["sqlite_backup"] = str(snapshot)
-    if not state["backend_active"]:
-        command("sudo", "-n", "systemctl", "start", "zennay-cloud.service",
-                timeout=25)
-    if not is_active("zennay-cloud.service"):
-        raise Refused("zennay-cloud backend did not become active")
-    # apply_worker_fleet.py refuses live unexpired queue claims and wrong hosts.
+    # Desired-state rewrite must precede API startup: otherwise the scheduler
+    # can claim work after the preflight but before the database mutation.
     command(sys.executable, str(ROOT / "scripts/apply_worker_fleet.py"),
             "--apply", env=env, timeout=40)
+    command("sudo", "-n", "systemctl", "start", "zennay-cloud.service",
+            timeout=25)
+    if not is_active("zennay-cloud.service"):
+        raise Refused("zennay-cloud backend did not become active")
     # An already-managed browser retains its live tabs: never restart it.
     if not managed:
         command("systemctl", "--user", "enable", "--now",
@@ -329,19 +344,26 @@ def main() -> int:
     # have genuinely checked in: early watchdog recovery can destroy startup.
     start = datetime.now(timezone.utc)
     deadline = time.monotonic() + args.wait_seconds
-    allocated = set()
+    configured = set()
     expected_keys = {f"{project}::w{slot}" for project, slot in expected}
     while time.monotonic() < deadline:
         targets = api("GET", "/api/runner-targets")
-        entries = (targets.get("global_allocation") or {}).get("workers") or []
-        allocated = {str(item.get("worker_key") or
-                         f"{item.get('project_id')}::w{item.get('worker_slot')}")
-                     for item in entries}
-        if allocated == expected_keys:
+        # Queue allocation only lists currently CLAIMED tasks. An idle queue
+        # must not make ten correctly configured worker tabs look absent.
+        configs = targets.get("projects") or {}
+        configured = {
+            key for project, slot in expected
+            if (key := f"{project}::w{slot}") in configs
+            and configs[key].get("base_project_id") == project
+            and int(configs[key].get("worker_slot") or 0) == slot
+            and configs[key].get("desired_state") == "running"
+            and configs[key].get("provider") == "chatgpt"
+        }
+        if configured == expected_keys:
             break
         time.sleep(2)
-    if allocated != expected_keys:
-        raise Refused(f"allocation mismatch: expected 10, observed {len(allocated & expected_keys)}")
+    if configured != expected_keys:
+        raise Refused(f"configured worker mismatch: expected 10, observed {len(configured)}")
     dynamic = api("GET", "/api/dynamic-workers").get("dynamic_workers") or {}
     if int(dynamic.get("chatgpt_count") or 0) != 10:
         raise Refused("runtime did not admit ten ChatGPT workers")
@@ -358,14 +380,35 @@ def main() -> int:
         if set(observed) == expected_keys:
             break
         time.sleep(3)
-    state["allocated"] = sorted(allocated)
+    state["configured_slots"] = sorted(configured)
     state["fresh_heartbeat_slots"] = sorted(observed)
-    state["heartbeats_verified"] = len(observed) == 10
-    if len(observed) != 10:
+    state["heartbeats_verified"] = set(observed) == expected_keys
+    if not state["heartbeats_verified"]:
         print(json.dumps(state, indent=2, sort_keys=True))
-        raise Refused(f"only {len(observed)}/10 fresh worker events; tabs/login need inspection")
-    # HTTP status is a separate piece of evidence, not an invented live count.
-    api("GET", "/api/runner-live")
+        raise Refused(f"only {len(observed)}/10 fresh browser heartbeats; tabs/login need inspection")
+    # Verify those same per-slot heartbeat receipts through the zCloud API.
+    live = api("GET", "/api/runner-live").get("chatgpt_runners") or {}
+    api_heartbeats = set()
+    for project, slot in expected:
+        for worker in (live.get(project) or {}).get("workers") or []:
+            if worker.get("worker_id") != f"{project}::w{slot}":
+                continue
+            last = timestamp((worker.get("last_heartbeat") or {}).get("time"))
+            if last and start <= last <= datetime.now(timezone.utc):
+                api_heartbeats.add(worker["worker_id"])
+    state["api_heartbeat_slots"] = sorted(api_heartbeats)
+    if api_heartbeats != expected_keys:
+        raise Refused(f"zCloud API confirms only {len(api_heartbeats)}/10 heartbeat slots")
+    allocation = api("GET", "/api/runner-targets").get("global_allocation") or {}
+    state["currently_claimed_queue_slots"] = sorted(
+        str(item.get("worker_key")) for item in allocation.get("workers") or []
+        if item.get("worker_key")
+    )
+    state["queue_execution_verified"] = False
+    state["queue_note"] = (
+        "Ten browser slots reported heartbeats. Actual queue claim, "
+        "prompt dispatch and completion require separate runtime receipts."
+    )
     # Arm existing recovery timers only after browser and slot proof. Never
     # stop/restart a live browser or queue worker as part of fleet activation.
     for timer in ("zcloud-firefox-supervisor.timer", "zcloud-self-heal.timer"):
@@ -374,7 +417,7 @@ def main() -> int:
             raise Refused(f"{timer} failed to become active")
     state["supervisor_and_self_heal_active"] = True
     print(json.dumps(state, indent=2, sort_keys=True))
-    print("ACTIVATED: ten allocated ChatGPT workers with fresh per-slot browser events")
+    print("ACTIVATED: ten configured ChatGPT tabs with fresh browser heartbeats; queue execution not yet proven")
     return 0
 
 
