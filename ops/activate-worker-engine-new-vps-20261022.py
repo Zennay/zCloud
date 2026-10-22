@@ -17,6 +17,7 @@ import pwd
 from pathlib import Path
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -118,17 +119,62 @@ def backup() -> Path:
     dest = Path("/home/ubuntu/.local/state/zcloud/fleet-backups")
     dest.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(dest, 0o700)
-    target = dest / ("pre-fleet-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".sqlite3")
     old_umask = os.umask(0o077)
+    target: Path | None = None
+    backup_fd: int | None = None
+    target_identity: tuple[int, int] | None = None
     try:
+        # Timestamp precision is not the safety boundary: O_EXCL guarantees a
+        # retry can never open and overwrite an earlier pre-fleet snapshot.
+        for _ in range(5):
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            candidate = dest / f"pre-fleet-{stamp}.sqlite3"
+            try:
+                backup_fd = os.open(
+                    candidate,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                    | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                    0o600,
+                )
+                target = candidate
+                opened = os.fstat(backup_fd)
+                target_identity = (opened.st_dev, opened.st_ino)
+                break
+            except FileExistsError:
+                continue
+        if target is None or backup_fd is None or target_identity is None:
+            raise Refused("could not allocate a unique backup path without overwrite")
+
         with sqlite3.connect(f"file:{ROOT / 'history.db'}?mode=ro", uri=True,
                              timeout=15) as source:
             with sqlite3.connect(target, timeout=15) as copy:
                 source.backup(copy)
-        os.chmod(target, 0o600)
+
+        current = target.lstat()
+        if (not stat.S_ISREG(current.st_mode)
+                or (current.st_dev, current.st_ino) != target_identity):
+            raise Refused("backup target identity changed during creation")
+        os.fchmod(backup_fd, 0o600)
+        return target
+    except Exception as exc:
+        # Remove only the incomplete file this invocation created. Never unlink
+        # an existing or replacement snapshot when the path identity changed.
+        if target is not None and target_identity is not None:
+            try:
+                current = target.lstat()
+                if (current.st_dev, current.st_ino) == target_identity:
+                    target.unlink()
+            except OSError:
+                pass
+        if isinstance(exc, Refused):
+            raise
+        raise Refused(
+            f"SQLite backup failed ({type(exc).__name__}); existing backups were not overwritten"
+        ) from None
     finally:
+        if backup_fd is not None:
+            os.close(backup_fd)
         os.umask(old_umask)
-    return target
 
 
 def browser_running() -> bool:
