@@ -15,6 +15,15 @@ MAX_INCIDENTS = 200
 MAX_ISSUES = 8
 MAX_TASKS = 5
 
+INCIDENT_STATUS_LABELS_NL = {
+    "human_action_required": "Menselijke actie vereist",
+    "read_only_diagnosis_required": "Broninspectie nodig",
+    "not_observed_needs_reconciliation": "Niet opnieuw waargenomen · reconciliatie nodig",
+    "exact_job_completed_source_reconciled": "Exacte jobbron opnieuw waargenomen",
+    "exact_job_route_reclassified_not_runner_recovered":
+        "Jobroute heringedeeld · runnerherstel niet bewezen",
+}
+
 INCIDENT_PROBLEM_LABELS_NL = {
     "github_job_unstarted": "GitHub-job niet gestart · oorzaak nog onbekend",
     "github_job_startup_failure": "GitHub-job kon niet starten · runner/bootstrap onderzoeken",
@@ -91,7 +100,11 @@ def incident_card(item, registry=None):
     owner = phrase(item.get("owner"), 80)
     due = phrase(item.get("target_review_by"), 35)
     action = phrase(item.get("action"), 480)
-    status = phrase(item.get("status"), 50)
+    raw_status = item.get("status")
+    status = phrase(
+        INCIDENT_STATUS_LABELS_NL.get(raw_status, raw_status)
+        if isinstance(raw_status, str) else raw_status, 50,
+    )
     reason = item.get("problem")
     # A displayed reason is an operator hint, never proof of recovery, billing
     # denial or a broken VPS listener. Prefer clear Dutch labels for known routes.
