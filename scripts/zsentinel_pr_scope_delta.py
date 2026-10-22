@@ -268,14 +268,17 @@ def compare(previous, current):
         new_pins = _pins(new, repo) if new_stable else {}
         head_changes = []
         for number in sorted(old_pins.keys() & new_pins.keys()):
-            if old_pins[number] != new_pins[number]:
+            previous_ref, current_ref = old_pins[number][2], new_pins[number][2]
+            branch_unknown = previous_ref is None or current_ref is None
+            if old_pins[number] != new_pins[number] or branch_unknown:
                 head_changes.append({
                     "url": f"https://github.com/{repo}/pull/{number}",
                     "previous_head": old_pins[number][0],
                     "current_head": new_pins[number][0],
-                    "previous_base_ref": old_pins[number][2],
-                    "current_base_ref": new_pins[number][2],
-                    "base_ref_changed": old_pins[number][2] != new_pins[number][2],
+                    "previous_base_ref": previous_ref,
+                    "current_base_ref": current_ref,
+                    "base_ref_changed": previous_ref != current_ref,
+                    "target_branch_identity_unknown": branch_unknown,
                     "base_changed": old_pins[number][1] != new_pins[number][1],
                     "head_changed": old_pins[number][0] != new_pins[number][0],
                 })
@@ -415,8 +418,9 @@ def render_delta(delta, format="text"):
         for row in delta["projects"]:
             links = []
             for changed in row["head_or_base_changed_in_both_samples"]:
-                links.append("<li>HEAD/doelbranch/basis gewijzigd: " + link(changed["url"]) +
-                             " (" + escape(changed["previous_head"][:12]) +
+                links.append("<li>HEAD/doelbranch/basis gewijzigd of doelbranch onbekend: " +
+                             link(changed["url"]) + " (" +
+                             escape(changed["previous_head"][:12]) +
                              " → " + escape(changed["current_head"][:12]) +
                              "; doelbranch " +
                              escape(changed["previous_base_ref"] or "ONBEKEND") + " → " +
@@ -542,10 +546,11 @@ def render_delta(delta, format="text"):
         else:
             lines.append("  Connectiegroep-verschillen ONBEKEND: bron onvolledig.")
         for item in row["head_or_base_changed_in_both_samples"]:
-            lines.append("  HEAD/doelbranch/basis: " + item["url"] + " " +
-                         item["previous_head"][:12] + " → " + item["current_head"][:12] +
-                         " · doelbranch " + (item["previous_base_ref"] or "ONBEKEND") +
-                         " → " + (item["current_base_ref"] or "ONBEKEND"))
+            lines.append("  HEAD/doelbranch/basis (of onbekende doelbranch): " +
+                         item["url"] + " " + item["previous_head"][:12] + " → " +
+                         item["current_head"][:12] + " · doelbranch " +
+                         (item["previous_base_ref"] or "ONBEKEND") + " → " +
+                         (item["current_base_ref"] or "ONBEKEND"))
         for url in row["seen_only_in_current_sample_not_proven_new"]:
             lines.append("  Alleen huidige steekproef, niet bewezen nieuw: " + url)
         for url in row["seen_only_in_previous_sample_not_proven_closed"]:
