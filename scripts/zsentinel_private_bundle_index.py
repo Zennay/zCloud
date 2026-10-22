@@ -938,6 +938,8 @@ def render_history_package(snapshots: list[dict], index_name: str) -> bytes:
     }
     if any(not value or len(value) > 1024 * 1024 for value in members.values()):
         raise ValueError("private history package member exceeds one MiB")
+    if sum(map(len, members.values())) > 4 * 1024 * 1024:
+        raise ValueError("private history package exceeds four-MiB unpacked budget")
     parsed = json.loads(machine)
     receipt = {
         "schema": "zsentinel-private-recovery-history-package-v2",
@@ -1059,16 +1061,19 @@ def build_index(directory: Path, stems: list[str], name: str,
         raise ValueError("index stem must not match a bundled snapshot")
     if any(type(stem) is not str or STEM.fullmatch(stem) is None for stem in stems):
         raise ValueError("invalid source bundle stem")
-    if output_format not in ("html", "json", "csv", "zip"):
+    if output_format not in ("html", "json", "csv", "prs-csv", "zip"):
         raise ValueError("unsupported private history format")
     snapshots = [load_snapshot(directory, stem) for stem in stems]
-    filename = name + ".index." + output_format
+    filename = name + ".index." + ("prs.csv" if output_format == "prs-csv"
+                                   else output_format)
     if output_format == "zip":
         write_private_history_package(
             directory, name, render_history_package(snapshots, name))
     else:
         payload = (render(snapshots, name) if output_format == "html"
                    else render_csv_history(snapshots, name) if output_format == "csv"
+                   else render_history_pr_csv(snapshots, name)
+                   if output_format == "prs-csv"
                    else render_machine(snapshots, name))
         write_create_only(directory / filename, payload)
     return {
@@ -1092,8 +1097,10 @@ def main(argv=None) -> int:
                         help="Discover newest 2–24 private receipts (mtime only; not live)")
     parser.add_argument("--name", required=True,
                         help="New create-only index stem")
-    parser.add_argument("--format", choices=("html", "json", "csv", "zip"), default="html",
-                        help="Private offline HTML, JSON, historical CSV or checksum ZIP")
+    parser.add_argument("--format",
+                        choices=("html", "json", "csv", "prs-csv", "zip"),
+                        default="html",
+                        help="Private HTML, JSON, project CSV, PR CSV or checksummed ZIP")
     args = parser.parse_args(argv)
     try:
         if args.latest is not None and args.bundle:
