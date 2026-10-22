@@ -18,7 +18,10 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "worker-fleet.json"
 DB = ROOT / "history.db"
-REQUIRED_TABLES = {"runner_targets", "runner_workers", "runtime_settings", "ai_global_slots", "portfolio_queue"}
+REQUIRED_TABLES = {
+    "runner_targets", "runner_workers", "runtime_settings", "ai_global_slots",
+    "portfolio_queue", "runner_events", "runner_commands",
+}
 
 
 def get_plan() -> tuple[dict, list[tuple[str, int, int]]]:
