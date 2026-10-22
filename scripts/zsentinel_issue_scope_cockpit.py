@@ -25,7 +25,7 @@ from zsentinel_product_issue_inbox import (
     observed_time as canonical_issue_clock,
 )
 from zsentinel_product_delivery_board import prepare as prepare_delivery_board
-from zsentinel_pr_scope_guard import ROOT, registry
+from zsentinel_pr_scope_guard import ROOT, registry, edit_path
 from zsentinel_pr_scope_portfolio import collect_portfolio
 from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
 from zsentinel_issue_pr_history import attach as attach_history
@@ -338,10 +338,76 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
                                  if updated is not None else None)
             seen_head_urls.add(url)
             observed_pr_heads.append({**head, "updated_at": normalized_update})
+        # The producer already observes file/directory ancestor clashes.
+        # Join them to the same issue→PR handoff as exact shared filenames,
+        # preserving source HEADs rather than losing these actionable edges.
+        scope_neighbors = {}
+        scope_pairs = item.get("shown_path_scope_collision_pairs", [])
+        if type(scope_pairs) is not list or len(scope_pairs) > 80:
+            raise ValueError("unbounded file/directory PR conflict source")
+        sampled_heads = {row["url"]: row["head_sha"] for row in observed_pr_heads}
+        seen_scope_edges = set()
+        for pair in scope_pairs:
+            if (type(pair) is not dict
+                    or pair.get("merge_conflict_verified") is not False
+                    or pair.get("same_active_owner_verified") is not False):
+                raise ValueError("invalid non-authorizing scope observation")
+            sides = [pair.get("left"), pair.get("right")]
+            if any(type(side) is not dict for side in sides):
+                raise ValueError("incomplete file/directory PR identity")
+            urls = []
+            for side in sides:
+                number, url, head = (side.get("number"), side.get("url"),
+                                     side.get("head_sha"))
+                if (type(number) is not int or not 0 < number < 100000000
+                        or url != "https://github.com/" + repo + "/pull/" + str(number)
+                        or sampled_heads.get(url) != head):
+                    raise ValueError("file/directory conflict HEAD not in current PR sample")
+                urls.append(url)
+            if urls[0] == urls[1]:
+                raise ValueError("self-overlapping file/directory PR evidence")
+            edge = tuple(sorted(urls))
+            if edge in seen_scope_edges:
+                raise ValueError("duplicate file/directory PR pair")
+            seen_scope_edges.add(edge)
+            observed = pair.get("path_conflict_count_observed")
+            examples = pair.get("path_conflicts")
+            partial = pair.get("path_conflicts_truncated")
+            if (type(observed) is not int or observed < 1
+                    or type(examples) is not list or not 1 <= len(examples) <= 24
+                    or observed < len(examples) or type(partial) is not bool
+                    or partial != (observed > len(examples))):
+                raise ValueError("invalid bounded file/directory path evidence")
+            for example in examples:
+                if type(example) is not dict:
+                    raise ValueError("invalid file/directory path example")
+                left_path = edit_path(example.get("left_path"))
+                right_path = edit_path(example.get("right_path"))
+                relation = example.get("relation")
+                if not (
+                    (relation == "left_file_conflicts_with_right_descendant"
+                     and right_path.startswith(left_path + "/"))
+                    or (relation == "right_file_conflicts_with_left_descendant"
+                        and left_path.startswith(right_path + "/"))
+                ):
+                    raise ValueError("file/directory path ancestry not proven by observed paths")
+            for own, other in ((0, 1), (1, 0)):
+                own_url, peer_url = urls[own], urls[other]
+                scope_neighbors.setdefault(own_url, []).append({
+                    "url": peer_url, "head_sha_observed": sampled_heads[peer_url],
+                    "path_pairs_observed": observed,
+                    "path_examples_truncated": partial,
+                    # One genuine sample per pair, bounded and displayed locally.
+                    "own_path_sample": examples[0]["left_path" if own == 0 else "right_path"],
+                    "peer_path_sample": examples[0]["right_path" if own == 0 else "left_path"],
+                    "collision_is_git_merge_failure": False,
+                    "owner_verified": False, "merge_authorized": False,
+                })
         exact[pid] = {"source": item["source_status"],
                       "complete": item["sample_complete"],
                       "observed_pr_heads": observed_pr_heads,
                       "collisions": related,
+                      "file_directory_neighbors": scope_neighbors,
                       "mentioned_issues": mentions,
                       "mention_snapshot_stable": mentions_stable,
                       "mention_sample_complete":
@@ -391,8 +457,13 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             if m is None or link.rsplit("/pull/", 1)[0] != "https://github.com/" + repo:
                 raise ValueError("untrusted cross-project PR candidate")
             rivals = sorted(state["collisions"].get(link, set()))
+            scope_rivals = (
+                sorted(state["file_directory_neighbors"].get(link, []),
+                       key=lambda row: row["url"]) if coherent else [])
             if rivals:
                 status = "shared_file_paths_observed"
+            elif scope_rivals:
+                status = "file_directory_ancestor_conflicts_observed"
             elif coherent and state["complete"] and link in state["known_disjoint"]:
                 status = "no_shared_paths_in_complete_open_pr_snapshot_only"
             else:
@@ -410,6 +481,8 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
                              state["mention_sample_complete"] if link not in original
                              else False,
                          "overlap_with_open_prs": rivals[:16],
+                         "file_directory_conflict_peers": scope_rivals[:16],
+                         "file_directory_conflict_peers_truncated": len(scope_rivals) > 16,
                          "saved_exact_head_gates": gates,
                          "current_branch_required_checks_verified": False,
                          "independent_review_current_head_verified": False,
@@ -418,7 +491,11 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
                          "merge_authorized": False})
         if card["url"] in OWNER_ONLY:
             route = "authorized_infrastructure_owner_only"
-        elif refs and any(p["file_scope_state"] == "shared_file_paths_observed" for p in refs):
+        elif refs and any(
+                p["file_scope_state"] in ("shared_file_paths_observed",
+                                          "file_directory_ancestor_conflicts_observed")
+                or p["file_directory_conflict_peers"]
+                for p in refs):
             route = "coordinate_existing_pr_file_overlap_and_owner"
         elif duplicate_current_mentions:
             route = "coordinate_multiple_existing_pr_issue_mentions"
