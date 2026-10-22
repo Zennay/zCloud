@@ -12,3 +12,7 @@ The read-only GitHub activity collector now includes a bounded branch-tip observ
 - Worst-case request budget is 10 GitHub GETs per repository: five PR pages, two Actions pages, two main-commit pages and one branch page. The on-demand cache reserves the same worst-case cost before starting a refresh.
 
 This collector is public/read-only by default in the on-demand cockpit. Its source timestamps and `observed_at` remain separate. The complete feed stays explicitly partial because local VPS activity, historical backfill, owner claims and deployment proof are not established by these GitHub reads. No worker/queue/SQLite/claim mutation, workflow dispatch, merge or deployment is performed.
+
+## Last-successful cache behavior
+
+The on-demand reader retains the previous successful bounded receipt while a refresh is running. If a refresh fails or capacity/rate admission delays a new fetch, the response keeps that receipt and reports the current state separately, with `stale=true`, `last_successful_sync_at` (observer completion time) and `stale_age_s`. A provider failure does not replace useful prior evidence with an empty receipt. This timestamp is not the GitHub source timestamp; the receipt's `observed_at` and each event's `source_at` remain separate. The UI should render these fields explicitly and must continue to show the feed as partial.
