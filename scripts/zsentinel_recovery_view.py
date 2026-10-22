@@ -147,7 +147,10 @@ def historical_card(item, registry=None):
         raise ValueError("untrusted historical incident authority")
     severity = phrase(item.get("severity"), 5)
     project = phrase(item.get("project_id"), 80)
-    reason = phrase(item.get("problem"), 120)
+    raw_reason = item.get("problem")
+    reason_label = (INCIDENT_PROBLEM_LABELS_NL.get(raw_reason, raw_reason)
+                    if isinstance(raw_reason, str) else raw_reason)
+    reason = phrase(reason_label, 120)
     last = phrase(item.get("last_seen"), 45)
     age = item.get("minutes_since_last_observed")
     if type(age) is not int or age < 0:
