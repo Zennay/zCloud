@@ -479,6 +479,8 @@ function blockedQueuePanel(){
           ?'No parked tasks match this search in the loaded queue sample.'
           :blockedQueueHumanOnly&&!Array.isArray(DATA.attention_needed)
             ?'Human Attention source unavailable; this filter cannot be evaluated. Clear filters to see all parked tasks.'
+          :blockedQueueRepeatClaimsOnly
+            ?'No parked tasks with 3 or more recorded claim attempts match these filters in the loaded queue sample.'
             :blockedQueueProject!=='all'||blockedQueueHumanOnly
               ?'No parked tasks match the selected project, priority or human-attention filters in the loaded source sample.'
             :blockedQueueUrgentOnly
