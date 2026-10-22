@@ -64,6 +64,21 @@ def _utc(value):
     return moment.astimezone(timezone.utc)
 
 
+def _valid_branch_ref(value):
+    return bool(
+        type(value) is str and 1 <= len(value) <= 255
+        and value == value.strip() and not value.startswith("/")
+        and not value.endswith("/") and "//" not in value and ".." not in value
+        and "@{" not in value
+        and not any(not char.isprintable() or char.isspace()
+                    or char in ("~", "^", ":", "?", "*", "[", "\\")
+                    for char in value)
+        and not any(not part or part.startswith(".") or part.endswith(".")
+                    or part.lower().endswith(".lock")
+                    for part in value.split("/"))
+    )
+
+
 def _gate_class(item: dict, observed: bool, old: bool) -> str:
     """Conservative saved triage: never represents merge clearance."""
     if not observed:
@@ -76,7 +91,8 @@ def _gate_class(item: dict, observed: bool, old: bool) -> str:
         return "observed_merge_conflict"
     if (item.get("check_runs_page_complete") is not True
             or item.get("legacy_status_source_may_be_truncated") is not False
-            or item.get("review_page_may_be_truncated") is not False):
+            or item.get("review_page_may_be_truncated") is not False
+            or not _valid_branch_ref(item.get("base_ref_observed"))):
         return "source_incomplete"
     if (item["observed_checks_not_successful"] > 0
             or item.get("legacy_status_failure_or_error_observed", 0) > 0):
@@ -156,6 +172,8 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 or not HEAD.fullmatch(item["head_sha_observed"])
                 or item.get("required_branch_checks_and_rules_verified") is not False
                 or item.get("required_review_policy_verified") is not False
+                or (item.get("base_ref_observed") is not None
+                    and not _valid_branch_ref(item.get("base_ref_observed")))
                 or type(item.get("observed_checks_pending")) is not int
                 or type(item.get("observed_checks_not_successful")) is not int
                 or type(item.get("observed_independent_exact_head_approvals")) is not int
@@ -202,6 +220,11 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                     raise ValueError("invalid negative observed gate count")
             rows.append({
                 "url": url,
+                "target_branch_observed": (
+                    item.get("base_ref_observed") if
+                    observed and _valid_branch_ref(item.get("base_ref_observed")) else None),
+                "target_branch_identity_known": bool(
+                    observed and _valid_branch_ref(item.get("base_ref_observed"))),
                 "exact_head_observed": item["head_sha_observed"] if observed else None,
                 "source_status": "observed_partial" if observed else "unavailable_or_drifted",
                 "checks_pending_observed": item["observed_checks_pending"] if observed else None,
@@ -249,6 +272,8 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 row["pending_individual_review_requests_observed"],
             "pending_team_review_requests_observed":
                 row["pending_team_review_requests_observed"],
+            "target_branch_observed": row["target_branch_observed"],
+            "target_branch_identity_known": row["target_branch_identity_known"],
             "exact_head_observed": row["exact_head_observed"],
             "receipt_old": row["saved_source_stale_over_15_minutes"],
             "current_head_verified": False,
@@ -331,6 +356,7 @@ def human(report, markdown=False):
         link = ("[" + action["url"] + "](" + action["url"] + ")"
                 if markdown else action["url"])
         lines.append("- " + str(action["manifest_position"]) + ". " + link +
+                     " · doelbranch " + str(action.get("target_branch_observed") or "ONBEKEND") +
                      " · [" + action["historic_gate_category"] + "] " +
                      HUMAN_GATE_LABELS_NL.get(action["human_next_gate"], "Actueel bronbewijs nodig.") +
                      " · " + _review_request_note(action) + " · geen mergevrijgave")
@@ -342,7 +368,9 @@ def human(report, markdown=False):
                      " · bron UTC " + batch["observed_at_utc"])
         for row in batch["prs"]:
             name = ("[" + row["url"] + "](" + row["url"] + ")") if markdown else row["url"]
-            lines.append("- " + name + " · [" + row["historic_gate_category"] + "] " +
+            lines.append("- " + name + " · doelbranch " +
+                         str(row.get("target_branch_observed") or "ONBEKEND") +
+                         " · [" + row["historic_gate_category"] + "] " +
                          HUMAN_GATE_LABELS_NL.get(row["next_human_gate"], "Actueel bronbewijs nodig.") +
                          " · " + _review_request_note(row) +
                          (" · VEROUDERD (>15 min)" if row["saved_source_stale_over_15_minutes"] else "") +
@@ -361,9 +389,11 @@ def html(report):
                                                        "Actueel bronbewijs nodig."))
             category = escape(row["historic_gate_category"])
             head = escape(row["exact_head_observed"] or "onbekend")
+            target = escape(row.get("target_branch_observed") or "ONBEKEND")
             note = " · oud bronbewijs" if row["saved_source_stale_over_15_minutes"] else ""
             items.append('<li><a rel="noopener noreferrer" href="' + url + '">' + url +
-                         '</a><br><small>HEAD ' + head + ' · [' + category + '] ' + step + escape(note) +
+                         '</a><br><small>HEAD ' + head + ' · doelbranch ' + target +
+                         ' · [' + category + '] ' + step + escape(note) +
                          ' · ' + escape(_review_request_note(row)) +
                          ' · geen mergevrijgave</small></li>')
         cards.append(
@@ -385,7 +415,9 @@ def html(report):
         step = escape(action["human_next_gate"])
         queue_items.append("<li><a rel='noopener noreferrer' href='" + url + "'>" +
                            str(action["manifest_position"]) + ". " + url +
-                           "</a><br><small>" + category + " · " + step +
+                           "</a><br><small>Doelbranch " +
+                           escape(action.get("target_branch_observed") or "ONBEKEND") +
+                           " · " + category + " · " + step +
                            " · HANDMATIG / GEEN MERGE</small></li>")
     queue_section = ("<section><h2>Eerst bekijken: menselijke PR-werkbak</h2>"
                      "<p>Prioriteit volgt het originele reviewmanifest. "
