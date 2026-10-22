@@ -2930,6 +2930,17 @@ privé Markdown-hersteloverdracht (`--format handoff`). Gebruik
 `--observe-local-runner` alleen wanneer de bestaande runtime-DB
 uitdrukkelijk beschikbaar is. Anders de zelfstandige triage-CLI hierboven.
 
+Voor de hoofd-cockpit is de optionele vlag `--observe-local-runners`
+nu ook een cross-source werkbank wanneer project `cloud` is geselecteerd:
+naast de lokale procesgroepkaart verschijnt automatisch de correlatie tussen
+de bestaande bounded GitHub-discovery/exact-job-refresh en de strengere
+hostgebonden `/proc`-bron. Er worden geen extra GitHub-GETs toegevoegd buiten
+de al bestaande discovery en refresh. De kaart toont de exacte joblink,
+HEAD, bronversheid en drie-regelige eigenaaractie; bij gedeeltelijke
+discovery of een onbeschikbare VPS-bron blijft de uitkomst expliciet
+ONBEKEND. De JSON bewaart ook de ontdekkingsdekking. Dit verandert geen
+queue, claim, runner, service of CI-run en maakt geen live herstelclaim.
+
 
 ### 20 oktober · Eén commando voor exact-job hersteltriage (zonder werkende queue-DB)
 
