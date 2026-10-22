@@ -568,7 +568,7 @@ def _coordination_groups(cards):
     }
 
 
-def _validate_coordination_receipt(bundle):
+def validate_coordination_receipt(bundle):
     """Reject altered workorder hashes and collision groups that drift from cards.
 
     SHA-256 here is a consistency checksum, not a signature or authorization.
@@ -1179,7 +1179,7 @@ def render_csv(bundle):
                 "claim_authorized", "merge_authorized",
                 "deploy_authorized", "writes_performed"))):
         raise ValueError("invalid private owner CSV")
-    _validate_coordination_receipt(bundle)
+    validate_coordination_receipt(bundle)
     fields = (
         "record_type", "project", "pr_number", "pr_url",
         "coordination_group_number", "observed_selected_scope_peers",
@@ -1434,7 +1434,7 @@ def render_html(bundle):
                 "claim_authorized", "merge_authorized",
                 "deploy_authorized", "writes_performed"))):
         raise ValueError("invalid private owner desk")
-    _validate_coordination_receipt(bundle)
+    validate_coordination_receipt(bundle)
     def e(value):
         return escape(str(value), quote=True)
 
@@ -1879,7 +1879,7 @@ def render_markdown(bundle):
                 "claim_authorized", "merge_authorized",
                 "deploy_authorized", "writes_performed"))):
         raise ValueError("invalid owner workorder bundle")
-    _validate_coordination_receipt(bundle)
+    validate_coordination_receipt(bundle)
     lines = [
         "# zSentinel · privé-werkopdrachten bestaande product-PRs",
         "",
