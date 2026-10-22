@@ -77,10 +77,20 @@
     return '<div class="panel evidence-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Evidence-backed progress</h2><div class="panel-subtitle">Checkpoint progress, change and current bottleneck</div></div><strong class="evidence-progress-value">'+num(p.progress)+'%</strong></div><div class="evidence-summary"><div><span>Change ('+esc(range)+')</span><strong>'+esc(deltaText)+'</strong></div><div><span>Current bottleneck</span><strong>'+esc(bottleneck)+'</strong></div></div>'+comparison+'<details class="section-details evidence-details"><summary>Sources and technical details</summary><p>'+esc(sourceBits.join(' · ')||'No source metadata available')+'</p></details></div>';
   }
 
+  function monitoringSourceUnconfirmed(){
+    if(DATA.stale===true)return true;
+    var stamp=Date.parse(DATA.time);
+    if(!Number.isFinite(stamp))return true;
+    var age=Date.now()-stamp;
+    // Match the watch client's freshness contract: at most 15 minutes old,
+    // with no more than two minutes of future clock skew.
+    return age>15*60*1000||age< -2*60*1000;
+  }
+
   function qPanel(p){
     var q=p&&p.quality;
     if(!q||!q.available||!q.headline)return '';
-    var sourceUnconfirmed=DATA.stale===true;
+    var sourceUnconfirmed=monitoringSourceUnconfirmed();
     var items=(q.items||[]).map(function(x){
       return '<div><span>'+esc(x.label)+'</span><strong>'+esc(x.value)+esc(x.unit||'')+'</strong></div>';
     }).join('');
@@ -111,7 +121,7 @@
   }
 
   function resourcePanel(){
-    var sourceUnconfirmed=DATA.stale===true;
+    var sourceUnconfirmed=monitoringSourceUnconfirmed();
     var list=(DATA.projects||[]).filter(function(p){return !!p.resource});
     if(!list.length)return '';
     var weights={background:100,normal:400,high:800,turbo:3000};
@@ -137,7 +147,7 @@
   }
   function incidentPanel(){
     var center=DATA.incidents||{items:[],recovery:null},items=center.items||[];
-    var sourceUnconfirmed=DATA.stale===true||center.current_blocker_feed_available===false;
+    var sourceUnconfirmed=monitoringSourceUnconfirmed()||center.current_blocker_feed_available===false;
     if(!items.length){
       var recovery=center.recovery||{};
       var recoveryText=recovery.available?'Recovery point available':'No recovery point yet';
