@@ -3590,6 +3590,8 @@ def portfolio_queue_drop(queue_id,evidence='',expected_updated_at=None,
     # No-op/rejected drops must not trigger a queue refill or audit writer.
     audit=portfolio_queue_audit(refill=True) if dropped else None
     return {'dropped':dropped,'queue_id':queue_id,'queue_audit':audit,
+            'status':'dropped' if dropped else str(row['status']),
+            'source_guarded':bool(guarded),
             'attention_resolved':attention_resolved,
             'reason':None if dropped else 'active-claim-or-not-droppable'}
 
