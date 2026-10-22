@@ -754,7 +754,9 @@ def operator_text(source):
                      "bewezen; vernieuw eerst de read-only bron.")
     for row in source.get("owner_followup_candidates", []):
         lines.append(
-            f"  PRIORITEIT eigenaarcontrole · {row['project_id']} worker {row['worker_slot']}"
+            ("  HISTORISCH / geen actuele eigenaaractie" if not _source_current(moment)
+             else "  PRIORITEIT eigenaarcontrole") +
+            f" · {row['project_id']} worker {row['worker_slot']}"
             f" · {row['classification']} · actie={row['safe_followup']}"
             f" · recente_blocks={row['recent_block_events_after_prompt_in_sample']}"
             f" · claim_niet_geverifieerd")
@@ -888,7 +890,9 @@ def worker_progress_html(source):
             " · claim NIET geverifieerd.</li>"
         )
     inbox_html = (
-        '<aside class="panel warn"><h3>Eigenaarcontrole · begrensde actielijst</h3>'
+        '<aside class="panel warn"><h3>' +
+        ('Historische signalen · geen actuele incidentenlijst' if not source_current
+         else 'Eigenaarcontrole · begrensde actielijst') + '</h3>'
         '<p>Advies, geen claim/lease/restart-toestemming. Niet getoonde workers'
         ' zijn niet bewezen gezond. Huidige sample is onvolledig.</p>'
         + ("<ol>" + "".join(inbox_lines) + "</ol>" if inbox_lines else
@@ -1169,8 +1173,11 @@ def worker_progress_html(source):
          'dan tien minuten of meer dan twee minuten in de toekomst. '
          'Actuele blokkades/claims zijn ONBEKEND; ververs de read-only bron.</p>'
          if not source_current else '') +
-        '<p>Dringende eigenaarcontrole eerst: gepauzeerd met claim, herhaalde'
-        ' actuele browserblokkades en ontbreken van voortgang. Iedere worker'
+        ('<p>Historische volgorde van signalen; eerst een nieuwe read-only '
+         'bronobservatie vóór eigenaar-escalatie. Iedere worker'
+         if not source_current else
+         '<p>Dringende eigenaarcontrole eerst: gepauzeerd met claim, herhaalde'
+         ' actuele browserblokkades en ontbreken van voortgang. Iedere worker')
         ' bevat maximaal 12 recente metadata-events en een begrensde'
         ' vervolgstap. Geen claim-epoch-binding, browserstatus-GET,'
         ' herstart of werkafrondingsbewijs. Oude of ontbrekende events'
