@@ -20,10 +20,14 @@ output is capped at 4 KiB and checked against a fixed property/value allowlist.
 It does not invoke service actions, inspect the journal, read unit-file contents,
 or expose PIDs, command lines, registration credentials or environment files.
 If systemd is absent, denied or times out, the report says **UNKNOWN** and keeps
-the separate process observation. A unit reported active while the listener is
-missing (or vice versa) remains a discrepancy for the authorized owner, never
-an automatic restart decision. The HTML/text workbench labels this separately
-from GitHub registration and exact-job assignment.
+the separate process observation. The report explicitly labels
+`unit_active_listener_not_observed`, `listener_observed_unit_not_active`,
+`unit_active_listener_observed`, or `unknown_*` when comparing the two
+snapshots. These are observation relationships, not health or permission
+states. A unit reported active while the listener is missing (or vice versa)
+remains a discrepancy for the authorized owner, never an automatic restart
+decision. The HTML/text workbench labels this separately from GitHub
+registration and exact-job assignment.
 
 The new `zsentinel_runner_host_pressure.py` reader pins the root directory
 with `O_NOFOLLOW` and reads capacity through `fstatvfs`; it reuses
