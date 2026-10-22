@@ -1132,6 +1132,12 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     # aggregate; do not infer failed retries, free workers or resume rights.
     # One card per (project, priority) prevents high-volume projects from
     # consuming all owner attention; never perform additional SQLite reads.
+    blocked_summary = {
+        "coverage": "not_observed", "observed_blocked_count": None,
+        "priority_groups_observed": None, "priority_groups_shown": 0,
+        "priority_groups_truncated": True,
+        "resume_authorized": False,
+    }
     blocked = pressure.get("blocked_queue") if type(pressure) is dict else None
     if blocked is not None:
         if (type(blocked) is not dict
@@ -1140,6 +1146,10 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                     "automatic_retry_authorized"))):
             raise ValueError("untrusted or authorizing blocked queue evidence")
         blocked_coverage = blocked.get("coverage")
+        blocked_summary["coverage"] = (
+            "not_current_unverified" if pressure.get("coverage") != "current"
+            else blocked_coverage
+        )
         groups = blocked.get("project_groups")
         samples = blocked.get("work_items")
         if (blocked_coverage not in ("not_supplied", "not_observed",
@@ -1182,6 +1192,18 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                 key=lambda item: (0 if item[1] == "P0" else 1,
                                   -item[2], item[0]),
             )
+            blocked_total = blocked.get("total_items_observed")
+            if type(blocked_total) is not int or not 0 <= blocked_total <= 10**9:
+                raise ValueError("invalid blocked queue total in owner inbox")
+            blocked_summary = {
+                "coverage": "bounded_current_readonly",
+                "observed_blocked_count": blocked_total,
+                "priority_groups_observed": len(candidates),
+                "priority_groups_shown": min(8, len(candidates)),
+                "priority_groups_truncated": (
+                    len(candidates) > 8 or blocked.get("sample_truncated") is True),
+                "resume_authorized": False,
+            }
             for pid, pri, count in candidates[:8]:
                 example = sample_by_key.get((pid, pri), [])
                 title = (_short(example[0].get("title"), 65)
@@ -1423,6 +1445,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
         },
         "notion_owner_status_review": notion_owner_status,
         "current_queue_lease_owner_summary": current_queue,
+        "blocked_queue_owner_summary": blocked_summary,
         "queue_claim_conflict_total_observed": conflict_total,
         "queue_claim_conflicts_sample_truncated": conflict_truncated,
         "queue_claim_comparison_supplied": queue_trend is not None,
