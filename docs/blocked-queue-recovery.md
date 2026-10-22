@@ -698,9 +698,10 @@ workflowdispatch.
 De knop gebruikt de al bestaande, met
 `action_request_allowed` beschermde `POST /api/portfolio-queue`
 met uitsluitend `action=inspect_blocked` en `queue_id`.
-`portfolio_queue_recovery_inspect` voert één bestaande-DB-
-`SELECT` uit, zonder `UPDATE`, claim, leaseverlenging, audit/refill
-of afhankelijkheidsattestatie. Er wordt **geen aparte publieke
+`portfolio_queue_recovery_inspect` leest de taak én de uitsluitend
+bijbehorende `queue:<id>`-Attention via twee `SELECT`-statements in
+één coherente SQLite-readtransactie. Er is geen `UPDATE`, claim,
+leaseverlenging, audit/refill of afhankelijkheidsattestatie. Er wordt **geen aparte publieke
 endpointprivilege** gemaakt. Voor een ontbrekende rij retourneert
 de inspectie expliciet `found=false`, niet een verzonnen
 beschikbaar herstel.
@@ -708,8 +709,9 @@ beschikbaar herstel.
 De actuele diagnose omvat: werkelijke taakstatus en bronversie,
 `eligible`, ieder nog vastzittend `worker_slot`/
 `claimed_at`/`claim_expires`, projectregistratie, actieve
-projectstatus, human-gated-modus en daarmee uitsluitend
-**read-only** `resume_candidate`/`close_candidate`-indicaties.
+projectstatus, human-gated-modus en de exacte gekoppelde menselijke
+Attention-status; daaruit volgen uitsluitend **read-only**
+`resume_candidate`/`close_candidate`-indicaties.
 Concrete `reason_codes` verklaren onder meer: taak niet meer
 geblokkeerd, malformed `blocked/eligible`, nog gekoppelde
 werknemer/lease, ontbrekende projectregistratie, gepauzeerd
@@ -728,9 +730,31 @@ de huidige eigenaar tot een onafhankelijke bevoegde overgang.
 Geïntegreerde bestanden:
 `server.py`, `public/app.js`, `public/style.css` en
 `public/index.html`. De HTML laadt expliciet de exact gepinde
-GitHub-blobs `app.js=90521753ce18` en
+GitHub-blobs  `app.js=fbe663500ab8` en
 `style.css=87b0cd17c5a2`. Dit blijft werk op de bestaande
 [PR #1565](https://github.com/Zennay/zCloud/pull/1565),
 niet op `main` en niet op productie. De bestaande falende OOM-guard,
 onafhankelijke review en echte release-autorisatie zijn
 niet omzeild; er zijn geen nieuwe QA-suites geschreven of uitgevoerd.
+
+**Transactie-uitkomst versus bereikbaarheid:** de browser houdt een door
+serverreceipt bevestigde `resumed/queued` of `dropped` overgang
+voortaan gescheiden van de daaropvolgende dashboardverversing. Als die
+latere GET wegvalt, meldt de interface expliciet dat de taakmutatie
+wél bevestigd was en niet opnieuw mag worden verstuurd. Bij een
+transportbreuk ná het versturen maar vóór een betrouwbaar antwoord
+maakt de UI geen aanname over succes of falen: `outcome unconfirmed`
+met instructie tot onafhankelijke herlezing van de queue en duurzame
+operatorreceipt. Alleen een expliciet ontvangen brongebonden 4xx-
+afwijzing geldt als bewezen weigering. Geen blinde retry of nieuw
+recht wordt geïntroduceerd.
+
+**Resume-bewijsbehoud:** het gedocumenteerde operatorattest staat nu
+vóór de oude blocker/evidence in het maximaal 4000 tekens lange
+queue-evidenceveld; een lange historische bron kan daardoor niet
+meer de nieuwe menselijke beslissing wegdrukken. De bijbehorende
+transactionele projectreceipt ontvangt de oorspronkelijke blocker
+(max. 2000 tekens) en evidence (max. 4000 tekens) apart en behoudt
+de expliciete notitie. De bestaande receipt-UTF-8-limiet en afwijzing
+bij overmaat blijven leidend; er vindt geen stille overschrijving
+van een actieve workerlease plaats.
