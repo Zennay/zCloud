@@ -166,6 +166,23 @@ dat een claim hersteld, afgerond of overdraagbaar is. Een regressie
 van de cursor vraagt bron-/eigenaarsinspectie in plaats van
 automatische workerreset.
 
+### Afzonderlijke claimvensterstatus van het voortgangstijdstip
+
+De observer toont nu afzonderlijk **het progress-event** en het
+**voortgangstijdstip** binnen het actuele queue-claimvenster. Deze signalen
+zijn niet uitwisselbaar: de classificatie voor waargenomen generatievoortgang
+vereist beide venstercontroles, naast de geldige bronklokken. Tekst, HTML,
+privé-Markdown en de eigenaarinbox tonen de timestamp-vlag expliciet; de
+twee-snapshot-handoff vergelijkt ook de vorige en huidige vlag en markeert
+ontbrekende of historische velden als `ONBEKEND` in plaats van ze terug te
+vullen.
+
+Een gewijzigde timestamp-vlag is uitsluitend temporele broninformatie. Ze
+bewijst geen queue-ID, claimepoch, echte tekstgeneratie of productoplevering.
+De deltaweergave houdt de cursorvergelijking daarom apart en toont
+timestamp-vensterwijzigingen als aanvullend eigenaarbewijs, zonder een claim,
+restart of herstelactie te autoriseren.
+
 Dit is een bruikbaar read-only voortgangsproduct naast het bestaande
 P1-issue [#1342](https://github.com/Zennay/zCloud/issues/1342), maar
 sluit de onderliggende control-plane writer/claim-token reparatie
