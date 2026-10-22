@@ -143,15 +143,17 @@ def validated_view(source: dict) -> dict:
         seen.add(issue)
         refs = card.get("open_pr_candidates")
         gaps = card.get("evidence_gaps")
-        if (type(refs) is not list or len(refs) > MAX_REFERENCES or
-            len(set(refs)) != len(refs) or any(
+        if (type(refs) is not list or len(refs) > MAX_REFERENCES or any(
                 type(ref) is not str or not URL.fullmatch(ref) or
                 re.fullmatch(
                     r"https://github[.]com/" +
                     re.escape(issue.rsplit("#", 1)[0]) +
                     r"/pull/[1-9][0-9]{0,8}", ref
                 ) is None for ref in refs
-            )):
+            ) or len(set(refs)) != len(refs)):
+            # Validate every element before constructing a set: malformed JSON
+            # may contain arrays/objects, which are unhashable and must produce
+            # the same bounded source-rejection path instead of a TypeError.
             raise ValueError("Untrusted, cross-repository or duplicate PR references")
         if (type(gaps) is not list or len(gaps) > MAX_GAPS or
             any(type(g) is not str or len(g) > 300 for g in gaps)):
