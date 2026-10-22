@@ -243,8 +243,12 @@ def _host_capacity_observation() -> dict[str, object]:
         "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "load_average": {"1m": None, "5m": None, "15m": None, "cpu_count": None,
                          "max_load_per_cpu": None},
-        "root_filesystem": {"total_bytes": None, "available_bytes": None,
-                            "available_percent": None, "used_percent": None},
+        "root_filesystem": {
+            "total_bytes": None, "available_bytes": None,
+            "available_percent": None, "used_percent": None,
+            "inodes_total": None, "inodes_free": None, "inodes_available": None,
+            "inodes_available_percent": None, "inodes_used_percent": None,
+        },
         "memory": {"total_bytes": None, "available_bytes": None,
                    "available_percent": None},
         "swap": {"configured": None, "total_bytes": None, "free_bytes": None,
@@ -339,22 +343,45 @@ def _host_capacity_observation() -> dict[str, object]:
         total_blocks, free_blocks, available_blocks = (
             int(vfs.f_blocks), int(vfs.f_bfree), int(vfs.f_bavail)
         )
+        total_inodes, free_inodes, available_inodes = (
+            int(vfs.f_files), int(vfs.f_ffree), int(vfs.f_favail)
+        )
         if (block_size <= 0 or total_blocks <= 0 or free_blocks > total_blocks
-                or available_blocks > total_blocks):
+                or available_blocks > free_blocks):
             raise ValueError("invalid_root_filesystem_capacity")
+        if (min(total_inodes, free_inodes, available_inodes) < 0
+                or (total_inodes > 0 and
+                    (free_inodes > total_inodes or available_inodes > free_inodes))):
+            raise ValueError("invalid_root_inode_capacity")
         total = block_size * total_blocks
         free = block_size * free_blocks
         available = block_size * available_blocks
         used = max(0, total - free)
         denominator = used + available
-        result["root_filesystem"] = {
+        root_capacity = {
             "total_bytes": total,
             "available_bytes": available,
             "available_percent": round(100 * available / total, 1),
             "used_percent": round(100 * used / denominator, 1) if denominator else 100.0,
+            "inodes_total": total_inodes if total_inodes > 0 else None,
+            "inodes_free": free_inodes if total_inodes > 0 else None,
+            "inodes_available": available_inodes if total_inodes > 0 else None,
+            "inodes_available_percent": (
+                round(100 * available_inodes / total_inodes, 1)
+                if total_inodes > 0 else None
+            ),
+            "inodes_used_percent": (
+                round(100 * (total_inodes - free_inodes) / total_inodes, 1)
+                if total_inodes > 0 else None
+            ),
         }
+        result["root_filesystem"] = root_capacity
+        if total_inodes == 0:
+            complete = False
+            evidence_warnings.append("root_inode_capacity_unavailable")
     except (OSError, ValueError, TypeError, OverflowError, AttributeError, ZeroDivisionError):
         complete = False
+        evidence_warnings.append("root_filesystem_capacity_observation_unavailable")
 
     try:
         mount_info = os.lstat(ARCHIVE_MOUNT_PATH)
@@ -398,6 +425,14 @@ def _host_capacity_observation() -> dict[str, object]:
     archive = result["archive_mount"]
     if type(root.get("used_percent")) in (int, float) and root["used_percent"] >= 95:
         warnings.append("root_filesystem_critical")
+    inode_available_percent = root.get("inodes_available_percent")
+    inode_used_percent = root.get("inodes_used_percent")
+    if (type(inode_available_percent) in (int, float) and inode_available_percent <= 1
+            or type(inode_used_percent) in (int, float) and inode_used_percent >= 99):
+        warnings.append("root_inodes_critical")
+    elif (type(inode_available_percent) in (int, float) and inode_available_percent <= 5
+          or type(inode_used_percent) in (int, float) and inode_used_percent >= 95):
+        warnings.append("root_inode_pressure_high")
     if type(swap.get("used_percent")) in (int, float) and swap["used_percent"] >= 90:
         warnings.append("swap_pressure_high")
     if type(memory.get("available_percent")) in (int, float) and memory["available_percent"] <= 10:
@@ -416,12 +451,15 @@ def _host_capacity_observation() -> dict[str, object]:
         # Only a measured zero is "no space"; missing counters are unavailable.
         evidence_warnings.append("archive_mount_no_available_space")
 
-    if "root_filesystem_critical" in warnings:
+    root_storage_critical = (
+        "root_filesystem_critical" in warnings or "root_inodes_critical" in warnings
+    )
+    if root_storage_critical:
         if archive_has_capacity:
             summary = (
-                "Root filesystem critically full and the configured archive mount reports capacity on a separate "
-                "filesystem. Verify file provenance, encryption/retention policy and active handles before "
-                "owner-approved offload; no deletion, move or restart is authorized by this snapshot."
+                "Root storage is critically constrained by filesystem bytes or inodes, and the configured archive "
+                "mount reports capacity on a separate filesystem. Verify file provenance, encryption/retention "
+                "policy and active handles before owner-approved offload; no deletion, move or restart is authorized."
             )
         elif (archive.get("mount_detected") is True
               and archive.get("separate_filesystem") is False):
@@ -448,9 +486,9 @@ def _host_capacity_observation() -> dict[str, object]:
         )
     elif evidence_warnings:
         summary = (
-            "Host pressure thresholds are not exceeded in this snapshot, but the configured archive path "
-            "is not verified as a separate offload target with available capacity. Do not offload data or "
-            "infer safe storage until the mount and its independent capacity are verified by the authorized owner."
+            "Host pressure thresholds are not exceeded in this snapshot, but one or more capacity evidence sources "
+            "are incomplete or the configured archive path is not verified as a separate offload target. Do not "
+            "offload data or infer safe storage until the missing evidence and independent capacity are verified."
         )
     elif complete:
         summary = (
@@ -462,7 +500,7 @@ def _host_capacity_observation() -> dict[str, object]:
             "Capacity evidence is partial or unavailable. Preserve active work and do not infer service health."
         )
     severity = (
-        "critical" if "root_filesystem_critical" in warnings else
+        "critical" if root_storage_critical else
         "high" if warnings else
         "normal" if complete else "unknown"
     )
@@ -552,7 +590,13 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
             codes.append("ARCHIVE_MOUNT_NO_CAPACITY_NO_OFFLOAD")
     severity = capacity.get("severity")
     if severity == "critical":
-        codes.append("HOLD_DISK_WRITES_REQUEST_OWNER_INVENTORY")
+        if "root_filesystem_critical" in capacity.get("warnings", []):
+            codes.append("HOLD_DISK_WRITES_REQUEST_OWNER_INVENTORY")
+        if "root_inodes_critical" in capacity.get("warnings", []):
+            codes.append("HOLD_STORAGE_WRITES_REQUEST_OWNER_INVENTORY")
+        if not any(code in capacity.get("warnings", []) for code in
+                   ("root_filesystem_critical", "root_inodes_critical")):
+            codes.append("HOLD_STORAGE_WRITES_REQUEST_OWNER_INVENTORY")
     elif severity == "high":
         codes.append("RECONCILE_RESOURCE_PRESSURE_BEFORE_NEW_WORK")
     elif severity != "normal":
