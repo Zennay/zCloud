@@ -124,7 +124,9 @@ def build(report):
                 or activity.get("active_claims_verified") is not False
                 or activity.get("prless_branch_owners_verified") is not False
                 or activity.get("stalled_project_proven") is not False
-                or activity.get("actions_authorized") is not False):
+                or activity.get("actions_authorized") is not False
+                or ("event_clock_incoherent" in activity
+                    and type(activity.get("event_clock_incoherent")) is not bool)):
             raise ValueError("invalid or authorizing issue activity evidence")
         for field in ("issue_inactivity_hours", "latest_linked_open_pr_inactivity_hours"):
             age = activity.get(field)
@@ -260,6 +262,7 @@ def build(report):
             "linked_pr_activity_coverage": activity["linked_pr_activity_coverage"],
             "activity_window_hours": activity["window_hours"],
             "activity_as_of_utc": activity.get("as_of_utc"),
+            "activity_event_clock_incoherent": activity.get("event_clock_incoherent"),
             "stalled_project_proven": False,
             "project": issue["project"], "category": action,
             "category_nl": LABELS[action], "human_next_step_nl": GUIDANCE[action],
@@ -527,6 +530,9 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
                      str(item["latest_linked_open_pr_updated_at"] or "ONBEKEND") +
                      " (" + str(item["latest_linked_open_pr_inactivity_hours"]) + " uur geleden)" +
                      " · PR-dekking=" + item["linked_pr_activity_coverage"] +
+                     " · event-clock anomalie=" +
+                     ("JA" if item.get("activity_event_clock_incoherent") is True else
+                      "NEE" if item.get("activity_event_clock_incoherent") is False else "ONBEKEND") +
                      " (geen bewijs van stilstand of vrije claim).")
         lines.append("   " + item["activity_note_nl"])
         if item["candidate_existing_pr_url"]:
@@ -591,7 +597,7 @@ def render_merge_first_csv(board, max_rows=20):
         "issue_activity_signal", "issue_updated_at", "issue_inactivity_hours",
         "latest_linked_open_pr_updated_at", "latest_linked_open_pr_inactivity_hours",
         "linked_pr_activity_coverage", "activity_window_hours", "activity_as_of_utc",
-        "related_issue_activity_snapshot_json",
+        "activity_event_clock_incoherent", "related_issue_activity_snapshot_json",
         "issue_source_observed_at_utc", "pr_source_observed_at_utc",
         "issue_coverage", "pr_coverage",
         "current_owner_verified", "claim_authorized",
@@ -636,6 +642,8 @@ def render_merge_first_csv(board, max_rows=20):
                     card["linked_pr_activity_coverage"],
                 "activity_window_hours": card["activity_window_hours"],
                 "activity_as_of_utc": card.get("activity_as_of_utc"),
+                "activity_event_clock_incoherent":
+                    card.get("activity_event_clock_incoherent"),
             })
         return json.dumps(records, ensure_ascii=True, sort_keys=True,
                           separators=(",", ":"))
@@ -669,7 +677,7 @@ def render_merge_first_csv(board, max_rows=20):
             "existing_pr_owner_review", group["human_next_gate_step"],
             "YES" if group["any_file_directory_overlap_observed"] else "NO",
             group["file_directory_conflict_peers_observed_max"],
-            "", "", "", "", "", "", "", "",
+            "", "", "", "", "", "", "", "", "",
             activity_snapshot(matches),
             board.get("observed_issue_source_at_utc"),
             board.get("observed_pr_source_at_utc"),
@@ -705,7 +713,8 @@ def render_merge_first_csv(board, max_rows=20):
             card.get("latest_linked_open_pr_updated_at"),
             card.get("latest_linked_open_pr_inactivity_hours"),
             card["linked_pr_activity_coverage"],
-            card["activity_window_hours"], card.get("activity_as_of_utc"), "",
+            card["activity_window_hours"], card.get("activity_as_of_utc"),
+            card.get("activity_event_clock_incoherent"), "",
             board.get("observed_issue_source_at_utc"),
             board.get("observed_pr_source_at_utc"),
             "sample_complete" if card["issue_reference_sample_complete"]
