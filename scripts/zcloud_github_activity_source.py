@@ -161,6 +161,7 @@ def bounded_events(
         "repository": repo,
         "synced_at": None,
         "observed_at": stamp(observed),
+        "completed_at": None,
         "status": "partial",
         "github_pr": "unavailable",
         "github_ci": "unavailable",
@@ -515,9 +516,17 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
                 break
         if not advanced:
             break
+    completed_at = stamp(utc_now())
+    for item in coverage:
+        item["completed_at"] = completed_at
+        # Keep the historical synced_at field, but make it the end of the
+        # successful/partial source collection rather than its start clock.
+        if item["synced_at"] is not None:
+            item["synced_at"] = completed_at
     return {
         "schema": "zcloud-github-activity-readonly-v1",
         "observed_at": stamp(observed),
+        "completed_at": completed_at,
         "hours": hours,
         "requested_projects": selected,
         "requests_used": MAX_REQUESTS - reader.remaining,
