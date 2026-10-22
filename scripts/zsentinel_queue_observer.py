@@ -32,7 +32,7 @@ MAX_SAMPLES = 20
 MAX_BLOCKED_GROUPS = 250
 MAX_BLOCKED_WORK_ITEMS = 24
 CANONICAL_WORK_LINK = re.compile(
-    r"^https://github\\.com/Zennay/[A-Za-z0-9_.-]{1,100}/(?:issues|pull)/[1-9][0-9]{0,8}$"
+    r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/(?:issues|pull)/[1-9][0-9]{0,8}$"
 )
 MAX_BYTES_PER_TEXT = 180
 UTC = timezone.utc
