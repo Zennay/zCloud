@@ -36,6 +36,9 @@ FIELDS = (
     "archive_only_issue_count", "archive_only_source_issue_urls",
     "board_issue_count", "board_issue_inventory_complete_verified",
     "issue_source_coverage", "issue_source_coverage_note",
+    "issue_coverage_project_count", "issue_coverage_partial_project_count",
+    "issue_coverage_degraded_project_count", "issue_coverage_unavailable_project_count",
+    "issue_coverage_summary_note",
     "board_heads_observed", "archive_heads_observed",
     "head_variation_is_historical_not_merge_conflict",
     "historical_gate_labels", "sampled_board_unknown_gates",
@@ -524,7 +527,10 @@ def render_private_html(rows, source_metadata=None):
         "selected_existing_pr_count", "selected_issue_without_pr_count",
         "selected_unlinked_pr_count", "selected_competing_pr_count",
         "selected_missing_final_pr_count", "selected_head_variation_count",
-        "selected_archive_only_pr_count")}
+        "selected_archive_only_pr_count",
+        "issue_coverage_project_count", "issue_coverage_partial_project_count",
+        "issue_coverage_degraded_project_count", "issue_coverage_unavailable_project_count",
+        "issue_coverage_summary_note")}
     parts.append(
         '<section aria-label="Owner selection and bounded coverage">'
         '<h2>Owner selection · saved source scope</h2>'
@@ -558,6 +564,12 @@ def render_private_html(rows, source_metadata=None):
         'merge-gate evidence.</p>'
         '<p>Filtered: ' + escape(str(selection["selection_filter_applied"])) +
         '. Excluded or absent entries are UNKNOWN, not fixed, merged or free.</p>'
+        '<p>Issue-source coverage across observed project rows: ' +
+        escape(str(selection["issue_coverage_project_count"])) + ' projects · partial ' +
+        escape(str(selection["issue_coverage_partial_project_count"])) + ' · degraded ' +
+        escape(str(selection["issue_coverage_degraded_project_count"])) + ' · unavailable ' +
+        escape(str(selection["issue_coverage_unavailable_project_count"])) + '. ' +
+        escape(str(selection["issue_coverage_summary_note"])) + '</p>'
         '</section>'
     )
     if not rows:
@@ -792,6 +804,12 @@ def render_private_markdown(rows, source_metadata):
             metadata["selected_head_variation_count"]),
         "- PRs with archive-only issue links: " + str(
             metadata["selected_archive_only_pr_count"]),
+        "- Project coverage rows observed: " + str(metadata["issue_coverage_project_count"]),
+        "- Partial / degraded / unavailable project rows: " +
+            str(metadata["issue_coverage_partial_project_count"]) + " / " +
+            str(metadata["issue_coverage_degraded_project_count"]) + " / " +
+            str(metadata["issue_coverage_unavailable_project_count"]),
+        "- Coverage limitation: " + _markdown_evidence(metadata["issue_coverage_summary_note"]),
         "",
         "**Selection exclusions and unobserved records remain UNKNOWN, "
         "never cleared, claimed or completed.**",
@@ -946,6 +964,19 @@ def main(argv=None):
             item["original_review_manifest_sha256"] for item in archives]
         missing_archive_batches = any(
             bool(item["missing_batch_indexes"]) for item in archives)
+        coverage_projects = view["coverage"]["projects"]
+        coverage_summary = {
+            "issue_coverage_project_count": len(coverage_projects),
+            "issue_coverage_partial_project_count": sum(
+                status == "partial" for status in coverage_projects.values()),
+            "issue_coverage_degraded_project_count": sum(
+                status == "degraded" for status in coverage_projects.values()),
+            "issue_coverage_unavailable_project_count": sum(
+                status == "unavailable" for status in coverage_projects.values()),
+            "issue_coverage_summary_note": (
+                "No complete issue inventory is established by this bounded source; "
+                "per-record coverage notes remain authoritative."),
+        }
         html_metadata = {
             "original_board_sha256": sha,
             "board_observed_at_utc": view["observed_at_utc"],
@@ -954,6 +985,7 @@ def main(argv=None):
             "source_archive_manifest_sha256s": " | ".join(archive_manifests) or "not-provided",
             "saved_pr_archive_supplied": bool(archives),
             "saved_archive_batches_missing": missing_archive_batches,
+            **coverage_summary,
         }
         admitted_rows = prepare_rows(
             view, sha, saved, exported_at=exported_at,
@@ -967,7 +999,8 @@ def main(argv=None):
             priority=args.priority, record_type=args.record_type,
             pr_url=args.inspect_pr_url, issue_url=args.inspect_issue_url,
             attention=args.attention)
-        # Keep complete-source coverage explicit, even in a single selected row.
+        # Keep source coverage explicit even when filters select zero records.
+        selection.update(coverage_summary)
         html_metadata.update(selection)
         for row in rows:
             row.update(selection)
