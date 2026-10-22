@@ -18,7 +18,10 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "worker-fleet.json"
 DB = ROOT / "history.db"
-REQUIRED_TABLES = {"runner_targets", "runner_workers", "runtime_settings", "ai_global_slots", "portfolio_queue"}
+REQUIRED_TABLES = {
+    "runner_targets", "runner_workers", "runtime_settings", "ai_global_slots",
+    "portfolio_queue", "runner_events", "runner_commands",
+}
 
 
 def get_plan() -> tuple[dict, list[tuple[str, int, int]]]:
@@ -72,6 +75,10 @@ def main() -> int:
     conn = sqlite3.connect(f"file:{DB}?mode={'rw' if args.apply else 'ro'}", uri=True, timeout=10)
     conn.row_factory = sqlite3.Row
     try:
+        # Keep target validation, lease admission and the complete fleet rewrite
+        # in ONE SQLite transaction. A scheduler cannot claim a queue item
+        # between the safety check and the desired-state reset.
+        conn.execute("BEGIN IMMEDIATE" if args.apply else "BEGIN")
         tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         missing = REQUIRED_TABLES - tables
         if missing:
@@ -80,18 +87,21 @@ def main() -> int:
         missing_projects = set(plan["projects"]) - existing
         if missing_projects:
             raise RuntimeError(f"Unknown targets; update/initialize zCloud first: {sorted(missing_projects)}")
+        # 'claimed' is also in flight: a worker may own a lease before the
+        # first prompt or transition to 'running'. Preflight and apply must
+        # both refuse a still-owned slot, including leases without expiry.
+        active_claims = conn.execute(
+            "SELECT count(*) FROM portfolio_queue "
+            "WHERE status IN ('claimed','running','verifying') AND worker_slot IS NOT NULL "
+            "AND (claim_expires IS NULL OR claim_expires > ?)",
+            (datetime.now(timezone.utc).isoformat(),),
+        ).fetchone()[0]
+        if active_claims:
+            raise RuntimeError(
+                f"{active_claims} active queue claims; drain or reconcile them first"
+            )
         if args.apply:
-            # Never steal a non-expired, in-flight claim from another browser.
-            active_claims = conn.execute(
-                "SELECT count(*) FROM portfolio_queue "
-                "WHERE status IN ('running','verifying') AND worker_slot IS NOT NULL "
-                "AND (claim_expires IS NULL OR claim_expires > ?)",
-                (datetime.now(timezone.utc).isoformat(),),
-            ).fetchone()[0]
-            if active_claims:
-                raise RuntimeError(f"{active_claims} active queue claims; drain or reconcile them first")
             now = datetime.now(timezone.utc).isoformat()
-            conn.execute("BEGIN IMMEDIATE")
             conn.execute("UPDATE runner_targets SET active=0")
             conn.execute("UPDATE runner_workers SET desired_state='paused'")
             providers_by_worker = {
