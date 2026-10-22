@@ -61,14 +61,14 @@ def _sha(value):
 
 def _branch_ref(value):
     """Validate GitHub's short target branch name before pinning or rendering it."""
-    forbidden = (" ", "~", "^", ":", "?", "*", "[", "\\\\")
+    forbidden = (" ", "~", "^", ":", "?", "*", "[", "\\")
     if (type(value) is not str or not 1 <= len(value) <= 255
             or value != value.strip() or value.startswith("/")
-            or value.endswith(("/", ".")) or "//" in value or ".." in value
+            or value.endswith("/") or "//" in value or ".." in value
             or "@{" in value or any(ord(char) < 32 or ord(char) == 127
                                     or char in forbidden for char in value)
-            or any(not part or part.startswith(".") or part.endswith(".lock")
-                   for part in value.split("/"))):
+            or any(not part or part.startswith(".") or part.endswith(".")
+                   or part.lower().endswith(".lock") for part in value.split("/"))):
         raise ValueError("invalid target branch identity")
     return value
 
