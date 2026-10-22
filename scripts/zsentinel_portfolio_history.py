@@ -23,6 +23,7 @@ from zsentinel_recovery_policy import (
 )
 
 MAX_DELTA_CARDS = 100
+MAX_OPERATOR_ISSUE_WORKORDERS = 20
 CHANGE_FOLLOWUP = {
     "NEWLY_OBSERVED_NOT_PROVEN_NEW": (
         "inspect_existing_prs_and_current_worker_claims",
@@ -305,6 +306,12 @@ def _operator_workorders(delta):
         row["priority_source"] != "CURRENT_BOUNDED_SAMPLE",
         row["repository"], row["issue_number"],
     ))
+    # Keep the advisory operator desk concise and bounded. The historical
+    # delta still retains its independent 100-card window and omitted totals.
+    # Reserve six extra slots for source gaps, never silently hide them under
+    # a large critical-issue display.
+    total_issue_candidates = len(work)
+    work = work[:MAX_OPERATOR_ISSUE_WORKORDERS]
     for row in delta["repositories_compared"]:
         if row["source_transition"] == "SOURCE_READABLE_IN_BOTH_SNAPSHOTS":
             continue
@@ -351,6 +358,10 @@ def _operator_workorders(delta):
         "release_authorized": False,
         "actions_executed": False,
         "count": len(work),
+        "total_issue_candidates": total_issue_candidates,
+        "omitted_issue_workorders": max(
+            0, total_issue_candidates - MAX_OPERATOR_ISSUE_WORKORDERS
+        ),
         "hidden_historical_changes_not_classified": delta["omitted_change_cards"],
         "by_repository": counts,
         "workorders": work,
@@ -365,6 +376,8 @@ def _operator_markdown(delta):
         "is established from these sampled observations.",
         "",
         "- Human workorders: " + str(handoff["count"]),
+        "- Extra issue workorders omitted from compact desk: " +
+        str(handoff["omitted_issue_workorders"]),
         "- Unclassified hidden history changes: " +
         str(handoff["hidden_historical_changes_not_classified"]),
     ]
@@ -393,7 +406,9 @@ def _operator_html(delta):
         "<section><h2>Human operator workorders · P0/P1 source first</h2>",
         "<p>Advisory only: verify active owner, required CI, merge and runtime "
         "independently. A missing or closed sampled issue is not shipped proof.</p>",
-        "<p>Workorders: " + esc(handoff["count"]) + " · hidden changes not "
+        "<p>Workorders: " + esc(handoff["count"]) +
+        " · extra issue workorders not shown: " +
+        esc(handoff["omitted_issue_workorders"]) + " · hidden changes not "
         "classified: " + esc(handoff["hidden_historical_changes_not_classified"]) +
         "</p><ol>",
     ]
