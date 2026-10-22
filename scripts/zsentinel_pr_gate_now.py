@@ -145,8 +145,10 @@ def _one(repo, number, token):
     base_repo = first["base"].get("repo")
     author = first.get("user")
     if (type(base_repo) is not dict or base_repo.get("full_name") != repo
-            or type(author) is not dict or type(author.get("login")) is not str):
+            or type(author) is not dict or type(author.get("login")) is not str
+            or re.fullmatch(r"[A-Za-z0-9-]{1,39}", author["login"]) is None):
         raise ValueError("PR not based in canonical repository")
+    author_identity = author["login"].casefold()
     checks = github_json(repo, "/commits/" + head + "/check-runs?per_page=100", token)
     if (type(checks) is not dict or type(checks.get("total_count")) is not int
             or not 0 <= checks["total_count"] <= 1000000
@@ -283,13 +285,18 @@ def _one(repo, number, token):
                 or type(row.get("user")) is not dict):
             raise ValueError("invalid review receipt")
         reviewer = row["user"].get("login")
-        if type(reviewer) is not str or not 1 <= len(reviewer) <= 70:
+        if (type(reviewer) is not str or
+                re.fullmatch(r"[A-Za-z0-9-]{1,39}", reviewer) is None):
             raise ValueError("untrusted reviewer identity")
+        # GitHub logins are case-insensitive. Never treat differently cased
+        # aliases as distinct approvals, or an author's case variant as an
+        # independent reviewer on the exact current commit.
+        reviewer_identity = reviewer.casefold()
         # Only reviews explicitly submitted for the current exact commit
         # can count as fresh positive observations. Dismissals supersede.
         if row.get("commit_id") != head:
             continue
-        if reviewer == author["login"]:
+        if reviewer_identity == author_identity:
             continue
         review_state = row.get("state")
         # COMMENTED is not a review decision. A later ordinary comment must
@@ -297,9 +304,9 @@ def _one(repo, number, token):
         # APPROVED decision by the same independent reviewer.
         if review_state not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
             continue
-        current = most_recent.get(reviewer)
+        current = most_recent.get(reviewer_identity)
         if current is None or row["id"] > current[0]:
-            most_recent[reviewer] = (row["id"], review_state)
+            most_recent[reviewer_identity] = (row["id"], review_state)
     review_fingerprint = _source_evidence_fingerprint(
         "current_head_reviews", sorted(
             ({"reviewer": name, "review_id": entry[0], "state": entry[1]}
