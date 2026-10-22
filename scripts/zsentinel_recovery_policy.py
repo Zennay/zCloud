@@ -1927,7 +1927,7 @@ def main(argv=None):
     parser.add_argument("--live-issue-url",
                         help="read one canonical Zennay GitHub issue and its existing PRs directly; no saved case required")
     parser.add_argument("--live-pr-url",
-                        help="read one exact Zennay GitHub PR with bounded HEAD/check/review observations; advisory only")
+                        help="read one exact Zennay GitHub PR with stable HEAD/default-branch and bounded check/review observations; advisory only")
     parser.add_argument("--live-inbox-repo",
                         help="bounded read-only P0/P1-first recent issue inbox for one Zennay/<repo>")
     parser.add_argument("--portfolio-repo", action="append",
