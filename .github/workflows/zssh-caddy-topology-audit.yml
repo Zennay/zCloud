@@ -21,7 +21,7 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 8
     env:
-      ZSSH_PRODUCTION_HOST: zssh.cheapgpt.shop
+      ZSSH_PRODUCTION_HOST: zssh.zennay.nl
       ZSSH_PUBLIC_UPSTREAM: 127.0.0.1:8789
     steps:
       - name: Check out zCloud coordination
