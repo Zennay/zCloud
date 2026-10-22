@@ -467,6 +467,14 @@ def selection_metadata(total, rows, *, repository=None, priority=None,
         "selection_filter_applied": bool(
             repository or priority or record_type != "all"
             or pr_url or issue_url or attention != "all"),
+        # Direct renderer callers may not have the validated board object.
+        # Defaults remain explicitly UNKNOWN until main supplies its summary.
+        "issue_coverage_project_count": 0,
+        "issue_coverage_partial_project_count": 0,
+        "issue_coverage_degraded_project_count": 0,
+        "issue_coverage_unavailable_project_count": 0,
+        "issue_coverage_summary_note": (
+            "Coverage summary was not supplied; backlog completeness is unknown."),
         # Cohort counts refer ONLY to rows selected from admitted snapshots.
         "selected_existing_pr_count": sum(bool(row["pr_url"]) for row in rows),
         "selected_issue_without_pr_count": sum(not row["pr_url"] for row in rows),
