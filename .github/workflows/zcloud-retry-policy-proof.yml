@@ -1,0 +1,96 @@
+name: zCloud retry policy contract proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_retry_policy_contract.py
+      - tests/test_retry_policy_contract.py
+      - tests/test_retry_policy_workflow.py
+      - docs/control-plane-retry-policy.md
+      - .github/workflows/zcloud-retry-policy-proof.yml
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-retry-policy-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Checkout exact requested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact permanent zCloud VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          echo "ZCLOUD_RETRY_POLICY_EXACT_CHECKOUT_GREEN=$actual"
+
+      - name: Run focused retry policy regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_retry_policy_contract tests.test_retry_policy_workflow
+
+      - name: Audit live retry readiness without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          from scripts.zcloud_retry_policy_contract import audit_retry_readiness
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          source = Path("server.py")
+          before = (db.stat().st_size, db.stat().st_mtime_ns)
+          report = audit_retry_readiness(db, source, max_attempts=3)
+          after = (db.stat().st_size, db.stat().st_mtime_ns)
+
+          if before != after:
+              raise SystemExit("live history.db changed during read-only retry audit")
+          if not report.get("database_fingerprint_unchanged"):
+              raise SystemExit("audit did not prove database fingerprint immutability")
+
+          bounded = {
+              "schema_version": report["schema_version"],
+              "max_attempts_policy": report["max_attempts_policy"],
+              "rows_observed": report["rows_observed"],
+              "attempt_buckets": report["attempt_buckets"],
+              "max_attempts_observed": report["max_attempts_observed"],
+              "active_rows": report["active_rows"],
+              "active_rows_at_or_over_retry_budget": report[
+                  "active_rows_at_or_over_retry_budget"
+              ],
+              "source_contract": report["source_contract"],
+              "writer_retry_contract_complete": report[
+                  "writer_retry_contract_complete"
+              ],
+          }
+          print("ZCLOUD_RETRY_POLICY_READINESS=" + json.dumps(
+              bounded, sort_keys=True, separators=(",", ":")
+          ))
+          print("ZCLOUD_RETRY_POLICY_READONLY_GREEN=1")
+          PY
