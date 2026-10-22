@@ -1326,15 +1326,24 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
     for left, right in alias_pairs:
         collided.add(left)
         collided.add(right)
-    # Combining bounded pages improves collision discovery, not claim admission.
-    # With more than one page we never infer whole-inventory completeness.
-    # Fully loaded PR filenames do not imply complete operator evidence:
-    # a capped ancestor-pair preview could still hide observed scope edges.
+    # A contiguous, double-read window starting at page one can prove the
+    # current open-PR enumeration ended: every preceding page is full and
+    # the last page is short. A full final page, skipped first page, drifted
+    # listing or missing middle page never proves repository completeness.
+    # For single-page inspection, the existing one-extra-PR lookahead applies.
+    window_complete = (
+        open_page == 1 and (
+            (page_count == 1 and len(before) <= limit and
+             len(snapshots_before[0]) < page_size) or
+            (page_count > 1 and
+             all(len(page) == page_size for page in snapshots_before[:-1]) and
+             len(snapshots_before[-1]) < page_size)))
+    # Full PR pagination does not prove full *file-scope* evidence: any capped
+    # path-pair or alias preview still blocks false clearance and work selection.
     source_coverage_reasons = []
     if not stable:
         source_coverage_reasons.append("open_pr_snapshot_changed_or_duplicate")
-    if (page_count != 1 or open_page != 1
-            or len(before) >= page_size or len(before) > limit):
+    if not window_complete:
         source_coverage_reasons.append("open_pr_window_incomplete")
     if suspicious_lists:
         source_coverage_reasons.append("pr_file_lists_incomplete")
@@ -1408,9 +1417,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "duplicate_issue_groups_truncated": (
             len(duplicate_issue_groups) > MAX_DUPLICATE_ISSUE_GROUPS),
         "duplicate_issue_group_coverage_complete": (
-            page_count == 1 and open_page == 1
-            and len(before) < page_size and len(before) <= limit
-            and stable and not any(
+            window_complete and stable and not any(
                 not pr["issue_reference_text_covered"] for pr in chosen)
             and len(duplicate_issue_groups) <= MAX_DUPLICATE_ISSUE_GROUPS),
         "issue_reference_body_coverage_complete":
@@ -1450,6 +1457,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "open_pr_page_may_be_truncated": bool(snapshots_before and
                                               len(snapshots_before[-1]) == page_size),
         "open_pr_snapshot_stable": stable,
+        "open_pr_window_complete": window_complete and stable,
         "pr_file_scope_sample_complete": fully_sampled,
         "source_coverage_reasons": source_coverage_reasons,
         "source_result": ("collisions_observed" if ordered or ordered_scope else
