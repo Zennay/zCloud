@@ -431,6 +431,41 @@ def compare(previous, current):
             and new_seen_aliases is not None
             and full_alias_preview(old, old_seen_aliases)
             and full_alias_preview(new, new_seen_aliases))
+
+        def incomplete_source_reasons(view, label, dimension, preview_complete):
+            reasons = []
+            if view.get("source_status") == "unavailable":
+                reasons.append(label + ":github_source_unavailable")
+            if view.get("open_pr_snapshot_stable") is not True:
+                reasons.append(label + ":open_pr_snapshot_unstable")
+            if view.get("sample_complete") is not True:
+                source_reasons = view.get("source_coverage_reasons")
+                if type(source_reasons) is list and source_reasons:
+                    reasons.extend(label + ":" + item for item in source_reasons
+                                   if type(item) is str and len(item) <= 120)
+                else:
+                    reasons.append(label + ":open_pr_inventory_incomplete")
+            elif not preview_complete:
+                reasons.append(label + ":" + dimension + "_preview_incomplete")
+            return reasons
+
+        scope_comparison_reasons = []
+        if not scope_comparable:
+            scope_comparison_reasons = list(dict.fromkeys(
+                incomplete_source_reasons(old, "previous", "path_scope", full_scope_preview(old)) +
+                incomplete_source_reasons(new, "current", "path_scope", full_scope_preview(new))))
+            if not scope_comparison_reasons:
+                scope_comparison_reasons = ["path_scope_comparison_unavailable"]
+        alias_comparison_reasons = []
+        if not alias_comparable:
+            alias_comparison_reasons = list(dict.fromkeys(
+                incomplete_source_reasons(old, "previous", "portable_alias",
+                                          full_alias_preview(old, old_seen_aliases)) +
+                incomplete_source_reasons(new, "current", "portable_alias",
+                                          full_alias_preview(new, new_seen_aliases))))
+            if not alias_comparison_reasons:
+                alias_comparison_reasons = ["portable_alias_comparison_unavailable"]
+
         old_aliases = old_seen_aliases if alias_comparable else set()
         new_aliases = new_seen_aliases if alias_comparable else set()
         current_alias_delta = (
@@ -491,6 +526,7 @@ def compare(previous, current):
             "added_collision_pairs_if_complete": describe(new_pairs - old_pairs),
             "disappeared_collision_pairs_if_complete": describe(old_pairs - new_pairs),
             "scope_conflicts_comparable_if_complete": scope_comparable,
+            "scope_conflict_comparison_reasons": scope_comparison_reasons,
             "added_scope_conflicts_if_complete": describe_scope(new_scope_pairs - old_scope_pairs),
             "disappeared_scope_conflicts_if_complete": describe_scope(old_scope_pairs - new_scope_pairs),
             "scope_conflicts_only_in_current_sample_not_proven_new": (
@@ -507,6 +543,7 @@ def compare(previous, current):
             "scope_conflict_comparison_unavailable": (
                 old_seen_scope is None or new_seen_scope is None),
             "portable_aliases_comparable_if_complete": alias_comparable,
+            "portable_alias_comparison_reasons": alias_comparison_reasons,
             "added_portable_path_aliases_if_complete": describe_aliases(new_aliases - old_aliases),
             "disappeared_portable_path_aliases_if_complete": describe_aliases(old_aliases - new_aliases),
             "portable_path_aliases_only_in_current_sample_not_proven_new": (
@@ -676,6 +713,16 @@ def render_delta(delta, format="text"):
                 links.append("<li>Padaliashistorie onbekend: minstens één snapshot mist de nieuwe aliasbronvelden of was niet beschikbaar.</li>")
             if row.get("scope_conflict_comparison_unavailable"):
                 links.append("<li>Bestand/map-historie onbekend: minstens één snapshot mist de nieuwe bronvelden of was niet beschikbaar.</li>")
+            reason_notes = []
+            if not row["scope_conflicts_comparable_if_complete"]:
+                reason_notes.append("Bestand/map-vergelijking onvolledig: " +
+                                    ", ".join(row.get("scope_conflict_comparison_reasons", [])))
+            if not row.get("portable_aliases_comparable_if_complete"):
+                reason_notes.append("Padaliasvergelijking onvolledig: " +
+                                    ", ".join(row.get("portable_alias_comparison_reasons", [])))
+            reason_html = ("<p><strong>Bronbeperkingen:</strong> " +
+                           escape(" · ".join(reason_notes)) + "</p>"
+                           if reason_notes else "")
             sections.append("<section><h3>" + escape(row["project"]) + "</h3><p>" +
                             ("Twee volledige stabiele open-PR snapshots; claims NIET gecontroleerd."
                              if row["complete_open_pr_inventory_comparable"] else
@@ -686,7 +733,7 @@ def render_delta(delta, format="text"):
                             "; retargets: " +
                             (str(row["target_branch_retarget_count"])
                              if row["target_branch_retarget_count"] is not None else "ONBEKEND") +
-                            ".</p><ul>" + ("".join(links) or
+                            ".</p>" + reason_html + "<ul>" + ("".join(links) or
                             "<li>Geen verandering aantoonbaar in deze bron.</li>") +
                             "</ul></section>")
         return ("<section><h2>Historische PR-verandering (niet-autoriserend)</h2><p>" +
@@ -760,6 +807,12 @@ def render_delta(delta, format="text"):
             lines.append("  Alleen huidige steekproef, niet bewezen nieuw: " + url)
         for url in row["seen_only_in_previous_sample_not_proven_closed"]:
             lines.append("  Alleen vorige steekproef, niet bewezen gesloten: " + url)
+        if not row["scope_conflicts_comparable_if_complete"]:
+            lines.append("  Reden bestand/map-vergelijking onvolledig: " +
+                         ", ".join(row.get("scope_conflict_comparison_reasons", [])))
+        if not row.get("portable_aliases_comparable_if_complete"):
+            lines.append("  Reden padaliasvergelijking onvolledig: " +
+                         ", ".join(row.get("portable_alias_comparison_reasons", [])))
         if row.get("portable_alias_comparison_unavailable"):
             lines.append("  Padaliashistorie onbekend: minstens één snapshot mist de nieuwe aliasbronvelden of was niet beschikbaar.")
         if row.get("scope_conflict_comparison_unavailable"):
