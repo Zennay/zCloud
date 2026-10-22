@@ -14,19 +14,39 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+MAX_PROC_MEMINFO_BYTES = 16384
+
+
 def _memory_values():
     """Read only bounded scalar memory/swap counters; never return raw proc data."""
+    fd = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+        fd = os.open("/proc/meminfo", flags)
+        raw = os.read(fd, MAX_PROC_MEMINFO_BYTES + 1)
+    except OSError as exc:
+        raise ValueError("Linux memory counters unavailable") from exc
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if not raw or len(raw) > MAX_PROC_MEMINFO_BYTES:
+        raise ValueError("Linux memory counter source exceeds its byte cap")
+    try:
+        lines = raw.decode("ascii").splitlines()
+    except UnicodeError as exc:
+        raise ValueError("invalid Linux memory counter encoding") from exc
+
     required = {"MemTotal:", "MemAvailable:", "SwapTotal:", "SwapFree:"}
     seen = {}
-    with open("/proc/meminfo", "r", encoding="ascii") as source:
-        for line in source:
-            fields = line.split()
-            if not fields or fields[0] not in required:
-                continue
-            if (fields[0] in seen or len(fields) != 3 or fields[2] != "kB"
-                    or not fields[1].isascii() or not fields[1].isdigit()):
-                raise ValueError("invalid Linux memory counter")
-            seen[fields[0]] = int(fields[1]) / 1024
+    for line in lines:
+        fields = line.split()
+        if not fields or fields[0] not in required:
+            continue
+        if (fields[0] in seen or len(fields) != 3 or fields[2] != "kB"
+                or not fields[1].isascii() or not fields[1].isdigit()):
+            raise ValueError("invalid Linux memory counter")
+        seen[fields[0]] = int(fields[1]) / 1024
     if set(seen) != required:
         raise ValueError("incomplete kernel memory counters")
     if (seen["MemTotal:"] <= 0 or seen["MemAvailable:"] > seen["MemTotal:"]
@@ -34,7 +54,6 @@ def _memory_values():
         raise ValueError("inconsistent kernel memory counters")
     return (seen["MemAvailable:"], seen["MemTotal:"],
             seen["SwapFree:"], seen["SwapTotal:"])
-
 
 
 def _archive_mount_capacity(archive_target: Path | None, root_device: int,
@@ -84,6 +103,10 @@ def _archive_mount_capacity(archive_target: Path | None, root_device: int,
             raise ValueError("contradictory archive target inode counters")
 
         mount_detected = os.path.ismount(archive_target)
+        path_after_mount_probe = os.stat(archive_target, follow_symlinks=False)
+        if ((path_after_mount_probe.st_dev, path_after_mount_probe.st_ino)
+                != (opened.st_dev, opened.st_ino)):
+            raise ValueError("archive target changed during mount-point observation")
         same_root = opened.st_dev == root_device
         same_database = opened.st_dev == database_device
         free_gib = fs.f_bavail * fs.f_frsize / (1024 ** 3)

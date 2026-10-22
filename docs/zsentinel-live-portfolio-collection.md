@@ -399,8 +399,10 @@ python3 scripts/zsentinel_live_cockpit.py \
 
 Use an existing database and a private output directory. The archive target
 must be an explicit absolute path and is opened with no-follow directory flags;
-the report marks it as an external mount only when mount-point detection
-succeeds and its filesystem differs from root. It also states whether the
+the 16 KiB-capped proc memory reader exposes only validated scalar counters, and
+the archive directory identity is rechecked after mount-point detection. The
+report marks it as an external mount only when mount-point detection succeeds
+and its filesystem differs from root. It also states whether the
 target shares a device with the queue database. Missing/unreadable archive
 metadata degrades only the optional archive sub-observation and does not erase
 root/database capacity evidence. No file names or contents are read. The
