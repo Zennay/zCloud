@@ -1138,3 +1138,20 @@ Default is strictly offline (zero GitHub requests). When explicitly enabled, zSe
 One successful detail response may establish `OPEN_AT_LIVE_RECHECK` or `CLOSED_AT_LIVE_RECHECK` with a fresh source-observation timestamp and normalized GitHub state reason. A GitHub closed issue is **not evidence** that a fix was coded, reviewed, merged to the default branch, deployed, or verified live. The original sampled change remains `NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED`; the observed present-day issue state is an additional independent field, not a rewrite of source history. JSON, script-free HTML, Markdown and private CSV distinguish checked, uncheckable and not-checked states and show the bounded provider-read count. No worker claim, queue write, notification, PR action, CI dispatch or runner/service restart is ever performed.
 
 For private GitHub issues a valid `GITHUB_TOKEN` may be supplied through the host environment rather than command arguments; no token, raw response body, issue body or private issue title is emitted into an operator report. Use this opt-in source read only when the appropriate owner has ordinary read access; an unavailable private repository is UNKNOWN rather than a request to escalate privileges.
+
+### One-pass live portfolio recheck in the established recovery CLI
+
+The same source-preserving reconciliation is now available directly within both established live portfolio entry points, so an operator need not separately run the history command after collecting a new snapshot:
+
+```sh
+python3 scripts/zsentinel_recovery_policy.py \
+  --portfolio-repo Zennay/zCloud --portfolio-repo Zennay/Supa \
+  --portfolio-previous-snapshot /private/path/snapshot-22.json \
+  --portfolio-verify-missing-live --portfolio-recheck-limit 3 \
+  --format html --output /private/path/current-issues.html \
+  --portfolio-snapshot-output /private/path/snapshot-23.json
+```
+
+The dedicated `scripts/zsentinel_portfolio_issue_desk.py` offers equivalent `--previous-snapshot`, `--verify-missing-live` and `--live-recheck-limit` options. Both flags are **disabled by default** and require a valid previous snapshot; 1–6 additional detail GETs are permitted only when the user explicitly requests them. This means the portfolio issue-source budget remains bounded by the existing 7 GETs per repository (at most 42 across six repos) **plus** at most six opt-in, canonical single-issue GETs (48 total in the largest permitted portfolio view). The additional detail reads use the same fixed-host/no-redirect, response-size-limited GitHub source reader.
+
+If the current portfolio discovery already recorded `provider_stopped_early=true`, opt-in detail checks are **not sent**; the missing-card state is `NOT_CHECKED_PRIOR_PROVIDER_STOP` instead. No repeated retries are used to disguise provider denial. Every candidate also carries one unexecuted human follow-up: continue an **OPEN** issue with the currently authorized owner; separately check merge, release and runtime evidence for **CLOSED**; or confirm source access for UNKNOWN. These live detail annotations never edit the original historical change category, never issue a queue/claim command and do not authorize PR merge/deploy. The paired new JSON snapshot intentionally excludes the live-recheck/diff annotations, retaining only the source data fetched from the portfolio issue reader for future comparisons.
