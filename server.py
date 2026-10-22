@@ -339,7 +339,7 @@ def live_receipt_status(data):
     """Overlay the latest durable receipt state without waiting for the 60s sampler."""
     status_data={**data,'projects':[dict(project) for project in data.get('projects',[])]}
     try:
-        with connect() as c:
+        with connect_readonly() as c:
             receipts=project_runtime.latest_receipts(c)
             coverage=project_runtime.receipt_coverage(
                 c,
@@ -1444,19 +1444,19 @@ def sampler():
 
 def history(pid, days):
     cutoff=datetime.fromtimestamp(time.time()-days*86400,timezone.utc).isoformat() if days else ''
-    with connect() as c:
+    with connect_readonly() as c:
         rows=c.execute('SELECT ts AS date,progress,commits,hash,message FROM project_samples WHERE project=? AND ts>=? ORDER BY ts',(pid,cutoff)).fetchall()
     # Preserve endpoints while keeping responses small on mobile.
     if len(rows)>1200:rows=rows[::max(1,len(rows)//1000)]+[rows[-1]]
     return [dict(r) for r in rows]
 
 def watch_activity(pid, limit=8):
-    with connect() as c:
+    with connect_readonly() as c:
         rows=c.execute('SELECT ts,kind,title,detail FROM events WHERE project=? ORDER BY ts DESC LIMIT ?',(pid,limit)).fetchall()
     return [dict(r) for r in rows]
 
 def compact_history(pid, limit=24):
-    with connect() as c:
+    with connect_readonly() as c:
         rows=c.execute('SELECT ts AS date,progress FROM project_samples WHERE project=? ORDER BY ts',(pid,)).fetchall()
     if not rows:
         return []
@@ -4870,7 +4870,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/project-state-receipts':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             project_id=str(q.get('project',[''])[0] or '').strip().lower()
-            with connect() as c:
+            with connect_readonly() as c:
                 receipts=project_runtime.latest_receipts(c)
             if project_id:
                 return self.reply({'project_id':project_id,'receipt':receipts.get(project_id),'time':now()})
