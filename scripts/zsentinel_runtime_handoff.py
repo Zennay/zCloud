@@ -926,6 +926,30 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
         from zsentinel_worker_handoff import STEP as WORKER_OWNER_STEPS
         worker_progress_html(worker)
         worker_coverage = _short(worker.get("coverage"), 80)
+        observed = worker.get("observed_at_utc")
+        if type(observed) is not str or len(observed) > 45:
+            raise ValueError("worker owner source lacks bounded observation time")
+        try:
+            worker_at = datetime.fromisoformat(observed.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("invalid worker source observation time") from exc
+        if worker_at.utcoffset() is None or worker_at.utcoffset().total_seconds() != 0:
+            raise ValueError("worker owner source timestamp must be UTC")
+        worker_age = (datetime.now(timezone.utc) - worker_at).total_seconds()
+        worker_fresh = -120 <= worker_age <= 600
+        if not worker_fresh:
+            # A stored private worker sample may be useful historically, but
+            # its old queue claim must not be a *current* P0/P1 intervention.
+            worker_coverage = "stale_or_future_reobservation_required"
+            card = _card(
+                "P2", "cloud", "worker_source_refresh_required",
+                "Workerbewijs is ouder dan tien minuten of heeft een onbetrouwbare "
+                "toekomstklok. Maak eerst een nieuwe begrensde read-only "
+                "worker-/queueobservatie; oude blokkades zijn niet bewezen actueel.",
+                source="private_worker_sample_stale_or_future")
+            card["worker_observed_at_utc"] = worker_at.isoformat(timespec="seconds")
+            card["current_worker_incidents_verified"] = False
+            cards.append(card)
         followups = worker.get("owner_followup_candidates")
         if not isinstance(followups, list) or len(followups) > 24:
             raise ValueError("unbounded worker followup list")
@@ -948,6 +972,10 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             if (type(followup_code) is not str
                     or followup_code not in WORKER_OWNER_STEPS):
                 raise ValueError("worker owner action has no approved explanation")
+            # Preserve the sample for audit but do not turn an outdated
+            # classification into a fresh worker owner escalation.
+            if not worker_fresh:
+                continue
             priority = ("P0" if cls == "allocated_paused_with_claimed_queue_owner_gate"
                         else "P1")
             card = _card(
@@ -1202,6 +1230,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     # Priority before kind: make owner/incident work visible before new intake.
     order = {"P0": 0, "P1": 1, "P2": 2}
     kind_order = {"fresh_incident": 0, "worker_owner_review": 1,
+                  "worker_source_refresh_required": 6,
                   "github_refresh_auth_owner_hold": 1,
                   "github_repository_access_owner_hold": 1,
                   "queue_current_owner_review": 2,
