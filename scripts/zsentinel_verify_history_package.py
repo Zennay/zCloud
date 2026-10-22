@@ -193,12 +193,26 @@ def inspect_history_package(path: Path) -> dict:
         observed.add(key)
     if observed != expected:
         raise ValueError("history CSV project coverage incomplete")
+
+    # Row identity alone misses contradictory numbers or human guidance in a
+    # spreadsheet. Rebuild the *entire* canonical CSV from this exact saved
+    # source JSON, including the UTF-8 BOM, headers and every column.
+    # Deliberately do not reread GitHub, Notion, queue or original bundles.
+    from zsentinel_private_bundle_index import render_csv_history
+    canonical_csv = render_csv_history(
+        [], report.get("index_name", ""),
+        machine_text=parts["history.json"].decode("utf-8"),
+    ).encode("utf-8")
+    if not hashlib.sha256(canonical_csv).digest() == hashlib.sha256(
+            parts["history.csv"]).digest() or canonical_csv != parts["history.csv"]:
+        raise ValueError("CSV values do not match the saved machine history")
     return {
         "schema": "zsentinel-private-recovery-history-inspection-v1",
         "package_sha256": hashlib.sha256(archive).hexdigest(),
         "source_bundle_count": len(snapshots),
         "project_snapshot_and_change_rows": len(expected),
         "saved_checksum_consistent": True,
+        "all_csv_values_rebuilt_from_saved_json": True,
         "source_authenticity_independently_verified": False,
         "current_claim_verified": False,
         "required_ci_review_verified": False,
