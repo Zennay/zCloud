@@ -590,6 +590,21 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
             codes.append("ARCHIVE_MOUNT_NOT_SEPARATE_FROM_ROOT_NO_OFFLOAD")
         if "archive_mount_no_available_space" in evidence_warnings:
             codes.append("ARCHIVE_MOUNT_NO_CAPACITY_NO_OFFLOAD")
+    # Keep the actionable cause visible in the structured handoff; the
+    # generic severity alone cannot distinguish inode, swap, memory or load.
+    pressure_codes = {
+        "root_filesystem_critical": "ROOT_FILESYSTEM_CRITICAL",
+        "root_inode_pressure_high": "ROOT_INODE_PRESSURE_HIGH",
+        "root_inodes_critical": "ROOT_INODES_CRITICAL",
+        "swap_pressure_high": "SWAP_PRESSURE_HIGH",
+        "memory_pressure_high": "MEMORY_PRESSURE_HIGH",
+        "load_pressure_high": "LOAD_PRESSURE_HIGH",
+    }
+    observed_pressure_warnings = capacity.get("warnings", [])
+    if isinstance(observed_pressure_warnings, list):
+        for warning in observed_pressure_warnings:
+            if warning in pressure_codes:
+                codes.append(pressure_codes[warning])
     severity = capacity.get("severity")
     if severity == "critical":
         if "root_filesystem_critical" in capacity.get("warnings", []):
