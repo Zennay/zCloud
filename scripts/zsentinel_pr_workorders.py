@@ -1089,6 +1089,8 @@ def render_csv(bundle):
     add("direct_job_actions_overview",
         detail="Direct GitHub failing-job links=" +
                str(work["direct_failing_job_actions"]) +
+               "; aged queued-job investigation actions=" +
+               str(work["aged_queued_job_investigation_actions"]) +
                "; parallel independent human review actions=" +
                str(work["parallel_independent_review_actions"]) +
                "; no automatic execution authorized")
@@ -1101,6 +1103,16 @@ def render_csv(bundle):
         add("operator_next_action", card, link=card["operator_action_link"],
             detail="Human-only next step: " + card["operator_primary_step"] +
                    "; source is not a claim or merge clearance")
+        for queued_job in card["aged_queued_job_attention"]:
+            add("queued_job_investigation", card, link=queued_job["url"],
+                detail="GitHub job queued >=30m; " +
+                       str(queued_job["queued_minutes_at_read"]) + " minutes at source. "
+                       "Inspect labels/runner route; no outage or rerun proven. " +
+                       queued_job["name"])
+        if card["aged_queued_job_attention_hidden"]:
+            add("coverage_warning", card, detail="Additional aged queued jobs " +
+                str(card["aged_queued_job_attention_hidden"]) +
+                " outside the bounded preview")
         add("open_existing_checks", card, link=card["checks_url"],
             detail="Reopen GitHub PR Checks; verify required exact-head CI, do not retrigger")
         add("open_existing_review", card, link=card["review_url"],
@@ -1289,6 +1301,8 @@ def render_html(bundle):
                      e(work["counts"][key]) + "</strong> PRs</li>")
     parts.append("</ol><p>Directe falende joblinks: <strong>" +
                  e(work["direct_failing_job_actions"]) +
+                 "</strong> · ≥30m queued jobs te onderzoeken: <strong>" +
+                 e(work["aged_queued_job_investigation_actions"]) +
                  "</strong> · vrije menselijke reviewstappen naast CI: <strong>" +
                  e(work["parallel_independent_review_actions"]) +
                  "</strong>. Gebaseerd op bronmomenten, niet op actuele eigenaarclaims; "
@@ -1432,6 +1446,14 @@ def render_html(bundle):
                          e(card["historical_changed_job_links_hidden"]) +
                          " historische checkverschillen niet getoond; geen "
                          "volledige gate-inventaris.</p>")
+        if card.get("aged_queued_job_attention"):
+            parts.append("<h3>Lang queued GitHub-jobs · controleer runnerroute</h3><ul>")
+            for job in card["aged_queued_job_attention"]:
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+                             e(job["url"]) + "\">" + e(job["name"]) + "</a> · " +
+                             e(job["queued_minutes_at_read"]) +
+                             " minuten queued bij bronopname; geen runneruitval bewezen</li>")
+            parts.append("</ul>")
         if card.get("check_links"):
             parts.append("<h3>Niet-groene checkbronnen</h3><ul>")
             for check in card["check_links"]:
@@ -1607,6 +1629,8 @@ def render_markdown(bundle):
     lines += [
         "Directe links naar falende exacte-HEAD jobs: " +
         str(work["direct_failing_job_actions"]) +
+        " · ≥30m queued jobs te onderzoeken: " +
+        str(work["aged_queued_job_investigation_actions"]) +
         " · aparte handmatige reviewacties naast CI: " +
         str(work["parallel_independent_review_actions"]) + ".",
         "Acties zijn adviezen uit begrensde GitHub-bronwaarnemingen; "
@@ -1698,6 +1722,13 @@ def render_markdown(bundle):
             lines.append("Meer historische checkverschillen buiten voorvertoning: " +
                          str(card["historical_changed_job_links_hidden"]) +
                          " (geen volledige gatebron).\n")
+        if card["aged_queued_job_attention"]:
+            lines.append("### Lang queued GitHub-jobs · onderzoek de runnerroute")
+            for job in card["aged_queued_job_attention"]:
+                lines.append("- [" + job["name"] + "](" + job["url"] + ") · " +
+                             str(job["queued_minutes_at_read"]) +
+                             " minuten op het bronmoment; geen runneruitval bewezen")
+            lines.append("")
         if card["check_links"]:
             lines.append("### Directe niet-groene check-/statusbronnen")
             for check in card["check_links"]:
