@@ -751,10 +751,137 @@ def blocked_work_owner_panel(decision):
     groups.sort(key=lambda x: (("P0", "P1", "P2", "P3").index(x[1]),
                                -x[2], x[0]))
     display = groups[:40]
-    items = ''.join('<li><strong>' + escape(prio) + ' · ' +
-                    escape(pid) + '</strong>: ' + str(count) +
-                    ' status=blocked; eigenaar moet bron handmatig inspecteren.</li>'
-                    for pid, prio, count in display)
+    aggregate_items = ''.join(
+        '<li><strong>' + escape(prio) + ' · ' + escape(pid) + '</strong>: ' +
+        str(count) + ' status=blocked; eigenaar moet bron handmatig inspecteren.</li>'
+        for pid, prio, count in display
+    )
+
+    # The queue observer already selected a bounded, portfolio-fair shortlist.
+    # Render those exact rows; never open SQLite again or infer a free claim.
+    work_items = blocked.get("work_items", [])
+    work_coverage = blocked.get("work_items_coverage", "not_observed")
+    work_truncated = blocked.get("work_items_truncated", True)
+    if (type(work_items) is not list or len(work_items) > 24
+            or work_coverage not in ("not_observed", "complete", "partial", "stale")
+            or type(work_truncated) is not bool):
+        raise ValueError("invalid blocked-worklist coverage")
+    if (work_coverage == "complete" and
+            (work_truncated or len(work_items) != total)):
+        raise ValueError("complete blocked worklist contradicts observed total")
+    if work_coverage in ("not_observed", "stale") and work_items:
+        raise ValueError("unknown/stale blocked worklist exposes individual rows")
+
+    work_rows = []
+    seen_refs = set()
+    for work in work_items:
+        if type(work) is not dict:
+            raise ValueError("invalid blocked work item")
+        ref, work_project, work_priority = (
+            work.get("queue_ref"), work.get("project_id"), work.get("priority"))
+        title, attempts = work.get("title"), work.get("claim_attempts")
+        eligible = work.get("eligible_observed")
+        claim_fields = work.get("claim_fields_present_observed")
+        slot_covered = work.get("worker_slot_source_covered")
+        slot_present = work.get("worker_slot_present_observed")
+        link = work.get("canonical_github_source_link_unverified")
+        next_step = work.get("human_next_step")
+        if (type(ref) is not str or not re.fullmatch(r"[0-9a-f]{16}", ref)
+                or ref in seen_refs or type(work_project) is not str
+                or not SLUG.fullmatch(work_project)
+                or work_priority not in ("P0", "P1", "P2", "P3")
+                or type(title) is not str or not 1 <= len(title) <= 180
+                or type(attempts) is not int or not 0 <= attempts <= 10**9
+                or type(eligible) is not bool or type(claim_fields) is not bool
+                or type(slot_covered) is not bool
+                or (slot_covered and type(slot_present) is not bool)
+                or (not slot_covered and slot_present is not None)
+                or (slot_present is True and claim_fields is not True)
+                or work.get("current_owner_verified") is not False
+                or work.get("resume_authorized") is not False
+                or work.get("automatic_retry_authorized") is not False
+                or type(next_step) is not str or len(next_step) > 220
+                or (link is not None and (
+                    type(link) is not str or len(link) > 220 or not re.fullmatch(
+                        r"https://github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[1-9][0-9]{0,8}",
+                        link)))):
+            raise ValueError("noncanonical or authorizing blocked work item")
+        seen_refs.add(ref)
+        updated_at = work.get("updated_at_observed_utc")
+        age_seconds = work.get("age_seconds_at_observation")
+        future = work.get("updated_at_future_observed")
+        clock_anomaly = work.get("updated_at_clock_anomaly_observed")
+        if updated_at is None:
+            if (age_seconds is not None or future not in (None, False)
+                    or clock_anomaly not in (None, False)):
+                raise ValueError("blocked row without timestamp has contradictory age")
+            age_label = "leeftijd onbekend"
+        else:
+            updated_stamp = _stamp(updated_at)
+            if (updated_stamp is None or type(future) is not bool
+                    or type(clock_anomaly) is not bool
+                    or (age_seconds is not None and
+                        (type(age_seconds) is not int or not 0 <= age_seconds <= 10**9))
+                    or (future and age_seconds is not None)
+                    or (not future and age_seconds is None)):
+                raise ValueError("invalid blocked row age evidence")
+            if future:
+                age_label = ("tijdstempel na waarneming" +
+                             (" · klokafwijking >2 min" if clock_anomaly else ""))
+            elif age_seconds < 3600:
+                age_label = str(age_seconds // 60) + " min bij opname"
+            elif age_seconds < 86400:
+                age_label = str(age_seconds // 3600) + " u bij opname"
+            else:
+                age_label = (str(age_seconds // 86400) + " d " +
+                             str((age_seconds % 86400) // 3600) + " u bij opname")
+        owner_note = (
+            "CLAIM/SLOT-METADATA AANWEZIG — niet hervatten of sluiten."
+            if claim_fields else
+            "Eigenaar niet geverifieerd — actuele queue en afhankelijkheid controleren."
+        )
+        source_link = (
+            ' · <a target="_blank" rel="noopener noreferrer" href="' +
+            escape(link, quote=True) + '">bronlink (niet geverifieerd)</a>'
+            if link else ''
+        )
+        work_rows.append(
+            '<tr><td><strong>' + escape(work_priority) + ' · ' +
+            escape(work_project) + '</strong></td><td>' +
+            _operator_visible_label(title) + '</td><td><code>' + escape(ref) +
+            '</code></td><td>' + escape(age_label) + '</td><td>' +
+            str(attempts) + '</td><td>' +
+            ('ja' if eligible else 'nee') + ' (bij opname)</td><td>' +
+            escape(owner_note) + '<br>' + escape(next_step) + source_link +
+            '</td></tr>'
+        )
+    if work_coverage == "not_observed":
+        work_message = "Individuele taken niet waargenomen; aggregaten zijn geen volledige werklist."
+    elif work_coverage == "stale":
+        work_message = "Individuele taakwaarneming verouderd; actuele taken en eigenaarschap ONBEKEND."
+    elif work_coverage == "complete" and not work_items and total == 0:
+        work_message = "Geen status=blocked-taken in deze bronwaarneming."
+    elif not work_items:
+        work_message = "Geen afzonderlijke taakregels in deze steekproef; dit bewijst geen lege queue."
+    else:
+        work_message = (
+            "Brongebonden steekproef met " + str(len(work_items)) +
+            " taakregels; claimpogingen zijn claims, geen bewezen uitvoeringsfouten. " +
+            ("De werklist is onvolledig of afgekapt; overige regels blijven onbekend."
+             if work_coverage != "complete" or work_truncated else
+             "De lijst is volledig binnen deze bronwaarneming.")
+        )
+    work_table = (
+        '<details><summary>Afzonderlijke geblokkeerde taken · ' +
+        str(len(work_items)) + ' waargenomen</summary><p>' +
+        escape(work_message) + '</p>' +
+        ('<div class="scroll"><table><thead><tr><th>Prioriteit/project</th>'
+         '<th>Taak</th><th>Privé-ref</th><th>Leeftijd bij bronopname</th>'
+         '<th>Claimpogingen</th><th>Eligible</th><th>Eigenaar / volgende stap</th>'
+         '</tr></thead><tbody>' + ''.join(work_rows) +
+         '</tbody></table></div>' if work_rows else '') +
+        '<p class="meta">Privé-ref is een eenrichtingshash, geen queue-ID. Bronlinks zijn ongeverifieerde navigatie, geen bewijs of toestemming.</p></details>'
+    )
     return ('<section class="panel" aria-label="Geblokkeerde portfolio werkregels">'
             '<h2>Geblokkeerde werkregels · P0 eerst</h2><p>' + str(total) +
             ' status=blocked geobserveerd op ' + escape(when) + '. ' +
@@ -762,11 +889,10 @@ def blocked_work_owner_panel(decision):
              coverage == "partial" else 'Bronaggregatie compleet in gekozen venster.') +
             '</p><details><summary>Projectprioriteiten (' + str(len(display)) +
             (' van ' + str(len(groups)) + ', afgekapt' if len(groups)>len(display) else '') +
-            ')</summary><ol>' + items +
-            '</ol></details><p class="meta">Blocked-status is geen'
-            ' bewezen technische fout, en verleent geen claim, retry of deploy.</p>'
+            ')</summary><ol>' + aggregate_items +
+            '</ol></details>' + work_table +
+            '<p class="meta">Blocked-status is geen bewezen technische fout, en verleent geen claim, retry of deploy.</p>'
             '</section>')
-
 
 
 def queue_owner_pressure_panel(decision):
