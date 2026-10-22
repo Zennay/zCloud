@@ -20,6 +20,12 @@ LOCAL_SCHEMA = "zsentinel-local-runner-observation-v1"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 FRESH_MINUTES = 5
 QUEUED_ACTIONABLE_MINUTES = 30
+JOB_STATUSES = {"queued", "in_progress", "completed", "waiting", "pending"}
+JOB_CONCLUSIONS = {
+    "success", "failure", "cancelled", "timed_out", "action_required",
+    "neutral", "skipped", "startup_failure", "stale",
+}
+TERMINAL_CI_FAILURES = {"failure", "timed_out", "action_required"}
 
 
 def _utc_clock(value, field):
@@ -35,13 +41,24 @@ def _utc_clock(value, field):
 
 
 def _action(stage, problem, next_action, local, *, pinned=None,
-            source_freshness="unknown"):
+            source_freshness="unknown", job_status=None, job_conclusion=None):
+    status_line = "ALLEEN-LEZEN · GitHub-runner herstel NIET BEWEZEN · geen serviceactie"
+    if job_status is not None:
+        if job_status not in JOB_STATUSES:
+            raise ValueError("invalid observed exact job status")
+        status_line += " · GitHub-job=" + job_status
+        if job_conclusion is not None:
+            if job_conclusion not in JOB_CONCLUSIONS:
+                raise ValueError("invalid observed exact job conclusion")
+            status_line += "/" + job_conclusion
     result = {
         "schema": SCHEMA,
         "stage": stage,
         "problem": problem,
         "next_action": next_action,
-        "status": "ALLEEN-LEZEN · GitHub-runner herstel NIET BEWEZEN · geen serviceactie",
+        "status": status_line,
+        "observed_job_status": job_status,
+        "observed_job_conclusion": job_conclusion,
         "local_proc_coverage": (
             "bounded_sample" if local["process_inventory_complete"] else "partial"),
         "source_freshness": source_freshness,
@@ -135,7 +152,7 @@ def combine(local, refreshed_projects):
     status = receipt.get("job_status")
     route = receipt.get("runner_route")
     assigned = receipt["runner_assigned"]
-    if (status not in ("queued", "in_progress", "completed", "waiting", "pending")
+    if (status not in JOB_STATUSES
             or route not in ("self_hosted", "hosted_or_custom", "unknown")):
         raise ValueError("incomplete canonical job route")
     if status in ("waiting", "pending"):
@@ -174,12 +191,30 @@ def combine(local, refreshed_projects):
             "Self-hosted job ongeassignerd; geen listener in volledige lokale processteekproef.",
             "Bevoegd eigenaar onderzoekt runner-service en registratie, zonder automatische herstart.",
             local, pinned=pinned, source_freshness="bounded_recent")
+    if status == "completed":
+        conclusion = receipt.get("conclusion")
+        if conclusion not in JOB_CONCLUSIONS:
+            conclusion = None
+        if conclusion in TERMINAL_CI_FAILURES:
+            return _action(
+                "terminal_ci_failure_not_runner_recovery",
+                "De exacte GitHub-job is terminaal mislukt; dit bewijst geen actuele runneruitval.",
+                "Inspecteer de gekoppelde jobuitkomst en routeer één root-fix naar een bevoegde eigenaar; geen blinde retry of runnerrestart.",
+                local, pinned=pinned, source_freshness="bounded_recent",
+                job_status=status, job_conclusion=conclusion)
+        return _action(
+            "terminal_job_not_runner_recovery",
+            "De exacte GitHub-job is terminaal; historische toewijzing bewijst geen actuele runnerstoring.",
+            "Beoordeel de vastgelegde jobuitkomst en actuele runnerbron apart; herstart geen runner op basis van deze historische job.",
+            local, pinned=pinned, source_freshness="bounded_recent",
+            job_status=status, job_conclusion=conclusion)
     if assigned:
         return _action(
             "job_assignment_observed_only",
             "GitHub vermeldt een runner-toewijzing, maar geen bewezen herstel.",
             "Controleer exacte jobuitkomst en actuele GitHub-registratie afzonderlijk.",
-            local, pinned=pinned, source_freshness="bounded_recent")
+            local, pinned=pinned, source_freshness="bounded_recent",
+            job_status=status)
     return _action(
         "nonqueued_self_hosted_unknown",
         "Self-hosted job heeft in deze toestand geen toegewezen runner.",
@@ -203,6 +238,12 @@ def as_html(result):
         raise ValueError("invalid exact GitHub job link")
     job_link = (' · <a rel="noopener noreferrer" href="' +
                 escape(link, quote=True) + '">Exacte GitHub-job</a>') if link else ''
+    observed_status = result.get("observed_job_status")
+    observed_conclusion = result.get("observed_job_conclusion")
+    if observed_status is not None and observed_status not in JOB_STATUSES:
+        raise ValueError("invalid displayed job status")
+    if observed_conclusion is not None and observed_conclusion not in JOB_CONCLUSIONS:
+        raise ValueError("invalid displayed job conclusion")
     return (
         '<section aria-label="zSentinel exacte runnerbron correlatie">'
         '<h2>P0 runner · exacte job plus lokaal proces</h2>'
