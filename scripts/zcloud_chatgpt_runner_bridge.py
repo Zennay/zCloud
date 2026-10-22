@@ -369,6 +369,13 @@ def _host_capacity_observation() -> dict[str, object]:
             complete = False
             evidence_warnings.append("archive_mount_not_detected")
         else:
+            root_device = os.stat("/").st_dev
+            archive_device = os.stat(ARCHIVE_MOUNT_PATH).st_dev
+            separate_filesystem = root_device != archive_device
+            archive["separate_filesystem"] = separate_filesystem
+            if not separate_filesystem:
+                # A bind mount on root cannot provide independent offload space.
+                evidence_warnings.append("archive_mount_same_filesystem_as_root")
             vfs = os.statvfs(ARCHIVE_MOUNT_PATH)
             block_size = int(vfs.f_frsize or vfs.f_bsize)
             total_blocks, available_blocks = int(vfs.f_blocks), int(vfs.f_bavail)
@@ -398,23 +405,36 @@ def _host_capacity_observation() -> dict[str, object]:
     if type(load.get("max_load_per_cpu")) in (int, float) and load["max_load_per_cpu"] >= 2:
         warnings.append("load_pressure_high")
     archive_available = archive.get("available_bytes")
-    archive_has_capacity = type(archive_available) is int and archive_available > 0
-    if archive.get("mount_detected") is True and not archive_has_capacity:
+    archive_has_capacity = (
+        archive.get("mount_detected") is True
+        and archive.get("separate_filesystem") is True
+        and type(archive_available) is int and archive_available > 0
+    )
+    if (archive.get("mount_detected") is True
+            and archive.get("separate_filesystem") is True
+            and not archive_has_capacity):
         # This is an offload-capacity limitation, not itself host pressure.
         evidence_warnings.append("archive_mount_no_available_space")
 
     if "root_filesystem_critical" in warnings:
-        if archive.get("mount_detected") is True and archive_has_capacity:
+        if archive_has_capacity:
             summary = (
-                "Root filesystem critically full and the configured archive mount reports available capacity. "
-                "Verify file provenance, encryption/retention policy and active handles before owner-approved "
-                "offload; no deletion, move or restart is authorized by this snapshot."
+                "Root filesystem critically full and the configured archive mount reports capacity on a separate "
+                "filesystem. Verify file provenance, encryption/retention policy and active handles before "
+                "owner-approved offload; no deletion, move or restart is authorized by this snapshot."
+            )
+        elif (archive.get("mount_detected") is True
+              and archive.get("separate_filesystem") is False):
+            summary = (
+                "Root filesystem critically full, but the configured archive path shares the root filesystem; "
+                "it is not a separate offload target. Preserve active work and obtain an authorized storage "
+                "inventory; no deletion, move or restart is authorized by this snapshot."
             )
         elif archive.get("mount_detected") is True:
             summary = (
-                "Root filesystem critically full, but the configured archive mount reports no available capacity. "
-                "Preserve active work and obtain an authorized storage inventory; no deletion, move or restart "
-                "is authorized by this snapshot."
+                "Root filesystem critically full, but the configured archive mount has no verified separate "
+                "available capacity. Preserve active work and obtain an authorized storage inventory; no deletion, "
+                "move or restart is authorized by this snapshot."
             )
         else:
             summary = (
@@ -428,9 +448,9 @@ def _host_capacity_observation() -> dict[str, object]:
         )
     elif evidence_warnings:
         summary = (
-            "Host pressure thresholds are not exceeded in this snapshot, but archive-mount "
-            "evidence/capacity is unavailable. Do not offload data or infer safe storage until "
-            "the configured mount and its capacity are verified by the authorized owner."
+            "Host pressure thresholds are not exceeded in this snapshot, but the configured archive path "
+            "is not verified as a separate offload target with available capacity. Do not offload data or "
+            "infer safe storage until the mount and its independent capacity are verified by the authorized owner."
         )
     elif complete:
         summary = (
@@ -526,6 +546,8 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
         if ("archive_mount_not_detected" in evidence_warnings
                 or "archive_mount_observation_unavailable" in evidence_warnings):
             codes.append("ARCHIVE_MOUNT_UNAVAILABLE_NO_OFFLOAD")
+        if "archive_mount_same_filesystem_as_root" in evidence_warnings:
+            codes.append("ARCHIVE_MOUNT_NOT_SEPARATE_FROM_ROOT_NO_OFFLOAD")
         if "archive_mount_no_available_space" in evidence_warnings:
             codes.append("ARCHIVE_MOUNT_NO_CAPACITY_NO_OFFLOAD")
     severity = capacity.get("severity")
