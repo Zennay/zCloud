@@ -1,0 +1,51 @@
+{
+  "remote": "vpsarchive:zcloud-vps/archive",
+  "projects": [
+    {
+      "name": "fuckball",
+      "root": "/srv/fuckball",
+      "min_age_days": 30,
+      "cold_directories": [
+        "archive-ready",
+        "old-runs",
+        "completed-experiments"
+      ]
+    },
+    {
+      "name": "haxlab",
+      "root": "/srv/haxlab",
+      "min_age_days": 30,
+      "cold_directories": [
+        "archive-ready",
+        "completed-experiments"
+      ]
+    },
+    {
+      "name": "ftmo",
+      "root": "/srv/ftmo",
+      "min_age_days": 45,
+      "cold_directories": [
+        "archive-ready",
+        "historical-exports"
+      ]
+    },
+    {
+      "name": "tradengine",
+      "root": "/srv/tradengine",
+      "min_age_days": 45,
+      "cold_directories": [
+        "archive-ready",
+        "historical-exports"
+      ]
+    },
+    {
+      "name": "zcloud",
+      "root": "/srv/zcloud",
+      "min_age_days": 30,
+      "cold_directories": [
+        "archive-ready"
+      ]
+    }
+  ],
+  "notes": "Example only. Verify real paths and active writer boundaries before enabling --apply. Keep databases, champions and active training outside cold directories."
+}
