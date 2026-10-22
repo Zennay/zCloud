@@ -1351,6 +1351,14 @@ def graph_operator_text(report):
 
 def graph_html(report):
     rows = []
+    observed_pr_rows = "".join(
+        "<li><a rel='noopener noreferrer' href='" +
+        escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
+        "</a> · HEAD <code>" + escape(pr["head_sha"][:12]) +
+        "</code> · doelbranch <code>" + escape(pr["base_ref"]) +
+        "</code> · " + str(pr["file_count_observed"]) + " bestanden (" +
+        ("volledig" if pr["file_list_complete"] else "gedeeltelijk") +
+        ")</li>" for pr in report["inspected_pr_heads"])
     for row in report["shown_file_collision_pairs"]:
         a, b = row["left"], row["right"]
         left, right = escape(a["url"], quote=True), escape(b["url"], quote=True)
