@@ -1117,8 +1117,12 @@ def collect_targeted_windows(project, issue_number, registry, budget,
     return combined, target, deduped, summary
 
 
-def render_issue_sections(unmatched, partial):
+def render_issue_sections(unmatched, partial, observed_at=None):
     esc = lambda x: html.escape(str(x), quote=True)
+    activity_clock = (observed_at if isinstance(observed_at, dt.datetime)
+                      and observed_at.tzinfo is not None
+                      and observed_at.utcoffset() is not None
+                      else dt.datetime.now(dt.timezone.utc))
     note = (
         "<section aria-label='Issue-first bewijs'><h2>Open issue → bestaande PR</h2>"
         "<p>Een PR-bodyverwijzing bewijst geen oplossing, claim, actuele eigenaar "
@@ -1133,9 +1137,12 @@ def render_issue_sections(unmatched, partial):
     if unmatched:
         note += "<details><summary>P0/P1 zonder geobserveerde PR-koppeling (" + str(len(unmatched)) + ")</summary><ul>"
         for issue in unmatched:
+            activity = issue_activity_evidence(issue, activity_clock)
             note += ("<li><a href='" + esc(issue["url"]) + "'>"
                      + esc(issue["priority"]) + " · " + esc(issue["repo"]) +
-                     "#" + esc(issue["number"]) + " · " + esc(issue["title"]) + "</a></li>")
+                     "#" + esc(issue["number"]) + " · " + esc(issue["title"]) + "</a> "
+                     + issue_activity_badge(activity) +
+                     " <small>activiteit is geen bewijs van eigenaarschap of oplossing.</small></li>")
         note += "</ul></details>"
     return note + "</section>"
 
@@ -1376,7 +1383,7 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
     claim_panel = render_claim_visibility(local_claims or {})
     inbox_panel = render_issue_inbox(issue_inbox) if issue_inbox is not None else ""
     return raw.replace("<main>", claim_panel + inbox_panel + target_section +
-                       render_issue_sections(unmatched, partial) +
+                       render_issue_sections(unmatched, partial, observed_at) +
                        related + "<main>", 1)
 
 
