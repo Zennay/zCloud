@@ -5,10 +5,11 @@ expired claim, available branch, or permission to interrupt ongoing work.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import re
 
 WINDOW_HOURS = 168
+MAX_OBSERVATION_CLOCK_SKEW_SECONDS = 120
 PR_URL = re.compile(
     r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}$")
 SIGNALS = {
@@ -67,6 +68,12 @@ def classify(issue_updated_at, linked_pr_urls, observed_prs, as_of,
     ref = _clock(as_of)
     if ref is None:
         raise ValueError("invalid activity observation clock")
+    # The observation clock itself is also untrusted input. A fabricated
+    # future reference could make current issues look quiet or distort ages
+    # even when every issue/PR timestamp is earlier than that false reference.
+    now = datetime.now(timezone.utc)
+    if ref > now + timedelta(seconds=MAX_OBSERVATION_CLOCK_SKEW_SECONDS):
+        raise ValueError("future activity observation clock")
     event_clock_incoherent = False
     pr_by_url = {}
     for pr in observed_prs:
