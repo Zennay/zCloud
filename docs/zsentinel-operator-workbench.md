@@ -73,7 +73,25 @@ een snapshot met een verkeerde klok niet stilzwijgend als vers worden gelezen.
 
 Een wijziging van bronfreshness (bijvoorbeeld retrybron van vers naar verouderd)
 verschijnt apart per snapshot-overgang, ook als de issue- en queue-aantallen gelijk
-blijven. Dit zijn uitsluitend de oorspronkelijke freshness-vlaggen bij opname,
+blijven.
+
+### Merge-first historie zonder nieuwe claims
+
+De index toont naast issuegekoppelde PR-kandidaten alle maximaal vijf
+oorspronkelijk geverifieerde pr_delivery_observations uit elke opgeslagen
+operatorboard, ook wanneer geen issuekaart naar die PR verwijst. Per
+historische waarneming zijn exacte 40-teken-HEAD, geobserveerde checkstatus,
+het aantal opgeslagen approvals en oorspronkelijke blocking_unknowns te zien.
+Tussen opvolgende bundels verschijnen nieuwe of niet opnieuw waargenomen PR's,
+HEAD-wissels en wijzigingen in check-, review- en blockerwaarnemingen.
+HTML en JSON bewaren dezelfde broninformatie, zonder nieuwe API-opvraag.
+
+Deze historie is geen actuele merge-wachtrij: een eerder geobserveerde groene
+check of approval is geen bewijs voor de huidige HEAD. Een verdwenen PR is
+geen merge- of closurebewijs. Voor echte merge blijven actuele GitHub-status,
+exact-HEAD verplichte CI, branchbescherming, onafhankelijke review en
+owner-/claimtoestemming noodzakelijk.
+ Dit zijn uitsluitend de oorspronkelijke freshness-vlaggen bij opname,
 geen nieuwe fetch en geen bewijs van actuele bronbeschikbaarheid.
 
 
