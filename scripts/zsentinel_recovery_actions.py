@@ -21,9 +21,9 @@ def _number(value):
     return value if type(value) is int and 0 <= value <= 1000000 else 0
 
 def _psi_owner_context(pressure):
-    """Bounded explanation of local 60-second stalls, not a job diagnosis."""
+    """Bounded explanation of observed kernel stalls, not a job diagnosis."""
     psi = pressure.get("psi")
-    if not isinstance(psi, dict) or psi.get("status") != "OBSERVED":
+    if not isinstance(psi, dict) or psi.get("status") not in ("OBSERVED", "PARTIAL"):
         return " Kernelwachttijden (PSI) niet volledig waargenomen."
     resources = psi.get("resources") or {}
     candidates = []
@@ -36,16 +36,22 @@ def _psi_owner_context(pressure):
     )
     for source, scope, description in labels:
         try:
+            if resources[source].get("status") != "OBSERVED":
+                continue
             value = resources[source]["measurements"][scope]["avg60_pct"]
         except (KeyError, TypeError):
             continue
         if type(value) in (float, int) and 0 <= value <= 100:
             candidates.append((value, description))
     if not candidates:
-        return " Kernelwachttijden (PSI) onbekend."
+        return (
+            " Kernelwachttijden (PSI) onbekend; gedeeltelijke bron zonder "
+            "bruikbare drukmeting." if psi.get("status") == "PARTIAL"
+            else " Kernelwachttijden (PSI) onbekend."
+        )
     # Full memory/I/O stalls are more severe than partial waits even when
-    # their raw percentage is smaller. Do not hide full 70% memory stalls
-    # behind a higher "some" percentage in a one-line owner handoff.
+    # their raw percentage is smaller. Do not hide full stalls behind a
+    # higher "some" percentage in a one-line owner handoff.
     full = [
         (value, label) for value, label in candidates
         if "volledige stilstand" in label and value >= 1
@@ -60,10 +66,27 @@ def _psi_owner_context(pressure):
         " de trendrichting is niet eenduidig."
         if window == "MIXED_WINDOWS" else ""
     )
+    partial_note = ""
+    if psi.get("status") == "PARTIAL":
+        basis = [
+            source for source in psi.get("pressure_basis", [])
+            if source in ("cpu", "memory", "io")
+        ]
+        if psi.get("pressure_hint") in ("HIGH", "ELEVATED") and basis:
+            partial_note = (
+                " PSI-brondekking is gedeeltelijk; waargenomen "
+                + psi["pressure_hint"] + " druk in " + ", ".join(basis)
+                + ". Ontbrekende bronnen blijven UNKNOWN."
+            )
+        else:
+            partial_note = (
+                " PSI-brondekking is gedeeltelijk; ontbrekende bronnen "
+                "kunnen druk verbergen en blijven UNKNOWN."
+            )
     return (
         f" Kernel-PSI (60s): {reason} {percent:.2f}%; "
         "bronbrede stall, geen bewijs van een specifieke GitHub-job."
-        + window_note
+        + partial_note + window_note
     )
 
 
