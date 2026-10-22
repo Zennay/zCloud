@@ -309,6 +309,7 @@ def _host_capacity_observation() -> dict[str, object]:
                  "used_percent": None},
         "archive_mount": {"configured": True, "mount_detected": None,
                           "mount_detection_basis": "unknown", "separate_filesystem": None,
+                          "read_only": None,
                           "total_bytes": None, "available_bytes": None,
                           "available_percent": None},
         "warnings": [],
@@ -474,6 +475,19 @@ def _host_capacity_observation() -> dict[str, object]:
                 # A bind mount on root cannot provide independent offload space.
                 evidence_warnings.append("archive_mount_same_filesystem_as_root")
             vfs = os.statvfs(ARCHIVE_MOUNT_PATH)
+            read_only_flag = getattr(os, "ST_RDONLY", None)
+            flags_before = getattr(vfs, "f_flag", None)
+            if (type(read_only_flag) is int and read_only_flag > 0
+                    and type(flags_before) is int and flags_before >= 0):
+                read_only = bool(flags_before & read_only_flag)
+                archive["read_only"] = read_only
+                if read_only:
+                    evidence_warnings.append("archive_mount_read_only_no_offload")
+            else:
+                read_only = None
+                archive["read_only"] = None
+                complete = False
+                evidence_warnings.append("archive_mount_read_only_state_unknown")
             block_size = int(vfs.f_frsize or vfs.f_bsize)
             archive_free_blocks, archive_available_blocks = (
                 int(vfs.f_bfree), int(vfs.f_bavail)
@@ -489,6 +503,15 @@ def _host_capacity_observation() -> dict[str, object]:
             # Recheck both mount membership and path identity around the path-based
             # statvfs call; a changed target must not be credited as archive capacity.
             archive_stat_after = os.stat(ARCHIVE_MOUNT_PATH, follow_symlinks=False)
+            vfs_after = os.statvfs(ARCHIVE_MOUNT_PATH)
+            flags_after = getattr(vfs_after, "f_flag", None)
+            if read_only is not None and (
+                type(read_only_flag) is not int
+                or type(flags_after) is not int
+                or flags_after < 0
+                or bool(flags_after & read_only_flag) != read_only
+            ):
+                raise ValueError("archive_mount_read_only_state_changed")
             if (
                 not stat.S_ISDIR(archive_stat_after.st_mode)
                 or (archive_stat_before.st_dev, archive_stat_before.st_ino)
@@ -508,15 +531,19 @@ def _host_capacity_observation() -> dict[str, object]:
                 str(exc) in ("archive_mount_changed_during_observation", "archive_mount_path_not_directory")
                 or isinstance(exc, (FileNotFoundError, NotADirectoryError))
             )
+            read_only_state_lost = str(exc) == "archive_mount_read_only_state_changed"
             if path_identity_lost:
                 archive["mount_detected"] = None
                 archive["mount_detection_basis"] = "unknown"
                 archive["separate_filesystem"] = None
-            evidence_warnings.append(
-                "archive_mount_changed_during_observation"
-                if path_identity_lost
-                else "archive_mount_observation_unavailable"
-            )
+            if read_only_state_lost:
+                archive["read_only"] = None
+            if path_identity_lost:
+                evidence_warnings.append("archive_mount_changed_during_observation")
+            elif read_only_state_lost:
+                evidence_warnings.append("archive_mount_read_only_state_changed")
+            else:
+                evidence_warnings.append("archive_mount_observation_unavailable")
 
     root = result["root_filesystem"]
     memory = result["memory"]
@@ -543,6 +570,7 @@ def _host_capacity_observation() -> dict[str, object]:
     archive_has_capacity = (
         archive.get("mount_detected") is True
         and archive.get("separate_filesystem") is True
+        and archive.get("read_only") is False
         and type(archive_available) is int and archive_available > 0
     )
     if (archive.get("mount_detected") is True
@@ -561,6 +589,12 @@ def _host_capacity_observation() -> dict[str, object]:
                 "mount reports capacity on a separate filesystem. Verify file provenance, encryption/retention "
                 "policy and active handles before owner-approved offload; no deletion, move or restart is authorized."
             )
+        elif archive.get("read_only") is True:
+            summary = (
+                "Root storage is critically constrained by filesystem bytes or inodes, but the configured archive "
+                "mount is read-only and cannot be used as an offload target. Preserve active work and obtain an "
+                "authorized writable-storage inventory; no deletion, move or restart is authorized by this snapshot."
+            )
         elif (archive.get("mount_detected") is True
               and archive.get("separate_filesystem") is False):
             summary = (
@@ -568,6 +602,12 @@ def _host_capacity_observation() -> dict[str, object]:
                 "path shares the root filesystem; "
                 "it is not a separate offload target. Preserve active work and obtain an authorized storage "
                 "inventory; no deletion, move or restart is authorized by this snapshot."
+            )
+        elif archive.get("mount_detected") is True and archive.get("read_only") is None:
+            summary = (
+                "Root storage is critically constrained by filesystem bytes or inodes, but the configured archive "
+                "mount's read-only state is unknown. Preserve active work and do not offload until the owner "
+                "confirms a writable, separate storage target."
             )
         elif archive.get("mount_detected") is True:
             summary = (
@@ -690,6 +730,12 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
             "archive_mount_changed_during_observation",
         )):
             codes.append("ARCHIVE_MOUNT_UNAVAILABLE_NO_OFFLOAD")
+        if "archive_mount_read_only_no_offload" in evidence_warnings:
+            codes.append("ARCHIVE_MOUNT_READ_ONLY_NO_OFFLOAD")
+        if any(reason in evidence_warnings for reason in (
+                "archive_mount_read_only_state_unknown",
+                "archive_mount_read_only_state_changed")):
+            codes.append("ARCHIVE_MOUNT_READ_ONLY_STATE_UNCERTAIN_NO_OFFLOAD")
         if "archive_mount_same_filesystem_as_root" in evidence_warnings:
             codes.append("ARCHIVE_MOUNT_NOT_SEPARATE_FROM_ROOT_NO_OFFLOAD")
         if "archive_mount_no_available_space" in evidence_warnings:
