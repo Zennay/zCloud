@@ -718,7 +718,7 @@ def _history_csv_cell(value):
     return value
 
 
-def render_csv_history(snapshots: list[dict], index_name: str) -> str:
+def render_csv_history(snapshots: list[dict], index_name: str, machine_text: str | None = None) -> str:
     """Human spreadsheet timeline: project snapshots plus *sample* deltas.
 
     Use the exact fully admitted machine-report source model. An empty field
@@ -728,7 +728,8 @@ def render_csv_history(snapshots: list[dict], index_name: str) -> str:
     import csv
     from io import StringIO
 
-    report = json.loads(render_machine(snapshots, index_name))
+    report = json.loads(machine_text if machine_text is not None
+                        else render_machine(snapshots, index_name))
     columns = (
         "record_kind", "source_bundle", "previous_bundle", "board_sha256",
         "saved_observed_utc", "project", "sampled_p0", "sampled_p1",
@@ -821,6 +822,112 @@ def render_csv_history(snapshots: list[dict], index_name: str) -> str:
 
 
 
+
+def render_history_package(snapshots: list[dict], index_name: str) -> bytes:
+    """Portable private HTML/JSON/CSV history plus member checksums.
+
+    All members derive from previously admitted, immutable saved snapshots.
+    HTML references to original .desk.html companions require those originals
+    beside an extracted index; this archive never fabricates missing sources.
+    """
+    from io import BytesIO
+    from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+
+    machine = render_machine(snapshots, index_name)
+    members = {
+        "history.html": render(snapshots, index_name).encode("utf-8"),
+        "history.json": machine.encode("utf-8"),
+        "history.csv": render_csv_history(
+            snapshots, index_name, machine_text=machine).encode("utf-8"),
+        "README.txt": (
+            "Private zSentinel historical source sample, NOT a live inventory.\\n"
+            "Source bundle receipts were verified before this archive was made.\\n"
+            "Missing issues/PRs do NOT prove closed, merged or free ownership.\\n"
+            "HTML links to original local desk and receipt require those original\\n"
+            "private bundle files beside the extracted history.html.\\n"
+            "No worker claim, CI, review, merge, queue write or deployment authority.\\n"
+        ).encode("utf-8"),
+    }
+    if any(not value or len(value) > 1024 * 1024 for value in members.values()):
+        raise ValueError("private history package member exceeds one MiB")
+    parsed = json.loads(machine)
+    receipt = {
+        "schema": "zsentinel-private-recovery-history-package-v1",
+        "source": "verified_saved_operator_bundles_not_live",
+        "generated_at_local_utc": parsed["generated_at_local_utc"],
+        "saved_bundle_board_sha256": {
+            row["bundle"]: row["board_sha256"] for row in parsed["snapshots"]
+        },
+        "members_sha256": {
+            name: hashlib.sha256(data).hexdigest()
+            for name, data in sorted(members.items())
+        },
+        "historical_sample_only": True,
+        "original_companion_files_not_included": True,
+        "current_claim_verified": False,
+        "required_ci_review_verified": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "live_verified": False,
+    }
+    members["manifest.json"] = (
+        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\\n"
+    ).encode("utf-8")
+    out = BytesIO()
+    with ZipFile(out, "w", compression=ZIP_DEFLATED,
+                 compresslevel=6, allowZip64=False) as package:
+        for name, data in members.items():
+            info = ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            info.create_system = 3
+            info.external_attr = (stat.S_IFREG | 0o600) << 16
+            info.compress_type = ZIP_DEFLATED
+            package.writestr(info, data)
+    result = out.getvalue()
+    if not result or len(result) > 4 * 1024 * 1024:
+        raise ValueError("private historical package exceeds four MiB")
+    return result
+
+
+def write_private_history_package(directory: Path, name: str, data: bytes) -> None:
+    """Publish one 0600 history archive atomically inside a trusted 0700 dir."""
+    import secrets
+
+    if not INDEX.fullmatch(name) or type(data) is not bytes or not data:
+        raise ValueError("invalid private package output")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("private no-follow output unsupported")
+    directory_fd = _open_private_directory(directory)
+    temporary = ".zsentinel-history-" + secrets.token_hex(16)
+    destination = name + ".index.zip"
+    fd = None
+    try:
+        if os.path.lexists(directory / destination):
+            raise FileExistsError("private history package already exists")
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                     os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != 0o600):
+            raise ValueError("unsafe private archive inode")
+        with os.fdopen(fd, "wb") as stream:
+            fd = None
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, destination, src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd, follow_symlinks=False)
+        os.fsync(directory_fd)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        os.close(directory_fd)
+
+
+
 def newest_private_bundles(directory: Path, maximum: int) -> list[str]:
     """Bounded local receipt discovery; never trust a directory entry as a claim."""
     if type(maximum) is not int or not 2 <= maximum <= MAX_BUNDLES:
@@ -864,14 +971,18 @@ def build_index(directory: Path, stems: list[str], name: str,
         raise ValueError("index stem must not match a bundled snapshot")
     if any(type(stem) is not str or STEM.fullmatch(stem) is None for stem in stems):
         raise ValueError("invalid source bundle stem")
-    if output_format not in ("html", "json", "csv"):
+    if output_format not in ("html", "json", "csv", "zip"):
         raise ValueError("unsupported private history format")
     snapshots = [load_snapshot(directory, stem) for stem in stems]
-    payload = (render(snapshots, name) if output_format == "html"
-               else render_csv_history(snapshots, name) if output_format == "csv"
-               else render_machine(snapshots, name))
     filename = name + ".index." + output_format
-    write_create_only(directory / filename, payload)
+    if output_format == "zip":
+        write_private_history_package(
+            directory, name, render_history_package(snapshots, name))
+    else:
+        payload = (render(snapshots, name) if output_format == "html"
+                   else render_csv_history(snapshots, name) if output_format == "csv"
+                   else render_machine(snapshots, name))
+        write_create_only(directory / filename, payload)
     return {
         "file": filename, "snapshots_indexed": len(snapshots),
         "private_offline_only": True,
@@ -893,8 +1004,8 @@ def main(argv=None) -> int:
                         help="Discover newest 2–24 private receipts (mtime only; not live)")
     parser.add_argument("--name", required=True,
                         help="New create-only index stem")
-    parser.add_argument("--format", choices=("html", "json", "csv"), default="html",
-                        help="Private offline HTML, JSON or sample-change spreadsheet CSV")
+    parser.add_argument("--format", choices=("html", "json", "csv", "zip"), default="html",
+                        help="Private offline HTML, JSON, historical CSV or checksum ZIP")
     args = parser.parse_args(argv)
     try:
         if args.latest is not None and args.bundle:
