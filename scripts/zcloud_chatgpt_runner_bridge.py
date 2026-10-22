@@ -469,14 +469,18 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
     worker_summary = service_cgroup.get("worker_summary")
     if coverage != "complete_for_comm_matched_processes":
         codes.append("RUNNER_MEMBERSHIP_UNKNOWN")
-    mismatch_summaries = {
-        "all_outside_expected_unit_comm_only",
-        "mixed_unit_membership_comm_only",
-    }
+    # Positive outside-unit counters remain actionable even when another
+    # process's cgroup file or the overall /proc scan is incomplete.
+    listener_mismatch = (
+        type(service_cgroup.get("listener_outside_expected_unit")) is int
+        and service_cgroup["listener_outside_expected_unit"] > 0
+    )
+    worker_mismatch = (
+        type(service_cgroup.get("worker_outside_expected_unit")) is int
+        and service_cgroup["worker_outside_expected_unit"] > 0
+    )
     # Evaluate both roles independently: the combined summary prioritizes the
-    # listener, so it can hide a worker mismatch when the listener is in-unit.
-    listener_mismatch = listener_summary in mismatch_summaries
-    worker_mismatch = worker_summary in mismatch_summaries
+    # listener, and partial coverage must not hide a positive observed mismatch.
     if listener_mismatch or worker_mismatch:
         codes.append("OWNER_RECONCILIATION_REQUIRED")
         if listener_mismatch:
@@ -650,7 +654,23 @@ def runner_worker_snapshot() -> dict:
         service_cgroup["observation_summary"] = "unknown_" + str(service_cgroup["membership_coverage"])
 
     if service_cgroup["membership_coverage"] != "complete_for_comm_matched_processes":
-        if service_cgroup["membership_coverage"] == "no_runner_processes_observed":
+        observed_outside_roles = [
+            role for role in ("listener", "worker")
+            if type(service_cgroup.get(f"{role}_outside_expected_unit")) is int
+            and service_cgroup[f"{role}_outside_expected_unit"] > 0
+        ]
+        if observed_outside_roles:
+            observed_roles = " and ".join(
+                "Runner.Listener" if role == "listener" else "Runner.Worker"
+                for role in observed_outside_roles
+            )
+            service_cgroup["operator_summary"] = (
+                "Partial runner service-cgroup coverage still observed " + observed_roles
+                + " process-name match(es) outside the expected unit. Treat this only as "
+                "an owner-reconciliation lead; preserve active work and do not restart or "
+                "take over from this receipt."
+            )
+        elif service_cgroup["membership_coverage"] == "no_runner_processes_observed":
             service_cgroup["operator_summary"] = (
                 "No Runner.Listener/Worker process-name match was observed in the bounded scan; "
                 "this does not prove GitHub registration or job assignment."
