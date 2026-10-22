@@ -238,44 +238,91 @@ def inspect_history_bytes(archive: bytes) -> dict:
 
 def historical_source_age(report: dict, *, as_of=None,
                           stale_after_hours: int = 6) -> dict:
-    """Tell the operator how old source observations really are.
+    """Show the age of the actual source inputs, not just the exported board.
 
-    Do not compare against ZIP creation time or local file mtime. A historical
-    saved source is NEVER promoted to active/live authority by this function.
+    A newly generated board may contain older GitHub, claim and queue sources.
+    Treat the oldest input of the latest saved board as the effective age.
+    Previously captured 'fresh=False' is never upgraded to fresh on export.
+    No source is fetched and no live recovery authority can be inferred.
     """
     from datetime import datetime, timezone, timedelta
 
     if type(stale_after_hours) is not int or not 1 <= stale_after_hours <= 168:
         raise ValueError("invalid historical source age threshold")
-    observed_at = as_of or datetime.now(timezone.utc)
-    if observed_at.tzinfo is None:
+    observed_at = as_of if as_of is not None else datetime.now(timezone.utc)
+    if not isinstance(observed_at, datetime) or observed_at.tzinfo is None:
         raise ValueError("historical age clock must be timezone-aware")
     observed_at = observed_at.astimezone(timezone.utc)
     snapshots = report.get("snapshots")
     if type(snapshots) is not list or not 2 <= len(snapshots) <= 24:
         raise ValueError("invalid history source series")
-    stamps = []
-    for row in snapshots:
-        text = row.get("saved_board_observed_at_utc")
-        if type(text) is not str or len(text) > 50:
+
+    def parsed_stamp(value):
+        if type(value) is not str or not 1 <= len(value) <= 50:
             raise ValueError("invalid original source time")
-        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if stamp.tzinfo is None:
             raise ValueError("original source time is not UTC-aware")
-        stamps.append(stamp.astimezone(timezone.utc))
-    newest = max(stamps)
-    oldest = min(stamps)
-    age = (observed_at - newest).total_seconds()
-    future = newest > observed_at + timedelta(minutes=2)
+        return stamp.astimezone(timezone.utc)
+
+    boards = [(parsed_stamp(row.get("saved_board_observed_at_utc")),
+               row.get("bundle"), row) for row in snapshots]
+    if any(type(stem) is not str for _, stem, _ in boards):
+        raise ValueError("invalid original bundle identity")
+    latest_board_time, _, latest = max(boards, key=lambda row: (row[0], row[1]))
+    clocks = latest.get("saved_individual_source_clocks")
+    captured_freshness = latest.get(
+        "saved_individual_source_freshness_at_capture")
+    allowed = {"inbox", "retry", "branches", "claims", "prs"}
+    if (type(clocks) is not dict or type(captured_freshness) is not dict
+            or not clocks or "inbox" not in clocks or set(clocks) !=
+            set(captured_freshness) or not set(clocks) <= allowed
+            or any(type(flag) is not bool
+                   for flag in captured_freshness.values())):
+        raise ValueError("latest original source clocks/freshness incomplete")
+    inputs = {kind: parsed_stamp(clock) for kind, clock in clocks.items()}
+    if any(stamp > latest_board_time for stamp in inputs.values()):
+        raise ValueError("original source clocks exceed their captured board")
+    oldest_input = min(inputs.values())
+    newest_input = max(inputs.values())
+    board_age_seconds = (observed_at - latest_board_time).total_seconds()
+    oldest_input_age_seconds = (observed_at - oldest_input).total_seconds()
+    suspected_future = (
+        latest_board_time > observed_at + timedelta(minutes=2)
+        or any(stamp > observed_at + timedelta(minutes=2)
+               for stamp in inputs.values())
+    )
+    stale_input_kinds = sorted(
+        kind for kind, stamp in inputs.items()
+        if not captured_freshness[kind] or
+        (observed_at - stamp).total_seconds() > stale_after_hours * 3600
+    )
+    status = (
+        "future_clock_unknown" if suspected_future else
+        "stale_historical_sample" if stale_input_kinds else
+        "recent_historical_sample_not_live"
+    )
     return {
-        "source_observation_oldest_utc": oldest.isoformat(),
-        "source_observation_newest_utc": newest.isoformat(),
-        "source_age_hours": round(age / 3600, 2),
+        # Backwards-compatible board timeline fields, explicitly labelled as
+        # board times. Do not misread these as the newest collected GitHub data.
+        "source_observation_oldest_utc":
+            min(item[0] for item in boards).isoformat(),
+        "source_observation_newest_utc": latest_board_time.isoformat(),
+        "source_age_hours": round(oldest_input_age_seconds / 3600, 2),
+        "latest_board_age_hours": round(board_age_seconds / 3600, 2),
+        "latest_bundle_evidence_oldest_utc": oldest_input.isoformat(),
+        "latest_bundle_evidence_newest_utc": newest_input.isoformat(),
+        "latest_bundle_source_clocks_utc": {
+            kind: stamp.isoformat() for kind, stamp in sorted(inputs.items())
+        },
+        "source_freshness_at_capture": dict(sorted(captured_freshness.items())),
+        "source_age_hours_by_kind": {
+            kind: round((observed_at - stamp).total_seconds() / 3600, 2)
+            for kind, stamp in sorted(inputs.items())
+        },
+        "stale_or_not_fresh_at_capture_sources": stale_input_kinds,
         "stale_after_hours": stale_after_hours,
-        "source_age_status": ("future_clock_unknown" if future
-                              else "stale_historical_sample"
-                              if age > stale_after_hours * 3600
-                              else "recent_historical_sample_not_live"),
+        "source_age_status": status,
         "historical_even_when_recent": True,
         "source_is_live_verified": False,
     }
