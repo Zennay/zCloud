@@ -1543,10 +1543,36 @@ def render_html(bundle):
             for member in group["members"]
         ]
         external_links = [
-            "<a href=\"" + e(url) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" +
-            e(url.rsplit("/", 1)[-1]) + "</a>"
+            "<a href=\"" + e(_same_repo_url(
+                url, PR.fullmatch(group["members"][0]["url"]).group(1))) +
+            "\" target=\"_blank\" rel=\"noopener noreferrer\">" +
+            e("PR #" + PR.fullmatch(url).group(2)) + "</a>"
             for url in group["external_peer_pr_urls_to_recheck"]
         ]
+        # Keep the origin of each external hint visible. A union-only list can
+        # hide which selected PR produced the hint when a component has peers.
+        card_by_url = {card["url"]: card for card in bundle["items"]}
+        external_references = []
+        seen_external_references = set()
+        for member in group["members"]:
+            source_card = card_by_url.get(member["url"])
+            if source_card is None:
+                raise ValueError("coordination member has no selected PR card")
+            source_anchor = _article_anchor(source_card)
+            for raw_peer_url in source_card["coordination_external_peer_urls"]:
+                peer_url = _same_repo_url(
+                    raw_peer_url, source_card["repository"])
+                pair = (member["url"], peer_url)
+                if pair in seen_external_references:
+                    continue
+                seen_external_references.add(pair)
+                external_references.append(
+                    "<li><a href=\"#" + e(source_anchor) + "\">" +
+                    e(source_card["project"]) + " #" +
+                    e(source_card["number"]) + "</a> → " +
+                    "<a href=\"" + e(peer_url) +
+                    "\" target=\"_blank\" rel=\"noopener noreferrer\">" +
+                    e("PR #" + PR.fullmatch(peer_url).group(2)) + "</a></li>")
         parts.append("<li>Groep " + e(group["group_number"]) + ": " +
                      ", ".join(links) + " · " +
                      e(group["observed_selected_scope_collisions"]) +
@@ -1557,7 +1583,12 @@ def render_html(bundle):
                      (" · andere PRs opnieuw controleren: " + ", ".join(external_links)
                       if external_links else "") +
                      (" (aanvullende PRs verborgen)" if group[
-                         "external_peer_preview_truncated"] else "") + "</li>")
+                         "external_peer_preview_truncated"] else "") +
+                     ("<ul class=\"external-peer-provenance\">" +
+                      "".join(external_references[:16]) + "</ul>"
+                      if external_references else "") +
+                     ("<p>Meer herkomstrelaties verborgen; bekijk de CSV per PR.</p>"
+                      if len(external_references) > 16 else "") + "</li>")
     parts.append("</ol>" +
                  ("<p>Bron deels onvolledig of peer-HEAD niet gelijk: "
                   "hercontrole noodzakelijk.</p>"
