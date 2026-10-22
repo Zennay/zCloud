@@ -2978,3 +2978,5 @@ PR-CSV-regel bewaart dezelfde boolean per gekoppeld issue in het
 `related_issue_activity_snapshot_json`. Oudere opgeslagen boards zonder deze
 nieuwe receipt krijgen `UNKNOWN` in plaats van een verzonnen `NO`. Dit is
 alleen een observatie van bronklokken, geen bewijs van stilstand of vrije claim.
+
+De observatieklok zelf wordt ook begrensd: een `as_of`-waarde meer dan 120 seconden in de toekomst levert een expliciete `ValueError` op. Anders zou een foutieve toekomstige referentie zowel issue- als PR-leeftijden kunstmatig verhogen en actuele productissues ten onrechte als stil presenteren. De toegestane twee minuten vangen kleine klokscheefstand op; er wordt geen toekomstig tijdstip gebruikt om stilte te berekenen.
