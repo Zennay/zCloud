@@ -59,12 +59,17 @@ EXTERNAL_WAIT_BLOCKERS = frozenset({
 RELEASE_BLOCKERS = frozenset({"branch_rules_ownership_and_release_not_verified"})
 
 
-def _operator_workstream(blocker, pinned, source_stale, history_state, defer_repeat):
+def _operator_workstream(blocker, pinned, source_stale, history_state,
+                         defer_repeat, parallel_review=False):
     """Actionable source interpretation, never admission or merge permission."""
     if (source_stale or not pinned or history_state in (
             "changed_or_uncertain_head", "incomplete_gate_source",
             "newly_selected_not_new_pr")):
         return "inspect_changed_source"
+    if parallel_review:
+        # Don't let a queued CI job hide the independent owner's review
+        # request that can be handled without rerunning that CI job.
+        return "owner_action_now"
     if defer_repeat:
         return "defer_unchanged_hold"
     if blocker in OWNER_BLOCKERS:
@@ -754,18 +759,47 @@ def collect_workorders(board):
             attention_status = "inspect_changed_evidence"
         else:
             attention_status = "await_required_gates"
+        # Review can be requested while existing CI runs. This is an
+        # independent human action only when exact-head evidence is complete
+        # enough to avoid duplicating an already-pending review request.
+        parallel_review = bool(
+            pinned and not source_stale
+            and live_gate.get("github_mergeable_boolean_observed") is True
+            and live_gate.get("draft_at_read") is False
+            and live_gate.get("check_page_complete") is True
+            and live_gate.get("review_page_may_be_truncated") is False
+            and live_gate.get("legacy_status_source_may_be_truncated") is False
+            and live_gate.get("observed_checks_pending", 0) > 0
+            and live_gate.get("observed_checks_not_successful") == 0
+            and live_gate.get("observed_exact_head_changes_requested") == 0
+            and live_gate.get("observed_independent_exact_head_approvals") == 0
+            and requests is not None
+            and requests["individuals"] == 0 and requests["teams"] == 0)
         workstream = _operator_workstream(
-            item.get("blocker"), pinned, source_stale, history_state, defer_repeat)
+            item.get("blocker"), pinned, source_stale, history_state,
+            defer_repeat, parallel_review)
+        if parallel_review:
+            notes.append(
+                "CI loopt al en er is geen reviewverzoek gezien. "
+                "De bevoegde PR-eigenaar kan parallel een onafhankelijke "
+                "review aanvragen na hercontrole van de actuele GitHub-HEAD. "
+                "Dit dossier vraagt niets automatisch aan.")
         cards.append({
             "attention_status": attention_status,
             "attention_label": ATTENTION_LABELS[attention_status],
             "workstream": workstream,
             "workstream_label": WORKSTREAM_LABELS[workstream],
             "operator_action_link": (
+                url if parallel_review else
                 url + "/checks" if item.get("blocker") in (
                     "failed_checks_or_legacy_context",
                     "checks_still_running", "check_source_not_terminal")
                 else url),
+            "parallel_review_request_possible_at_observation": parallel_review,
+            "operator_primary_step": (
+                "Vraag onafhankelijke review aan bij huidige PR terwijl "
+                "de bestaande CI loopt (alleen bevoegde eigenaar, HEAD herlezen)."
+                if parallel_review else _markdown(next_step)),
             "project": project, "repository": repo, "number": num,
             "url": url, "files_url": url + "/files",
             "checks_url": url + "/checks", "review_url": url,
@@ -823,6 +857,9 @@ def collect_workorders(board):
         "review_request_source_unknown_prs": sum(
             card["pending_review_requests"] is None for card in cards),
         "review_requests_are_not_approvals": True,
+        "parallel_review_action_prs": sum(
+            card["parallel_review_request_possible_at_observation"]
+            for card in cards),
     }
     receipt = {
         "schema": SCHEMA, "source_observed_at_utc": observed_at,
