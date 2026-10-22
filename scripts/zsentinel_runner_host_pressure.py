@@ -143,6 +143,23 @@ def owner_summary(observation):
             (type(inodes) not in (int, float) or
              not math.isfinite(inodes) or not 0 <= inodes <= 100)):
         raise ValueError("inconsistent host capacity report")
+    # Recompute the severity from the admitted metrics. A source receipt must
+    # not be able to pair exhausted swap/disk with a reassuring status string.
+    critical_inodes = inodes is not None and inodes >= 95
+    constrained_inodes = inodes is not None and inodes >= 90
+    swap_ratio = swap_free / swap_total if swap_total > 0 else None
+    critical_swap = swap_ratio is not None and swap_ratio <= 0.05
+    constrained_swap = swap_ratio is not None and swap_ratio <= 0.15
+    expected_pressure = (
+        "critical_headroom_observed"
+        if root_free < 2 or root_used >= 95 or critical_inodes
+        or memory < 512 or critical_swap else
+        "constrained_headroom_observed"
+        if root_free < 4 or root_used >= 90 or constrained_inodes
+        or memory < 1024 or constrained_swap else
+        "no_critical_pressure_in_this_sample")
+    if observation["pressure_observation"] != expected_pressure:
+        raise ValueError("inconsistent host pressure classification")
     inode_label = (
         " · inodes niet beschikbaar"
         if inodes is None else " · inodes bezet " + str(inodes) + "%")
