@@ -911,6 +911,7 @@ async function resumeBlockedQueue(queueId,button){
   if(!window.confirm('Return “'+String(item.title||queueId)+'” to normal queue selection? The scheduler still applies its normal capacity and claim checks.'))return;
   blockedResumesPending.add(queueId);
   const previous=button.textContent;
+  let writeMayHaveReachedServer=false,serverExplicitlyRefused=false;
   button.disabled=true;
   button.textContent='Checking latest task…';
   try{
@@ -936,6 +937,7 @@ async function resumeBlockedQueue(queueId,button){
       throw new Error('The queue source has no valid update version. Resume refused.');
     }
     button.textContent='Resuming…';
+    writeMayHaveReachedServer=true;
     const response=await fetch('/api/portfolio-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       action:'resume_blocked',queue_id:queueId,resolution_note:note.trim(),
       expected_updated_at:expectedVersion,
@@ -949,6 +951,7 @@ async function resumeBlockedQueue(queueId,button){
     const result=await response.json().catch(()=>({}));
     if(!response.ok||!result.ok){
       const reason=result.result?.reason||result.error||'';
+      serverExplicitlyRefused=response.status>=400&&response.status<500&&result.ok===false&&!!reason;
       if(reason==='parked-task-still-bound-to-worker'){
         throw new Error('Resume refused: the parked task still carries a worker claim or lease. Ask the current owner to settle it; no task was changed.');
       }
@@ -991,7 +994,9 @@ async function resumeBlockedQueue(queueId,button){
       BLOCKED_QUEUE_ERROR='Could not refresh the parked queue; resume disabled until the source is available.';
     }
     render();
-    window.alert(error?.message||'Could not safely resume the parked task.');
+    window.alert(writeMayHaveReachedServer&&!serverExplicitlyRefused
+      ?'Resume outcome is NOT CONFIRMED. The request may have reached the server without a reliable receipt. Inspect the current queue and operator history; do not repeat this action blindly. '+String(error?.message||'')
+      :(error?.message||'Could not safely resume the parked task.'));
   }finally{
     blockedResumesPending.delete(queueId);
     button.disabled=false;
@@ -1008,6 +1013,7 @@ async function closeBlockedQueue(queueId,button){
   if(!window.confirm('PERMANENTLY close “'+String(item.title||queueId)+'”? This will mark the exact queue item dropped and resolve only its linked human Attention. It will NOT cancel other tasks or bypass project gates.'))return;
   blockedResumesPending.add(queueId);
   const old=button.textContent;
+  let writeMayHaveReachedServer=false,serverExplicitlyRefused=false;
   button.disabled=true;
   button.textContent='Checking queue identity…';
   try{
@@ -1027,6 +1033,7 @@ async function closeBlockedQueue(queueId,button){
       throw new Error('No valid source version for terminal closure. Request refused.');
     }
     button.textContent='Closing parked task…';
+    writeMayHaveReachedServer=true;
     const response=await fetch('/api/portfolio-queue',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
@@ -1043,6 +1050,7 @@ async function closeBlockedQueue(queueId,button){
     const result=await response.json().catch(()=>({}));
     if(!response.ok||!result.ok){
       const reason=result.result?.reason||result.error||'';
+      serverExplicitlyRefused=response.status>=400&&response.status<500&&result.ok===false&&!!reason;
       if(reason==='dependency-source-changed-reconfirm'){
         throw new Error('The dependency changed while closing. Review the fresh source and confirm again.');
       }
@@ -1097,7 +1105,9 @@ async function closeBlockedQueue(queueId,button){
       blockedQueueObservedAt='';
     }
     render();
-    window.alert(error?.message||'Could not safely close the parked task.');
+    window.alert(writeMayHaveReachedServer&&!serverExplicitlyRefused
+      ?'Terminal closure outcome is NOT CONFIRMED. The request may have committed without a returned receipt. Inspect the durable source and operator history; do not repeat the close blindly. '+String(error?.message||'')
+      :(error?.message||'Could not safely close the parked task.'));
   }finally{
     blockedResumesPending.delete(queueId);
     button.disabled=false;
