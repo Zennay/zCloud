@@ -45,6 +45,12 @@ EVIDENCE_FIELDS = frozenset({
     "blocked_source_status",
     "blocked_source_observed_at_utc", "queue_lease_observed_at_utc",
     "task_claim_observed_at_utc",
+    "independent_task_id", "independent_task_project_id",
+    "independent_task_source_url", "independent_task_source_verified",
+    "independent_task_status", "independent_task_eligible",
+    "independent_task_source_guarded", "independent_task_version",
+    "independent_task_source_observed_at_utc",
+    "queue_lease_subject_task_id", "task_claim_subject_task_id",
     "escalation_reason", "permission_required", "irreversible_risk",
     "safe_routes_exhausted", "capacity", "exact_head",
     "required_ci", "independent_review", "branch_protection",
@@ -73,6 +79,7 @@ ENUMS = {
     "dependency_kind": {"external", "internal", "unknown"},
     "queue_lease_state": {"clear", "bound", "unknown"},
     "blocked_source_status": {"blocked", "queued", "claimed", "running", "verifying", "dropped", "unknown"},
+    "independent_task_status": {"queued", "claimed", "running", "verifying", "blocked", "dropped", "done", "unknown"},
     "task_claim_state": {"none", "active", "unknown"},
     "dependency_scope": {"single_task", "project_wide", "unknown"},
     "escalation_reason": {"permission_required", "irreversible_risk", "safe_routes_exhausted", "unknown"},
@@ -82,7 +89,8 @@ BOOL_FIELDS = {
     "scope_disjoint", "dependency_unchanged", "dependency_cleared",
     "blocked_task_preserved", "previous_blocker_preserved", "operator_attestation",
     "blocked_source_guarded", "blocked_task_noneligible",
-    "task_claim_source_available",
+    "task_claim_source_available", "independent_task_source_verified",
+    "independent_task_eligible", "independent_task_source_guarded",
     "permission_required", "irreversible_risk", "safe_routes_exhausted",
     "owner_authorized", "root_cause_confirmed", "release_approval",
     "runtime_owner_authorized", "human_approval",
@@ -291,6 +299,26 @@ def _validate(data):
         type(blocked_task_id) is not str or not QUEUE_ID.fullmatch(blocked_task_id)
     ):
         raise PolicyInputError("blocked_task_id must be a bounded canonical queue identifier")
+    for field in ("independent_task_id", "queue_lease_subject_task_id",
+                  "task_claim_subject_task_id"):
+        value = evidence.get(field)
+        if value is not None and (
+            type(value) is not str or not QUEUE_ID.fullmatch(value)
+        ):
+            raise PolicyInputError(field + " must be a bounded canonical queue identifier")
+    candidate_project = evidence.get("independent_task_project_id")
+    if candidate_project is not None and (
+        type(candidate_project) is not str or not SLUG.fullmatch(candidate_project)
+    ):
+        raise PolicyInputError("independent_task_project_id must be a bounded ASCII identifier")
+    candidate_url = evidence.get("independent_task_source_url")
+    if candidate_url is not None:
+        _source_url(candidate_url)
+    candidate_version = evidence.get("independent_task_version")
+    if candidate_version is not None and (
+        type(candidate_version) is not int or not 0 <= candidate_version <= 10000
+    ):
+        raise PolicyInputError("independent_task_version must be an integer from 0 to 10000")
     reason = evidence.get("closure_reason")
     if reason is not None and (
         type(reason) is not str or not 12 <= len(reason) <= 1200
@@ -301,7 +329,8 @@ def _validate(data):
     # Malformed provided source clocks fail closed at input admission; missing
     # clocks are policy HOLDs, surfaced as exact owner-readable gaps.
     for field in ("blocked_source_observed_at_utc",
-                  "queue_lease_observed_at_utc", "task_claim_observed_at_utc"):
+                  "queue_lease_observed_at_utc", "task_claim_observed_at_utc",
+                  "independent_task_source_observed_at_utc"):
         if evidence.get(field) is not None:
             _timestamp(evidence[field])
     for field in ("attempts", "retry_budget", "unresolved_review_threads"):
@@ -319,11 +348,19 @@ def recommended_next_step_code(action, blockers):
     if codes & {"source_stale", "source_not_verified", "source_future_dated", "task_claim_source_unknown"} or any(
         code.endswith(("_missing", "_after_receipt", "_stale"))
         and code.startswith(("blocked_source_observed_at_utc",
+                             "independent_task_source_observed_at_utc",
                              "queue_lease_observed_at_utc",
                              "task_claim_observed_at_utc"))
         for code in codes
     ):
         return "refresh_source"
+    if codes & {"independent_task_id_missing", "independent_task_project_missing",
+                "independent_task_source_url_missing", "independent_task_source_unverified",
+                "independent_task_source_not_guarded", "independent_task_version_unknown",
+                "queue_lease_subject_mismatch", "task_claim_subject_mismatch"}:
+        return "bind_exact_independent_task_identity"
+    if codes & {"independent_task_not_queued", "independent_task_not_eligible"}:
+        return "select_queued_eligible_independent_task"
     if codes & {"claim_not_clear", "claim_state_unknown", "queue_lease_not_clear", "task_claim_not_clear"}:
         if codes & {"owner_missing", "human_owner_missing"}:
             return "identify_claim_owner"
@@ -400,15 +437,28 @@ def recommended_next_step(action, blockers, required_evidence):
     codes = {item["code"] for item in blockers}
     if action == "assign_independent_work" and "task_claim_source_unknown" in codes:
         return "Re-read the independent task's separate task-claim source and queue lease; do not admit work while the claim source is unavailable."
+    if action == "assign_independent_work" and codes & {
+        "independent_task_id_missing", "independent_task_project_missing",
+        "independent_task_source_url_missing", "independent_task_source_unverified",
+        "independent_task_source_not_guarded", "independent_task_version_unknown",
+        "queue_lease_subject_mismatch", "task_claim_subject_mismatch",
+    }:
+        return "Re-read the exact candidate queue row and bind its ID, project, version, status and eligibility to both the queue-lease and separate task-claim observations before considering admission."
+    if action == "assign_independent_work" and codes & {
+        "independent_task_not_queued", "independent_task_not_eligible",
+    }:
+        return "Select a currently queued, explicitly eligible task; do not admit a claimed, running, verifying, blocked, dropped or unknown row."
     if action == "assign_independent_work" and any(
         code.endswith(("_missing", "_after_receipt", "_stale"))
-        and code.startswith(("queue_lease_observed_at_utc", "task_claim_observed_at_utc"))
+        and code.startswith(("independent_task_source_observed_at_utc",
+                             "queue_lease_observed_at_utc", "task_claim_observed_at_utc"))
         for code in codes
     ):
         return "Reobserve the independent task's queue lease and separate task claim at current source time; a fresh wrapper receipt cannot refresh older evidence."
     if codes & {"source_stale", "source_not_verified", "source_future_dated", "task_claim_source_unknown"} or any(
         code.endswith(("_missing", "_after_receipt", "_stale"))
         and code.startswith(("blocked_source_observed_at_utc",
+                             "independent_task_source_observed_at_utc",
                              "queue_lease_observed_at_utc",
                              "task_claim_observed_at_utc"))
         for code in codes
@@ -527,6 +577,7 @@ def evaluate(data, max_age_minutes, *, now=None):
     snapshot_sources = ()
     if action == "assign_independent_work":
         snapshot_sources = (
+            ("independent_task_source_observed_at_utc", "candidate queue task"),
             ("queue_lease_observed_at_utc", "queue lease"),
             ("task_claim_observed_at_utc", "separate task claim"),
         )
@@ -616,6 +667,54 @@ def evaluate(data, max_age_minutes, *, now=None):
                 ("evidence.owner_authorized",))
 
     elif action == "assign_independent_work":
+        candidate_id = value("independent_task_id")
+        candidate_id_valid = (
+            type(candidate_id) is str and QUEUE_ID.fullmatch(candidate_id) is not None
+        )
+        require(candidate_id_valid,
+                "independent_task_id_missing",
+                "Independent admission must identify one exact canonical queue task.",
+                ("evidence.independent_task_id",))
+        require(type(value("independent_task_project_id")) is str
+                and SLUG.fullmatch(value("independent_task_project_id")) is not None,
+                "independent_task_project_missing",
+                "The candidate queue task must be bound to its canonical project ID.",
+                ("evidence.independent_task_project_id",))
+        require(type(value("independent_task_source_url")) is str,
+                "independent_task_source_url_missing",
+                "A source URL for the candidate queue row is required.",
+                ("evidence.independent_task_source_url",))
+        require(value("independent_task_source_verified") is True,
+                "independent_task_source_unverified",
+                "The candidate queue row must be observed from its canonical source.",
+                ("evidence.independent_task_source_verified",))
+        require(value("independent_task_status") == "queued",
+                "independent_task_not_queued",
+                "Only a currently queued candidate may be admitted as independent work.",
+                ("evidence.independent_task_status",))
+        require(value("independent_task_eligible") is True,
+                "independent_task_not_eligible",
+                "The candidate queue row must be explicitly eligible.",
+                ("evidence.independent_task_eligible",))
+        require(value("independent_task_source_guarded") is True,
+                "independent_task_source_not_guarded",
+                "Candidate ID, project, status, version and eligibility must match the stable source row.",
+                ("evidence.independent_task_source_guarded",))
+        require(type(value("independent_task_version")) is int
+                and 0 <= value("independent_task_version") <= 10000,
+                "independent_task_version_unknown",
+                "The candidate queue row must have an observed bounded version.",
+                ("evidence.independent_task_version",))
+        require(candidate_id_valid
+                and value("queue_lease_subject_task_id") == candidate_id,
+                "queue_lease_subject_mismatch",
+                "The queue-lease observation must refer to the exact candidate task ID.",
+                ("evidence.queue_lease_subject_task_id", "evidence.independent_task_id"))
+        require(candidate_id_valid
+                and value("task_claim_subject_task_id") == candidate_id,
+                "task_claim_subject_mismatch",
+                "The separate task-claim observation must refer to the exact candidate task ID.",
+                ("evidence.task_claim_subject_task_id", "evidence.independent_task_id"))
         require(value("independent_task_ready") is True,
                 "task_not_ready", "Independent work must be explicitly identified as ready.",
                 ("evidence.independent_task_ready",))
