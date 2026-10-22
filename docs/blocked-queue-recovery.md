@@ -371,3 +371,51 @@ actieve claimlease, replay/retrybudget en `FAILED_RETRYABLE` /
 eigen serialized runtime-owner- en migratievoorwaarden.
 De GitHub-bron op deze bestaande featurebranch is geen
 runtime-bewijs of mergeautorisatie.
+
+## 22 oktober · issue #677: actieve claimchurn inspecteren zonder retry
+
+De eerdere parked-only monitor toont niet het kernprobleem uit
+[issue #677](https://github.com/Zennay/zCloud/issues/677): er kunnen
+bijvoorbeeld wachtrijtaken met een hoog aantal claimpogingen nog
+`queued`, `claimed`, `running` of `verifying` zijn. De nieuwe
+**Claim Churn**-inbox gebruikt daarom dezelfde reeds geautoriseerde
+`GET /api/portfolio-queue`-snapshot zonder extra leesverzoek.
+Hij bevat **alleen** deze vier actieve/planbare statussen met
+`attempts >= 3`, toont het actuele `worker_slot` bij geclaimde
+statussen en laat de huidige eigenaar ongemoeid. Claimpogingen zijn
+geen foutteller en `>=3` is een **triagehint**, niet het
+geïmplementeerde retry-budget uit #677.
+
+De portfolio-weergave geeft P0/P1-first kaarten, een filter voor
+P0/P1 en voor status en een incrementele **Show next 12**-weergave.
+Op iedere afzonderlijke projectpagina verschijnen maximaal zes
+actieve claimchurn-kaarten, ongeacht eerder gekozen
+portfoliofilterwaarden; **Open portfolio claim churn** opent de
+volledige read-only werkbank. Kaarten bevatten prioriteit, status,
+worker-slot of uitdrukkelijk onbekende eigenaar, laatst geobserveerde
+queuewijziging, beperkte taaktekst en alleen canonieke
+GitHub-bronlinks. Als de actuele wachtrijbron niet gelezen kon worden,
+is de status **source unavailable** in plaats van 0 taken.
+Er worden geen claim-/release-/retryknoppen getoond.
+
+Met **Export private handoff** kan een operator na expliciete
+bevestiging de zichtbare portfolio-filterselectie naar een **lokaal**
+JSON-bestand exporteren met schema
+`zsentinel.claim-churn.readonly-handoff.v1`. De output bevat maximaal
+100 regels en 100 KB en toont expliciet aantal geobserveerde
+wachtrijregels, geselecteerde items, ontbrekende items door
+truncatie, brontijd en filterkeuzes. De inhoud bevat alleen
+queue-/project-ID's, prioriteit, status, geregistreerd aantal
+claimpogingen, geobserveerd worker-slot, laatste update,
+canonieke GitHub-issue/PR-link en een read-only owner-vervolgstap.
+**Ruwe titels, opdrachttekst, blocker en evidence ontbreken** in de
+download. Het bestand kan nog interne IDs en worker-slots bevatten;
+controleer het vóór verder delen. Zonder geldige bron- of
+waarnemingstijd is export onmogelijk.
+
+Dit productoppervlak neemt **niet** de native retry-planner, backend
+writer, historische attempts-migratie, nieuwe FAILED-/NEEDS_AI-staten,
+claimlease of de door #677 vereiste rollback/owner-review over.
+Source branch ≠ main ≠ live. Bestaande exact-head CI,
+onafhankelijke review, mergebeveiliging en release-eigenaarschap blijven
+ongewijzigd. Er zijn geen QA-tests geschreven of uitgevoerd.
