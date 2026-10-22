@@ -111,7 +111,8 @@ def _read_sqlite(path):
                     "updated_at,claimed_at,claim_expires,title," +
                     worker_slot_predicate + " AS worker_slot_present," +
                     source_link_column + " AS source_url_observed FROM portfolio_queue "
-                    "WHERE status='blocked' AND priority=? AND project_id=? LIMIT ?",
+                    "WHERE status='blocked' AND priority=? AND project_id=? "
+                    "ORDER BY rowid LIMIT ?",
                     (priority, project, remaining)
                 )])
                 remaining_query_budget -= 1
@@ -182,6 +183,9 @@ def _blocked_queue_observation(raw, observed_at):
         raise ValueError("worker slot source coverage missing")
     if type(work_source) is not list or len(work_source) > MAX_BLOCKED_WORK_ITEMS + 1:
         raise ValueError("invalid bounded blocked-work source")
+    observation_stamp = _stamp(observed_at)
+    if observation_stamp is None:
+        raise ValueError("blocked-queue observation timestamp is invalid")
     work = []
     seen_refs = set()
     invalid_work = 0
@@ -205,6 +209,19 @@ def _blocked_queue_observation(raw, observed_at):
         seen_refs.add(queue_ref)
         title_text = (" ".join(title.split())[:MAX_BYTES_PER_TEXT]
                       if type(title) is str else "Unlabeled queue item")
+        # The original row clock is useful owner context, but malformed or
+        # future-dated values must stay unknown instead of looking fresh.
+        updated_stamp = _stamp(row.get("updated_at"))
+        updated_at = (updated_stamp.isoformat().replace("+00:00", "Z")
+                      if updated_stamp is not None else None)
+        updated_future = (updated_stamp is not None
+                          and updated_stamp > observation_stamp)
+        updated_clock_anomaly = (updated_stamp is not None
+                                 and updated_stamp > observation_stamp + timedelta(minutes=2))
+        age_seconds = (
+            int((observation_stamp - updated_stamp).total_seconds())
+            if updated_stamp is not None and not updated_future else None
+        )
         # An operator may navigate to a canonical GitHub issue/PR, but
         # a queue-supplied link is unverified text, NOT proof of ownership,
         # issue status, successful fix or permission to edit.
@@ -226,6 +243,10 @@ def _blocked_queue_observation(raw, observed_at):
         work.append({
             "queue_ref": queue_ref, "project_id": pid, "priority": priority,
             "title": title_text, "claim_attempts": attempts,
+            "updated_at_observed_utc": updated_at,
+            "age_seconds_at_observation": age_seconds,
+            "updated_at_future_observed": updated_future,
+            "updated_at_clock_anomaly_observed": updated_clock_anomaly,
             "canonical_github_source_link_unverified": safe_source_url,
             "eligible_observed": bool(eligible),
             "claim_fields_present_observed": claim_fields_present,
