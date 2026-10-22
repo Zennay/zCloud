@@ -109,6 +109,10 @@ def observe_portfolio(repositories, *, token=None, view="all"):
                 stopped_for_provider = True
             continue
         error = source["source_error"]
+        # A real source error must never coexist with a misleading complete
+        # sample flag, even if the nested reader did not propagate its error
+        # into the older completeness boolean.
+        source_partial = bool(error) or source["source_partial_or_unknown"]
         rank_totals = {
             "label_p0": sum(issue["triage_rank"] == 0 for issue in source["issues"]),
             "label_p1": sum(issue["triage_rank"] == 1 for issue in source["issues"]),
@@ -124,12 +128,11 @@ def observe_portfolio(repositories, *, token=None, view="all"):
             all_priority_counts[category] += count
         recorded.append({
             "repository": name,
-            "state": "INCOMPLETE" if error or source["source_partial_or_unknown"]
-            else "SAMPLED",
+            "state": "INCOMPLETE" if source_partial else "SAMPLED",
             "observed_at_utc": source["observed_at_utc"],
             "sampled_count": source["total_issues_seen"],
             "recent_window_complete": source["recent_issue_window_complete"],
-            "source_partial_or_unknown": source["source_partial_or_unknown"],
+            "source_partial_or_unknown": source_partial,
             "provider_issue_count": source["provider_total_issue_count_at_observation"],
             "get_attempts": source["get_attempts"],
             "source_error": "github_repository_unavailable"
