@@ -110,31 +110,55 @@ def html_inbox_links(project):
 
 
 def owner_review_suggestions(portfolio, maximum=6):
-    """Read-only P0-first human owner queue; never grants a worker claim."""
+    """P0-first local owner handoff, never admission or a claim token.
+
+    Mirror the full owner CSV ordering: queued P0, active P0, queued P1,
+    then active P1. Active-only projects require owner review, not takeover.
+    """
     suggestions = []
     for item in portfolio:
-        queued = item["queued_p0"] + item["queued_p1"]
-        if not queued:
+        p0_wait, p1_wait = item["queued_p0"], item["queued_p1"]
+        p0_active, p1_active = item["in_flight_p0"], item["in_flight_p1"]
+        if not (p0_wait or p1_wait or p0_active or p1_active):
             continue
-        priority = "P0" if item["queued_p0"] else "P1"
-        eligible = item["eligible_queued_p0"] + item["eligible_queued_p1"]
+        kind = ("P0_QUEUED" if p0_wait else
+                "P0_ACTIVE_OWNER" if p0_active else
+                "P1_QUEUED" if p1_wait else "P1_ACTIVE_OWNER")
+        active_only = not (p0_wait or p1_wait)
         suggestions.append({
-            "project": item["project"], "priority": priority,
-            "queued_local": queued, "eligible_hint_local": eligible,
-            "queued_p0": item["queued_p0"], "queued_p1": item["queued_p1"],
+            "project": item["project"],
+            "priority": "P0" if kind.startswith("P0_") else "P1",
+            "owner_review_kind": kind,
+            "queued_local": p0_wait + p1_wait,
+            "eligible_hint_local": item["eligible_queued_p0"] + item["eligible_queued_p1"],
+            "queued_p0": p0_wait, "queued_p1": p1_wait,
             "eligible_hint_p0": item["eligible_queued_p0"],
             "eligible_hint_p1": item["eligible_queued_p1"],
-            "active_local": item["in_flight_p0"] + item["in_flight_p1"],
+            "active_p0": p0_active, "active_p1": p1_active,
+            "active_local": p0_active + p1_active,
             "source": "read_only_local_queue",
             "current_owner_verified": False,
             "claim_authorized": False,
             "merge_authorized": False,
             "next_step": (
+                "Alleen actief P0/P1-werk waargenomen: controleer eerst "
+                "de bestaande eigenaar en actuele voortgang; neem geen lease, "
+                "slot of taak over." if active_only else
                 "Controleer actuele Notion-claims en bestaande GitHub PRs/issues; "
                 "behoud alle actieve eigenaars. Kies pas vrij productwerk na "
                 "exacte bron- en bevoegdheidscontrole."
             ),
         })
+    priority_order = {
+        "P0_QUEUED": 0, "P0_ACTIVE_OWNER": 1,
+        "P1_QUEUED": 2, "P1_ACTIVE_OWNER": 3,
+    }
+    suggestions.sort(key=lambda item: (
+        priority_order[item["owner_review_kind"]],
+        -item["queued_p0"], -item["active_p0"],
+        -item["queued_p1"], -item["active_p1"],
+        item["project"].casefold(),
+    ))
     return suggestions[:maximum], len(suggestions) > maximum
 
 
@@ -902,7 +926,7 @@ def text_view(data):
             f"  {item['priority']} {item['project']}: "
             f"P0 wacht {item['queued_p0']} (eligible-hint {item['eligible_hint_p0']}), "
             f"P1 wacht {item['queued_p1']} (eligible-hint {item['eligible_hint_p1']}), "
-            f"{item['active_local']} actief; huidige eigenaar ONBEKEND."
+            f"P0 {item['active_p0']} / P1 {item['active_p1']} actief; huidige eigenaar ONBEKEND."
         )
         out.append("  Vervolg: " + item["next_step"])
     if data["owner_review_shortlist_partial"]:
@@ -1272,7 +1296,7 @@ def html_view(data):
         + str(item["eligible_hint_p0"]) + "); P1 wacht "
         + str(item["queued_p1"]) + " (eligible-hint "
         + str(item["eligible_hint_p1"]) + "); "
-        + str(item["active_local"]) + " lokaal actief.</p><p>"
+        + "P0 " + str(item["active_p0"]) + " / P1 " + str(item["active_p1"]) + " lokaal actief.</p><p>
         + html.escape(item["next_step"]) + "</p>"
         + html_inbox_links(item["project"]) + "<p><a href='#project-"
         + next(project_id for project_id, project_name in PORTFOLIO_PROJECTS.items()
@@ -1282,13 +1306,13 @@ def html_view(data):
     )
     owner_panel = (
         "<section class='notice'><h2>Eerst beoordelen · menselijke eigenaaroverdracht</h2>"
-        "<p>Gesorteerd op lokaal wachtende P0, daarna P1. "
+        "<p>Gesorteerd op lokaal wachtende P0, actieve P0, wachtende P1 en actieve P1. "
         "Dit zijn GEEN vrije claims of actuele GitHub/Notion-waarnemingen.</p>"
         "<div class='grid'>" + owner_cards + "</div>"
         + ("<p class='warn'>Shortlist of lokale projectbron onvolledig; "
            "controleer de oorspronkelijke projectbron.</p>"
            if data["owner_review_shortlist_partial"] else "")
-        + ("<p>Geen lokaal wachtende P0/P1-projecten in deze bron; "
+        + ("<p>Geen lokale P0/P1-wacht- of actieve projecten in deze bron; "
            "geen bewijs dat er geen open GitHub-issues zijn.</p>"
            if not owner_cards else "")
         + "</section>"
@@ -1453,7 +1477,7 @@ def markdown_view(data):
             + " / " + str(item["eligible_hint_p0"]),
             "- **P1 wacht lokaal / eligible-hint:** " + str(item["queued_p1"])
             + " / " + str(item["eligible_hint_p1"]),
-            "- **Actief lokaal (niet overnemen):** " + str(item["active_local"]),
+            "- **Actief P0 / P1 lokaal (niet overnemen):** " + str(item["active_p0"]) + " / " + str(item["active_p1"]),
             "- **Huidige externe eigenaar:** ONBEKEND.",
             "- **Vervolg:** " + item["next_step"],
         ))
@@ -1821,8 +1845,8 @@ def owner_actions_csv(data):
         links = github_inbox_urls(project_name)
         if links is None:
             raise ValueError("Missing verified project GitHub navigation mapping")
-        rank = ("P0" if row and row["queued_p0"] else
-                "P1" if row and row["queued_p1"] else "UNKNOWN")
+        rank = ("P0" if row and (row["queued_p0"] or row["in_flight_p0"]) else
+                "P1" if row and (row["queued_p1"] or row["in_flight_p1"]) else "UNKNOWN")
         # These are fixed product enums and canonical project names; never
         # interpolate untrusted row titles or GitHub issue body into Excel.
         writer.writerow((
@@ -1871,7 +1895,7 @@ def portfolio_owner_book(data):
             "- " + item["priority"] + " " + item["project"] +
             ": P0 wacht " + str(item["queued_p0"]) +
             ", P1 wacht " + str(item["queued_p1"]) + " in lokale bron; " +
-            str(item["active_local"]) + " actief; huidige eigenaar ONBEKEND."
+            "P0 " + str(item["active_p0"]) + " / P1 " + str(item["active_p1"]) + " actief; huidige eigenaar ONBEKEND."
         )
     if data["owner_review_shortlist_partial"]:
         contents.append(
