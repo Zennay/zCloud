@@ -900,6 +900,12 @@ def worker_progress_html(source):
         "allocated_paused_with_claimed_queue_owner_gate": "P0 EIGENAARCONTROLE: actieve queueclaim op toegewezen maar gepauzeerde worker",
         "allocated_queue_claim_expired_or_invalid_owner_recheck":
             "P1 EIGENAARCONTROLE: queueclaim bestaat maar lease is verlopen of onbetrouwbaar; GEEN vrijgavebewijs",
+        "allocated_no_active_claim_owner_review":
+            "EIGENAARCONTROLE: toegewezen worker zonder actieve queueclaim; browseractiviteit is geen bewijs van taakwerk",
+        "allocated_multiple_active_claims_owner_review":
+            "EIGENAARCONTROLE: meerdere actieve queueclaims op hetzelfde worker-slot; eigenaar moet dubbele claim beoordelen",
+        "allocated_queue_source_unavailable_owner_review":
+            "EIGENAARCONTROLE: queuebron onbeschikbaar of schema onvolledig; actieve claim ONBEKEND",
         "configured_not_allocated_not_a_stalled_worker": "Worker heeft geen globale toewijzing; oude config/events zijn GEEN actieve storing",
         "configured_draining_owner_hold": "Worker wordt door eigenaar gedraineerd; geen automatische herstart",
         "configured_running_no_event_evidence": "Worker staat op running maar heeft geen eventbron; eerst eigendom en start controleren",
@@ -1020,6 +1026,12 @@ def worker_progress_html(source):
                 "Actieve claim op gepauzeerde worker: eigenaarcontrole nodig.",
             "owner_reconcile_stale_queue_claim_without_claim_transfer":
                 "Claimstatus bestaat maar lease is verlopen/ongeldig; laat bevoegde eigenaar handmatig toestand reconciliëren, zonder overname.",
+            "owner_verify_unclaimed_allocated_slot":
+                "Controleer huidige slottoewijzing en queue-eigenaar; zonder actieve claim geen bewijs dat dit slot aan deze taak werkt.",
+            "owner_reconcile_duplicate_active_queue_claims":
+                "Laat bevoegde queue-eigenaar dubbele actieve claim voor één slot beoordelen; geen reclaim, vrijgave of herverdeling.",
+            "owner_recheck_queue_observer_source_scope":
+                "Queue-bron ontbreekt of vereiste kolommen ontbreken; laat broneigenaar read-only schema/toegang beoordelen, geen restart.",
             "owner_inspect_current_assignment_and_recent_browser_block":
                 "Open de recente browserblokkade bij de bevoegde workereigenaar.",
             "owner_verify_orphan_browser_block_without_prompt_identity":
