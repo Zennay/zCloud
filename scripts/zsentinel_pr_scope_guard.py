@@ -1541,7 +1541,10 @@ def graph_html(report):
             ". Gedeelde bestandspaden betekenen niet automatisch Git-mergeconflict."
             " Geen Notion-claim, eigenaar, bestandslease of PR-loze branch"
             " geverifieerd. Geen automatische claim of merge.</aside>"
-            "<h2>Verbonden PR-bestandsgroepen</h2>"
+            "<h2>Geobserveerde PR's in dit begrensde venster</h2>"
+            "<p>Bronidentiteit en doelbranch zijn waargenomen; afwezigheid van overlap is geen claimvrijgave.</p><ul>" +
+            (observed_pr_rows or "<li>Geen PR-identiteiten waargenomen.</li>") +
+            "</ul><h2>Verbonden PR-bestandsgroepen</h2>"
             "<p>Exact waargenomen gelijke bestandspaden verbinden PRs binnen het "
             "gelezen venster. Geen claim-, mergevolgorde- of Git-conflictbewijs.</p><ol>" +
             ("".join(cluster_cards) or
