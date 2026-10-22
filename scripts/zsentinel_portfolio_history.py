@@ -135,10 +135,30 @@ def compare_snapshots(previous, current):
             before_state[repo] in ("SAMPLED", "INCOMPLETE")
             and after_state[repo] in ("SAMPLED", "INCOMPLETE")
         )
+        before_readable = before_state[repo] in ("SAMPLED", "INCOMPLETE")
+        after_readable = after_state[repo] in ("SAMPLED", "INCOMPLETE")
+        if before_readable and not after_readable:
+            transition = "GITHUB_SOURCE_LOST"
+            action = "confirm_repo_access_and_provider_admission"
+        elif not before_readable and after_readable:
+            transition = "GITHUB_SOURCE_RESTORED_NOT_BACKLOG_CLEARED"
+            action = "reinspect_original_issues_and_existing_prs"
+        elif not before_readable and not after_readable:
+            transition = "SOURCE_UNAVAILABLE_IN_BOTH_SNAPSHOTS"
+            action = "escalate_unresolved_source_access_to_owner"
+        elif before_state[repo] != after_state[repo]:
+            transition = "SOURCE_COVERAGE_CHANGED"
+            action = "inspect_incomplete_source_windows"
+        else:
+            transition = "SOURCE_READABLE_IN_BOTH_SNAPSHOTS"
+            action = "review_priority_changed_issue_cards"
         coverage.append({
             "repository": repo, "previous_state": before_state[repo],
             "current_state": after_state[repo],
             "comparable_visible_cards": comparable,
+            "source_transition": transition,
+            "human_source_action_code": action,
+            "action_executed": False,
             "resolution_status": "NOT_VERIFIABLE_FROM_SAMPLES",
         })
         if not comparable:
@@ -195,7 +215,16 @@ def compare_snapshots(previous, current):
         "issues_resolved_or_closed_verified": False,
         "ownership_claims_verified": False, "ci_or_review_verified": False,
         "actions_executed": False, "merge_or_deploy_authorized": False,
-        "counts": counts, "total_changes": len(changes),
+        "counts": counts,
+        "source_transition_counts": {
+            key: sum(c["source_transition"] == key for c in coverage)
+            for key in ("GITHUB_SOURCE_LOST",
+                        "GITHUB_SOURCE_RESTORED_NOT_BACKLOG_CLEARED",
+                        "SOURCE_UNAVAILABLE_IN_BOTH_SNAPSHOTS",
+                        "SOURCE_COVERAGE_CHANGED",
+                        "SOURCE_READABLE_IN_BOTH_SNAPSHOTS")
+        },
+        "total_changes": len(changes),
         "omitted_change_cards": max(0, len(changes) - MAX_DELTA_CARDS),
         "changes": changes[:MAX_DELTA_CARDS],
     }
@@ -216,7 +245,10 @@ def as_markdown(delta):
     for coverage in delta["repositories_compared"]:
         rows.append("- " + coverage["repository"] + ": " + coverage["previous_state"] +
                     " → " + coverage["current_state"] + " · comparison possible: " +
-                    str(coverage["comparable_visible_cards"]))
+                    str(coverage["comparable_visible_cards"]) +
+                    " · " + coverage["source_transition"] +
+                    " · human next: " + coverage["human_source_action_code"] +
+                    " (not executed)")
     rows += ["", "### Visible-card changes", ""]
     for change in delta["changes"]:
         rows.append(
@@ -246,7 +278,10 @@ def as_html(delta):
     for c in delta["repositories_compared"]:
         rows.append("<li>" + esc(c["repository"]) + ": " + esc(c["previous_state"]) +
                     " → " + esc(c["current_state"]) + " · comparable: " +
-                    esc(c["comparable_visible_cards"]) + "</li>")
+                    esc(c["comparable_visible_cards"]) + " · " +
+                    esc(c["source_transition"]) + " · human next: " +
+                    esc(c["human_source_action_code"]) +
+                    " (not executed)</li>")
     rows.append("</ul><ol>")
     for c in delta["changes"]:
         rows.append(
@@ -264,6 +299,13 @@ def append_csv(base, delta):
     """Append rows in the existing 24-field issue-desk CSV schema."""
     sink = io.StringIO(newline="")
     writer = csv.writer(sink, lineterminator="\n")
+    for coverage in delta["repositories_compared"]:
+        row = [""] * 24
+        row[0] = "delta_source_transition"
+        row[1] = coverage["repository"]
+        row[3] = coverage["source_transition"]
+        row[17] = coverage["human_source_action_code"] + " (NOT EXECUTED)"
+        writer.writerow(row)
     for c in delta["changes"]:
         row = [""] * 24
         row[0] = "delta_" + c["change"].lower()
