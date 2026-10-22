@@ -27,8 +27,8 @@ jobs:
     env:
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
-      ZSSH_PRODUCTION_ORIGIN: https://zssh.cheapgpt.shop
-      ZSSH_PRODUCTION_HOST: zssh.cheapgpt.shop
+      ZSSH_PRODUCTION_ORIGIN: https://zssh.zennay.nl
+      ZSSH_PRODUCTION_HOST: zssh.zennay.nl
       ZSSH_EXPECTED_IPV4: 198.244.191.182
       ZSSH_PUBLIC_GATEWAY_PORT: "8789"
     steps:
@@ -342,7 +342,7 @@ jobs:
           PY
           )"
 
-          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Installed Caddy, promoted transactional zSSH public TLS ingress, and proved the outbound reviewer target agent"             --commit "$ZSSH_SHA"             --ci-status success             --next-gate "Run GitHub-hosted zSSH external public-ingress preflight against https://zssh.cheapgpt.shop/mcp, then continue Auth0 and reviewer pairing/login gates"             --source "github-actions:zssh-public-ingress-bootstrap"             --evidence-json "$evidence_json"
+          python3 scripts/zcloud_runtime.py             --db /home/ubuntu/zennay-cloud/history.db             receipt             --project zssh             --phase "Public plugin · production submission hardening"             --action "Installed Caddy, promoted transactional zSSH public TLS ingress, and proved the outbound reviewer target agent"             --commit "$ZSSH_SHA"             --ci-status success             --next-gate "Run GitHub-hosted zSSH external public-ingress preflight against https://zssh.zennay.nl/mcp, then continue Auth0 and reviewer pairing/login gates"             --source "github-actions:zssh-public-ingress-bootstrap"             --evidence-json "$evidence_json"
 
           echo "$evidence_json" > "$RUNNER_TEMP/zssh-public-ingress-bootstrap.json"
           echo "ZSSH_PUBLIC_INGRESS_BOOTSTRAP_GREEN sha=$ZSSH_SHA"
