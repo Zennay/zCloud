@@ -399,13 +399,21 @@ def saved_attention(snap: dict) -> list[dict]:
     """Sort bounded saved project observations, never allocate or claim work."""
     result = []
     for project, data in snap["projects"].items():
-        queue = (data.get("operations") or {}).get("queue_observation")
+        operations = data.get("operations") or {}
+        queue = operations.get("queue_observation")
         expired = queue["expired_active_leases"] if queue is not None else None
         attempts = queue["high_claim_attempts"] if queue is not None else None
-        counts = data["priorities"]
+        # A truncated card view may omit P0 issues captured in the saved
+        # project-level source counts. Never sort only by rendered cards when
+        # the admitted source provides a larger bounded issue sample.
+        counts = operations.get("issue_counts_in_sample") or data["priorities"]
         result.append({
             "project": project,
             "sampled_p0": counts["P0"], "sampled_p1": counts["P1"],
+            "priority_counts_from": (
+                "saved_project_source_sample" if operations.get("issue_counts_in_sample")
+                else "rendered_issue_cards_only"
+            ),
             "sampled_expired_active_leases": expired,
             "sampled_high_claim_attempts": attempts,
             "saved_queue_present": queue is not None,
@@ -460,21 +468,23 @@ def historical_attention_html(snap: dict) -> str:
             str(item["sampled_p0"]) + " / " + str(item["sampled_p1"]) +
             "</td><td>" + ("onbekend" if expired is None else str(expired)) +
             "</td><td>" + ("onbekend" if churn is None else str(churn)) +
-            "</td></tr>"
+            "</td><td>" + escape(item["priority_counts_from"]) + "</td></tr>"
         )
     return (
         "<section class='delta'><h2>Historische herstelprioriteiten</h2>"
         "<p><strong>Geen live prioritering of opdracht.</strong> De meest recente "
         "bewaarde bordwaarneming " + escape(snap["stem"]) + " van " +
-        escape(snap["observed"].isoformat()) + " is gesorteerd op P0-kaarten, "
-        "waargenomen verlopen leases, P1-kaarten en hoge claimpogingen. "
+        escape(snap["observed"].isoformat()) + " is gesorteerd op "
+        "P0 uit opgeslagen projectsteekproeven (anders issuekaarten), "
+        "waargenomen verlopen leases, P1-steekproeven en hoge claimpogingen. "
         "Ontbrekende retrybron wordt nooit nul. Kijk actuele issues, "
         "leases, owners en CI na voordat je iets claimt of vrijgeeft.</p>"
         "<table><thead><tr><th>Project</th><th>Sample P0/P1</th>"
         "<th>Expired leases bij opname</th><th>Hoge claimpogingen</th>"
+        "<th>Telbasis</th>"
         "</tr></thead><tbody>" +
         ("".join(rows) if rows else
-         "<tr><td colspan='4'>Geen projecten in de opgeslagen steekproef</td></tr>") +
+         "<tr><td colspan='5'>Geen projecten in de opgeslagen steekproef</td></tr>") +
         "</tbody></table>" + historical_merge_attention(snap) + "</section>"
     )
 
