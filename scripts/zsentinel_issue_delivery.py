@@ -872,7 +872,7 @@ def render_html(board):
                         "</section>")
     owner_panel = (
         '<section aria-label="P0 eigenaarafhankelijke blokkades">'
-        '<h2>Menselijke infrastructuuractie · ' + str(len(owner_cards)) +
+        '<h2>Menselijke eigenaaractie · ' + str(len(owner_cards)) +
         '</h2><p>Runner, billing en andere menselijke bevoegdheden '
         'mogen onafhankelijke productissues niet verdringen.</p>'
         '<details><summary>Bekijk eigenaarblokkades (' +
