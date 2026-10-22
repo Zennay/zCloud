@@ -673,6 +673,8 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             if old_head != observed.get("observed_head_sha"):
                 raise ValueError("PR continuity head differs from owner receipt")
             card["pr_continuity_state"] = observed["state"]
+            card["pr_continuity_gate_families"] = list(
+                observed.get("observed_gate_families_changed", []))
     for item in incidents:
         if not isinstance(item, dict) or item.get("severity") not in ("P0", "P1", "P2"):
             raise ValueError("malformed fresh incident")
@@ -1096,8 +1098,10 @@ def _pr_continuity_label(card):
             "Sinds privé-bron: exacte HEAD gewijzigd, controleer CI/reviews opnieuw",
         "same_head_owner_step_changed_REVIEW_GATE":
             "Sinds privé-bron: eigenaaractie gewijzigd, huidige releasegate bekijken",
-        "same_observed_head_and_owner_step_NOT_ALL_CLEAR":
-            "Zelfde waargenomen HEAD/eigenaaractie, geen algemeen groen bewijs",
+        "same_head_observed_ci_or_review_changed_REVIEW_GATE":
+            "Sinds privé-bron: CI/status/reviewsteekproef veranderd, gate opnieuw inspecteren",
+        "same_observed_head_and_gate_sample_NOT_ALL_CLEAR":
+            "Zelfde HEAD, eigenaaractie en begrensde CI/reviewsteekproef, geen algemeen groen bewijs",
         "newly_in_bounded_sample_NOT_NEW_PR":
             "Nu voor het eerst in beperkt bronvenster, geen nieuwe PR bewezen",
         "partial_exact_source_NO_GATE_DELTA":
@@ -1107,7 +1111,19 @@ def _pr_continuity_label(card):
     }
     if state not in labels or card.get("kind") != "open_pr_owner_review":
         raise ValueError("untrusted exact PR continuity label")
-    return labels[state]
+    families = card.get("pr_continuity_gate_families", [])
+    names = {
+        "check_runs": "GitHub check-runs",
+        "classic_statuses": "klassieke statuscontexts",
+        "same_head_reviews": "same-head reviews",
+    }
+    if (type(families) is not list or len(families) > 3
+            or len(set(families)) != len(families)
+            or any(f not in names for f in families)):
+        raise ValueError("invalid observed PR source families")
+    return (labels[state] +
+            (" · veranderd: " + ", ".join(names[f] for f in families)
+             if families else ""))
 
 
 def _pr_gate_brief(card):
