@@ -1444,7 +1444,29 @@ def owner_html(report):
             ])
             for key, count in reviews["observed_review_states"].items():
                 rows.append("<li>" + esc(key) + ": " + str(count) + "</li>")
-            rows.append("</ul></details>")
+            rows.append("</ul><p>Review commit binding: " +
+                         esc(reviews.get("review_binding_sha") or "NOT REQUESTED") +
+                         " · exact HEAD: " +
+                         esc(reviews.get("exact_head_review_count", "UNKNOWN")) +
+                         " · other commits: " +
+                         esc(reviews.get("other_head_review_count", "UNKNOWN")) +
+                         " · unbound: " +
+                         esc(reviews.get("unbound_review_count", "UNKNOWN")) +
+                         " · coverage: " +
+                         esc(reviews.get("exact_head_review_coverage", "UNKNOWN")) +
+                         ".</p><p>Exact-HEAD states: " +
+                         esc(json.dumps(
+                             reviews.get("observed_review_states_exact_head"), sort_keys=True
+                         )) +
+                         " · other-head states: " +
+                         esc(json.dumps(
+                             reviews.get("observed_review_states_other_heads"), sort_keys=True
+                         )) +
+                         " · unbound states: " +
+                         esc(json.dumps(
+                             reviews.get("observed_review_states_unbound"), sort_keys=True
+                         )) +
+                         ". Independent review verdict remains UNKNOWN.</p></details>")
         if row.get("secondary_source_gaps"):
             rows.extend([
                 "<details><summary>Unavailable secondary GitHub sources</summary>",
@@ -1655,6 +1677,19 @@ def markdown(report):
                     " · " + (check["url"] or "URL UNKNOWN")
                 )
             lines.append("")
+        if "reviews" in row:
+            reviews = row["reviews"]
+            lines.extend([
+                "- Review binding HEAD: " + str(reviews.get("review_binding_sha") or "NOT REQUESTED"),
+                "- Reviews bound to exact HEAD: " + str(reviews.get("exact_head_review_count", "UNKNOWN")),
+                "- Exact-HEAD review states: " +
+                json.dumps(reviews.get("observed_review_states_exact_head", "UNKNOWN"), sort_keys=True),
+                "- Reviews on other commits: " + str(reviews.get("other_head_review_count", "UNKNOWN")),
+                "- Reviews without valid commit binding: " + str(reviews.get("unbound_review_count", "UNKNOWN")),
+                "- Exact-HEAD review coverage: " + str(reviews.get("exact_head_review_coverage", "UNKNOWN")),
+                "- Independent review verdict: UNKNOWN (sample counts are not approval authority)",
+                "",
+            ])
         for reason in row.get("secondary_source_gaps", []):
             lines.append("- Secondary source UNKNOWN: " + reason)
         if "reason" in row:
