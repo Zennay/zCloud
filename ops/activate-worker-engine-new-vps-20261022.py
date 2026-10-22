@@ -13,6 +13,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 import os
+import pwd
 from pathlib import Path
 import socket
 import sqlite3
@@ -150,8 +151,19 @@ def main() -> int:
         raise Refused("wait-seconds must be in [15,300]")
     if socket.gethostname() != HOST:
         raise Refused("wrong hostname; old VPS and cloned runners must remain untouched")
-    if os.geteuid() == 0 or os.getuid() != 1000:
-        raise Refused("run as the new VPS ubuntu user (UID 1000), not root")
+    try:
+        ubuntu_uid = pwd.getpwnam("ubuntu").pw_uid
+    except KeyError as exc:
+        raise Refused("new VPS ubuntu account is missing") from exc
+    if ubuntu_uid == 0 or os.geteuid() != ubuntu_uid or os.getuid() != ubuntu_uid:
+        raise Refused(
+            f"run as the new VPS ubuntu user (UID {ubuntu_uid}), "
+            f"not uid={os.getuid()} euid={os.geteuid()}; "
+            "from root, use: runuser -u ubuntu -- env "
+            "HOME=/home/ubuntu XDG_RUNTIME_DIR=/run/user/$(id -u ubuntu) "
+            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u ubuntu)/bus "
+            "python3 /home/ubuntu/zennay-cloud/ops/activate-worker-engine-new-vps-20261022.py"
+        )
     if ROOT.resolve() != Path(__file__).resolve().parent.parent:
         raise Refused("script is not running from canonical /home/ubuntu/zennay-cloud")
     plan = json.loads((ROOT / "worker-fleet.json").read_text(encoding="utf-8"))
@@ -176,8 +188,9 @@ def main() -> int:
     if not SESSION_SOCKET.exists() or not Path("/home/ubuntu/.Xauthority").exists():
         raise Refused("X11 :10 interactive session/Xauthority unavailable; do not launch headless")
     env = os.environ.copy()
-    env.update({"XDG_RUNTIME_DIR": "/run/user/1000",
-                "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"})
+    runtime_dir = f"/run/user/{ubuntu_uid}"
+    env.update({"XDG_RUNTIME_DIR": runtime_dir,
+                "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime_dir}/bus"})
     if system_state("chatgpt-firefox.service", user=True, env=env) != "loaded":
         raise Refused("chatgpt-firefox user service not installed")
     if system_state("zennay-cloud.service") != "loaded":
