@@ -111,7 +111,8 @@ def collect(repo, token=None):
                 type(label) is str and LABEL.fullmatch(label) for label in labels[:12])
             labels_sample = labels[:8] if valid_labels else []
             name = row.get("name")
-            if type(name) is not str or not 1 <= len(name) <= 160:
+            if (type(name) is not str or not 1 <= len(name) <= 160
+                    or any(ord(ch) < 32 or ord(ch) == 127 for ch in name)):
                 name = "GitHub job #" + str(row["id"])
             jobs.append({
                 "run_url": "https://github.com/" + repo + "/actions/runs/" + str(run_id),
@@ -193,7 +194,36 @@ def lines(receipt):
 
 
 def html(receipt):
-    content = lines(receipt)
-    return ("<section class='runner-queue'><h2>GitHub Actions runnerwachtrij</h2><ul>" +
-            "".join("<li>" + escape(line) + "</li>" for line in content) +
-            "</ul><p>Read-only, geen restart, retry, claim of mergevrijgave.</p></section>")
+    """Offline, script-free queue cards with canonical clickable GitHub job URLs."""
+    lines(receipt)  # Validate the non-authorizing receipt.
+    header = ("<section class='runner-queue'><h2>GitHub Actions runnerwachtrij · " +
+              escape(receipt["repository"]) + "</h2>")
+    if receipt.get("source_status") == "unavailable":
+        return header + "<p>GitHub Actions-bron ONBEKEND; geen oordeel over runnergezondheid.</p></section>"
+    rows = []
+    for job in receipt["sampled_jobs"][:64]:
+        age = job["job_age_seconds_observed"]
+        age_text = str(age // 60) + " minuten" if age is not None else "ONBEKEND"
+        rows.append(
+            "<li><a rel='noopener noreferrer' href='" +
+            escape(job["job_url"], quote=True) + "'>" +
+            escape(job["name"]) + "</a> · " +
+            escape(job["status_at_read"]) + " · " +
+            escape(job["assignment"]) +
+            " · leeftijd jobbron: " + age_text +
+            " · gevraagde labels: " +
+            escape(", ".join(job["labels_observed"]) or "ONBEKEND") +
+            (" (labels onvolledig)" if not job["labels_complete"] else "") +
+            "</li>")
+    partial = (any(not x["all_status_runs_sampled"] for x in receipt["run_windows"])
+               or any(not x["jobs_sample_complete"] for x in receipt["run_receipts"]))
+    return (
+        header + "<p>Niet toegewezen queued jobs in de begrensde bron: " +
+        str(receipt["unassigned_queued_jobs_observed"]) +
+        " · geen bewijs van runneruitval.</p><ol>" +
+        ("".join(rows) or "<li>Geen queued of lopende jobs gezien in deze bron.</li>") +
+        "</ol>" +
+        ("<p>ONVOLLEDIG: andere runs/jobs kunnen ontbreken.</p>" if partial else "") +
+        "<p>Eigenaaractie: verifieer GitHub runnerlabels, rechten en wachtrij; "
+        "gebruik uitsluitend geautoriseerde zSSH voor listenerinspectie en raak "
+        "actieve jobs niet aan. Geen restart, retry, claim of mergevrijgave.</p></section>")
