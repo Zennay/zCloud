@@ -349,7 +349,9 @@ function blockedQueueTaskClaimNotice(item){
     unknown:'The separate task-claim lease or project identity is malformed or unknown. Resume and close are disabled.',
     'source-unavailable':'The separate task-claim source could not be read. Claim-free status is unknown; resume and close are disabled.'
   };
-  return '<p class="blocked-queue-warning" role="alert">'+esc(messages[state]||messages.unknown)+'</p>';
+  const lease=typeof item?.task_claim_lease_until==='string'&&item.task_claim_lease_until
+    ?' Observed lease expiry: '+item.task_claim_lease_until.slice(0,80)+'.':'';
+  return '<p class="blocked-queue-warning" role="alert">'+esc((messages[state]||messages.unknown)+lease)+'</p>';
 }
 function blockedQueueSourceUrl(raw){
   // Queue evidence can contain user-supplied URLs. Only link exact GitHub
@@ -919,7 +921,8 @@ async function inspectBlockedQueue(queueId,button){
       +esc(result.found?('Queue: '+String(result.queue_status||'unknown')+'. '
           +'Resume candidate: '+(result.resume_candidate===true?'yes':'no')+'. '
           +'Terminal-close candidate: '+(result.close_candidate===true?'yes':'no')+'. '
-          +'Separate task claim: '+String(result.task_claim_state||'unknown')+'. '
+          +'Separate task claim: '+String(result.task_claim_state||'unknown')
+          +(result.task_claim_lease_until?' (lease_until '+String(result.task_claim_lease_until).slice(0,80)+')':'')+'. '
           +'Linked human Attention: '+String(result.linked_attention_status||'unknown')+'.')
         :'Queue item not found.')+'</p>'
       +(details?'<ul>'+details+'</ul>':'')
