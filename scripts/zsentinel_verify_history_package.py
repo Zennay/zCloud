@@ -85,9 +85,10 @@ def _json(data: bytes) -> dict:
     return document
 
 
-def inspect_history_package(path: Path) -> dict:
-    """Verify the saved internal JSON/CSV/manifest binding, not live authority."""
-    archive = private_archive_bytes(path)
+def inspect_history_bytes(archive: bytes) -> dict:
+    """Verify internal JSON/CSV/manifest binding of these exact bytes."""
+    if type(archive) is not bytes or not 1 <= len(archive) <= MAX_ARCHIVE:
+        raise ValueError("invalid archive bytes")
     with ZipFile(BytesIO(archive)) as package:
         info = package.infolist()
         if (len(info) != len(MEMBERS) or
@@ -222,13 +223,104 @@ def inspect_history_package(path: Path) -> dict:
     }
 
 
+def inspect_history_package(path: Path) -> dict:
+    """Verify one existing private history package without changing it."""
+    return inspect_history_bytes(private_archive_bytes(path))
+
+
+def extract_verified_history(archive: bytes, destination: Path,
+                             basename: str) -> list[str]:
+    """Install five reviewed, inert data files into an owned 0700 directory.
+
+    The caller MUST inspect these exact bytes first. Create-only destination
+    names are derived from the canonical package basename, not ZIP metadata.
+    Every file remains private, the original ZIP and source bundles untouched.
+    """
+    if not PACKAGE.fullmatch(basename + ".index.zip"):
+        raise ValueError("invalid private export basename")
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise ValueError("no-follow private extraction is unavailable")
+    # Inspect the same byte sequence we are about to publish. This is a
+    # read-model/content-boundary check, not a QA or production action.
+    inspect_history_bytes(archive)
+    outputs = (
+        ("history.html", basename + ".index.html"),
+        ("history.json", basename + ".index.json"),
+        ("history.csv", basename + ".index.csv"),
+        ("README.txt", basename + ".index.README.txt"),
+        ("manifest.json", basename + ".index.manifest.json"),
+    )
+    prior = destination.lstat()
+    if (not stat.S_ISDIR(prior.st_mode)
+            or prior.st_uid != os.geteuid()
+            or stat.S_IMODE(prior.st_mode) != 0o700):
+        raise ValueError("extraction requires an existing owned 0700 directory")
+    directory_fd = os.open(
+        destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    created = []
+    try:
+        current = os.fstat(directory_fd)
+        if ((prior.st_dev, prior.st_ino) != (current.st_dev, current.st_ino)
+                or current.st_uid != os.geteuid()
+                or stat.S_IMODE(current.st_mode) != 0o700):
+            raise ValueError("private extraction directory changed")
+        with ZipFile(BytesIO(archive)) as package:
+            # Named, validated and bounded member access. Never use
+            # ZipFile.extract or names/paths supplied by an archive entry.
+            values = [(filename, package.read(member))
+                      for member, filename in outputs]
+        for _, filename in values:
+            try:
+                os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            raise FileExistsError("create-only extracted history already exists")
+        for filename, data in values:
+            fd = os.open(
+                filename, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                0o600, dir_fd=directory_fd)
+            created.append((filename, os.fstat(fd).st_ino))
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+        os.fsync(directory_fd)
+    except BaseException:
+        # Only remove files we created and that retain the exact inode.
+        # Never delete a caller's pre-existing file or a swapped pathname.
+        for filename, inode in reversed(created):
+            try:
+                found = os.stat(
+                    filename, dir_fd=directory_fd, follow_symlinks=False)
+                if (stat.S_ISREG(found.st_mode) and found.st_ino == inode):
+                    os.unlink(filename, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        raise
+    finally:
+        os.close(directory_fd)
+    return [filename for filename, _ in values]
+
+
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path,
                         help="Existing privately stored .index.zip package")
+    parser.add_argument("--extract-to", type=Path,
+                        help="Optional existing owned 0700 folder for five "
+                             "create-only private companion files")
     args = parser.parse_args(argv)
     try:
-        result = inspect_history_package(args.source)
+        archive = private_archive_bytes(args.source)
+        result = inspect_history_bytes(archive)
+        if args.extract_to is not None:
+            stem = args.source.name[:-len(".index.zip")]
+            created = extract_verified_history(
+                archive, args.extract_to, stem)
+            result["private_extracted_files"] = created
+            result["private_extraction_only"] = True
     except (OSError, ValueError, KeyError, TypeError, UnicodeError,
             BadZipFile, OverflowError, csv.Error) as exc:
         print("History package inspection refused: " +
