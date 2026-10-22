@@ -17,7 +17,7 @@ import re
 import sys
 
 from zsentinel_product_delivery_board import (
-    ISSUE, PROJECT, URL, SCHEMAS, MAX_INPUT, unique, write_create_only, when,
+    ISSUE, PROJECT, URL, SCHEMAS, ISSUE_COVERAGE_NOTES, MAX_INPUT, unique, write_create_only, when,
 )
 
 MAX_CARDS = 60
@@ -181,6 +181,9 @@ def validated_view(source: dict) -> dict:
             "evidence_gaps": gaps,
             "recommended_next_step": next_step,
             "issue_coverage": card.get("project_issue_coverage", "unknown"),
+            "issue_coverage_note": ISSUE_COVERAGE_NOTES.get(
+                card.get("project_issue_coverage"),
+                "Issue coverage is UNKNOWN; backlog completeness cannot be inferred."),
             "claim_context": ("reported_observation_only" if
                               card.get("observed_claim_ids") else "not_verified"),
         })
@@ -245,6 +248,7 @@ def validated_view(source: dict) -> dict:
         project_operations.append({
             "project": pid,
             "issue_coverage": row["issue_coverage"],
+            "issue_coverage_note": ISSUE_COVERAGE_NOTES[row["issue_coverage"]],
             "issue_counts_in_sample": {k: counts[k] for k in
                                        ("P0", "P1", "P2", "Unspecified")},
             "queue_observation": (
@@ -492,13 +496,12 @@ def project_operations_html(view: dict) -> str:
     def rank(row):
         queue = row["queue_observation"] or {}
         counts = row["issue_counts_in_sample"]
-        # P0 product blockers always rank first. Expired leases and high
-        # claim cycles follow as human reconciliation leads, never as proof
-        # that a lease is released or a retry is authorized.
+        # Product issues rank P0 then P1 before non-urgent queue churn.
+        # Lease/claim observations remain advisory and never prove release.
         return (0 if counts["P0"] else
-                1 if queue.get("expired_active_leases", 0) else
-                2 if queue.get("high_claim_attempts", 0) else
-                3 if counts["P1"] else 4, row["project"])
+                1 if counts["P1"] else
+                2 if queue.get("expired_active_leases", 0) else
+                3 if queue.get("high_claim_attempts", 0) else 4, row["project"])
     for row in sorted(view["project_operations"], key=rank):
         counts = row["issue_counts_in_sample"]
         queue = row["queue_observation"]
@@ -518,9 +521,9 @@ def project_operations_html(view: dict) -> str:
                     queue_active, high_cycles, expired_leases),
                 "Action: {} (human-only; no automatic claim, retry, reclaim or merge).".format(
                     row["recommended_next_step"]),
-                "Status: HOLD · issue coverage={} · queue source UTC={} · "
+                "Status: HOLD · issue coverage={} — {} · queue source UTC={} · "
                 "current owner/lease, exact-head CI, review and release authority UNKNOWN.".format(
-                    row["issue_coverage"],
+                    row["issue_coverage"], row["issue_coverage_note"],
                     row["queue_source_observed_at_utc"] or "unavailable"),
             ))
             queue_handoff_html = (
@@ -534,14 +537,14 @@ def project_operations_html(view: dict) -> str:
             .format(queue["active_items"], queue["high_claim_attempts"],
                     queue["expired_active_leases"])
         )
-        if queue is not None and queue["expired_active_leases"]:
-            badge = "Review suspected expired lease with current owner"
-        elif counts["P0"]:
+        if counts["P0"]:
             badge = "Review observed P0 product blocker"
-        elif queue is not None and queue["high_claim_attempts"]:
-            badge = "Investigate repeated claim cycles (not failures)"
         elif counts["P1"]:
             badge = "Review observed P1 product work"
+        elif queue is not None and queue["expired_active_leases"]:
+            badge = "Review suspected expired lease with current owner"
+        elif queue is not None and queue["high_claim_attempts"]:
+            badge = "Investigate repeated claim cycles (not failures)"
         else:
             badge = "Verify current project source and claims"
         sections.append(
@@ -550,7 +553,8 @@ def project_operations_html(view: dict) -> str:
             '<strong>' + escape(badge) + '</strong>' +
             '<br>P0 ' + str(counts["P0"]) + ' / P1 ' + str(counts["P1"]) +
             ' (observed sample) · GitHub coverage: ' +
-            escape(row["issue_coverage"]) +
+            escape(row["issue_coverage"]) + ' — ' +
+            escape(row["issue_coverage_note"]) +
             '<br>' + escape(queue_text) +
             ' · original queue source UTC: ' +
             escape(row["queue_source_observed_at_utc"] or "unavailable") +
