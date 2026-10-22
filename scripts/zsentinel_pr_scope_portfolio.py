@@ -588,7 +588,7 @@ def summary_lines(view):
     ]
     reasons = view.get("source_coverage_reasons", [])
     if reasons:
-        result.append("Bronbeperkingen: " + ", ".join(reasons))
+        result.append("Bronbeperkingen: " + coverage_reason_text(reasons))
         result.append("Eigenaaractie: ontbrekende PR-/bestandsdekking inspecteren; "
                       "geen claim, merge of vrijgave uit dit overzicht afleiden.")
     for cluster in view["linked_pr_collision_clusters"]:
@@ -1651,6 +1651,8 @@ def as_private_csv(board):
         }
         emit("project_summary", project, repo, source_status, **summary,
              operator_notice=(
+                 "Complete open-PR sample only; claims, review and release rules UNKNOWN."
+                 if view["sample_complete"] else
                  "Incomplete source evidence: " +
                  coverage_reason_text(view.get("source_coverage_reasons", [])) +
                  "; claims, review and release rules UNKNOWN."))
