@@ -25,6 +25,27 @@ This runbook describes the **advisory source check** proposed in [PR #1460](http
 
 The scanner currently bounds open PRs to 1,000 and changed files to 300 per PR. A cap overflow is an **incomplete inventory**, never evidence of no collision. It does not enumerate un-PR'd branches (#870/#875/#1310), nor provide the complete reconciliation required by #1204 or authorization to manipulate production. Fork-origin PRs are conservatively refused rather than declared harmless.
 
+## Current-slice conflict guard for recent PR-less branches (#870)
+
+Before taking over or starting work on a branch that does not yet have an open PR, run the explicit current-slice mode against the current repository inventory:
+
+```bash
+export GITHUB_TOKEN='<read-only repository token>'
+python3 scripts/zcloud_deployops_prless_branch_inventory_20261021.py \
+  --current-branch 'your-current-branch' \
+  --recent-days 7
+```
+
+The branch must be a non-main, same-repository branch with no observed open PR. The collector binds every comparison to the exact observed main SHA, reads each candidate's immutable commit metadata, compares the current branch and recent candidates against that same main SHA, and rechecks the complete branch inventory, open-PR inventory and main ref after analysis.
+
+A candidate is a recent owner only when its exact committer timestamp is within the bounded window (7 days by default) and it has commits ahead of the sampled main. A diverged branch with commits ahead is still included conservatively. Older PR-less branches remain visible as historical evidence, not automatic owners. The overlap check catches exact paths, file-versus-directory ancestor collisions and both old/new paths for a rename.
+
+- Exit **0**: complete snapshot, no path overlap found in the current slice.
+- Exit **1**: one or more overlaps with a recent PR-less owner; stop and coordinate ownership.
+- Exit **2**: refused/incomplete evidence; this is **not** a clean result.
+
+The mode refuses if more than 200 PR-less branches would need commit-age inspection, if a comparison returns a truncated 300-file response, if commit timestamps or identities are invalid, or if branch/PR/main evidence changes during the snapshot. Output is compact and bounded; path and collision previews are capped, while the overlap count covers the full accepted path set. A clear result means only that this exact read-only snapshot had no detected path collision. The SHA-256 fingerprint remains explicitly unverified; this mode grants no merge, release or deployment authority and performs no mutation.
+
 ## Offline, read-only reproduction
 
 For a complete *trusted and independently collected* snapshot file (not an arbitrary PR description), run:
