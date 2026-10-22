@@ -1155,7 +1155,19 @@ def html_view(decision, registry=None):
                     combined[key] = combined.get(key, 0) + count
             if combined != window_totals:
                 raise ValueError("Notion lease portfolio and project totals disagree")
-        elif project_windows is not None:
+            running_clocks = notion.get("active_project_in_progress_claim_clock_rechecks")
+            verifying = notion.get("verifying_project_counts")
+            if (type(running_clocks) is not dict
+                    or set(running_clocks) != set(project_totals)
+                    or type(verifying) is not dict
+                    or any(type(n) is not int or n < 0
+                           or n > project_totals[project] - verifying.get(project, 0)
+                           or n > sum(value for key, value in project_windows[project].items()
+                                      if key != "time_window_present_not_owner_verified")
+                           for project, n in running_clocks.items())):
+                raise ValueError("Notion running/claimed clock observations inconsistent")
+        elif project_windows is not None or (
+                notion.get("active_project_in_progress_claim_clock_rechecks") is not None):
             raise ValueError("saved Notion snapshot cannot claim live project lease totals")
         rows = []
         for item in notion["items"]:
@@ -1272,16 +1284,20 @@ def html_view(decision, registry=None):
             ]
             ranked_projects = sorted(
                 project_windows.items(),
-                key=lambda row: (-sum(n for k, n in row[1].items()
-                                      if k != "time_window_present_not_owner_verified"),
-                                 row[0]))
+                key=lambda row: (
+                    -running_clocks[row[0]],
+                    -sum(n for k, n in row[1].items()
+                         if k != "time_window_present_not_owner_verified"),
+                    row[0]))
             project_rows = []
             for project, buckets in ranked_projects[:12]:
                 irregular = sum(n for k, n in buckets.items()
                                 if k != "time_window_present_not_owner_verified")
                 project_rows.append(
                     '<li>' + phrase(project, 100) + ': ' + str(irregular) +
-                    ' ontbrekende/verlopen/ongeldige klokken, ' +
+                    ' ontbrekende/verlopen/ongeldige klokken, waarvan ' +
+                    str(running_clocks[project]) +
+                    ' bij Claimed/Running-statusregels; ' +
                     str(buckets.get("time_window_present_not_owner_verified", 0)) +
                     ' tijdvensters alleen als metadata</li>')
             window_counts_html = (
