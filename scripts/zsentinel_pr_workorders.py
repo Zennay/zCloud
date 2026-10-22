@@ -471,6 +471,12 @@ def _coordination_groups(cards):
                 or type(card.get("peer_head_evidence_partial")) is not bool
                 or type(card.get("overlap_paths_hidden")) is not bool):
             raise ValueError("invalid PR coordination freshness flags")
+        coverage_reasons = card.get("source_coverage_reasons", [])
+        if (type(coverage_reasons) is not list or len(coverage_reasons) > 16
+                or any(type(reason) is not str or
+                       re.fullmatch(r"[a-z0-9_:-]{1,120}", reason) is None
+                       for reason in coverage_reasons)):
+            raise ValueError("invalid bounded source coverage reasons")
         peer_rows = card.get("peer_head_evidence")
         scope_rows = card.get("scope_path_conflicts")
         related_rows = card.get("related_prs")
@@ -1116,6 +1122,21 @@ def collect_workorders(board):
             url + "/checks" if item.get("blocker") in (
                 "failed_checks_or_legacy_context",
                 "checks_still_running", "check_source_not_terminal") else url)
+        coverage_reasons = projects[project].get("source_coverage_reasons", [])
+        if (type(coverage_reasons) is not list or len(coverage_reasons) > 16
+                or any(type(reason) is not str or
+                       re.fullmatch(r"[a-z0-9_:-]{1,120}", reason) is None
+                       for reason in coverage_reasons)):
+            raise ValueError("invalid project source coverage reasons")
+        coverage_reasons = list(dict.fromkeys(coverage_reasons))
+        if (projects[project].get("sample_complete") is not True or
+                projects[project].get("open_pr_snapshot_stable") is not True or
+                projects[project].get("source_truncated") is True) and not coverage_reasons:
+            coverage_reasons = ["open_pr_inventory_incomplete"]
+        source_warnings = list(notes)
+        if coverage_reasons:
+            source_warnings.append("PR-overlapbrondekking onvolledig: " +
+                                   ", ".join(coverage_reasons))
         cards.append({
             "attention_status": attention_status,
             "attention_label": ATTENTION_LABELS[attention_status],
@@ -1167,11 +1188,12 @@ def collect_workorders(board):
             "check_links_hidden": int(item.get("non_green_jobs_hidden", 0)),
             "overlap_paths": [_markdown(p) for p in paths],
             "overlap_paths_hidden": paths_cut,
+            "source_coverage_reasons": coverage_reasons,
             "scope_path_conflicts": scope_conflicts,
             "related_prs": related, "unverified_issue_hints": hints,
             "peer_head_evidence": peer_evidence,
             "peer_head_evidence_partial": peer_partial,
-            "source_warnings": notes,
+            "source_warnings": source_warnings,
             "owner_claim_verified": False, "required_checks_verified": False,
             "merge_authorized": False, "deploy_authorized": False,
         })
