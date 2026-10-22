@@ -48,6 +48,10 @@ GATE_STEPS_NL = {
 }
 MAX_PRS = 4
 NUMBER = re.compile(r"^[1-9][0-9]{0,8}$")
+# GitHub App actors have logins like dependabot[bot]. They may open PRs
+# and leave reviews; neither their casing nor their automation identity
+# is evidence of an independent human approval.
+GITHUB_ACTOR = re.compile(r"^[A-Za-z0-9-]{1,39}(?:\\[bot\\])?$")
 OK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 # Owner attention only; this is not a required CI gate or proof of runner failure.
 QUEUED_CHECK_ATTENTION_AFTER_SECONDS = 30 * 60
@@ -146,7 +150,7 @@ def _one(repo, number, token):
     author = first.get("user")
     if (type(base_repo) is not dict or base_repo.get("full_name") != repo
             or type(author) is not dict or type(author.get("login")) is not str
-            or re.fullmatch(r"[A-Za-z0-9-]{1,39}", author["login"]) is None):
+            or GITHUB_ACTOR.fullmatch(author["login"]) is None):
         raise ValueError("PR not based in canonical repository")
     author_identity = author["login"].casefold()
     checks = github_json(repo, "/commits/" + head + "/check-runs?per_page=100", token)
@@ -280,13 +284,13 @@ def _one(repo, number, token):
     if type(reviews) is not list or len(reviews) > 100:
         raise ValueError("bounded reviews source unavailable")
     most_recent = {}
+    automation_reviews_ignored = 0
     for row in reviews:
         if (type(row) is not dict or type(row.get("id")) is not int
                 or type(row.get("user")) is not dict):
             raise ValueError("invalid review receipt")
         reviewer = row["user"].get("login")
-        if (type(reviewer) is not str or
-                re.fullmatch(r"[A-Za-z0-9-]{1,39}", reviewer) is None):
+        if type(reviewer) is not str or GITHUB_ACTOR.fullmatch(reviewer) is None:
             raise ValueError("untrusted reviewer identity")
         # GitHub logins are case-insensitive. Never treat differently cased
         # aliases as distinct approvals, or an author's case variant as an
@@ -297,6 +301,12 @@ def _one(repo, number, token):
         if row.get("commit_id") != head:
             continue
         if reviewer_identity == author_identity:
+            continue
+        # A GitHub App/bot review can be useful activity context but is not
+        # the separate independent human review required by release policy.
+        # Count it explicitly rather than making the entire PR unreadable.
+        if reviewer_identity.endswith("[bot]") or row["user"].get("type") == "Bot":
+            automation_reviews_ignored += 1
             continue
         review_state = row.get("state")
         # COMMENTED is not a review decision. A later ordinary comment must
@@ -411,6 +421,8 @@ def _one(repo, number, token):
         "legacy_status_sample_complete_and_terminal": (
             not legacy_partial and legacy_states["pending"] == 0),
         "observed_independent_exact_head_approvals": approved,
+        "automation_review_events_excluded_from_independent_approval":
+            automation_reviews_ignored,
         "exact_head_review_evidence_sha256": review_fingerprint,
         "observed_exact_head_changes_requested": requested,
         "review_page_may_be_truncated": len(reviews) == 100,
@@ -526,6 +538,11 @@ def human_gate_summary(source: dict) -> str:
         lines.append(
             "Onafhankelijke exact-head approvals (waargenomen): " +
             str(item["observed_independent_exact_head_approvals"]))
+        if item.get("automation_review_events_excluded_from_independent_approval"):
+            lines.append(
+                "Bot-/automatiseringsreviews niet meegeteld als onafhankelijke " +
+                "goedkeuring: " +
+                str(item["automation_review_events_excluded_from_independent_approval"]))
         lines.append(
             "Openstaande reviewaanvragen: " +
             str(item["pending_individual_review_requests_observed"]) + " personen, " +
