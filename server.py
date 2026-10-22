@@ -4128,7 +4128,10 @@ def runner_worker_statuses(project_id, *, base=None, targets=None):
         base=runner_targets().get(project_id)
     if not base:
         return []
-    targets=targets if targets is not None else runner_worker_targets()
+    # Standalone callers must not implicitly reconcile runner_workers in a
+    # status read: the default target helper performs INSERT/UPDATE operations.
+    # Control and scheduler paths can explicitly request reconciliation.
+    targets=targets if targets is not None else runner_worker_targets(reconcile=False)
     # Aggregate status reads must not prune leases with DELETEs. Expired rows
     # are filtered in SQL and the scheduler/control paths retain cleanup ownership.
     claims=task_claims(project_id,prune_expired=False)
@@ -4904,7 +4907,11 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-live':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             target_cfg=runner_targets()
-            return self.reply({'chatgpt_runners':runner_statuses(target_cfg=target_cfg),'chatgpt_firefox':firefox_runner_status(),'time':now()})
+            return self.reply({'chatgpt_runners':runner_statuses(target_cfg=target_cfg),
+                               'chatgpt_firefox':firefox_runner_status(),'time':now(),
+                               'read_only_observation':True,
+                               'sqlite_reconciliation_performed':False,
+                               'expired_claims_pruned':False})
         if u.path=='/api/portfolio-queue':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
