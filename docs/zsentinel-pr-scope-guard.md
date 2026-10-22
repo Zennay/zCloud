@@ -1,5 +1,30 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · brongebonden botsingshistorie en onafhankelijke revieweridentiteit
+
+Twee productreparaties in dezelfde bestaande merge-eerst PR:
+
+- De historische **file-overlap** en **bestand/map-ancestor** vergelijkers
+  controleren nu per zijde de exacte `head_sha`, `base_sha` en
+  `base_ref` tegen de opgeslagen PR-inventaris. Een botsingskaart van een
+  andere HEAD of doelbranch wordt geweigerd; een stabiele PR-lijst alleen is
+  onvoldoende bewijs voor een botsing op die HEAD.
+- Onbeschikbare of niet-stabiele projectsnapshots hebben geen verifieerbare
+  botsingsparen. De vergelijker toont daarvoor ONBEKEND in plaats van oude
+  positieve signalen onder een nieuwe bronklok.
+- Bestandspaden met Unicode-controlekarakters, inclusief bidi-overschrijvingen,
+  worden geweigerd voordat zij in HTML of menselijke werkorders verschijnen.
+- De actuele PR-reviewwerkbak behandelt GitHub-logins hoofdletterongevoelig,
+  net als GitHub zelf. Een PR-auteur kan geen onafhankelijke goedkeuring
+  krijgen via een andere schrijfwijze van zijn login; hetzelfde account kan
+  niet dubbel tellen als twee onafhankelijke reviews.
+
+Deze broncontroles geven **nooit** toestemming om een workerclaim,
+PR-review, branchbescherming, verplichte exacte-HEAD CI of deploygate over
+te slaan. Bij een onvolledige bron moet de bevoegde eigenaar de actuele
+GitHub- en Notion-feiten opnieuw controleren. Er zijn geen QA-suites,
+workflow-reruns, VPS/queuewrites of automatische merges toegevoegd.
+
 ## 22 oktober · fail-closed canonical project registry
 
 `registry()` now treats the canonical project list as an all-or-nothing
