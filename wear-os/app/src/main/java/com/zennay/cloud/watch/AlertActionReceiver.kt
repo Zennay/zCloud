@@ -38,6 +38,15 @@ class AlertActionReceiver : BroadcastReceiver() {
             humanActionRequired = true,
             episodeId = episodeId
         )
+        // Bind the validated extras back to the opaque URI that created this
+        // PendingIntent. A stale/mismatched payload must never snooze another
+        // episode, even if a future caller accidentally reuses an action.
+        val actionUri = intent.data ?: return
+        if (actionUri.scheme != "zcloud-watch" ||
+            actionUri.host != "snooze" ||
+            actionUri.pathSegments != listOf(project, IncidentSnoozeStore.actionIdentity(alert))) {
+            return
+        }
         runCatching { IncidentSnoozeStore.snoozeForOneHour(context.applicationContext, alert) }
     }
 
