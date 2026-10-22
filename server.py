@@ -715,7 +715,7 @@ def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
 
 def _worker_recovery_hold_until():
     try:
-        with connect() as c:
+        with connect_readonly() as c:
             row=c.execute("SELECT value FROM runtime_settings WHERE key=?",(WORKER_OOM_RECOVERY_HOLD_KEY,)).fetchone()
         if not row or not row['value']:
             return None
@@ -841,7 +841,7 @@ def config_audit(limit=80,config_key=None,target=None):
     if where:
         query+=" WHERE "+" AND ".join(where)
     query+=" ORDER BY id DESC LIMIT ?";args.append(limit)
-    with connect() as c:
+    with connect_readonly() as c:
         rows=c.execute(query,args).fetchall()
     out=[]
     for row in rows:
@@ -857,7 +857,7 @@ def _feature_flag_row(name, connection=None):
     sql="SELECT name,enabled,expires_at,updated_at,actor FROM feature_flags WHERE name=?"
     if connection is not None:
         return connection.execute(sql,(name,)).fetchone()
-    with connect() as c:
+    with connect_readonly() as c:
         return c.execute(sql,(name,)).fetchone()
 
 def feature_flag_state(name, at=None):
@@ -2127,7 +2127,7 @@ def _autonomy_status_json(path):
 
 def _latest_autonomy_signal(project_id):
     try:
-        with connect() as c:
+        with connect_readonly() as c:
             placeholders=','.join('?' for _ in AUTONOMY_SIGNAL_EVENTS)
             row=c.execute(
                 f'SELECT ts,event,reason FROM runner_events WHERE project_id=? AND event IN ({placeholders}) ORDER BY id DESC LIMIT 1',
@@ -2218,7 +2218,7 @@ def autonomy_states():
     return {project_id:project_autonomy_state(project_id) for project_id in RUNNER_DEFAULTS}
 
 def _autonomy_runtime(project_id):
-    with connect() as c:
+    with connect_readonly() as c:
         row=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
     return dict(row) if row else None
 
@@ -4242,7 +4242,7 @@ def runner_statuses(target_cfg=None):
 
 def watch_last_run(pid):
     aliases={'haxlab':['haxlab'],'ftmo':['ftmo'],'cloud':['zennay cloud','zennay-cloud'],'supa':['supa']}.get(pid,[pid])
-    with connect() as c:
+    with connect_readonly() as c:
         row=None
         for alias in aliases:
             row=c.execute("SELECT ts,title,event FROM runner_events WHERE event IN ('generation-started','prompt-sent') AND lower(title) LIKE ? ORDER BY id DESC LIMIT 1",('%'+alias.lower()+'%',)).fetchone()
