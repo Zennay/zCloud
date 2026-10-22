@@ -28,7 +28,7 @@ SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 QUEUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 ACTIONS = frozenset({
     "retry_ci", "route_root_fix", "assign_independent_work", "park_blocker",
-    "resume_blocked", "escalate_human", "merge_pr", "deploy", "restart_runner",
+    "resume_blocked", "close_blocked", "escalate_human", "merge_pr", "deploy", "restart_runner",
 })
 ROOT_FIELDS = frozenset({
     "schema_version", "action", "project_id", "incident_id",
@@ -40,6 +40,8 @@ EVIDENCE_FIELDS = frozenset({
     "scope_disjoint", "dependency_kind", "dependency_scope",
     "dependency_unchanged", "dependency_cleared", "blocked_task_id",
     "blocked_task_preserved", "previous_blocker_preserved", "operator_attestation",
+    "blocked_source_guarded", "blocked_task_noneligible", "closure_reason",
+    "queue_lease_state", "task_claim_state",
     "escalation_reason", "permission_required", "irreversible_risk",
     "safe_routes_exhausted", "capacity", "exact_head",
     "required_ci", "independent_review", "branch_protection", "owner_authorized",
@@ -60,6 +62,8 @@ ENUMS = {
     "runner_state": {"healthy", "unavailable", "unknown"},
     "running_jobs": {"none", "active", "unknown"},
     "dependency_kind": {"external", "internal", "unknown"},
+    "queue_lease_state": {"clear", "bound", "unknown"},
+    "task_claim_state": {"none", "active", "unknown"},
     "dependency_scope": {"single_task", "project_wide", "unknown"},
     "escalation_reason": {"permission_required", "irreversible_risk", "safe_routes_exhausted", "unknown"},
 }
@@ -67,6 +71,7 @@ BOOL_FIELDS = {
     "source_verified", "backoff_elapsed", "independent_task_ready",
     "scope_disjoint", "dependency_unchanged", "dependency_cleared",
     "blocked_task_preserved", "previous_blocker_preserved", "operator_attestation",
+    "blocked_source_guarded", "blocked_task_noneligible",
     "permission_required", "irreversible_risk", "safe_routes_exhausted",
     "owner_authorized", "root_cause_confirmed", "release_approval",
     "runtime_owner_authorized", "human_approval",
@@ -275,6 +280,13 @@ def _validate(data):
         type(blocked_task_id) is not str or not QUEUE_ID.fullmatch(blocked_task_id)
     ):
         raise PolicyInputError("blocked_task_id must be a bounded canonical queue identifier")
+    reason = evidence.get("closure_reason")
+    if reason is not None and (
+        type(reason) is not str or not 12 <= len(reason) <= 1200
+        or reason != reason.strip()
+        or any(ord(char) < 0x20 or ord(char) == 0x7f for char in reason)
+    ):
+        raise PolicyInputError("closure_reason must contain 12–1200 printable characters")
     for field in ("attempts", "retry_budget", "unresolved_review_threads"):
         value = evidence.get(field)
         if value is not None and (
@@ -305,6 +317,12 @@ def recommended_next_step_code(action, blockers):
         return "wait_for_capacity_and_runtime_evidence"
     if "blocked_task_id_missing" in codes:
         return "identify_exact_blocked_task"
+    if "terminal_reason_missing" in codes:
+        return "obtain_concrete_terminal_reason"
+    if codes & {"source_guard_missing", "blocked_task_eligible"}:
+        return "refresh_exact_blocked_source"
+    if codes & {"queue_lease_not_clear", "task_claim_not_clear"}:
+        return "resolve_claim_with_owner"
     if codes & {"escalation_reason_missing", "permission_gate_unconfirmed",
                 "irreversible_risk_unconfirmed", "safe_routes_not_exhausted"}:
         return "confirm_escalation_basis"
@@ -336,6 +354,7 @@ def recommended_next_step_code(action, blockers):
         "assign_independent_work": "review_independent_task_admission",
         "park_blocker": "review_single_task_parking",
         "resume_blocked": "review_exact_task_resumption",
+        "close_blocked": "review_guarded_terminal_closure",
         "escalate_human": "escalate_to_named_owner",
         "merge_pr": "review_exact_head_merge_gates",
         "deploy": "review_release_gates",
@@ -363,7 +382,13 @@ def recommended_next_step(action, blockers, required_evidence):
                 "runner_unavailability_unproven"}:
         return "Wait for current capacity and runner/job evidence; do not launch or restart workers from this report."
     if "blocked_task_id_missing" in codes:
-        return "Identify the exact blocked queue item from current source evidence; do not resume an entire project lane."
+        return "Identify the exact blocked queue item from current source evidence; do not change an entire project lane."
+    if "terminal_reason_missing" in codes:
+        return "Explain why the exact task is permanently obsolete; an unresolved dependency alone is not a closure reason."
+    if codes & {"source_guard_missing", "blocked_task_eligible"}:
+        return "Refresh the complete blocked-task identity, source version and original evidence before terminal action."
+    if codes & {"queue_lease_not_clear", "task_claim_not_clear"}:
+        return "Have the existing owner reconcile queue leases and task claims; never retire an active or unknown claim."
     if codes & {"escalation_reason_missing", "permission_gate_unconfirmed",
                 "irreversible_risk_unconfirmed", "safe_routes_not_exhausted"}:
         return "Confirm the specific permission/risk reason and whether safe routes are exhausted before escalating."
@@ -397,6 +422,7 @@ def recommended_next_step(action, blockers, required_evidence):
         "assign_independent_work": "Have the owner recheck live claims, disjoint scope and capacity before admitting the independent task.",
         "park_blocker": "Have the owner park only the exact dependent task after confirming unrelated ready work; no queue mutation is performed here.",
         "resume_blocked": "Have the owner recheck the exact task and cleared dependency before explicitly resuming it.",
+        "close_blocked": "Have the authorized operator re-read the parked task, confirm no claims, and explicitly confirm the terminal decision twice.",
         "escalate_human": "Route the specific permission or risk decision to the named human owner; preserve all existing claims.",
         "merge_pr": "Have the authorized owner recheck exact-head CI, review threads and branch protection before a normal GitHub merge.",
         "deploy": "Have the runtime owner verify the exact merged commit, post-merge health and release approval before deployment.",
@@ -574,6 +600,60 @@ def evaluate(data, max_age_minutes, *, now=None):
                 "The operator must be authorized to resume this queue item.",
                 ("evidence.owner_authorized",))
 
+    elif action == "close_blocked":
+        # Advisory match for the existing runtime action='drop' guarded closure.
+        # Even READY_FOR_HUMAN_REVIEW never sends an HTTP request or queue write.
+        require(type(value("blocked_task_id")) is str
+                and bool(QUEUE_ID.fullmatch(value("blocked_task_id"))),
+                "blocked_task_id_missing",
+                "Terminal close requires one exact canonical blocked queue ID.",
+                ("evidence.blocked_task_id",))
+        require(value("dependency_scope") == "single_task",
+                "dependency_scope_too_broad",
+                "Only the exact parked task may be retired, not an entire project lane.",
+                ("evidence.dependency_scope",))
+        require(value("blocked_task_preserved") is True,
+                "blocked_task_not_preserved", "The parked task must still exist.",
+                ("evidence.blocked_task_preserved",))
+        require(value("blocked_task_noneligible") is True,
+                "blocked_task_eligible", "The blocked row must be eligible=0.",
+                ("evidence.blocked_task_noneligible",))
+        require(value("blocked_source_guarded") is True,
+                "source_guard_missing",
+                "Fresh full identity, status, version, blocker and evidence must match.",
+                ("evidence.blocked_source_guarded",))
+        require(value("previous_blocker_preserved") is True,
+                "previous_blocker_evidence_missing",
+                "Original blocker/evidence must be retained in the terminal receipt.",
+                ("evidence.previous_blocker_preserved",))
+        require(type(value("closure_reason")) is str
+                and len(value("closure_reason")) >= 12,
+                "terminal_reason_missing",
+                "Explain why the work is obsolete, not merely blocked.",
+                ("evidence.closure_reason",))
+        require(value("operator_attestation") is True,
+                "operator_attestation_missing",
+                "A deliberate second operator confirmation is required.",
+                ("evidence.operator_attestation",))
+        require(value("queue_lease_state") == "clear",
+                "queue_lease_not_clear",
+                "Worker slot, claim timestamp and lease must all be clear.",
+                ("evidence.queue_lease_state",))
+        require(value("task_claim_state") == "none",
+                "task_claim_not_clear",
+                "Separate task-claim source must explicitly show none.",
+                ("evidence.task_claim_state",))
+        require(value("active_claim") == "none",
+                "claim_not_clear",
+                "Never retire an actively owned or unknown work item.",
+                ("evidence.active_claim",))
+        require(data["owner"] is not None,
+                "owner_missing", "A named operator is required.", ("owner",))
+        require(value("owner_authorized") is True,
+                "owner_authorization_missing",
+                "Only the authorized operator may make the terminal decision.",
+                ("evidence.owner_authorized",))
+
     elif action == "escalate_human":
         reason = value("escalation_reason")
         require(reason in {"permission_required", "irreversible_risk", "safe_routes_exhausted"},
@@ -704,6 +784,7 @@ def evaluate(data, max_age_minutes, *, now=None):
             "deployment_executed": False,
             "runner_restarted": False,
             "queue_resumed": False,
+            "queue_closed": False,
         },
     }
 
@@ -711,7 +792,7 @@ def evaluate(data, max_age_minutes, *, now=None):
 # Human-review ordering only; never infer incident severity or live authority.
 WORKORDER_ORDER = {
     "merge_pr": 0, "restart_runner": 1, "resume_blocked": 2,
-    "route_root_fix": 3, "retry_ci": 4, "deploy": 5,
+    "close_blocked": 3, "route_root_fix": 4, "retry_ci": 4, "deploy": 5,
     "escalate_human": 6, "park_blocker": 7, "assign_independent_work": 8,
 }
 
