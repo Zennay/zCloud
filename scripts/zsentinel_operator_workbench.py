@@ -2288,12 +2288,21 @@ function acceptBaseline(data){
    });
   }
  }
+ const issueCoverageNotes=Object.freeze({
+  partial:'GitHub issue coverage is PARTIAL; issues outside the observed window remain unknown.',
+  degraded:'GitHub issue source is DEGRADED; prioritization may omit current issues.',
+  unavailable:'GitHub issue source is UNAVAILABLE; an empty issue list does not mean no issues exist.'
+ });
  const items=new Map();
  for(const c of data.cards){
   if(!c||Array.isArray(c)||typeof c.issue!=='string'||!issuePattern.test(c.issue)||
      items.has(c.issue)||typeof c.project!=='string'||
      !/^[a-z][a-z0-9_-]{0,63}$/.test(c.project)||
      !['P0','P1','P2','Unspecified'].includes(c.priority)||
+     !['partial','degraded','unavailable'].includes(c.issue_coverage)||
+     c.issue_coverage_note!==issueCoverageNotes[c.issue_coverage]||
+     !['reported_observation_only','not_verified'].includes(c.claim_context)||
+     !data.coverage||!data.coverage.projects||data.coverage.projects[c.project]!==c.issue_coverage||
      c.claim_authorized!==false||c.merge_authorized!==false||c.deploy_authorized!==false||
      !Array.isArray(c.open_pr_candidates)||c.open_pr_candidates.length>3||
      !Array.isArray(c.evidence_gaps)||c.evidence_gaps.length>15)
@@ -2316,6 +2325,8 @@ function acceptBaseline(data){
    .map(url=>[url,observedPrs.get(url)]));
   items.set(c.issue,{issue:c.issue,project:c.project,priority:c.priority,
    title:c.title,next:c.recommended_next_step,
+   issue_coverage:c.issue_coverage,issue_coverage_note:c.issue_coverage_note,
+   claim_context:c.claim_context,
    prs:new Set(c.open_pr_candidates),gaps:new Set(c.evidence_gaps),prGates});
  }
  const projectRows=data.project_operations===undefined?[]:data.project_operations;
@@ -2328,6 +2339,7 @@ function acceptBaseline(data){
      projectOperations.has(row.project)||row.action_authorized!==false||
      row.is_complete_inventory!==false||
      !['partial','degraded','unavailable'].includes(row.issue_coverage)||
+     row.issue_coverage_note!==issueCoverageNotes[row.issue_coverage]||
      typeof row.recommended_next_step!=='string'||!row.recommended_next_step.trim()||
      row.recommended_next_step.length>650)
    throw Error('invalid earlier project recovery card');
@@ -2364,6 +2376,7 @@ function acceptBaseline(data){
    throw Error('invalid earlier bounded claim-context observation');
   projectOperations.set(row.project,{
    project:row.project,issue_coverage:row.issue_coverage,
+   issue_coverage_note:row.issue_coverage_note,
    issue_counts_in_sample:{P0:counts.P0,P1:counts.P1,P2:counts.P2,Unspecified:counts.Unspecified},
    queue_observation:queueCopy,queue_source_observed_at_utc:queueAt,
    claim_context:claimIds&&claimIds.length?'reported_observation_only':'not_verified',
@@ -2747,7 +2760,7 @@ function currentBrief(){
    const totals=row.issue_counts_in_sample;
    const pressure=row.queue_observation;
    lines.push('### Project '+line(row.project,80),
-     'GitHub issue source coverage: '+line(row.issue_coverage,30)+' (bounded/incomplete)',
+     'GitHub issue source coverage: '+line(row.issue_coverage,30)+' — '+line(row.issue_coverage_note,300),
      'P0/P1/P2/unspecified sampled issues: '+totals.P0+'/'+totals.P1+'/'+
        totals.P2+'/'+totals.Unspecified,
      'Queue source: '+(pressure?
@@ -2936,7 +2949,7 @@ function drawDetail(){
  detail.append(elem('small',card.priority+' · '+card.project),
    elem('h2',card.title),elem('p',card.issue,'code'),
    link('Open original GitHub issue ↗',card.url),
-   elem('p','Owner status: '+card.claim_context+' · source coverage: '+card.issue_coverage,'meta'),
+   elem('p','Owner status: '+card.claim_context+' · source coverage: '+card.issue_coverage+' — '+card.issue_coverage_note,'meta'),
    elem('h3','Proposed next investigation'),elem('p',card.recommended_next_step));
  const prs=elem('div');prs.append(elem('h3','Existing PR references (not ownership proof)'));
  if(!card.open_pr_candidates.length)prs.append(elem('p','No candidate PR in this bounded snapshot.'));
@@ -3173,7 +3186,7 @@ function drawDetail(){
     el(root,'small','Original board SHA256: '+boardSha);
     const age=archivedPrFreshnessNow();
     el(root,'p','Saved PR source age at preview (local, untrusted clock): '+age.status+' · '+age.age);
-    el(root,'p','Original board source coverage: '+card.issue_coverage+
+    el(root,'p','Original board source coverage: '+card.issue_coverage+' — '+card.issue_coverage_note+
       ' · historic relationship: '+(match?'observed in bounded ZIP data':'UNKNOWN / not observed'));
     el(root,'h2','Historical PR sources');
     savedPrHistory.original_archive_sources.forEach(s=>{
@@ -3521,6 +3534,7 @@ function projectRecoveryPacket(project,includePrivate){
   source_board_sha256:boardSha,source_observed_at_utc:board.observed_at_utc,
   source_clocks_utc:board.project_source_observed_at_utc,
   project:row.project,issue_source_coverage:row.issue_coverage,
+  issue_source_coverage_note:row.issue_coverage_note,
   issue_sample_may_be_incomplete:true,
   issue_sample_size_for_this_project:issueRows.length,
   sampled_issue_counts:row.issue_counts_in_sample,
@@ -4134,6 +4148,7 @@ function issueHandoffSource(card){
  return {
   issue:card.issue,project:card.project,priority:card.priority,url:card.url,
   title:card.title,issue_coverage:card.issue_coverage,
+  issue_coverage_note:card.issue_coverage_note,
   project_coverage:board.coverage.projects[card.project]||'unavailable',
   inbox_source_observed_at_utc:board.project_source_observed_at_utc?.inbox||'unavailable',
   open_pr_candidates:card.open_pr_candidates,
@@ -4637,7 +4652,7 @@ function staticPortfolioWorklist(){
    const item=el(doc.body,'article','');
    el(item,'strong',card.priority+' · '+card.title+' · ');
    github(item,card.issue,card.url);
-   el(item,'small','Issue coverage: '+card.issue_coverage+
+   el(item,'small','Issue coverage: '+card.issue_coverage+' — '+card.issue_coverage_note+
      ' · original claim context: '+card.claim_context+' · NO current owner proof.');
    const archive=savedPrHistory.issues[card.issue];
    if(archive){
@@ -4924,7 +4939,7 @@ function projectRecoveryCsvSource(){
   'source_branches_fresh','source_branches_observed_at_utc',
   'source_prs_fresh','source_prs_observed_at_utc',
   'snapshot_inbox_truncated','snapshot_cards_truncated','snapshot_github_denial',
-  'sampled_issue_coverage','sampled_P0_issues','sampled_P1_issues',
+  'sampled_issue_coverage','sampled_issue_coverage_note','sampled_P0_issues','sampled_P1_issues',
   'sampled_P2_issues','sampled_unspecified_priority_issues',
   'queue_observation_available','sampled_queue_active_items',
   'sampled_high_claim_attempts','sampled_expired_active_leases',
@@ -4948,7 +4963,7 @@ function projectRecoveryCsvSource(){
    String(board.coverage.inbox_truncated),
    String(board.coverage.cards_truncated),
    String(board.coverage.github_denial),
-   row.issue_coverage,counts.P0,counts.P1,counts.P2,counts.Unspecified,q!==null,
+   row.issue_coverage,row.issue_coverage_note,counts.P0,counts.P1,counts.P2,counts.Unspecified,q!==null,
    q===null?'UNKNOWN':q.active_items,
    q===null?'UNKNOWN':q.high_claim_attempts,
    q===null?'UNKNOWN':q.expired_active_leases,
