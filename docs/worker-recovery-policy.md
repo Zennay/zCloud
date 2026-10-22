@@ -1,3 +1,14 @@
+## 22 October 2026 — no unbound check-run masquerading as exact-head CI
+
+The existing read-only `scripts/zsentinel_pr_live_read.py` source now
+requires each sampled GitHub check run's `head_sha` to equal the exact
+PR HEAD used to fetch it. An omitted `head_sha` is not accepted: URL
+scope alone does not independently identify the row. A missing or mismatched
+row results in a source gap and an explicit owner HOLD, **not** a green
+or pending check observation bound to this PR. Even matching rows remain
+only a bounded sample; effective required checks and final CI success
+must be independently established via protected-branch policy.
+
 ## 22 October 2026 — pin both sides of the merge compare and link the exact diff
 
 The existing `scripts/zsentinel_pr_merge_preflight.py` exact-SHA GitHub
