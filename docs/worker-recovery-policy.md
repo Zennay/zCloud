@@ -93,6 +93,12 @@ Edit incident.json using only evidence actually observed. Leave unavailable fiel
 
 The template command validates the project/incident identifiers and source URL. It does not assert that the source is current, that any check is green, or that an owner has approved an action. Regenerate or refresh the observation timestamp immediately before evaluation; the default freshness window is 60 minutes.
 
+A source observation timestamp more than two minutes in the future now produces
+`HOLD` with `source_future_dated` and the `refresh_source` next step. The
+two-minute tolerance is only for small clock skew; a future timestamp must not
+make old evidence appear freshly observed. Portfolio recovery-case imports apply
+the same future-clock boundary to the case, issue and queue source clocks.
+
 ### Incident-owner workorders and conflicting proposals
 
 An operator can now get a **three-line problem/action/status handoff** for the
