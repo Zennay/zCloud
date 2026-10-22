@@ -1425,7 +1425,12 @@ def main():
             print(json.dumps(payload, ensure_ascii=False))
         else:
             for project, claim in local_claims.items():
+                identity = claim.get("source_identity_sha256_private")
+                identity_prefix = identity[:12] if isinstance(identity, str) else "UNKNOWN"
                 print(f"LOCAL_CLAIMS {project} {claim['status']}; "
+                      f"observed_at={claim.get('observed_at_utc') or 'UNKNOWN'}; "
+                      f"db_identity={identity_prefix}; "
+                      f"identity_verified={claim.get('source_identity_verified') is True}; "
                       f"leases={claim['active_local_leases_observed']}; "
                       f"expired_leases={claim['expired_local_leases_observed']}; "
                       f"writers={claim['active_local_writers_observed']}; "
