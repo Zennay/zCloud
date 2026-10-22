@@ -733,6 +733,7 @@ def current_gate_lines(board, markdown=False):
             continue
         lines.append(
             "  Exact HEAD " + gate["head_sha_observed"][:12] +
+            " · doelbranch " + gate["base_ref_observed"] +
             " · Check Runs lopend " + str(gate["observed_checks_pending"]) +
             " / mislukt " + str(gate["observed_checks_not_successful"]) +
             " / totaal gezien " + str(gate["check_runs_total_observed"]) +
@@ -983,8 +984,9 @@ def attention_lines(board, markdown=False):
                          str(row["historical_gate_change"]) +
                          " (geen bewijs van volledige CI/merge)")
         if row["head_sha"]:
-            lines.append("  HEAD " + row["head_sha"][:12] + " · doelbasis " +
-                         row["base_sha"][:12])
+            lines.append("  HEAD " + row["head_sha"][:12] +
+                         " · doelbranch " + row["base_ref"] +
+                         " · doelbasis " + row["base_sha"][:12])
         for job in row["non_green_jobs"]:
             detail = ("[" + safe_markdown_label(job["name"]) + "](" +
                       job["url"] + ")" if markdown else
@@ -1025,6 +1027,7 @@ def attention_html(board):
                 "</a> · alleen overeenkomstige bestandspaden</li>"
                 for other in row["observed_file_overlap_prs"])
             meta = ("<p>HEAD <code>" + escape(row["head_sha"][:12]) +
+                    "</code> · doelbranch <code>" + escape(row["base_ref"]) +
                     "</code> · doelbasis <code>" + escape(row["base_sha"][:12]) +
                     "</code></p>" if row["head_sha"] else
                     "<p>HEAD/bron niet veilig bevestigd.</p>")
