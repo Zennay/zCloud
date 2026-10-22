@@ -89,7 +89,8 @@ def verified_source_coverage(selected, provenance, bundle):
                  len(ci_status) == 1 and ci_status[0] in (
                      "selected_one_source_bound_job",
                      "selected_one_source_bound_job_partial_window",
-                     "no_actionable_job_in_sampled_windows"))
+                     "no_actionable_job_in_sampled_windows",
+                     "approval_wait_workflow_no_job_selected"))
         # GitHub 401/403 can be repository-specific. An unrelated project's
         # denied issue window must not suppress this project's own complete
         # bounded issue/PR receipt. Global rate-limit handling is already
