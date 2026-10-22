@@ -346,7 +346,7 @@ function blockedQueueTaskClaimNotice(item){
   const messages={
     active:'A separate task claim has a live lease. Resume and close are disabled until its owner reconciles/releases it.',
     'expired-record':'A task-claim record remains after lease expiry. Expiry alone is not takeover permission; the owner must reconcile it.',
-    unknown:'The separate task-claim lease is malformed or unknown. Resume and close are disabled.',
+    unknown:'The separate task-claim lease or project identity is malformed or unknown. Resume and close are disabled.',
     'source-unavailable':'The separate task-claim source could not be read. Claim-free status is unknown; resume and close are disabled.'
   };
   return '<p class="blocked-queue-warning" role="alert">'+esc(messages[state]||messages.unknown)+'</p>';
