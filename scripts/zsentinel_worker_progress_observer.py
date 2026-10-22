@@ -798,7 +798,7 @@ def operator_text(source):
             f" · event_age_s={row['event_age_seconds']}"
             f" · event_clock={row.get('event_timestamp_status', 'UNKNOWN')}"
             f" · progress_age_s={row['progress_age_seconds']}"
-            f" · progress_clock={row.get('progress_timestamp_status', 'UNKNOWN')}
+            f" · progress_clock={row.get('progress_timestamp_status', 'UNKNOWN')}"
             f" · indexed_event_cursor={row.get('latest_indexed_event_id', 'ONBEKEND')}"
             f" · indexed_progress_event_cursor={row.get('latest_indexed_progress_event_id', 'ONBEKEND')}"
             f" · last_12_blocks_after_prompt={(row.get('timeline') or {}).get('recent_block_events_after_last_prompt_in_sample', 'ONBEKEND')}"
