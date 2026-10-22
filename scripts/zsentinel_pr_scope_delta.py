@@ -259,8 +259,29 @@ def compare(previous, current):
                           if old.get("source_status") != "unavailable" else None)
         new_seen_scope = (_scope_pairs(new, repo)
                           if new.get("source_status") != "unavailable" else None)
+        # PR inventory completeness does not imply all *path examples*
+        # were retained. Two 100-file PRs can exceed the per-pair display
+        # cap even when every open PR itself was sampled. Comparing capped
+        # path sets as complete would invent "resolved" file/map conflicts.
+        def full_scope_preview(view):
+            rows = view.get("shown_path_scope_collision_pairs")
+            observed = view.get("observed_path_scope_collision_pairs")
+            return (
+                type(rows) is list
+                and type(observed) is int and observed == len(rows)
+                and view.get("path_scope_collision_pairs_truncated") is False
+                and view.get("path_scope_examples_truncated") is False
+                and all(type(row) is dict
+                        and row.get("path_conflicts_truncated") is False
+                        and type(row.get("path_conflict_count_observed")) is int
+                        and row["path_conflict_count_observed"]
+                            == len(row.get("path_conflicts", []))
+                        for row in rows)
+            )
         scope_comparable = (both_complete and old_seen_scope is not None
-                            and new_seen_scope is not None)
+                            and new_seen_scope is not None
+                            and full_scope_preview(old)
+                            and full_scope_preview(new))
         old_scope_pairs = old_seen_scope if scope_comparable else set()
         new_scope_pairs = new_seen_scope if scope_comparable else set()
         old_clusters = set(_connected_pr_sets(old_pairs))
