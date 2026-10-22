@@ -1681,9 +1681,14 @@ def _blocked_queue_owner_note(report):
             or type(groups) is not int or not 0 <= groups <= 250
             or row["priority_groups_shown"] != min(8, groups)):
         raise ValueError("inconsistent current blocked-work overview")
+    if type(row.get("active_queue_inventory_incomplete", False)) is not bool:
+        raise ValueError("invalid active inventory coverage in blocked-work note")
     return (str(total) + " geblokkeerde items in begrensde read-only bron; " +
             str(row["priority_groups_shown"]) + "/" + str(groups) +
             " P0/P1-projectgroepen getoond. GEEN retry, claim of hervatting." +
+            (" De afzonderlijke ACTIEVE queuebron is onvolledig; actuele "
+             "claims/slots blijven ONBEKEND."
+             if row.get("active_queue_inventory_incomplete") is True else "") +
             (" Overige groepen ONBEKEND door beperkte bron/kaarten."
              if row["priority_groups_truncated"] else ""))
 
