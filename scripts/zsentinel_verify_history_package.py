@@ -483,8 +483,8 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
         "",
     ]
     for rank, item in enumerate(attention[:24], start=1):
-        project = item["project"]
-        raw = projects.get(project)
+        project_id = item["project"]
+        raw = projects.get(project_id)
         if type(raw) is not dict:
             raise ValueError("attention entry not bound to saved project")
         op = raw.get("saved_project_operations") or {}
@@ -492,7 +492,7 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
         if type(queue) is not dict:
             queue = None
         lines.extend([
-            "### " + str(rank) + ". " + safe(project),
+            "### " + str(rank) + ". " + safe(project_id),
             "",
             "- P0/P1 in opgeslagen steekproef: " +
                 safe(item["sampled_p0"]) + " / " + safe(item["sampled_p1"]),
@@ -558,10 +558,6 @@ def private_owner_brief(report: dict, *, stale_after_hours: int = 6,
     for changed in changed_projects:
         if project is not None and changed["project"] != project:
             continue
-        if changed["project"] not in projects and project is None:
-            # A project present only in the previous sample is historical,
-            # not a current confirmed issue or available worker claim.
-            pass
         lines.extend([
             "### " + safe(changed["project"]),
             "",
