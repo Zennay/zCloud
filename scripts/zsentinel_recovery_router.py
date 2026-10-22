@@ -833,6 +833,8 @@ def _blocked_queue_summary(source, source_coverage):
         "source_coverage": source_coverage, "observed_at": None,
         "total_items_observed": None, "project_groups": [],
         "sample_truncated": True, "invalid_group_rows": None,
+        "work_items": [], "work_items_coverage": "not_observed",
+        "work_items_truncated": True, "invalid_work_rows": None,
         "claim_ownership_verified": False, "queue_write_authorized": False,
         "automatic_retry_authorized": False,
     }
@@ -887,6 +889,68 @@ def _blocked_queue_summary(source, source_coverage):
             raise ValueError("blocked-queue complete coverage contradicts aggregate")
     elif not raw["sample_truncated"] and raw["invalid_group_rows"] == 0:
         raise ValueError("partial blocked-queue source has no coverage reason")
+    # Optional in saved older queue snapshots. Never confuse the lack of an
+    # individual P0/P1 task list with a genuine empty blocked queue.
+    samples = raw.get("work_items")
+    work_coverage = raw.get("work_items_coverage", "not_observed")
+    if samples is None:
+        samples = []
+    truncated = raw.get("work_items_truncated", True)
+    invalid_work = raw.get("invalid_work_rows")
+    if (work_coverage not in ("not_observed", "complete", "partial")
+            or type(samples) is not list or len(samples) > 24
+            or type(truncated) is not bool
+            or (invalid_work is not None and (
+                type(invalid_work) is not int or not 0 <= invalid_work <= 24))):
+        raise ValueError("untrusted blocked individual work sample")
+    if work_coverage == "not_observed":
+        if samples or truncated is not True or invalid_work is not None:
+            raise ValueError("missing blocked item evidence cannot imply empty list")
+    else:
+        if invalid_work is None:
+            raise ValueError("blocked item source lacks invalid-row count")
+        if ((work_coverage == "complete" and
+             (coverage != "complete" or truncated or invalid_work != 0
+              or len(samples) != raw["total_items_observed"]))
+                or (work_coverage == "partial" and
+                    coverage == "complete" and not truncated and invalid_work == 0
+                    and len(samples) == raw["total_items_observed"])):
+            raise ValueError("individual blocked work completeness contradicts source")
+    safe_work = []
+    seen_work = set()
+    for row in samples:
+        if type(row) is not dict:
+            raise ValueError("invalid blocked work item")
+        ref, pid, priority = (row.get("queue_ref"), row.get("project_id"),
+                              row.get("priority"))
+        title, attempts = row.get("title"), row.get("claim_attempts")
+        if (type(ref) is not str or re.fullmatch(r"[0-9a-f]{16}", ref) is None
+                or ref in seen_work or type(pid) is not str
+                or SLUG.fullmatch(pid) is None or priority not in PRIORITY
+                or type(title) is not str or len(title) > 180
+                or any(ord(ch) < 32 for ch in title)
+                or type(attempts) is not int or not 0 <= attempts <= 10**9
+                or type(row.get("eligible_observed")) is not bool
+                or type(row.get("claim_fields_present_observed")) is not bool
+                or row.get("current_owner_verified") is not False
+                or row.get("resume_authorized") is not False
+                or row.get("automatic_retry_authorized") is not False):
+            raise ValueError("untrusted blocked task identity or authority")
+        seen_work.add(ref)
+        safe_work.append({
+            "queue_ref": ref, "project_id": pid, "priority": priority,
+            "title": title, "claim_attempts": attempts,
+            "eligible_observed": row["eligible_observed"],
+            "claim_fields_present_observed": row["claim_fields_present_observed"],
+            "current_owner_verified": False, "resume_authorized": False,
+            "automatic_retry_authorized": False,
+            "human_next_step": (
+                "Bevoegde eigenaar moet claimvelden verifiëren; NIET hervatten of sluiten."
+                if row["claim_fields_present_observed"] else
+                "Controleer actuele eigenaar, blokkade en queuebron voordat een bevoegde operator handelt."),
+        })
+    if len(safe_work) > raw["total_items_observed"]:
+        raise ValueError("blocked item sample exceeds aggregate count")
     effective = "stale" if source_coverage == "stale" else coverage
     return {
         "coverage": effective, "aggregate_coverage": coverage,
@@ -894,6 +958,11 @@ def _blocked_queue_summary(source, source_coverage):
         "observed_at": raw["observed_at_utc"],
         "total_items_observed": raw["total_items_observed"],
         "project_groups": safe_groups if source_coverage != "stale" else [],
+        "work_items": safe_work if source_coverage != "stale" else [],
+        "work_items_coverage": (
+            "stale" if source_coverage == "stale" else work_coverage),
+        "work_items_truncated": truncated or source_coverage == "stale",
+        "invalid_work_rows": invalid_work,
         "sample_truncated": raw["sample_truncated"] or source_coverage == "stale",
         "invalid_group_rows": raw["invalid_group_rows"],
         "claim_ownership_verified": False, "queue_write_authorized": False,
@@ -912,6 +981,8 @@ def queue_pressure_summary(source, now):
                     "source_coverage": "not_supplied", "observed_at": None,
                     "total_items_observed": None, "project_groups": [],
                     "sample_truncated": True, "invalid_group_rows": None,
+                    "work_items": [], "work_items_coverage": "not_observed",
+                    "work_items_truncated": True, "invalid_work_rows": None,
                     "claim_ownership_verified": False, "queue_write_authorized": False,
                     "automatic_retry_authorized": False,
                 }}
