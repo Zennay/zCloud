@@ -244,7 +244,12 @@ def _utc(value):
         return None
 
 
-def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases, missing_local_claim, active_profile_mismatch, local_config_mismatch, local_config_unverified, host_admission):
+def operator_admission(
+    lane, source_complete, cross_lane_complete, collision_count,
+    expired_local_leases, missing_local_claim, active_profile_mismatch,
+    local_config_mismatch, local_config_unverified, host_admission,
+    host_pressure=None,
+):
     """Map a local lane observation to human-only admission guidance.
 
     This deliberately never claims a task and is not an admission token.
@@ -256,6 +261,25 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
     deferred_ineligible = max(0, int(lane.get("deferred_ineligible_packages") or 0))
     deferred_assigned = max(0, int(lane.get("deferred_assigned_packages") or 0))
     blocked = lane.get("blocked_by") or []
+    source_coverage = (
+        host_pressure.get("source_coverage")
+        if isinstance(host_pressure, dict) else None
+    )
+    source_labels = {
+        "meminfo": "RAM/swap", "loadavg": "load/CPU",
+        "root_disk": "root-schijf", "psi": "PSI",
+    }
+    incomplete_sources = []
+    if isinstance(source_coverage, dict):
+        for key in ("meminfo", "loadavg", "root_disk", "psi"):
+            if source_coverage.get(key) in ("UNKNOWN", "PARTIAL"):
+                incomplete_sources.append(source_labels[key] + "=" + source_coverage[key])
+    source_note = (
+        " Ontbrekende/partiële bronnen: " + ", ".join(incomplete_sources) + "."
+        if incomplete_sources else
+        " De brondekking is niet volledig bevestigd."
+        if host_admission == "HOST_SOURCE_UNVERIFIED" else ""
+    )
     if state in ACTIVE:
         return {
             "code": "ACTIVE_OWNER_PROTECTED",
@@ -344,13 +368,21 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
         return {
             "code": "HOLD_HOST_PRESSURE",
             "label": "Nieuwe worker uitgesteld door gemeten hostdruk",
-            "next_step": "Behoud lopende workers; laat de bevoegde host-/runner-eigenaar RAM, swap, PSI en schijfruimte beoordelen voordat een nieuwe schrijftaak start.",
+            "next_step": (
+                "Behoud lopende workers; laat de bevoegde host-/runner-eigenaar "
+                "RAM, swap, PSI en schijfruimte beoordelen voordat een nieuwe "
+                "schrijftaak start." + source_note
+            ),
         }
     if state == "queued" and host_admission == "HOST_SOURCE_UNVERIFIED":
         return {
             "code": "HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED",
             "label": "Hostdrukmeting ontbreekt of is niet volledig betrouwbaar",
-            "next_step": "Laat de hosteigenaar betrouwbare host-/cgroup-bronnen bevestigen; start geen extra worker op basis van ontbrekende telemetrie.",
+            "next_step": (
+                "Laat de hosteigenaar betrouwbare host-/cgroup-bronnen bevestigen; "
+                "start geen extra worker op basis van ontbrekende telemetrie."
+                + source_note
+            ),
         }
     if state == "queued":
         return {
@@ -675,7 +707,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
             lane, source_complete, cross_lane_coverage,
             collision_counts[lane["lane_id"]], expired, missing_local_claim,
             active_profile_mismatch, local_config_mismatch,
-            local_config_unverified, host_admission,
+            local_config_unverified, host_admission, host_pressure,
         )
         visible.append({
             "id": lane["lane_id"],
