@@ -12,6 +12,10 @@ portfolio CSV/JSON/ZIP, `--state` en `--window-state`. De recovery-refresh CLI b
 ook het originele bundlebestand en zijn opgeslagen PR-bron. Alle
 create-only uitvoerbestanden worden vóór de eerste observatie op bestaande
 bestanden gecontroleerd, inclusief achtergebleven en gebroken symlinks.
+De doelmappen worden bovendien alleen via metadata beoordeeld op werkelijk
+maptype, huidige gebruiker en het ontbreken van groep-/wereldschrijfrechten.
+De uitvoerende schrijver verifieert de map-inode opnieuw; een preflight is
+geen tijdslot-, eigendoms- of filesystemracegarantie.
 Bestaande `--state`- en `--window-state`-ledgers mogen wél in hun
 eigen beheerpad blijven staan, nooit als alias van een ander rapport.
 
