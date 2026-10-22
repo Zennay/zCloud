@@ -1,5 +1,42 @@
 # zSentinel · Private Product Delivery Workbench
 
+## 22 oktober · Projectgeschiedenis als CSV en volledig privé ZIP-pakket
+
+De bestaande [private bundle index](../scripts/zsentinel_private_bundle_index.py)
+kan nu ook **CSV** en een **ZIP met HTML, JSON, CSV en SHA-256-manifest**
+maken van dezelfde 2–24 eerder aangemaakte, geverifieerde privébundels.
+Een operator kan veranderingen in P0/P1-steekproeven, PR-kandidaten,
+waargenomen queue-druk, leaseproblemen, claimcontext en aanbevelingen
+in een spreadsheet volgen, zonder handmatig snapshots te vergelijken.
+
+```bash
+python3 scripts/zsentinel_private_bundle_index.py \
+  --directory "$HOME/zsentinel-private" \
+  --latest 8 --name recovery-history-table --format csv
+
+python3 scripts/zsentinel_private_bundle_index.py \
+  --directory "$HOME/zsentinel-private" \
+  --latest 8 --name recovery-history-handoff --format zip
+```
+
+De CSV gebruikt UTF-8 BOM, puntkomma's voor Nederlandstalige
+spreadsheetprogramma's en formuleveilige velden. De regelsoorten
+`snapshot` en `sample_change` onderscheiden bewaarde bronfeiten van
+verschillen tussen *steekproeven*. Ontbrekende queuebronnen blijven leeg
+(onbekend) en worden niet als nul geteld. Historische verschillen bewijzen
+geen issue-closure, PR-merge of vrijgekomen workerclaim. De ZIP bevat
+`history.html`, `history.json`, `history.csv`, `README.txt` en
+`manifest.json` met per bestandslid SHA-256 plus de originele
+board-SHA-256's. Links vanuit HTML naar originele privébundels werken
+alleen als die originele bestanden naast de uitgepakte HTML blijven staan;
+de ZIP kopieert die originele bundels niet.
+
+De bestaande oorspronkelijke bundels worden volledig gecontroleerd vóór
+de export. Output wordt alleen create-only opgeslagen in de bestaande
+eigen 0700-map; de ZIP krijgt mode 0600. Geen live GitHub/Notion-query,
+geen actieve queue- of leasewijziging, CI-uitvoering, claim, review, merge,
+deploy of vrijgavebevoegdheid is onderdeel van deze export.
+
 ## 22 oktober · malformed enum values fail closed
 
 Source admission for issue cards, saved archive priority fields, historical
