@@ -117,6 +117,8 @@
 .claim-churn-item-head strong{font-size:13px;color:#f5e8d2}
 .claim-churn-count{font-size:11px;border-radius:999px;background:#46321a;border:1px solid #896238;color:#ffe0b4;padding:3px 8px;white-space:nowrap;font-weight:700}
 .claim-churn-item p{font-size:12px;color:#d5c6af;margin:8px 0 3px;line-height:1.5}
+.claim-churn-lease{margin:7px 0;border:1px solid #57614d;border-radius:6px;background:#22291f;color:#cce3bf;padding:5px 8px;line-height:1.5;font-size:11px;font-weight:600}
+.claim-churn-lease.is-expired{border-color:#bf8645;background:#382817;color:#ffe0b4}
 .claim-churn-item small{display:block;color:#a99a86;font-size:11px;line-height:1.5}
 .claim-churn-source{margin-top:8px}
 .claim-churn-foot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-top:12px;color:#b3a692;font-size:11px;line-height:1.5}
