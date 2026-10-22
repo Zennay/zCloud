@@ -1,5 +1,49 @@
 # zSentinel — live PR-bestandsscope bij projectherstel
 
+## 22 oktober · één direct bruikbare privé-HTML-werkbak voor actuele PR-gates
+
+De bestaande GitHub exact-HEAD bronobserver in
+`scripts/zsentinel_pr_gate_now.py` levert naast machineleesbare JSON en
+Nederlandse tekst nu ook een **responsief offline HTML eigenaarsscherm**:
+
+```bash
+python3 scripts/zsentinel_pr_gate_now.py \
+  --pr 'Zennay/zCloud#1567' \
+  --format html \
+  --output /eigen/prive-map/zsentinel-pr-gates.html
+```
+
+- `--output` maakt uitsluitend een **nieuw** privébestand met `0600`
+  via de bestaande create-only writer; nooit een stilzwijgende overschrijving.
+  Zonder `--output` verschijnt dezelfde HTML op stdout. Het scherm laadt
+  geen externe styles, scripts of fonts en heeft een restrictieve CSP.
+- Per PR: actuele herlezen HEAD en doelbranch, expliciete mergeability-status,
+  lopende/falende checks, historische statuscontexten, onafhankelijke
+  exact-HEAD reviews, de concrete eerstvolgende bevoegde eigenaaractie en
+  maximaal twaalf directe GitHub-checklinks. Een ontbrekende/gewijzigde
+  bron maakt een waarschuwing, nooit een positieve releaseclaim.
+- GitHub-**queued** checks langer dan 30 minuten en
+  **in_progress** checks langer dan 60 minuten worden als verschillende
+  triagesignalen getoond. Ontbrekende of toekomstige tijdstippen worden
+  als ONBEKEND onderscheiden. Langdurig betekent nadrukkelijk niet
+  automatisch een vastgelopen runner of herdispatch-toestemming.
+  De begrensde checklijst toont deze signalen voor gewone pending items.
+- Wanneer checkbron en mergeability geldig zijn, maar een onafhankelijke
+  review nog **niet is aangevraagd**, stelt de eigenaarwerkbak voor om die
+  *parallel* met bestaande CI aan te vragen. Ontbrekende checkbron,
+  mergeconflicten, afwijzingen en foutieve CI blijven hogere prioriteit.
+  Het programma dient zelf geen reviews in.
+- GitHub-automatiseringsreviews, inclusief `[bot]`-gebruikers, worden
+  als activiteit verwerkt maar nooit als onafhankelijke menselijke
+  goedkeuring gerekend. Zelfreviews of hoofdlettervarianten evenmin.
+
+Dit is één read-only observatiewerkstroom: geen nieuwe API-rechten,
+autoclaim, GitHub-write, workflowdispatch, QA-suite, stop/restart,
+automatische merge of deploy. GitHub-hosted pending CI, protected main,
+actuele Notion-claim, bronouderdom, onafhankelijke review en werkelijke
+releasebevoegdheid blijven apart te controleren. Een HTML-bestand is
+**geen** live VPS- of `main`-oplevering.
+
 ## 22 oktober · brongebonden botsingshistorie en onafhankelijke revieweridentiteit
 
 Twee productreparaties in dezelfde bestaande merge-eerst PR:
