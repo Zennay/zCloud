@@ -88,6 +88,23 @@ def utc_seconds(value):
     return unix
 
 
+def _valid_base_ref(value):
+    if value is None:
+        return True
+    return bool(
+        type(value) is str and 1 <= len(value) <= 255
+        and value == value.strip() and not value.startswith("/")
+        and not value.endswith("/") and "//" not in value and ".." not in value
+        and "@{" not in value
+        and not any(not char.isprintable() or char.isspace()
+                    or char in ("~", "^", ":", "?", "*", "[", "\\")
+                    for char in value)
+        and not any(not part or part.startswith(".") or part.endswith(".")
+                    or part.lower().endswith(".lock")
+                    for part in value.split("/"))
+    )
+
+
 def inspect_source(data, repository):
     if (data.get("schema") != SOURCE or data.get("repository") != repository
             or data.get("source") != "bounded_double_read_current_open_github_prs_and_files"
@@ -130,10 +147,12 @@ def inspect_source(data, repository):
         number, url = pr.get("number"), pr.get("url")
         files = pr.get("file_paths_observed")
         head, base = pr.get("head_sha"), pr.get("base_sha")
+        base_ref = pr.get("base_ref")
         if (type(number) is not int or not 0 < number < 100000000
                 or url != "https://github.com/" + repository + "/pull/" + str(number)
                 or type(head) is not str or SHA.fullmatch(head) is None
                 or type(base) is not str or SHA.fullmatch(base) is None
+                or not _valid_base_ref(base_ref)
                 or type(files) is not list or len(files) > MAX_FILES_PER_PR
                 or type(pr.get("file_list_complete")) is not bool
                 or type(pr.get("file_count_observed")) is not int
@@ -149,7 +168,7 @@ def inspect_source(data, repository):
             raise ValueError("duplicate file evidence within PR")
         found[number] = {
             "number": number, "url": url,
-            "head_sha": head, "base_sha": base, "files": names,
+            "head_sha": head, "base_sha": base, "base_ref": base_ref, "files": names,
         }
         if pr["file_list_complete"] is False:
             incomplete.append(number)
@@ -175,6 +194,7 @@ def inspect_source(data, repository):
         pr = found[int(tail)]
         origin = link.get("mentioned_in")
         if (pr["url"] != url or link.get("pr_head_sha") != pr["head_sha"]
+                or link.get("pr_base_ref") != pr["base_ref"]
                 or link.get("owner_verified") is not False
                 or link.get("fix_verified") is not False
                 or type(origin) is not list or not origin
@@ -184,7 +204,7 @@ def inspect_source(data, repository):
             raise ValueError("inconsistent issue-link provenance")
         seen_refs.add((number, url))
         refs.append({"number": number, "url": url, "head_sha": pr["head_sha"],
-                     "mentioned_in": origin})
+                     "base_ref": pr["base_ref"], "mentioned_in": origin})
     return observed, pages, found, incomplete, refs
 
 
@@ -275,6 +295,7 @@ def connected_cross_window_groups(all_prs, owners):
                 "prs": [{
                     "number": n, "url": all_prs[n]["url"],
                     "head_sha": all_prs[n]["head_sha"],
+                    "base_ref": all_prs[n]["base_ref"],
                     "source_window": all_prs[n]["snapshot"],
                 } for n in touching],
             })
@@ -291,6 +312,7 @@ def connected_cross_window_groups(all_prs, owners):
                 {"number": number, "url": all_prs[number]["url"],
                  "head_sha": all_prs[number]["head_sha"],
                  "base_sha": all_prs[number]["base_sha"],
+                 "base_ref": all_prs[number]["base_ref"],
                  "source_window": all_prs[number]["snapshot"],
                  "direct_filename_neighbors_observed": degree[number]}
                 for number in ranked
@@ -392,6 +414,7 @@ def combine_sources(sources, repository):
         rows.append({
             "left_url": a["url"], "right_url": b["url"],
             "left_head_sha": a["head_sha"], "right_head_sha": b["head_sha"],
+            "left_base_ref": a["base_ref"], "right_base_ref": b["base_ref"],
             "left_snapshot": a["snapshot"], "right_snapshot": b["snapshot"],
             "shared_files_observed": overlap_count,
             "shared_paths": names[:MAX_SHARED_PATHS],
@@ -407,6 +430,7 @@ def combine_sources(sources, repository):
         by_pr[number] = {
             "pr_number": number, "url": pr["url"],
             "head_sha_observed": pr["head_sha"],
+            "base_ref_observed": pr["base_ref"],
             "snapshot": pr["snapshot"],
             "cross_window_file_pair_count": 0,
             "cross_window_shared_file_count": 0,
