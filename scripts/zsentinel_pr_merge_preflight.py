@@ -29,7 +29,20 @@ def _repository_default_branch(payload, full_name):
     return branch
 
 
-def _gate_cards(head, checks, reviews, stable, default_branch=None, default_branch_stable=False):
+def _repository_default_branch_sha(payload, branch):
+    """Read the exact tip of the named branch without trusting a PR's base hint."""
+    if not isinstance(payload, dict) or payload.get("name") != branch:
+        raise GitHubReadError("default branch identity is inconsistent")
+    commit = payload.get("commit")
+    sha = commit.get("sha") if isinstance(commit, dict) else None
+    if not isinstance(sha, str) or not re.fullmatch(r"[a-f0-9]{40}", sha):
+        raise GitHubReadError("default branch tip SHA is missing or invalid")
+    return sha
+
+
+def _gate_cards(head, checks, reviews, stable, default_branch=None,
+                default_branch_stable=False, default_branch_sha=None,
+                default_branch_sha_stable=False, base_tip_matches_default=None):
     """Operator workorders; read-only samples never satisfy release gates."""
     state = ("OBSERVED" if stable else "UNKNOWN")
     sample = ("UNKNOWN" if checks is None else
@@ -45,6 +58,12 @@ def _gate_cards(head, checks, reviews, stable, default_branch=None, default_bran
         not head["reported_merged"] and
         head["target_branch"] == default_branch else "HOLD"
     )
+    base_tip_gate = (
+        "NOT_APPLICABLE" if head and default_branch and
+        head["target_branch"] != default_branch else
+        "UNKNOWN" if not default_branch_sha_stable or not default_branch_sha else
+        "OBSERVED_CURRENT" if base_tip_matches_default is True else "HOLD"
+    )
     return [
         {"gate": "exact_head", "state": state,
          "next": "Reconfirm current exact SHA at the time of authorized merge."},
@@ -52,6 +71,8 @@ def _gate_cards(head, checks, reviews, stable, default_branch=None, default_bran
          "next": "Target the observed repository default branch (" +
                  (default_branch or "UNKNOWN") +
                  ") and independently confirm intended release scope."},
+        {"gate": "base_tip_current", "state": base_tip_gate,
+         "next": "Compare the PR base SHA with the stable default-branch tip; if stale, update the existing branch and resolve conflicts without force or gate bypass."},
         {"gate": "head_check_sample", "state": sample,
          "next": "Resolve visible failures and pending jobs; independently determine mandatory checks."},
         {"gate": "all_required_ci", "state": "UNKNOWN",
@@ -69,7 +90,7 @@ def _gate_cards(head, checks, reviews, stable, default_branch=None, default_bran
 
 
 def observe_exact_pr(pr_url, *, token=None):
-    """At most six bounded GETs; pin PR state and default branch to stable reads."""
+    """At most eight bounded GETs; pin PR, default-branch name and tip to stable reads."""
     match = REPO_URL.fullmatch(pr_url) if isinstance(pr_url, str) else None
     if match is None or len(pr_url) > 250:
         raise GitHubReadError("provide one canonical Zennay GitHub pull-request URL")
@@ -86,6 +107,8 @@ def observe_exact_pr(pr_url, *, token=None):
     attempted = 1
     default_branch = None
     default_branch_stable = False
+    default_branch_sha = None
+    default_branch_sha_stable = False
     try:
         attempted += 1
         default_branch = _repository_default_branch(
@@ -95,6 +118,24 @@ def observe_exact_pr(pr_url, *, token=None):
         missing.append("repository metadata: " + str(exc))
         if "authentication, quota or provider admission" in str(exc):
             return _unknown_pr(pr_url, first, missing, attempted)
+
+    if default_branch is not None:
+        try:
+            attempted += 1
+            default_branch_sha = _repository_default_branch_sha(
+                _limited_json(
+                    api + "/branches/" + quote(default_branch, safe=""),
+                    token=token,
+                ),
+                default_branch,
+            )
+        except GitHubReadError as exc:
+            missing.append("default branch tip: " + str(exc))
+            if "authentication, quota or provider admission" in str(exc):
+                return _unknown_pr(
+                    pr_url, first, missing, attempted,
+                    default_branch=default_branch,
+                )
 
     try:
         attempted += 1
@@ -129,6 +170,7 @@ def observe_exact_pr(pr_url, *, token=None):
                     ["repository default branch changed during observation; "
                      "no stable release target was established"], attempted,
                     default_branch=default_branch,
+                    default_branch_sha=default_branch_sha,
                 )
             default_branch_stable = True
         except GitHubReadError as exc:
@@ -137,13 +179,42 @@ def observe_exact_pr(pr_url, *, token=None):
                 return _unknown_pr(
                     pr_url, first, missing, attempted,
                     default_branch=default_branch,
+                    default_branch_sha=default_branch_sha,
+                )
+
+    if default_branch is not None and default_branch_sha is not None:
+        try:
+            attempted += 1
+            second_default_branch_sha = _repository_default_branch_sha(
+                _limited_json(
+                    api + "/branches/" + quote(default_branch, safe=""),
+                    token=token,
+                ),
+                default_branch,
+            )
+            if second_default_branch_sha != default_branch_sha:
+                return _unknown_pr(
+                    pr_url, first,
+                    ["default branch tip changed during observation; "
+                     "no stable base comparison was established"], attempted,
+                    default_branch=default_branch,
+                    default_branch_sha=default_branch_sha,
+                )
+            default_branch_sha_stable = True
+        except GitHubReadError as exc:
+            missing.append("default branch tip re-read: " + str(exc))
+            if "authentication, quota or provider admission" in str(exc):
+                return _unknown_pr(
+                    pr_url, first, missing, attempted,
+                    default_branch=default_branch,
+                    default_branch_sha=default_branch_sha,
                 )
 
     attempted += 1
     second = _pr_summary(_limited_json(path, token=token), full_name, number)
     stable_keys = (
         "number", "observed_state", "observed_draft", "reported_merged",
-        "target_branch", "exact_head_sha",
+        "target_branch", "base_sha", "exact_head_sha",
     )
     if any(first[k] != second[k] for k in stable_keys):
         return _unknown_pr(
@@ -163,6 +234,15 @@ def observe_exact_pr(pr_url, *, token=None):
     elif first["target_branch"] != default_branch:
         next_step = "This PR targets " + first["target_branch"] + ", not the observed default branch " + default_branch + "; confirm intended release scope."
         status = "BASE_NOT_DEFAULT"
+    elif default_branch_sha is None or not default_branch_sha_stable:
+        next_step = "Restore a stable read of the current default-branch tip before evaluating whether this PR is up to date."
+        status = "DEFAULT_BRANCH_TIP_UNKNOWN"
+    elif first["base_sha"] != default_branch_sha:
+        next_step = (
+            "The PR base SHA differs from the stable current default-branch tip. "
+            "Update the existing branch with its owner and resolve conflicts without force or gate bypass."
+        )
+        status = "BASE_TIP_OUTDATED"
     elif first["observed_draft"]:
         next_step = "Finish the existing draft with its owner; keep independent review and CI gates."
         status = "DRAFT"
@@ -189,6 +269,13 @@ def observe_exact_pr(pr_url, *, token=None):
         "source_stable_between_reads": True,
         "repository_default_branch": default_branch,
         "repository_default_branch_stable": default_branch_stable,
+        "repository_default_branch_sha": default_branch_sha,
+        "repository_default_branch_sha_stable": default_branch_sha_stable,
+        "base_tip_matches_default": (
+            first["base_sha"] == default_branch_sha
+            if first["target_branch"] == default_branch and
+            default_branch is not None and default_branch_sha_stable else None
+        ),
         "target_is_default_branch": (
             first["target_branch"] == default_branch
             if default_branch is not None and default_branch_stable else None
@@ -197,6 +284,10 @@ def observe_exact_pr(pr_url, *, token=None):
         "sampled_reviews": reviews, "get_attempts": attempted,
         "operator_gates": _gate_cards(
             first, checks, reviews, True, default_branch, default_branch_stable,
+            default_branch_sha, default_branch_sha_stable,
+            first["base_sha"] == default_branch_sha
+            if first["target_branch"] == default_branch and
+            default_branch_sha is not None and default_branch_sha_stable else None,
         ),
         "next_human_step": next_step,
         "required_ci_verified": False, "independent_review_verified": False,
@@ -206,7 +297,8 @@ def observe_exact_pr(pr_url, *, token=None):
     }
 
 
-def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None):
+def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None,
+                default_branch_sha=None):
     """Do not retain a supposedly stable PR HEAD after provider uncertainty."""
     return {
         "schema_version": 1, "policy": "zsentinel-exact-pr-preflight-v1",
@@ -216,11 +308,16 @@ def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None):
         "repository_default_branch": None,
         "unconfirmed_default_branch": default_branch,
         "repository_default_branch_stable": False,
+        "repository_default_branch_sha": None,
+        "unconfirmed_default_branch_sha": default_branch_sha,
+        "repository_default_branch_sha_stable": False,
+        "base_tip_matches_default": None,
         "target_is_default_branch": None,
         "secondary_source_gaps": gaps, "sampled_check_runs": None,
         "sampled_reviews": None, "get_attempts": attempted,
         "operator_gates": _gate_cards(
             None, None, None, False, default_branch, False,
+            default_branch_sha, False, None,
         ),
         "next_human_step": "Recover source admission and re-read the exact PR; do not merge.",
         "required_ci_verified": False, "independent_review_verified": False,
@@ -244,8 +341,12 @@ def as_markdown(report):
         (observed.get("exact_head_sha") or "UNKNOWN"),
         "- GitHub merged hint: " + str(observed.get("reported_merged", "UNKNOWN")),
         "- Base branch: " + str(observed.get("target_branch", "UNKNOWN")),
+        "- PR base SHA: " + str(observed.get("base_sha", "UNKNOWN")),
         "- Repository default branch: " + str(report.get("repository_default_branch") or "UNKNOWN"),
+        "- Repository default branch SHA: " + str(report.get("repository_default_branch_sha") or "UNKNOWN"),
         "- Default branch stable across reads: " + str(report.get("repository_default_branch_stable", False)),
+        "- Default branch tip stable across reads: " + str(report.get("repository_default_branch_sha_stable", False)),
+        "- Base tip matches current default: " + str(report.get("base_tip_matches_default", "UNKNOWN")),
         "- Base is current default: " + str(report.get("target_is_default_branch", "UNKNOWN")),
         "- Sampled checks: " + str(checks.get("sampled_count", "UNKNOWN")) +
         " of " + str(checks.get("provider_total_count", "UNKNOWN")),
@@ -294,8 +395,12 @@ def as_html(report):
         ("Observed at", report["observed_at_utc"]),
         ("Stable exact HEAD", observed.get("exact_head_sha", "UNKNOWN")),
         ("Base", observed.get("target_branch", "UNKNOWN")),
+        ("PR base SHA", observed.get("base_sha", "UNKNOWN")),
         ("Repository default branch", report.get("repository_default_branch") or "UNKNOWN"),
+        ("Repository default branch SHA", report.get("repository_default_branch_sha") or "UNKNOWN"),
         ("Default branch stable across reads", report.get("repository_default_branch_stable", False)),
+        ("Default branch tip stable across reads", report.get("repository_default_branch_sha_stable", False)),
+        ("Base tip matches current default", report.get("base_tip_matches_default", "UNKNOWN")),
         ("Base is current default", report.get("target_is_default_branch", "UNKNOWN")),
         ("Reported merged", observed.get("reported_merged", "UNKNOWN")),
         ("Check sample", str(checks.get("sampled_count", "UNKNOWN")) + " / " +
