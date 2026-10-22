@@ -15,9 +15,10 @@ actieve owners of mergegolven geteld. De collector bewaart maximaal 80
 PR-paren en acht padvoorbeelden per paar; totale waargenomen aantallen en
 afkappingsvlaggen blijven apart zichtbaar. Als het aliasbewijs of een ander
 scopevenster is afgekapt, wordt de volledige PR-scope-steekproef niet als
-compleet aangemerkt. Een aliaswaarschuwing krijgt de normale botsings-exitcode
-`2`, zodat een CLI-consument de mogelijke botsing niet als een schone
-scope leest.
+compleet aangemerkt. Een echte gedeelde Git-pad- of bestand/map-ancestorbotsing behoudt exitcode
+`2`. Een alias-only waarneming krijgt exitcode `3` (menselijke hercontrole nodig),
+zodat de heuristiek niet ten onrechte als bewezen Git-conflict wordt gebruikt
+maar ook nooit als een schone scope eindigt.
 
 Dezelfde observatie verschijnt in:
 - de directe scope-CLI tekst, JSON, Markdown, HTML en private create-only CSV;
