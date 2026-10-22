@@ -141,8 +141,13 @@ Het nieuwe `host_pressure_trend`-object vergelijkt CPU-vraag per core,
 CPU-some-PSI en geheugen-/I/O-full-PSI. Alleen eindige, begrensde cijfers uit
 twee expliciete `local_procfs`-bronrecords met hetzelfde aantal CPU's worden
 gebruikt; beide records moeten ook expliciet `release_authorized=false` en
-`changes_host=false` aangeven. Ontbrekende of afwijkende bronvelden worden
-per opname benoemd en leveren `untrusted_source` op. De ruwe load, CPU-count
+`changes_host=false` aangeven en dezelfde geldige `source_scope_fingerprint`
+bevatten. Die fingerprint is een hash van lokale hostnaam + boot-ID; de ruwe
+identifiers worden niet geëxporteerd. Een ontbrekende fingerprint levert
+`untrusted_source` op, een verschil tussen host/boot-scopes
+`different_source_scope`. Oudere rapporten zonder fingerprint kunnen dus niet
+als trendbaseline dienen. Dit detecteert onbedoelde cross-host-/na-reboot-
+vergelijkingen, maar is geen cryptografische attestation of eigenaarbewijs. De ruwe load, CPU-count
 en afgeleide load-per-CPU moeten onderling consistent zijn. Het meetvenster
 moet bovendien strikt positief en maximaal 60 minuten lang zijn; nul seconden
 is geen tijdtrend. De totale trend wordt alleen als rising/falling/stable/mixed
