@@ -1,3 +1,9 @@
+## 22 October 2026 · bounded display discovery and auth-file admission
+
+The read-only display-discovery helper now bounds `/proc` traversal, each process environment read, total environment bytes and retained DISPLAY/XAUTHORITY candidates. It binds each accepted environment snapshot to the same PID/start-time and process-directory identity before and after the read; inaccessible, oversized, or changing evidence is reported as PARTIAL/UNKNOWN rather than used to claim that no Ubuntu display exists. Raw environment bytes are never printed. Xauthority candidates must be stable, owner-owned, private regular files; symlinks and group/world-readable files are rejected, and the candidate is rechecked before each display probe.
+
+Source commit: [cd5125f](https://github.com/Zennay/zCloud/commit/cd5125f7468344d830b8ef8376b4bd414857f37d). No QA suite was written or run, and no VPS command was executed.
+
 # New VPS zCloud workers — staged cutover (22 October 2026)
 
 Target host: `VM-7eb5ee16-2c71-440d-b7fd-8095d204e930`. The historical DB snapshot transferred to `/home/ubuntu/zcloud-history-migration.db` has **23 tables** and is readable, but **is not an authoritative final sync** if the old VPS kept working after its capture.
