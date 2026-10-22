@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Bounded, read-only local zCloud runner process observation.
+"""Bounded, read-only local zCloud runner and systemd-unit observation.
 
-Only the live Linux host is sampled. A listener process is NOT proof that
-GitHub has registered it, assigned it a job or completed the job. Never
-reads the registration credentials, service journal or runner .env file.
+Only the intended Linux host is sampled. A listener process or active unit is
+NOT proof that GitHub registered the runner, assigned a job or completed it.
+Never reads registration credentials, service journals or the runner .env.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,9 +21,104 @@ HOST = "vps-bb300bba"
 RUNNER_ROOT = "/home/ubuntu/actions-runner-zcloud"
 LISTENER = (RUNNER_ROOT + "/bin/Runner.Listener").encode("ascii")
 WORKER = (RUNNER_ROOT + "/bin/Runner.Worker").encode("ascii")
+SYSTEMCTL = Path("/usr/bin/systemctl")
+SERVICE_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+SERVICE_PROPERTIES = ("LoadState", "ActiveState", "SubState", "UnitFileState", "Result")
+MAX_SYSTEMD_OUTPUT = 4096
 MAX_PIDS = 20000
 MAX_CMDLINE_BYTES = 4096
 MAX_STAT_BYTES = 4096
+
+
+def observe_systemd_service():
+    """Read only five fixed systemd properties for the canonical zCloud unit.
+
+    Never invokes start/stop/restart/enable/disable, never reads a journal or
+    environment file, and never exposes PID, token, argv or unit-file contents.
+    Missing systemd permissions or a timeout is UNKNOWN, not service failure.
+    """
+    observed_at = datetime.now(timezone.utc).isoformat()
+
+    def unknown(reason):
+        return {
+            "schema": "zsentinel-systemd-service-observation-v1",
+            "source": "fixed_systemctl_show_readonly",
+            "service_unit": SERVICE_UNIT,
+            "status": "unknown",
+            "reason": reason,
+            "properties": None,
+            "observed_at_utc": observed_at,
+            "mutations_performed": False,
+            "restart_authorized": False,
+        }
+
+    if not SYSTEMCTL.is_file() or not os.access(SYSTEMCTL, os.X_OK):
+        return unknown("systemctl_unavailable")
+    env = os.environ.copy()
+    env.update({"LC_ALL": "C", "SYSTEMD_PAGER": "cat", "SYSTEMD_COLORS": "0"})
+    command = [str(SYSTEMCTL), "show", "--no-pager"]
+    command.extend("--property=" + name for name in SERVICE_PROPERTIES)
+    command.append(SERVICE_UNIT)
+    try:
+        completed = subprocess.run(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=3, check=False, env=env)
+    except subprocess.TimeoutExpired:
+        return unknown("query_timeout")
+    except OSError:
+        return unknown("query_unavailable")
+    if completed.returncode != 0:
+        return unknown("query_failed")
+    raw = completed.stdout
+    if not isinstance(raw, bytes) or len(raw) > MAX_SYSTEMD_OUTPUT:
+        return unknown("malformed_output")
+    try:
+        lines = raw.decode("utf-8", "strict").splitlines()
+    except UnicodeError:
+        return unknown("malformed_output")
+    properties = {}
+    for line in lines:
+        key, sep, value = line.partition("=")
+        if not sep or key not in SERVICE_PROPERTIES or key in properties:
+            return unknown("malformed_output")
+        if len(value) > 64 or not re.fullmatch(r"[A-Za-z0-9_.:-]*", value):
+            return unknown("malformed_output")
+        properties[key] = value
+    if set(properties) != set(SERVICE_PROPERTIES):
+        return unknown("incomplete_output")
+    return {
+        "schema": "zsentinel-systemd-service-observation-v1",
+        "source": "fixed_systemctl_show_readonly",
+        "service_unit": SERVICE_UNIT,
+        "status": "observed",
+        "reason": None,
+        "properties": properties,
+        "observed_at_utc": observed_at,
+        "mutations_performed": False,
+        "restart_authorized": False,
+    }
+
+
+def _systemd_summary(report):
+    service = report.get("systemd_service_observation")
+    if (type(service) is not dict
+            or service.get("schema") != "zsentinel-systemd-service-observation-v1"
+            or service.get("status") != "observed"
+            or type(service.get("properties")) is not dict):
+        reason = service.get("reason") if type(service) is dict else "not_observed"
+        if reason not in ("systemctl_unavailable", "query_timeout",
+                          "query_unavailable", "query_failed",
+                          "malformed_output", "incomplete_output", "not_observed"):
+            reason = "not_observed"
+        return "ONBEKEND (" + reason + ")"
+    props = service["properties"]
+    active = props.get("ActiveState") or "unknown"
+    sub = props.get("SubState") or "unknown"
+    load = props.get("LoadState") or "unknown"
+    unit = props.get("UnitFileState") or "unknown"
+    result = props.get("Result") or "unknown"
+    return ("ActiveState=" + active + "/" + sub + "; LoadState=" + load
+            + "; UnitFileState=" + unit + "; Result=" + result)
 
 
 def _runner_binary(first, process):
