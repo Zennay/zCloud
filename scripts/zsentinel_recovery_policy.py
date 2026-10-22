@@ -308,7 +308,7 @@ def recommended_next_step_code(action, blockers):
         if codes & {"owner_missing", "human_owner_missing"}:
             return "identify_claim_owner"
         return "resolve_claim_with_owner"
-    if "competing_incident_routes" in codes or "competing_incident_actions" in codes:
+    if codes & {"competing_incident_routes", "competing_incident_actions", "competing_blocked_task_routes"}:
         return "choose_one_incident_route"
     if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
                 "main_state_not_open", "main_merge_unverified",
@@ -374,7 +374,7 @@ def recommended_next_step(action, blockers, required_evidence):
         if codes & {"owner_missing", "human_owner_missing"}:
             return "Identify the current claim owner from live source evidence; do not preempt, reassign, or mutate the queue."
         return "Ask the current owner to confirm or release the exact claim; do not preempt, reassign, or mutate the queue."
-    if "competing_incident_routes" in codes or "competing_incident_actions" in codes:
+    if codes & {"competing_incident_routes", "competing_incident_actions", "competing_blocked_task_routes"}:
         return "Ask the authorized owner to choose one recovery route for this incident before reviewing route-specific gates."
     if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
                 "main_state_not_open", "main_merge_unverified",
@@ -1008,6 +1008,41 @@ def evaluate_batch(data, max_age_minutes):
             })
             if "incident_route_selection" not in report["required_evidence"]:
                 report["required_evidence"].append("incident_route_selection")
+            report["decision"] = "HOLD"
+            report["recommended_next_step"] = recommended_next_step(
+                report["action"], report["blockers"], report["required_evidence"]
+            )
+            report["recommended_next_step_code"] = recommended_next_step_code(
+                report["action"], report["blockers"]
+            )
+
+    # Incident labels are supplied by the caller. Two distinct incident IDs
+    # can still name the very same parked queue row; a resume and a terminal
+    # closure must not both look review-ready merely because aliases differ.
+    # Group by canonical queue identity, without exporting raw queue IDs.
+    blocked_routes = {}
+    for item in results:
+        report = item["report"]
+        if report["action"] not in {"resume_blocked", "close_blocked"}:
+            continue
+        queue_id = data[item["index"]]["evidence"].get("blocked_task_id")
+        if queue_id is not None:
+            blocked_routes.setdefault((report["project_id"], queue_id), []).append(item)
+    for proposals in blocked_routes.values():
+        distinct_incidents = {
+            item["report"]["incident_id"] for item in proposals
+        }
+        if len(distinct_incidents) < 2:
+            continue
+        for item in proposals:
+            report = item["report"]
+            report["blockers"].append({
+                "code": "competing_blocked_task_routes",
+                "message": "Different incident labels target the same blocked queue item; "
+                           "one authorized owner must reconcile the exact task first.",
+            })
+            if "blocked_task_route_selection" not in report["required_evidence"]:
+                report["required_evidence"].append("blocked_task_route_selection")
             report["decision"] = "HOLD"
             report["recommended_next_step"] = recommended_next_step(
                 report["action"], report["blockers"], report["required_evidence"]
