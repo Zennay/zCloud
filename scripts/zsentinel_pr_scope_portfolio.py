@@ -28,6 +28,10 @@ from zsentinel_pr_scope_delta import read_private_previous, compare, render_delt
 from zsentinel_pr_gate_continuity import compare_gate_episodes, render_gate_episodes
 from zsentinel_pr_gate_now import SOURCE_PROBLEMS_NL, _source_problem_kind
 from zsentinel_private_report_writer import write_private_report
+from zsentinel_runner_queue import (
+    collect as collect_runner_queue, unavailable as runner_queue_unavailable,
+    lines as runner_queue_lines, html as runner_queue_html,
+)
 
 MAX_PROJECTS = 3
 MAX_PRS_PER_PAGE = 16
@@ -1206,6 +1210,8 @@ def as_text(board):
         output.append("[" + view["project"] + "] " + view["repository"])
         output.extend(summary_lines(view))
     output.extend(current_gate_lines(board))
+    for project, receipt in board.get("runner_queue_observations", {}).items():
+        output.extend(["", "[" + project + "]"] + runner_queue_lines(receipt))
     if board.get("historical_gate_episodes"):
         output.extend(["", render_gate_episodes(board["historical_gate_episodes"])])
     if board.get("historical_pr_delta"):
@@ -1319,6 +1325,9 @@ def as_markdown(board):
         if view.get("source_truncated"):
             lines.append("Bronkaarten afgekapt; inspecteer overige PR's.")
     lines.extend(current_gate_lines(board, markdown=True))
+    for project, receipt in board.get("runner_queue_observations", {}).items():
+        lines.extend(["", "## Runnerwachtrij · " + project] +
+                     ["- " + line for line in runner_queue_lines(receipt)])
     if board.get("historical_gate_episodes"):
         lines.extend(["", render_gate_episodes(board["historical_gate_episodes"], "markdown")])
     if board.get("historical_pr_delta"):
@@ -1633,6 +1642,8 @@ def as_html(board):
         "Dit bewijst geen mergeconflicten, claims of vrije werkscope. "
         "Geen automatische actie, merge of deploy.</aside>" +
         attention_html(board) + gate_panel + gate_episode_panel + delta_panel +
+        "".join(runner_queue_html(receipt) for receipt
+                in board.get("runner_queue_observations", {}).values()) +
         "".join(cards) + "</html>"
     )
 
@@ -1971,6 +1982,9 @@ def main(argv=None):
     parser.add_argument("--inspect-current-pr-gates", action="store_true",
                         help="Optioneel tot vier exacte-head GitHub CI/reviewbonnen "
                              "in bestaande PR-steekproef (max 20 extra GETs)")
+    parser.add_argument("--inspect-runner-queue", action="store_true",
+                        help="Opt-in bounded read-only Actions runner-assignment evidence; "
+                             "max 6 extra GET per project, no restart or dispatch")
     parser.add_argument("--format", choices=("text", "json", "html", "markdown", "csv", "workorders", "workorders-json", "workorders-html", "workorders-csv"),
                         default="text")
     args = parser.parse_args(argv)
@@ -1979,6 +1993,16 @@ def main(argv=None):
         board = collect_portfolio(args.project, canonical,
                                   os.environ.get("GITHUB_TOKEN"),
                                   args.max_prs, pages=args.pages)
+        if args.inspect_runner_queue:
+            board["runner_queue_observations"] = {}
+            for project in args.project:
+                repo = canonical[project]
+                try:
+                    receipt = collect_runner_queue(repo, os.environ.get("GITHUB_TOKEN"))
+                except (ValueError, OSError):
+                    receipt = runner_queue_unavailable(repo)
+                board["runner_queue_observations"][project] = receipt
+            board["maximum_github_gets"] += 6 * len(args.project)
         if args.gate_pr and not args.inspect_current_pr_gates:
             raise ValueError("--gate-pr requires --inspect-current-pr-gates")
         if args.format in ("workorders", "workorders-json", "workorders-html", "workorders-csv"):
