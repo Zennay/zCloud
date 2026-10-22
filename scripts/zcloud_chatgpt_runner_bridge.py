@@ -253,6 +253,7 @@ def _host_capacity_observation() -> dict[str, object]:
                           "total_bytes": None, "available_bytes": None,
                           "available_percent": None},
         "warnings": [],
+        "evidence_warnings": [],
         "operator_summary": "Capacity evidence is partial; do not infer runner health or authorize cleanup.",
         "service_health_verified": False,
         "runner_registration_verified": False,
@@ -265,6 +266,7 @@ def _host_capacity_observation() -> dict[str, object]:
     }
     complete = True
     warnings: list[str] = []
+    evidence_warnings: list[str] = []
 
     raw = _read_bounded_proc_file("/proc/loadavg", 256)
     if raw is not None:
@@ -361,7 +363,12 @@ def _host_capacity_observation() -> dict[str, object]:
         mounted = os.path.ismount(ARCHIVE_MOUNT_PATH)
         archive = result["archive_mount"]
         archive["mount_detected"] = mounted
-        if mounted:
+        if not mounted:
+            # The configured archive path may merely be a directory on root.
+            # Do not report complete capacity evidence or imply offload is safe.
+            complete = False
+            evidence_warnings.append("archive_mount_not_detected")
+        else:
             vfs = os.statvfs(ARCHIVE_MOUNT_PATH)
             block_size = int(vfs.f_frsize or vfs.f_bsize)
             total_blocks, available_blocks = int(vfs.f_blocks), int(vfs.f_bavail)
@@ -375,6 +382,7 @@ def _host_capacity_observation() -> dict[str, object]:
             })
     except (OSError, ValueError, TypeError, OverflowError, AttributeError, ZeroDivisionError):
         complete = False
+        evidence_warnings.append("archive_mount_observation_unavailable")
 
     root = result["root_filesystem"]
     memory = result["memory"]
@@ -391,11 +399,9 @@ def _host_capacity_observation() -> dict[str, object]:
         warnings.append("load_pressure_high")
     archive_available = archive.get("available_bytes")
     archive_has_capacity = type(archive_available) is int and archive_available > 0
-    if "root_filesystem_critical" in warnings and archive.get("mount_detected") is False:
-        warnings.append("archive_mount_not_detected")
-    elif ("root_filesystem_critical" in warnings and archive.get("mount_detected") is True
-          and not archive_has_capacity):
-        warnings.append("archive_mount_no_available_space")
+    if archive.get("mount_detected") is True and not archive_has_capacity:
+        # This is an offload-capacity limitation, not itself host pressure.
+        evidence_warnings.append("archive_mount_no_available_space")
 
     if "root_filesystem_critical" in warnings:
         if archive.get("mount_detected") is True and archive_has_capacity:
@@ -420,6 +426,12 @@ def _host_capacity_observation() -> dict[str, object]:
             "Resource pressure threshold(s) observed. This is not proof of runner/job failure; "
             "reconcile service identity, GitHub registration and job assignment separately."
         )
+    elif evidence_warnings:
+        summary = (
+            "Host pressure thresholds are not exceeded in this snapshot, but archive-mount "
+            "evidence/capacity is unavailable. Do not offload data or infer safe storage until "
+            "the configured mount and its capacity are verified by the authorized owner."
+        )
     elif complete:
         summary = (
             "No configured capacity threshold was exceeded in this snapshot. "
@@ -439,6 +451,7 @@ def _host_capacity_observation() -> dict[str, object]:
         "coverage": "complete" if complete else "partial",
         "severity": severity,
         "warnings": warnings,
+        "evidence_warnings": evidence_warnings,
         "operator_summary": summary,
     })
     return result
@@ -508,6 +521,13 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
         codes.append("ZERO_WORKERS_IS_NOT_CLAIM_CLEARANCE")
     if capacity.get("coverage") != "complete":
         codes.append("CAPACITY_EVIDENCE_PARTIAL")
+    evidence_warnings = capacity.get("evidence_warnings", [])
+    if isinstance(evidence_warnings, list):
+        if ("archive_mount_not_detected" in evidence_warnings
+                or "archive_mount_observation_unavailable" in evidence_warnings):
+            codes.append("ARCHIVE_MOUNT_UNAVAILABLE_NO_OFFLOAD")
+        if "archive_mount_no_available_space" in evidence_warnings:
+            codes.append("ARCHIVE_MOUNT_NO_CAPACITY_NO_OFFLOAD")
     severity = capacity.get("severity")
     if severity == "critical":
         codes.append("HOLD_DISK_WRITES_REQUEST_OWNER_INVENTORY")
