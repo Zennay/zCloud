@@ -187,6 +187,8 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
         "merged_main_or_deployed_verified": False,
         "actions_executed": False,
     }
-    # A subset of displayed missing cards may have a present-time observed
-    # state; this does not change the historical difference classification.
+    # Refresh only the advisory human workorder view. The original sampled
+    # change remains unchanged even when GitHub detail reports CLOSED.
+    from zsentinel_portfolio_history import _operator_workorders
+    report["operator_workorders"] = _operator_workorders(report)
     return report
