@@ -4463,7 +4463,10 @@ De gebruiker bekijkt de exacte CSV eerst in de werkbank en kan daarna alleen
 diezelfde inhoud downloaden. De export bevat board-SHA256 en observatietijd,
 projectdekking, bemonsterde P0/P1/P2/onbekende issue-aantallen, queue-
 observatietijd en bounded aantallen actieve items/hoge claimcycli/verlopen
-leases. Ontbrekende queuegegevens worden als `UNKNOWN` weergegeven. De
+leases. De kolommen `source_inbox_fresh`, `source_retry_fresh`,
+`source_branches_fresh` en `source_prs_fresh` behouden ook de expliciete
+freshnessvlaggen en bronklokken per bron. Ontbrekende broninformatie en
+queuegegevens worden als `UNKNOWN` weergegeven. De
 export bevat geen opaque claim-ID's, lokale contactlabels of privénotities en
 is bewust onafhankelijk van issuezoek-, prioriteits- en projectfilters.
 
