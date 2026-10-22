@@ -775,7 +775,8 @@ def render(report, fmt):
             lines.append("  - [PR](" + entry["url"] + ") · bronvenster " +
                          str(entry["snapshot"]) + " · " +
                          "/".join(entry["mentioned_in"]) +
-                         " · HEAD " + entry["head_sha"][:12])
+                         " · HEAD " + entry["head_sha"][:12] +
+                         " · doelbranch " + str(entry.get("base_ref") or "ONBEKEND"))
         if group["pr_list_truncated"]:
             lines.append("  - overige gekoppelde PR-bronnen niet getoond")
     if not report["shown_issue_number_hints"]:
@@ -871,7 +872,8 @@ def render(report, fmt):
             "<li><a rel='noopener noreferrer' href='" +
             escape(row["url"], quote=True) + "'>PR</a> · venster " +
             str(row["snapshot"]) + " · " +
-            escape("/".join(row["mentioned_in"])) + "</li>"
+            escape("/".join(row["mentioned_in"])) + " · doelbranch " +
+            escape(row.get("base_ref") or "ONBEKEND") + "</li>"
             for row in group["shown_prs"]) + "</ul></li>"
         for group in report["shown_issue_number_hints"])
     return (
