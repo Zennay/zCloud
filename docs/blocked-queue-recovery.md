@@ -442,3 +442,15 @@ aanbieden. Een nieuwe succesvolle geautoriseerde queue-GET vult
 de informatie opnieuw. Er wordt geen actieve claim aangepast of
 herstart. Dit zijn codewijzigingen op de bestaande, nog niet
 gemergede product-PR; geen productie-installatie.
+
+### Portfolio-at-a-glance voor actieve claimchurn
+
+De bestaande projectkaarten laten naast blocked task counts nu de aantallen
+**repeated claims** voor actieve/planbare taken zien, en waar zichtbaar
+het aantal leases dat **op het bronobservatiemoment** reeds was
+verstreken. Dit is uitsluitend een telling over de al geladen
+geautoriseerde queuebron. Bij ontbrekende queuebronnen verschijnt
+geen misleidend nul-label. De herstelwerkbank zelf laat de
+onderliggende taken en huidige worker-slots zien. Alleen de eigenaar
+van een bestaande claim kan die muteren. Geen automatische
+cancel/force/requeue-actie en geen privédataset op een nieuwe API-route.
