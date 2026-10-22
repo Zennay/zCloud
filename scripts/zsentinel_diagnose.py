@@ -17,7 +17,7 @@ UTC = timezone.utc
 PAUSED = frozenset({"paused", "parked", "human-blocked"})
 RUNNING = frozenset({"running", "in_progress"})
 COMPLETED = frozenset({"completed", "failure", "success", "cancelled"})
-RESULTS = frozenset({"success", "failure", "cancelled", "timed_out", "action_required"})
+RESULTS = frozenset({"success", "failure", "cancelled", "timed_out", "action_required", "neutral", "skipped", "stale", "startup_failure"})
 MAX_PROJECTS = 200
 
 
@@ -126,9 +126,19 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
                 return verdict(pid, "stalled", "github_workflow_failed",
                                "Inspect the exact-head failed job log; reproduce and fix an independently owned scoped defect, then verify fresh CI.",
                                "workflow-failed", sha)
+            if conclusion == "startup_failure":
+                return verdict(pid, "stalled", "github_job_startup_failure",
+                               "Inspect exact runner bootstrap, labels, access and admission evidence; do not infer a code defect or restart/retry without owner approval.",
+                               "github-startup-failure", sha)
             if conclusion == "cancelled":
                 return verdict(pid, "unknown", "github_job_cancelled",
                                "Resolve cancellation reason and owner before retrying.")
+            if conclusion == "stale":
+                return verdict(pid, "unknown", "github_job_stale_conclusion",
+                               "Refresh the current exact-head run/job; stale conclusions do not establish the current commit's result.")
+            if conclusion in {"neutral", "skipped"}:
+                return verdict(pid, "unknown", "github_job_neutral_or_skipped",
+                               "Inspect workflow conditions and required-check policy; neutral/skipped are not success or recovery evidence.")
     state = runtime.get("execution_state")
     if state == "running":
         hb = required_time(runtime, "heartbeat_at", now, pid + ".runtime")
