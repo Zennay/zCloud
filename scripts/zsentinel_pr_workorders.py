@@ -1744,6 +1744,12 @@ def render_markdown(bundle):
             "4. Bewaar de bestaande workerclaim; neem geen werk van een andere eigenaar over.",
             "",
         ]
+        if (not card["base_ref_stable_on_second_read"] and
+                (card["captured_base_ref"] or card["observed_base_ref"])):
+            lines.append("**Doelbranch capture → tweede read:** " +
+                         (card["captured_base_ref"] or "ONBEKEND") + " → " +
+                         (card["observed_base_ref"] or "ONBEKEND") +
+                         " (bronidentiteit niet stabiel; niet mergeklaar).")
         if card["historical_next_step"]:
             lines.append("**Historische vervolgstap:** " +
                          card["historical_next_step"] +
