@@ -2310,6 +2310,18 @@ def markdown(report):
              " · beperkt recent geobserveerd"),
             "Notion-statussen bewijzen geen actuele worker, lease, bestandsscope of vrijgave.",
         ])
+        clock_classes = notion.get("claim_window_observation_counts")
+        if clock_classes is None:
+            lines.append("Notion leaseklokken: ONBEKEND; status is geen eigenaarbewijs.")
+        else:
+            clock_uncertain = sum(
+                value for key, value in clock_classes.items()
+                if key != "time_window_present_not_owner_verified")
+            lines.append(
+                "Notion leaseklokken: " + str(clock_uncertain) +
+                " ontbrekend/verlopen/toekomstig/inconsistent; " +
+                str(clock_classes.get("time_window_present_not_owner_verified", 0)) +
+                " tijdvenster aanwezig maar NIET eigenaar- of claimgeverifieerd.")
         for win in notion["status_windows"]:
             lines.append("- Statusbron " + _md(win["status"]) + ": minstens " +
                          str(win["observed_rows"]) + " rijen, " +
