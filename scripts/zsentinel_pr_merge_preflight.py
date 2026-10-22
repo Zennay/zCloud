@@ -119,6 +119,19 @@ def _parallel_owner_actions(report):
             "SOURCE_UNKNOWN")
         return cards
 
+    if observed.get("reported_merged") is True:
+        add("verify_reported_merge_on_default",
+            "GitHub reports this PR already merged.",
+            "Read the exact merged default-branch SHA and verify live release separately.",
+            "ALREADY_REPORTED_MERGED")
+        return cards
+    if observed.get("observed_state") != "open":
+        add("find_existing_open_product_pr",
+            "This PR is not open and cannot be a current merge candidate.",
+            "Inspect its closure and find a genuinely open owner-controlled product PR.",
+            "CLOSED_UNMERGED")
+        return cards
+
     if report.get("target_is_default_branch") is False:
         add("confirm_default_branch_target",
             "The PR does not target the observed default branch.",
