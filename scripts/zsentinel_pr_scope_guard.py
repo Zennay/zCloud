@@ -1382,6 +1382,24 @@ def graph_operator_text(report):
         if cluster["shared_files_sample_truncated"]:
             result.append("  Meer gedeelde paden; weergave ingekort.")
         result.append("  Alleen waargenomen bestandspaden; geen eigenaar of mergevolgorde.")
+    result.append("Potentiële cross-platform padaliasparen: " +
+                  str(report["observed_portable_path_alias_pairs"]) +
+                  " · getoond: " + str(len(report["shown_portable_path_alias_pairs"])) +
+                  " · NFC/casefold-heuristiek, geen Git-mergeconflictbewijs.")
+    for pair in report["shown_portable_path_alias_pairs"]:
+        result.append("PADALIAS PR #" + str(pair["left"]["number"]) +
+                      " ↔ PR #" + str(pair["right"]["number"]) + " · " +
+                      str(pair["path_alias_count_observed"]) +
+                      " mogelijke cross-platform padaliases")
+        for alias in pair["path_aliases"]:
+            result.append("  " + alias["left_path"] + " ↔ " +
+                          alias["right_path"] + " [" + alias["relation"] + "]")
+        if pair["path_aliases_truncated"]:
+            result.append("  Extra aliasvoorbeelden buiten de begrensde weergave.")
+    if report["portable_path_alias_pairs_truncated"]:
+        result.append("ONVOLLEDIG: meer padaliasparen dan getoond.")
+    if report["portable_path_alias_examples_truncated"]:
+        result.append("ONVOLLEDIG: extra padaliasvoorbeelden zijn afgekapt.")
     result.append("Verbonden bestand/map-scopegroepen: " +
                   str(report["observed_connected_path_scope_collision_clusters"]) +
                   " waargenomen · getoond " +
@@ -1466,6 +1484,7 @@ def graph_operator_text(report):
 
 def graph_html(report):
     rows = []
+    alias_rows = []
     observed_pr_rows = "".join(
         "<li><a rel='noopener noreferrer' href='" +
         escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
@@ -1588,6 +1607,24 @@ def graph_html(report):
             ("<p>Meer gedeelde bestandspaden zijn niet afgebeeld.</p>"
              if cluster["shared_files_sample_truncated"] else "") +
             "</details></li>")
+    for pair in report["shown_portable_path_alias_pairs"]:
+        a, b = pair["left"], pair["right"]
+        examples = "<br>".join(
+            "<code>" + escape(item["left_path"]) + "</code> ↔ <code>" +
+            escape(item["right_path"]) + "</code><br><small>" +
+            escape(item["relation"]) + "</small>"
+            for item in pair["path_aliases"])
+        if pair["path_aliases_truncated"]:
+            examples += "<br><small>Extra aliasvoorbeelden buiten de limiet.</small>"
+        alias_rows.append(
+            "<tr><td><a rel='noopener noreferrer' href='" +
+            escape(a["url"], quote=True) + "'>PR #" + str(a["number"]) +
+            "</a> ↔ <a rel='noopener noreferrer' href='" +
+            escape(b["url"], quote=True) + "'>PR #" + str(b["number"]) +
+            "</a></td><td>" + str(pair["path_alias_count_observed"]) +
+            "</td><td>" + examples + "</td></tr>")
+    if not alias_rows:
+        alias_rows.append("<tr><td colspan='3'>Geen mogelijke case-/Unicode-padaliases waargenomen in deze steekproef.</td></tr>")
     scope_cluster_cards = []
     for cluster in report["linked_pr_path_scope_collision_clusters"]:
         members = "".join(
@@ -1675,6 +1712,13 @@ def graph_html(report):
             "".join(scope_rows) + "</tbody></table>" +
             ("<p role='alert'>ONVOLLEDIG: aanvullende bestand/map-conflicpparen ontbreken buiten de weergavelimiet.</p>"
              if report["path_scope_collision_pairs_truncated"] else "") +
+            "<h2>Mogelijke cross-platform padaliases (" +
+            str(report["observed_portable_path_alias_pairs"]) + ")</h2>"
+            "<p>Afzonderlijke Git-paden kunnen op sommige case-insensitive of Unicode-normaliserende filesystems hetzelfde pad aanduiden. Dit is een NFC/casefold-heuristiek, geen platform-specifieke zekerheid, Git-mergeconflict of eigenaarbewijs.</p>"
+            "<table><thead><tr><th>Open PR's</th><th>Mogelijke aliassen</th><th>Paden en relatie</th></tr></thead><tbody>" +
+            "".join(alias_rows) + "</tbody></table>" +
+            ("<p role='alert'>ONVOLLEDIG: aliasparen of voorbeelden zijn begrensd; ongeziene paden blijven onbekend.</p>"
+             if report["portable_path_alias_pairs_truncated"] or report["portable_path_alias_examples_truncated"] else "") +
             "<h2>Meerdere open PR's noemen hetzelfde issue</h2>"
             "<p>Positieve PR-tekstvermeldingen, geen bewezen fix of mergevrijgave.</p><ul>" +
             ("".join(duplicate_cards) or
@@ -1848,6 +1892,26 @@ def graph_markdown(report):
         lines.append("Geen bestand/map-ancestorparen waargenomen in de gelezen bron.")
     if report["path_scope_collision_pairs_truncated"]:
         lines.append("**ONVOLLEDIG:** overige bestand/map-conflicpparen buiten de weergavelimiet.")
+    lines.extend(["", "## Mogelijke cross-platform padaliases", "",
+                  "Git-paden zijn case-/bytegevoelig; op sommige filesystems kunnen "
+                  "verschillende hoofdletters of Unicode-normalisaties als hetzelfde pad "
+                  "worden behandeld. Dit is een conservatieve NFC/casefold-heuristiek, "
+                  "geen platform-specifieke zekerheid, Git-mergeconflict of eigenaarsbewijs.", ""])
+    for pair in report["shown_portable_path_alias_pairs"]:
+        left, right = pair["left"], pair["right"]
+        lines.append("- [#" + str(left["number"]) + "](" + left["url"] +
+                     ") ↔ [#" + str(right["number"]) + "](" + right["url"] +
+                     "): " + str(pair["path_alias_count_observed"]) + " mogelijke aliases")
+        for alias in pair["path_aliases"]:
+            lines.append("  - " + chr(96) + alias["left_path"] +
+                         chr(96) + " ↔ " + chr(96) + alias["right_path"] +
+                         chr(96) + " [" + alias["relation"] + "]")
+        if pair["path_aliases_truncated"]:
+            lines.append("  - Extra aliasvoorbeelden buiten de begrensde weergave.")
+    if not report["shown_portable_path_alias_pairs"]:
+        lines.append("Geen mogelijke cross-platform padaliases waargenomen.")
+    if report["portable_path_alias_pairs_truncated"] or report["portable_path_alias_examples_truncated"]:
+        lines.append("**ONVOLLEDIG:** aanvullende aliasparen/voorbeelden kunnen ontbreken.")
     lines.extend([
         "", "## Verbonden bestand/map-scopegroepen", "",
         "Transitive groepen van waargenomen bestand/map-ancestorconflicten; geen merge- of eigenaarsbewijs.",
