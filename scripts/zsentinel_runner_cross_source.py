@@ -466,6 +466,12 @@ def as_text(result):
     service = _validated_service_observation({
         "systemd_service_observation": result.get("systemd_service_observation")
     })
+    relationship = result.get("systemd_process_relationship", "unknown_service_state")
+    if relationship not in SYSTEMD_RELATIONSHIPS:
+        raise ValueError("invalid systemd/process relationship")
+    listener_count = result.get("local_listener_processes_observed")
+    if type(listener_count) is not int or not 0 <= listener_count <= 20000:
+        raise ValueError("invalid local listener count")
     return "\n".join((
         "RUNNER · " + result["problem"],
         "ACTIE · " + result["next_action"],
