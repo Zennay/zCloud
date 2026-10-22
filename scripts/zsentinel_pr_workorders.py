@@ -1461,9 +1461,9 @@ def render_html(bundle):
     for group in coordination["groups"]:
         links = [
             "<a href=\"#" + e(_article_anchor(
-                {"repository": member["url"].split("/pull/")[0]
-                 .removeprefix("https://github.com/"),
-                 "number": member["number"]})) + "\">" +
+                {"url": member["url"],
+                 "repository": member["url"].split("/pull/")[0]
+                 .removeprefix("https://github.com/")})) + "\">" +
             e(member["project"]) + " #" + e(member["number"]) + "</a>"
             for member in group["members"]
         ]
