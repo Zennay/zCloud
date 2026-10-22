@@ -44,7 +44,11 @@ verouderd of **niet opgenomen** waren. Een verse boardaanmaak maakt oudere
 onderliggende broninformatie nooit opnieuw vers. De pagina bevat directe,
 alleen historische links naar de maximaal drie hoogste opgeslagen issues
 per project, een paar bestaande PR-kandidaten en het opgeslagen
-eigenaarvervolgadvies. In de detailkaart staan de overige brongebonden
+eigenaarvervolgadvies. De merge-first sectie toont voor iedere opgenomen
+PR nu de **volledige bron-HEAD**, originele PR-bronklok,
+opgeslagen blockerreden(en) en een expliciete eigenaaractie om huidige
+HEAD, beschermingsregels, exacte checks en onafhankelijke reviews te
+controleren. Geen van die historische waarden is een mergebevoegdheid. In de detailkaart staan de overige brongebonden
 issues en PR-kandidaten met prioriteitslabels. Hiermee kan de eigenaar
 naar de **huidige** GitHub-status navigeren; er worden geen claims
 genomen, workflows gestart, merges uitgevoerd of actuele statussen
