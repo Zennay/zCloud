@@ -60,6 +60,10 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "shown_collision_pairs": [],
                 "shown_path_scope_collision_pairs": [],
                 "observed_path_scope_collision_pairs": None,
+                "shown_portable_path_alias_pairs": [],
+                "observed_portable_path_alias_pairs": None,
+                "portable_path_alias_pairs_truncated": False,
+                "portable_path_alias_examples_truncated": False,
                 "path_scope_collision_pairs_truncated": False,
                 "path_scope_examples_truncated": False,
                 "linked_pr_collision_clusters": [],
@@ -87,7 +91,10 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                              len(source["shown_file_collision_pairs"]) > MAX_VISIBLE_PAIRS or
                              source["path_scope_collision_pairs_truncated"] or
                              source["path_scope_examples_truncated"] or
-                             len(source["shown_path_scope_collision_pairs"]) > MAX_VISIBLE_PAIRS)
+                             len(source["shown_path_scope_collision_pairs"]) > MAX_VISIBLE_PAIRS or
+                             source["portable_path_alias_pairs_truncated"] or
+                             source["portable_path_alias_examples_truncated"] or
+                             len(source["shown_portable_path_alias_pairs"]) > MAX_VISIBLE_PAIRS)
         complete = source["pr_file_scope_sample_complete"] and not display_truncated
         items.append({
             "project": project,
@@ -101,6 +108,12 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "shown_collision_pairs": pairs,
             "shown_path_scope_collision_pairs": scope_pairs,
             "observed_path_scope_collision_pairs": source["observed_path_scope_collision_pairs"],
+            "shown_portable_path_alias_pairs": source["shown_portable_path_alias_pairs"][:MAX_VISIBLE_PAIRS],
+            "observed_portable_path_alias_pairs": source["observed_portable_path_alias_pairs"],
+            "portable_path_alias_pairs_truncated": (
+                source["portable_path_alias_pairs_truncated"] or
+                len(source["shown_portable_path_alias_pairs"]) > MAX_VISIBLE_PAIRS),
+            "portable_path_alias_examples_truncated": source["portable_path_alias_examples_truncated"],
             "path_scope_collision_pairs_truncated": (
                 source["path_scope_collision_pairs_truncated"] or
                 len(source["shown_path_scope_collision_pairs"]) > MAX_VISIBLE_PAIRS),
@@ -150,6 +163,9 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             bool(i["observed_collision_pairs"]) for i in items),
         "any_path_scope_collisions_observed": any(
             bool(i.get("observed_path_scope_collision_pairs"))
+            for i in items),
+        "any_portable_path_aliases_observed": any(
+            bool(i.get("observed_portable_path_alias_pairs"))
             for i in items),
         "any_multiple_pr_issue_mentions_observed": any(
             bool(i["observed_duplicate_issue_groups"]) for i in items),
@@ -545,6 +561,8 @@ def summary_lines(view):
         str(view["observed_collision_pairs"]),
         "Waargenomen bestand/map-ancestorparen: " +
         str(view.get("observed_path_scope_collision_pairs", "ONBEKEND")),
+        "Mogelijke cross-platform padaliasparen (NFC/casefold, geen mergebewijs): " +
+        str(view.get("observed_portable_path_alias_pairs", "ONBEKEND")),
         "Samenhangende PR-bestandsgroepen: " +
         str(view["observed_connected_pr_collision_clusters"]),
         "Open PR-teksten met hetzelfde issue (GEEN fix- of eigenaarsbewijs): " +
@@ -582,6 +600,18 @@ def summary_lines(view):
             result.append("    Extra padparen buiten begrensde voorvertoning.")
     if view.get("path_scope_collision_pairs_truncated"):
         result.append("  Bestand/map-conflictweergave onvolledig; overige paren onbekend.")
+    for pair in view.get("shown_portable_path_alias_pairs", []):
+        result.append(
+            "  PADALIAS PR #" + str(pair["left"]["number"]) + " ↔ PR #" +
+            str(pair["right"]["number"]) + " · " +
+            str(pair["path_alias_count_observed"]) + " mogelijke paden")
+        for alias in pair["path_aliases"]:
+            result.append("    " + alias["left_path"] + " ↔ " +
+                          alias["right_path"] + " [" + alias["relation"] + "]")
+        if pair["path_aliases_truncated"]:
+            result.append("    Extra aliasvoorbeelden afgekapt.")
+    if view.get("portable_path_alias_pairs_truncated") or view.get("portable_path_alias_examples_truncated"):
+        result.append("  ONVOLLEDIG: overige mogelijke padaliases onbekend.")
     for group in view["shown_duplicate_issue_groups"]:
         result.append("  ISSUE #" + str(group["issue_number"]) +
                       " · vermeld door " + str(group["open_pr_mentions_observed"]) +
@@ -1202,6 +1232,23 @@ def as_markdown(board):
             lines.append("Geen bestand/map-ancestorparen waargenomen in de steekproef.")
         if view.get("path_scope_collision_pairs_truncated"):
             lines.append("**ONVOLLEDIG:** overige bestand/map-conflicpparen buiten de weergavelimiet.")
+        lines.extend(["", "### Mogelijke cross-platform padaliases", "",
+                      "NFC/casefold-heuristiek voor case-insensitive of Unicode-normaliserende filesystems; geen bewezen alias op elk platform, Git-mergeconflict of eigenaarsbewijs.", ""])
+        for pair in view.get("shown_portable_path_alias_pairs", []):
+            left, right = pair["left"], pair["right"]
+            lines.append("- [#" + str(left["number"]) + "](" + left["url"] +
+                         ") ↔ [#" + str(right["number"]) + "](" + right["url"] +
+                         "): " + str(pair["path_alias_count_observed"]) + " mogelijke aliases")
+            for alias in pair["path_aliases"]:
+                lines.append("  - " + chr(96) + alias["left_path"] +
+                             chr(96) + " ↔ " + chr(96) + alias["right_path"] +
+                             chr(96) + " [" + alias["relation"] + "]")
+            if pair["path_aliases_truncated"]:
+                lines.append("  - Extra aliasvoorbeelden buiten de limiet.")
+        if not view.get("shown_portable_path_alias_pairs"):
+            lines.append("Geen mogelijke cross-platform padaliases waargenomen.")
+        if view.get("portable_path_alias_pairs_truncated") or view.get("portable_path_alias_examples_truncated"):
+            lines.append("**ONVOLLEDIG:** aanvullende aliasparen of voorbeelden ontbreken.")
         lines.extend(["", "### Meerdere open PR's noemen hetzelfde issue (geen fix-/claimbewijs)", ""])
         for group in view["shown_duplicate_issue_groups"]:
             refs = ", ".join("[PR](" + pr["url"] + ")" for pr in group["shown_pr_sources"])
