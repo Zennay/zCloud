@@ -562,6 +562,7 @@ def runner_worker_snapshot() -> dict:
             "other_worker_process_band": "unknown",
             "listener_process_band_observed": "unknown",
             "self_worker_excluded": False,
+            "self_worker_identity_basis": "unknown",
             "worker_age_bands_observed": None,
             "claim_ownership_verified": False,
             "project_attribution_verified": False,
@@ -576,20 +577,23 @@ def runner_worker_snapshot() -> dict:
         }
 
     service_cgroup = _empty_service_cgroup_observation("not_observed")
-    current_worker_pids = set()
+    # Bind self-worker identity to both PID and kernel start ticks. A PID alone
+    # can be reused between ancestry discovery and the bounded /proc scan.
+    current_worker_pids: dict[int, int] = {}
     pid = os.getpid()
     for _ in range(MAX_PROC_ANCESTORS):
         info, _error = _process_stat(pid)
         if info is None:
             break
         if info["comm"] == "Runner.Worker":
-            current_worker_pids.add(pid)
+            current_worker_pids[pid] = int(info["start_ticks"])
         parent_pid = info["parent_pid"]
         if parent_pid <= 1 or parent_pid == pid:
             break
         pid = parent_pid
     self_worker_excluded = bool(current_worker_pids)
 
+    current_worker_seen: set[int] = set()
     worker_ages: list[int | None] = []
     listener_count = 0
     scanned = 0
@@ -618,7 +622,9 @@ def runner_worker_snapshot() -> dict:
                     continue
                 service_cgroup["worker_processes_observed"] += 1
                 _record_service_cgroup_membership(service_cgroup, "worker", process_id)
-                if process_id in current_worker_pids:
+                if (process_id in current_worker_pids
+                        and current_worker_pids[process_id] == int(info["start_ticks"])):
+                    current_worker_seen.add(process_id)
                     continue
                 age = uptime_seconds - info["start_ticks"] / ticks_per_second
                 worker_ages.append(
@@ -756,7 +762,7 @@ def runner_worker_snapshot() -> dict:
 
     worker_band = _occupancy_band(len(worker_ages), partial)
     observed_band = _occupancy_band(
-        len(worker_ages) + len(current_worker_pids), partial
+        len(worker_ages) + len(current_worker_seen), partial
     ) if self_worker_excluded else _occupancy_band(len(worker_ages), partial)
     state = (
         "partial_observation" if partial else
@@ -772,6 +778,9 @@ def runner_worker_snapshot() -> dict:
         "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "scan_coverage": "partial" if partial else "bounded_proc_snapshot_complete",
         "self_worker_excluded": self_worker_excluded,
+        "self_worker_identity_basis": (
+            "pid_and_start_ticks" if self_worker_excluded else "unknown"
+        ),
         "worker_process_band_observed": observed_band,
         "other_worker_process_band": worker_band if self_worker_excluded else "unknown_self_not_excluded",
         "listener_process_band_observed": _occupancy_band(listener_count, partial),
