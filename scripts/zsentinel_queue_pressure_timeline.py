@@ -308,6 +308,10 @@ def _blocked_queue_delta(left, right, allow_comparison=True):
         "from_total": None, "to_total": None, "delta": None,
         "project_deltas": None, "count_change_is_not_resolution_proof": True,
         "claim_authorized": False, "retry_authorized": False,
+        "observed_persistent_blocked_refs": [],
+        "observed_persistent_blocked_refs_total": None,
+        "historical_blocked_absence_comparison": None,
+        "same_task_observed_not_recovery_or_owner_proof": True,
     }
     if (not allow_comparison or type(left) is not dict or type(right) is not dict
             or left.get("source_fresh_when_saved") is not True
@@ -316,6 +320,52 @@ def _blocked_queue_delta(left, right, allow_comparison=True):
             or type(right.get("total_items_observed")) is not int):
         return unknown
     from_total, to_total = left["total_items_observed"], right["total_items_observed"]
+    old_refs = left.get("blocked_task_refs", [])
+    new_refs = right.get("blocked_task_refs", [])
+    old_coverage = left.get("blocked_task_refs_coverage", "not_observed")
+    new_coverage = right.get("blocked_task_refs_coverage", "not_observed")
+    if (type(old_refs) is not list or len(old_refs) > 24
+            or type(new_refs) is not list or len(new_refs) > 24):
+        raise ValueError("unbounded historical blocked task comparison")
+    persistent = []
+    task_absence = None
+    if (old_coverage in ("complete", "partial")
+            and new_coverage in ("complete", "partial")):
+        before_refs = {item["queue_ref"]: item for item in old_refs}
+        after_refs = {item["queue_ref"]: item for item in new_refs}
+        if len(before_refs) != len(old_refs) or len(after_refs) != len(new_refs):
+            raise ValueError("duplicate historical blocked task reference")
+        for ref in sorted(set(before_refs) & set(after_refs)):
+            old, new = before_refs[ref], after_refs[ref]
+            if (old["project_id"], old["priority"]) != (
+                    new["project_id"], new["priority"]):
+                # A project or priority change is not a scoped continuity proof.
+                continue
+            persistent.append({
+                "private_queue_ref": ref, "project_id": new["project_id"],
+                "priority": new["priority"],
+                "claim_metadata_was_present": old["claim_fields_present_observed"],
+                "claim_metadata_now_present": new["claim_fields_present_observed"],
+                "owner_verified": False, "recovery_verified": False,
+                "automatic_retry_authorized": False,
+            })
+        persistent.sort(key=lambda row: (
+            PRIORITIES.index(row["priority"]), row["project_id"],
+            row["private_queue_ref"]))
+        # Only fully enumerated samples can establish that a reference was
+        # absent from the *blocked state* at a historical time. Even then,
+        # it may have been dropped, claimed elsewhere or edited: never DONE.
+        if old_coverage == new_coverage == "complete":
+            task_absence = {
+                "newly_blocked_refs_observed": sorted(
+                    set(after_refs) - set(before_refs))[:12],
+                "no_longer_blocked_refs_observed": sorted(
+                    set(before_refs) - set(after_refs))[:12],
+                "newly_blocked_total": len(set(after_refs) - set(before_refs)),
+                "no_longer_blocked_total": len(set(before_refs) - set(after_refs)),
+                "task_recovered_or_closed_verified": False,
+                "owner_or_release_authorized": False,
+            }
     project_deltas = None
     if (left.get("project_groups_complete") is True
             and right.get("project_groups_complete") is True):
@@ -337,6 +387,10 @@ def _blocked_queue_delta(left, right, allow_comparison=True):
         "delta": to_total - from_total, "project_deltas": project_deltas,
         "count_change_is_not_resolution_proof": True,
         "claim_authorized": False, "retry_authorized": False,
+        "observed_persistent_blocked_refs": persistent[:12],
+        "observed_persistent_blocked_refs_total": len(persistent),
+        "historical_blocked_absence_comparison": task_absence,
+        "same_task_observed_not_recovery_or_owner_proof": True,
     }
 
 
