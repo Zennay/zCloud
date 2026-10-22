@@ -37,8 +37,11 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             val urgent = snapshot.alerts
                 // Do not interrupt for generic high severity. Only the server
                 // can assert that the known incident requires a human decision.
-                .filter { it.id.isNotBlank() && it.id.length <= 256 && it.isUrgent() &&
-                          it.humanActionRequired }
+                .filter {
+                    it.id.isNotBlank() && it.id.length <= 256 &&
+                        it.id.none { ch -> Character.isISOControl(ch) } &&
+                        it.isUrgent() && it.humanActionRequired
+                }
                 // Prefer the highest urgency and newest observed episode before
                 // dropping duplicate source rows for the same project/incident.
                 // The old order kept the first (possibly obsolete) episode, so a
