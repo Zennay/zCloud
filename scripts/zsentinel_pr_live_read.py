@@ -273,6 +273,15 @@ def _pr_summary(payload, full_name, number):
     sha = head.get("sha")
     if not isinstance(sha, str) or not SHA.fullmatch(sha):
         raise GitHubReadError("PR HEAD SHA missing or invalid")
+    head_ref = head.get("ref")
+    head_repo = head.get("repo")
+    head_repo_full_name = head_repo.get("full_name") if isinstance(head_repo, dict) else None
+    if (not isinstance(head_ref, str) or not head_ref or len(head_ref) > 255
+            or head_ref != head_ref.strip()
+            or any(not char.isprintable() or char.isspace() for char in head_ref)
+            or not isinstance(head_repo_full_name, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", head_repo_full_name)):
+        raise GitHubReadError("PR source repository/ref missing or invalid")
     state, draft, merged = payload.get("state"), payload.get("draft"), payload.get("merged")
     if state not in ("open", "closed") or type(draft) is not bool or type(merged) is not bool:
         raise GitHubReadError("PR state incomplete or inconsistent")
@@ -288,7 +297,10 @@ def _pr_summary(payload, full_name, number):
         "number": number, "url": "https://github.com/" + full_name + "/pull/" + str(number),
         "observed_state": state, "observed_draft": draft,
         "reported_merged": merged, "target_branch": base_ref,
+        "base_repo_full_name": repo,
         "base_sha": base_sha,
+        "head_repo_full_name": head_repo_full_name,
+        "head_ref": head_ref,
         "exact_head_sha": sha, "head_verified_by_live_get": True,
         "exact_head_checks_url": "https://github.com/" + full_name + "/commit/" + sha + "/checks",
         "pr_files_url": "https://github.com/" + full_name + "/pull/" + str(number) + "/files",
@@ -1035,14 +1047,17 @@ def observe_candidate_prs(issue, *, token=None, source_case=None,
                     "PR title or description changed during live read; text relation UNKNOWN"
                 )
             if (before["exact_head_sha"] != after["exact_head_sha"] or
+                    before["head_repo_full_name"] != after["head_repo_full_name"] or
+                    before["head_ref"] != after["head_ref"] or
+                    before["base_repo_full_name"] != after["base_repo_full_name"] or
                     before["observed_state"] != after["observed_state"] or
                     before["reported_merged"] != after["reported_merged"] or
                     before["observed_draft"] != after["observed_draft"] or
                     before["target_branch"] != after["target_branch"] or
                     before["base_sha"] != after["base_sha"]):
                 raise GitHubReadError(
-                    "PR HEAD, base commit or release state changed during live read; "
-                    "no stable source binding"
+                    "PR source repository/ref, HEAD, base ref/commit or release state "
+                    "changed during live read; no stable source binding"
                 )
             base.update(before)
             base["observed_at_utc"] = utc()
