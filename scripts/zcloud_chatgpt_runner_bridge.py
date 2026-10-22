@@ -123,6 +123,78 @@ def _process_stat(pid: int) -> tuple[dict[str, object] | None, str | None]:
     return {"comm": comm, "parent_pid": parent_pid, "start_ticks": start_ticks}, None
 
 
+MAX_PROC_CGROUP_BYTES = 4096
+EXPECTED_ZCLOUD_RUNNER_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
+
+
+def _service_cgroup_membership(pid: int) -> str:
+    """Return an enum only; never expose a raw /proc cgroup path."""
+    fd = None
+    try:
+        path = Path("/proc") / str(pid) / "cgroup"
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        fd = os.open(path, flags)
+        raw = os.read(fd, MAX_PROC_CGROUP_BYTES + 1)
+    except OSError:
+        return "UNKNOWN"
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if not raw or len(raw) > MAX_PROC_CGROUP_BYTES:
+        return "UNKNOWN"
+    try:
+        value = raw.decode("ascii")
+    except UnicodeError:
+        return "UNKNOWN"
+    paths = []
+    for line in value.splitlines():
+        fields = line.split(":", 2)
+        if (len(fields) != 3 or not fields[0].isdigit()
+                or not fields[2].startswith("/")):
+            continue
+        paths.append(fields[2])
+    if not paths:
+        return "UNKNOWN"
+    if any(EXPECTED_ZCLOUD_RUNNER_UNIT in path.strip("/").split("/") for path in paths):
+        return "EXPECTED_UNIT"
+    return "OTHER_UNIT"
+
+
+def _empty_service_cgroup_observation(coverage: str) -> dict[str, object]:
+    return {
+        "expected_unit": EXPECTED_ZCLOUD_RUNNER_UNIT,
+        # /proc stat comm is only a process-name hint, not executable identity.
+        "process_name_match_basis": "proc_stat_comm_only",
+        "membership_coverage": coverage,
+        "process_scan_partial": coverage != "unavailable",
+        "listener_processes_observed": 0,
+        "listener_in_expected_unit": 0,
+        "listener_outside_expected_unit": 0,
+        "listener_membership_unknown": 0,
+        "worker_processes_observed": 0,
+        "worker_in_expected_unit": 0,
+        "worker_outside_expected_unit": 0,
+        "worker_membership_unknown": 0,
+        "runner_registration_verified": False,
+        "job_assignment_verified": False,
+        "safe_to_take_over": False,
+        "release_authorized": False,
+        "mutation_performed": False,
+    }
+
+
+def _record_service_cgroup_membership(observation: dict[str, object], role: str, pid: int) -> None:
+    membership = _service_cgroup_membership(pid)
+    if membership == "EXPECTED_UNIT":
+        key = f"{role}_in_expected_unit"
+    elif membership == "OTHER_UNIT":
+        key = f"{role}_outside_expected_unit"
+    else:
+        key = f"{role}_membership_unknown"
+    observation[key] = int(observation[key]) + 1
+
+
 def _occupancy_band(count: int, partial: bool = False) -> str:
     if count <= 0:
         return "none_observed_coverage_partial" if partial else "none_observed"
@@ -164,8 +236,10 @@ def runner_worker_snapshot() -> dict:
             "safe_to_take_over": False,
             "release_authorized": False,
             "mutation_performed": False,
+            "runner_service_cgroup": _empty_service_cgroup_observation("unavailable"),
         }
 
+    service_cgroup = _empty_service_cgroup_observation("not_observed")
     current_worker_pids = set()
     pid = os.getpid()
     for _ in range(MAX_PROC_ANCESTORS):
@@ -201,8 +275,14 @@ def runner_worker_snapshot() -> dict:
                     continue
                 if info["comm"] == "Runner.Listener":
                     listener_count += 1
+                    service_cgroup["listener_processes_observed"] += 1
+                    _record_service_cgroup_membership(service_cgroup, "listener", process_id)
                     continue
-                if info["comm"] != "Runner.Worker" or process_id in current_worker_pids:
+                if info["comm"] != "Runner.Worker":
+                    continue
+                service_cgroup["worker_processes_observed"] += 1
+                _record_service_cgroup_membership(service_cgroup, "worker", process_id)
+                if process_id in current_worker_pids:
                     continue
                 age = uptime_seconds - info["start_ticks"] / ticks_per_second
                 worker_ages.append(
@@ -210,6 +290,24 @@ def runner_worker_snapshot() -> dict:
                 )
     except OSError:
         partial = True
+
+    service_cgroup["process_scan_partial"] = partial
+    observed_runner_processes = (
+        int(service_cgroup["listener_processes_observed"])
+        + int(service_cgroup["worker_processes_observed"])
+    )
+    unknown_cgroup_memberships = (
+        int(service_cgroup["listener_membership_unknown"])
+        + int(service_cgroup["worker_membership_unknown"])
+    )
+    if partial:
+        service_cgroup["membership_coverage"] = "partial_process_scan"
+    elif observed_runner_processes == 0:
+        service_cgroup["membership_coverage"] = "no_runner_processes_observed"
+    elif unknown_cgroup_memberships:
+        service_cgroup["membership_coverage"] = "partial_cgroup_metadata"
+    else:
+        service_cgroup["membership_coverage"] = "complete_for_comm_matched_processes"
 
     worker_band = _occupancy_band(len(worker_ages), partial)
     observed_band = _occupancy_band(
@@ -231,6 +329,7 @@ def runner_worker_snapshot() -> dict:
         "other_worker_process_band": worker_band if self_worker_excluded else "unknown_self_not_excluded",
         "listener_process_band_observed": _occupancy_band(listener_count, partial),
         "worker_age_bands_observed": _worker_age_bands(worker_ages),
+        "runner_service_cgroup": service_cgroup,
         "claim_ownership_verified": False,
         "project_attribution_verified": False,
         "safe_to_take_over": False,
