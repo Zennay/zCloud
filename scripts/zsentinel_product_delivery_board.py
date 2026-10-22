@@ -48,7 +48,7 @@ def read(path: Path, schema: str) -> dict:
         raise ValueError("source is not a bounded regular file")
     if not hasattr(os, "O_NOFOLLOW"):
         raise ValueError("secure no-follow opening not supported")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         opened = os.fstat(fd)
         if not stat.S_ISREG(opened.st_mode) or (
