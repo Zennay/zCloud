@@ -34,6 +34,7 @@ ATTENTION_LABELS = {
     "defer_unchanged_hold": "HOLD ongewijzigd: ander werk oppakken",
     "inspect_changed_evidence": "Nieuw gatebewijs: eigenaar laten beoordelen",
     "await_required_gates": "Wacht op verplichte gates en onafhankelijke review",
+    "parallel_review_while_ci": "Vraag onafhankelijke review aan terwijl bestaande CI loopt",
 }
 
 # Existing GitHub/portfolio blocker categories, not new CI or review gates.
@@ -779,6 +780,7 @@ def collect_workorders(board):
             item.get("blocker"), pinned, source_stale, history_state,
             defer_repeat, parallel_review)
         if parallel_review:
+            attention_status = "parallel_review_while_ci"
             notes.append(
                 "CI loopt al en er is geen reviewverzoek gezien. "
                 "De bevoegde PR-eigenaar kan parallel een onafhankelijke "
