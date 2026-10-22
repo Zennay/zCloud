@@ -4448,3 +4448,27 @@ en open `<stem>.desk.html` uit die directory. Onderaan staan de lokale
 bronlinks, inclusief eigenaarspakket wanneer `--owner-handoff` is gekozen.
 Neem nooit de aanwezigheid van `.receipt.json` of een klikbare link
 als goedkeuring voor een merge, productie-release of actieve claim.
+
+
+## 22 oktober · issue-onafhankelijke projectherstel-CSV
+
+De offline `scripts/zsentinel_operator_workbench.py` heeft naast de gefilterde
+issue-CSV nu een afzonderlijke **Preview project recovery CSV** in het
+projectherstelpaneel. Deze export gebruikt uitsluitend de reeds gevalideerde
+`project_operations` uit hetzelfde privé-board. Daardoor blijven ook
+projecten zichtbaar wanneer de begrensde GitHub-issuesample nul kaarten bevat
+maar de opgeslagen queue-observatie wel druk toont.
+
+De gebruiker bekijkt de exacte CSV eerst in de werkbank en kan daarna alleen
+diezelfde inhoud downloaden. De export bevat board-SHA256 en observatietijd,
+projectdekking, bemonsterde P0/P1/P2/onbekende issue-aantallen, queue-
+observatietijd en bounded aantallen actieve items/hoge claimcycli/verlopen
+leases. Ontbrekende queuegegevens worden als `UNKNOWN` weergegeven. De
+export bevat geen opaque claim-ID's, lokale contactlabels of privénotities en
+is bewust onafhankelijk van issuezoek-, prioriteits- en projectfilters.
+
+De kolommen `inventory_complete`, `claim_authorized`, `merge_authorized`
+en `deploy_authorized` zijn expliciet `false`: dit is een overdraagbare
+historische handoff, geen live status, eigenaarschapsbewijs of toestemming om
+een taak opnieuw te claimen, te retriggeren, te mergen of te deployen. Er wordt
+geen extern spreadsheet, netwerkendpoint of queuewriter aangeroepen.
