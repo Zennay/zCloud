@@ -485,6 +485,7 @@ def evaluate(data, max_age_minutes, *, now=None):
             "source_not_verified", "The supplied source receipt is not marked verified.",
             ("evidence.source_verified",))
     action = data["action"]
+    source_clocks = {}
     # A fresh wrapper receipt does not refresh the distinct source reads
     # used to justify an ownership-changing route. A missing/old/future-
     # relative source clock is a HOLD; these remain supplied observations,
@@ -498,11 +499,19 @@ def evaluate(data, max_age_minutes, *, now=None):
         for field, label in snapshot_sources:
             supplied = value(field)
             if supplied is None:
+                source_clocks[field] = {"status": "missing", "age_seconds": None}
                 require(False, field + "_missing",
                         "Current " + label + " source observation clock is missing.",
                         ("evidence." + field,))
                 continue
             snapshot_at = _timestamp(supplied)
+            clock_age_seconds = max(0, int((now - snapshot_at).total_seconds()))
+            clock_status = ("after_receipt" if snapshot_at > observed + timedelta(minutes=2)
+                            else "stale" if now - snapshot_at > timedelta(minutes=max_age_minutes)
+                            else "within_configured_window")
+            source_clocks[field] = {
+                "status": clock_status, "age_seconds": clock_age_seconds,
+            }
             require(snapshot_at <= observed + timedelta(minutes=2),
                     field + "_after_receipt",
                     "The " + label + " observation postdates the reported source receipt.",
@@ -883,6 +892,7 @@ def evaluate(data, max_age_minutes, *, now=None):
         "source_url": source,
         "source_age_seconds": max(0, int(age.total_seconds())),
         "source_freshness_window_minutes": max_age_minutes,
+        "source_clock_observations_unverified": source_clocks,
         "owner": data["owner"],
         "blockers": blockers,
         "required_evidence": requirements,
@@ -1816,6 +1826,13 @@ def markdown(report):
         "- Action executed: no",
         "",
     ]
+    if report.get("source_clock_observations_unverified"):
+        lines.extend(["## Queue/claim source clocks (operator-supplied; unverified)", ""])
+        for name, clock in sorted(report["source_clock_observations_unverified"].items()):
+            duration = ("unknown" if clock["age_seconds"] is None
+                        else str(clock["age_seconds"]) + " seconds")
+            lines.append("- " + name + ": " + clock["status"] + " (" + duration + ")")
+        lines.append("")
     if report["blockers"]:
         lines.extend(["## Holds to resolve", ""])
         lines.extend("- " + item["code"] + " — " + item["message"]
@@ -1865,6 +1882,14 @@ def policy_html(report):
         "<li>Source: <a href='" + esc(report["source_url"]) + "'>" + esc(report["source_url"]) + "</a></li>",
         "</ul></section>",
     ]
+    if report.get("source_clock_observations_unverified"):
+        parts.append("<section><h2>Queue/claim source clocks (unverified)</h2><ul>")
+        for name, clock in sorted(report["source_clock_observations_unverified"].items()):
+            duration = ("unknown" if clock["age_seconds"] is None
+                        else str(clock["age_seconds"]) + " seconds")
+            parts.append("<li><code>" + esc(name) + "</code>: " +
+                         esc(clock["status"]) + " (" + esc(duration) + ")</li>")
+        parts.append("</ul></section>")
     if report["blockers"]:
         parts.extend(["<section><h2>Holds to resolve</h2><ul>"])
         for item in report["blockers"]:
