@@ -1104,7 +1104,10 @@ def worker_progress_html(source):
             '<article class="panel ' +
             ('warn' if state in (
                 "allocated_paused_with_claimed_queue_owner_gate",
-                "allocated_queue_claim_expired_or_invalid_owner_recheck") else 'read') +
+                "allocated_queue_claim_expired_or_invalid_owner_recheck",
+                "allocated_no_active_claim_owner_review",
+                "allocated_multiple_active_claims_owner_review",
+                "allocated_queue_source_unavailable_owner_review") else 'read') +
             '"><h3>' + escape(pid) + ' · worker ' +
             str(slot) + '</h3><p>' + escape(status[state]) +
             '</p><p class="small">Gewenste status: ' + escape(desired) +
