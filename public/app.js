@@ -969,7 +969,11 @@ async function resumeBlockedQueue(queueId,button){
       DATA.attention_needed=(DATA.attention_needed||[]).filter(row=>row.attention_id!=='queue:'+queueId);
     }
     render();
-    await refresh(true);
+    const refreshed=await refresh(true);
+    if(refreshed!==true||!Array.isArray(BLOCKED_QUEUE)){
+      $('notice').hidden=false;
+      $('notice').textContent='The server confirmed this task was resumed. A later dashboard refresh could not verify the new queue snapshot; do not repeat the action. Reconnect to inspect its current status.';
+    }
   }catch(error){
     // A 409 means the operator's confirmed dependency source changed.
     // Restore the actual queue, never leave a stale resume button enabled.
@@ -1063,13 +1067,19 @@ async function closeBlockedQueue(queueId,button){
       DATA.attention_needed=(DATA.attention_needed||[]).filter(row=>row.attention_id!=='queue:'+queueId);
     }
     render();
-    await refresh(true);
-    // The transaction may succeed while the separate post-commit scheduler
-    // refill fails. Do not misreport cancellation as failed or hide the
-    // pending admission follow-up from an authorized operator.
+    const refreshed=await refresh(true);
+    // A verified transaction receipt is permanent even when a separate
+    // scheduler refill or a later network read fails. Do not invite retries.
+    const followups=[];
     if(result.result?.queue_audit_deferred===true){
+      followups.push('Queue refill was deferred after the closure. Ask the scheduler owner to inspect normal admission.');
+    }
+    if(refreshed!==true||!Array.isArray(BLOCKED_QUEUE)){
+      followups.push('The subsequent dashboard read was unavailable; inspect the queue after reconnecting.');
+    }
+    if(followups.length){
       $('notice').hidden=false;
-      $('notice').textContent='The task was permanently closed, but the subsequent queue refill was deferred after an error. Ask the scheduler owner to inspect normal admission; do not repeat the close.';
+      $('notice').textContent='The task was permanently closed and acknowledged by the server. '+followups.join(' ')+' Do not repeat the close.';
     }
   }catch(error){
     // Refuse to leave any old write affordance enabled when a source read fails.
