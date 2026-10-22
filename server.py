@@ -3314,10 +3314,17 @@ def portfolio_queue_allocate():
     preempted=set()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
+        # Expired *queue* lease is not authority to discard an independent
+        # task_claims record. Preserve both active and expired-but-recorded
+        # claims for explicit owner reconciliation, not automatic takeover.
         c.execute("""UPDATE portfolio_queue
                      SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                      WHERE eligible=1 AND status IN ('claimed','running','verifying')
-                       AND claim_expires IS NOT NULL AND claim_expires<=?""",(ts,ts))
+                       AND claim_expires IS NOT NULL AND claim_expires<=?
+                       AND NOT EXISTS (
+                         SELECT 1 FROM task_claims
+                         WHERE task_claims.claim_key=portfolio_queue.queue_id
+                       )""",(ts,ts))
         _portfolio_requeue_conflicting_claimed_lanes_locked(c,ts)
 
         occupied_rows=c.execute(
@@ -3661,11 +3668,24 @@ def portfolio_queue_allocate():
                 )
             )
             lane_metadata=_portfolio_lane_metadata(row,lane)
-            c.execute("""UPDATE portfolio_queue
+            # Recheck claim ownership at the SQL write boundary, even when an
+            # earlier lane snapshot offered this row. No claim record (including
+            # expired-but-not-released records) may be taken over implicitly.
+            updated=c.execute("""UPDATE portfolio_queue
                          SET status='claimed',worker_slot=?,claimed_at=?,claim_expires=?,updated_at=?,
                              attempts=attempts+1,metadata_json=?
-                         WHERE queue_id=? AND status='queued' AND eligible=1""",
+                         WHERE queue_id=? AND status='queued' AND eligible=1
+                           AND worker_slot IS NULL AND claimed_at IS NULL AND claim_expires IS NULL
+                           AND NOT EXISTS (
+                             SELECT 1 FROM task_claims
+                             WHERE task_claims.claim_key=portfolio_queue.queue_id
+                           )""",
                       (slot,ts,lease_until,ts,lane_metadata,row['queue_id']))
+            if updated.rowcount!=1:
+                # A separate task claim/ownership appeared, or the candidate
+                # became ineligible. Preserve it and select another row later.
+                preempted.add(str(row['queue_id']))
+                continue
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
             if (force_replacement or force_preferred_slot==slot) and str(row['project_id'] or '')==force_project:
