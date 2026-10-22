@@ -26,7 +26,8 @@ def build_bundle(*, inbox: Path, output_dir: Path, name: str,
                  retry: Path | None = None, branches: Path | None = None,
                  claims: Path | None = None, prs: Path | None = None,
                  pr_dossiers: list[Path] | None = None, limit: int = 40,
-                 max_age_hours: int = 24, owner_handoff: bool = False) -> dict:
+                 max_age_hours: int = 24, owner_handoff: bool = False,
+                 verify_after_write: bool = False) -> dict:
     """Precompute both complete products before publishing either artifact."""
     if not NAME.fullmatch(name):
         raise ValueError("name must be a short lowercase safe filename stem")
@@ -146,6 +147,13 @@ def build_bundle(*, inbox: Path, output_dir: Path, name: str,
     for artifact_path, payload, _ in artifacts:
         write_create_only(artifact_path, payload)
     write_create_only(receipt_path, receipt_data)
+    verified = None
+    if verify_after_write:
+        # Optional end-to-end local delivery proof uses the exact verifier
+        # exposed as an independent read-only operator command. It never
+        # upgrades the unsigned saved receipt into current release authority.
+        from zsentinel_verify_operator_bundle import verify_bundle
+        verified = verify_bundle(output_dir, name)
     # Do not print private filesystem paths or worker/project source details
     # into shell, runner or service logs. Names are safe caller-chosen stems.
     return {
@@ -155,6 +163,10 @@ def build_bundle(*, inbox: Path, output_dir: Path, name: str,
         "receipt_file": receipt_path.name,
         "board_sha256": board_sha,
         "bundle_complete": True,
+        "delivery_integrity_verified": (
+            verified["integrity_verified"] if verified is not None else None
+        ),
+        "delivery_integrity_check_performed": verify_after_write,
         "source_is_live": False,
         "claim_authorized": False,
         "merge_authorized": False,
@@ -176,6 +188,8 @@ def main(argv=None) -> int:
     parser.add_argument("--max-age-hours", type=int, default=24)
     parser.add_argument("--owner-handoff", action="store_true",
                         help="Also create a P0-first saved existing-PR owner worklist Markdown")
+    parser.add_argument("--verify-after-write", action="store_true",
+                        help="After publishing the receipt, read it back and verify exact private artifact digests")
     parser.add_argument("--output-dir", type=Path, required=True,
                         help="Existing private (0700) operator-owned directory")
     parser.add_argument("--name", required=True,
@@ -187,7 +201,8 @@ def main(argv=None) -> int:
             retry=args.retry, branches=args.branches, claims=args.claims,
             prs=args.prs, pr_dossiers=args.pr_dossier,
             limit=args.limit, max_age_hours=args.max_age_hours,
-            owner_handoff=args.owner_handoff)
+            owner_handoff=args.owner_handoff,
+            verify_after_write=args.verify_after_write)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except (OSError, ValueError, KeyError, TypeError, UnicodeError) as exc:
