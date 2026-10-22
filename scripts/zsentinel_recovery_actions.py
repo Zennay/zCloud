@@ -479,6 +479,28 @@ def suggested_actions(packet):
             "Notion-/GitHub-claims en bestandsoverlap vóór een eigen reparatie.",
             "PR_AND_OWNER_GATE_REQUIRED",
         ))
+    # The short owner worklist already includes active-only P0 projects,
+    # but the top nine incident cards used to show only QUEUED projects.
+    # Preserve one explicit active-owner follow-up without inventing a
+    # stall, releasing a lease or implying that this work is claimable.
+    for entry in packet.get("owner_review_shortlist", [])[:6]:
+        if not isinstance(entry, dict) or entry.get("owner_review_kind") != "P0_ACTIVE_OWNER":
+            continue
+        name = entry.get("project")
+        active = _number(entry.get("active_p0"))
+        if not isinstance(name, str) or not (0 < len(name) <= 32 and active):
+            continue
+        result.append(action(
+            "p0-active-owner-" + name.casefold(),
+            "review",
+            f"{name}: {active} lokale P0-taak/taken zijn al in behandeling; "
+            "geen nieuwe wachtende P0-taak in deze steekproef.",
+            "Controleer met de bestaande eigenaar de actuele voortgang, "
+            "claimklok en gekoppelde PR; onderbreek, herclaim of herstart niets. "
+            "Actief werk is op zichzelf geen vastgelopen incident.",
+            "ACTIVE_P0_OWNER_PROTECTED",
+        ))
+        break
     # Show one safe independent continuation when release/owner waits.
     # An idle lane is *not* an available new writer while another active
     # queue task or local claim has an unknown actual write scope. Do not
@@ -518,9 +540,13 @@ def suggested_actions(packet):
             return 0
         if item["severity"] == "urgent":
             return 1
-        if identifier.startswith(("p0-project-", "p1-project-")):
+        if identifier.startswith("p0-project-"):
             return 2
-        if item["severity"] == "review":
+        if identifier.startswith("p0-active-owner-"):
             return 3
-        return 4
+        if identifier.startswith("p1-project-"):
+            return 4
+        if item["severity"] == "review":
+            return 5
+        return 6
     return sorted(result, key=display_rank)[:MAX_ACTIONS]
