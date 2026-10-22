@@ -95,6 +95,93 @@ def _gate_cards(head, checks, reviews, stable, default_branch=None,
     ]
 
 
+def _parallel_owner_actions(report):
+    """Expose independent merge blockers without turning samples into authority.
+
+    A stale base must not hide a pending check or a review request. These
+    bounded cards are suggested *human* work, never scheduler instructions.
+    """
+    observed = report.get("observed") or {}
+    checks = report.get("sampled_check_runs")
+    reviews = report.get("sampled_reviews")
+    cards = []
+
+    def add(code, problem, action, evidence):
+        cards.append({
+            "code": code, "problem": problem, "owner_action": action,
+            "evidence": evidence, "execution_authorized": False,
+        })
+
+    if not report.get("source_stable_between_reads"):
+        add("refresh_unstable_pr_source",
+            "The exact PR or default-branch source was not stable.",
+            "Restore source admission and re-observe before doing PR work.",
+            "SOURCE_UNKNOWN")
+        return cards
+
+    if report.get("target_is_default_branch") is False:
+        add("confirm_default_branch_target",
+            "The PR does not target the observed default branch.",
+            "Confirm the intended release branch with the PR owner.",
+            "BASE_NOT_DEFAULT")
+    elif report.get("base_tip_matches_default") is False:
+        add("reconcile_outdated_pr_base",
+            "The PR base differs from the stable default-branch tip.",
+            "Coordinate a non-force update and conflict resolution with the branch owner.",
+            "BASE_TIP_OUTDATED")
+    elif report.get("base_tip_matches_default") is None:
+        add("recheck_default_branch_tip",
+            "The current default-branch base could not be established.",
+            "Recover the stable branch-name and tip source.",
+            "DEFAULT_BRANCH_TIP_UNKNOWN")
+    if observed.get("observed_draft") is True:
+        add("finish_existing_draft",
+            "The PR is still draft.",
+            "Ask its current owner to mark ready only after review preparation.",
+            "DRAFT")
+    if checks is None:
+        add("recover_head_check_source",
+            "Exact-head check source is unavailable.",
+            "Restore source visibility; do not infer a green gate.",
+            "CHECK_SOURCE_UNKNOWN")
+    else:
+        if checks.get("sampled_blocking_checks"):
+            add("investigate_sampled_terminal_checks",
+                "Some sampled exact-head checks have terminal non-success.",
+                "Inspect linked checks; resolve real failures without weakening requirements.",
+                "OBSERVED_BLOCKING_NON_SUCCESS")
+        if checks.get("sampled_pending_checks"):
+            add("resolve_pending_head_checks",
+                "Some sampled exact-head checks are pending or queued.",
+                "Reconcile their actual runner/admission state; no blind workflow reruns.",
+                "OBSERVED_PENDING_CHECKS")
+        if checks.get("sample_incomplete"):
+            add("review_unsampled_head_checks",
+                "GitHub reports more check runs than this bounded sample contains.",
+                "Inspect all branch-required exact-head checks independently.",
+                "SAMPLE_INCOMPLETE")
+    if reviews is None:
+        add("recover_review_source",
+            "The bounded PR review source is unavailable.",
+            "Restore read-only review visibility and inspect independent approval.",
+            "REVIEW_SOURCE_UNKNOWN")
+    elif reviews.get("sampled_count") == 0:
+        add("request_independent_review",
+            "No submitted reviews appeared in the sampled PR review source.",
+            "Request an independent review; verify approval, head relevance and threads.",
+            "ZERO_REVIEWS_IN_SAMPLE")
+    elif reviews.get("exact_head_review_coverage") != "OBSERVED":
+        add("reconcile_partial_review_coverage",
+            "Some sampled review entries are unbound, unknown or truncated.",
+            "Inspect effective reviewer decisions and unresolved threads on GitHub.",
+            "PARTIAL_REVIEW_SAMPLE")
+    add("verify_authority_and_protection",
+        "Branch protection, current claims and release-owner permission remain unverified.",
+        "Check all required CI, independent review, protection and current ownership before merge.",
+        "HUMAN_GATES_UNKNOWN")
+    return cards[:8]
+
+
 def observe_exact_pr(pr_url, *, token=None):
     """At most eight bounded GETs; pin PR, default-branch name and tip to stable reads."""
     match = REPO_URL.fullmatch(pr_url) if isinstance(pr_url, str) else None
@@ -276,7 +363,7 @@ def observe_exact_pr(pr_url, *, token=None):
         next_step = "Verify all required CI, independent review, open threads, protection and live owner claims."
         status = "HUMAN_GATES_UNVERIFIED"
 
-    return {
+    report = {
         "schema_version": 1, "policy": "zsentinel-exact-pr-preflight-v1",
         "url": pr_url, "observed_at_utc": utc(),
         "observed": first, "status": status,
@@ -309,12 +396,14 @@ def observe_exact_pr(pr_url, *, token=None):
         "owner_authorized": False, "merge_authorized": False,
         "merge_executed": False, "deployed": False, "advisory_only": True,
     }
+    report["parallel_owner_actions"] = _parallel_owner_actions(report)
+    return report
 
 
 def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None,
                 default_branch_sha=None):
     """Do not retain a supposedly stable PR HEAD after provider uncertainty."""
-    return {
+    report = {
         "schema_version": 1, "policy": "zsentinel-exact-pr-preflight-v1",
         "url": pr_url, "observed_at_utc": utc(),
         "observed": None, "unconfirmed_first_head": first["exact_head_sha"],
@@ -339,6 +428,8 @@ def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None,
         "owner_authorized": False, "merge_authorized": False,
         "merge_executed": False, "deployed": False, "advisory_only": True,
     }
+    report["parallel_owner_actions"] = _parallel_owner_actions(report)
+    return report
 
 
 def as_markdown(report):
@@ -380,6 +471,10 @@ def as_markdown(report):
     ]
     lines.extend("- " + item["gate"] + ": " + item["state"] + " — " + item["next"]
                  for item in report["operator_gates"])
+    lines.extend(["", "## Parallel owner actions — none executed", ""])
+    for card in report.get("parallel_owner_actions", []):
+        lines.extend(("- " + card["code"] + " · " + card["problem"],
+                      "  Action: " + card["owner_action"]))
     lines.extend(["", "## Missing sources", ""])
     lines.extend("- " + entry for entry in report["secondary_source_gaps"])
     if not report["secondary_source_gaps"]:
@@ -454,6 +549,11 @@ def as_html(report):
     for gate in report["operator_gates"]:
         parts.append("<li><strong>" + esc(gate["gate"]) + " — " +
                      esc(gate["state"]) + "</strong>: " + esc(gate["next"]) + "</li>")
+    parts.extend(["</ul></section><section><h2>Parallel owner actions — not executed</h2><ul>"])
+    for card in report.get("parallel_owner_actions", []):
+        parts.append("<li><strong>" + esc(card["problem"]) + "</strong><br>" +
+                     esc(card["owner_action"]) + " <small>(" + esc(card["code"]) +
+                     ")</small></li>")
     parts.extend(["</ul></section><section><h2>Source gaps and sampled checks</h2><ul>"])
     for gap in report["secondary_source_gaps"]:
         parts.append("<li>" + esc(gap) + "</li>")
