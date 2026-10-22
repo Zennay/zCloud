@@ -343,7 +343,8 @@ def main() -> int:
             raise Refused("legacy service requires authorized X11 :10; do not launch headless")
     state = {
         "hostname": HOST, "mode": "apply" if args.apply else "preflight",
-        "desired": 10, "maximum": 20, "profile_present": True,
+        "desired": 10, "maximum": 20,
+        "managed_profile_present": (PROFILE / "prefs.js").is_file() and (PROFILE / "cookies.sqlite").is_file(),
         "extension_present": True, "browser_managed_active": managed,
         "standalone_browser_present": standalone,
         "browser_owner": "userscript-only" if standalone else "managed-service",
