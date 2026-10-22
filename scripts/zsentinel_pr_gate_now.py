@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 from datetime import datetime, timezone
+from html import escape
 import json
 import os
 from pathlib import Path
@@ -617,6 +618,130 @@ def human_gate_summary(source: dict) -> str:
 
 
 
+def html_gate_summary(source: dict) -> str:
+    """Private offline operator desk; no remote actions, scripts, or release grants."""
+    if (type(source) is not dict or source.get("schema") != SCHEMA
+            or source.get("merge_authorized") is not False
+            or source.get("deployment_authorized") is not False
+            or source.get("writes_performed") is not False
+            or type(source.get("items")) is not list):
+        raise ValueError("invalid source for private current-PR gate HTML")
+
+    def h(value):
+        return escape(str(value), quote=True)
+
+    cards = []
+    for item in source["items"]:
+        repository, number = item.get("repository"), item.get("number")
+        if (type(repository) is not str or REPO.fullmatch(repository) is None
+                or type(number) is not int or not 1 <= number <= 999999999):
+            raise ValueError("invalid canonical source PR")
+        url = "https://github.com/" + repository + "/pull/" + str(number)
+        title = "<h2><a rel='noopener noreferrer' href='" + h(url) + "'>" + h(repository) + " #" + str(number) + "</a></h2>"
+        if item.get("status") != "observed_current_head_partial_gate_evidence":
+            cards.append("<article>" + title +
+                         "<p class='warning'>GitHub-bron niet beschikbaar of HEAD gewijzigd. Herlees bron; geen merge.</p></article>")
+            continue
+        head = item.get("head_sha_observed")
+        if type(head) is not str or SHA.fullmatch(head) is None:
+            raise ValueError("untrusted PR commit identity")
+        step = item.get("human_next_gate_step")
+        if step not in GATE_STEPS_NL:
+            raise ValueError("unknown owner gate step")
+        action = GATE_STEPS_NL[step]
+        state = (
+            "CONCEPT: eigenaar moet reviewklaar maken" if item["draft_at_read"] else
+            "MERGECONFLICT: eigenaar moet oplossen" if item["merge_conflict_observed"] else
+            "Mergeability nog onbekend" if item["mergeability_not_yet_evaluated"] else
+            "GitHub ziet code als samenvoegbaar, NIET vrijgegeven")
+        badges = (
+            "<div class='metrics'>"
+            "<span><strong>" + h(item["observed_checks_pending"]) + "</strong> checks niet klaar</span>"
+            "<span><strong>" + h(item["observed_checks_not_successful"]) + "</strong> checks niet geslaagd</span>"
+            "<span><strong>" + h(item["observed_independent_exact_head_approvals"]) + "</strong> onafhankelijke reviews op HEAD</span>"
+            "<span><strong>" + h(item["queued_check_attention_30m_observed"]) + "</strong> queued ≥30 min</span>"
+            "<span><strong>" + h(item["running_check_attention_60m_observed"]) + "</strong> actief ≥60 min</span>"
+            "</div>")
+        jobs = []
+        for job in item.get("observed_actionable_check_runs", [])[:12]:
+            job_id = job.get("check_run_id")
+            if type(job_id) is not int or job_id <= 0:
+                raise ValueError("untrusted check run identity")
+            check_url = "https://github.com/" + repository + "/runs/" + str(job_id)
+            kind = ("Lange looptijd, onderzoek eigenaar" if job.get("running_attention_60m") is True
+                    else "Lang queued, onderzoek toewijzing" if job.get("queued_attention_30m") is True
+                    else "Nog niet klaar of niet geslaagd")
+            minutes = (job.get("running_age_seconds_observed")
+                       if job.get("running_attention_60m") is True
+                       else job.get("queued_age_seconds_observed")
+                       if job.get("queued_attention_30m") is True else None)
+            duration = (" · " + h(minutes // 60) + " min waargenomen"
+                        if type(minutes) is int else "")
+            jobs.append("<li><a rel='noopener noreferrer' href='" + h(check_url) +
+                        "'>" + h(job.get("name", "Onbekende check")) + "</a> — " +
+                        h(kind) + duration + "</li>")
+        if item.get("observed_actionable_check_runs_hidden"):
+            jobs.append("<li>Extra checkregels buiten beperkte bronweergave: " +
+                        h(item["observed_actionable_check_runs_hidden"]) + "</li>")
+        legacy = []
+        for entry in item.get("observed_actionable_legacy_contexts", [])[:12]:
+            legacy.append("<li>" + h(entry.get("context", "Onbekende status")) +
+                          " — " + h(entry.get("state", "onbekend")) + "</li>")
+        if item.get("observed_actionable_legacy_contexts_hidden"):
+            legacy.append("<li>Meer oude statuscontexten buiten venster: " +
+                          h(item["observed_actionable_legacy_contexts_hidden"]) + "</li>")
+        unknown = []
+        if (item.get("legacy_status_source_may_be_truncated") is True
+                or item.get("check_runs_page_complete") is not True
+                or item.get("review_page_may_be_truncated") is True):
+            unknown.append("Een of meer GitHub-bronnen zijn afgekapt.")
+        if item.get("queued_check_age_unknown_observed"):
+            unknown.append("Queued checks zonder valide tijdstip: " +
+                           str(item["queued_check_age_unknown_observed"]))
+        if item.get("running_check_age_unknown_observed"):
+            unknown.append("Lopende checks zonder valide starttijd: " +
+                           str(item["running_check_age_unknown_observed"]))
+        if item.get("automation_review_events_excluded_from_independent_approval"):
+            unknown.append("Botreviewevents niet als menselijke approvals geteld: " +
+                           str(item["automation_review_events_excluded_from_independent_approval"]))
+        cards.append(
+            "<article>" + title +
+            "<p><strong>Huidige HEAD:</strong> <a rel='noopener noreferrer' href='" +
+            h("https://github.com/" + repository + "/commit/" + head) + "'><code>" +
+            h(head[:12]) + "</code></a> · doel: " + h(item["base_ref_observed"]) + "</p>" +
+            "<p class='warning'>" + h(state) + "</p>" + badges +
+            "<p class='action'><strong>Volgende eigenaaractie:</strong> " + h(action) + "</p>" +
+            ("<h3>Actuele checkacties (begrensde bron)</h3><ul>" + "".join(jobs) + "</ul>" if jobs else "") +
+            ("<h3>Legacy statuscontexten</h3><ul>" + "".join(legacy) + "</ul>" if legacy else "") +
+            ("<p class='muted'>" + " · ".join(h(x) for x in unknown) + "</p>" if unknown else "") +
+            "<p class='muted'>Merge-, claim- en deployautorisatie: NEE. Vereiste branchregels en "
+            "volledige verplichte checkset zijn niet onafhankelijk vastgesteld.</p></article>")
+    return (
+        "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
+        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">"
+        "<title>zSentinel · actuele PR-gates</title><style>"
+        "body{font:16px/1.55 system-ui,sans-serif;margin:0 auto;padding:1.5rem;max-width:1100px;"
+        "background:#101a26;color:#eef2f6}a{color:#9cceff;overflow-wrap:anywhere}"
+        "article{background:#1b2a3a;border:1px solid #44576d;border-radius:1rem;"
+        "padding:1.2rem;margin:1.2rem 0}h1,h2,h3{line-height:1.25}"
+        ".metrics{display:flex;flex-wrap:wrap;gap:.5rem}"
+        ".metrics span{padding:.5rem .7rem;border:1px solid #4a6075;border-radius:.5rem}"
+        ".metrics strong{font-size:1.3rem}.action{background:#263e4e;padding:.8rem;border-radius:.5rem}"
+        ".warning{color:#ffe39d}.muted,footer{color:#b5c5d3}li{margin:.3rem 0}"
+        "@media print{body{background:#fff;color:#111}article{background:#fff;border-color:#888}"
+        "a,.warning,.muted{color:#222}}</style></head><body><header>"
+        "<h1>zSentinel · actuele PR-gates</h1><p>Bronmoment UTC: " +
+        h(source.get("observed_at_utc", "ONBEKEND")) +
+        "</p><p><strong>Read-only eigenaarwerkbak.</strong> Lange queued of lopende checks zijn "
+        "uitsluitend signalen, geen bewijs van runneruitval. Onafhankelijke review, exact-head "
+        "verplichte CI, eigenaarschap en branch protection blijven altijd vereist.</p></header>" +
+        "".join(cards) +
+        "<footer>Geen CI-herstart, queueclaim, PR-merge of live deployment uitgevoerd. "
+        "GitHub kan na dit bronmoment veranderen.</footer></body></html>\n")
+
+
 REVIEW_SCHEMA = "zsentinel-offline-merge-first-review-v1"
 REVIEW_MAX_BYTES = 1024 * 1024
 REVIEW_MAX_PRS = 300
@@ -734,8 +859,8 @@ def main(argv=None):
         "--batch", type=int, default=1,
         help="1-based bounded review manifest batch (four PRs maximum per operation)")
     parser.add_argument(
-        "--format", choices=("json", "text"), default="json",
-        help="JSON for offline import (default), or human-readable Dutch gate triage")
+        "--format", choices=("json", "text", "html"), default="json",
+        help="JSON receipt (default), Dutch text triage or private offline HTML desk")
     parser.add_argument(
         "--output", type=Path,
         help="Create NEW private 0600 report; omit to print to stdout")
@@ -768,7 +893,8 @@ def main(argv=None):
                 source[key] = review[key]
         rendered = (
             json.dumps(source, sort_keys=True, ensure_ascii=True, indent=2) + "\n"
-            if args.format == "json" else human_gate_summary(source))
+            if args.format == "json" else html_gate_summary(source)
+            if args.format == "html" else human_gate_summary(source))
         if args.output is None:
             sys.stdout.write(rendered)
         else:
