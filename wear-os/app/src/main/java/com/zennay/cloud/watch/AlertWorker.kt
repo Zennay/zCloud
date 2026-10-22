@@ -93,6 +93,28 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                     applicationContext, 0, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
+                // Snoozing is a local preference only. A per-episode opaque
+                // data URI prevents two blockers from sharing this action.
+                val snoozeIntent = Intent(applicationContext, AlertActionReceiver::class.java)
+                    .setAction(AlertActionReceiver.ACTION_SNOOZE_BLOCKER)
+                    .setData(Uri.parse(
+                        "zcloud-watch://snooze/" + project + "/" +
+                            IncidentSnoozeStore.actionIdentity(alert)
+                    ))
+                    .putExtra(AlertActionReceiver.EXTRA_INCIDENT_ID, alert.id)
+                    .putExtra(AlertActionReceiver.EXTRA_PROJECT_ID, project)
+                    .apply {
+                        alert.episodeId?.let {
+                            putExtra(AlertActionReceiver.EXTRA_EPISODE_ID, it)
+                        }
+                        alert.occurredAt?.let {
+                            putExtra(AlertActionReceiver.EXTRA_OCCURRED_AT, it)
+                        }
+                    }
+                val snoozePending = PendingIntent.getBroadcast(
+                    applicationContext, 0, snoozeIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
                 // A bounded explicit owner action takes priority over a
                 // generic incident summary on a very small notification face.
                 val text = alert.action?.takeIf { it.isNotBlank() }
@@ -108,6 +130,11 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                     .setContentText(text)
                     .setStyle(Notification.BigTextStyle().bigText(text))
                     .setContentIntent(pending)
+                    .addAction(
+                        Notification.Action.Builder(
+                            R.drawable.ic_launcher, "Dempen 1 uur", snoozePending
+                        ).build()
+                    )
                     .setAutoCancel(true)
                     .setCategory(Notification.CATEGORY_ERROR)
                     .build()
