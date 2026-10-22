@@ -95,6 +95,17 @@ zijn uitgesloten van deze reproduceerbare vergelijking.
 Een mismatch of ontbrekend origineel weigert de uitpakactie zonder
 bestaande bestanden te wijzigen.
 
+Ook de <b>echte opgeslagen bronleeftijd</b> wordt nu bij iedere inspectie
+apart weergegeven: oudste/nieuwste oorspronkelijke UTC-waarneming,
+`source_age_hours` en `source_age_status`. De standaardgrens is zes uur
+en is aanpasbaar met `--stale-after-hours 24` (1–168).
+Mogelijke toekomstige bronklokken (>2 minuten) worden
+`future_clock_unknown`; oudere opnames heten
+`stale_historical_sample`; recente opnames blijven expliciet
+`recent_historical_sample_not_live`. Een nieuwe ZIP-aanmaak of
+bestandstijd maakt historische broninformatie nooit kunstmatig actueel.
+Dit beïnvloedt geen claims, watches, CI of releases.
+
 De uitvoer onderscheidt `original_private_bundle_files_reverified` van
 `saved_checksum_consistent`. Ook een geslaagde vergelijking met de
 **lokale oorspronkelijke** bundels is geen onafhankelijke authenticatie
