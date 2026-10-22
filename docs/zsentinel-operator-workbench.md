@@ -120,6 +120,39 @@ volledige project-CSV als de PR-gate-CSV opnieuw opgebouwd uit JSON. Geslaagde c
 **interne pakketintegriteit, geen cryptografische afzenderidentiteit** en
 geen nieuwe actuele issue-, claim-, CI-, review- of merge-status.
 
+### Privé eigenaarbriefing uit de laatste opgenomen projectstatus
+
+Voor daadwerkelijke productoverdracht kan dezelfde bron ook een **compacte
+Markdown-eigenaarbriefing** genereren, zonder raw queue-ID's of verborgen
+workerprompts. De eigenaar ziet de bewaarde P0/P1-prioriteiten,
+oorspronkelijke queue-leases en claimcontext, historisch vervolgadvies,
+waargenomen bestaande PR-HEADs en de verplichte **actuele**
+eigenaar-/CI-/reviewstappen. Output is alleen in een bestaande eigen
+0700-map, create-only met rechten 0600; bronnotities verschijnen nooit op
+stdout.
+
+```bash
+python3 scripts/zsentinel_verify_history_package.py \
+  --source "$HOME/zsentinel-private/recovery-history-handoff.index.zip" \
+  --verify-sources "$HOME/zsentinel-private" \
+  --owner-brief-output "$HOME/zsentinel-private/recovery-owner.md"
+```
+
+Voor een **projectspecifieke** overdracht, zonder andere projectkaarten of
+PR-gegevens in de eigenaarbriefing, voeg toe:
+`--owner-brief-project Zennay/Supa`.
+De gekozen projectnaam moet canoniek zijn en aantoonbaar in de laatste
+opgeslagen bron voorkomen. Een ontbrekend project wordt niet als nul
+backlog beschouwd maar expliciet geweigerd. Ook zonder de optionele
+volledige oorspronkelijke-broncontrole wordt alle meegeleverde ZIP-inhoud
+gecontroleerd, maar het ontvangstbewijs geeft dan alleen interne
+consistentie, niet origineel bronbewijs.
+
+`--owner-brief-output` en `--extract-to` zijn aparte publicatieacties:
+gebruik ze niet samen in één CLI-aanroep. Zo ontstaat geen halve dubbele
+export als één van de private bestemmingen niet meer beschikbaar is.
+De briefing is brongebonden *historisch*, niet een live claimopdracht.
+
 De bestaande oorspronkelijke bundels worden volledig gecontroleerd vóór
 de export. Output wordt alleen create-only opgeslagen in de bestaande
 eigen 0700-map; de ZIP krijgt mode 0600. Geen live GitHub/Notion-query,
