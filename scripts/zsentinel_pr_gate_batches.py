@@ -21,7 +21,7 @@ from zsentinel_pr_gate_now import (
     MAX_PRS, REVIEW_MAX_PRS, REVIEW_SCHEMA,
     SCHEMA as GATE_SCHEMA, read_review_manifest,
     GATE_STEPS_NL as HUMAN_GATE_LABELS_NL,
-    SOURCE_PROBLEMS_NL,
+    SOURCE_PROBLEMS_NL, _closed_pr_message,
 )
 
 SCHEMA = "zsentinel-pr-gate-batch-reconciliation-v1"
@@ -30,6 +30,10 @@ MAX_RECEIPT_BYTES = 1024 * 1024
 HEAD = re.compile(r"^[a-f0-9]{40}$")
 OBSERVED = "observed_current_head_partial_gate_evidence"
 UNKNOWN = "github_source_unavailable_or_head_changed"
+MERGED_DEFAULT = "github_confirmed_merged_on_default_branch"
+MERGED_OTHER = "github_confirmed_merged_on_other_branch"
+CLOSED_UNMERGED = "github_confirmed_closed_without_merge"
+CLOSED_LIFECYCLE = frozenset((MERGED_DEFAULT, MERGED_OTHER, CLOSED_UNMERGED))
 # Only the canonical live gate collector may supply a saved human action.
 # Never render arbitrary instructions embedded in a local receipt as advice.
 HUMAN_GATE_STEPS = frozenset(HUMAN_GATE_LABELS_NL)
@@ -44,11 +48,18 @@ OWNER_LANES = {
     "request_review": "Onafhankelijke reviewer aanvragen",
     "external_wait": "Externe CI/review afhankelijkheid parkeren",
     "release_handoff": "Bevoegde release-eigenaar laat geldende gates controleren",
+    "merged_default": "GitHub-merge bevestigd: controleer live release afzonderlijk",
+    "closed_without_main": "Gesloten/andere branch: geen levering op default branch",
 }
 OWNER_LANE_ORDER = tuple(OWNER_LANES)
 
 
 def _owner_lane(category):
+    if category == "github_merged_default_branch_historical":
+        return "merged_default"
+    if category in ("github_merged_other_branch_historical",
+                    "github_closed_unmerged_historical"):
+        return "closed_without_main"
     if category in ("source_unavailable", "saved_evidence_stale", "source_incomplete"):
         return "refresh_source"
     if category in ("saved_draft", "observed_merge_conflict", "observed_check_failure",
@@ -160,6 +171,12 @@ def _valid_branch_ref(value):
 
 def _gate_class(item: dict, observed: bool, old: bool) -> str:
     """Conservative saved triage: never represents merge clearance."""
+    if item.get("status") == MERGED_DEFAULT:
+        return "github_merged_default_branch_historical"
+    if item.get("status") == MERGED_OTHER:
+        return "github_merged_other_branch_historical"
+    if item.get("status") == CLOSED_UNMERGED:
+        return "github_closed_unmerged_historical"
     if not observed:
         return "source_unavailable"
     if old:
@@ -291,10 +308,18 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                     or item.get("merge_authorized") is not False
                     or item.get("deployment_authorized") is not False
                     or item.get("read_only") is not True
-                    or item.get("status") not in (OBSERVED, UNKNOWN)):
+                    or item.get("status") not in (OBSERVED, UNKNOWN, *CLOSED_LIFECYCLE)):
                 raise ValueError("receipt PR identity, ordering or authority invalid")
             observed = item["status"] == OBSERVED
-            source_problem = item.get("source_problem_kind") if not observed else None
+            lifecycle = item["status"] in CLOSED_LIFECYCLE
+            if lifecycle:
+                # Reuse the canonical exact-head lifecycle contract rather
+                # than trusting a saved claimed merge SHA or branch name.
+                if (_closed_pr_message(item) is None
+                        or item.get("human_next_gate_step") not in HUMAN_GATE_STEPS):
+                    raise ValueError("invalid saved closed PR lifecycle")
+            source_problem = (item.get("source_problem_kind")
+                              if item["status"] == UNKNOWN else None)
             if source_problem is not None and (type(source_problem) is not str or
                                                source_problem not in SOURCE_PROBLEMS_NL):
                 raise ValueError("unknown saved GitHub source failure category")
@@ -358,14 +383,22 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
             rows.append({
                 "owner_check_links": owner_check_links,
                 "source_problem_kind": source_problem,
+                "github_lifecycle_status_observed": item["status"] if lifecycle else None,
+                "github_merge_commit_sha_observed": (
+                    item.get("github_merge_commit_sha_observed") if lifecycle else None),
+                "github_default_branch_ref_observed": (
+                    item.get("default_branch_ref_observed") if lifecycle else None),
                 "url": url,
                 "target_branch_observed": (
                     item.get("base_ref_observed") if
-                    observed and _valid_branch_ref(item.get("base_ref_observed")) else None),
+                    (observed or lifecycle) and
+                    _valid_branch_ref(item.get("base_ref_observed")) else None),
                 "target_branch_identity_known": bool(
-                    observed and _valid_branch_ref(item.get("base_ref_observed"))),
-                "exact_head_observed": item["head_sha_observed"] if observed else None,
-                "source_status": "observed_partial" if observed else "unavailable_or_drifted",
+                    (observed or lifecycle) and _valid_branch_ref(item.get("base_ref_observed"))),
+                "exact_head_observed": item["head_sha_observed"] if (observed or lifecycle) else None,
+                "source_status": ("observed_partial" if observed else
+                                  "github_closed_lifecycle_historical" if lifecycle
+                                  else "unavailable_or_drifted"),
                 "checks_pending_observed": item["observed_checks_pending"] if observed else None,
                 "checks_failed_observed": item["observed_checks_not_successful"] if observed else None,
                 "independent_exact_head_approvals_observed": (
@@ -374,7 +407,8 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                     item.get("pending_individual_review_requests_observed") if observed else None),
                 "pending_team_review_requests_observed": (
                     item.get("pending_team_review_requests_observed") if observed else None),
-                "next_human_gate": item["human_next_gate_step"] if observed else "recollect_exact_head_source",
+                "next_human_gate": (item["human_next_gate_step"] if (observed or lifecycle)
+                                    else "recollect_exact_head_source"),
                 "parallel_human_gate": (item.get("parallel_independent_review_step")
                                         if observed else None),
                 "historic_gate_category": _gate_class(item, observed, age > 900),
@@ -391,7 +425,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
         for i in sorted(batches)
         for local_index, row in enumerate(batches[i]["prs"])
     ]
-    unavailable = sum(row["source_status"] != "observed_partial"
+    unavailable = sum(row["source_status"] == "unavailable_or_drifted"
                       for _, row in all_rows)
     stale = sum(row["saved_source_stale_over_15_minutes"] for _, row in all_rows)
     category_counts = {}
@@ -420,6 +454,9 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
             "exact_head_observed": row["exact_head_observed"],
             "owner_check_links": row["owner_check_links"],
             "source_problem_kind": row["source_problem_kind"],
+            "github_lifecycle_status_observed": row["github_lifecycle_status_observed"],
+            "github_merge_commit_sha_observed": row["github_merge_commit_sha_observed"],
+            "github_default_branch_ref_observed": row["github_default_branch_ref_observed"],
             "receipt_old": row["saved_source_stale_over_15_minutes"],
             "current_head_verified": False,
             "owner_and_release_authorized": False,
@@ -434,7 +471,8 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
     # manifest order. Within each category, preserve source manifest order.
     # The prioritization is a visual handoff, not a merge/claim decision.
     owner_priority = ("fix_source", "inspect_ci", "refresh_source", "request_review",
-                      "release_handoff", "external_wait")
+                      "release_handoff", "merged_default", "closed_without_main",
+                      "external_wait")
     attention_queue = sorted(manual_queue,
                              key=lambda action: (owner_priority.index(action["owner_lane"]),
                                                  action["manifest_position"]))
