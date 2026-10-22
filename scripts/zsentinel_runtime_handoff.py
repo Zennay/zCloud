@@ -2115,6 +2115,45 @@ def _gate_owner_html_line(report):
     raise ValueError("contradictory routing gate evidence")
 
 
+
+def _notion_clock_card_detail(card, report):
+    """Bind a suggested owner recheck to the original bounded Notion read."""
+    if card.get("kind") != "notion_claim_clock_owner_review":
+        return ""
+    summary = report.get("notion_claim_clock_owner_review")
+    notion = _notion_review_summary(report)
+    if (type(summary) is not dict
+            or summary.get("coverage") not in
+            ("live_readonly_bounded", "live_readonly_incomplete")
+            or summary.get("source_only_not_lease_proof") is not True
+            or any(summary.get(key) is not False for key in
+                   ("claim_authorized", "retry_authorized", "dispatch_authorized"))
+            or type(summary.get("owner_cards_sample_truncated")) is not bool
+            or type(summary.get("affected_project_groups_in_sample")) is not int
+            or not 1 <= summary["affected_project_groups_in_sample"] <= 12
+            or notion is None or notion["coverage"] != summary["coverage"]
+            or card.get("notion_claim_owner_verified") is not False
+            or card.get("queue_lease_same_work_verified") is not False
+            or card.get("notion_observed_at_utc") != notion["observed_at_utc"]):
+        raise ValueError("untrusted Notion owner action scope/authority")
+    project = card.get("project")
+    matches = [row for row in notion["projects"] if row["project"] == project]
+    if len(matches) != 1:
+        raise ValueError("Notion owner card lacks its original project")
+    row = matches[0]
+    concern = card.get("notion_claim_clock_recheck_min")
+    working = card.get("notion_work_status_in_progress_min")
+    if (type(concern) is not int or concern < 1
+            or concern != row["observed_claim_clock_recheck_min"]
+            or type(working) is not int
+            or working != row["observed_in_progress_min"]
+            or card.get("priority") != ("P1" if working else "P2")):
+        raise ValueError("Notion owner card contradicts its source")
+    return ("Notion bron " + notion["observed_at_utc"] +
+            " · " + str(concern) + " verdachte/onbekende leaseklokken "
+            "binnen de waargenomen projectregels; "
+            "geen matching queueclaim of vrijgave bewezen.")
+
 def _linked_issue_pr_gates(card):
     """Strict reusable validation for all private owner handoff formats."""
     gates = card.get("linked_inspected_pr_gates", [])
@@ -2283,9 +2322,13 @@ def handoff_html(report):
             continuity = _pr_continuity_label(item)
             if continuity:
                 pr_label += " · " + escape(continuity)
+        notion_clock_label = _notion_clock_card_detail(item, report)
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
-                     escape(_short(item.get("next_step"))) + due_label + pr_label +
+                     escape(_short(item.get("next_step"))) +
+                     (' <span class="muted">' + escape(notion_clock_label) +
+                      '</span>' if notion_clock_label else '') +
+                     due_label + pr_label +
                      link + queue_link + caution_label + pr_links +
                      verified_links + linked_labels + missing_label + '</li>')
     coverage = report.get("coverage", {})
@@ -2548,6 +2591,9 @@ def markdown(report):
         if cautions:
             lines.append("   Alleen voorbeeldsignalen (niet volledig): " +
                          _md("; ".join(cautions), 500))
+        clock_detail = _notion_clock_card_detail(card, report)
+        if clock_detail:
+            lines.append("   " + _md(clock_detail, 350))
         if card.get("issue_url"):
             lines.append("   Bestaand issue: " + card["issue_url"])
         if card.get("unverified_queue_source_url"):
