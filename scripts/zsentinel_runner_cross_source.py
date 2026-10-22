@@ -32,18 +32,24 @@ SERVICE_PROPERTIES = ("LoadState", "ActiveState", "SubState", "UnitFileState", "
 SERVICE_UNKNOWN_REASONS = {
     "systemctl_unavailable", "query_timeout", "query_unavailable",
     "query_failed", "malformed_output", "incomplete_output", "not_observed",
+    "invalid_observation_clock", "stale_observation_clock", "future_observation_clock",
 }
 
 
 def _validated_service_observation(local):
+    """Admit only a fresh, timestamped observation of the canonical systemd unit."""
     raw = local.get("systemd_service_observation")
-    if raw is None:
+    def unknown(reason, observed_at=None):
         return {
             "schema": SERVICE_SCHEMA, "source": "fixed_systemctl_show_readonly",
             "service_unit": SERVICE_UNIT, "status": "unknown",
-            "reason": "not_observed", "properties": None,
+            "reason": reason, "properties": None,
+            "observed_at_utc": observed_at,
             "mutations_performed": False, "restart_authorized": False,
         }
+
+    if raw is None:
+        return unknown("not_observed")
     if (type(raw) is not dict or raw.get("schema") != SERVICE_SCHEMA
             or raw.get("source") != "fixed_systemctl_show_readonly"
             or raw.get("service_unit") != SERVICE_UNIT
@@ -51,16 +57,25 @@ def _validated_service_observation(local):
             or raw.get("restart_authorized") is not False
             or raw.get("status") not in ("observed", "unknown")):
         raise ValueError("untrusted read-only systemd observation")
+
+    # The outer /proc sample has its own clock. Do not let a fresh wrapper
+    # timestamp make an old or future-dated systemd receipt look current.
+    stamp = raw.get("observed_at_utc")
+    try:
+        observed_at = _utc_clock(stamp, "systemd_service")
+    except ValueError:
+        return unknown("invalid_observation_clock")
+    age = datetime.now(timezone.utc) - observed_at
+    if age < -timedelta(minutes=2):
+        return unknown("future_observation_clock", stamp)
+    if age > timedelta(minutes=FRESH_MINUTES):
+        return unknown("stale_observation_clock", stamp)
+
     if raw["status"] == "unknown":
         if (raw.get("reason") not in SERVICE_UNKNOWN_REASONS
                 or raw.get("properties") is not None):
             raise ValueError("invalid unknown systemd observation")
-        return {
-            "schema": SERVICE_SCHEMA, "source": raw["source"],
-            "service_unit": SERVICE_UNIT, "status": "unknown",
-            "reason": raw["reason"], "properties": None,
-            "mutations_performed": False, "restart_authorized": False,
-        }
+        return unknown(raw["reason"], stamp)
     properties = raw.get("properties")
     if (raw.get("reason") is not None or type(properties) is not dict
             or set(properties) != set(SERVICE_PROPERTIES)):
@@ -76,6 +91,7 @@ def _validated_service_observation(local):
         "schema": SERVICE_SCHEMA, "source": raw["source"],
         "service_unit": SERVICE_UNIT, "status": "observed",
         "reason": None, "properties": clean,
+        "observed_at_utc": stamp,
         "mutations_performed": False, "restart_authorized": False,
     }
 
@@ -109,14 +125,17 @@ def _service_process_relationship(local, service):
 
 
 def _service_summary(service):
+    stamp = service.get("observed_at_utc")
+    suffix = (" · bronmoment UTC=" + stamp) if isinstance(stamp, str) else ""
     if service.get("status") != "observed":
-        return "ONBEKEND (" + service.get("reason", "not_observed") + ")"
+        return "ONBEKEND (" + service.get("reason", "not_observed") + ")" + suffix
     p = service["properties"]
     return ("ActiveState=" + (p["ActiveState"] or "unknown") + "/" +
             (p["SubState"] or "unknown") + "; LoadState=" +
             (p["LoadState"] or "unknown") + "; UnitFileState=" +
             (p["UnitFileState"] or "unknown") + "; Result=" +
-            (p["Result"] or "unknown"))
+            (p["Result"] or "unknown") + suffix)
+
 
 
 def _utc_clock(value, field):
