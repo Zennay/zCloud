@@ -303,8 +303,11 @@ def _parallel_owner_actions(report):
         "Branch protection, current claims and release-owner permission remain unverified.",
         "Check all required CI, independent review, protection and current ownership before merge.",
         "HUMAN_GATES_UNKNOWN")
-    # Keep independent CI, review, conflict and authority blockers visible.
-    return cards[:MAX_PARALLEL_OWNER_ACTIONS]
+    # Authority/protection is the final non-optional HOLD; preserving only
+    # the first N cards previously hid it on complex, highly blocked PRs.
+    # Reserve a slot rather than increasing the bounded operator payload.
+    authority_card = cards[-1]
+    return cards[:MAX_PARALLEL_OWNER_ACTIONS - 1] + [authority_card]
 
 
 def _compare_summary(payload, expected_base_sha, expected_head_sha):
