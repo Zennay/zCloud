@@ -420,20 +420,37 @@ def _notion_owner_status_summary(observed, source_mode, registry):
             continue
         _project(pid)
         review = verifying.get(pid, 0)
+        in_progress = total - review
+        clock_buckets = (
+            dict(project_windows.get(pid, {})) if project_windows is not None else None)
+        uncertain = (sum(value for kind, value in clock_buckets.items()
+                         if kind != "time_window_present_not_owner_verified")
+                     if clock_buckets is not None else None)
         known.append({
             "project": pid, "observed_unfinished_min": total,
             "observed_verifying_min": review,
-            "claim_window_observation_counts": (
-                dict(project_windows.get(pid, {})) if project_windows is not None else None),
-            "next_step": ("Controleer bestaande PR en verificatie-eigenaar vóór nieuw werk."
-                          if review else
-                          "Controleer actieve taakclaim, scope en bestaande PR."),
+            "observed_in_progress_min": in_progress,
+            "observed_claim_clock_recheck_min": uncertain,
+            "claim_window_observation_counts": clock_buckets,
+            "next_step": (
+                "Notion-claimklokken missen of verlopen: bevoegde eigenaar controleert "
+                "originele wachtrijlease, slot en PR; GEEN claimvrijgave of retry."
+                if uncertain else
+                "Controleer bestaande PR, queueclaim en verificatie-eigenaar; "
+                "Notion-status bewijst geen huidige lease."
+                if clock_buckets is not None else
+                "Controleer actieve taakclaim, scope en bestaande PR; "
+                "bron heeft geen actuele leaseklokken."),
             "live_owner_verified": False,
             "review_required": True, "can_claim": False,
         })
-    known.sort(key=lambda x: (-bool(x["observed_verifying_min"]),
-                               -x["observed_verifying_min"],
-                               -x["observed_unfinished_min"], x["project"]))
+    # Flag substantive owner attention before the large Verifying backlog:
+    # rows are incomplete positive observations, not eligible work slots.
+    known.sort(key=lambda x: (
+        -bool(x["observed_claim_clock_recheck_min"]),
+        -(x["observed_claim_clock_recheck_min"] or 0),
+        -x["observed_in_progress_min"],
+        -x["observed_verifying_min"], x["project"]))
     return {
         **blank,
         "coverage": ("saved_snapshot_origin_unverified"
@@ -1906,13 +1923,25 @@ def _notion_review_summary(report):
         seen.add(project)
         total = row.get("observed_unfinished_min")
         review = row.get("observed_verifying_min")
+        in_progress = row.get("observed_in_progress_min")
+        review_clocks = row.get("observed_claim_clock_recheck_min")
+        if (type(in_progress) is not int or in_progress != total - review
+                or (review_clocks is not None and
+                    (type(review_clocks) is not int or
+                     not 0 <= review_clocks <= total))):
+            raise ValueError("invalid Notion owner claim-clock triage counts")
         project_counts = row.get("claim_window_observation_counts")
         if project_counts is not None and (
                 type(project_counts) is not dict or len(project_counts) > 7
                 or any(k not in lease_categories or type(n) is not int or not 1 <= n <= 400
                        for k, n in project_counts.items())
-                or sum(project_counts.values()) != total):
+                or sum(project_counts.values()) != total
+                or review_clocks != sum(
+                    n for kind, n in project_counts.items()
+                    if kind != "time_window_present_not_owner_verified")):
             raise ValueError("untrusted per-project Notion claim clock summary")
+        if project_counts is None and review_clocks is not None:
+            raise ValueError("Notion owner triage cannot invent lease counts")
         if (type(total) is not int or not 1 <= total <= 400
                 or type(review) is not int or not 0 <= review <= total
                 or row.get("live_owner_verified") is not False
