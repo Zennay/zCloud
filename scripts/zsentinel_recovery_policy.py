@@ -1919,6 +1919,8 @@ def main(argv=None):
                         help="read one canonical Zennay GitHub issue and its existing PRs directly; no saved case required")
     parser.add_argument("--live-inbox-repo",
                         help="bounded read-only P0/P1-first recent issue inbox for one Zennay/<repo>")
+    parser.add_argument("--inbox-page", type=int, default=1,
+                        help="bounded issue inbox display page 1–5 (live inbox only)")
     parser.add_argument("--template", choices=sorted(ACTIONS),
                         help="emit a fresh, fail-closed JSON request template")
     parser.add_argument("--project-id", help="project slug used by --template")
@@ -1962,6 +1964,10 @@ def main(argv=None):
                 "--live-candidates requires --case-input, --view-project, "
                 "--view-issue and --format json|markdown|html; no conflicting action modes"
             )
+    if args.inbox_page != 1 and not args.live_inbox_repo:
+        parser.error("--inbox-page requires --live-inbox-repo")
+    if not 1 <= args.inbox_page <= 5:
+        parser.error("--inbox-page must be between 1 and 5")
     if args.live_inbox_repo:
         if (any((args.live_issue_url, args.case_input, args.input,
                  args.batch_input, args.template, args.live_candidates,
@@ -2036,6 +2042,7 @@ def main(argv=None):
             from zsentinel_pr_live_read import GitHubReadError
             report = observe_repo_inbox(
                 args.live_inbox_repo, token=os.environ.get("GITHUB_TOKEN") or None,
+                display_page=args.inbox_page,
             )
             output = (
                 issue_inbox_html(report) if args.format == "html"
