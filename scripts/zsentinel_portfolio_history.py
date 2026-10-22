@@ -10,12 +10,14 @@ import csv
 import html
 import io
 import json
+import re
 from datetime import datetime, timezone
 
 from zsentinel_live_issue_inbox import ISSUE, REPO
 from zsentinel_recovery_policy import PolicyInputError, _read_input
 
 MAX_DELTA_CARDS = 100
+UTC_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?Z\\Z")
 VALID_STATES = frozenset((
     "SAMPLED", "INCOMPLETE", "SOURCE_UNAVAILABLE",
     "NOT_READ_AFTER_SOURCE_ERROR",
@@ -23,7 +25,7 @@ VALID_STATES = frozenset((
 
 
 def _timestamp(raw):
-    if not isinstance(raw, str) or len(raw) > 36 or not raw.endswith("Z"):
+    if type(raw) is not str or UTC_TIMESTAMP.fullmatch(raw) is None:
         raise PolicyInputError("snapshot time must be UTC ISO 8601")
     try:
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
