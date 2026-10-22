@@ -167,6 +167,25 @@ class NoRedirects(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(NoRedirects)
 
 
+class GitHubSourceError(ValueError):
+    """Bounded, nonsecret failure identity from the canonical GitHub reader.
+
+    Preserve HTTP outcome for a downstream *human* repair suggestion without
+    forwarding a token, URL, response body or untrusted provider message.
+    Existing callers catching ValueError continue to fail closed.
+    """
+
+    def __init__(self, code=None, headers=None):
+        self.code = code if type(code) is int and 100 <= code <= 599 else None
+        self.headers = {}
+        if headers is not None:
+            for key in ("x-ratelimit-remaining", "retry-after"):
+                val = headers.get(key)
+                if type(val) is str and len(val) <= 40:
+                    self.headers[key] = val
+        super().__init__("github_source_unavailable_or_denied")
+
+
 def github_json(repo, suffix, token):
     if not REPO.fullmatch(repo) or not suffix.startswith("/") or "//" in suffix:
         raise ValueError("invalid GitHub request")
@@ -186,8 +205,14 @@ def github_json(repo, suffix, token):
             body = response.read(MAX_REPLY_BYTES + 1)
             if len(body) > MAX_REPLY_BYTES:
                 raise ValueError("github_response_oversized")
-    except (TimeoutError, OSError, urllib.error.URLError, urllib.error.HTTPError):
-        raise ValueError("github_source_unavailable_or_denied") from None
+    except urllib.error.HTTPError as error:
+        # urllib.HTTPError is also an OSError/URLError. Catch it *first* or
+        # exact HTTP status and safe quota headers are irretrievably lost.
+        # Never inspect/forward the response body or exception string.
+        raise GitHubSourceError(
+            code=error.code, headers=error.headers) from None
+    except (TimeoutError, OSError, urllib.error.URLError):
+        raise GitHubSourceError() from None
     try:
         return json.loads(body.decode("utf-8"), object_pairs_hook=unique)
     except (UnicodeError, json.JSONDecodeError):
