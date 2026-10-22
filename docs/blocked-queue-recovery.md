@@ -519,3 +519,48 @@ geretriggerd, geen live queue-, Attention-, SQLite-, worker- of
 VPS-mutaties uitgevoerd. De definitieve annulering komt alleen tot
 stand wanneer een afzonderlijke geautoriseerde operator deze
 nieuwe interface ná release bewust gebruikt.
+
+## 22 oktober · claim-integriteit en bronversheid in de operatorcockpit
+
+De read-only **Claim Churn**-inbox (issue #677) onderzoekt nu niet
+uitsluitend het aantal claimpogingen en de verlopen leases, maar ook
+de **consistentie van de werkelijk opgeslagen eigenaarvelden**.
+Een `queued` taak met achtergebleven `worker_slot`, `claimed_at`
+of `claim_expires` verschijnt als *inconsistent claim fields* in
+plaats van *No current queue claim*. Bij een actief `claimed`,
+`running` of `verifying` item ontbrekende worker/claim/expiry of
+een onmogelijke leaseperiode, toont de werkbank een afzonderlijke
+owner-reviewwaarschuwing. Een valide lease die bij het oorspronkelijke
+bronmoment al verlopen was, blijft eveneens een waarschuwing.
+Geen van deze classificaties is toestemming om een eigenaar over te nemen.
+
+**Only owner/lease warnings** is een aparte lokale selectie binnen de
+reeds gelezen `attempts >= 3` claimchurn-steekproef. De bestaande
+`Only expired leases`-filter blijft beschikbaar, ook gecombineerd
+met prioriteit/status. Het paneel toont de waarschuwingsteller en
+neemt `claim_integrity`, `needs_owner_review`,
+`claim_anomaly_filter` en het waargenomen brontijdstip mee in de
+al bestaande privé-JSON-handoff. Het v1-envelope, de bestaande
+`lease_status_at_observation`-waarde en de bronidentiteit blijven
+ongewijzigd; het zijn uitsluitend aanvullende velden. Geen
+nieuwe server-API, extra providerrequest, claim-, retry- of queue-write.
+
+Een tweede operatorrisico was een **oud tabblad**: een eerder succesvolle
+queue-GET kon na lange tijd nog als gewone momentopname worden weergegeven.
+De claimchurn- én Dependency Holds-weergave markeren de bron daarom als
+**STALE** zodra het waarnemingsmoment meer dan 15 minuten oud is.
+Beide handoffs schrijven nu expliciet `source_freshness.state` en
+`age_seconds` weg; voor de Dependency Holds-export waarschuwt
+de bestaande handmatige bevestiging extra bij stale data. De
+alleen-lezen export geeft nooit toestemming voor actie; de al
+bestaande verse GET, bronfingerprint, servertransactie en
+authenticatie blijven verplicht vóór hervatten of permanent sluiten.
+
+**Bronintegratie:** `public/app.js` Git-blob
+`c0f7f83ba56a5a3d7c528d418a32d78aa1cb7961` is via de
+exacte assetpin `sha=c0f7f83ba56a` in `public/index.html`
+op dezelfde PR geïntegreerd. De bestaande `style.css`-pin is
+ongewijzigd. Dit betreft alleen broncode op [PR #1565](https://github.com/Zennay/zCloud/pull/1565);
+geen merge of productiedeploy. Exact-head CI, onafhankelijke review,
+branch protection en runtime-/releaseeigenaar blijven leidend.
+Er zijn geen QA-/regressietests of workflow-reruns gestart.
