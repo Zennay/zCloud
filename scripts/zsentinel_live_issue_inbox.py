@@ -98,6 +98,10 @@ def _safe_issue(item, repository, *, observed_at):
         "P1" if isinstance(title, str) and
         re.match(r"^\s*P1\b(?:\s|[:\-])", title, re.IGNORECASE) else "NONE"
     )
+    label_title_disagreement = (
+        verified_label in ("P0", "P1", "P2", "P3")
+        and title_hint != "NONE" and title_hint != verified_label
+    )
     # Explicit GitHub priority labels always govern this issue, including
     # P2/P3. A contradictory title prefix must not move a labelled P2/P3
     # into the P0/P1 navigation-hint groups. Title-only recall is allowed
@@ -126,11 +130,16 @@ def _safe_issue(item, repository, *, observed_at):
         "explicit_priority_label_conflict": conflict,
         "label_source_complete": labels_complete,
         "unverified_title_prefix_hint": title_hint,
+        "explicit_label_title_disagreement": label_title_disagreement,
         "triage_rank": rank,
         "source_window_identity_drift": False,
         "state": "open",
         "source_type": "github_recent_open_issue",
-        "owner_next_step": "inspect_current_issue_and_existing_repair_prs",
+        "owner_next_step": (
+            "inspect_conflicting_priority_with_issue_owner"
+            if label_title_disagreement else
+            "inspect_current_issue_and_existing_repair_prs"
+        ),
         "followup_command": (
             "python3 scripts/zsentinel_recovery_policy.py"
             " --live-issue-url " + url + " --format html"
@@ -237,6 +246,7 @@ def observe_repo_inbox(repo_full_name, *, token=None):
                     # Drift means the original derived priority is no longer
                     # reliable and cannot remain prioritized as a P0.
                     existing["source_window_identity_drift"] = True
+                    existing["explicit_label_title_disagreement"] = "UNKNOWN"
                     existing["priority_from_explicit_labels"] = "UNKNOWN"
                     existing["unverified_title_prefix_hint"] = "NONE"
                     existing["triage_rank"] = 6
@@ -370,6 +380,10 @@ def observe_repo_inbox(repo_full_name, *, token=None):
         "get_attempts": attempts,
         "read_get_attempt_upper_bound": MAX_PAGES + 4,
         "priority_breakdown_in_source_window": by_rank,
+        "observed_label_title_disagreements": sum(
+            item["explicit_label_title_disagreement"] is True
+            for item in issues
+        ),
         "explicit_p0_p1_without_github_issue_update_72h": sum(
             row["priority_from_explicit_labels"] in ("P0", "P1")
             and row["no_github_issue_update_for_72h"] is True
@@ -424,6 +438,8 @@ def markdown(report):
         "- Issues with conflicting source-window observations: " +
         str(report["issue_rows_with_cross_window_drift"]),
         "- P0/P1 title matches are navigation-only, not verified priority",
+        "- Explicit label/title contradictions: " +
+        str(report["observed_label_title_disagreements"]),
         "- Issues visible: " + str(report["total_issues_seen"]),
         "- Issues displayed: " + str(report["displayed_issues"]),
         "- Source partial/unknown: " + str(report["source_partial_or_unknown"]),
@@ -461,6 +477,9 @@ def markdown(report):
         lines.append(
             "- [Issue #" + str(row["number"]) + "](" + row["url"] +
             ") · label " + label + " · unverified title hint " + hint +
+            " · label/title disagreement: " +
+            str(row["explicit_label_title_disagreement"]) +
+            " · next owner step: " + row["owner_next_step"] +
             " · last issue update " + (row["updated_at_utc"] or "UNKNOWN") +
             " · no GitHub issue update for 72h: " +
             str(row["no_github_issue_update_for_72h"]) +
@@ -523,6 +542,10 @@ def html_view(report):
         " · issues observed " +
         esc(report["total_issues_seen"]) + " · displayed " +
         esc(report["displayed_issues"]) + "</p>",
+        "<p>Observed explicit label/title priority disagreements: " +
+        esc(report["observed_label_title_disagreements"]) +
+        " · reconcile with the issue owner; never silently promote a " +
+        "title hint over a label.</p>",
         "<p>Explicit P0/P1 with no issue update for 72h: " +
         esc(report["explicit_p0_p1_without_github_issue_update_72h"]) +
         " · this is NOT proof of stalled workers.</p>",
@@ -573,6 +596,9 @@ def html_view(report):
             esc(item["priority_from_explicit_labels"]) + "</strong>"
             " · unverified title prefix " +
             esc(item["unverified_title_prefix_hint"]) +
+            " · priority disagreement: " +
+            esc(item["explicit_label_title_disagreement"]) +
+            " · human next step: " + esc(item["owner_next_step"]) +
             " · last GitHub update " +
             esc(item["updated_at_utc"] or "UNKNOWN") +
             " · no issue update for 72h: " +
