@@ -4131,6 +4131,22 @@ na een actuele bron-/claim- en dependencycontrole een echte mutatie doen.
 De open writer-afhankelijkheid van #677 blijft apart; deze werkbak
 verandert geen native queue-retrycontract.
 
+### 22 oktober · native retrycontract expliciet als ownergrens
+
+De herstelrouter voegt nu `native_retry_contract_boundary` toe aan de
+gestructureerde queue-overdracht. De status
+`not_verified_by_read_only_queue_view` is nadrukkelijk geen uitspraak dat
+de writer ontbreekt of al werkt. De private HTML- en tekstweergaven noemen
+de vier semantische punten die de native owner moet aantonen: expliciete
+`FAILED_RETRYABLE/NEEDS_AI/FAILED_FINAL`-dispositie, duurzame
+retry-not-before/backoff, een eindig retrybudget en behoud van
+claim-/correlatie-identiteit.
+
+De link naar [issue #677](https://github.com/Zennay/zCloud/issues/677) is
+uitsluitend navigatie; de kaart doet geen extra SQLite-query en leest geen
+actuele issue-status. Er wordt geen queuewrite, retry, leasevrijgave,
+counter-reset of dispatch uitgevoerd. De native writer blijft bij de
+bevoegde runtime-eigenaar en het bestaande serialized control-plane window.
 
 ### 22 oktober · claimveilige worker-slotindicatie bij geblokkeerde taken
 
