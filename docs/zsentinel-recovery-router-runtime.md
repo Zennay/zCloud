@@ -2955,6 +2955,24 @@ De bestaande `zsentinel_private_output` weigert overschrijven/symlinks.
 Er wordt nooit een CI-rerun, runnerherstart of claim uitgegeven. Bronfouten
 worden als onbekend en zonder geheimen in CLI-uitvoer gemeld.
 
+Dezelfde CLI ondersteunt nu ook `--discover`, zodat de operator
+geen run-ID, job-ID of SHA handmatig hoeft over te typen:
+```sh
+python3 scripts/zsentinel_runner_triage.py --discover
+```
+Dit gebruikt de bestaande begrensde queued-, in-progress- en failure-vensters
+(maximaal negen discovery-GETs voor één repo), kiest maximaal één
+brongebonden kandidaat en ververst daarna de exacte run/job/SHA met maximaal
+twee extra GETs vóór de lokale procescorrelatie. De privé JSON/HTML vermeldt
+de ontdekkingsdekking en het requestbudget; tekst blijft drie regels en
+neemt de dekking mee in de statusregel. Bij een onvolledige of geweigerde
+bron wordt geen kandidaat afwezig verklaard: de actie wordt `github_job_unavailable`
+en dekking blijft gedeeltelijk. Een complete steekproef zonder kandidaat
+blijft `no_actionable_job_in_sampled_windows`, nooit `all_clear`.
+De handmatige exact-pinmodus blijft beschikbaar en is wederzijds exclusief
+met `--discover`. Beide routes blijven read-only en geven geen toestemming
+voor restart, retry, claim of release.
+
 Voor [P0 GitHub-hosted billing/admission #1523](https://github.com/Zennay/zCloud/issues/1523)
 is daarnaast `scripts/zsentinel_hosted_gate_triage.py` op dezelfde PR
 geïmplementeerd. Deze leest alleen één bestaande exacte GitHub-run/job/SHA
