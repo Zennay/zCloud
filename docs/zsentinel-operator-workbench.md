@@ -1,5 +1,15 @@
 # zSentinel · Private Product Delivery Workbench
 
+## 22 oktober · ongeldige prioriteitswaarden sluiten veilig af
+
+De bron-toelating van issuekaarten en de paginaselectie van historische
+portfolio-deltas controleren nu eerst dat een prioriteit een string is,
+voordat die met een set of mapping wordt vergeleken. Een malformed JSON-array
+of object eindigt daardoor in het bedoelde begrensde `ValueError`-pad in plaats
+van een ongecontroleerde `TypeError`. Dit verandert geen live issue-status,
+claim, CI, merge- of deploybevoegdheid.
+
+
 ## 22 oktober · Privé geschiedenis van meerdere herstelbundels
 
 De nieuwe [bundle history CLI](../scripts/zsentinel_private_bundle_index.py)
