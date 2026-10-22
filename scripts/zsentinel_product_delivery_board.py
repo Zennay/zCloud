@@ -101,7 +101,7 @@ def count(value):
 
 
 def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
-            hours=24, limit=40):
+            hours=24, limit=40, evaluated_at=None):
     if (inbox.get("actions_authorized") is not False
             or inbox.get("active_claims_verified") is not False
             or inbox.get("queue_ownership_known") is not False):
@@ -292,7 +292,10 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
                 "merge_authorized": False,
             }
 
-    now = datetime.now(timezone.utc)
+    now = evaluated_at or datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("board evaluation clock must be timezone-aware")
+    now = now.astimezone(timezone.utc)
     fresh = {name: (now - stamp <= timedelta(hours=hours))
              for name, stamp in source_times.items()}
     for name in ("retry", "branches", "claims", "prs"):
