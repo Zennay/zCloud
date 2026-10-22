@@ -347,8 +347,13 @@ def _compare_summary(payload, expected_base_sha, expected_head_sha):
     if type(payload) is not dict:
         raise GitHubReadError("base/head compare response is not an object")
     base = payload.get("base_commit")
+    head = payload.get("head_commit")
+    # A correct base alone is not sufficient: a cached, mistargeted or
+    # stale compare response must not authenticate a different PR HEAD.
     if type(base) is not dict or base.get("sha") != expected_base_sha:
         raise GitHubReadError("base/head compare base identity changed")
+    if type(head) is not dict or head.get("sha") != expected_head_sha:
+        raise GitHubReadError("base/head compare head identity changed")
     status = payload.get("status")
     ahead = payload.get("ahead_by")
     behind = payload.get("behind_by")
