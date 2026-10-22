@@ -19,7 +19,7 @@ import stat
 import sys
 
 from zsentinel_pr_scope_guard import (
-    ROOT, csv_formula_inert, observe_conflict_graph, overlap_relation,
+    ROOT, coverage_reason_text, csv_formula_inert, observe_conflict_graph, overlap_relation,
     overlaps, registry,
 )
 
@@ -1367,7 +1367,7 @@ def as_html(board):
                  else "volledige huidige open-PR-steekproef" if view["sample_complete"]
                  else "onvolledige open-PR-steekproef")
         coverage_note = ("<p class='warning'><strong>Bronbeperkingen:</strong> " +
-                         escape(", ".join(view.get("source_coverage_reasons", []))) +
+                         escape(coverage_reason_text(view.get("source_coverage_reasons", []))) +
                          ". Inspecteer ontbrekende PRs of padvoorbeelden bij de eigenaar; "
                          "geen automatische claim- of mergevrijgave.</p>"
                          if view.get("source_coverage_reasons") else "")
@@ -1652,7 +1652,7 @@ def as_private_csv(board):
         emit("project_summary", project, repo, source_status, **summary,
              operator_notice=(
                  "Incomplete source evidence: " +
-                 ",".join(view.get("source_coverage_reasons", [])) +
+                 coverage_reason_text(view.get("source_coverage_reasons", [])) +
                  "; claims, review and release rules UNKNOWN."))
         if source_status == "unavailable":
             continue
