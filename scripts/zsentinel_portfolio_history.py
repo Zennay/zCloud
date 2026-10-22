@@ -277,8 +277,19 @@ def _operator_workorders(delta):
                 else row["prior_priority_rank"])
         current = row["current_priority_rank"] is not None
         live = row.get("live_issue_recheck_state")
-        priority_source = ("CURRENT_BOUNDED_SAMPLE" if current
-                           else "HISTORICAL_BOUNDED_SAMPLE")
+        # The reader's ranks 0/1 are source-verified P0/P1 labels,
+        # 2/3 title-only hints, 4/5 P2/P3 labels and 6 UNKNOWN.
+        # Never present title text or a historical sample as verified P0/P1.
+        if not current:
+            priority_source = "HISTORICAL_SAMPLE_ONLY"
+        elif rank in (0, 1):
+            priority_source = "CURRENT_EXPLICIT_GITHUB_P0_P1_LABEL"
+        elif rank in (2, 3):
+            priority_source = "CURRENT_UNVERIFIED_TITLE_HINT"
+        elif rank in (4, 5):
+            priority_source = "CURRENT_EXPLICIT_GITHUB_P2_P3_LABEL"
+        else:
+            priority_source = "CURRENT_PRIORITY_UNKNOWN"
         work.append({
             "kind": "issue",
             "repository": row["repository"],
@@ -287,6 +298,9 @@ def _operator_workorders(delta):
             "change": row["change"],
             "priority_rank_hint": rank,
             "priority_source": priority_source,
+            "critical_priority_verified_from_current_label": (
+                current and rank in (0, 1)
+            ),
             "live_github_issue_state": live or "NOT_LIVE_CHECKED",
             "live_github_observed_at_utc": row.get(
                 "live_issue_recheck_observed_at_utc"),
@@ -303,7 +317,7 @@ def _operator_workorders(delta):
     # Real observed current P0/P1 first, then historical urgency hints.
     work.sort(key=lambda row: (
         row["priority_rank_hint"],
-        row["priority_source"] != "CURRENT_BOUNDED_SAMPLE",
+        row["priority_source"] == "HISTORICAL_SAMPLE_ONLY",
         row["repository"], row["issue_number"],
     ))
     # Keep the advisory operator desk concise and bounded. The historical
@@ -323,6 +337,7 @@ def _operator_workorders(delta):
             "change": row["source_transition"],
             "priority_rank_hint": None,
             "priority_source": "SOURCE_COVERAGE_NOT_ISSUE_PRIORITY",
+            "critical_priority_verified_from_current_label": False,
             "live_github_issue_state": "UNKNOWN",
             "live_github_observed_at_utc": None,
             "human_next_action_code": row["human_source_action_code"],
