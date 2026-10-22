@@ -353,9 +353,13 @@ def observe_claims(data_source_id, token, known_projects=None):
         })
     # Histograms cover all read rows, not just visible sample rows.
     window_counts = {}
+    project_windows = {}
     for item in rows:
         cls = item["claim_window_observation"]
+        project = item["project"]
         window_counts[cls] = window_counts.get(cls, 0) + 1
+        bucket = project_windows.setdefault(project, {})
+        bucket[cls] = bucket.get(cls, 0) + 1
     counts, verifying_counts = {}, {}
     for row in rows:
         label = row["project"]
@@ -374,6 +378,10 @@ def observe_claims(data_source_id, token, known_projects=None):
         "verifying_project_counts": dict(sorted(verifying_counts.items())),
         "verifying_count": sum(verifying_counts.values()),
         "claim_window_observation_counts": dict(sorted(window_counts.items())),
+        "active_project_claim_window_counts": {
+            project: dict(sorted(bucket.items()))
+            for project, bucket in sorted(project_windows.items())
+        },
         "claim_window_verified": False,
         "status_source_windows": status_source_windows,
         "total_pages_read": sum(row["pages_read"] for row in status_source_windows),
