@@ -3496,7 +3496,14 @@ def portfolio_queue_recovery_inspect(queue_id):
     if not queue_id or len(queue_id)>160:
         raise ValueError('Een geldige queue_id is vereist voor herstelinspectie')
     with connect() as c:
+        # Read the queue row and its exact linked human Attention in one
+        # consistent SQLite read transaction; neither read changes state.
+        c.execute('BEGIN')
         row=c.execute("SELECT * FROM portfolio_queue WHERE queue_id=?",(queue_id,)).fetchone()
+        attention=(c.execute(
+            "SELECT status,severity,updated_at FROM portfolio_attention WHERE attention_id=?",
+            ('queue:'+queue_id,),
+        ).fetchone() if row is not None else None)
     ts=now()
     if row is None:
         return {'read_only':True,'observed_at':ts,'found':False,
@@ -3535,6 +3542,8 @@ def portfolio_queue_recovery_inspect(queue_id):
             'eligible':bool(eligible),'claim_or_lease_bound':has_owner,
             'project_registered':project is not None,'project_active':active,
             'project_human_gated':human_gate,
+            'linked_attention_status':str(attention['status'] or '') if attention is not None else 'not_linked',
+            'linked_attention_updated_at':str(attention['updated_at'] or '') if attention is not None else '',
             'resume_candidate':resume_candidate,'close_candidate':close_candidate,
             'reason_codes':reasons,
             'note':'Diagnostic snapshot only. A human dependency decision, new source read, '
