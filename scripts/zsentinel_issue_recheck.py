@@ -36,6 +36,10 @@ LIVE_FOLLOWUP = {
         "defer_until_provider_access_restored",
         "Earlier GitHub detail read failed; avoid more probes until the source recovers.",
     ),
+    "NOT_CHECKED_REPOSITORY_SOURCE_ERROR": (
+        "confirm_access_to_affected_repository",
+        "This repository already returned inaccessible/not-found; avoid further reads of it.",
+    ),
     "NOT_CHECKED_PRIOR_PROVIDER_STOP": (
         "defer_after_portfolio_provider_stop",
         "Earlier portfolio read stopped on provider error; retain UNKNOWN without additional GETs.",
@@ -91,6 +95,7 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
     observed_open = 0
     observed_closed = 0
     source_errors = 0
+    inaccessible_repositories = set()
     for item in missing:
         _set_status(item, UNCHECKED)
         item["live_issue_recheck_observed_at_utc"] = None
@@ -103,6 +108,9 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
         if stopped:
             _set_status(item, "NOT_CHECKED_AFTER_SOURCE_ERROR")
             continue
+        if item["repository"] in inaccessible_repositories:
+            _set_status(item, "NOT_CHECKED_REPOSITORY_SOURCE_ERROR")
+            continue
         if attempted >= max_reads:
             _set_status(item, "NOT_CHECKED_READ_LIMIT")
             continue
@@ -113,10 +121,21 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
                 token=token,
             )
             summary = _issue_summary(payload, item["repository"], item["number"])
-        except (GitHubReadError, ValueError, KeyError, TypeError):
-            # 404 can mean private, removed, or inaccessible. There is no
-            # permission to classify it as closed or to repeat the provider
-            # request after a shared quota/network/admission failure.
+        except GitHubReadError as exc:
+            # The existing GitHub reader distinguishes a canonical 404 from
+            # provider-wide quota/auth/network errors. A 404 makes only that
+            # repository inaccessible in this read window; don't send more
+            # requests to the same repo, but preserve other independent repos.
+            source_errors += 1
+            _set_status(item, "SOURCE_UNAVAILABLE_AT_LIVE_RECHECK")
+            if "inaccessible or not found" in str(exc):
+                inaccessible_repositories.add(item["repository"])
+            else:
+                stopped = True
+            continue
+        except (ValueError, KeyError, TypeError):
+            # Contradictory source identity or malformed API payload is not
+            # a verified local 404. Stop further provider reads safely.
             source_errors += 1
             stopped = True
             _set_status(item, "SOURCE_UNAVAILABLE_AT_LIVE_RECHECK")
@@ -154,6 +173,7 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
         "open_at_recheck": observed_open,
         "closed_at_recheck": observed_closed,
         "source_errors": source_errors,
+        "repository_local_source_gaps": sorted(inaccessible_repositories),
         "provider_reads_stopped_after_error": stopped,
         "prior_provider_stop_suppressed_reads": not source_read_admitted,
         "not_displayed_cards_not_checked": report.get("omitted_change_cards", 0),
