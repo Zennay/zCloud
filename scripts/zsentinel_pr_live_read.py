@@ -415,6 +415,10 @@ def _checks_summary(payload, sha, full_name):
             "".join(c if c.isprintable() else " " for c in name)[:90]
             if isinstance(name, str) else "unnamed sampled check"
         )
+        clean_context_name = (
+            "".join(c if c.isprintable() else " " for c in name)[:200]
+            if isinstance(name, str) else "unnamed sampled check"
+        )
         if not isinstance(status, str) or not status or len(status) > 32:
             raise GitHubReadError("check-run status is malformed")
         if conclusion is not None and (not isinstance(conclusion, str) or len(conclusion) > 64):
@@ -424,7 +428,7 @@ def _checks_summary(payload, sha, full_name):
         if app_id is not None and (type(app_id) is not int or app_id < 0):
             raise GitHubReadError("check-run app identity is malformed")
         sampled_check_observations.append({
-            "name": clean_name,
+            "name": clean_context_name,
             "status": status,
             "conclusion": conclusion,
             "app_id": app_id,
