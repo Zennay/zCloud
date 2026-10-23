@@ -16,7 +16,8 @@ concurrency:
 jobs:
   deny-new-cross-run-downloads:
     if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: [self-hosted, zcloud, vps]
+    # Read-only immutable source checks do not need VPS runner capacity.
+    runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
       - name: Reject untrusted PR provenance before any repository checkout
