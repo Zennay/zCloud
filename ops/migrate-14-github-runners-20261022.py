@@ -215,8 +215,9 @@ def migrate_one(repo: str, old_name: str, binary_dir: str) -> None:
         time.sleep(5)
     raise RuntimeError(f"{repo}: registered but not yet online; investigate service")
 
-def verify_jobs(selected: list[tuple[str, str, str]]) -> None:
-    """Actual assignment receipt, not just runner-online status."""
+def verify_jobs(selected: list[tuple[str, str, str]]) -> bool:
+    """Require a completed successful job on the exact new runner for every repo."""
+    unproven = []
     for repo, _old, _source in selected:
         desired = new_name(repo)
         try:
@@ -227,11 +228,24 @@ def verify_jobs(selected: list[tuple[str, str, str]]) -> None:
                 if jobs.get("total_count", 0) > 100:
                     continue
                 for job in jobs.get("jobs", []):
-                    if job.get("runner_name") == desired and job.get("runner_id", 0) > 0:
-                        receipts.append((run["id"], job["id"], job["status"], job.get("conclusion")))
-            print(f"{repo}: assigned jobs={receipts[:3] if receipts else 'NONE YET — not proven'}")
+                    if (
+                        job.get("runner_name") == desired
+                        and job.get("runner_id", 0) > 0
+                        and job.get("status") == "completed"
+                        and job.get("conclusion") == "success"
+                    ):
+                        receipts.append((run["id"], job["id"], job["runner_id"], job["conclusion"]))
+            if receipts:
+                print(f"{repo}: verified successful assignment={receipts[:3]}")
+            else:
+                unproven.append(repo)
+                print(f"{repo}: NOT PROVEN — no completed successful job on {desired}")
         except Exception as exc:
+            unproven.append(repo)
             print(f"{repo}: job proof unavailable: {type(exc).__name__}")
+    if unproven:
+        print(f"Assignment proof incomplete for {len(unproven)}/{len(selected)} repos: {', '.join(unproven)}", file=sys.stderr)
+    return not unproven
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -246,7 +260,8 @@ def main() -> int:
     if args.action == "inventory":
         inventory(selected)
     elif args.action == "verify-jobs":
-        verify_jobs(selected)
+        if not verify_jobs(selected):
+            return 2
     else:
         require_target()
         if not args.old_services_disabled:
