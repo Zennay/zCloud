@@ -96,8 +96,9 @@ def snapshot(repo: str, old_name: str) -> tuple[dict | None, dict | None]:
     new = next((r for r in runners if r["name"] == new_name(repo)), None)
     return old, new
 
-def inventory(selected: list[tuple[str, str, str]]) -> None:
+def inventory(selected: list[tuple[str, str, str]]) -> bool:
     print("repo | source registration | source state | new state | source custom labels")
+    failures = []
     for repo, old_name, _ in selected:
         try:
             old, new = snapshot(repo, old_name)
@@ -108,7 +109,11 @@ def inventory(selected: list[tuple[str, str, str]]) -> None:
                   if old else f"{repo} | {old_name} | MISSING", end="")
             print(f" | {new['status'] if new else 'not registered'} | {labels}")
         except Exception as exc:
+            failures.append(repo)
             print(f"{repo} | ERROR {type(exc).__name__}: {exc}")
+    if failures:
+        print(f"Inventory incomplete for {len(failures)}/{len(selected)} repos: {', '.join(failures)}", file=sys.stderr)
+    return not failures
 
 def require_target() -> None:
     if os.uname().nodename != EXPECTED_HOST:
@@ -258,7 +263,8 @@ def main() -> int:
     if not selected:
         parser.error("Unknown repository")
     if args.action == "inventory":
-        inventory(selected)
+        if not inventory(selected):
+            return 2
     elif args.action == "verify-jobs":
         if not verify_jobs(selected):
             return 2
