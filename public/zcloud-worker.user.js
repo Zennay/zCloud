@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      2.0.9
+// @version      2.0.10
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -39,11 +39,13 @@
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
   window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
   sessionStorage.setItem("zcloud-v2-worker",id);
-  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.9");
+  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.10");
   document.documentElement?.setAttribute("data-zcloud-v2-owner",id);
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let target=null,inflight=false,sending=false,awaiting=false,everGenerating=false;
+  // Consent is distinct from generation; never synthesize an approval click.
+  let approvalWasPending=false,approvalReplyBefore=null,approvalCountBefore=0;
   const markBusy=()=>document.documentElement?.setAttribute("data-zcloud-v2-busy",
     sending||awaiting||generating()||approvalPending()?"true":"false");
   // An explicit Force owns one command ID and may only be delivered to its
@@ -86,10 +88,18 @@
       target:location.href,targetConversation:conversation(),title:document.title,
       event,at,progressAt:at,generating:generating(),sending,
       assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.9",...extra
+      provider:"chatgpt",runnerVersion:"2.0.10",...extra
     });return true}catch(_){return false}
   }
-  async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
+  async function blocked(reason){
+    if(lastBlock===reason)return;
+    lastBlock=reason;
+    const permissionBlock=reason==="human-approval-pending"||
+      reason==="approval-resolved-awaiting-assistant";
+    await status("send-blocked",{
+      reason,...(permissionBlock?{generating:false,approvalRequired:reason==="human-approval-pending"}:{})
+    });
+  }
   function high(){
     // The live composer attribute is authoritative: a checked menu item
     // elsewhere must never override an explicitly Medium/Low composer.
@@ -256,6 +266,7 @@
       // Drafts on the new-chat route can synchronize between browser tabs.
       const draft=String(composer()?.value||composer()?.innerText||composer()?.textContent||"").trim();
       if(draft!==prompt){await blocked("composer-draft-changed-before-send");return false}
+      approvalWasPending=false;approvalReplyBefore=null;approvalCountBefore=0;
       baseline=reply();baselineAssistantCount=assistantCount();button.click();promptAt=Date.now();awaitingAt=promptAt;
       awaiting=true;everGenerating=false;next=false;lastBlock="";
       noteFullContextSent(fullPrompt,prompt);
@@ -303,7 +314,11 @@
       const payload=await api("/runner-targets"),actual=payload.projects?.[id]||null;
       target=actual;
       if(!actual)return;
-      await status("heartbeat",{reason:"worker-v2-check-30s"});
+      const permissionVisible=approvalPending();
+      await status("heartbeat",{
+        reason:permissionVisible?"human-approval-pending":"worker-v2-check-30s",
+        ...(permissionVisible?{generating:false,approvalRequired:true}:{})
+      });
       const cid=conversation();
       // The durable server binding, not a sessionStorage cache, acknowledges
       // adoption. Retry failed delivery and repair a restored/missing binding.
@@ -316,14 +331,36 @@
           sessionStorage.setItem("zcloud-v2-reported-conversation",cid);
         }
       }
+      // A Stop button can remain visible behind a tool authorization card.
+      if(permissionVisible){
+        if(!approvalWasPending){
+          approvalWasPending=true;
+          approvalReplyBefore=reply();
+          approvalCountBefore=assistantCount();
+        }
+        await blocked("human-approval-pending");return;
+      }
+      if(approvalWasPending){
+        approvalWasPending=false;
+        lastBlock="";
+        await status("approval-resolved",{
+          reason:"permission-dialog-dismissed-awaiting-assistant",
+          approvalRequired:false,generating:false
+        });
+      }
       if(generating()){
         const started=!reportedGenerating;
         observedGenerating=true;reportedGenerating=true;
         everGenerating=true;awaiting=false;
         await status(started?"generation-started":"generation-progress");return;
       }
-      if(approvalPending()){
-        await blocked("human-approval-pending");return;
+      // A dismissed dialog proves neither tool success nor a completed reply.
+      if(approvalReplyBefore!==null){
+        if(assistantCount()===approvalCountBefore&&reply()===approvalReplyBefore){
+          await blocked("approval-resolved-awaiting-assistant");return;
+        }
+        approvalReplyBefore=null;
+        lastBlock="";
       }
       if(resetRoute!==null){
         if(failedConversation()||!visible(composer())||
@@ -407,7 +444,20 @@
       poll();
     }, FINISH_SETTLE_MS);
   }
+  let observedApprovalPending=false;
   function generationDomChanged() {
+    const pending=approvalPending();
+    if(pending!==observedApprovalPending){
+      observedApprovalPending=pending;
+      // Recheck immediately after a consent card opens/closes, without clicking.
+      if(finishTimer!==null)clearTimeout(finishTimer);
+      finishTimer=setTimeout(()=>{
+        finishTimer=null;
+        if(!inflight)poll();
+        else scheduleFinishedResponseCheck();
+      },FINISH_SETTLE_MS);
+    }
+    if(pending){observedGenerating=false;return;}
     if (!awaiting && !everGenerating) {
       observedGenerating = false;
       return;
