@@ -37,4 +37,29 @@ Browser tasks should batch a few deterministic actions and send only clipped DOM
 4. Perform targeted runtime inspection: zSSH auth succeeds, tool exists only on private profile, browser can start, authorized site navigation yields compact observation, human approval gates deny risky actions until approved. Check zCloud queue route and an actual assigned worker.
 5. Deploy using the existing gated zSSH/zCloud process and maintain recovery. No change is automatically applied to the new VPS merely by merging source.
 
+## Registry-contract repair (23 October 2026)
+
+The new-VPS `zennay-cloud.service` is running, but a bounded, read-only
+service observation exposed the concrete exception
+`ValueError: missing explicit runtime contract for project 'browseragent'`.
+`projects.json` includes BrowserAgent while `project-contracts.json` previously
+did not. The project-card loader calls `project_runtime.project_contract()`
+for each registry entry and therefore could not resolve BrowserAgent.
+
+The existing zCloud BrowserAgent routing PR now includes an explicit,
+**fail-closed** contract for that already-registered project:
+
+- `queue_mode=human-gated`; `lane_profile=platform`
+- `ai_worker_cap=0`; `autonomy.mode=external_gate`,
+  `auto_start=false`
+- `compute.pool=disabled` with zero slots and no automatic CPU/memory admission.
+
+This corrects the missing-contract source mismatch without treating a browser
+capability as an automatically authorized worker. It does **not** create a new
+project entry, start Chromium, issue navigation, turn on private tools,
+schedule a worker, approve account actions, or modify the running VPS.
+A protected-main merge and separately authorized deployment of the current
+code/config pair are still required before the live exception can be
+considered resolved; service-active alone is not proof of that.
+
 **Known live limitation (22 Oct 2026):** zSSH connector still returned `McpServerError: Session terminated`; source commits/PRs are not proof of service activation. Existing zSSH public onboarding PR #391 has unresolved owner-auth/mTLS deployment gates and must remain separate from this private browser module.
