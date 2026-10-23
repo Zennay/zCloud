@@ -66,9 +66,11 @@ sudo env ZCLOUD_DNS_CUTOVER_CONFIRMED=yes \
   bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --apply
 ~~~
 
-The script refuses a wrong host, unhealthy or non-loopback API, missing
-cutover attestation, missing DNS-owner confirmation, IPv4/IPv6 DNS drift, invalid auth, missing Caddy import
-or unexpected existing site. It stages one drop-in, validates Caddy, reloads
+The script refuses extra arguments, a wrong host, unhealthy or non-loopback
+API, missing cutover/DNS-owner attestations, IPv4/IPv6 DNS drift, invalid
+auth, a missing Caddy import, or a Caddyfile/import directory that is not
+root-owned and non-group/world-writable, as well as an unexpected existing
+site. It stages one drop-in, validates Caddy, reloads
 and checks that anonymous HTTPS returns HTTP 401. Rollback quarantines only
 the exact site inode created by that invocation, outside the imported glob.
 If a rollback reload fails, the script reports the live state as unverified
