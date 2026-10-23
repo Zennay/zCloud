@@ -1039,3 +1039,29 @@ onbekende of niet-canonieke prioriteiten zonder deze naar een veilige P0/P1
 classificatie te promoveren. De nieuwste JS- en CSS-blobversies worden vanuit
 `public/index.html` geladen. Alleen na de bestaande verplichte CI, review,
 branch protection, merge en geautoriseerde release kan dit live gedrag zijn.
+
+
+## Human-attention status follows the status snapshot clock
+
+The dashboard must not present an empty `attention_needed` array as proof that no
+human action is needed unless the status snapshot is current and its clock is
+trustworthy.
+
+- A snapshot is **fresh** only when its timestamp parses, is no more than two
+  minutes in the future, is at most 90 seconds old, and the API does not mark
+  it stale.
+- A stale snapshot labels any listed requests as **last observed** and explains
+  that the operator should refresh before relying on the list. An empty stale
+  snapshot says **No human gates in the last snapshot**, not that the current
+  portfolio is clear.
+- A missing, malformed, or excessively future-dated status timestamp makes
+  the current attention state **unconfirmed**. The count is unknown rather
+  than zero.
+- Non-queue `Done` controls are disabled until the status source is fresh.
+  Queue-bound resume controls retain their separate fresh-queue and original
+  task/claim checks; the server still performs its own authorization and
+  transactional recheck.
+
+This is presentation safety only. It does not clear attention records, change
+queue state, release claims, assign workers, or imply CI, merge, or deployment
+success.
