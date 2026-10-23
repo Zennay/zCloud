@@ -478,6 +478,7 @@ def run_governed(
     conn = connect(Path(db_path))
     proc = None
     old_handlers = {}
+    termination_requested = None
     acquired = False
     acquired_at = None
     try:
@@ -516,6 +517,23 @@ def run_governed(
         acquired = True
         acquired_at = str(result["lease"]["acquired_at"])
 
+        def forward(signum, _frame):
+            nonlocal termination_requested
+            if termination_requested is None:
+                termination_requested = signum
+            if proc is not None:
+                _signal_process_group(proc, signum)
+
+        # Install handlers BEFORE child launch. A SIGTERM between Popen and
+        # first renewal otherwise kills the governor but may orphan heavy
+        # descendants with an active lease still in the shared pool.
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            old_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, forward)
+
+        if termination_requested is not None:
+            return 128 + int(termination_requested)
+
         env = os.environ.copy()
         env["ZCLOUD_RESOURCE_PROJECT"] = str(project_id)
         env["ZCLOUD_RESOURCE_OWNER"] = str(owner_id)
@@ -526,6 +544,12 @@ def run_governed(
             preexec_fn=lambda: _apply_process_limits(project_id, wrapper_pid),
             start_new_session=True,
         )
+        if termination_requested is not None:
+            # Stop the complete session even when the direct subprocess
+            # ignores its signal. Finally verifies descendants before
+            # the original lease can be released.
+            _stop_process_group(proc)
+            return 128 + int(termination_requested)
 
         renewed = _renew_existing_lease(
             conn, project_id, owner_id, acquired_at, lease_seconds,
@@ -536,17 +560,14 @@ def run_governed(
             _admission_denied(renewed)
             return 75
 
-        def forward(signum, _frame):
-            if proc is not None:
-                _signal_process_group(proc, signum)
-
-        for signum in (signal.SIGTERM, signal.SIGINT):
-            old_handlers[signum] = signal.getsignal(signum)
-            signal.signal(signum, forward)
-
         next_renewal = time.monotonic() + renew_seconds
         next_memory_check = time.monotonic()
         while True:
+            # An ignored SIGTERM must not strand the wrapper in its ordinary
+            # polling/renewal loop indefinitely. Start bounded group cleanup.
+            if termination_requested is not None:
+                _stop_process_group(proc)
+                return 128 + int(termination_requested)
             returncode = proc.poll()
             if returncode is not None:
                 return _exit_code(returncode)
