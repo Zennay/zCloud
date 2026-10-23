@@ -25,6 +25,11 @@ PROMOTION_SECONDS = 300
 PROMOTION_MIN_OBSERVATIONS = 3
 PROMOTION_MIN_GAP = 45
 PROMOTION_MAX_SAMPLE_GAP = 240
+# Linux PSI avg10 is the percentage of the previous 10 seconds spent stalled.
+# Sustained full stalls are urgent; material some-stall time is moderate.
+MEMORY_PSI_FULL_URGENT_PERCENT = 1.0
+MEMORY_PSI_FULL_MODERATE_PERCENT = 0.25
+MEMORY_PSI_SOME_MODERATE_PERCENT = 10.0
 MAX_PRIVATE_STATE = 16 * 1024
 MAX_RUNNER_CMDLINE_BYTES = 8 * 1024
 MAX_RUNNER_PROCESS_SCAN = 8192
@@ -464,6 +469,23 @@ def pressure_reasons(s):
             urgent.append("low-available-memory")
         elif memory < 3:
             moderate.append("limited-available-memory")
+
+    # Use host-wide memory stall time as a live pressure signal, not as
+    # attribution to any runner. PSI is optional on older/restricted kernels:
+    # missing PSI remains unknown and does not fabricate a healthy zero.
+    psi_full = s.get("memory_psi_full_avg10_percent")
+    psi_some = s.get("memory_psi_some_avg10_percent")
+    if (type(psi_full) in (int, float) and math.isfinite(psi_full)
+            and 0 <= psi_full <= 100):
+        if psi_full >= MEMORY_PSI_FULL_URGENT_PERCENT:
+            urgent.append("critical-memory-pressure-stalls")
+        elif psi_full >= MEMORY_PSI_FULL_MODERATE_PERCENT:
+            moderate.append("elevated-memory-pressure-stalls")
+    if (type(psi_some) in (int, float) and math.isfinite(psi_some)
+            and 0 <= psi_some <= 100
+            and psi_some >= MEMORY_PSI_SOME_MODERATE_PERCENT):
+        moderate.append("elevated-memory-pressure-stalls")
+
     swap = s["swap_used_percent"]
     if s.get("swap_status") == "NO_SWAP_CONFIGURED":
         moderate.append("no-swap-configured")
@@ -669,6 +691,8 @@ REASON_LABELS = {
     "elevated-system-load": "de systeemload is verhoogd",
     "low-available-memory": "er is weinig vrij beschikbaar RAM",
     "limited-available-memory": "het beschikbare RAM is beperkt",
+    "critical-memory-pressure-stalls": "hostbrede geheugenstagnatie is kritiek",
+    "elevated-memory-pressure-stalls": "hostbrede geheugenstagnatie is verhoogd",
     "high-swap-use": "het swapgebruik is hoog",
     "no-swap-configured": "er is geen swap geconfigureerd; ga voorzichtig om met geheugenpieken",
     "elevated-swap-use": "het swapgebruik is verhoogd",
