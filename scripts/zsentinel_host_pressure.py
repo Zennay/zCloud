@@ -62,7 +62,11 @@ def observe_host_pressure():
         "meminfo": "UNKNOWN",
         "loadavg": "UNKNOWN",
         "root_disk": (
-            "OBSERVED" if root_disk.get("status") == "ROOT_STATVFS_OBSERVED"
+            "OBSERVED"
+            if (root_disk.get("status") == "ROOT_STATVFS_OBSERVED"
+                and root_disk.get("inode_status") == "OBSERVED")
+            else "PARTIAL"
+            if root_disk.get("status") == "ROOT_STATVFS_OBSERVED"
             else "UNKNOWN"
         ),
         "psi": psi_status if psi_status in ("OBSERVED", "PARTIAL") else "UNKNOWN",
@@ -153,13 +157,20 @@ def observe_host_pressure():
             elevated = True
             basis.append("load_per_cpu_elevated")
 
-    disk_hint = root_disk.get("pressure_hint")
+    disk_hint = root_disk.get("space_pressure_hint", root_disk.get("pressure_hint"))
     if disk_hint == "HIGH":
         high = True
         basis.append("root_disk_high")
     elif disk_hint == "ELEVATED":
         elevated = True
         basis.append("root_disk_elevated")
+    inode_hint = root_disk.get("inode_pressure_hint")
+    if inode_hint == "HIGH":
+        high = True
+        basis.append("root_inode_high")
+    elif inode_hint == "ELEVATED":
+        elevated = True
+        basis.append("root_inode_elevated")
 
     if psi.get("pressure_hint") in ("HIGH", "ELEVATED"):
         psi_level = psi["pressure_hint"].lower()
@@ -219,8 +230,10 @@ def pressure_sentence(report):
             "swap_usage_elevated": "swapgebruik ≥70%",
             "load_per_cpu_high": "load/CPU ≥2",
             "load_per_cpu_elevated": "load/CPU ≥1,25",
-            "root_disk_high": "root-schijfdruk hoog",
-            "root_disk_elevated": "root-schijfdruk verhoogd",
+            "root_disk_high": "root-schijfruimtedruk hoog",
+            "root_disk_elevated": "root-schijfruimtedruk verhoogd",
+            "root_inode_high": "root-inodedruk hoog",
+            "root_inode_elevated": "root-inodedruk verhoogd",
             "psi_cpu_high": "PSI CPU-druk hoog",
             "psi_cpu_elevated": "PSI CPU-druk verhoogd",
             "psi_memory_high": "PSI geheugendruk hoog",
@@ -246,10 +259,18 @@ def pressure_sentence(report):
     disk = report.get("root_disk") or {}
     disk_note = (
         f"root beschikbaar {disk['available_gib']} GiB, "
-        f"{disk['unavailable_percent']}% onbeschikbaar"
+        f"{disk['unavailable_percent']}% blokken niet beschikbaar"
         if disk.get("status") == "ROOT_STATVFS_OBSERVED"
         else "root-schijfruimte onbekend"
     )
+    inode_note = (
+        f"inodes beschikbaar {disk['available_inodes']}, "
+        f"{disk['unavailable_inode_percent']}% niet beschikbaar "
+        f"({disk['inode_pressure_hint']})"
+        if disk.get("inode_status") == "OBSERVED"
+        else "inodecapaciteit UNKNOWN"
+    )
+    disk_note += "; " + inode_note
     swap_line = (
         f"swap gebruikt {report['swap_used_percent']}%"
         if report.get("swap_status") == "OBSERVED"
