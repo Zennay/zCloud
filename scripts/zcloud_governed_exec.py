@@ -214,21 +214,23 @@ def _expired_heavy_group_active(conn, *, live_authority: bool) -> bool:
                 return True
             pid = metadata.get("pid")
             scope = metadata.get("service_cgroup")
-            if live_authority and metadata.get("executor") == "zcloud-governed-exec":
-                # The original lease may come from another VPS or a prior
-                # boot. Local PID/cgroup absence cannot prove remote cleanup.
-                # Missing legacy boot evidence is likewise inconclusive.
+            if live_authority and (
+                    metadata.get("executor") == "zcloud-governed-exec"
+                    or pid is not None or scope is not None):
+                # An expired heavy lease from another writer may record a
+                # child PID without an executor label. Its local absence
+                # is not proof of cleanup on the originating VPS/boot.
                 if metadata.get("host_boot_id") != _local_boot_identity():
                     return True
             if pid is None:
-                # Child may have started and detached before its first
-                # PID-bearing renewal. The pre-launch lease already
-                # carries our dedicated service cgroup for this reason.
-                # Old executor rows without that recovery identity are
-                # ambiguous, not evidence of a safely stopped workload.
-                if metadata.get("executor") == "zcloud-governed-exec":
-                    if scope is None or _live_service_members(scope):
+                # A heavy worker can start before its first PID-bearing
+                # renewal. In that window the initial lease still records
+                # its dedicated service cgroup; a live member blocks reuse.
+                if scope is not None:
+                    if _live_service_members(scope):
                         return True
+                elif metadata.get("executor") == "zcloud-governed-exec":
+                    return True
                 continue
             if type(pid) is not int or pid <= 1:
                 return True
