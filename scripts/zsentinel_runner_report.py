@@ -1952,7 +1952,7 @@ def verify_private_incident_bundle(path):
         source = {}
         for name in sorted(names):
             fd = os.open(
-                name, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
                 dir_fd=directory,
             )
             try:
