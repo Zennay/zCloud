@@ -901,40 +901,52 @@ def _claim_key_from_alert(alert):
     first=detail.split(" · ",1)[0].strip()
     return first if ":" in first and len(first) >= 4 else None
 
-def _claim_conflict_is_active(db_path, alert, now_ts):
+def _claim_conflict_is_active(db_path, alert, now_ts, *, with_source_status=False):
+    """Keep unresolved/unknown conflicts visible; report claim evidence separately."""
     claim_key=_claim_key_from_alert(alert)
     if not claim_key:
-        # Backward-compatible for legacy alerts without structured claim detail.
-        return True
+        # Legacy text has no canonical claim key; never silently dismiss it.
+        result, source=True, "unverified_legacy"
+        return (result,source) if with_source_status else result
     try:
         with _db_connect_readonly(db_path) as c:
             c.row_factory=sqlite3.Row
             if not c.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_claims'"
             ).fetchone():
-                return True
+                result,source=True,"unavailable"
+                return (result,source) if with_source_status else result
             row=c.execute(
                 "SELECT lease_until FROM task_claims WHERE project_id=? AND claim_key=?",
                 (str(alert.get("project") or "cloud"),claim_key),
             ).fetchone()
         if not row:
-            return False
-        try:
-            return datetime.fromisoformat(str(row["lease_until"])).astimezone(timezone.utc) > now_ts
-        except Exception:
-            return True
+            result,source=False,"observed"
+        else:
+            try:
+                result=(datetime.fromisoformat(str(row["lease_until"])).
+                        astimezone(timezone.utc) > now_ts)
+                source="observed"
+            except Exception:
+                # Malformed lease metadata cannot suppress an incident.
+                result,source=True,"invalid_claim_clock"
     except Exception:
-        # Attention filtering must never hide an issue because claim-state lookup failed.
-        return True
+        # Source unavailability is never evidence that a conflict disappeared.
+        result,source=True,"unavailable"
+    return (result,source) if with_source_status else result
 
 def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None):
     recovery=recovery_status(recovery_dir)
     now_ts=datetime.now(timezone.utc)
     items=[]
+    claim_sources=[]
     alerts, alerts_source_status = list_alerts(db_path,80,False,with_source_status=True)
     for alert in alerts:
         if str(alert.get("kind") or "").strip().lower().replace("-","_")=="claim_conflict":
-            if not _claim_conflict_is_active(db_path,alert,now_ts):
+            active, claim_source = _claim_conflict_is_active(
+                db_path,alert,now_ts,with_source_status=True)
+            claim_sources.append(claim_source)
+            if not active:
                 continue
         incident=_incident_from_alert(alert,recovery,now_ts)
         if incident:
@@ -1013,7 +1025,16 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
             "alerts_source_complete":alerts_source_status=="observed",
             "alerts_source_next_step":(
                 "Controleer de bestaande SQLite-bron en herstel de leesroute; geen meldingen is niet bewezen."
-                if alerts_source_status!="observed" else None)}
+                if alerts_source_status!="observed" else None),
+            "claim_conflict_source_status":(
+                "not_applicable" if not claim_sources else
+                "observed" if all(source=="observed" for source in claim_sources)
+                else "partial"),
+            "claim_conflict_source_complete":all(
+                source=="observed" for source in claim_sources),
+            "claim_conflict_source_next_step":(
+                "Verifieer de actieve taakclaims bij de eigenaar voordat een conflict wordt gesloten."
+                if any(source!="observed" for source in claim_sources) else None)}
 
 def list_alerts(db_path, limit=20, important_only=False, *, with_source_status=False):
     """List persisted alerts; optionally expose unavailable source separately from empty."""
