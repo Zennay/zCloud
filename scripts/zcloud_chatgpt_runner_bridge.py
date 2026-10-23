@@ -288,6 +288,61 @@ def _mountinfo_target_state(path: str) -> str:
     return "mounted" if matches == 1 else "not_mounted"
 
 
+def _mountinfo_target_backing(path: str) -> str:
+    """Privacy-safe mount backing hint from a bounded kernel source.
+
+    A block device node is only a candidate, never physical-drive separation
+    or permission to use that device. FUSE/network/virtual mounts are
+    ineligible for local bulk-training storage even with large free space.
+    """
+    raw = _read_bounded_proc_file("/proc/self/mountinfo", MAX_PROC_MOUNTINFO_BYTES)
+    if raw is None:
+        return "unknown"
+    try:
+        value = raw.decode("ascii")
+    except UnicodeError:
+        return "unknown"
+    target = os.path.normpath(os.path.abspath(path))
+    matches: list[tuple[str, str]] = []
+    for line in value.splitlines():
+        fields = line.split()
+        try:
+            separator = fields.index("-")
+        except ValueError:
+            return "unknown"
+        if separator < 6 or len(fields) < separator + 4:
+            return "unknown"
+        mount_point = _decode_mountinfo_path(fields[4])
+        if mount_point is None or not mount_point.startswith("/"):
+            return "unknown"
+        if os.path.normpath(mount_point) == target:
+            matches.append((fields[separator + 1].lower(), fields[separator + 2]))
+            if len(matches) > 1:
+                return "unknown"
+    if len(matches) != 1:
+        return "unknown"
+    filesystem, source = matches[0]
+    if (
+        filesystem.startswith("fuse")
+        or filesystem in {
+            "nfs", "nfs4", "cifs", "smb3", "9p", "ceph", "overlay",
+            "tmpfs", "ramfs", "autofs", "proc", "sysfs", "devtmpfs",
+        }
+    ):
+        return "virtual_or_network"
+    if filesystem not in {"ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs"}:
+        return "unknown"
+    if not re.fullmatch(r"/dev/[A-Za-z0-9_.\-/]+", source):
+        return "unknown"
+    if "/../" in source or source.endswith("/..") or "/./" in source:
+        return "unknown"
+    try:
+        device = os.stat(source, follow_symlinks=True)
+    except (OSError, ValueError):
+        return "unknown"
+    return "local_block_candidate" if stat.S_ISBLK(device.st_mode) else "unknown"
+
+
 BULK_ARCHIVE_MIN_FREE_BYTES = 30 * 1024 ** 3
 
 
@@ -314,6 +369,10 @@ def _archive_bulk_storage_gate(archive: dict[str, object]) -> dict[str, object]:
         state, next_code = "read_only_mount", "REQUEST_WRITABLE_ARCHIVE_WITH_OWNER"
     elif readonly is not False:
         state, next_code = "mount_writability_unknown", "REFRESH_ARCHIVE_WRITABILITY_EVIDENCE"
+    elif archive.get("filesystem_backing") == "virtual_or_network":
+        state, next_code = "virtual_or_network_mount", "REQUEST_LOCAL_BLOCK_DEVICE_WITH_OWNER"
+    elif archive.get("filesystem_backing") != "local_block_candidate":
+        state, next_code = "block_backing_unknown", "VERIFY_ARCHIVE_BLOCK_DEVICE_WITH_OWNER"
     elif type(available) is not int or available < 0:
         state, next_code = "free_space_unknown", "REFRESH_ARCHIVE_CAPACITY_EVIDENCE"
     elif available < BULK_ARCHIVE_MIN_FREE_BYTES:
@@ -332,6 +391,8 @@ def _archive_bulk_storage_gate(archive: dict[str, object]) -> dict[str, object]:
         "filesystem_identity_unknown": "Filesystem independence is unverified; do not infer external storage.",
         "read_only_mount": "The separate archive mount is read-only and cannot receive large files.",
         "mount_writability_unknown": "Archive mount writability is unverified; do not plan an offload.",
+        "virtual_or_network_mount": "The archive is FUSE, network or virtual storage; it is not a local block-device bulk-training target.",
+        "block_backing_unknown": "The archive has no verified local block-device backing; obtain owner inspection.",
         "free_space_unknown": "Archive free-space evidence is missing or invalid; do not infer capacity.",
         "below_30_gib": "The archive has less than 30 GiB free; request an owner-approved larger destination.",
         "capacity_candidate_not_training_authorization": (
@@ -379,7 +440,7 @@ def _host_capacity_observation() -> dict[str, object]:
                  "used_percent": None},
         "archive_mount": {"configured": True, "mount_detected": None,
                           "mount_detection_basis": "unknown", "separate_filesystem": None,
-                          "read_only": None,
+                          "read_only": None, "filesystem_backing": "unknown",
                           "total_bytes": None, "available_bytes": None,
                           "available_percent": None},
         "bulk_storage_advisory": _archive_bulk_storage_gate({}),
@@ -535,6 +596,7 @@ def _host_capacity_observation() -> dict[str, object]:
     else:
         archive["mount_detected"] = True
         try:
+            archive["filesystem_backing"] = _mountinfo_target_backing(ARCHIVE_MOUNT_PATH)
             archive_stat_before = os.stat(ARCHIVE_MOUNT_PATH, follow_symlinks=False)
             if not stat.S_ISDIR(archive_stat_before.st_mode):
                 raise ValueError("archive_mount_path_not_directory")
@@ -590,6 +652,8 @@ def _host_capacity_observation() -> dict[str, object]:
                 or bool(flags_after & read_only_flag) != read_only
             ):
                 raise ValueError("archive_mount_read_only_state_changed")
+            if _mountinfo_target_backing(ARCHIVE_MOUNT_PATH) != archive["filesystem_backing"]:
+                raise ValueError("archive_mount_backing_changed_during_observation")
 
             archive.update({
                 "total_bytes": total,
@@ -610,8 +674,13 @@ def _host_capacity_observation() -> dict[str, object]:
                 archive["read_only"] = None
             if read_only_state_lost:
                 archive["read_only"] = None
+            backing_lost = str(exc) == "archive_mount_backing_changed_during_observation"
+            if path_identity_lost or backing_lost:
+                archive["filesystem_backing"] = "unknown"
             if path_identity_lost:
                 evidence_warnings.append("archive_mount_changed_during_observation")
+            elif backing_lost:
+                evidence_warnings.append("archive_mount_backing_changed_during_observation")
             elif read_only_state_lost:
                 evidence_warnings.append("archive_mount_read_only_state_changed")
             else:
