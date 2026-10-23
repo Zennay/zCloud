@@ -72,7 +72,10 @@ auth, a missing Caddy import, or a Caddyfile/import directory that is not
 root-owned and non-group/world-writable, as well as an unexpected existing
 site. It stages one drop-in, validates Caddy, reloads
 and checks that anonymous HTTPS returns HTTP 401. Rollback quarantines only
-the exact site inode created by that invocation, outside the imported glob.
+the exact site inode created by that invocation into a root-owned 0700
+quarantine outside the entire Caddy configuration tree. The move is allowed
+only on the same filesystem, so it remains atomic and cannot be picked up by
+a broad Caddy import.
 If a rollback reload fails, the script reports the live state as unverified
 instead of claiming successful recovery. An existing site returning HTTP 401
 is not treated as a successful publication.
