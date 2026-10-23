@@ -20,8 +20,11 @@ Use loopback-only backend binding and authenticated HTTPS Caddy instead.
    Never start a second production writer.
 2. The new zennay-cloud.service is already live on 127.0.0.1:8765 only.
    Its local /api/status returns a current timestamp and projects array.
-3. The zcloud.zennay.nl DNS A record points only to 95.211.40.88. Any
-   public AAAA record must be verified separately for the new host.
+3. The zcloud.zennay.nl address set must resolve only to 95.211.40.88.
+   The publisher checks the complete getent ahosts result and refuses
+   --apply if any IPv6/AAAA address is present; this target has no approved
+   IPv6 endpoint configured. Remove an unintended AAAA record or add a
+   separately reviewed IPv6-aware implementation before publication.
    The zSSH repository's last observed authoritative nameservers for
    zennay.nl are ns1.site.eu, ns2.site.nl, ns3.site.be and ns4.site.de,
    **not Cloudflare**. Confirm current delegation with the DNS owner before
@@ -59,10 +62,13 @@ sudo env ZCLOUD_SQLITE_CUTOVER_CONFIRMED=yes \
 ~~~
 
 The script refuses a wrong host, unhealthy or non-loopback API, missing
-cutover attestation, wrong DNS, invalid auth, missing Caddy import or
-unexpected existing site. It stages one drop-in, validates Caddy, reloads
-and checks that anonymous HTTPS returns HTTP 401. Failed validation, reload
-or auth challenge removes the newly installed site from active imports.
+cutover attestation, IPv4/IPv6 DNS drift, invalid auth, missing Caddy import
+or unexpected existing site. It stages one drop-in, validates Caddy, reloads
+and checks that anonymous HTTPS returns HTTP 401. Rollback quarantines only
+the exact site inode created by that invocation, outside the imported glob.
+If a rollback reload fails, the script reports the live state as unverified
+instead of claiming successful recovery. An existing site returning HTTP 401
+is not treated as a successful publication.
 
 The operator must independently confirm from another network that:
 - TLS certificate and hostname are correct;
