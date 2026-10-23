@@ -3,6 +3,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import signal
 import time
 import sys
 import tempfile
@@ -148,6 +149,87 @@ class GovernedExecTests(unittest.TestCase):
             holder.close()
 
     @unittest.skipUnless(sys.platform == "linux", "Linux process groups required")
+    @unittest.skipUnless(sys.platform == "linux", "Linux signals required")
+    def test_sigterm_stops_running_child_before_releasing_lease(self):
+        # Terminate the test-only wrapper, not any real VPS service.
+        # Both it and its subprocess use this test's temporary contract/DB.
+        marker = self.root / "signal-child-pid.txt"
+        child_code = (
+            "import os,time; from pathlib import Path; "
+            f"Path({str(marker)!r}).write_text(str(os.getpid())); "
+            "time.sleep(8)"
+        )
+        wrapper_code = (
+            "import sys; from pathlib import Path; "
+            f"sys.path.insert(0, {str(ROOT)!r}); "
+            "import project_runtime as runtime; "
+            f"runtime.CONTRACT_FILE = Path({str(self.contract)!r}); "
+            "from scripts import zcloud_governed_exec as governed; "
+            "raise SystemExit(governed.run_governed("
+            f"Path({str(self.db)!r}), 'ftmo', 'signal-test', "
+            f"[sys.executable, '-c', {child_code!r}], "
+            "lease_seconds=180, renew_seconds=30))"
+        )
+        wrapper = subprocess.Popen(
+            [sys.executable, "-c", wrapper_code],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        child_pid = None
+        try:
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and not marker.exists():
+                self.assertIsNone(wrapper.poll(), "governor exited before child startup")
+                time.sleep(0.05)
+            self.assertTrue(marker.exists(), "test child never started")
+            child_pid = int(marker.read_text())
+            # This is a real active lease, not merely a mock admission.
+            with self._connect() as conn:
+                self.assertEqual(
+                    1, conn.execute(
+                        "SELECT COUNT(*) FROM resource_leases "
+                        "WHERE project_id='ftmo' AND owner_id='signal-test'"
+                    ).fetchone()[0],
+                )
+            wrapper.terminate()
+            stdout, stderr = wrapper.communicate(timeout=10)
+            self.assertEqual(128 + signal.SIGTERM, wrapper.returncode, (stdout, stderr))
+            deadline = time.monotonic() + 2.0
+            still_running = True
+            while time.monotonic() < deadline:
+                status = Path(f"/proc/{child_pid}/stat")
+                if not status.exists():
+                    still_running = False
+                    break
+                if status.read_text().rpartition(")")[2].split()[0] in {"Z", "X"}:
+                    still_running = False
+                    break
+                time.sleep(0.05)
+            self.assertFalse(still_running, "child survived governor termination")
+            with self._connect() as conn:
+                self.assertEqual(
+                    0, conn.execute(
+                        "SELECT COUNT(*) FROM resource_leases "
+                        "WHERE project_id='ftmo' AND owner_id='signal-test'"
+                    ).fetchone()[0],
+                )
+        finally:
+            if wrapper.poll() is None:
+                wrapper.terminate()
+                try:
+                    wrapper.communicate(timeout=3)
+                except subprocess.TimeoutExpired:
+                    wrapper.kill()
+                    wrapper.communicate(timeout=3)
+            # This test owns the child PID and may only clean it up if
+            # the assertion path above failed before normal cleanup.
+            if child_pid is not None:
+                status = Path(f"/proc/{child_pid}/stat")
+                try:
+                    if status.exists() and status.read_text().rpartition(")")[2].split()[0] not in {"Z", "X"}:
+                        os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
     def test_parent_exit_stops_same_group_descendant_before_lease_release(self):
         # The direct workload exits immediately, leaving a bounded test-only
         # grandchild asleep in its *same* session. It must not outlive the
