@@ -238,8 +238,17 @@ def capacity_changes(previous, current):
             max_gib = a["root_volume_bytes"] / (1024 ** 3) if mount_ok else None
             numeric = (numeric and max_gib is not None
                        and old <= max_gib + 0.02 and new <= max_gib + 0.02)
+        # A no-swap host has no meaningful "percent of swap used".
+        # Historical receipts without explicit swap source identity are
+        # likewise incomparable; never equate 0% unconfigured with 0% free.
+        swap_ok = (
+            key != "swap_used_percent"
+            or (a.get("swap_status") == "OBSERVED"
+                and b.get("swap_status") == "OBSERVED")
+        )
         comparable = (numeric and (not is_disk or mount_ok)
-                      and (key != "root_inode_available_percent" or inode_ok))
+                      and (key != "root_inode_available_percent" or inode_ok)
+                      and swap_ok)
         metrics.append({
             "metric": key,
             "previous": old if numeric else None,
