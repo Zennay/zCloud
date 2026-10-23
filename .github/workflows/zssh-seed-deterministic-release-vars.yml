@@ -7,6 +7,11 @@ on:
     paths:
       - ".github/zssh-seed-deterministic-release-vars-trigger"
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type SEED_ZSSH_DETERMINISTIC_RELEASE_VARS to authorize this manual variable write
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -18,7 +23,9 @@ concurrency:
 jobs:
   seed:
     name: Seed exact non-secret zSSH production release variables
-    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm == 'SEED_ZSSH_DETERMINISTIC_RELEASE_VARS')
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
     steps:
