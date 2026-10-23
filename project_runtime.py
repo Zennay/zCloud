@@ -20,6 +20,33 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_MAX_RECEIPT_CLOCK_SKEW_SECONDS = 120
+
+
+def validated_receipt_timestamp(
+    value: str | None = None, *, now: datetime | None = None
+) -> str:
+    """Normalize a bounded timezone-aware observation timestamp to canonical UTC."""
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None or reference.utcoffset() is None:
+        raise ValueError("receipt validation clock must be timezone-aware")
+    reference = reference.astimezone(timezone.utc)
+    if value is None or value == "":
+        return reference.isoformat().replace("+00:00", "Z")
+    if type(value) is not str or not 1 <= len(value) <= 48 or "\x00" in value:
+        raise ValueError("receipt observed_at must be a bounded timezone-aware ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("receipt observed_at must include a timezone")
+        normalized = parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError) as exc:
+        raise ValueError("invalid receipt observed_at timestamp") from exc
+    if normalized > reference + timedelta(seconds=_MAX_RECEIPT_CLOCK_SKEW_SECONDS):
+        raise ValueError("receipt observed_at is too far in the future")
+    return normalized.isoformat().replace("+00:00", "Z")
+
+
 def load_contracts(path: Path | None = None) -> dict:
     target = path or CONTRACT_FILE
     raw = json.loads(target.read_text(encoding="utf-8"))
@@ -218,7 +245,7 @@ def record_receipt(
     ci_status = str(ci_status or "").lower()
     if ci_status not in {"", "queued", "in_progress", "success", "failure", "cancelled", "skipped"}:
         raise ValueError("unsupported ci_status")
-    observed_at = str(observed_at or _now())
+    observed_at = validated_receipt_timestamp(observed_at)
     created_at = _now()
     text_fields = validated_receipt_text(
         phase=phase, action=action, commit_sha=commit_sha, blocker=blocker,
