@@ -1076,3 +1076,7 @@ The overview queue summary uses the same connection-aware freshness decision as
 the attention panel. A successful-looking timestamp from a cached response
 cannot label owner-clearance counts as the latest snapshot after a failed
 status refresh.
+
+Status timestamps must include an explicit RFC3339 timezone (UTC `Z` or a
+numeric offset). Date-only or local-time strings are classified as unknown;
+browser-local parsing is not accepted as freshness evidence.
