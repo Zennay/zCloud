@@ -445,6 +445,167 @@ def normalize_report(data, raw_sha256, now=None):
     }
 
 
+
+def _project_evidence_comparable(report, project):
+    """Require complete, versioned source evidence without requiring it to be recent now."""
+    coverage = report.get("source_coverage")
+    if not isinstance(coverage, dict):
+        return False
+    workers = project.get("workers")
+    observed = project.get("observed_worker_slots")
+    desired = project.get("desired_workers")
+    if not isinstance(workers, list) or not isinstance(observed, list):
+        return False
+    slots = [worker.get("worker_slot") for worker in workers if isinstance(worker, dict)]
+    return bool(
+        report.get("source_status") == "observed"
+        and report.get("source_complete") is True
+        and report.get("source_authorization_contract") == "explicitly_non_authorizing"
+        and all(coverage.get(key) == "observed" for key in ("runner_events", "runner_targets", "alerts"))
+        and project.get("desired_workers_source") == "observed"
+        and type(desired) is int
+        and project.get("worker_coverage_state") == "complete_fresh"
+        and not project.get("missing_worker_slots")
+        and not project.get("stale_worker_slots")
+        and not project.get("unknown_heartbeat_worker_slots")
+        and len(slots) == len(set(slots))
+        and set(slots) == set(observed)
+        and len(observed) == desired
+    )
+
+
+def compare_reports(current, previous):
+    """Describe two complete saved observations; never infer causality or grant authority."""
+    reasons = []
+    current_time = _timestamp(current.get("source_generated_at"))
+    previous_time = _timestamp(previous.get("source_generated_at"))
+    elapsed = round((current_time - previous_time).total_seconds())
+    if current_time <= previous_time:
+        reasons.append("current_timestamp_not_after_previous")
+    if current.get("source_sha256") == previous.get("source_sha256"):
+        reasons.append("identical_source_digest")
+    if current.get("source_freshness") in {"future", "clock_skew"}:
+        reasons.append("current_source_clock_uncertain")
+    if previous.get("source_freshness") in {"future", "clock_skew"}:
+        reasons.append("previous_source_clock_uncertain")
+    for label, report in (("current", current), ("previous", previous)):
+        if (
+            report.get("source_status") != "observed"
+            or report.get("source_complete") is not True
+            or report.get("source_authorization_contract") != "explicitly_non_authorizing"
+            or not isinstance(report.get("source_coverage"), dict)
+            or any(report["source_coverage"].get(key) != "observed"
+                   for key in ("runner_events", "runner_targets", "alerts"))
+        ):
+            reasons.append(label + "_source_incomplete_or_unverified")
+
+    current_projects = {project["project_id"]: project for project in current.get("projects", [])}
+    previous_projects = {project["project_id"]: project for project in previous.get("projects", [])}
+    current_ids = set(current_projects)
+    previous_ids = set(previous_projects)
+    missing_current = sorted(previous_ids - current_ids)
+    missing_previous = sorted(current_ids - previous_ids)
+    if missing_current or missing_previous:
+        reasons.append("project_set_changed")
+
+    comparable_projects = []
+    global_source_ok = not any(
+        reason.endswith("_source_incomplete_or_unverified")
+        or reason.endswith("_source_clock_uncertain")
+        or reason in {"current_timestamp_not_after_previous", "identical_source_digest"}
+        for reason in reasons
+    )
+    if global_source_ok:
+        for project_id in sorted(current_ids & previous_ids):
+            now_project = current_projects[project_id]
+            old_project = previous_projects[project_id]
+            if not _project_evidence_comparable(current, now_project) or not _project_evidence_comparable(previous, old_project):
+                reasons.append("project_evidence_incomplete:" + project_id)
+                continue
+            if now_project["desired_workers"] != old_project["desired_workers"]:
+                reasons.append("desired_worker_count_changed:" + project_id)
+                continue
+            now_workers = {worker["worker_slot"]: worker for worker in now_project["workers"]}
+            old_workers = {worker["worker_slot"]: worker for worker in old_project["workers"]}
+            if set(now_workers) != set(old_workers) or set(now_workers) != set(now_project["observed_worker_slots"]):
+                reasons.append("worker_slot_set_changed:" + project_id)
+                continue
+
+            worker_deltas = []
+            for slot in sorted(now_workers):
+                new_worker = now_workers[slot]
+                old_worker = old_workers[slot]
+
+                def numeric_delta(key):
+                    old_value = old_worker.get(key)
+                    new_value = new_worker.get(key)
+                    if old_value is None or new_value is None:
+                        return None
+                    return round(float(new_value) - float(old_value), 3)
+
+                worker_deltas.append({
+                    "worker_slot": slot,
+                    "completed_generations_delta": numeric_delta("completed_generations"),
+                    "observed_seconds_delta": numeric_delta("observed_seconds"),
+                    "throughput_per_observed_hour_delta": numeric_delta("throughput_per_observed_hour"),
+                    "working_pct_delta": numeric_delta("working_pct"),
+                    "idle_pct_delta": numeric_delta("idle_pct"),
+                    "blocked_pct_delta": numeric_delta("blocked_pct"),
+                    "heartbeat_freshness_from": old_worker["heartbeat_freshness"],
+                    "heartbeat_freshness_to": new_worker["heartbeat_freshness"],
+                    "heartbeat_freshness_changed": old_worker["heartbeat_freshness"] != new_worker["heartbeat_freshness"],
+                })
+            old_duplicate = old_project.get("duplicate_work_prevented")
+            new_duplicate = now_project.get("duplicate_work_prevented")
+            duplicate_delta = None
+            if (
+                old_project.get("claim_conflict_source_status") == "observed"
+                and now_project.get("claim_conflict_source_status") == "observed"
+                and old_duplicate is not None and new_duplicate is not None
+            ):
+                duplicate_delta = new_duplicate - old_duplicate
+            comparable_projects.append({
+                "project_id": project_id,
+                "desired_workers": now_project["desired_workers"],
+                "assessment_from": old_project["assessment_state"],
+                "assessment_to": now_project["assessment_state"],
+                "assessment_changed": old_project["assessment_state"] != now_project["assessment_state"],
+                "duplicate_work_prevented_from": old_duplicate if duplicate_delta is not None else None,
+                "duplicate_work_prevented_to": new_duplicate if duplicate_delta is not None else None,
+                "duplicate_work_prevented_delta": duplicate_delta,
+                "workers": worker_deltas,
+            })
+
+    if comparable_projects and reasons:
+        state = "partial"
+    elif comparable_projects:
+        state = "comparable"
+    else:
+        state = "inconclusive"
+    return {
+        "schema_version": "zsentinel-worker-scaling-comparison-v1",
+        "state": state,
+        "reason_codes": sorted(set(reasons)),
+        "previous_source_sha256": previous.get("source_sha256"),
+        "current_source_sha256": current.get("source_sha256"),
+        "previous_observed_at": previous_time.isoformat(),
+        "current_observed_at": current_time.isoformat(),
+        "elapsed_seconds": elapsed if elapsed >= 0 else None,
+        "current_snapshot_fresh": current.get("source_freshness") == "fresh",
+        "previous_snapshot_stale_now": previous.get("source_freshness") == "stale",
+        "historical_only": current.get("source_freshness") != "fresh",
+        "projects_missing_from_current": missing_current,
+        "projects_missing_from_previous": missing_previous,
+        "projects": comparable_projects,
+        "claim_authorized": False,
+        "dispatch_authorized": False,
+        "scale_change_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "active_claim_verified": False,
+    }
+
+
 def _md(value) -> str:
     text = _safe_text(str(value), 600)
     for char in ("\\", chr(96), "*", "_", "[", "]", "<", ">", "|", "#"):
@@ -473,6 +634,44 @@ def render_markdown(report):
         lines.append(f"- {key}: **{value}**")
     for reason in report["source_reasons"]:
         lines.append(f"- Source limitation: {_md(reason)}")
+    comparison = report.get("comparison")
+    if isinstance(comparison, dict):
+        lines.extend([
+            "",
+            "## Snapshot comparison",
+            "",
+            f"- Comparison state: **{_md(comparison['state'])}**",
+            f"- Previous observation: {_md(comparison['previous_observed_at'])}",
+            f"- Current observation: {_md(comparison['current_observed_at'])}",
+            f"- Elapsed seconds: {_md(comparison['elapsed_seconds'] if comparison['elapsed_seconds'] is not None else 'unknown')}",
+            f"- Current snapshot fresh: {str(comparison['current_snapshot_fresh']).lower()}",
+            f"- Historical only: {str(comparison['historical_only']).lower()}",
+            "- Descriptive telemetry delta only; no causal attribution or scaling authority.",
+        ])
+        for reason in comparison["reason_codes"]:
+            lines.append(f"- Comparison limitation: {_md(reason)}")
+        for project in comparison["projects"]:
+            lines.extend([
+                "",
+                f"### Comparison: {_md(project['project_id'])}",
+                "",
+                f"- Desired workers: {project['desired_workers']}",
+                f"- Assessment: {_md(project['assessment_from'])} → {_md(project['assessment_to'])}",
+                f"- Duplicate-work alert delta: {_md(project['duplicate_work_prevented_delta'] if project['duplicate_work_prevented_delta'] is not None else 'unknown')}",
+                "",
+                "| Slot | Completed Δ | Throughput/hour Δ | Working % Δ | Idle % Δ | Blocked % Δ | Heartbeat changed |",
+                "|---:|---:|---:|---:|---:|---:|---|",
+            ])
+            for worker in project["workers"]:
+                lines.append(
+                    f"| {worker['worker_slot']} | "
+                    f"{_md(worker['completed_generations_delta'] if worker['completed_generations_delta'] is not None else 'unknown')} | "
+                    f"{_md(worker['throughput_per_observed_hour_delta'] if worker['throughput_per_observed_hour_delta'] is not None else 'unknown')} | "
+                    f"{_md(worker['working_pct_delta'] if worker['working_pct_delta'] is not None else 'unknown')} | "
+                    f"{_md(worker['idle_pct_delta'] if worker['idle_pct_delta'] is not None else 'unknown')} | "
+                    f"{_md(worker['blocked_pct_delta'] if worker['blocked_pct_delta'] is not None else 'unknown')} | "
+                    f"{str(worker['heartbeat_freshness_changed']).lower()} |"
+                )
     if report["source_freshness"] != "fresh":
         lines.extend(["", "**Do not treat these metrics as current:** the saved source is stale or its clock is uncertain."])
     if not report["projects"]:
@@ -509,8 +708,55 @@ def render_markdown(report):
     return "\n".join(lines)
 
 
+def _render_comparison_html(report):
+    comparison = report.get("comparison")
+    if not isinstance(comparison, dict):
+        return ""
+    esc = lambda value: html.escape(str(value), quote=True)
+    reasons = "".join(f"<li>{esc(reason)}</li>" for reason in comparison["reason_codes"])
+    cards = []
+    for project in comparison["projects"]:
+        rows = []
+        for worker in project["workers"]:
+            fmt = lambda key: esc(worker[key] if worker[key] is not None else "unknown")
+            rows.append(
+                "<tr>"
+                f"<td>{worker['worker_slot']}</td>"
+                f"<td>{fmt('completed_generations_delta')}</td>"
+                f"<td>{fmt('throughput_per_observed_hour_delta')}</td>"
+                f"<td>{fmt('working_pct_delta')}</td>"
+                f"<td>{fmt('idle_pct_delta')}</td>"
+                f"<td>{fmt('blocked_pct_delta')}</td>"
+                f"<td>{str(worker['heartbeat_freshness_changed']).lower()}</td>"
+                "</tr>"
+            )
+        if not rows:
+            rows.append("<tr><td colspan='7'>No comparable worker slots.</td></tr>")
+        cards.append(
+            "<section class='card'>"
+            f"<h3>Project <code>{esc(project['project_id'])}</code></h3>"
+            f"<p>Desired workers: {project['desired_workers']} · "
+            f"Assessment: <strong>{esc(project['assessment_from'])}</strong> → <strong>{esc(project['assessment_to'])}</strong> · "
+            f"Duplicate-work alert delta: {esc(project['duplicate_work_prevented_delta'] if project['duplicate_work_prevented_delta'] is not None else 'unknown')}</p>"
+            "<div class='table-wrap'><table><thead><tr><th>Slot</th><th>Completed Δ</th><th>Throughput/h Δ</th><th>Working % Δ</th><th>Idle % Δ</th><th>Blocked % Δ</th><th>Heartbeat changed</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table></div></section>"
+        )
+    return (
+        "<section class='card'><h2>Snapshot comparison</h2>"
+        f"<p>State: <strong>{esc(comparison['state'])}</strong> · "
+        f"Previous: <code>{esc(comparison['previous_observed_at'])}</code> · "
+        f"Current: <code>{esc(comparison['current_observed_at'])}</code> · "
+        f"Elapsed seconds: {esc(comparison['elapsed_seconds'] if comparison['elapsed_seconds'] is not None else 'unknown')}</p>"
+        f"<p>Current snapshot fresh: <strong>{str(comparison['current_snapshot_fresh']).lower()}</strong> · "
+        f"Historical only: <strong>{str(comparison['historical_only']).lower()}</strong></p>"
+        "<p>Descriptive telemetry delta only; no causal attribution or scaling authority.</p>"
+        f"<ul>{reasons}</ul>{''.join(cards)}</section>"
+    )
+
+
 def render_html(report):
     esc = lambda value: html.escape(str(value), quote=True)
+    comparison_html = _render_comparison_html(report)
     coverage = "".join(
         f"<li><code>{esc(key)}</code>: <strong>{esc(value)}</strong></li>"
         for key, value in report["source_coverage"].items()
@@ -572,7 +818,7 @@ def render_html(report):
         f"Telemetry rows: {esc(report['telemetry_rows'] if report['telemetry_rows'] is not None else 'unknown')} · "
         f"Empty window: {esc(report['window_empty'] if report['window_empty'] is not None else 'unknown')}</p>"
         f"<p>Assessment context complete and fresh: <strong>{str(report['assessment_context_complete']).lower()}</strong></p>"
-        f"{warning}<h2>Source coverage</h2><ul>{coverage}{reasons}</ul>"
+        f"{warning}{comparison_html}<h2>Source coverage</h2><ul>{coverage}{reasons}</ul>"
         "<p><strong>Read-only historical evidence:</strong> no live claim verification, dispatch, scaling action, merge or deployment authority.</p>"
         f"{''.join(projects)}</body></html>"
     )
@@ -633,11 +879,19 @@ def main() -> int:
     parser.add_argument("--input", required=True, type=Path, help="absolute path to an owner-private JSON report")
     parser.add_argument("--output", required=True, type=Path, help="new file in an owner-private directory; never overwritten")
     parser.add_argument("--format", choices=("html", "markdown", "json"), default="html")
+    parser.add_argument("--previous", type=Path, help="optional earlier private JSON report for a descriptive snapshot comparison")
     args = parser.parse_args()
     try:
+        if args.previous is not None and os.path.abspath(args.previous) == os.path.abspath(args.input):
+            raise ValueError("input_and_previous_must_differ")
         raw, digest = _read_private_source(args.input)
         data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object, parse_constant=_reject_constant)
         report = normalize_report(data, digest)
+        if args.previous is not None:
+            previous_raw, previous_digest = _read_private_source(args.previous)
+            previous_data = json.loads(previous_raw.decode("utf-8"), object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+            previous_report = normalize_report(previous_data, previous_digest)
+            report["comparison"] = compare_reports(report, previous_report)
         if args.format == "html":
             rendered = render_html(report)
         elif args.format == "markdown":
@@ -654,7 +908,8 @@ def main() -> int:
     print(
         "Saved private worker-scaling handoff "
         f"(sha256={digest}, format={args.format}, projects={len(report['projects'])}, "
-        f"source_status={report['source_status']}, freshness={report['source_freshness']})."
+        f"source_status={report['source_status']}, freshness={report['source_freshness']}"
+        + (f", comparison={report['comparison']['state']}" if "comparison" in report else "") + ")."
     )
     return 0
 
