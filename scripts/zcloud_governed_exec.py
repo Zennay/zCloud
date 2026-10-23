@@ -44,13 +44,19 @@ def _assert_shared_resource_db(db_path: Path) -> None:
             raise RuntimeError("resource_database_identity_mismatch")
 
 
-def _effective_cgroup_memory_ceiling_mb(host_mb: int) -> int:
-    """Honor inherited cgroup-v2 memory.max ceilings at every parent slice."""
+def _effective_cgroup_memory_limits_mb(host_mb: int) -> tuple[int, int]:
+    """Return min inherited cgroup-v2 limit and currently free headroom.
+
+    A child can be constrained by any ancestor slice. Reading just its
+    leaf memory.max misses the parent unit/slice and reading max alone
+    misses memory already in use by unrelated processes in that slice.
+    """
+    remaining_mb = host_mb
     try:
         controls = Path("/proc/self/cgroup").read_text().splitlines()
         unified = [line.split("::", 1)[1] for line in controls if line.startswith("0::")]
         if not unified:
-            return host_mb  # Linux cgroup v1: host pressure remains required.
+            return host_mb, remaining_mb  # Legacy cgroup v1.
         if len(unified) != 1:
             raise RuntimeError("resource_cgroup_identity_ambiguous")
         components = [part for part in unified[0].split("/") if part]
@@ -60,18 +66,18 @@ def _effective_cgroup_memory_ceiling_mb(host_mb: int) -> int:
         for component in [""] + components:
             if component:
                 path = path / component
-            source = path / "memory.max"
-            raw = source.read_text().strip()
+            raw = (path / "memory.max").read_text().strip()
             if raw == "max":
                 continue
-            ceiling_bytes = int(raw)
-            if ceiling_bytes <= 0:
-                raise RuntimeError("resource_cgroup_memory_unavailable")
-            host_mb = min(host_mb, ceiling_bytes // (1024 * 1024))
-        return host_mb
+            maximum = int(raw)
+            current = int((path / "memory.current").read_text().strip())
+            if maximum <= 0 or current < 0:
+                raise RuntimeError("resource_cgroup_memory_invalid")
+            host_mb = min(host_mb, maximum // (1024 * 1024))
+            remaining_mb = min(remaining_mb, max(0, (maximum-current)//(1024*1024)))
+        return host_mb, remaining_mb
     except (OSError, ValueError, IndexError) as exc:
         raise RuntimeError("resource_cgroup_memory_unavailable") from exc
-
 
 def _nonprotected_memory_admission(conn, project_id: str,
                                    compute: dict) -> dict | None:
@@ -91,8 +97,8 @@ def _nonprotected_memory_admission(conn, project_id: str,
             if len(fields) == 3 and fields[2] == "kB":
                 if fields[0] in ("MemTotal:", "MemAvailable:"):
                     mem[fields[0][:-1]] = int(fields[1]) // 1024
-        host_mb = _effective_cgroup_memory_ceiling_mb(mem["MemTotal"])
-        available_mb = min(host_mb, mem["MemAvailable"])
+        host_mb, cgroup_free_mb = _effective_cgroup_memory_limits_mb(mem["MemTotal"])
+        available_mb = min(host_mb, cgroup_free_mb, mem["MemAvailable"])
         if host_mb <= 0 or available_mb < 0:
             raise ValueError("host memory numbers invalid")
     except (OSError, ValueError, KeyError) as exc:
