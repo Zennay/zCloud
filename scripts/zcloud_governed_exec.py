@@ -1002,7 +1002,8 @@ def inspect_pool(db_path: Path, project_id: str) -> dict:
                 0 if legacy_active else heavy["remaining"]
             )
         return {
-            "source": "readonly_shared_sqlite_snapshot",
+            "source": ("readonly_canonical_pool_snapshot" if live_authority
+                       else "readonly_isolated_canary_snapshot"),
             "project_id": project_id,
             "pool": pool,
             "observed_at": now,
@@ -1011,6 +1012,8 @@ def inspect_pool(db_path: Path, project_id: str) -> dict:
             "overcommitted": any(value["admitted"] > value["capacity"]
                                  for value in pools.values()),
             "pinned_database": bool(os.environ.get("ZCLOUD_RESOURCE_DB")),
+            "canonical_live_authority": live_authority,
+            "other_unleased_heavy_jobs_verified_absent": False,
             "admission_granted": False,
             "runtime_deployment_verified": False,
         }
