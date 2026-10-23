@@ -147,6 +147,52 @@ class GovernedExecTests(unittest.TestCase):
             holder.commit()
             holder.close()
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux process groups required")
+    def test_parent_exit_stops_same_group_descendant_before_lease_release(self):
+        # The direct workload exits immediately, leaving a bounded test-only
+        # grandchild asleep in its *same* session. It must not outlive the
+        # lease release, even though the wrapper's direct child has exited.
+        marker = self.root / "subprocess-pid.txt"
+        command = (
+            "import subprocess,sys; from pathlib import Path; "
+            "child=subprocess.Popen([sys.executable,'-c',"
+            "'import time;time.sleep(8)']); "
+            f"Path({str(marker)!r}).write_text(str(child.pid))"
+        )
+        rc = governed.run_governed(
+            self.db,
+            "ftmo",
+            "parent-exit-tree-cleanup",
+            [sys.executable, "-c", command],
+        )
+        self.assertEqual(0, rc)
+        pid = int(marker.read_text())
+        # A terminated grandchild may remain briefly as a zombie until its
+        # init process reaps it. Zombies consume no running workload.
+        deadline = time.monotonic() + 2.0
+        running = True
+        while time.monotonic() < deadline:
+            status = Path(f"/proc/{pid}/stat")
+            if not status.exists():
+                running = False
+                break
+            if status.read_text().rpartition(")")[2].split()[0] in {"Z", "X"}:
+                running = False
+                break
+            time.sleep(0.05)
+        self.assertFalse(running, "workload descendant survived lease release")
+        conn = self._connect()
+        try:
+            self.assertEqual(
+                0,
+                conn.execute(
+                    "SELECT COUNT(*) FROM resource_leases "
+                    "WHERE project_id='ftmo' AND owner_id='parent-exit-tree-cleanup'"
+                ).fetchone()[0],
+            )
+        finally:
+            conn.close()
+
     def test_duplicate_owner_rejects_child_without_touching_active_lease(self):
         # The same owner key must not renew an existing generation while
         # accidentally starting a second process outside the one-slot pool.
