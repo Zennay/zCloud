@@ -107,6 +107,72 @@ def _assert_portfolio_pool_capacities(contracts: dict) -> None:
             raise RuntimeError("resource_project_pool_contract_unsafe")
 
 
+def _service_cgroup_for_pid(pid: int) -> str | None:
+    """Capture the dedicated systemd service identity of a supervised child."""
+    if sys.platform != "linux":
+        return None
+    try:
+        rows = (Path("/proc") / str(pid) / "cgroup").read_text().splitlines()
+    except FileNotFoundError:
+        return None  # A very short-lived child may already have exited.
+    except OSError as exc:
+        raise RuntimeError("resource_child_cgroup_unavailable") from exc
+    groups = [line.partition("::")[2].strip()
+              for line in rows if line.startswith("0::")]
+    if len(groups) != 1:
+        return None
+    parts = [value for value in groups[0].split("/") if value]
+    if (not parts or not parts[-1].endswith(".service")
+            or any(part in (".", "..") for part in parts)):
+        return None
+    return "/" + "/".join(parts)
+
+
+def _live_service_members(cgroup_path: str) -> bool:
+    """Read-only bounded subtree census for an expired heavy lease's unit."""
+    if not isinstance(cgroup_path, str) or not cgroup_path.startswith("/"):
+        raise RuntimeError("resource_expired_cgroup_invalid")
+    parts = [part for part in cgroup_path.split("/") if part]
+    if (not parts or not parts[-1].endswith(".service")
+            or any(part in (".", "..") for part in parts)):
+        raise RuntimeError("resource_expired_cgroup_invalid")
+    root = Path("/sys/fs/cgroup").resolve(strict=True)
+    folder = root
+    for part in parts:
+        folder = folder / part
+        if folder.is_symlink():
+            raise RuntimeError("resource_expired_cgroup_invalid")
+    if not folder.is_dir():
+        return False  # Unit no longer exists, no old members can remain.
+    pending = [folder]
+    count = 0
+    while pending:
+        unit = pending.pop()
+        count += 1
+        if count > 1024:
+            raise RuntimeError("resource_expired_cgroup_inventory_unbounded")
+        for child in unit.iterdir():
+            if child.is_dir():
+                if child.is_symlink():
+                    raise RuntimeError("resource_expired_cgroup_invalid")
+                pending.append(child)
+        pids = (unit / "cgroup.procs").read_text().splitlines()
+        if len(pids) > 20000:
+            raise RuntimeError("resource_expired_cgroup_inventory_unbounded")
+        for pid in pids:
+            if not pid.isdecimal():
+                raise RuntimeError("resource_expired_cgroup_invalid")
+            if int(pid) == os.getpid():
+                continue
+            try:
+                fields = (Path("/proc") / pid / "stat").read_text().rpartition(")")[2].split()
+            except FileNotFoundError:
+                continue
+            if len(fields) < 3 or fields[0] not in {"Z", "X"}:
+                return True
+    return False
+
+
 def _expired_heavy_group_active(conn) -> bool:
     """Don't recycle an expired heavy lease while its known process group lives.
 
@@ -137,6 +203,9 @@ def _expired_heavy_group_active(conn) -> bool:
             if type(pid) is not int or pid <= 1:
                 return True
             if _process_group_has_live_members(pid):
+                return True
+            scope = metadata.get("service_cgroup")
+            if scope is not None and _live_service_members(scope):
                 return True
         except (TypeError, ValueError, KeyError, OSError):
             return True
@@ -472,6 +541,9 @@ def _metadata(command, *, pid=None):
             payload[key] = value[:200]
     if pid is not None:
         payload["pid"] = int(pid)
+        service_cgroup = _service_cgroup_for_pid(int(pid))
+        if service_cgroup is not None:
+            payload["service_cgroup"] = service_cgroup[:256]
     return payload
 
 
@@ -641,6 +713,8 @@ def _retain_owned_lease(conn, project_id: str, owner_id: str,
         }
         if type(metadata.get("pid")) is int and metadata["pid"] > 1:
             incident["pid"] = metadata["pid"]
+        if isinstance(metadata.get("service_cgroup"), str):
+            incident["service_cgroup"] = metadata["service_cgroup"][:256]
         encoded = json.dumps(incident, separators=(",", ":"), sort_keys=True)
         until = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()
         cursor = conn.execute(
