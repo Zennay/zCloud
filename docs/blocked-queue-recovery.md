@@ -1065,3 +1065,9 @@ trustworthy.
 This is presentation safety only. It does not clear attention records, change
 queue state, release claims, assign workers, or imply CI, merge, or deployment
 success.
+
+
+A failed `/api/status` refresh also marks the cached snapshot stale, even when
+its timestamp is less than 90 seconds old. The dashboard connection failure
+must not leave stale attention cards actionable; non-queue resolution stays
+disabled until a successful status refresh with a trustworthy timestamp.
