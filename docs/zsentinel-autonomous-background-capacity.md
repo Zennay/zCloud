@@ -1,0 +1,1140 @@
+## 21 oktober · historische failure episodes per systemd-manager
+
+De eerdere dagelijkse bronhistorie telde alleen de system-scope `runner_units`
+bij `failed_observations`. Daardoor ontbrak het langdurig falen van
+gebruikersrunners in de P0/P1 prioritering, terwijl de aparte live cards
+die services al konden zien. Dit is nu op dezelfde product-PR hersteld.
+
+`timeline_footprint()` gebruikt afzonderlijke gevalideerde bronsets
+voor `systemctl` en `systemctl --user`. Per scope bewaart hij bounded
+aantallen `failed`-momentopnames, de systemd-resultaten zoals `oom-kill`,
+de laatste **waargenomen** status, en onafhankelijke volledigheid.
+`latest_user_failed_services`, `user_failed_observations` en
+`incomplete_user_service_samples` zijn nieuwe aparte keys.
+
+Een identieke systemd unitnaam is geen gedeelde bronidentiteit:
+`timeline_owner_actions()` vergelijkt uitsluitend `(scope, unit)`.
+Een recente `oom-kill` uit de user-manager wordt dus correct tot dezelfde
+bevoegde geheugenonderzoeksplicht geleid als een system-manager failure,
+maar impliceert GEEN herstart- of vrijgegeven GitHub-workflowactie.
+Ontbrekende oudere user-data blijft ONBEKEND en telt mee als gedeeltelijke
+brondekking. Geen bronrapport mag bij een ontbrekende user-manager
+beweren dat alle runners succesvol draaien.
+
+Het offline HTML-blok, de privé Markdown-handoff en de JSON-eigenaarinbox
+tonen nu apart hoe vaak user-services als failed zijn waargenomen en
+welke oorzaak de bron op het laatste moment vermeldde. `failed_samples`
+is een telling van historische observaties, **geen** aantal crashes,
+restarts of GitHub-jobmislukkingen. Geen nieuwe QA-, regressie- of
+quality-validationpackages; dezelfde bestaande exacte-head CI, reviews,
+branch protection en operationele releasebevoegdheid blijven vereist.
+
+## 21 oktober · hostbrede OOM- en memory-PSI triage (read-only)
+
+Bij de huidige VPS stond swap volledig vol en rapporteerden twee
+systemd-runners `Result=oom-kill`. Alleen swap/servicestatus is onvoldoende
+om te zien of de kernel daarna nieuwe OOM-kills registreert. Daarom leest
+dezelfde bestaande operatorroute nu optioneel twee **hostbrede Linux-bronnen**:
+
+* `/proc/pressure/memory`: maximaal 4096 bytes, uitsluitend `some` en
+  `full` `avg10` als percentages; ontbreken betekent ONBEKEND.
+* `/proc/vmstat`: maximaal 65536 bytes, alleen de cumulatieve `oom_kill`
+  teller. Die geldt sinds de huidige Linux-boot voor ALLE processen.
+
+`snapshot()` bewaart de geobserveerde begrensde cijfers in zijn bestaande
+momentopname. Het bestaande CPU-yieldbeleid wordt **niet** veranderd door
+de optionele PSI-bron; ontbrekende PSI is dus geen reden voor extra CPU
+en evenmin een automatische diagnose of serviceschrijfactie. De offline
+HTML toont de teller en de PSI-waarden als eigenaarcontext.
+
+De T0/T1-functie `memory_oom_changes()` rapporteert een OOM-delta uitsluitend
+wanneer beide privébronnen een geldige monotone kernelwaarde tonen én de
+bestaande private bootvingerafdruk **dezelfde boot** bevestigt. Nieuwe boot,
+ontbrekende bron, negatieve telling of ontbrekende vingerafdruk leveren
+`oom_counter_same_boot_comparable=false`, tellerdelta `null` / ONBEKEND.
+Ook wanneer de teller stijgt, is niet aangetoond dat een GitHub-runner de
+geheugenslachtoffer was; `kernel_oom_incident_attributed_to_runner=false`.
+
+De historische HTML, privé T0/T1-overdracht, directe Markdown-handoff en
+JSON-eigenaarinbox tonen nu hostbreed OOM/PSI-bewijs. Bij **geverifieerde
+OOM-toename én actuele hoge hostdruk** krijgt de bevoegde eigenaar een
+extra P0-onderzoekstaak. Dit is geen herstelautoriteit. CI, runnerlistener,
+claims en daadwerkelijke GitHub-jobtoewijzing moeten onafhankelijk worden
+gecontroleerd door de bestaande bevoegde release-/runtime-eigenaar.
+
+Operatorcommando's voor alleen-lezen momentopnames:
+
+```bash
+python3 scripts/zsentinel_background_priority.py --preview --runners --human
+python3 scripts/zsentinel_runner_report.py --format html --output /PRIVATE-NIEUW/INZICHT.html
+python3 scripts/zsentinel_runner_report.py --format json --output /PRIVATE-NIEUW/BRON.json
+python3 scripts/zsentinel_runner_report.py --t0 /PRIVATE-NIEUW/T0.json --t1 /PRIVATE-NIEUW/T1.json --output /PRIVATE-NIEUW/T0-T1.html
+```
+
+Bestanden zijn nieuw/privé (0600); bestaande snapshot- en reviewgates blijven
+verplicht. Geen systemctl restart, GitHub workflowdispatch, portfoliolease
+of productiedeploy.
+
+## Non-blocking private receipt reads
+
+Operatorbronmodules, private CPU-beleidstatus, opgeslagen T0/T1-receipts en incidentbundelbestanden worden
+met `O_NONBLOCK` geopend vóór de descriptor op een regulier bestand wordt gecontroleerd.
+Een FIFO die een verwacht JSON-/bronbestand vervangt, wordt daardoor geweigerd
+in plaats van de operatoropdracht te laten hangen. De descriptor blijft daarna
+het object waarvan de metadata en begrensde bytes worden gelezen. Dit is alleen
+invoerbescherming: het geeft geen release-, herstel- of deploymentautorisatie.
+
+## Conservatieve behandeling van onbekende inode-druk
+
+Als de root-inodebeschikbaarheid niet als geldige percentagebron beschikbaar is,
+wordt dit nu een expliciete gematigde drukreden. Het CPU-beleid blijft dan op de
+intermediaire `100% / CPUWeight 40`-trede in plaats van onbekende inode-druk als
+volledig idle te behandelen. Betrouwbaar waargenomen <1% vrije inodes blijft een
+urgente reden om CPU te laten wijken; deze wijziging leest alleen `statvfs` en
+start, stopt of herconfigureert geen runner of trainer buiten de bestaande
+geautoriseerde policy-route.
+
+## Geen swap geconfigureerd op de nieuwe VPS (23 oktober)
+
+Een afzonderlijke read-only zSSH-waarneming van
+`VM-7eb5ee16-2c71-440d-b7fd-8095d204e930` toont
+`SwapTotal: 0 kB` en `SwapFree: 0 kB`. Dit is **geen** bewijs
+voor 0% van een bestaande swapruimte in gebruik. De CPU-governor meldt nu
+`swap_status=NO_SWAP_CONFIGURED` en `no-swap-configured` als gematigde
+drukreden. Zonder verdere urgente signalen betekent dit maximaal de
+intermediaire 100% / CPUWeight 40-trede in plaats van idle 175% / 70.
+De bestaande onmiddellijke verlaging bij CPU-/RAM-/rootdruk blijft intact.
+
+`/proc/meminfo` wordt begrensd gelezen. Dubbele, ontbrekende, ongeldige of
+te grote bronvelden leveren `swap_status=UNKNOWN` en een conservatief
+onvolledige-bronbesluit. De numerieke oude `swap_used_percent=0` blijft bij
+`NO_SWAP_CONFIGURED` uitsluitend voor compatibiliteit met oudere bewaarformaten;
+de HTML-werkbank toont nu expliciet **Geen swap geconfigureerd** in plaats van
+een misleidende gebruiksmeter. T0/T1-vergelijkingen van swappercentages worden
+alleen als vergelijkbaar verklaard als beide bonnen `OBSERVED` melden; oude
+bonnen zonder `swap_status` blijven voor die metriek niet vergelijkbaar.
+De privé-eigenaarhandoff voegt een P1-opdracht toe om geheugenrisico te beoordelen.
+Ook een historisch privébronvenster rapporteert nu per bronmoment of swap
+werkelijk afwezig was, toont de laatste `swap_status` en maakt dat in het
+offline HTML-verloop en de Markdown-ownerhandoff zichtbaar. Ook de directe
+privé-eigenaaroverdracht schrijft bij `OBSERVED` het swappercentage, bij
+`NO_SWAP_CONFIGURED` "niet van toepassing" en bij `UNKNOWN` "onbekend" in
+plaats van een legacy nul. De JSON-ownerinbox draagt dezelfde toegelaten status
+mee. Dit zijn tellingen van **waarnemingen**, niet van systeemrestarts, drukduur
+of kernel-OOM-kills.
+Dit is geen toestemming voor het inschakelen van swap, herstarten van runners,
+extra training, CI-reruns of een productiedeploy.
+
+Het offline tijdlijnrapport behandelt nu historische/legacy-bonnen zonder een
+expliciete `swap_status` als **onvolledige capaciteitsbron**, ook als ze een
+oude numerieke `swap_used_percent=0` bevatten. Geldige disk-/load-signalen
+blijven bruikbaar, maar een verder lage drukuitkomst blijft `UNKNOWN` zolang
+de swapbron niet onafhankelijk is vastgesteld. Onbekende swap telt niet mee
+als hoge swap en wordt niet verward met een geconfigureerde swapruimte;
+`NO_SWAP_CONFIGURED` blijft zichtbaar als afzonderlijke eigenaaractie.
+
+Een tweede read-only broncontrole op hetzelfde host toont `/opt/fuckball-training`
+en `/` beide op device `2050` en `/dev/sda2`. Daarmee blijft de daadwerkelijke
+training-outputlocatie op de **systeemschijf**; deze CPU-fix maakt dat pad niet
+veilig en autoriseert geen trainingstart. De aparte externe-opslag/cutover-gate
+uit issue #1588 en het bestaande training-PR moet onafhankelijk worden voldaan.
+
+Historische T0/T1-vergelijkingen bewaren nu naast de numerieke metric ook de
+bronstatus vóór en na de meting. De privé-HTML en Markdown-eigenaaroverdracht
+tonen `swap geconfigureerd`, `geen swap geconfigureerd` of `swapbron UNKNOWN`
+en melden een wijziging alleen wanneer beide bronstatussen bekend zijn. De
+numerieke swapdelta blijft niet-vergelijkbaar tenzij beide bonnen
+`OBSERVED` melden.
+
+## Coherente root-capaciteitsopname
+
+De hoofd-snapshot leest root-schijfruimte, vrije inodes en volumeomvang nu uit één
+`statvfs`-waarneming. De device/inode-identiteit van `/` wordt vóór en na die
+meting vergeleken; bij een wijzigende root-mount blijven de capaciteitsvelden
+ONBEKEND. De bestaande `source_complete`- en drukregels laten het CPU-advies dan
+conservatief zakken in plaats van metriek van twee verschillende volumes te
+combineren. De afzonderlijke kleine helpers blijven beschikbaar voor bestaande
+callers, maar de policy gebruikt één gecombineerde opname.
+
+## 21 oktober · systeem- én gebruikersmanager GitHub runnerherstel
+
+De herstelwerkbank las eerder alleen `systemctl list-units` zonder `--user`.
+Een runner die als user-service draait kon daardoor onzichtbaar zijn, zelfs
+als het P0-probleem juist de niet-werkende GitHub listener in die scope is.
+
+**Nieuw op dezelfde product-PR:** de read-only `runner_inventory()` vraagt
+twee onafhankelijke bronnen op: `systemctl ... list-units` (system) en
+`systemctl --user ... list-units` (user). Ook het bekende foutmarkersymbool
+voor failed-services wordt vóór naamvalidatie weggehaald; de servicefout
+blijft zichtbaar. Er is geen daemon-reload, restart, queue-writer, API-call
+of GitHub-workflowdispatch. Per scope maximaal twintig services en
+maximaal 20 KB tekst, met een korte (max. 8 s) bron-timeout.
+
+Runner service names may contain dots inside owner/repository or runner names; the
+inventory accepts those names. A malformed or unrecognized `actions.runner.*`
+line makes that manager's coverage partial instead of silently implying that
+all runner services were enumerated.
+
+De bestaande `runner_units`-velden bewaren hun historische system-scope
+betekenis. Drie nieuwe velden (`user_runner_units_observed`,
+`user_runner_units`, `user_runner_units_truncated`) bewaren de onafhankelijke
+gebruikersbron. Eenzelfde servicenummer/naam in beide scopes is **niet**
+dezelfde service. Oude privébonnen zonder user-velden zijn **ONBEKEND**,
+niet nul of hersteld. Per-scope bronlimieten en ontbrekende managerverbinding
+blijven zichtbaar.
+
+De privé-T0/T1 runnerbon levert nu ook afzonderlijke `user_transitions`
+en `complete_user_service_coverage`, met scoped, gebonden incidentreferenties
+die niet met system-incidenten kunnen botsen. Historische HTML, huidige
+offline herstelwerkbank, JSON-eigenaarinbox en de handmatige Markdown-overdracht
+tonen gebruikersscope afzonderlijk. P1-advies telt gefaalde/geïnactiveerde
+system- en user-services apart; bronverlies wordt niet als gezondheid gezien.
+
+**Gebruik (alleen lezen):**
+
+```bash
+python3 scripts/zsentinel_background_priority.py --preview --runners --human
+python3 scripts/zsentinel_runner_report.py --format json --output /EIGEN-PRIVATE-MAP/NIEUW.json
+python3 scripts/zsentinel_runner_report.py --format html --output /EIGEN-PRIVATE-MAP/NIEUW.html
+```
+
+De uitvoer is een momentopname van lokale Linux-servicebronnen.
+`active` bewijst niet dat GitHub jobs aanneemt; `failed→active` bewijst
+niet dat CI draait, main gemerged is of productie hersteld is. Voor
+serviceherstart, schedulerinstellingen, claims en productie zijn altijd
+bevoegde runtime-eigenaar, onafhankelijke review en exacte-head CI vereist.
+
+# zSentinel autonomous background capacity (20 Oct 2026)
+
+This source extends the existing Ubuntu user-sidecar without launching new workers. An
+**existing** `zcloud-background-priority.timer` evaluates live host pressure once a
+minute, then changes **only** `fuckball-ai-coach.service`'s user-scope
+`CPUQuota`/`CPUWeight`. All bands leave some CPU for training. The tuner does
+not edit models or forecasts, manage FTMO trades, claim jobs, dispatch workflows,
+move files or bypass a merge/deploy gate.
+
+## Runtime behavior
+
+| Observation | CPUQuota / CPUWeight | Meaning |
+| --- | --- | --- |
+| zCloud GitHub job worker observed, load > 1.35× affinity cores, <2 GiB MemAvailable, swap >=80% used, root unavailable >=90%, **or incomplete /proc, memory, load or root-disk telemetry** | 60% / 25 | Yield strongly, never assume unknown observations mean idle. |
+| Other GitHub job worker observed, load >0.85× cores, <3 GiB MemAvailable, swap >=60% used, or root unavailable >=85% | 100% / 40 | Yield moderately. |
+| None of the above | 175% / 70 | Allow bounded idle background training. |
+
+A process is a job worker only if `/proc/*/comm` is `Runner.Worker` and
+its command line is present. The process scan is capped at 8,192 numeric
+`/proc` entries, and each argv read is capped at 8 KiB. Exceeding either bound
+or reading an oversized/unreadable command line makes source coverage
+incomplete; truncated prefixes are never used to classify a runner. An idle
+listener alone is not a running job.
+A process that disappears with `FileNotFoundError` during the scan is ignored.
+Any other read/permission error is UNKNOWN; a second path-existence probe is not
+used to guess that an inaccessible process disappeared. If a Runner.Worker has
+no readable argv, source coverage is incomplete and the conservative band
+applies. A failed whole-/proc observation likewise cannot be treated as proof
+of idle runner capacity.
+The `zcloud_runner_active` field is a **path marker**, not proof that an
+AI browser worker or merge job is active. Load, memory, swap and root disk
+are independent capacity indicators; CPU throttling does not actually free
+swap, disk blocks or repair a runner.
+
+On each timer invocation, the tuner reads the **actual** user-systemd
+`CPUQuotaPerSecUSec`, `CPUWeight` and `ActiveState`, rather than assuming an
+old saved JSON decision is still installed. If the active service already
+has the selected values, no control write is necessary; otherwise the tuner
+changes only the existing user-scope properties and reads them back before
+claiming `applied_verified=true`. A failed systemctl update or read-back
+never publishes a false verified decision. If the coach is inactive, the
+tuner does not start it: it writes `unit_active=false` and
+`applied_verified=false` for operator visibility. The read-only snapshot and
+selected CPU policy are saved through a private atomic 0600 temporary file
+under `$XDG_RUNTIME_DIR`; rename replaces the prior state. State stores only
+numeric capacity and boolean runner observations, not process command lines,
+full filesystem paths or credentials.
+
+## Read-only decision preview
+
+On a machine with access to the Python source, `python3
+scripts/zsentinel_background_priority.py --preview` prints a single JSON
+snapshot with root-disk/swap/memory/load observations, conservative mode,
+recommended quota/weight and `"applied": false`. When a user systemd bus
+is available, the preview additionally makes a **read-only** `systemctl
+--user show` call for the current coach `unit_active`,
+`current_quota_percent`, `current_weight` and
+`recommendation_currently_applied`. Without a user bus it displays
+`unit_observed=false` and null current values, never inventing an active
+setting. It makes no service change or state-file write and does not require
+Ubuntu UID 1000. The bare command remains restricted to that UID and only
+changes the existing dedicated user unit. A preview's observed current
+values **do not prove** this PR source was installed, nor does preview
+validate runner recovery.
+
+
+Voor operators zonder JSON is er daarnaast `python3 scripts/zsentinel_background_priority.py --preview --human`: een Nederlandstalig één-scherms overzicht van het CPU-advies, de concrete oorzaken (actieve GitHub-jobs, systeemload, swap en schijfruimte), huidige systemd-quota/gewicht waar uitleesbaar, en de expliciete melding dat de preview niets heeft gewijzigd. `--human` zonder `--preview` wordt geweigerd. Beide weergaven lezen alleen; geen periodieke controle wordt gestart.
+
+### Two-stage promotion also covers mixed quota/weight states
+
+The intermediate `100% CPUQuota / CPUWeight 40` rung is required whenever the coach is below 100% quota **or** its current weight is below 40. In particular, a mixed state such as `100% / 25` must not jump directly to `175% / 70` after one low-pressure window. It first reaches `100% / 40`, then starts a fresh independent five-minute observation window before any further increase. Immediate reductions remain immediate, and an unknown or changed cgroup still resets or blocks promotion.
+
+## Why the CPU band was selected
+
+The preview and private on-host state now include a bounded array of
+machine-readable `reasons`: e.g. `zcloud-github-job-running`,
+`high-system-load`, `high-swap-use`, `low-root-disk-headroom`, and
+the live host-wide memory-pressure signals below. These describe independently
+observed host pressure, **not** proof of a failing specific GitHub workflow.
+An incomplete required `/proc` or capacity read emits
+`incomplete-capacity-source` and chooses the conservative band. Optional
+PSI support may be unavailable on older/restricted kernels; that remains
+unknown rather than a fabricated healthy zero. This lets operators distinguish
+a real running zCloud job from host pressure without exposing process
+arguments, runner IDs, home paths or command-line credentials.
+
+### Live memory stalls also yield background CPU
+
+The governor now uses the kernel's memory Pressure Stall Information (PSI)
+`avg10` values as an additional host-wide admission signal. These are
+percentages of the previous ten seconds spent stalled, not runner-specific
+attribution:
+
+- `memory_psi_full_avg10_percent >= 1.0`: urgent pressure; cap the existing
+  background coach at the conservative 60% CPUQuota / CPUWeight 25 band.
+- `memory_psi_full_avg10_percent >= 0.25`, or
+  `memory_psi_some_avg10_percent >= 10.0`: moderate pressure; cap it at
+  100% / weight 40 unless another existing signal requires the stricter band.
+- Missing, malformed, non-finite or out-of-range PSI values do not become
+  zero and do not create a new claim of source completeness. The `some` and
+  `full` fields are tracked independently in live previews; an unavailable
+  field no longer hides the other field when it was actually observed. The
+  existing required RAM, swap, load, disk and inode observations continue to
+  govern unknown-source handling. The kernel OOM counter remains diagnostic only:
+  its cumulative host-wide value is not used as evidence against a particular
+  runner or as a standalone current-pressure trigger.
+
+The same reason codes appear in the private JSON/HTML owner handoff and the
+Dutch CLI preview, so the applied recommendation and its pressure explanation
+remain consistent. The timer still only adjusts the existing user-scoped
+coach quota/weight; it never stops or restarts training or a runner.
+
+The tuner independently reconciles with the actual `systemctl --user
+show` values on every authorized oneshot invocation. It does not rely
+on old `zcloud-background-priority.json` data for admission. A unit that
+was manually changed after the previous observation is re-evaluated on
+the next invocation, while an inactive unit remains untouched (but has
+an explicit unverified observation in private state).
+
+## Read-only GitHub runner service overview
+
+For a one-command private operator view, use `python3
+scripts/zsentinel_background_priority.py --preview --human --runners`.
+The added `--runners` flag is **opt-in and preview-only**; the background
+timer never inventories other services. It uses bounded, shell-free
+`systemctl list-units` reads for at most 20 canonical
+`actions.runner.<owner>.<runner>.service` names. Only failed units get
+a bounded `systemctl show -p Result` read for familiar values such as
+`oom-kill`, `exit-code` or `timeout`. No unit descriptions, arbitrary
+command lines, GitHub credentials or process environment are returned.
+An oversized list explicitly says the coverage is partial; if systemd is
+unreachable, the output says the service state could not be observed.
+
+An **active runner service is not proof of an executing GitHub job**,
+correct GitHub labels, successful builds or a healthy deploy. Likewise,
+`inactive/dead` does not mean that a service is crashed: it may have
+stopped normally. The optional overview deliberately provides no restart,
+enable, stop, dispatch, write or repair action. Recovery of OOM-failed
+project runners remains subject to the specific service owner, memory
+headroom and existing production gates.
+
+## Privé offline herstelwerkbank
+
+Met de bestaande one-shot preview kan een bevoegde operator een statisch
+Nederlandstalig HTML-overzicht genereren zonder een externe dashboarddienst:
+
+`python3 scripts/zsentinel_background_priority.py --preview --human --report "$HOME/private-recovery/zsentinel-20261020.html"`
+
+De bestemmingsmap moet **al bestaan** en door de uitvoerende gebruiker
+beschrijfbaar zijn. Het opgegeven `.html`-bestand moet **nieuw** zijn: aanmaken
+is exclusief (`O_CREAT|O_EXCL|O_NOFOLLOW`), bestandstoegang is `0600`,
+de laatste doelmapcomponent wordt zonder symlink geopend. Het programma
+overschrijft nooit een bestaand HTML-rapport en logt de privébestandsnaam
+niet naar stdout of een portfolio-feed. Een ongeldige naam, bestaand bestand,
+ontoegankelijke doelmap of onvolledige write geeft een fout; gedeeltelijk
+geschreven bestanden worden weer verwijderd.
+
+De privé herstelwerkbank geeft ook een **geprioriteerde herstelvolgorde**:
+bij onvoldoende of hoge RAM/swap/disk/load-capaciteit krijgt eerst
+capaciteitsveiligheid prioriteit en adviseert hij geen extra runner-start.
+Daarna volgen afzonderlijk het bevoegde onderzoek van OOM-gefaalde services,
+eigenaarcontrole voor bewust mogelijk gestopte services en onafhankelijke
+GitHub-toewijzingscontrole voor actieve services. Onvolledige bronnen krijgen
+een aparte waarschuwing. Dit is tekstadvies, geen uitvoerbare herstelactie
+of bevoegdheidsverlening.
+
+De rapportbron komt uit dezelfde **eenmalige** read-only host- en
+service-observaties als de preview. Een afzonderlijke zelfstandige ingang
+`python3 scripts/zsentinel_runner_report.py --output NEW.html`
+biedt dezelfde HTML-werkbank voor een losse beheeractie. Het rapport bevat
+hostcapaciteit, CPU-advies versus huidige coach-instellingen en maximaal
+20 canonieke runner-servicestatussen met veilige vervolgadviezen bij
+`failed/oom-kill`, gestopt of actief. De status van een uitvoerende GitHub-job
+blijft onafhankelijk van een actieve listener.
+
+Het HTML bevat **geen JavaScript of externe assets**, heeft een beperkende
+Content Security Policy en is uitsluitend privé beschikbaar. Hiermee worden
+geen logs, GitHub credentials, gebruikersprofielen of proces-argv opgeslagen.
+Het bestand is een momentopname; de tool claimt geen CI-success, main-merge,
+recovered listener, vrijgevallen Notion-claim of live productieintegratie.
+De optionele `--report`-modus draait nooit vanuit de bestaande
+systemd-timer en voert geen nieuwe `systemctl set-property`-actie uit.
+
+## Privé T0/T1-bronmomenten voor runner-status
+
+Wanneer incidentonderzoek over meerdere tijdstippen gaat, slaat de operator
+twee losse, create-only momentopnamen op. Eén opdracht met de bestaande
+`--preview` verzamelt dezelfde lokale host-, CPU- en systemd-bronnen als
+het private HTML-overzicht:
+
+```bash
+python3 scripts/zsentinel_background_priority.py --preview --snapshot "$HOME/private-recovery/T0.json"
+# Na een volgende echte observatie:
+python3 scripts/zsentinel_background_priority.py --preview --snapshot "$HOME/private-recovery/T1.json" --previous "$HOME/private-recovery/T0.json"
+```
+
+De alternatieve standalone ingang is
+`python3 scripts/zsentinel_runner_snapshot.py --output NEW.json --previous OLD.json`.
+Elk doel is een **nieuw** bestand (`0600`, `O_CREAT|O_EXCL|O_NOFOLLOW`),
+met maximaal 128 KiB. Bestaande snapshots worden niet aangepast.
+Voor T0/T1 is het vorige bestand een door dezelfde Unix-eigenaar beheerde
+reguliere file zonder groep-/wereldrechten en zonder finale symlink.
+De vergelij­king vereist schema `zsentinel.runner-observation.v1`,
+**dezelfde host**, strikt oplopende UTC-bronmomenten en maximaal 72 uur
+verschil. Onvolledige of afgekorte runner-bronnen blijven zichtbaar als
+`complete_service_coverage=false`.
+
+De `comparison.transitions` onderscheiden `newly_observed`,
+`no_longer_observed` en `service_state_changed`. **Zelfs een overgang van
+`failed` naar `active` is géén bewijs dat een GitHub-job, PR of deploy
+hersteld is**; de velden `github_job_recovered` en
+`production_restored` blijven daarom `null`.
+Iedere statusovergang krijgt daarnaast een stabiele, privé SHA-256-afgeleide `incident_key` (24 hextekens) over host, canonical service-id en waargenomen vóór/na-toestand. Herhaalde identieke overgangen kunnen hierdoor als hetzelfde type incident worden herkend, zonder een oude T0-bron als huidige vrijgave of herstelbewijs te accepteren. De vergelijking bevat ook de gemeten `elapsed_seconds` en per overgang `action_authorized=false`. Dit is een deduplicatiehint, geen vertrouwenshandtekening.
+
+Iedere bron draagt expliciet `claim_authorized=false`,
+`service_restart_authorized=false`, `merge_authorized=false` en
+`deploy_authorized=false`. Een oude bron wordt nooit als vrijgave
+voor nieuwe werkzaamheden of automatische recovery geïnterpreteerd.
+Zonder `--snapshot` of `--report` kan `--previous` niet gebruikt worden;
+`--report` en `--snapshot` zijn bewust afzonderlijke create-only uitvoeracties.
+
+## Historische HTML: twee opgeslagen bronnen zonder VPS-toegang
+
+De privé werkbank ondersteunt nu **offline herweergave** van twee eerder
+vastgelegde runnerbronmomenten. Op dezelfde Unix-gebruikersaccount als de
+privé snapshotbestanden kan de operator uitvoeren:
+
+```bash
+python3 scripts/zsentinel_runner_report.py \
+  --t0 "$HOME/private-recovery/T0.json" \
+  --t1 "$HOME/private-recovery/T1.json" \
+  --output "$HOME/private-recovery/vergelijking.html"
+```
+
+Deze modus leest uitsluitend twee bestaande eigenaar-privé JSON-bronnen
+en maakt één **nieuw** 0600 HTML-rapport. Er worden **geen actuele
+systemd-/proc-/GitHub-metingen uitgevoerd**, geen achtergrondservice
+geactiveerd en geen gegevens naar een netwerkendpoint verzonden. De
+bestaande vergelijking weigert een andere host, verkeerde bronvolgorde,
+onbekend schema of een verschil groter dan 72 uur.
+
+Het HTML toont expliciet de T0- en T1-tijd, dekkingsgraad, waargenomen
+statusovergangen en stabiele incidentcodes, plus de bij T1 **opgeslagen**
+capaciteitswaarden en CPU-aanbeveling. De historische PSI-vergelijking houdt
+`full` en `some` apart vergelijkbaar: als één PSI-bron ontbreekt, blijft
+een betrouwbaar verschil voor de andere bron zichtbaar in plaats van beide
+metingen onterecht als onbekend te verbergen. Voor nieuwe bronbestanden bewaart
+zSentinel ook de waargenomen Linux-root-mount-identiteit en het totale
+volume. Het historische overzicht toont verschillen in beschikbare RAM,
+swapdruk en load, en toont een schijfdelta **uitsluitend** wanneer zowel
+het mount-device als de totale volumeomvang op T0 en T1 overeenkomen.
+Ontbrekende oude mount-identiteit of een veranderd volume geeft
+`niet vergelijkbaar`, niet een verzonnen vrijeruimtewinst.
+Alle verschillen zijn begrensde momentopnames, geen bewijs van veilige
+bestandsverwijdering, runnerherstel of nieuwe training.
+Een vorige bron zonder
+opgeslagen coachinstellingen blijft **onbekend**, niet stiekem live
+nagevraagd. `--previous T0.json` zonder `--t0/--t1` is de aparte
+**actuele**, read-only systeemobservatie die het verschil met T0 in het
+nieuwe privé HTML-bestand plaatst. Beide modi zijn afzonderlijk van
+`--snapshot` en van productieactivatie.
+
+## Rootschijfruimte in GiB · 20 oktober 2026
+
+De VPS kan bijna vol zijn terwijl een percentage de omvang van een
+beschikbaar herstelvenster onvoldoende laat zien. De read-only
+capaciteitsobservatie bevat daarom naast het percentage ontoegankelijke
+rootruimte nu ook `root_available_gib`: de actuele, aan de gebruiker
+beschikbare blokken (`statvfs.f_bavail × f_frsize`) in GiB.
+
+- `--preview --human` toont de daadwerkelijk beschikbare rootruimte; een
+  ontbrekende bron wordt als *onbekend* getoond en laat geen CPU-promotie toe.
+- Privé HTML-werkbanken tonen de beschikbare GiB naast het bestaande
+  percentage, swapgebruik en RAM. Nieuwe T0/T1-bronnen vergelijken ook de
+  GiB-verandering, **uitsluitend** bij identiek mount-device en identieke
+  volumeomvang. Oude v1-bonnen zonder deze optionele meting blijven leesbaar
+  maar krijgen *niet vergelijkbaar*, geen verzonnen nulwaarde.
+- Historische HTML-tijdlijnen en Markdown-overdrachten nemen deze delta over;
+  de waarneming is geen bewijs dat bestanden veilig zijn opgeruimd, dat
+  GitHub-jobs hervat zijn of dat een release is uitgevoerd.
+- Ook wanneer het percentuele schijfgebruik de 85/90%-grenzen
+  niet bereikt, is **minder dan 2 GiB werkelijk beschikbaar** een urgente
+  brongebonden capaciteitssituatie (CPU 60%/gewicht 25 voor de trainer).
+  Bij 2–5 GiB kiest het systeem de gematigde band (100%/40).
+  Bestaande ernstige druk heeft altijd voorrang. De privé operatorweergave
+  noemt de absolute drempel als afzonderlijke oorzaak. Deze CPU-regeling
+  blijft pas actief na onafhankelijke, geautoriseerde runtime-release;
+  de code start of stopt geen training.
+- Geen disk cleaner, extra directory-scan, servicemutatie, runnerrestart,
+  CI-dispatch, queueclaim of productieactivatie is toegevoegd.
+
+## Inode-capaciteit · aanvulling 20 oktober 2026
+
+Veel kleine bestanden kunnen de inodepool uitputten terwijl er nog
+gigabytes beschikbaar zijn. Het optionele Linux-`statvfs`-signaal
+`root_inode_available_percent` (en de begrensde
+`root_inode_total` als herkomstcontext) is daarom toegevoegd aan
+de read-only capaciteitsbron. Er wordt niet door directories gewandeld,
+niets verwijderd en geen inode-aantal als vrijgave voor extra werk gebruikt.
+
+- Minder dan **1%** vrije inodes is urgente systeemdruk: het bestaande
+  CPU-advies laat de achtergrondtrainer maximaal 60%/gewicht 25 toe.
+  Bij **1–5%** is de gematigde band maximaal 100%/gewicht 40.
+  Zwaardere bestaande CPU-, RAM-, swap- of byteschijfdruk houdt voorrang.
+- Op filesystems die geen betrouwbare totale inodepool melden staat dit
+  optionele signaal op **onbekend**; er wordt geen valse 100%-waarde
+  gemaakt. De bestaande verplichte capaciteitssignalen blijven behouden.
+- De privé HTML-werkbank en `--preview --human` tonen expliciet de
+  beschikbare inode-fractie. Nieuwe T0/T1-historische bronnen tonen
+  procentpuntverschillen uitsluitend bij gelijk Linux-rootdevice,
+  gelijk volumetotaal **én gelijk aantal totale inodes**.
+  Oudere bronmomenten blijven leesbaar, met een niet-vergelijkbaar
+  inodeverschil in plaats van een fictieve nulmeting.
+- Een gunstige inodewaarde bewijst geen geslaagde GitHub CI,
+  runner-herstel, veilige opschoning of geautoriseerde productie-release.
+  Automatische systemd-aanpassing blijft onder alle bestaande gates.
+
+## Bootbewuste runnerherstelvergelijking (privé T0/T1)
+
+Nieuwe `zsentinel_runner_snapshot.py`-bonnen slaan vanaf deze bronversie
+`boot_fingerprint` op: een afgekorte SHA-256 van de Linux `boot_id`
+(geen letterlijke boot-UUID; uitsluitend binnen het eigenaar-private JSON).
+Voor vergelijkingen op hetzelfde hostlabel worden twee bronmomenten nu
+onderverdeeld in drie expliciete gevallen:
+
+- `same_boot_verified=true`: opstartsessie van beide metingen bevestigd;
+  niet hetzelfde als een bevestigde GitHub-job, runner-claim of CI.
+- `host_reboot_observed=true`: Linux heeft tussen T0/T1 aantoonbaar een
+  andere opstartsessie; herstelde `active` services zijn geen bewijs
+  dat oorspronkelijke worker/CI na de reboot doorging.
+- Beide onbekend: ten minste één bron mist een geldig bootbewijs, bijvoorbeeld
+  oudere v1-bronnen. Dit blijft **onbekend**, niet stilzwijgend dezelfde boot.
+
+De CLI JSON en het privé offline HTML-vergelijkingsrapport tonen dit
+onderscheid. Als T0 of T1 door bronfouten of de inventarislimiet onvolledig
+was, krijgt een alleen in één bron zichtbare service expliciet de aanduiding
+`previous_source_gap` respectievelijk `current_source_gap` in plaats van
+ten onrechte `newly_observed` of `no_longer_observed`. Een verdwenen
+inventarisregel bewijst geen gestopte of herstelde service.
+Ook de gededupliceerde service-overgangen binden aan de
+beschikbare opstartsessie-identiteiten; na reboot wordt niet per ongeluk
+de oude incidentcode als hetzelfde meetmoment behandeld. V1 blijft leesbaar
+en is bewust niet achteraf voorzien van verzonnen bootbewijs.
+
+Nieuw in dezelfde T0/T1-vergelijking is **feitelijk gemeten trainerbeleid**:
+als de bestaande Fuckball-coach op beide momenten actief en uitleesbaar was
+én de Linux-boot hetzelfde is, toont de herstelwerkbank de echte
+`CPUQuota`- en `CPUWeight`-waarden van T0 en T1, inclusief of die
+veranderden. Apart wordt vermeld of de laatst geobserveerde instelling
+overeenkomt met het toenmalige CPU-advies. Een inactieve unit, onbekende
+systemd-bron, oude bon zonder coachwaarden of reboot resulteert juist in
+`same_boot_policy_comparable=false` en **onbekend**; nooit een verzonnen
+instelling, geïnstalleerde update of doorlopende training. Deze uitbreiding
+schrijft niets aan het coach-cgroup en start geen runner.
+
+Het betreft uitsluitend een read-only systeemmeting bij het maken van een
+nieuw privé bronmoment; geen extra systeembrede installatie, reset,
+workerstart, GitHub-dispatch, betaling, merge of deploy. Toestemming en
+exacte-head CI/review blijven onverkort van toepassing.
+
+## Meerdere privébronmomenten: historisch runnerverloop (nieuw)
+
+Voor een terugkerende VPS-runnerblokkade kan de operator voortaan **drie tot
+twaalf** eerder opgeslagen, chronologisch oplopende JSON-bronmomenten in één
+volledig offline HTML-overzicht openen. Gebruik alleen eigen mode-0600
+bronbestanden en een **nieuwe** privé `.html`-uitvoer:
+
+```bash
+python3 scripts/zsentinel_runner_report.py --output herstelverloop.html \
+  --timeline T0.json T1.json T2.json
+```
+
+Dezelfde reeds gemaakte **privé JSON-bonnen** kunnen daarnaast zonder
+nieuwe live metingen worden omgezet naar een compacte, door een bevoegde
+eigenaar overdraagbare **Markdown-hersteloverdracht**:
+
+```bash
+python3 scripts/zsentinel_runner_report.py --format markdown \
+  --output hersteloverdracht.md \
+  --timeline T0.json T1.json T2.json
+```
+
+Dit vormt **één** zelfstandig leesbaar `.md`-document met actuele
+P0/P1-vervolgacties, status en onzekerheid, herhaald geobserveerde
+systemd-fouten, hostcapaciteitsdruk en ieder chronologisch bronverschil.
+Geen handmatige duplicatie van gegevens uit het HTML-rapport. De uitvoer
+maakt alleen een **nieuw** owner-private 0600-bestand (maximaal 128 KiB),
+zonder bestaande bestanden te overschrijven of procesargumenten, tokens
+of servicejournalinhoud toe te voegen. De tekstvelden zijn begrensd en
+onschadelijk gemaakt voor Markdown-injectie.
+
+`--format markdown` wordt uitsluitend met `--timeline` geaccepteerd;
+voor een los live bronmoment mag geen geschiedenis of herstelde status
+worden verzonnen. De standaard blijft `--format html`. Het Markdown-bestand
+is een **operatoroverdracht, geen workflow-, runner- of releasegoedkeuring**.
+
+Het rapport telt daarnaast, over de hele opgegeven reeks, per werkelijk
+geobserveerde service hoeveel meetmomenten een `failed`-status bevatten,
+hoe vaak hoge swapdruk (≥80%), kritieke rootschijfdruk (≥90%) en hoge
+systeemload (>1,35× CPU-affinity-cores) zijn **waargenomen**, plus hoeveel
+bronnen onvolledig waren. Een telling is nadrukkelijk **niet** het aantal
+nieuwe crashes, retries, downminuten of daadwerkelijk toegewezen GitHub-jobs.
+Bij ontbrekende metingen worden er geen nulmeting of herstelde service verzonnen.
+
+In hetzelfde historisch overzicht verschijnt vervolgens een beperkte
+**eigenaar-herstelagenda van maximaal drie regels**: onder meer een
+P0-verzoek om eerst hostcapaciteit en oorzaak te laten bevestigen wanneer
+`failed`-services samengaan met resourcepressure, een expliciete
+GitHub-claim-/jobhercontrole na een bootwissel, of een bronvolledigheidsvraag.
+Ieder voorstel toont probleem, veilige menselijke vervolgactie en
+`NIET HERSTELD`/`BRON ONVOLLEDIG`-achtige status. Dit zijn handmatige
+beslisadviezen en nooit een impliciete toestemming tot process kill,
+auto-restart, terugzetten van claims, dispatch, GitHub merge of deploy.
+
+**Prioriteitswaarheid:** een ooit in de vorige twaalf bronmomenten
+geobserveerde `failed`-service is niet automatisch een actuele P0.
+Alleen een `failed`-status **in de laatste bron** in combinatie met
+**in dezelfde laatste bron geobserveerde** hoge swap-, schijf- of load-
+druk krijgt een P0-eigenaarsonderzoek. Laatste bron failed maar geen
+bevestigde hoge druk → P1; uitsluitend eerder failed → een historische
+P1-opvolging, ook wanneer de laatste status active is (dat bewijst immers
+geen GitHub-jobherstel). Onvolledige actuele capaciteit blijft **onbekend**
+en kan geen P0-resourceclaim op basis van oude cijfers rechtvaardigen.
+Deze bronbinding is zichtbaar in de privé HTML én de optionele Markdown-
+hersteloverdracht.
+
+De offline reeks neemt eveneens de **werkelijk waargenomen systemd Result-code**
+over, uitsluitend uit een vaste allowlist (`oom-kill`, `exit-code`,
+`signal`, `timeout`, `watchdog`, `core-dump`, `resources`; anders
+`unknown`). Per service staat de verdeling over bronmomenten in privé HTML
+en Markdown. Het blijven getelde momentopnames; drie keer `oom-kill` in
+drie bronsnapshots bewijst niet dat het proces drie afzonderlijke OOM-crashes
+had. Wanneer de laatste bron failed mét hoge actuele resourcepressure én
+`oom-kill` meldt, adviseert de operator expliciet onderzoek naar RAM, swap
+en relevante cgroup-limieten door de bevoegde runtime-eigenaar, niet
+automatisch een herstart. Een onbekende Result-code verleent geen impliciete
+bevoegdheid en wordt nooit als een vertrouwde oorzaak weergegeven.
+
+De weergave laat per opeenvolgende meting zien: servicestatuswijzigingen,
+onvolledige inventarisdekking, dezelfde of veranderde Linux-opstartsessie,
+load/RAM/swap/root-schijfverschil en (uitsluitend waar vergelijkbaar) de
+daadwerkelijk gemeten CPUQuota/CPUWeight-instellingen van de Fuckball-coach.
+Het laatste bronmoment blijft de basis voor de huidige kaartensamenvatting.
+Die kaartensamenvatting wordt nu opgemaakt uit **exact dezelfde eenmaal
+geopende T0/T1-bronobjecten** als de tijdlijn; geen tweede bestandsopening
+waarbij een tussentijds vervangen privébron een tegenstrijdige eindkaart
+zou kunnen opleveren. Deze bronconsistentie is alleen binnen de geopende
+momentopnames gegarandeerd; er is geen cryptografische claim over de
+werkelijke VPS-runner- of GitHub-geschiedenis.
+Opeenvolgende bronmomenten moeten strikt oplopen en het hele venster past
+binnen **72 uur** op **exact hetzelfde hostlabel**. Per-bon laden is begrensd
+tot 128 KiB en de uiteindelijke offline HTML blijft maximaal 128 KiB.
+Onvergelijkbare signalen blijven onbekend in plaats van een gesuggereerd
+herstel. Een herstart van de VPS verbreekt aantoonbare same-boot-continuïteit.
+
+`--timeline` is onderling exclusief met `--t0/--t1` en `--previous`.
+Historische replay doet **geen** actuele Linux-/systemd-probes, GitHub-calls,
+claimwijzigingen, runner-herstart, model-/broker- of productieactie. Het
+rapport bewijst geen GitHub-jobassignment, succesvolle CI, training of merge.
+
+## 21 oktober · direct opgeslagen pakket vergelijken met lokale checkout
+
+De operator kan nu één gecontroleerd privébronpakket direct vergelijken met de
+lokaal beschikbare checkout. Er is geen tweede export nodig en er wordt
+geen externe GitHub- of VPS-bron opgevraagd.
+
+```bash
+python3 scripts/zsentinel_operator_export.py \
+  --verify-dir "$HOME/private-recovery/pakket-A" \
+  --compare-source-dir scripts \
+  --compare-format html \
+  --compare-output "$HOME/private-recovery/bronverschil.html"
+```
+
+De opgeslagen pakketbron A moet intern met SHA-256 en eigenaar-private
+bronbestanden kloppen. Checkoutbron B wordt tweemaal begrensd via één
+veilig geopende Linux-directory-FD gelezen, met controle van bronmap,
+bestandsidentiteiten, bytes en wijzigingen. Dit bewijst geen atomische
+Git-revisie, schone checkout, externe trust, CI- of live-installatiestatus.
+Ontbrekend, vervangen of gewijzigd bronmateriaal wordt geweigerd.
+
+Het statische, mobiel leesbare HTML-werkblad toont drie modulekaarten
+met bron A/B SHA-256, bytes en wijzigingsstatus. De vierde kaart toont de
+meegeleverde LEESMIJ.txt uit pakket A; voor een checkoutvergelijking blijft
+de bron B-instructiestatus expliciet **ONBEKEND**. De lopende exporter kan
+namelijk uit een andere revisie komen dan de gekozen --compare-source-dir.
+Alleen bij vergelijking tussen twee werkelijk opgeslagen pakketten worden
+de instructieteksten van beide pakketten met hun eigen manifest vergeleken. Het bevat geen scripts,
+externe bronnen, netwerkverzoeken of uitvoerende herstelknoppen. Het kan
+alleen in een nieuwe .html-file onder een vooraf bestaande eigenaar-private
+0700-map worden bewaard (0600, create-only, nooit overwrite). Ook text,
+markdown of json blijven beschikbaar. De source-directory-vergelijking is
+wederzijds exclusief met de historische pakket-tegen-pakketvergelijking.
+
+Een lokaal bronverschil is geen merge-, claim-, CI-, runner- of deployautorisatie.
+Alle bestaande exacte-HEAD checks, onafhankelijke review en runtime-toestemming
+blijven verplicht; geen service, model, queue, claim of systemd wordt gewijzigd.
+## 21 oktober · offline vergelijking van twee volledige operatorbronpakketten
+
+Bij overdracht of voorbereiding op een geautoriseerde installatie kan de
+operator voortaan twee **bestaande, eigen privé sourcebundels** rechtstreeks
+vergelijken met de reeds bestaande exporter. Hiervoor is geen nieuwe
+GitHub-/VPS-bronopvraag, workeractie, timer, runner, systemd-service of
+uitvoering van de drie gebundelde modules nodig.
+
+```bash
+# Draai vanaf een broncheckout waar scripts/zsentinel_operator_export.py staat.
+python3 scripts/zsentinel_operator_export.py \
+  --verify-dir "$HOME/private-recovery/pakket-B" \
+  --compare-dir "$HOME/private-recovery/pakket-A" \
+  --compare-format markdown
+# --compare-format text (standaard) of json is eveneens mogelijk.
+# Optionele veilige bewaaractie: uitsluitend NIEUW bestand in bestaande privémap:
+python3 scripts/zsentinel_operator_export.py \
+  --verify-dir "$HOME/private-recovery/pakket-B" \
+  --compare-dir "$HOME/private-recovery/pakket-A" \
+  --compare-format markdown \
+  --compare-output "$HOME/private-recovery/bronvergelijking.md"
+```
+
+Beide bronpakketten worden **afzonderlijk** eigenaar-privé en byte-voor-byte
+tegen hun eigen SHA-256-manifest gecontroleerd. De operator krijgt per vaste
+module de vergelijking **GEWIJZIGD/identiek**, byteomvang en beide SHA-256
+vingerafdrukken, met een totale gewijzigde-moduleteller. Ook het meegeleverde
+`LEESMIJ.txt` wordt als eigen regel met SHA-256 en byteomvang vergeleken:
+identieke Pythonmodules met veranderde operatorinstructies worden dus
+**niet** als volledig ongewijzigd gepresenteerd. JSON bevat ook
+expliciet `source_order_proven=false`, `external_source_verified=false`,
+`release_authorized=false` en `installed_or_live_verified=false`.
+
+De namen A en B zeggen niets over de chronologie van commits, geldige reviews
+of wat daadwerkelijk op de VPS draait; een onderling identiek pakket kan
+allebei oud zijn. De read-only vergelijking vermeldt uitsluitend bekende
+modulebasenamen en geen privé-bestandspaden of broninhoud op stdout. Ontbrekende,
+gecorrumpeerde, niet-private of onbekende bronbestanden blokkeren de vergelijking.
+De benodigde GitHub exact-HEAD CI, onafhankelijke review, branch protection
+en aangewezen runtime-eigenaar blijven ongewijzigd verplicht. Dit commando
+maakt geen nieuwe bundel en verleent geen merge- of deploybevoegdheid.
+
+De optionele `--compare-output` schrijft een **nieuw** Markdown-, tekst- of
+JSON-overdrachtsbestand met `0600` in een **reeds bestaande**, eigenaar-private
+(geen groeps- of wereldtoegang) doelmap. Bestaande bestanden worden niet
+aangeraakt; het bestandsachtervoegsel moet bij `--compare-format` passen.
+Zonder `--compare-output` blijft het resultaat alleen op stdout staan.
+Deze lokale handoff installeert of wijzigt geen timer, service of runner.
+
+## Samenhangend privé operatorpakket (geen installatie)
+
+Een normale toekomstige runtime-installatie van het basis CPU-prioriteitscript
+is **niet automatisch** een installatie van de optionele HTML-/JSON-tools.
+Die laatste importeren `zsentinel_background_priority.py`,
+`zsentinel_runner_report.py` en `zsentinel_runner_snapshot.py` uit
+dezelfde Python-modulemap. Alleen het hoofdscript overzetten veroorzaakt
+`ModuleNotFoundError` in de optionele operatorfuncties.
+
+Een bevoegde operator kan na beoordeling van **dezelfde exacte commit**
+de drie samenhangende modules bundelen, zonder VPS/runner/timer/service
+te starten, te verplaatsen of te updaten:
+
+```bash
+python3 scripts/zsentinel_operator_export.py \
+  --source-dir scripts \
+  --output-dir "$HOME/private-recovery/zsentinel-operator-bron"
+python3 scripts/zsentinel_operator_export.py \
+  --verify-dir "$HOME/private-recovery/zsentinel-operator-bron"
+```
+
+De doelbovenmap, bijvoorbeeld `$HOME/private-recovery`, moet
+**vooraf bestaan**, eigendom zijn van dezelfde Unix-gebruiker en zelf
+privé (`0700`) zijn. Anders weigert de exporter het pakket vóór de
+bestemmingsmap wordt gemaakt. Maak deze bovenmap alleen lokaal en met
+toestemming van de runtime-eigenaar; export doet dit nooit automatisch.
+
+De eerste opdracht maakt uitsluitend een **nieuwe** map met mode `0700`
+binnen de reeds geopende privé bovenmap (zonder symlink en via directory-FD)
+en drie Python-modules (ieder `0600`), `LEESMIJ.txt` en
+`MANIFEST.json` met per module SHA-256 en byteomvang **én een afzonderlijke
+SHA-256 van de operatorinstructies**. Bij bestaande
+bestemming wordt niet overschreven. De tweede opdracht leest eigenaar-privé
+bronbestanden en verifieert volledigheid en bytevingerafdrukken, zonder
+modules uit te voeren of services aan te raken. De bijbehorende
+bronmap moet bestaan en de benodigde bestanden bevatten; een ontbrekende
+module stopt de export voordat de doelmap wordt aangemaakt. De bundel
+bevat bewust **geen** systemd-unit, runner-script, secrets of autorisatietoken.
+
+De controle bewijst alleen dat de overgebrachte bronbestanden overeenkomen
+met het opgeslagen **pakketmanifest**, **niet** dat de bron al een
+onafhankelijk goedgekeurde GitHub-release is. Het manifest bevat daarom
+`external_source_verified=false`, `systemd_installed=false`,
+`workflow_dispatched=false` en `production_released=false`.
+Controleer daarnaast zelf de exacte GitHub-commit, verplichte CI,
+onafhankelijke review en runtime-eigenaarstoestemming. Deze bundel kopieert
+geen bestanden naar `~/.local/bin`, `~/.config/systemd/user/`,
+of enige productieroute. Bij daadwerkelijk geautoriseerde installatie
+moet de runtime-eigenaar de drie modules in één Python-modulemap beheren,
+zonder bestaande timer of coach te dupliceren.
+
+## CPU-herstel zonder op-en-neer springen (5 minuten stabiel bewijs)
+
+De nieuwe branchversie van `zsentinel_background_priority.py` behoudt de
+bestaande **directe CPU-vermindering** zodra een zCloud/GitHub-job actief is,
+systeemmetingen ontbreken, of er hoge load/RAM-/swap-/schijfdruk is.
+Een moment met weinig druk mag echter niet meer direct van bijvoorbeeld
+60% naar 175% trainer-CPU opschalen. Opschalen van CPUQuota **of CPUWeight**
+vereist voortaan:
+
+- dezelfde Linux-opstartsessie, met ongewijzigde werkelijk uitgelezen
+  systemd CPU-instellingen (geen toestemming op basis van oude JSON);
+- minstens **300 seconden** aanhoudende lagere druk bij hetzelfde advies;
+- minimaal **drie observaties**, met ten minste **45 seconden** ertussen;
+- maximaal **240 seconden** tussen geldige opeenvolgende observaties.
+
+De verhoging gebeurt bovendien in **twee trappen**: een bestaande
+60%-trainer mag na een geslaagde eerste herstelperiode maximaal naar
+**100% CPU / gewicht 40**. Van 100% naar **175% CPU / gewicht 70**
+is pas mogelijk na een **nieuwe**, onafhankelijke periode van vijf
+minuten en drie gespreide stabiele metingen. Het script slaat hiervoor
+alleen de minimumstatus van de daadwerkelijke read-back cgroup op,
+gebonden aan dezelfde Linux boot. Opschalen gebeurt nooit op basis
+van een oud algemeen performanceadvies alleen.
+
+Bij een nieuw runnerproces, hoge systeemdruk of verminderde betrouwbaarheid
+wordt de effectieve CPU- of gewichtstoewijzing **zonder wachttijd verlaagd**.
+Als de coach inactief is start het script niets. Kan een *actieve* coach zijn
+actuele cgroup niet uitlezen, dan weigert het script de wijziging; het
+verzint geen veilige quota. Bij ontbrekende, niet-private, corrupte of
+oude status, reboot, of veranderde door de operator ingestelde CPU-grens,
+begint een nieuwe opschaalobservatie. Een onleesbare boot-ID verleent
+nooit een opschaaltoestemming.
+
+**Bescherming tegen gelijktijdige wijzigingen.** Direct vóór een eventuele
+CPU/gewicht-mutatie leest de regeling de werkelijk ingestelde cgroup nogmaals
+en haalt een nieuwe bounded host-/runnerbron op. Wijzigde een andere eigenaar
+tussentijds CPUQuota/CPUWeight, zelfs een kleine quota-aanpassing die niet
+door de normale systemd-formatter zichtbaar als hele procentwaarde is,
+dan wordt het verouderde advies **niet** toegepast. De tweede cgroup-readback
+vergelijkt quota op microsecondeprecisie van de systemd-bron en bewaakt ook
+CPUWeight; het historische opschaalvenster reset bij een voldoende afwijkende
+afgeronde CPUQuota in plaats van de eerdere ruime marge. Een nieuwe runner, gewijzigde bronvolledigheid of verandering in
+de drukcategorie verbreekt de oude *promotion epoch*, ook wanneer het
+algemene advies toevallig dezelfde CPU-percentages noemt. De vijf minuten
+opschaalgeschiedenis is voortaan cryptografisch gekoppeld aan die bounded
+runner-/drukcategorie (zonder process args, commandline of tokens in de
+privéstatus). Bij plots hogere druk kan de regeling uitsluitend een nieuw,
+veiliger **lager** CPU-/gewichtslimiet aanbevelen; een verhoging wordt dan
+geweigerd. Er is geen runtime-claim of privilege-uitbreiding aan toegevoegd.
+Een fysieke verandering ná de allerlaatste meting is niet atomair met
+systemd te voorkomen; operationeel blijft de bevoegde eigenaar
+verantwoordelijk voor de releases en de volgende timercyclus.
+
+**Redenen voor uitgestelde opschaling zijn zichtbaar.** De operatorweergave
+en privébronmomenten onderscheiden `promotion-waiting` van drie
+herstelde wachttijden: `promotion-reset-context` wanneer er een nieuwe
+runner/drukcategorie/opstartsessie verschijnt, `promotion-reset-policy`
+wanneer de huidige cgroup of gewenste hersteltrap verandert, en
+`promotion-reset-gap` wanneer er meer dan 240 seconden zonder
+bruikbare opvolgmeting verstreken. Bij oudere of onbetrouwbare status
+begint de wachttijd gewoon opnieuw. De bronstatus is een uitlegbaar
+beslisbewijs, **geen** machtiging om de CPU-instelling te veranderen.
+
+**Privéstatus zonder directory-race.** De CPU-beslisbon is maximaal
+16 KiB, alleen leesbaar als regulier bestand met eigenaar-gelijk-UID en
+zonder groep/wereldrechten. Niet alleen het bestand maar ook de
+doeldirectory moet daadwerkelijk **eigendom van dezelfde Unix-gebruiker**
+zijn, privé (0700) en geen finale symlink. Beide worden via één open
+directory-FD gecontroleerd; tempbestanden worden exclusief met 0600
+gemaakt en binnen diezelfde directory atomair hernoemd. Bij een
+onbetrouwbare of ontbrekende bestaande bon wordt de promotieperiode
+opnieuw opgebouwd; er wordt geen historische toestemming aangenomen.
+Bij een onveilige schrijfmap weigert de timer de private status te bewaren,
+in plaats van een minder veilige map te gebruiken.
+
+De timer schrijft pas in een toekomstige *geautoriseerde installatie* een
+atomair privé (0600) bronmoment met wachttijd en observatietelling. De
+`--preview`-optie leest dezelfde bronnen, toont de aanbevolen én werkelijk
+veilige effectieve toewijzing plus wachttijd, maar past niets toe en schrijft
+geen statusbestand. De privé HTML-herstelwerkbank en nieuwe JSON-bronmomenten
+bevatten deze gegevens eveneens; oudere bronmomenten blijven leesbaar,
+met onbekende opschaalstatus. Dat een aanbeveling voor opschalen bestaat,
+betekent nooit dat zij live is toegepast.
+
+**Huidige releasegrens:** dit staat op een open PR-branch en wijzigt geen
+lopende VPS timer, trainer of runner. Alleen de bevoegde runtime-eigenaar
+mag na exacte-head verplichte CI, onafhankelijke review, protected-main
+merge en release-autoriteit de bron installeren. Geen timer-restart of
+load-/claimmanipulatie om de wachttijd te verkorten.
+
+## Operator installation and release boundaries
+
+Code files:
+- `scripts/zsentinel_background_priority.py`
+- `scripts/zsentinel_runner_report.py` (optionele privé HTML)
+- `scripts/zsentinel_runner_snapshot.py` (optionele privé JSON/T0-T1)
+- `scripts/zsentinel_operator_export.py` (alleen lokale export en controle)
+- `ops/systemd/user/zcloud-background-priority.service`
+- `ops/systemd/user/zcloud-background-priority.timer`
+
+On the targeted Ubuntu VPS user session, only an authorized runtime owner
+may copy the reviewed Python script to
+`/home/ubuntu/.local/bin/zcloud-background-priority.py` and the two unit
+files to `~/.config/systemd/user/`. The runtime owner then reloads their
+**user** manager, enables/starts the timer and invokes the oneshot service
+once. There is no privileged install path or unattended production rollout
+from this PR. Preserve the existing coach's always-restart policy, 3 GiB
+memory maximum, Nice=10, disk-space reservation and model promotion gates.
+Do not start duplicate sidecars.
+
+This implementation adds conservative disk/swap/load admission to a
+previously installed independent user-sidecar, but **source being committed
+does not prove the VPS's installed copy matches this branch**. Installing
+these changes requires ordinary protected-main, review, exact-head CI and
+release-owner authorization. Self-hosted runner incident #1326, Actions
+billing issue #1523, and project claim ownership remain separate.
+
+The FTMO autonomous systemd service is root-managed and outside this
+sidecar's authority. Its own owner must resolve the reported inaccessible
+`/home/ubuntu` paths through an authorized privileged release; no blanket
+permissions or zCloud SQLite write access should be granted to work around it.
+
+
+## Structured owner inbox for integration consumers (source-only)
+
+The **same existing** one-shot workbench now exports a bounded JSON inbox,
+without new GitHub calls or permission to restart/claim/merge/deploy:
+
+```bash
+python3 scripts/zsentinel_runner_report.py --format json --output "$HOME/private-recovery/inbox-now.json"
+python3 scripts/zsentinel_runner_report.py --format json --t0 "$HOME/private-recovery/T0.json" --t1 "$HOME/private-recovery/T1.json" --output "$HOME/private-recovery/inbox-pair.json"
+python3 scripts/zsentinel_runner_report.py --format json --timeline "$HOME/private-recovery/T0.json" "$HOME/private-recovery/T1.json" "$HOME/private-recovery/T2.json" --output "$HOME/private-recovery/inbox-history.json"
+```
+
+`zsentinel.runner-owner-inbox.v1` contains a provenance-labelled current/pair/
+timeline observation window, bounded observed service state counts, **validated canonical runner service names**
+with their observed systemd state (maximum 20), capacity measurements,
+**actual source-bound state changes across private T0/T1 or timeline windows**
+(up to 40 newest named transitions, with omission counts and window coverage),
+and up to **three** concrete human-owner work items with status,
+explicit partial-source flags and denied action authorities. Missing runner
+source produces `null` counts, never false zero; an old offline pair or
+timeline is **not** a new live observation. Service activity is not GitHub
+assignment, a completed job or production recovery; `github_job_recovered`
+and `production_restored` remain `null`.
+
+JSON is written to a **new** private 0600 `.json` file through the existing
+create-only writer. Like HTML/Markdown, no raw process arguments, credentials,
+private input paths, worker claims or source filesystem trees are exported.
+The manifest-based portable operator bundle already includes this updated
+report module. This is a **source PR feature only**, not a deployed feature
+until exact-head CI, independent review and authorized release.
+
+
+## Immediate human-readable owner handoff (live or T0/T1)
+
+An owner can now create a **first-response** Dutch Markdown incident handoff
+from one source read, without first waiting for three saved samples:
+
+```bash
+python3 scripts/zsentinel_runner_report.py --format markdown \
+  --output "$HOME/private-recovery/owner-current.md"
+
+# Replay two previously saved owner-private receipts, with no fresh host read:
+python3 scripts/zsentinel_runner_report.py --format markdown \
+  --t0 "$HOME/private-recovery/T0.json" \
+  --t1 "$HOME/private-recovery/T1.json" \
+  --output "$HOME/private-recovery/owner-two-moments.md"
+
+# Original deep historical transfer remains available unchanged:
+python3 scripts/zsentinel_runner_report.py --format markdown \
+  --timeline "$HOME/private-recovery/T0.json" \
+  "$HOME/private-recovery/T1.json" "$HOME/private-recovery/T2.json" \
+  --output "$HOME/private-recovery/owner-history.md"
+```
+
+The new immediate Markdown shares the exact same **bounded, canonical source**
+and owner-action decision as the JSON owner inbox. It includes source provenance
+(current one-shot versus private offline replay), a maximum of three
+prioritized human actions, up to twenty admitted systemd service names/states,
+capacity measurements and optional T0/T1 state transitions. An incomplete
+service source explicitly stays **UNKNOWN**, never a zero-service or
+healthy-runner assertion. Markdown uses a new private 0600 create-only file
+and has no GitHub/network, claim, systemd or queue write authorization.
+A live local systemd observation does not independently establish that a
+GitHub job is assigned, that a worker resumed, or that a PR/release passed.
+
+This source addition is **not deployed** by committing it to the PR branch.
+Exact-head required CI, independent review and authorized integration remain
+necessary before release.
+
+## Offline one-receipt replay without requiring a second reading
+
+Previously the operator report could only be reopened offline with **two**
+historical receipts (T0/T1), or three or more for the full timeline. The new
+`--receipt` mode loads **exactly one** previously saved, 0600 owner-private
+`zsentinel.runner-observation.v1` receipt and exports it as private Markdown,
+JSON, or HTML without contacting current systemd, /proc or GitHub:
+
+```bash
+python3 scripts/zsentinel_runner_report.py --receipt "$HOME/private-recovery/T0.json" \
+  --format markdown --output "$HOME/private-recovery/incident-from-T0.md"
+python3 scripts/zsentinel_runner_report.py --receipt "$HOME/private-recovery/T0.json" \
+  --format json --output "$HOME/private-recovery/inbox-from-T0.json"
+python3 scripts/zsentinel_runner_report.py --receipt "$HOME/private-recovery/T0.json" \
+  --format html --output "$HOME/private-recovery/incident-from-T0.html"
+```
+
+Before rendering, the existing owner-private loader and strict single-receipt
+admission validate schema, UTC timestamp, nonblank host, canonical unit names
+and bounded service count, known CPU bands and allowed source reason codes.
+The same admitted representation now underlies T0/T1 and single-receipt
+reporting. A saved receipt is labelled **historical**, not fresh or fully
+covered, and never implies current job assignment, recovery or authorization.
+The output file must not exist already and is created with mode 0600. No
+in-place modification of the input source, worker state, service or cgroup.
+
+
+## Coherent, single-observation operator incident bundle
+
+The owner can now package an incident from **one** live read-only host/service
+observation or **one existing owner-private** saved receipt. Unlike exporting
+separate reports on separate invocations, all three representations derive
+from the same bounded source and incident decision:
+
+```bash
+# First provision a 0700 directory controlled by the operator.
+mkdir -m 700 "$HOME/private-recovery"  # omit if it already exists
+
+# One read-only source collection -> NEW directory with all formats.
+python3 scripts/zsentinel_runner_report.py \
+  --bundle "$HOME/private-recovery/incident-001"
+
+# Or reconstruct historical evidence without polling the VPS again.
+python3 scripts/zsentinel_runner_report.py \
+  --receipt "$HOME/private-recovery/T0.json" \
+  --bundle "$HOME/private-recovery/incident-replay-001"
+
+# Verify an existing incident folder read-only, including all file digests.
+python3 scripts/zsentinel_runner_report.py \
+  --verify-bundle "$HOME/private-recovery/incident-001"
+```
+
+Each new folder is 0700 and has exactly four mode-0600 files:
+`incident.html`, `owner-handoff.md`, `owner-inbox.json` and
+`MANIFEST.json`. The manifest records SHA-256 of each rendition,
+its bounded length, source type, and **the exact shared observation window**.
+It also provides a deterministic 24-character `incident_ref` from the
+owner-inbox rendition. A saved receipt exported twice with identical source
+and owner decision gets the same reference across folders; another read of
+current host state may result in a different reference. The read-only verifier
+recomputes the reference, which can be quoted in a project issue without
+pasting private service-state data. This hash is **not** a secret token,
+claim lease, digital signature or release authorization.
+It grants no job claim, GitHub dispatch, service restart, merge or deploy,
+and leaves real job/production recovery unknown.
+
+The read-only `--verify-bundle` command rejects missing or extra files,
+symlinks, other owners, unsafe permissions, inconsistent observation windows
+or SHA-256 mismatches. A successful check only proves consistency **within
+this owner-held folder**. It is **not** a provider-signed provenance receipt,
+a verified GitHub assignment, an independent reviewer approval, a successful
+CI job, or an authorization to act. `--bundle` and `--output` are mutually
+exclusive, and neither overwrites old evidence. The implementation renders
+in memory before creating the directory and attempts to remove a partially
+written fresh bundle if any write fails.
+
+This branch is source-only until the existing protected-main review, exact
+commit CI and authorized deployment gates all complete.
+
+
+## Actionable redacted GitHub owner issue draft
+
+Runner incidents can now leave the private operator folder as a
+**human-reviewable GitHub issue draft**, without publishing any stored
+systemd runner names, host names, PIDs, shell commands, raw capacity values,
+private source paths or original JSON. This addresses the handoff gap when
+the responsible GitHub job, claim owner or runner owner cannot yet be proven.
+
+```bash
+# New owner-private 0600 Markdown file; prints nothing from private input.
+python3 scripts/zsentinel_runner_report.py \
+  --format issue --output "$HOME/private-recovery/github-owner-issue.md"
+
+# Can equally be constructed from one historical saved receipt, offline.
+python3 scripts/zsentinel_runner_report.py \
+  --receipt "$HOME/private-recovery/T0.json" --format issue \
+  --output "$HOME/private-recovery/github-owner-issue-from-T0.md"
+
+# --bundle automatically adds github-owner-issue-draft.md as its fifth file.
+# Previously produced four-file bundles remain supported by --verify-bundle.
+```
+
+The draft uses the exact admitted decision of `owner-inbox.json` and
+includes a deterministic **incident reference**, up to three **manual**
+operator actions, source/provenance caveats, and checkboxes for genuine
+GitHub assignment, independent evidence and authorization. It **does not**
+submit an issue, post a comment, request a review, restart any systemd unit,
+change a claim, run a workflow or deploy a release. The operator must inspect,
+edit and deliberately post any message to the correct real project. The
+read-only manifest verifier checks the optional fifth artifact's digest too
+and continues to support older four-file incident bundles. GitHub job
+recovery and production state remain **UNKNOWN** until separately proven.
+
+
+## Live source-gap handling and navigable incident handoff
+
+The live one-shot owner-action decision used by HTML, JSON, the redacted
+GitHub issue draft and `--bundle` now handles incomplete **CPU capacity**
+without throwing a comparison error: unknown/non-finite load, unknown or
+zero CPU cores, invalid swap/disk percentages, and invalid optional root
+free-space/inode percentages cause an owner-visible conservative **P0:
+capacity unknown or under pressure**. No workload is started, stopped,
+reshaped or declared recovered on such an observation. It does **not**
+replace the existing source-coverage, independent owner or GitHub-job gates.
+
+In newly generated coherent private incident bundles, `incident.html`
+offers static, relative navigation to three co-located files:
+`owner-handoff.md`, `github-owner-issue-draft.md` and
+`owner-inbox.json`. There is **no API call, remote URL, upload, browser
+script or auto-created GitHub issue**. The Markdown handoff and incident HTML
+show the identical 24-character `incident_ref` contained in
+`MANIFEST.json` and the redacted issue draft. Existing four-file bundles
+remain readable by `--verify-bundle`; older HTML files are not modified.
+
+Historical saved-receipt HTML now explicitly identifies its source as
+**historical owner-private evidence**, rather than implying a new live
+Linux/systemd observation.
+When the operator supplies `--previous T0.json`, the one-shot **new** host
+reading plus saved historical T0 are labelled `local-current-with-saved-previous`
+in the machine-readable owner inbox and are explained separately in the
+Markdown handoff and redacted GitHub-owner issue draft. T0 must not be
+misrepresented as an independently current second observation. No offline content is evidence of current GitHub
+assignment, active claim, passed CI or a production release.
+
+All of these changes remain *PR-branch source code* until exact-head required
+CI, independent review and protected-main/release authorization complete.

@@ -1,0 +1,527 @@
+#!/usr/bin/env python3
+"""One-shot private runner state receipts and conservative T0/T1 comparison.
+
+A changed systemd service is not proof of a repaired GitHub runner or CI job.
+No queue, unit, GitHub or worker action is performed.
+"""
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+import re
+from pathlib import Path
+import stat
+from zsentinel_background_priority import RUNNER_UNIT
+from zsentinel_runner_report import collect
+
+SCHEMA = "zsentinel.runner-observation.v1"
+MAX_BYTES = 128 * 1024
+MAX_AGE_HOURS = 72
+
+
+def _boot_fingerprint():
+    """Private per-boot evidence, never a host-identity or restart authority."""
+    try:
+        raw = Path("/proc/sys/kernel/random/boot_id").read_text().strip().lower()
+    except (OSError, UnicodeError):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", raw):
+        return None
+    # Never place the literal Linux boot UUID in operator receipts.
+    return hashlib.sha256(raw.encode("ascii")).hexdigest()[:24]
+
+
+def _iso(dt):
+    return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _parsed(ts):
+    if not isinstance(ts, str) or not ts.endswith("Z"):
+        raise ValueError("Untrusted observation timestamp")
+    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    if dt.utcoffset().total_seconds() != 0:
+        raise ValueError("Observation not UTC")
+    return dt
+
+
+def _unit_states(bundle):
+    obs = bundle.get("units")
+    if not isinstance(obs, dict):
+        raise ValueError("No valid runner observations")
+    rows = obs.get("runner_units")
+    if not isinstance(rows, list) or len(rows) > 20:
+        raise ValueError("Out-of-bounds runner observations")
+    states = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("Bad runner item")
+        name = row.get("unit")
+        state = row.get("state")
+        detail = row.get("detail")
+        reason = row.get("reason")
+        if (not isinstance(name, str) or len(name) > 160 or
+                not RUNNER_UNIT.fullmatch(name) or
+                state not in {"active", "inactive", "failed", "activating",
+                              "deactivating", "unknown"} or
+                (not isinstance(detail, str) or
+                 detail not in {"running", "dead", "failed", "exited", "start",
+                                "stop", "auto-restart", "waiting", "listening",
+                                "unknown"}) or
+                (reason is not None and (
+                    not isinstance(reason, str) or
+                    reason not in {"oom-kill", "exit-code", "signal", "timeout",
+                                   "watchdog", "core-dump", "resources",
+                                   "success"})) or name in states):
+            raise ValueError("Malformed/duplicate service observation")
+        states[name] = {"state": state, "detail": detail, "reason": reason}
+    return states
+
+
+
+def _user_unit_states(bundle):
+    """Validate a separate user-systemd source without conflating same unit names.
+
+    Historical receipts without this source remain UNKNOWN, not an observed
+    empty user-manager inventory.
+    """
+    obs = bundle.get("units")
+    if not isinstance(obs, dict):
+        raise ValueError("No valid user runner observations")
+    if "user_runner_units_observed" not in obs:
+        return {}
+    observed = obs["user_runner_units_observed"]
+    if type(observed) is not bool:
+        raise ValueError("Invalid user runner source status")
+    rows = obs.get("user_runner_units")
+    if not isinstance(rows, list) or len(rows) > 20:
+        raise ValueError("Out-of-bounds user runner observations")
+    if not observed and rows:
+        raise ValueError("Unobserved user source cannot contain trusted services")
+    truncated = obs.get("user_runner_units_truncated")
+    if truncated is not None and type(truncated) is not bool:
+        raise ValueError("Invalid user runner source completeness")
+    return _unit_states({"units": {"runner_units": rows}})
+
+
+
+def packet(report_data):
+    """Construct a bounded evidence packet, never carrying raw process arguments."""
+    bundle = {
+        "schema": SCHEMA,
+        "observation_utc": _iso(datetime.now(timezone.utc)),
+        "host": os.uname().nodename,
+        "boot_fingerprint": _boot_fingerprint(),
+        "units": report_data["units"],
+        "capacity": report_data["host"],
+        "coach_state": {
+            "observed": report_data["coach"].get("observed") is True,
+            "active": report_data["coach"].get("active"),
+            "quota": report_data["coach"].get("quota"),
+            "weight": report_data["coach"].get("weight"),
+            "recommendation_matches": report_data["coach"].get("recommendation_matches"),
+            # The read-only proposal is not an applied cgroup or a release.
+            "effective_quota": (
+                report_data["coach"].get("effective_quota")
+                if type(report_data["coach"].get("effective_quota")) in (int, float)
+                and 0 < report_data["coach"]["effective_quota"] <= 10000 else None
+            ),
+            "effective_weight": (
+                report_data["coach"].get("effective_weight")
+                if type(report_data["coach"].get("effective_weight")) is int
+                and 1 <= report_data["coach"]["effective_weight"] <= 10000 else None
+            ),
+            "promotion_status": (
+                report_data["coach"].get("promotion_status")
+                if report_data["coach"].get("promotion_status") in {
+                    "promotion-waiting", "promotion-reset-context",
+                    "promotion-reset-policy", "promotion-reset-gap",
+                    "sustained-headroom", "immediate-cpu-yield",
+                    "immediate-weight-yield", "no-promotion-needed",
+                    "inactive-no-action", "source-unavailable",
+                    "unreadable-current-cgroup", "current-cgroup-unavailable",
+                } else None
+            ),
+            "promotion_observations": (
+                report_data["coach"].get("promotion_observations")
+                if type(report_data["coach"].get("promotion_observations")) is int
+                and 1 <= report_data["coach"]["promotion_observations"] <= 1000
+                else None
+            ),
+            "promotion_remaining_seconds": (
+                report_data["coach"].get("promotion_remaining_seconds")
+                if type(report_data["coach"].get("promotion_remaining_seconds")) is int
+                and 0 <= report_data["coach"]["promotion_remaining_seconds"] <= 300
+                else None
+            ),
+        },
+        "cpu_recommendation": {
+            "quota_percent": report_data["quota"], "weight": report_data["weight"],
+            "reasons": report_data["reasons"],
+        },
+        "authority": {
+            "claim_authorized": False, "service_restart_authorized": False,
+            "merge_authorized": False, "deploy_authorized": False,
+        },
+        "limitations": [
+            "systemd service state is not GitHub job success",
+            "missing from inventory is not resolved",
+            "source coverage may be partial",
+        ],
+    }
+    _unit_states(bundle)
+    _user_unit_states(bundle)
+    if len(json.dumps(bundle, ensure_ascii=False).encode("utf-8")) > MAX_BYTES:
+        raise ValueError("Observation exceeds allowed private receipt size")
+    return bundle
+
+
+def load_private(path):
+    """Read only an owner-held, mode-0600, regular JSON file without symlinks."""
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or
+                info.st_mode & 0o077 or info.st_size > MAX_BYTES):
+            raise ValueError("Previous receipt is not an owner-private regular file")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            blob = stream.read(MAX_BYTES + 1)
+        if len(blob) > MAX_BYTES:
+            raise ValueError("Receipt limit exceeded")
+        obj = json.loads(blob.decode("utf-8"))
+    finally:
+        os.close(fd)
+    if not isinstance(obj, dict) or obj.get("schema") != SCHEMA:
+        raise ValueError("Wrong receipt schema")
+    return obj
+
+
+def capacity_changes(previous, current):
+    """Report observed capacity differences without asserting resource recovery."""
+    a, b = previous.get("capacity"), current.get("capacity")
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return {"source_complete": False, "root_comparable": False,
+                "metrics": [], "explanation": "Capacity source unavailable"}
+    mount_ok = (
+        isinstance(a.get("root_mount_device"), str) and
+        a.get("root_mount_device") == b.get("root_mount_device") and
+        type(a.get("root_volume_bytes")) is int and
+        a["root_volume_bytes"] > 0 and
+        a["root_volume_bytes"] == b.get("root_volume_bytes")
+    )
+    inode_ok = (
+        mount_ok
+        and type(a.get("root_inode_total")) is int
+        and a["root_inode_total"] > 0
+        and a["root_inode_total"] == b.get("root_inode_total")
+    )
+    labels = (
+        ("host_load", False), ("memory_available_gib", False),
+        ("swap_used_percent", False), ("disk_unavailable_percent", True),
+        ("root_available_gib", True),
+        ("root_inode_available_percent", True),
+    )
+    metrics = []
+    for key, is_disk in labels:
+        old, new = a.get(key), b.get(key)
+        numeric = (
+            type(old) in (int, float) and type(new) in (int, float) and
+            0 <= old < 1e12 and 0 <= new < 1e12
+        )
+        if key in {"swap_used_percent", "disk_unavailable_percent",
+                   "root_inode_available_percent"}:
+            numeric = numeric and old <= 100 and new <= 100
+        if key == "root_available_gib":
+            # A source may be syntactically valid yet claim more free GiB
+            # than its own filesystem can contain. Refuse the bogus delta.
+            max_gib = a["root_volume_bytes"] / (1024 ** 3) if mount_ok else None
+            numeric = (numeric and max_gib is not None
+                       and old <= max_gib + 0.02 and new <= max_gib + 0.02)
+        # A no-swap host has no meaningful "percent of swap used".
+        # Historical receipts without explicit swap source identity are
+        # likewise incomparable; never equate 0% unconfigured with 0% free.
+        swap_ok = (
+            key != "swap_used_percent"
+            or (a.get("swap_status") == "OBSERVED"
+                and b.get("swap_status") == "OBSERVED")
+        )
+        comparable = (numeric and (not is_disk or mount_ok)
+                      and (key != "root_inode_available_percent" or inode_ok)
+                      and swap_ok)
+        metrics.append({
+            "metric": key,
+            "previous": old if numeric else None,
+            "current": new if numeric else None,
+            "comparable": comparable,
+            "difference": round(new - old, 2) if comparable else None,
+        })
+    previous_swap_status = a.get("swap_status")
+    current_swap_status = b.get("swap_status")
+    swap_status_comparable = (
+        previous_swap_status in {"OBSERVED", "NO_SWAP_CONFIGURED"}
+        and current_swap_status in {"OBSERVED", "NO_SWAP_CONFIGURED"}
+    )
+    return {
+        "source_complete": a.get("source_complete") is True
+                           and b.get("source_complete") is True,
+        "root_comparable": mount_ok,
+        "root_inode_comparable": inode_ok,
+        "swap_status": {
+            "previous": (previous_swap_status if previous_swap_status in {
+                "OBSERVED", "NO_SWAP_CONFIGURED"} else "UNKNOWN"),
+            "current": (current_swap_status if current_swap_status in {
+                "OBSERVED", "NO_SWAP_CONFIGURED"} else "UNKNOWN"),
+            "comparable": swap_status_comparable,
+            "changed": (
+                previous_swap_status != current_swap_status
+                if swap_status_comparable else None
+            ),
+        },
+        "metrics": metrics,
+        "explanation": (
+            "Observed host capacity difference only; no proof of recovered "
+            "files, runner performance or successful model training."
+        ),
+    }
+
+
+
+def memory_oom_changes(previous, current, same_boot):
+    """Read-only host OOM evidence for T0/T1, never assign kills to runners."""
+    import math
+    a, b = previous.get("capacity"), current.get("capacity")
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        a, b = {}, {}
+    def pressure(src, name, kind):
+        number = src.get(name)
+        flag = src.get(f"memory_psi_{kind}_observed")
+        observed = flag if type(flag) is bool else src.get("memory_psi_observed") is True
+        return (number if observed is True
+                and type(number) in (int, float) and math.isfinite(number)
+                and 0 <= number <= 100 else None)
+    before_full = pressure(a, "memory_psi_full_avg10_percent", "full")
+    after_full = pressure(b, "memory_psi_full_avg10_percent", "full")
+    before_some = pressure(a, "memory_psi_some_avg10_percent", "some")
+    after_some = pressure(b, "memory_psi_some_avg10_percent", "some")
+    full_comparable = before_full is not None and after_full is not None
+    some_comparable = before_some is not None and after_some is not None
+    before_kills = a.get("kernel_oom_kills_since_boot")
+    after_kills = b.get("kernel_oom_kills_since_boot")
+    counter_comparable = (
+        same_boot is True
+        and a.get("kernel_oom_counter_observed") is True
+        and b.get("kernel_oom_counter_observed") is True
+        and type(before_kills) is int and type(after_kills) is int
+        and 0 <= before_kills <= after_kills < 2 ** 63
+    )
+    return {
+        "memory_psi_source_comparable": full_comparable and some_comparable,
+        "memory_psi_full_comparable": full_comparable,
+        "memory_psi_some_comparable": some_comparable,
+        "previous_psi_full_avg10_percent": before_full,
+        "current_psi_full_avg10_percent": after_full,
+        "previous_psi_some_avg10_percent": before_some,
+        "current_psi_some_avg10_percent": after_some,
+        "oom_counter_same_boot_comparable": counter_comparable,
+        "kernel_oom_kills_delta": (after_kills - before_kills
+                                   if counter_comparable else None),
+        "kernel_oom_incident_attributed_to_runner": False,
+        "service_restart_authorized": False,
+        "interpretation": (
+            "PSI measures host-wide memory stalls over recent seconds. "
+            "Kernel OOM kills count all host processes since boot. "
+            "Even an increase cannot identify a runner or authorize restart."
+        ),
+    }
+
+
+def coach_changes(previous, current, same_boot):
+    """Compare actual read-back coach policy, never infer it from advice or JSON state."""
+    def policy(bundle):
+        src = bundle.get("coach_state")
+        unknown = {"observed": False, "active": None, "quota": None,
+                   "weight": None, "recommendation_matches": None}
+        if not isinstance(src, dict) or src.get("observed") is not True:
+            return unknown
+        active = src.get("active")
+        if type(active) is not bool:
+            return unknown
+        # Inactive units have no applicable CPU policy. Treat it as inactive,
+        # not as zero quota or an operator-authorized restart.
+        if not active:
+            return {**unknown, "observed": True, "active": False}
+        quota, weight = src.get("quota"), src.get("weight")
+        if (type(quota) not in (int, float) or not 0 < quota <= 10000
+                or type(weight) is not int or not 1 <= weight <= 10000):
+            return unknown
+        matched = src.get("recommendation_matches")
+        return {"observed": True, "active": True, "quota": quota,
+                "weight": weight, "recommendation_matches":
+                    matched if type(matched) is bool else None}
+
+    before, after = policy(previous), policy(current)
+    comparable = (same_boot and before["observed"] and after["observed"]
+                  and before["active"] and after["active"])
+    altered = (before["quota"] != after["quota"] or
+               before["weight"] != after["weight"]) if comparable else None
+    return {
+        "previous": before, "current": after,
+        "same_boot_policy_comparable": comparable,
+        "observed_settings_changed": altered,
+        "applied_recommendation_now": (
+            after["recommendation_matches"] if after["observed"] and
+            after["active"] else None
+        ),
+        "training_running_verified": False,
+        "github_job_recovered": None,
+        "action_authorized": False,
+        "interpretation": "Read-back user cgroup values only; no job, training, "
+                          "runner continuity, user consent or release proof.",
+    }
+
+
+def changes(previous, current):
+    """Report only observed service state transitions; never infer global recovery."""
+    if previous.get("schema") != SCHEMA or current.get("schema") != SCHEMA:
+        raise ValueError("Incompatible evidence schema")
+    host_a, host_b = previous.get("host"), current.get("host")
+    if not isinstance(host_a, str) or not host_a or host_a != host_b:
+        raise ValueError("Incomparable host")
+    t0, t1 = _parsed(previous.get("observation_utc")), _parsed(current.get("observation_utc"))
+    elapsed = (t1 - t0).total_seconds()
+    if not (0 < elapsed <= MAX_AGE_HOURS * 3600):
+        raise ValueError("Out-of-order or stale receipt")
+    boot_a, boot_b = previous.get("boot_fingerprint"), current.get("boot_fingerprint")
+    valid_boot = lambda value: isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{24}", value))
+    boot_pair_observed = valid_boot(boot_a) and valid_boot(boot_b)
+    same_boot = boot_pair_observed and boot_a == boot_b
+    changed_boot = boot_pair_observed and boot_a != boot_b
+    a, b = _unit_states(previous), _unit_states(current)
+    coverage_a = previous["units"].get("runner_units_observed") is True and previous["units"].get("runner_units_truncated") is False
+    coverage_b = current["units"].get("runner_units_observed") is True and current["units"].get("runner_units_truncated") is False
+    result = []
+    for name in sorted(set(a) | set(b)):
+        before, after = a.get(name), b.get(name)
+        if before is None:
+            # A capped/unreadable T0 list does not establish a new service.
+            tag = "newly_observed" if coverage_a else "previous_source_gap"
+        elif after is None:
+            # A capped/unreadable T1 list is never service removal evidence.
+            tag = "no_longer_observed" if coverage_b else "current_source_gap"
+        elif before != after:
+            tag = "service_state_changed"
+        else:
+            continue
+        # Stable per-transition dedup receipt. A hash is not an authorization
+        # token and does not prove a successful GitHub runner recovery.
+        material = json.dumps(
+            [host_a, boot_a if valid_boot(boot_a) else None,
+             boot_b if valid_boot(boot_b) else None, name, tag, before, after],
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        result.append({
+            "incident_key": hashlib.sha256(material).hexdigest()[:24],
+            "unit": name, "change": tag,
+            "previous": before, "current": after,
+            "github_job_recovered": None,
+            "production_restored": None,
+            "action_authorized": False,
+            "same_boot_verified": same_boot,
+        })
+    # User-manager services use a separate namespace and independent coverage.
+    # This prevents a same-named system service from impersonating user recovery.
+    user_a, user_b = _user_unit_states(previous), _user_unit_states(current)
+    ua = (previous["units"].get("user_runner_units_observed") is True and
+          previous["units"].get("user_runner_units_truncated") is False)
+    ub = (current["units"].get("user_runner_units_observed") is True and
+          current["units"].get("user_runner_units_truncated") is False)
+    user_transitions = []
+    for name in sorted(set(user_a) | set(user_b)):
+        before, after = user_a.get(name), user_b.get(name)
+        if before is None:
+            tag = "newly_observed" if ua else "previous_source_gap"
+        elif after is None:
+            tag = "no_longer_observed" if ub else "current_source_gap"
+        elif before != after:
+            tag = "service_state_changed"
+        else:
+            continue
+        evidence = json.dumps(
+            [host_a, "user", boot_a if valid_boot(boot_a) else None,
+             boot_b if valid_boot(boot_b) else None, name, tag, before, after],
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        user_transitions.append({
+            "incident_key": hashlib.sha256(evidence).hexdigest()[:24],
+            "scope": "user", "unit": name, "change": tag,
+            "previous": before, "current": after,
+            "github_job_recovered": None, "production_restored": None,
+            "action_authorized": False, "same_boot_verified": same_boot,
+        })
+    return {
+        "previous_utc": previous["observation_utc"],
+        "current_utc": current["observation_utc"],
+        "same_host": True,
+        "same_boot_verified": same_boot,
+        "host_reboot_observed": changed_boot if boot_pair_observed else None,
+        "complete_service_coverage": coverage_a and coverage_b,
+        "elapsed_seconds": int(elapsed),
+        "capacity_comparison": capacity_changes(previous, current),
+        "coach_comparison": coach_changes(previous, current, same_boot),
+        "memory_oom_comparison": memory_oom_changes(previous, current, same_boot),
+        "transitions": result,
+        "user_transitions": user_transitions,
+        "complete_user_service_coverage": ua and ub,
+        "interpretation": (
+            "Only bounded systemd observations. A boot change or unknown boot "
+            "identity prevents treating transitions as same-boot continuity; "
+            "even failed→active does not prove GitHub assignment, a completed job "
+            "or a merged PR."
+        ),
+    }
+
+
+def save_private_json(path, payload):
+    """Create once, 0600; never overwrite an old receipt or follow final symlinks."""
+    target = Path(path)
+    if target.suffix != ".json" or not target.name or target.name in {".", ".."}:
+        raise ValueError("A new .json file is required")
+    raw = (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(raw) > MAX_BYTES:
+        raise ValueError("Private receipt too large")
+    directory = os.open(str(target.parent), os.O_RDONLY | os.O_DIRECTORY |
+                        getattr(os, "O_NOFOLLOW", 0))
+    try:
+        fd = os.open(target.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                     getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except BaseException:
+            os.unlink(target.name, dir_fd=directory)
+            raise
+    finally:
+        os.close(directory)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Owner-private runner service observation receipt")
+    parser.add_argument("--output", required=True, help="New 0600 .json receipt")
+    parser.add_argument("--previous", help="Previous owner-private snapshot on the same host (max 72 hours)")
+    args = parser.parse_args()
+    try:
+        current = packet(collect())
+        if args.previous:
+            earlier = load_private(args.previous)
+            current["comparison"] = changes(earlier, current)
+        save_private_json(args.output, current)
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+        parser.exit(1, "Geen privé runnerbewijs gemaakt; controleer bron, volgorde en doelrechten.\n")
+    print("Privé runnerbewijs opgeslagen (0600); geen service- of wachtrijactie uitgevoerd.")
+
+
+if __name__ == "__main__":
+    main()
