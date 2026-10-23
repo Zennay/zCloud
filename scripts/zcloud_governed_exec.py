@@ -390,12 +390,18 @@ def _assert_shared_resource_db(db_path: Path) -> None:
             raise RuntimeError("resource_database_identity_mismatch")
 
 
-def _effective_cgroup_memory_limits_mb(host_mb: int) -> tuple[int, int]:
-    """Return min inherited cgroup-v2 limit and currently free headroom.
+def _effective_cgroup_memory_limits_mb(
+    host_mb: int, *, dedicated_heavy_leaf: bool = False
+) -> tuple[int, int]:
+    """Return inherited cgroup cap and usable admission headroom.
 
-    A child can be constrained by any ancestor slice. Reading just its
-    leaf memory.max misses the parent unit/slice and reading max alone
-    misses memory already in use by unrelated processes in that slice.
+    A bounded, dedicated heavy service already contains its own wrapper.
+    Its leaf memory.current therefore consumes part of the same total
+    memory.max budget, not *additional* memory on top of the requested
+    workload limit. Check the leaf ceiling as total capacity, while
+    retaining free-headroom checks on all ancestor slices that can
+    contain unrelated workloads. For shared build/test scopes, charge
+    leaf memory.current as before.
     """
     remaining_mb = host_mb
     try:
@@ -409,7 +415,7 @@ def _effective_cgroup_memory_limits_mb(host_mb: int) -> tuple[int, int]:
         if any(part in (".", "..") for part in components):
             raise RuntimeError("resource_cgroup_path_invalid")
         path = Path("/sys/fs/cgroup")
-        for component in [""] + components:
+        for index, component in enumerate([""] + components):
             if component:
                 path = path / component
             raw = (path / "memory.max").read_text().strip()
@@ -419,14 +425,25 @@ def _effective_cgroup_memory_limits_mb(host_mb: int) -> tuple[int, int]:
             current = int((path / "memory.current").read_text().strip())
             if maximum <= 0 or current < 0:
                 raise RuntimeError("resource_cgroup_memory_invalid")
-            host_mb = min(host_mb, maximum // (1024 * 1024))
-            remaining_mb = min(remaining_mb, max(0, (maximum-current)//(1024*1024)))
+            ceiling_mb = maximum // (1024 * 1024)
+            host_mb = min(host_mb, ceiling_mb)
+            if dedicated_heavy_leaf and index == len(components):
+                # The leaf's memory.max already caps the whole service,
+                # including its current wrapper, forked descendants and
+                # future child allocations. Subtracting that same current
+                # usage from the full requested total double-counts it.
+                remaining_mb = min(remaining_mb, ceiling_mb)
+            else:
+                remaining_mb = min(
+                    remaining_mb, max(0, (maximum-current)//(1024*1024))
+                )
         return host_mb, remaining_mb
     except (OSError, ValueError, IndexError) as exc:
         raise RuntimeError("resource_cgroup_memory_unavailable") from exc
 
 def _nonprotected_memory_admission(conn, project_id: str, owner_id: str,
-                                   compute: dict) -> dict | None:
+                                   compute: dict, *,
+                                   dedicated_heavy_leaf: bool = False) -> dict | None:
     """Protect host memory for both control-plane projects across pools.
 
     Heavy/build slot limits prevent within-pool collisions, but they alone
@@ -444,7 +461,9 @@ def _nonprotected_memory_admission(conn, project_id: str, owner_id: str,
                 if fields[0] in ("MemTotal:", "MemAvailable:"):
                     mem[fields[0][:-1]] = int(fields[1]) // 1024
         host_mb = mem["MemTotal"]
-        cgroup_limit_mb, cgroup_free_mb = _effective_cgroup_memory_limits_mb(host_mb)
+        cgroup_limit_mb, cgroup_free_mb = _effective_cgroup_memory_limits_mb(
+            host_mb, dedicated_heavy_leaf=dedicated_heavy_leaf
+        )
         available_mb = mem["MemAvailable"]
         if host_mb <= 0 or available_mb < 0 or cgroup_limit_mb <= 0:
             raise ValueError("host memory numbers invalid")
@@ -485,10 +504,18 @@ def _nonprotected_memory_admission(conn, project_id: str, owner_id: str,
     # independent ceilings. Deducting zCloud/zSSH's global RAM reserve from
     # a dedicated FTMO-only cgroup would double-count unrelated services and
     # prevent even an appropriately bounded heavy job from ever starting.
+    # A deliberately stricter heavy service memory.max is safe: account
+    # its full project budget for portfolio admission, but require only
+    # the smaller *enforced* ceiling against its own cgroup ancestry.
+    # The host/protected-pool checks still reserve the full contract.
+    cgroup_need_mb = (
+        min(budget_mb, cgroup_limit_mb)
+        if dedicated_heavy_leaf else budget_mb
+    )
     if (budget_mb + other_mb > host_mb - protected_mb - safety_mb
             or available_mb < budget_mb + safety_mb
-            or budget_mb > cgroup_limit_mb
-            or budget_mb > cgroup_free_mb):
+            or (not dedicated_heavy_leaf and budget_mb > cgroup_limit_mb)
+            or cgroup_need_mb > cgroup_free_mb):
         return {"acquired": False, "reason": "resource_protected_memory_headroom",
                 "project_id": project_id}
     return None
@@ -1128,7 +1155,10 @@ def run_governed(
                     "project_id": project_id,
                 })
                 return 75
-            pressure = _nonprotected_memory_admission(conn, project_id, owner_id, compute)
+            pressure = _nonprotected_memory_admission(
+                conn, project_id, owner_id, compute,
+                dedicated_heavy_leaf=(live_authority and compute.get("pool") == "heavy"),
+            )
             if pressure is not None:
                 conn.rollback()
                 _admission_denied(pressure)
