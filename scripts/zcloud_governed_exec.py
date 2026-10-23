@@ -392,7 +392,7 @@ def _assert_shared_resource_db(db_path: Path) -> None:
 
 def _effective_cgroup_memory_limits_mb(
     host_mb: int, *, dedicated_heavy_leaf: bool = False
-) -> tuple[int, int]:
+) -> tuple[int, int, int | None]:
     """Return inherited cgroup cap and usable admission headroom.
 
     A bounded, dedicated heavy service already contains its own wrapper.
@@ -404,11 +404,12 @@ def _effective_cgroup_memory_limits_mb(
     leaf memory.current as before.
     """
     remaining_mb = host_mb
+    dedicated_leaf_mb = None
     try:
         controls = Path("/proc/self/cgroup").read_text().splitlines()
         unified = [line.split("::", 1)[1] for line in controls if line.startswith("0::")]
         if not unified:
-            return host_mb, remaining_mb  # Legacy cgroup v1.
+            return host_mb, remaining_mb, None  # Legacy cgroup v1.
         if len(unified) != 1:
             raise RuntimeError("resource_cgroup_identity_ambiguous")
         components = [part for part in unified[0].split("/") if part]
@@ -428,6 +429,7 @@ def _effective_cgroup_memory_limits_mb(
             ceiling_mb = maximum // (1024 * 1024)
             host_mb = min(host_mb, ceiling_mb)
             if dedicated_heavy_leaf and index == len(components):
+                dedicated_leaf_mb = ceiling_mb
                 # The leaf's memory.max already caps the whole service,
                 # including its current wrapper, forked descendants and
                 # future child allocations. Subtracting that same current
@@ -437,7 +439,7 @@ def _effective_cgroup_memory_limits_mb(
                 remaining_mb = min(
                     remaining_mb, max(0, (maximum-current)//(1024*1024))
                 )
-        return host_mb, remaining_mb
+        return host_mb, remaining_mb, dedicated_leaf_mb
     except (OSError, ValueError, IndexError) as exc:
         raise RuntimeError("resource_cgroup_memory_unavailable") from exc
 
@@ -461,7 +463,7 @@ def _nonprotected_memory_admission(conn, project_id: str, owner_id: str,
                 if fields[0] in ("MemTotal:", "MemAvailable:"):
                     mem[fields[0][:-1]] = int(fields[1]) // 1024
         host_mb = mem["MemTotal"]
-        cgroup_limit_mb, cgroup_free_mb = _effective_cgroup_memory_limits_mb(
+        cgroup_limit_mb, cgroup_free_mb, dedicated_leaf_mb = _effective_cgroup_memory_limits_mb(
             host_mb, dedicated_heavy_leaf=dedicated_heavy_leaf
         )
         available_mb = mem["MemAvailable"]
@@ -509,8 +511,9 @@ def _nonprotected_memory_admission(conn, project_id: str, owner_id: str,
     # the smaller *enforced* ceiling against its own cgroup ancestry.
     # The host/protected-pool checks still reserve the full contract.
     cgroup_need_mb = (
-        min(budget_mb, cgroup_limit_mb)
-        if dedicated_heavy_leaf else budget_mb
+        min(budget_mb, dedicated_leaf_mb)
+        if dedicated_heavy_leaf and dedicated_leaf_mb is not None
+        else budget_mb
     )
     if (budget_mb + other_mb > host_mb - protected_mb - safety_mb
             or available_mb < budget_mb + safety_mb
