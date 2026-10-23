@@ -10,7 +10,8 @@ jobs:
   source-only:
     # Read-only source tests are not policy approval or release authority.
     if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.repository == 'Zennay/zCloud') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: [self-hosted, zcloud, vps]
+    # Static source-only tests run on ephemeral hosted CI, never on production VPS.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout exact same-repo PR head

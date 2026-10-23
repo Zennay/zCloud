@@ -20,7 +20,8 @@ jobs:
   source-admission:
     name: Reject untrusted PR before any checkout
     if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: [self-hosted, zcloud, vps]
+    # Static source-only tests run on ephemeral hosted CI, never on production VPS.
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
       - name: Fail closed on forks, wrong base and reruns
@@ -42,7 +43,8 @@ jobs:
     name: Prevent new unguarded zCloud VPS jobs
     needs: source-admission
     if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: [self-hosted, zcloud, vps]
+    # Static source-only tests run on ephemeral hosted CI, never on production VPS.
+    runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
       - name: Checkout exact unprivileged PR source and base history
