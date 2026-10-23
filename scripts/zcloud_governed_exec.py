@@ -20,14 +20,14 @@ import project_runtime as runtime  # noqa: E402
 
 
 def connect(path: Path):
-    if os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+    if _uses_live_governor_authority(path):
         # A supervised workload with a pinned shared database must never
         # create its own empty SQLite store after a missing disk/mount.
         # Doing so would silently create an independent "heavy" pool.
         if (path.is_symlink() or not path.is_file()
                 or not os.access(path, os.R_OK | os.W_OK)):
             raise RuntimeError("resource_shared_database_unavailable")
-    if os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+    if _uses_live_governor_authority(path):
         # The existing file can vanish after preflight. SQLite mode=rw
         # refuses to create a replacement when a shared mount disappears.
         from urllib.parse import quote
@@ -38,7 +38,7 @@ def connect(path: Path):
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=15000")
-        if os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+        if _uses_live_governor_authority(path):
             # An existing, unrelated SQLite database at the pinned path
             # must not be silently initialized as an empty resource pool.
             row = conn.execute(
@@ -217,7 +217,7 @@ def _pinned_database_identity(path: Path) -> tuple[int, int] | None:
     stop and reconcile its original lease instead of believing two files
     under the same pathname belong to the same heavy pool.
     """
-    if os.environ.get("ZCLOUD_RESOURCE_DB") is None:
+    if not _uses_live_governor_authority(path):
         return None
     try:
         status = path.stat()
