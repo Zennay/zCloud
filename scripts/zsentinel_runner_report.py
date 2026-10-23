@@ -29,6 +29,8 @@ REASON_NL = {
     "limited-available-memory": "Beperkt beschikbaar werkgeheugen",
     "high-swap-use": "Hoog swapgebruik",
     "elevated-swap-use": "Verhoogd swapgebruik",
+    "no-swap-configured": "Geen swap geconfigureerd; geen swapbuffer voor geheugenpieken",
+    "root-inode-source-unavailable": "Vrije root-inodes zijn onbekend",
     "low-root-disk-headroom": "Weinig vrije root-schijfruimte",
     "limited-root-disk-headroom": "Beperkte root-schijfruimte",
     "critical-root-free-gib": "Minder dan 2 GiB vrije rootruimte",
@@ -143,6 +145,13 @@ def recovery_priorities(data):
             or load > cores * 1.35
         )
     actions = []
+    if host.get("swap_status") == "NO_SWAP_CONFIGURED":
+        actions.append((
+            "P1 · geen swap geconfigureerd",
+            "Er is geen swapbuffer. De runtime-eigenaar beoordeelt RAM-headroom "
+            "en OOM-risico voordat extra achtergrondtraining of runners worden "
+            "toegelaten; deze observatie wijzigt geen systeeminstellingen."
+        ))
     if under_pressure:
         actions.append(("P0 · capaciteit veiligstellen",
                         "Geheugen-, swap-, load- of schijfdruk is hoog of onvoldoende "
@@ -548,7 +557,14 @@ def render(data):
     metrics = "".join([
         box("Load / CPU", f'{_value(host["host_load"])} / {_value(host["cores"])} cores'),
         box("MemAvailable", _value(host["memory_available_gib"], " GiB")),
-        box("Swap gebruikt", _value(host["swap_used_percent"], "%")),
+        box("Swapstatus", {
+            "OBSERVED": "Swap geconfigureerd",
+            "NO_SWAP_CONFIGURED": "Geen swap geconfigureerd",
+        }.get(host.get("swap_status"), "Bron onbekend (oud bewijs)")),
+        box("Swap gebruikt", _value(host["swap_used_percent"], "%")
+            if host.get("swap_status") == "OBSERVED"
+            else "Niet van toepassing" if host.get("swap_status") == "NO_SWAP_CONFIGURED"
+            else "Onbekend"),
         box("Geheugen-PSI some avg10 (host)", _value(
             host.get("memory_psi_some_avg10_percent")
             if host.get("memory_psi_observed") is True else None, "%")),
