@@ -3635,3 +3635,15 @@ de bevoegde runnerbeheerder en live uitvoeringsbewijs.
 ## Explicit issue freshness is required before publishing a PR HEAD
 
 The merge-first issue workorder rejects any issue card whose `issue_evidence_stale` field is absent or not a real boolean. Only an explicit `false`, coherent source clocks and a stable second-read PR HEAD can populate `source_head_observed`. Missing or malformed freshness must never be interpreted as “not stale”; the operator can still refresh the source, but cannot reuse an unverified HEAD receipt.
+
+
+## Target-branch freshness for an explicitly selected source PR
+
+When `--source-pr` is supplied, the scope guard now reads the actual GitHub target-branch tip before and after the bounded collision scan. The report distinguishes:
+
+- `current`: both branch-tip reads agree with the selected PR's stored base SHA;
+- `stale`: both branch-tip reads agree with each other, but the PR's stored base SHA differs;
+- `changed_during_observation`: the target branch moved during the scan;
+- `unavailable`: either independent target-branch read could not be established.
+
+Only `current` permits the selected-source scan to count as complete. The tool still reports observed path collisions when freshness is uncertain, but it cannot present a stale-base or changing-base sample as complete. This is a read-only evidence guard, not a rebase, mergeability, ownership, approval or merge-authority claim.
