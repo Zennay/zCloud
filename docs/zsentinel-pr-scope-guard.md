@@ -3664,3 +3664,7 @@ Deze codewijziging verandert geen GitHub-staat, workflow, claim, runner, queue, 
 ### 23 oktober · titel/body-issue-identiteit zonder onbedoelde aliassen
 
 De bestaande open-PR-collision scan gebruikt nu in titel én body dezelfde begrensde `#123`-syntaxis: maximaal acht decimale cijfers, geen letters, cijfers, underscore of slash direct vóór de `#`, en een numerieke woordgrens na het issue-nummer. Hierdoor verdwijnt het eerdere asymmetrische titelmaximum van zeven cijfers en kan een fragment achter een padseparator geen automatische gelijknamige issue-relatie krijgen. De source-coverage voor ontbrekende/te lange PR-tekst blijft apart `incomplete`; een bronverwijzing is alleen een hint, nooit merge-/claimautorisatie.
+
+### 23 oktober · volledige same-repo issuelinks in bestaande PR-collision graph
+
+De read-only PR-bron herkent nu niet alleen de expliciete `#123`-issues in titel/body, maar ook volledige canonieke `https://github.com/Zennay/<repo>/issues/123`-links voor **dezelfde** geregistreerde repository. Een verwijzing naar een issue met hetzelfde nummer in een andere repository wordt niet als interne relatie opgenomen. Bestaande `body`/`title`-provenance en afgekapt-bronvenster blijven behouden. Dit maakt duplicate-issue-overzichten en merge-first-bestandsbotsingen vollediger, maar de relatie is uitsluitend een niet-geautoriseerde tekstwaarneming; branch owners, reviews, CI en merge-rechten worden er niet uit afgeleid.
