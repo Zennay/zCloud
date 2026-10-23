@@ -225,6 +225,7 @@ def observe_claims(data_source_id, token, known_projects=None):
     rows = []
     seen_pages = set()
     incomplete = False
+    unresolved_project_relations = 0
     status_source_windows = []
     opener = urllib.request.build_opener(NoRedirect())
     # Reserve separate bounded Notion source windows. A large historic
@@ -238,6 +239,7 @@ def observe_claims(data_source_id, token, known_projects=None):
         seen_cursors = set()
         status_pages = 0
         status_matched = 0
+        status_unresolved_project_relations = 0
         status_partial = False
         for index in range(page_budget):
             payload = {
@@ -311,6 +313,16 @@ def observe_claims(data_source_id, token, known_projects=None):
                 title = _text(props.get("Work item")) or "Onbenoemd actief werk"
                 number = _work_number(props.get("Work ID"))
                 worker = _worker_name(props.get("Worker"))
+                project_name = _project_name(props.get("Project"), known_projects)
+                project_resolved = project_name not in ("onbekend", "niet in projectregister")
+                if not project_resolved:
+                    # An active row with no canonical project mapping is not
+                    # complete ownership evidence. Keep the row visible but
+                    # fail closed for routing and expose the exact coverage gap.
+                    incomplete = True
+                    status_partial = True
+                    unresolved_project_relations += 1
+                    status_unresolved_project_relations += 1
                 claimed_at = _date_start(props.get("Claimed At"), "Claimed At")
                 claim_expires = _date_start(props.get("Claim Expires"), "Claim Expires")
                 # Notion pages arrive sequentially. Do not evaluate identical
@@ -318,7 +330,8 @@ def observe_claims(data_source_id, token, known_projects=None):
                 rows.append({
                     "work": ("PWQ-" + str(number) if number else "Werk-ID onbekend"),
                     "title": title, "status": state,
-                    "project": _project_name(props.get("Project"), known_projects),
+                    "project": project_name,
+                    "project_relation_status": "resolved" if project_resolved else "unresolved",
                     "worker": worker,
                     "claimed_at": claimed_at,
                     "claim_expires": claim_expires,
@@ -346,6 +359,7 @@ def observe_claims(data_source_id, token, known_projects=None):
             "pages_read": status_pages,
             "page_budget": page_budget,
             "observed_rows": status_matched,
+            "unresolved_project_relations": status_unresolved_project_relations,
             "coverage": "partial" if status_partial else "complete_within_source",
             "read_only": True,
             "claim_scope_verified": False,
@@ -382,6 +396,8 @@ def observe_claims(data_source_id, token, known_projects=None):
         "source": "notion_readonly_data_source_pages",
         "observed_at": observation_time.isoformat().replace("+00:00", "Z"),
         "coverage": "incomplete" if incomplete else "current_pages_only",
+        "project_relation_coverage": "partial" if unresolved_project_relations else "complete",
+        "unresolved_project_relation_count": unresolved_project_relations,
         "active_count": len(rows),
         # Claimed/Running/Verifying are possible work-occupancy signals,
         # not proof of file-level claims or active worker leases.
