@@ -30,12 +30,18 @@ UNBLOCK_EVENTS = {
     "conversation-adopted",
 }
 MAX_HEARTBEAT_GAP_SECONDS = 150
+MAX_DESIRED_WORKER_SLOTS = 64
 MIN_EXTRA_OBSERVED_SECONDS = 30 * 60
 MIN_EXTRA_COMPLETIONS = 3
 
 
 def _dt(value: str) -> datetime:
-    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    # A naive timestamp is not UTC evidence. Never silently interpret it in the
+    # host's local timezone when assessing heartbeat freshness or event deltas.
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp_timezone_missing")
+    return parsed.astimezone(timezone.utc)
 
 
 def _pct(seconds: float, total: float) -> float:
@@ -43,7 +49,8 @@ def _pct(seconds: float, total: float) -> float:
 
 
 def _open_ro(db: Path) -> sqlite3.Connection:
-    c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    # as_uri() safely encodes spaces and URI-significant path characters.
+    c = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
     c.row_factory = sqlite3.Row
     return c
 
@@ -52,7 +59,8 @@ def _has_table(c: sqlite3.Connection, name: str) -> bool:
     return bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
 
 
-def worker_metrics(rows: list[sqlite3.Row]) -> dict:
+def worker_metrics(rows: list[sqlite3.Row], now: datetime | None = None) -> dict:
+    observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if not rows:
         return {
             "observed_seconds": 0,
@@ -67,6 +75,9 @@ def worker_metrics(rows: list[sqlite3.Row]) -> dict:
             "blocked_events": 0,
             "first_event": None,
             "last_event": None,
+            "last_heartbeat": None,
+            "last_heartbeat_age_seconds": None,
+            "heartbeat_freshness": "no_heartbeat",
         }
 
     ordered = sorted(rows, key=lambda r: r["ts"])
@@ -87,7 +98,10 @@ def worker_metrics(rows: list[sqlite3.Row]) -> dict:
 
     working = idle = blocked = observed = 0.0
     for (left, left_blocked), (right, _right_blocked) in zip(heartbeats, heartbeats[1:]):
-        delta = (_dt(right["ts"]) - _dt(left["ts"])).total_seconds()
+        try:
+            delta = (_dt(right["ts"]) - _dt(left["ts"])).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            continue
         if delta <= 0 or delta > MAX_HEARTBEAT_GAP_SECONDS:
             continue
         observed += delta
@@ -99,6 +113,22 @@ def worker_metrics(rows: list[sqlite3.Row]) -> dict:
             idle += delta
 
     throughput = round(completed / (observed / 3600.0), 2) if observed >= 60 and completed else (0.0 if observed >= 60 else None)
+    last_heartbeat = heartbeats[-1][0]["ts"] if heartbeats else None
+    last_heartbeat_age_seconds = None
+    heartbeat_freshness = "no_heartbeat"
+    if last_heartbeat is not None:
+        try:
+            heartbeat_age = (observed_at - _dt(last_heartbeat)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            heartbeat_freshness = "unknown"
+        else:
+            if heartbeat_age < 0:
+                heartbeat_freshness = "future"
+            else:
+                last_heartbeat_age_seconds = round(heartbeat_age)
+                heartbeat_freshness = (
+                    "fresh" if heartbeat_age <= MAX_HEARTBEAT_GAP_SECONDS else "stale"
+                )
     return {
         "observed_seconds": round(observed),
         "working_seconds": round(working),
@@ -112,18 +142,97 @@ def worker_metrics(rows: list[sqlite3.Row]) -> dict:
         "blocked_events": blocked_events,
         "first_event": first_event,
         "last_event": last_event,
+        "last_heartbeat": last_heartbeat,
+        "last_heartbeat_age_seconds": last_heartbeat_age_seconds,
+        "heartbeat_freshness": heartbeat_freshness,
+    }
+
+
+def worker_coverage(workers: list[dict], desired_workers: int) -> dict:
+    """Require every configured slot and a recent heartbeat before comparing scale."""
+    desired = max(1, int(desired_workers or 1))
+    supported_desired = min(desired, MAX_DESIRED_WORKER_SLOTS)
+    considered = [
+        w for w in workers
+        if 1 <= int(w["worker_slot"]) <= supported_desired
+    ]
+    observed_slots = sorted({int(w["worker_slot"]) for w in considered})
+    # A corrupt/out-of-contract desired count must not allocate an unbounded
+    # range or masquerade as a complete fleet observation.
+    missing_slots = (
+        [] if desired > MAX_DESIRED_WORKER_SLOTS else
+        [slot for slot in range(1, desired + 1) if slot not in observed_slots]
+    )
+    stale_slots = []
+    unknown_slots = []
+    for worker in considered:
+        slot = int(worker["worker_slot"])
+        freshness = (worker.get("metrics") or {}).get("heartbeat_freshness")
+        if freshness == "stale":
+            stale_slots.append(slot)
+        elif freshness != "fresh":
+            unknown_slots.append(slot)
+
+    if desired > MAX_DESIRED_WORKER_SLOTS:
+        state = "desired_worker_count_out_of_range"
+    elif missing_slots:
+        state = "missing_worker_slots"
+    elif stale_slots:
+        state = "stale_heartbeats"
+    elif unknown_slots:
+        state = "unknown_heartbeat_freshness"
+    else:
+        state = "complete_fresh"
+    return {
+        "state": state,
+        "desired_workers": desired,
+        "max_supported_desired_workers": MAX_DESIRED_WORKER_SLOTS,
+        "observed_worker_slots": observed_slots,
+        "observed_worker_count": len(observed_slots),
+        "missing_worker_slots": missing_slots,
+        "missing_worker_slots_enumeration_complete": desired <= MAX_DESIRED_WORKER_SLOTS,
+        "stale_worker_slots": sorted(stale_slots),
+        "unknown_heartbeat_worker_slots": sorted(unknown_slots),
+        "freshness_threshold_seconds": MAX_HEARTBEAT_GAP_SECONDS,
     }
 
 
 def scaling_assessment(workers: list[dict], desired_workers: int) -> dict:
-    considered = [w for w in workers if int(w["worker_slot"]) <= max(1, int(desired_workers or 1))]
-    if desired_workers <= 1 or len(considered) <= 1:
-        return {"state": "single_worker", "reason": "Er is geen actuele multi-worker vergelijking nodig."}
+    desired = max(1, int(desired_workers or 1))
+    coverage = worker_coverage(workers, desired)
+    if coverage["state"] != "complete_fresh":
+        if coverage["state"] == "desired_worker_count_out_of_range":
+            reason = "Geen schaaladvies: het gewenste aantal workers valt buiten de ondersteunde grens."
+        elif coverage["missing_worker_slots"]:
+            reason = "Geen schaaladvies: telemetry ontbreekt voor één of meer gewenste worker-slots."
+        elif coverage["stale_worker_slots"]:
+            reason = "Geen schaaladvies: minstens één gewenste worker heeft een verouderde heartbeat."
+        else:
+            reason = "Geen schaaladvies: actuele heartbeat-versheid is onbekend."
+        return {
+            "state": "insufficient_data",
+            "reason": reason,
+            "worker_coverage": coverage,
+        }
+    if desired <= 1:
+        return {
+            "state": "single_worker",
+            "reason": "Er is één gewenste worker; een multi-worker vergelijking is niet nodig.",
+            "worker_coverage": coverage,
+        }
 
+    considered = [
+        w for w in workers
+        if 1 <= int(w["worker_slot"]) <= desired
+    ]
     primary = next((w for w in considered if int(w["worker_slot"]) == 1), None)
     extras = [w for w in considered if int(w["worker_slot"]) > 1]
     if not primary or primary["metrics"]["throughput_per_observed_hour"] is None:
-        return {"state": "insufficient_data", "reason": "De primaire worker heeft nog te weinig betrouwbare observatietijd."}
+        return {
+            "state": "insufficient_data",
+            "reason": "De primaire worker heeft nog te weinig betrouwbare observatietijd.",
+            "worker_coverage": coverage,
+        }
 
     eligible = [
         w for w in extras
@@ -135,6 +244,7 @@ def scaling_assessment(workers: list[dict], desired_workers: int) -> dict:
         return {
             "state": "insufficient_data",
             "reason": "Minstens één extra worker heeft minder dan 30 minuten of 3 afgeronde generaties betrouwbare data.",
+            "worker_coverage": coverage,
         }
 
     primary_rate = max(float(primary["metrics"]["throughput_per_observed_hour"] or 0), 0.01)
@@ -160,32 +270,111 @@ def scaling_assessment(workers: list[dict], desired_workers: int) -> dict:
         "reason": reason,
         "extra_vs_primary_throughput_ratio": round(avg_ratio, 2),
         "extra_idle_blocked_pct": round(avg_nonwork * 100.0, 1),
+        "worker_coverage": coverage,
+    }
+
+
+def _unavailable_report(
+    now: datetime,
+    hours: float,
+    cutoff: datetime,
+    reason: str,
+    source_coverage: dict | None = None,
+) -> dict:
+    return {
+        "schema_version": "zcloud-worker-scaling-report-v1",
+        "read_only_observation": True,
+        "claim_authorized": False,
+        "dispatch_authorized": False,
+        "scale_change_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "active_claim_verified": False,
+        "generated_at": now.isoformat(),
+        "window_hours": float(hours),
+        "cutoff": cutoff.isoformat(),
+        "method": "observational runner telemetry; no causal claim",
+        "source_status": "unavailable",
+        "source_complete": False,
+        "source_reasons": [reason],
+        "source_coverage": source_coverage or {
+            "runner_events": "unavailable",
+            "runner_targets": "unknown",
+            "alerts": "unknown",
+        },
+        "telemetry_rows": 0,
+        "window_empty": None,
+        "projects": [],
     }
 
 
 def report(db: Path, hours: float = 12.0, project: str | None = None, now: datetime | None = None) -> dict:
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    cutoff = now - timedelta(hours=max(0.25, float(hours)))
-    with closing(_open_ro(db)) as c:
-        params: list[object] = [cutoff.isoformat()]
-        where = "ts>=? AND project_id IS NOT NULL AND project_id<>''"
-        if project:
-            where += " AND project_id=?"
-            params.append(project)
-        rows = c.execute(
-            f"SELECT ts,event,generating,sending,reason,error,project_id,worker_slot FROM runner_events WHERE {where} ORDER BY ts",
-            params,
-        ).fetchall()
+    window_hours = max(0.25, float(hours))
+    cutoff = now - timedelta(hours=window_hours)
+    if db.is_symlink() or not db.is_file():
+        return _unavailable_report(now, window_hours, cutoff, "database_missing_or_not_regular")
 
-        desired = {}
-        if _has_table(c, "runner_targets"):
-            for row in c.execute("SELECT project_id,worker_count FROM runner_targets"):
-                desired[str(row["project_id"])] = max(1, int(row["worker_count"] or 1))
+    try:
+        with closing(_open_ro(db)) as c:
+            if not _has_table(c, "runner_events"):
+                return _unavailable_report(
+                    now, window_hours, cutoff, "runner_events_table_missing",
+                    {"runner_events": "unavailable", "runner_targets": "unknown", "alerts": "unknown"},
+                )
+            params: list[object] = [cutoff.isoformat()]
+            where = "ts>=? AND project_id IS NOT NULL AND project_id<>''"
+            if project:
+                where += " AND project_id=?"
+                params.append(project)
+            rows = c.execute(
+                f"SELECT ts,event,generating,sending,reason,error,project_id,worker_slot FROM runner_events WHERE {where} ORDER BY ts",
+                params,
+            ).fetchall()
 
-        conflicts = defaultdict(int)
-        if _has_table(c, "alerts"):
-            for row in c.execute("SELECT project,COUNT(*) n FROM alerts WHERE kind='claim_conflict' AND ts>=? GROUP BY project", (cutoff.isoformat(),)):
-                conflicts[str(row["project"] or "cloud")] = int(row["n"])
+            target_source_available = _has_table(c, "runner_targets")
+            desired = {}
+            if target_source_available:
+                for row in c.execute("SELECT project_id,worker_count FROM runner_targets"):
+                    project_id = str(row["project_id"] or "").strip()
+                    if not project_id:
+                        raise ValueError("invalid_runner_target_project")
+                    desired[project_id] = max(1, int(row["worker_count"] or 1))
+
+            alerts_source_available = _has_table(c, "alerts")
+            conflicts = defaultdict(int)
+            if alerts_source_available:
+                for row in c.execute(
+                    "SELECT project,COUNT(*) n FROM alerts WHERE kind='claim_conflict' AND ts>=? GROUP BY project",
+                    (cutoff.isoformat(),),
+                ):
+                    conflicts[str(row["project"] or "cloud")] = int(row["n"])
+    except sqlite3.Error:
+        return _unavailable_report(now, window_hours, cutoff, "sqlite_read_failed")
+    except OSError:
+        return _unavailable_report(now, window_hours, cutoff, "database_unavailable")
+    except (TypeError, ValueError, OverflowError, KeyError):
+        return _unavailable_report(now, window_hours, cutoff, "invalid_source_row")
+
+    # Validate the source clock and slot identity before making any scale
+    # recommendation. A single malformed/naive timestamp must not be silently
+    # interpreted using the VPS timezone or disappear from a complete sample.
+    try:
+        for row in rows:
+            _dt(row["ts"])
+            if not str(row["project_id"] or "").strip() or not str(row["event"] or "").strip():
+                raise ValueError("missing_event_identity")
+            if int(row["worker_slot"] or 1) < 1:
+                raise ValueError("invalid_worker_slot")
+    except (TypeError, ValueError, OverflowError, KeyError):
+        return _unavailable_report(
+            now, window_hours, cutoff, "invalid_telemetry_row",
+            {
+                "runner_events": "partial",
+                "runner_targets": "observed" if target_source_available else "unavailable",
+                "alerts": "observed" if alerts_source_available else "unavailable",
+            },
+        )
 
     grouped: dict[tuple[str, int], list[sqlite3.Row]] = defaultdict(list)
     for row in rows:
@@ -193,33 +382,86 @@ def report(db: Path, hours: float = 12.0, project: str | None = None, now: datet
 
     by_project: dict[str, list[dict]] = defaultdict(list)
     for (pid, slot), events in grouped.items():
-        by_project[pid].append({"worker_slot": slot, "metrics": worker_metrics(events)})
+        by_project[pid].append({"worker_slot": slot, "metrics": worker_metrics(events, now=now)})
 
     projects = []
+    source_reasons = []
+    if not target_source_available:
+        source_reasons.append("runner_targets_table_missing")
+    if not alerts_source_available:
+        source_reasons.append("alerts_table_missing")
+
     for pid, workers in sorted(by_project.items()):
         workers.sort(key=lambda x: x["worker_slot"])
-        desired_count = desired.get(pid, max((w["worker_slot"] for w in workers), default=1))
-        total_finished = sum(w["metrics"]["completed_generations"] for w in workers if w["worker_slot"] <= desired_count)
-        total_worker_hours = sum(w["metrics"]["observed_seconds"] for w in workers if w["worker_slot"] <= desired_count) / 3600.0
+        desired_count = desired.get(pid) if target_source_available else None
+        if desired_count is None:
+            source_reasons.append("project_target_missing")
+            observed_slots = sorted({int(w["worker_slot"]) for w in workers})
+            fallback_count = max(observed_slots, default=1)
+            coverage = worker_coverage(workers, fallback_count)
+            coverage.update({
+                "state": "desired_worker_count_unknown",
+                "desired_workers": None,
+                "missing_worker_slots": [],
+                "missing_worker_slots_enumeration_complete": False,
+                "desired_worker_count_source": "unavailable",
+            })
+            assessment = {
+                "state": "insufficient_data",
+                "reason": "Geen schaaladvies: de gewenste workerconfiguratie ontbreekt voor dit project.",
+                "worker_coverage": coverage,
+            }
+        else:
+            coverage = worker_coverage(workers, desired_count)
+            assessment = scaling_assessment(workers, desired_count)
+
+        included = [
+            w for w in workers
+            if desired_count is None or w["worker_slot"] <= desired_count
+        ]
+        total_finished = sum(w["metrics"]["completed_generations"] for w in included)
+        total_worker_hours = sum(w["metrics"]["observed_seconds"] for w in included) / 3600.0
         projects.append({
             "project_id": pid,
             "desired_workers": desired_count,
+            "desired_workers_source": "observed" if desired_count is not None else "unavailable",
             "observed_worker_slots": [w["worker_slot"] for w in workers],
+            "worker_coverage": coverage,
             "completed_generations": total_finished,
             "completed_per_worker_hour": round(total_finished / total_worker_hours, 2) if total_worker_hours > 0 else None,
-            "duplicate_work_prevented": conflicts.get(pid, 0),
-            "assessment": scaling_assessment(workers, desired_count),
+            "duplicate_work_prevented": conflicts.get(pid, 0) if alerts_source_available else None,
+            "claim_conflict_source_status": "observed" if alerts_source_available else "unavailable",
+            "assessment": assessment,
             "workers": workers,
         })
 
+    source_reasons = sorted(set(source_reasons))
+    source_coverage = {
+        "runner_events": "observed",
+        "runner_targets": "observed" if target_source_available else "unavailable",
+        "alerts": "observed" if alerts_source_available else "unavailable",
+    }
     return {
+        "schema_version": "zcloud-worker-scaling-report-v1",
+        "read_only_observation": True,
+        "claim_authorized": False,
+        "dispatch_authorized": False,
+        "scale_change_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "active_claim_verified": False,
         "generated_at": now.isoformat(),
-        "window_hours": float(hours),
+        "window_hours": window_hours,
         "cutoff": cutoff.isoformat(),
-        "method": "observational runner telemetry; heartbeat gaps >150s excluded; no causal claim",
+        "method": "observational runner telemetry; heartbeat gaps >150s excluded; scaling assessment requires every desired slot and a fresh heartbeat; no causal claim",
+        "source_status": "partial" if source_reasons else "observed",
+        "source_complete": not source_reasons,
+        "source_reasons": source_reasons,
+        "source_coverage": source_coverage,
+        "telemetry_rows": len(rows),
+        "window_empty": not rows,
         "projects": projects,
     }
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Measure zCloud worker scaling from read-only telemetry")

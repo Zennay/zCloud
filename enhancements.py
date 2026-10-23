@@ -1,6 +1,6 @@
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hashlib, json, os, re, sqlite3, subprocess, time
 import project_runtime
 
@@ -51,6 +51,21 @@ def _db_connect(db_path):
     except Exception:
         c.rollback()
         raise
+    finally:
+        c.close()
+
+@contextmanager
+def _db_connect_readonly(db_path):
+    """Observe the existing live SQLite/WAL state without a write-capable handle.
+
+    Alert/incident GET requests must not create an absent database or implicitly
+    COMMIT a read; only the sampler and explicit incident producers may write.
+    """
+    uri = Path(db_path).resolve().as_uri() + "?mode=ro"
+    c = sqlite3.connect(uri, uri=True)
+    try:
+        c.execute("PRAGMA query_only=ON")
+        yield c
     finally:
         c.close()
 
@@ -886,43 +901,73 @@ def _claim_key_from_alert(alert):
     first=detail.split(" · ",1)[0].strip()
     return first if ":" in first and len(first) >= 4 else None
 
-def _claim_conflict_is_active(db_path, alert, now_ts):
+def _claim_conflict_is_active(db_path, alert, now_ts, *, with_source_status=False,
+                              connection=None):
+    """Keep unresolved/unknown conflicts visible; report claim evidence separately."""
     claim_key=_claim_key_from_alert(alert)
     if not claim_key:
-        # Backward-compatible for legacy alerts without structured claim detail.
-        return True
+        # Legacy text has no canonical claim key; never silently dismiss it.
+        result, source=True, "unverified_legacy"
+        return (result,source) if with_source_status else result
     try:
-        with _db_connect(db_path) as c:
+        with (nullcontext(connection) if connection is not None
+              else _db_connect_readonly(db_path)) as c:
             c.row_factory=sqlite3.Row
             if not c.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_claims'"
             ).fetchone():
-                return True
+                result,source=True,"unavailable"
+                return (result,source) if with_source_status else result
             row=c.execute(
                 "SELECT lease_until FROM task_claims WHERE project_id=? AND claim_key=?",
                 (str(alert.get("project") or "cloud"),claim_key),
             ).fetchone()
         if not row:
-            return False
-        try:
-            return datetime.fromisoformat(str(row["lease_until"])).astimezone(timezone.utc) > now_ts
-        except Exception:
-            return True
+            result,source=False,"observed"
+        else:
+            try:
+                result=(datetime.fromisoformat(str(row["lease_until"])).
+                        astimezone(timezone.utc) > now_ts)
+                source="observed"
+            except Exception:
+                # Malformed lease metadata cannot suppress an incident.
+                result,source=True,"invalid_claim_clock"
     except Exception:
-        # Attention filtering must never hide an issue because claim-state lookup failed.
-        return True
+        # Source unavailability is never evidence that a conflict disappeared.
+        result,source=True,"unavailable"
+    return (result,source) if with_source_status else result
 
 def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None):
     recovery=recovery_status(recovery_dir)
     now_ts=datetime.now(timezone.utc)
     items=[]
-    for alert in list_alerts(db_path,80,False):
-        if str(alert.get("kind") or "").strip().lower().replace("-","_")=="claim_conflict":
-            if not _claim_conflict_is_active(db_path,alert,now_ts):
-                continue
-        incident=_incident_from_alert(alert,recovery,now_ts)
-        if incident:
-            items.append(incident)
+    claim_sources=[]
+    alert_items=[]
+    # Bind alert rows and matching lease evidence to one short-lived,
+    # read-only SQLite snapshot. Multiple per-alert opens could otherwise
+    # combine incompatible claim/alert moments during scheduler churn.
+    try:
+        with _db_connect_readonly(db_path) as c:
+            c.execute("BEGIN")
+            alerts, alerts_source_status, alerts_more = list_alerts(
+                db_path,80,False,with_window_status=True,connection=c)
+            for alert in alerts:
+                if str(alert.get("kind") or "").strip().lower().replace("-","_")=="claim_conflict":
+                    active, claim_source = _claim_conflict_is_active(
+                        db_path,alert,now_ts,with_source_status=True,connection=c)
+                    claim_sources.append(claim_source)
+                    if not active:
+                        continue
+                incident=_incident_from_alert(alert,recovery,now_ts)
+                if incident:
+                    alert_items.append(incident)
+        items.extend(alert_items)
+    except Exception:
+        # Keep independently observed worker/service incidents available.
+        # An alert read failure is never a clean/no-conflict receipt.
+        alerts_source_status, alerts_more = "unavailable", None
+        claim_sources=[]
+        alert_items=[]
     for project in (data or {}).get("projects", []):
         if project.get("health")=="healthy" or project.get("status")=="archived":
             continue
@@ -991,17 +1036,48 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
     ordered=list(dedup.values())
     ordered.sort(key=lambda x:str(x.get("detected_at") or ""),reverse=True)
     ordered.sort(key=lambda x:priority.get(str(x.get("severity") or "").lower(),3))
-    return {"count":len(ordered),"items":ordered[:max(1,int(limit))],"recovery":recovery}
+    return {"count":len(ordered),"items":ordered[:max(1,int(limit))],
+            "recovery":recovery,
+            "alerts_source_status":alerts_source_status,
+            "alerts_source_complete":alerts_source_status=="observed",
+            "alerts_window_has_more":alerts_more,
+            "alerts_window_complete":(alerts_more is False),
+            "alerts_source_next_step":(
+                "Controleer de bestaande SQLite-bron en herstel de leesroute; geen meldingen is niet bewezen."
+                if alerts_source_status!="observed" else None),
+            "claim_conflict_source_status":(
+                "unavailable" if alerts_source_status!="observed" else
+                "not_applicable" if not claim_sources else
+                "observed" if all(source=="observed" for source in claim_sources)
+                else "partial"),
+            "claim_conflict_source_complete":(
+                alerts_source_status=="observed" and
+                all(source=="observed" for source in claim_sources)),
+            "claim_conflict_source_next_step":(
+                "Verifieer de alertbron en actieve taakclaims vóór het sluiten van een conflict."
+                if alerts_source_status!="observed" or
+                   any(source!="observed" for source in claim_sources) else None)}
 
-def list_alerts(db_path, limit=20, important_only=False):
+def list_alerts(db_path, limit=20, important_only=False, *,
+                with_source_status=False, with_window_status=False, connection=None):
+    """Read a bounded alert window and expose unavailable/truncated coverage."""
     try:
-        with _db_connect(db_path) as c:
+        cap=max(1,min(200,int(limit)))
+        with (nullcontext(connection) if connection is not None
+              else _db_connect_readonly(db_path)) as c:
             c.row_factory = sqlite3.Row
             where = "WHERE important=1" if important_only else ""
-            rows = c.execute("SELECT * FROM alerts %s ORDER BY ts DESC LIMIT ?" % where, (limit,)).fetchall()
-        return [dict(r) for r in rows]
+            rows = c.execute("SELECT * FROM alerts %s ORDER BY ts DESC LIMIT ?" % where, (cap+1,)).fetchall()
+        more = len(rows) > cap
+        alerts = [dict(r) for r in rows[:cap]]
+        source = "observed"
     except Exception:
-        return []
+        # Missing, corrupt or unreadable SQLite must not be presented by the
+        # operator cockpit as proof that no alerts exist.
+        alerts, source, more = [], "unavailable", None
+    if with_window_status:
+        return alerts, source, more
+    return (alerts, source) if with_source_status else alerts
 
 def _state_for(data):
     state = {"milestones": [], "quality": {}}

@@ -363,7 +363,7 @@ def live_receipt_status(data):
     """Overlay the latest durable receipt state without waiting for the 60s sampler."""
     status_data={**data,'projects':[dict(project) for project in data.get('projects',[])]}
     try:
-        with connect() as c:
+        with connect_readonly() as c:
             receipts=project_runtime.latest_receipts(c)
             coverage=project_runtime.receipt_coverage(
                 c,
@@ -739,7 +739,7 @@ def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
 
 def _worker_recovery_hold_until():
     try:
-        with connect() as c:
+        with connect_readonly() as c:
             row=c.execute("SELECT value FROM runtime_settings WHERE key=?",(WORKER_OOM_RECOVERY_HOLD_KEY,)).fetchone()
         if not row or not row['value']:
             return None
@@ -810,6 +810,24 @@ def connect():
     finally:
         c.close()
 
+@contextmanager
+def connect_readonly():
+    """Open an existing SQLite database in hard read-only mode.
+
+    Diagnostics must not create a missing database file, modify persistent
+    tables, or silently commit writes when reused by a GET handler. Unlike
+    immutable=1 this connection still observes live SQLite/WAL updates.
+    """
+    uri=Path(DB).resolve().as_uri()+'?mode=ro'
+    c=sqlite3.connect(uri,uri=True,timeout=DB_BUSY_TIMEOUT_SECONDS)
+    try:
+        c.execute(f'PRAGMA busy_timeout={DB_BUSY_TIMEOUT_MS}')
+        c.execute('PRAGMA query_only=ON')
+        c.row_factory=sqlite3.Row
+        yield c
+    finally:
+        c.close()
+
 def request_actor(handler):
     addr=str((handler.client_address or ["unknown"])[0] or "unknown")
     hinted=str(handler.headers.get("X-ZCloud-Actor") or "").strip()
@@ -847,7 +865,7 @@ def config_audit(limit=80,config_key=None,target=None):
     if where:
         query+=" WHERE "+" AND ".join(where)
     query+=" ORDER BY id DESC LIMIT ?";args.append(limit)
-    with connect() as c:
+    with connect_readonly() as c:
         rows=c.execute(query,args).fetchall()
     out=[]
     for row in rows:
@@ -863,7 +881,7 @@ def _feature_flag_row(name, connection=None):
     sql="SELECT name,enabled,expires_at,updated_at,actor FROM feature_flags WHERE name=?"
     if connection is not None:
         return connection.execute(sql,(name,)).fetchone()
-    with connect() as c:
+    with connect_readonly() as c:
         return c.execute(sql,(name,)).fetchone()
 
 def feature_flag_state(name, at=None):
@@ -1450,19 +1468,19 @@ def sampler():
 
 def history(pid, days):
     cutoff=datetime.fromtimestamp(time.time()-days*86400,timezone.utc).isoformat() if days else ''
-    with connect() as c:
+    with connect_readonly() as c:
         rows=c.execute('SELECT ts AS date,progress,commits,hash,message FROM project_samples WHERE project=? AND ts>=? ORDER BY ts',(pid,cutoff)).fetchall()
     # Preserve endpoints while keeping responses small on mobile.
     if len(rows)>1200:rows=rows[::max(1,len(rows)//1000)]+[rows[-1]]
     return [dict(r) for r in rows]
 
 def watch_activity(pid, limit=8):
-    with connect() as c:
+    with connect_readonly() as c:
         rows=c.execute('SELECT ts,kind,title,detail FROM events WHERE project=? ORDER BY ts DESC LIMIT ?',(pid,limit)).fetchall()
     return [dict(r) for r in rows]
 
 def compact_history(pid, limit=24):
-    with connect() as c:
+    with connect_readonly() as c:
         rows=c.execute('SELECT ts AS date,progress FROM project_samples WHERE project=? ORDER BY ts',(pid,)).fetchall()
     if not rows:
         return []
@@ -1517,7 +1535,7 @@ def canonical_main_sha():
     return None
 
 def improvement_loop_state(project_id=IMPROVEMENT_PROJECT_ID):
-    with connect() as c:
+    with connect_readonly() as c:
         row=c.execute('SELECT * FROM improvement_loops WHERE project_id=?',(project_id,)).fetchone()
     if not row:
         return {'project_id':project_id,'state':IMPROVEMENT_RUNNING,'iteration_count':0,'clean_reviews':0,
@@ -1581,30 +1599,35 @@ def improvement_loop_resume(project_id=IMPROVEMENT_PROJECT_ID):
             (project_id,IMPROVEMENT_RUNNING,0,0,None,None,None,ts))
     return improvement_loop_state(project_id)
 
-def _coordination_claim_rows_locked(connection,project_id,exclude_owner=None,ts=None):
+def _coordination_claim_rows_locked(connection,project_id,exclude_owner=None,ts=None,*,prune_expired=True):
+    """Observe live claims; only an explicit writable control path prunes rows."""
     ts=ts or now()
-    connection.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+    if prune_expired:
+        connection.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
     rows=connection.execute(
-        'SELECT project_id,claim_key,owner_id,worker_id FROM task_claims WHERE project_id=? ORDER BY claim_key,owner_id,worker_id',
-        (project_id,),
+        'SELECT project_id,claim_key,owner_id,worker_id FROM task_claims '
+        'WHERE project_id=? AND lease_until>? ORDER BY claim_key,owner_id,worker_id',
+        (project_id,ts),
     ).fetchall()
     return [
         {'project_id':r['project_id'],'claim_key':r['claim_key'],'owner_id':r['owner_id'],'worker_id':r['worker_id']}
         for r in rows if not exclude_owner or r['owner_id']!=exclude_owner
     ]
 
-def _coordination_claims_fingerprint_locked(connection,project_id,exclude_owner=None,ts=None):
-    rows=_coordination_claim_rows_locked(connection,project_id,exclude_owner,ts)
+def _coordination_claims_fingerprint_locked(connection,project_id,exclude_owner=None,ts=None,*,prune_expired=True):
+    rows=_coordination_claim_rows_locked(
+        connection,project_id,exclude_owner,ts,prune_expired=prune_expired
+    )
     raw=json.dumps(rows,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
     return hashlib.sha256(raw).hexdigest(),rows
 
 def _coordination_claim_rows(project_id, exclude_owner=None):
-    with connect() as c:
-        return _coordination_claim_rows_locked(c,project_id,exclude_owner)
+    with connect_readonly() as c:
+        return _coordination_claim_rows_locked(c,project_id,exclude_owner,prune_expired=False)
 
 def _coordination_claims_fingerprint(project_id, exclude_owner=None):
-    with connect() as c:
-        return _coordination_claims_fingerprint_locked(c,project_id,exclude_owner)
+    with connect_readonly() as c:
+        return _coordination_claims_fingerprint_locked(c,project_id,exclude_owner,prune_expired=False)
 
 def coordination_vps_health(profile='default'):
     profile=str(profile or 'default').strip().lower()
@@ -1622,7 +1645,7 @@ def coordination_vps_health(profile='default'):
     firefox=firefox_runner_status()
     checks['firefox_automation']=bool(firefox.get('active'))
     try:
-        with connect() as c:
+        with connect_readonly() as c:
             quick=c.execute('PRAGMA quick_check').fetchone()
         checks['state_store']=bool(quick and str(quick[0]).lower()=='ok')
     except Exception:
@@ -1734,7 +1757,7 @@ def worker_preflight_record(project_id,worker_id,owner_id,notion,github,vps_prof
         )
     return worker_preflight_state(project_id,worker_id,owner_id)
 
-def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=None):
+def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=None,*,prune_expired=True):
     row=connection.execute(
         'SELECT * FROM worker_preflights WHERE project_id=? AND worker_id=? AND owner_id=?',
         (project_id,worker_id,owner_id),
@@ -1750,7 +1773,8 @@ def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=N
     except Exception:
         expired=True
     fingerprint,current_claims=_coordination_claims_fingerprint_locked(
-        connection,project_id,owner_id,ts or reference.isoformat()
+        connection,project_id,owner_id,ts or reference.isoformat(),
+        prune_expired=prune_expired
     )
     claims_changed=fingerprint!=row['claims_fingerprint']
     try:notion=json.loads(row['notion_json'])
@@ -1774,8 +1798,10 @@ def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=N
     }
 
 def worker_preflight_state(project_id,worker_id,owner_id):
-    with connect() as c:
-        return _worker_preflight_state_locked(c,project_id,worker_id,owner_id)
+    # HTTP GET and post-creation state reads are observations, not renewals.
+    # Preflight CREATE/UPDATE uses the separate authorized writable path.
+    with connect_readonly() as c:
+        return _worker_preflight_state_locked(c,project_id,worker_id,owner_id,prune_expired=False)
 
 def _normalize_conflict_scope(metadata):
     metadata=metadata if isinstance(metadata,dict) else {}
@@ -1858,8 +1884,16 @@ def _claim_metadata_json(metadata):
     return raw
 
 def task_claims(project_id=None, *, prune_expired=True):
+    """List live claims; prune_expired=True also deletes expired rows.
+
+    Read-only HTTP observations must pass prune_expired=False. That mode
+    filters expired leases from the result without mutating the claim table;
+    authorized scheduler/control paths retain explicit cleanup ownership.
+    """
     ts=now()
-    with connect() as c:
+    # Read-only listing cannot create or write SQLite. Explicit pruning keeps
+    # the prior control/scheduler behavior under the normal writable connection.
+    with (connect() if prune_expired else connect_readonly()) as c:
         if prune_expired:
             c.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
             if project_id:
@@ -2117,7 +2151,7 @@ def _autonomy_status_json(path):
 
 def _latest_autonomy_signal(project_id):
     try:
-        with connect() as c:
+        with connect_readonly() as c:
             placeholders=','.join('?' for _ in AUTONOMY_SIGNAL_EVENTS)
             row=c.execute(
                 f'SELECT ts,event,reason FROM runner_events WHERE project_id=? AND event IN ({placeholders}) ORDER BY id DESC LIMIT 1',
@@ -2208,7 +2242,7 @@ def autonomy_states():
     return {project_id:project_autonomy_state(project_id) for project_id in RUNNER_DEFAULTS}
 
 def _autonomy_runtime(project_id):
-    with connect() as c:
+    with connect_readonly() as c:
         row=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
     return dict(row) if row else None
 
@@ -2650,7 +2684,7 @@ def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
 
 def portfolio_execution_lanes(project_id=None):
     ids=[str(project_id).strip().lower()] if project_id else None
-    with connect() as c:
+    with connect_readonly() as c:
         return _portfolio_lane_snapshot_locked(c,ids,now())
 
 def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
@@ -2758,7 +2792,7 @@ def _portfolio_queue_execution_capable(title,completion_criteria=''):
     return True
 
 def portfolio_attention_items(include_resolved=False):
-    with connect() as c:
+    with connect_readonly() as c:
         if include_resolved:
             rows=c.execute("""SELECT * FROM portfolio_attention
                               ORDER BY CASE severity WHEN 'urgent' THEN 0 WHEN 'attention' THEN 1 ELSE 2 END,
@@ -2828,7 +2862,7 @@ def _attention_action_for_blocker(project_id,title,evidence):
     return f'{name}: your input is needed to unblock this step'
 
 def portfolio_queue_items(include_done=False):
-    with connect() as c:
+    with connect_readonly() as c:
         if include_done:
             rows=c.execute("""SELECT * FROM portfolio_queue
                               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
@@ -2844,7 +2878,7 @@ def portfolio_queue_current_for_slot(global_slot):
     try: slot=int(global_slot)
     except Exception: return None
     ts=now()
-    with connect() as c:
+    with connect_readonly() as c:
         row=c.execute("""SELECT * FROM portfolio_queue
                          WHERE worker_slot=? AND status IN ('claimed','running','verifying')
                            AND (claim_expires IS NULL OR claim_expires>?)
@@ -2853,7 +2887,7 @@ def portfolio_queue_current_for_slot(global_slot):
 
 def portfolio_queue_has_project_assignment(project_id):
     ts=now()
-    with connect() as c:
+    with connect_readonly() as c:
         row=c.execute("""SELECT 1 FROM portfolio_queue
                          WHERE project_id=? AND status IN ('claimed','running','verifying')
                            AND (claim_expires IS NULL OR claim_expires>?) LIMIT 1""",(project_id,ts)).fetchone()
@@ -3561,7 +3595,7 @@ def portfolio_queue_allocation():
     # physical slot. If an idle lower-numbered slot is later Force-assigned
     # to the same project, renumbering its generating worker would silently
     # orphan the active browser session.
-    with connect() as c:
+    with connect_readonly() as c:
         previous={
             (str(r['project_id']),int(r['slot'])):int(r['worker_slot'])
             for r in c.execute(
@@ -3706,7 +3740,7 @@ def _current_global_slot_map():
     if GLOBAL_CHATGPT_WORKER_LIMIT <= 0:
         return {}
     try:
-        with connect() as c:
+        with connect_readonly() as c:
             rows=c.execute('SELECT slot,project_id,worker_slot FROM ai_global_slots ORDER BY slot LIMIT ?',
                            (GLOBAL_CHATGPT_WORKER_LIMIT,)).fetchall()
             if rows:
@@ -3853,7 +3887,7 @@ def autonomy_scheduler():
         time.sleep(AUTONOMY_TICK_SECONDS)
 
 def runner_targets():
-    with connect() as c:
+    with connect_readonly() as c:
         rows=c.execute('SELECT project_id,name,conversation_id,prompt,active,worker_count FROM runner_targets ORDER BY project_id').fetchall()
     out={}
     for r in rows:
@@ -3898,7 +3932,7 @@ def runner_worker_targets(allocation=None, base=None, *, reconcile=True):
         if snapshot_bound else _current_global_slot_map()
     )
     out={}
-    with connect() as c:
+    with (connect() if reconcile else connect_readonly()) as c:
         for project_id,cfg in base.items():
             allocated_count=sum(1 for key in global_slots if key.startswith(project_id+'::'))
             count=max(1,min(GLOBAL_CHATGPT_WORKER_LIMIT,max(int(cfg.get('worker_count') or 1),allocated_count)))
@@ -4072,7 +4106,7 @@ def runner_record(payload):
 
 def runner_status(project_id=None, target_cfg=None):
     target_cfg=target_cfg if target_cfg is not None else runner_targets()
-    with connect() as c:
+    with connect_readonly() as c:
         if project_id in target_cfg:
             cfg=target_cfg[project_id]
             if cfg['conversation_id']:
@@ -4120,7 +4154,10 @@ def runner_worker_statuses(project_id, *, base=None, targets=None):
         base=runner_targets().get(project_id)
     if not base:
         return []
-    targets=targets if targets is not None else runner_worker_targets()
+    # Standalone callers must not implicitly reconcile runner_workers in a
+    # status read: the default target helper performs INSERT/UPDATE operations.
+    # Control and scheduler paths can explicitly request reconciliation.
+    targets=targets if targets is not None else runner_worker_targets(reconcile=False)
     # Aggregate status reads must not prune leases with DELETEs. Expired rows
     # are filtered in SQL and the scheduler/control paths retain cleanup ownership.
     claims=task_claims(project_id,prune_expired=False)
@@ -4130,7 +4167,7 @@ def runner_worker_statuses(project_id, *, base=None, targets=None):
         if worker_id:
             by_worker.setdefault(worker_id,[]).append(claim)
     out=[]
-    with connect() as c:
+    with connect_readonly() as c:
         for worker_key,cfg in sorted(targets.items(),key=lambda item:item[1].get('worker_slot',1)):
             if cfg.get('base_project_id')!=project_id:
                 continue
@@ -4234,7 +4271,7 @@ def runner_statuses(target_cfg=None):
 
 def watch_last_run(pid):
     aliases={'haxlab':['haxlab'],'ftmo':['ftmo'],'cloud':['zennay cloud','zennay-cloud'],'supa':['supa']}.get(pid,[pid])
-    with connect() as c:
+    with connect_readonly() as c:
         row=None
         for alias in aliases:
             row=c.execute("SELECT ts,title,event FROM runner_events WHERE event IN ('generation-started','prompt-sent') AND lower(title) LIKE ? ORDER BY id DESC LIMIT 1",('%'+alias.lower()+'%',)).fetchone()
@@ -4348,12 +4385,14 @@ def _age_seconds(ts):
     except Exception: return None
 
 def worker_debug_report():
-    workers = runner_worker_targets()
+    # A GET diagnostic must observe the current worker map without reconciling it.
+    # reconcile=True performs INSERT/UPDATE work in runner_workers.
+    workers = runner_worker_targets(reconcile=False)
     window = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
     marks = ','.join('?' * len(WORKER_BLOCK_EVENTS))
     rows = []
     summary = {}
-    with connect() as c:
+    with connect_readonly() as c:
         for key, cfg in workers.items():
             if cfg.get('global_worker_slot') is None: continue
             base = cfg['base_project_id']; slot = int(cfg['worker_slot'])
@@ -4392,7 +4431,9 @@ def worker_debug_report():
         cmds = [{'status': r['status'], 'result': r['r'], 'count': r['n']} for r in c.execute("SELECT status,COALESCE(substr(result,1,90),'') r,COUNT(*) n FROM runner_commands WHERE created_at>? GROUP BY 1,2 ORDER BY n DESC LIMIT 8", (window,)).fetchall()]
     try: firefox = firefox_runner_status()
     except Exception as exc: firefox = {'active': None, 'error': str(exc)[:120]}
-    return {'time': now(), 'workers': rows, 'summary': summary, 'events_15m': events, 'failed_commands_15m': failed,
+    return {'time': now(), 'read_only_observation': True,
+            'sqlite_reconciliation_performed': False, 'queue_mutations_performed': False,
+            'workers': rows, 'summary': summary, 'events_15m': events, 'failed_commands_15m': failed,
             'commands_15m': cmds, 'firefox': firefox,
             'contract': {'prompt': 'project-first', 'queue_binding': 'structured-metadata', 'text_boilerplate_required': False}}
 
@@ -4858,7 +4899,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/project-state-receipts':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             project_id=str(q.get('project',[''])[0] or '').strip().lower()
-            with connect() as c:
+            with connect_readonly() as c:
                 receipts=project_runtime.latest_receipts(c)
             if project_id:
                 return self.reply({'project_id':project_id,'receipt':receipts.get(project_id),'time':now()})
@@ -4883,11 +4924,20 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()
-            return self.reply({'projects':runner_worker_targets(allocation=allocation),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings()})
+            # GET /api/runner-targets is observational: never reconcile runner_workers here.
+            projects=runner_worker_targets(allocation=allocation,reconcile=False)
+            return self.reply({'projects':projects,'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,
+                               'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings(),
+                               'read_only_observation':True,'sqlite_reconciliation_performed':False,
+                               'queue_mutations_performed':False})
         if u.path=='/api/runner-live':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             target_cfg=runner_targets()
-            return self.reply({'chatgpt_runners':runner_statuses(target_cfg=target_cfg),'chatgpt_firefox':firefox_runner_status(),'time':now()})
+            return self.reply({'chatgpt_runners':runner_statuses(target_cfg=target_cfg),
+                               'chatgpt_firefox':firefox_runner_status(),'time':now(),
+                               'read_only_observation':True,
+                               'sqlite_reconciliation_performed':False,
+                               'expired_claims_pruned':False})
         if u.path=='/api/portfolio-queue':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
@@ -4908,7 +4958,15 @@ class Handler(BaseHTTPRequestHandler):
             worker_id=str(q.get('worker',[''])[0] or '').strip()
             owner_id=str(q.get('owner',[''])[0] or '').strip()
             if not project_id or not worker_id or not owner_id:return self.reply({'error':'project, worker en owner zijn verplicht'},400)
-            return self.reply(worker_preflight_state(project_id,worker_id,owner_id))
+            # This GET only observes an existing preflight and the live claim
+            # fingerprint; it never creates/renews a preflight or prunes claims.
+            preflight=worker_preflight_state(project_id,worker_id,owner_id)
+            return self.reply({
+                **preflight,
+                'read_only_observation':True,
+                'sqlite_mutations_performed':False,
+                'expired_claims_pruned':False,
+            })
         if u.path=='/api/config-audit':
             if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
             try: limit=int(q.get('limit',['80'])[0])
@@ -4922,7 +4980,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({'improvement':improvement_loop_state(q.get('project',[IMPROVEMENT_PROJECT_ID])[0] or IMPROVEMENT_PROJECT_ID),'time':now()})
         if u.path=='/api/task-claims':
             if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
-            return self.reply({'claims':task_claims(q.get('project',[''])[0] or None),'time':now()})
+            # GET is observational: hide expired leases without deleting claim rows.
+            # Lease cleanup remains owned by the scheduler/control paths.
+            claims=task_claims(q.get('project',[''])[0] or None,prune_expired=False)
+            return self.reply({
+                'claims':claims,
+                'time':now(),
+                'read_only_observation':True,
+                'sqlite_mutations_performed':False,
+                'expired_claims_pruned':False,
+            })
         if u.path=='/api/runner-commands':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             # Browser workers must never be starved by an old pending backlog.
@@ -4931,7 +4998,7 @@ class Handler(BaseHTTPRequestHandler):
             # always visible without returning an unbounded command history.
             try: command_limit=max(10,min(200,int(q.get('limit',['100'])[0])))
             except Exception: command_limit=100
-            with connect() as c:
+            with connect_readonly() as c:
                 rows=c.execute(
                     "SELECT id,project_id,action,created_at,result FROM ("
                     "SELECT id,project_id,action,created_at,result FROM runner_commands "
@@ -4963,7 +5030,14 @@ class Handler(BaseHTTPRequestHandler):
                 incidents=enhancements.incident_center(DB,runners,data=data)
                 return self.reply({**public_status(data),'chatgpt_runner':runner_status(target_cfg=target_cfg),'chatgpt_runners':runners,'chatgpt_firefox':firefox_runner_status(),'dynamic_workers':dynamic_worker_settings(),'incidents':incidents})
             if u.path=='/api/v1/watch':return self.reply(watch_summary(data))
-            if u.path=='/api/v1/alerts':return self.reply({'time':data['time'],'alerts':enhancements.list_alerts(DB,20,True)})
+            if u.path=='/api/v1/alerts':
+                alerts, source, more = enhancements.list_alerts(
+                    DB,20,True,with_window_status=True)
+                return self.reply({'time':data['time'],'alerts':alerts,
+                                   'alerts_source_status':source,
+                                   'alerts_source_complete':source=='observed',
+                                   'alerts_window_has_more':more,
+                                   'alerts_window_complete':more is False})
             if u.path=='/api/alerts':return self.reply(enhancements.list_alerts(DB,20,False))
             if u.path=='/api/resources':return self.reply(enhancements.resource_snapshot())
             if u.path=='/api/v1/watch/project':
@@ -4977,11 +5051,11 @@ class Handler(BaseHTTPRequestHandler):
                 days={'24h':1,'7d':7,'30d':30,'all':0}.get(q.get('range',['7d'])[0],7)
                 return self.reply(history(pid,days))
             if u.path=='/api/activity':
-                with connect() as c:
+                with connect_readonly() as c:
                     rows=c.execute('SELECT * FROM events WHERE (?="" OR project=?) ORDER BY ts DESC LIMIT 80',(pid,pid)).fetchall()
                 return self.reply([dict(r) for r in rows])
             if u.path=='/api/host-history':
-                with connect() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
+                with connect_readonly() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
                 return self.reply([dict(r) for r in reversed(rows)])
             return self.reply({'error':'Niet gevonden'},404)
         files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/enhancements.js':'enhancements.js','/style.css':'style.css','/enhancements.css':'enhancements.css','/ftmo-readiness.css':'ftmo-readiness.css','/favicon.svg':'favicon.svg','/manifest.webmanifest':'manifest.webmanifest','/zcloud-worker.user.js':'zcloud-worker.user.js'}
