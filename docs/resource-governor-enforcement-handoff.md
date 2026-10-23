@@ -648,6 +648,37 @@ additional test fixture verifies both root-present and root-absent
 cases. After correcting that source defect and fixture, all eight
 targeted cases passed.
 
+## Cross-process heavy-slot handoff and deadline regressions
+
+The existing `tests/test_zcloud_governed_exec.py` module now
+exercises actual two-process, one-heavy-slot contention against a
+shared **temporary** SQLite file. One process keeps an FTMO lease
+open while a separate Python interpreter invokes the HaxLab governor
+with `wait_seconds=5`, using the same temporary test contract.
+The test proves no contender child starts during occupancy, then
+releases the first lease, observes the contender's successful child
+start and exit, and verifies no heavy lease remains.
+
+A second test holds the initial lease through the entire bounded
+`wait_seconds=1` interval and verifies exit code 75, no child
+launch and the original holder's lease still present. This uses a
+non-mutating SQLite row count compatible with the *actual current
+main*, not the still-unmerged runtime PR's diagnostic API.
+
+Both tests join the four earlier execution regressions and four
+earlier safety regressions in the **same existing test module**.
+A fresh isolated exact-head invocation after these changes reported
+**10 tests, zero failures and zero errors** on GitHub head
+`22837139d9f6b258616abc5bfd9d2d384a95771a`,
+with actual `main@723726e0d9c8eb3f84d1b365f1204dae5e6475e0`
+runtime and lane-generator modules. All subprocesses and the test
+database were within an automatically cleaned temporary test tree.
+No production `history.db`, active training unit, or service
+configuration was modified. This verifies local concurrency behavior
+but is **not** a production cross-project or cross-host canary,
+does not replace GitHub Actions checks, and does not prove
+cross-writer expired-lease reconciliation in runtime PR #1547.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
