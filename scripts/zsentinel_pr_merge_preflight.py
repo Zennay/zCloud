@@ -89,7 +89,8 @@ def _repository_default_branch_sha(payload, branch):
 def _gate_cards(head, checks, reviews, stable, default_branch=None,
                 default_branch_stable=False, default_branch_sha=None,
                 default_branch_sha_stable=False, base_tip_matches_default=None,
-                mergeability_hint_stable=False):
+                mergeability_hint_stable=False, branch_protection=None,
+                branch_protection_stable=False):
     """Operator workorders; read-only samples never satisfy release gates."""
     state = ("OBSERVED" if stable else "UNKNOWN")
     sample = ("UNKNOWN" if checks is None else
@@ -138,8 +139,11 @@ def _gate_cards(head, checks, reviews, stable, default_branch=None,
         {"gate": "independent_review_and_threads", "state": "UNKNOWN",
          "next": "Confirm latest independent approval and zero unresolved review threads.",
          "sample_available": reviews is not None},
-        {"gate": "branch_protection", "state": "UNKNOWN",
-         "next": "Confirm protection without bypass, force or disabled checks."},
+        {"gate": "branch_protection",
+         "state": "CONFIGURATION_OBSERVED_NOT_SATISFIED" if branch_protection_stable and isinstance(branch_protection, dict) else "UNKNOWN",
+         "next": ("A stable protection configuration was observed, but this is not proof that this PR satisfies every required rule; confirm exact-head required checks, effective review, threads, claims and owner authority."
+                  if branch_protection_stable and isinstance(branch_protection, dict)
+                  else "Protection configuration could not be stably observed; do not infer that the branch is unprotected or that merge is allowed.")},
         {"gate": "claim_and_owner", "state": "UNKNOWN",
          "next": "Check active worker/Notion claims and get explicit owner authorization."},
         {"gate": "default_branch_merge_and_live", "state": "NOT_EXECUTED",
@@ -309,10 +313,13 @@ def _parallel_owner_actions(report):
             "Review submissions were observed, but no effective independent approval or resolved-thread state is proven.",
             "Inspect latest per-reviewer decisions on the exact HEAD and all unresolved review threads before seeking merge.",
             "REVIEW_SUBMISSIONS_NOT_APPROVAL")
+    protection_stable = report.get("branch_protection_config_stable") is True
     add("verify_authority_and_protection",
-        "Branch protection, current claims and release-owner permission remain unverified.",
-        "Check all required CI, independent review, protection and current ownership before merge.",
-        "HUMAN_GATES_UNKNOWN")
+        ("A stable branch-protection configuration was observed, but satisfaction of its rules, current claims and release-owner permission remain unverified."
+         if protection_stable else
+         "Branch-protection configuration could not be stably observed; current claims and release-owner permission also remain unverified."),
+        "Check exact-head required CI, effective independent review, unresolved threads, active claims and release-owner permission before merge; never infer protection state from an inaccessible endpoint.",
+        "PROTECTION_CONFIG_OBSERVED_GATES_UNVERIFIED" if protection_stable else "HUMAN_GATES_UNKNOWN")
     # Preserve independent CI and reviewer gates when many issues compete for
     # the bounded 12-card display. A truncated shortlist must explicitly say so.
     # This remains a human-owned HOLD; it does not grant merge authority.
@@ -393,6 +400,114 @@ def _compare_summary(payload, expected_base_sha, expected_head_sha):
     }
 
 
+
+def _branch_protection_summary(payload, full_name, branch):
+    """Normalize a real branch-protection response without calling it merge approval."""
+    if type(payload) is not dict:
+        raise GitHubReadError("branch protection response is not an object")
+    if not isinstance(full_name, str) or not re.fullmatch(
+        r"Zennay/[A-Za-z0-9_.-]{1,100}", full_name
+    ):
+        raise GitHubReadError("branch protection repository identity is invalid")
+    if not isinstance(branch, str) or not branch or len(branch) > 255:
+        raise GitHubReadError("branch protection branch identity is invalid")
+
+    required = payload.get("required_status_checks")
+    contexts = []
+    strict = None
+    if required is not None:
+        if type(required) is not dict:
+            raise GitHubReadError("required status-check configuration is malformed")
+        raw_contexts = required.get("contexts", [])
+        raw_checks = required.get("checks", [])
+        strict = required.get("strict")
+        if type(raw_contexts) is not list or len(raw_contexts) > 64:
+            raise GitHubReadError("required status-check contexts are unbounded")
+        if type(raw_checks) is not list or len(raw_checks) > 64:
+            raise GitHubReadError("required status-check app list is unbounded")
+        if strict is not None and type(strict) is not bool:
+            raise GitHubReadError("required status-check strict flag is malformed")
+        for context in raw_contexts:
+            if not isinstance(context, str) or not context.strip() or len(context) > 200:
+                raise GitHubReadError("required status-check context is malformed")
+            contexts.append(context.strip())
+        for item in raw_checks:
+            if type(item) is not dict:
+                raise GitHubReadError("required status-check app entry is malformed")
+            context = item.get("context")
+            app_id = item.get("app_id")
+            if not isinstance(context, str) or not context.strip() or len(context) > 200:
+                raise GitHubReadError("required status-check app context is malformed")
+            if app_id is not None and (type(app_id) is not int or app_id < 0):
+                raise GitHubReadError("required status-check app identity is malformed")
+            contexts.append(context.strip())
+
+    reviews = payload.get("required_pull_request_reviews")
+    if reviews is not None:
+        if type(reviews) is not dict:
+            raise GitHubReadError("required review configuration is malformed")
+        approvals = reviews.get("required_approving_review_count")
+        if approvals is not None and (type(approvals) is not int or not 0 <= approvals <= 100):
+            raise GitHubReadError("required approval count is malformed")
+        for key in ("dismiss_stale_reviews", "require_code_owner_reviews", "require_last_push_approval"):
+            if key in reviews and type(reviews[key]) is not bool:
+                raise GitHubReadError("required review boolean is malformed")
+
+    def enabled_object(key):
+        if key not in payload:
+            return None
+        value = payload[key]
+        if value is None:
+            return False
+        if type(value) is not dict or type(value.get("enabled")) is not bool:
+            raise GitHubReadError("branch protection flag is malformed: " + key)
+        return value["enabled"]
+
+    restrictions = payload.get("restrictions")
+    if restrictions is not None:
+        if type(restrictions) is not dict:
+            raise GitHubReadError("push restrictions are malformed")
+        for key in ("users", "teams", "apps"):
+            values = restrictions.get(key, [])
+            if type(values) is not list or len(values) > 200:
+                raise GitHubReadError("push restriction list is malformed: " + key)
+            if any(type(value) is not dict for value in values):
+                raise GitHubReadError("push restriction entry is malformed: " + key)
+    return {
+        "schema_version": "zsentinel-branch-protection-observation-v1",
+        "repository": full_name,
+        "branch": branch,
+        "branch_protected": True,
+        "required_status_checks_enabled": required is not None,
+        "required_status_check_contexts": sorted(set(contexts)),
+        "required_status_checks_strict": strict,
+        "required_pull_request_reviews_enabled": reviews is not None,
+        "required_approving_review_count": (
+            reviews.get("required_approving_review_count") if isinstance(reviews, dict) else None
+        ),
+        "dismiss_stale_reviews": (
+            reviews.get("dismiss_stale_reviews") if isinstance(reviews, dict) else None
+        ),
+        "require_code_owner_reviews": (
+            reviews.get("require_code_owner_reviews") if isinstance(reviews, dict) else None
+        ),
+        "require_last_push_approval": (
+            reviews.get("require_last_push_approval") if isinstance(reviews, dict) else None
+        ),
+        "enforce_admins": enabled_object("enforce_admins"),
+        "allow_force_pushes": enabled_object("allow_force_pushes"),
+        "allow_deletions": enabled_object("allow_deletions"),
+        "required_conversation_resolution": enabled_object("required_conversation_resolution"),
+        "required_linear_history": enabled_object("required_linear_history"),
+        "push_restrictions_enabled": restrictions is not None,
+        "push_restriction_counts": ({
+            key: len(restrictions.get(key, [])) for key in ("users", "teams", "apps")
+        } if isinstance(restrictions, dict) else None),
+        "merge_authorized": False,
+        "branch_protection_verified": False,
+    }
+
+
 def observe_exact_pr(pr_url, *, token=None):
     """At most nine bounded GETs; pin PR, default-branch name and tip to stable reads."""
     match = REPO_URL.fullmatch(pr_url) if isinstance(pr_url, str) else None
@@ -416,6 +531,9 @@ def observe_exact_pr(pr_url, *, token=None):
     default_branch_stable = False
     default_branch_sha = None
     default_branch_sha_stable = False
+    branch_protection_first = None
+    branch_protection = None
+    branch_protection_stable = False
     try:
         attempted += 1
         default_branch = _repository_default_branch(
@@ -427,6 +545,23 @@ def observe_exact_pr(pr_url, *, token=None):
             return _unknown_pr(pr_url, first, missing, attempted)
 
     if default_branch is not None:
+        try:
+            attempted += 1
+            branch_protection_first = _branch_protection_summary(
+                _limited_json(
+                    api + "/branches/" + quote(default_branch, safe="") + "/protection",
+                    token=token,
+                ),
+                full_name,
+                default_branch,
+            )
+        except GitHubReadError as exc:
+            missing.append("branch protection configuration: " + str(exc))
+            if "authentication, quota or provider admission" in str(exc):
+                return _unknown_pr(
+                    pr_url, first, missing, attempted,
+                    default_branch=default_branch,
+                )
         try:
             attempted += 1
             default_branch_sha = _repository_default_branch_sha(
@@ -482,6 +617,31 @@ def observe_exact_pr(pr_url, *, token=None):
             default_branch_stable = True
         except GitHubReadError as exc:
             missing.append("repository default-branch re-read: " + str(exc))
+            if "authentication, quota or provider admission" in str(exc):
+                return _unknown_pr(
+                    pr_url, first, missing, attempted,
+                    default_branch=default_branch,
+                    default_branch_sha=default_branch_sha,
+                )
+
+    if default_branch is not None and branch_protection_first is not None:
+        try:
+            attempted += 1
+            second_branch_protection = _branch_protection_summary(
+                _limited_json(
+                    api + "/branches/" + quote(default_branch, safe="") + "/protection",
+                    token=token,
+                ),
+                full_name,
+                default_branch,
+            )
+            if second_branch_protection != branch_protection_first:
+                missing.append("branch protection configuration changed during observation; configuration is UNKNOWN")
+            else:
+                branch_protection = branch_protection_first
+                branch_protection_stable = True
+        except GitHubReadError as exc:
+            missing.append("branch protection configuration re-read: " + str(exc))
             if "authentication, quota or provider admission" in str(exc):
                 return _unknown_pr(
                     pr_url, first, missing, attempted,
@@ -654,6 +814,9 @@ def observe_exact_pr(pr_url, *, token=None):
         "repository_default_branch_stable": default_branch_stable,
         "repository_default_branch_sha": default_branch_sha,
         "repository_default_branch_sha_stable": default_branch_sha_stable,
+        "branch_protection_observation": branch_protection,
+        "branch_protection_config_stable": branch_protection_stable,
+        "branch_protection_observed_at_utc": utc() if branch_protection_stable else None,
         "base_tip_matches_default": base_tip_matches_default,
         "base_head_history": history_comparison,
         "merge_policy_input_hint": {
@@ -682,6 +845,8 @@ def observe_exact_pr(pr_url, *, token=None):
             default_branch_sha, default_branch_sha_stable,
             base_tip_matches_default,
             mergeability_hint_stable=mergeability_hint_stable,
+            branch_protection=branch_protection,
+            branch_protection_stable=branch_protection_stable,
         ),
         "next_human_step": next_step,
         "required_ci_verified": False, "independent_review_verified": False,
@@ -711,6 +876,9 @@ def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None,
         "repository_default_branch_sha": None,
         "unconfirmed_default_branch_sha": default_branch_sha,
         "repository_default_branch_sha_stable": False,
+        "branch_protection_observation": None,
+        "branch_protection_config_stable": False,
+        "branch_protection_observed_at_utc": None,
         "base_head_history": None,
         "merge_policy_input_hint": {
             "pr_base_sync": "unknown",
@@ -731,6 +899,7 @@ def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None,
         "operator_gates": _gate_cards(
             None, None, None, False, default_branch, False,
             default_branch_sha, False, None,
+            branch_protection=None, branch_protection_stable=False,
         ),
         "next_human_step": "Recover source admission and re-read the exact PR; do not merge.",
         "required_ci_verified": False, "independent_review_verified": False,
@@ -781,6 +950,10 @@ def as_markdown(report):
         " (ahead_by=" + _known((report.get("merge_policy_input_hint") or {}).get("ahead_by")) +
         ", behind_by=" + _known((report.get("merge_policy_input_hint") or {}).get("behind_by")) + ")",
         "- Base is current default: " + _known(report.get("target_is_default_branch")),
+        "- Branch protection configuration stable: " + str(report.get("branch_protection_config_stable", False)),
+        "- Branch protection configuration (not gate satisfaction): " +
+        json.dumps(report.get("branch_protection_observation") or "UNKNOWN", sort_keys=True),
+        "- Branch protection verified/satisfied: false (this observer never grants merge authority)",
         "- Sampled checks: " + str(checks.get("sampled_count", "UNKNOWN")) +
         " of " + str(checks.get("provider_total_count", "UNKNOWN")),
         "- Sampled review states (all observed commits): " +
@@ -862,6 +1035,10 @@ def as_html(report):
          " (ahead_by=" + _known((report.get("merge_policy_input_hint") or {}).get("ahead_by")) +
          ", behind_by=" + _known((report.get("merge_policy_input_hint") or {}).get("behind_by")) + ")"),
         ("Base is current default", _known(report.get("target_is_default_branch"))),
+        ("Branch protection configuration stable", report.get("branch_protection_config_stable", False)),
+        ("Branch protection configuration (not gate satisfaction)",
+         json.dumps(report.get("branch_protection_observation") or "UNKNOWN", sort_keys=True)),
+        ("Branch protection verified/satisfied", False),
         ("Reported merged", observed.get("reported_merged", "UNKNOWN")),
         ("Check sample", str(checks.get("sampled_count", "UNKNOWN")) + " / " +
          str(checks.get("provider_total_count", "UNKNOWN"))),
