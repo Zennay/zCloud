@@ -44,7 +44,12 @@ def _assert_shared_resource_db(db_path: Path) -> None:
     canary databases without an explicitly pinned environment stay supported.
     """
     configured = os.environ.get("ZCLOUD_RESOURCE_DB")
-    if configured:
+    if configured is not None:
+        # An empty env override is not a valid way to disable the shared
+        # production authority; this would turn a pinned run into a
+        # non-shared local checkout by accident.
+        if not configured.strip():
+            raise RuntimeError("resource_database_identity_missing")
         supplied = Path(db_path).expanduser().resolve(strict=False)
         canonical = Path(configured).expanduser().resolve(strict=False)
         if supplied != canonical:
