@@ -19,7 +19,7 @@ die() { printf 'REFUSED: %s\n' "$*" >&2; exit 2; }
 say() { printf '%s\n' "$*"; }
 [[ "$MODE" = --status || "$MODE" = --apply ]] || die 'usage: --status | --apply'
 [[ "$(hostname)" = "$HOST" ]] || die 'wrong host'
-for cmd in curl python3 ss getent caddy systemctl stat flock; do
+for cmd in curl python3 ss getent caddy systemctl stat flock awk sort grep mktemp chmod ln unlink date mv rm cat; do
   command -v "$cmd" >/dev/null || die "missing command: $cmd"
 done
 
@@ -34,7 +34,11 @@ backend_ready() {
 }
 
 dns_ready() {
-  [[ "$(getent ahostsv4 "$DOMAIN" | awk '{print $1}' | sort -u)" = "$IP" ]]
+  # Require the complete address set to be exactly the approved IPv4 target.
+  # Any AAAA/IPv6 result fails closed until a separately approved IPv6 route exists.
+  local addresses
+  addresses="$(getent ahosts "$DOMAIN" | awk '{print $1}' | sort -u)"
+  [[ "$addresses" = "$IP" ]]
 }
 
 import_ready() {
@@ -65,6 +69,19 @@ public_requires_login() {
   [[ "$code" = 401 ]]
 }
 
+SITE_ID=''
+quarantine_own_site() {
+  local reason="$1" current_id destination
+  [[ -n "$SITE_ID" && -f "$SITE" && ! -L "$SITE" ]] || return 1
+  current_id="$(stat -c '%d:%i' "$SITE")" || return 1
+  [[ "$current_id" = "$SITE_ID" ]] || return 1
+  destination="/etc/caddy/zcloud-dashboard-${reason}-$(date +%s)-$.caddy"
+  [[ ! -e "$destination" && ! -L "$destination" ]] || return 1
+  mv -n -- "$SITE" "$destination" || return 1
+  [[ ! -e "$SITE" && ! -L "$SITE" && -f "$destination" ]] || return 1
+  say "rollback_quarantine=$destination"
+}
+
 say "target=$HOST ipv4=$IP domain=$DOMAIN"
 if backend_ready; then say 'backend=healthy_loopback'; else say 'backend=not_ready'; fi
 if dns_ready; then say 'dns=target_ipv4'; else say 'dns=not_target'; fi
@@ -85,8 +102,10 @@ dns_ready || die 'DNS not cut over to new VPS'
 import_ready || die 'Caddy owner must review and enable sites-enabled import first'
 auth_ready || die 'root-owned bcrypt auth snippet missing or invalid; never publish credentials'
 if [[ -e "$SITE" || -L "$SITE" ]]; then
-  public_requires_login && { say 'ALREADY_LIVE_AUTH_REQUIRED'; exit 0; }
-  die 'existing Caddy site is not verified'
+  if public_requires_login; then
+    die 'existing site returns HTTP 401, but authenticated dashboard behavior is not verified; no changes made'
+  fi
+  die 'existing Caddy site is not verified; no changes made'
 fi
 
 # Stage outside the imported directory to avoid half-written public config.
@@ -104,21 +123,30 @@ zcloud.zennay.nl {
 }
 CADDY
 chmod 0644 "$STAGED"
+STAGED_ID="$(stat -c '%d:%i' "$STAGED")" || die 'cannot identify staged site file'
 ln "$STAGED" "$SITE" || die 'site already occupied (no overwrite)'
-unlink "$STAGED"
+SITE_ID="$STAGED_ID"
+if ! unlink "$STAGED"; then
+  quarantine_own_site staging-cleanup-failed || die 'staging cleanup failed and the new site could not be safely removed; live state is unverified'
+  die 'staging cleanup failed; the new site was removed from active imports'
+fi
 if ! caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1; then
-  mv "$SITE" "/etc/caddy/zcloud-dashboard-validation-failed-$(date +%s)-$$.caddy"
-  die 'Caddy validation failed; active import removed'
+  quarantine_own_site validation-failed || die 'Caddy validation failed and the new site could not be safely removed; manual recovery required'
+  die 'Caddy validation failed; this run site was removed from the imported directory'
 fi
 if ! systemctl reload caddy; then
-  mv "$SITE" "/etc/caddy/zcloud-dashboard-reload-failed-$(date +%s)-$$.caddy"
-  systemctl reload caddy || true
-  die 'Caddy reload failed; new site removed from import'
+  quarantine_own_site reload-failed || die 'Caddy reload failed and the new site could not be safely removed; live state is unverified'
+  if ! systemctl reload caddy; then
+    die 'Caddy reload failed; site removed from imports but rollback reload is not verified'
+  fi
+  die 'Caddy reload failed; new site removed and previous config reload succeeded'
 fi
 if ! public_requires_login; then
-  mv "$SITE" "/etc/caddy/zcloud-dashboard-auth-failed-$(date +%s)-$$.caddy"
-  systemctl reload caddy || true
-  die 'public HTTPS did not require authentication; site rolled back'
+  quarantine_own_site auth-failed || die 'public HTTPS auth check failed and the new site could not be safely removed; live state is unverified'
+  if ! systemctl reload caddy; then
+    die 'public HTTPS auth check failed; site removed from imports but rollback reload failed; live state is unverified'
+  fi
+  die 'public HTTPS did not require authentication; site removed and previous config reloaded'
 fi
 say 'ZCLOUD_DASHBOARD_PUBLIC_HTTPS_AUTH_GREEN'
 say 'Confirm authenticated HTML and /api/status independently from outside the VPS.'
