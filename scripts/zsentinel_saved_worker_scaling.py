@@ -196,13 +196,13 @@ def _metric_snapshot(worker):
         throughput = _number(throughput, minimum=0)
     return {
         "worker_slot": slot,
-        "observed_seconds": _native_int(metrics.get("observed_seconds", 0)),
-        "completed_generations": _native_int(metrics.get("completed_generations", 0)),
+        "observed_seconds": _native_int(metrics.get("observed_seconds")),
+        "completed_generations": _native_int(metrics.get("completed_generations")),
         "throughput_per_observed_hour": throughput,
-        "working_pct": _number(metrics.get("working_pct", 0), minimum=0, maximum=100),
-        "idle_pct": _number(metrics.get("idle_pct", 0), minimum=0, maximum=100),
-        "blocked_pct": _number(metrics.get("blocked_pct", 0), minimum=0, maximum=100),
-        "blocked_events": _native_int(metrics.get("blocked_events", 0)),
+        "working_pct": _number(metrics.get("working_pct"), minimum=0, maximum=100),
+        "idle_pct": _number(metrics.get("idle_pct"), minimum=0, maximum=100),
+        "blocked_pct": _number(metrics.get("blocked_pct"), minimum=0, maximum=100),
+        "blocked_events": _native_int(metrics.get("blocked_events")),
         "last_heartbeat": heartbeat,
         "last_heartbeat_age_seconds": age,
         "heartbeat_freshness": freshness,
@@ -235,10 +235,10 @@ def _project_snapshot(project):
         "desired_worker_count_unknown",
     }:
         coverage_state = "unknown"
-    observed_slots = _slot_list(project.get("observed_worker_slots", []))
-    missing_slots = _slot_list(coverage.get("missing_worker_slots", []))
-    stale_slots = _slot_list(coverage.get("stale_worker_slots", []))
-    unknown_slots = _slot_list(coverage.get("unknown_heartbeat_worker_slots", []))
+    observed_slots = _slot_list(project.get("observed_worker_slots"))
+    missing_slots = _slot_list(coverage.get("missing_worker_slots"))
+    stale_slots = _slot_list(coverage.get("stale_worker_slots"))
+    unknown_slots = _slot_list(coverage.get("unknown_heartbeat_worker_slots"))
 
     assessment = project.get("assessment")
     assessment = assessment if isinstance(assessment, dict) else {}
@@ -254,7 +254,7 @@ def _project_snapshot(project):
     if not isinstance(conflict_source, str) or conflict_source not in COVERAGE_STATUSES:
         conflict_source = "unknown"
 
-    workers = project.get("workers", [])
+    workers = project.get("workers")
     if not isinstance(workers, list) or len(workers) > MAX_WORKERS_PER_PROJECT:
         raise ValueError("worker_cardinality_exceeded")
     worker_rows = [_metric_snapshot(item) for item in workers]
@@ -371,6 +371,21 @@ def normalize_report(data, raw_sha256, now=None):
     if status == "unavailable" and projects:
         source_complete = False
         source_reasons.append("unavailable_source_contains_project_rows")
+    if rows is not None and rows > 0 and not projects:
+        if status == "observed":
+            status = "partial"
+        source_complete = False
+        source_reasons.append("telemetry_rows_without_project_cards")
+    if rows == 0 and projects:
+        if status == "observed":
+            status = "partial"
+        source_complete = False
+        source_reasons.append("empty_telemetry_with_project_cards")
+    if window_empty is True and projects:
+        if status == "observed":
+            status = "partial"
+        source_complete = False
+        source_reasons.append("empty_window_has_project_cards")
 
     for project in projects:
         project["assessment_context_complete"] = bool(
