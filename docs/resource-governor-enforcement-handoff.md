@@ -469,6 +469,46 @@ owners should still configure one pinned canonical shared database
 and a dedicated bounded cgroup. Live workers must not be restarted,
 stopped, or reconfigured merely to prove the source checks.
 
+## Expired lease and detached-process recovery (23 October)
+
+Before a new `heavy` slot is admitted, the governed executor now reads
+**up to 256 expired heavy lease records** under the same
+`BEGIN IMMEDIATE` SQLite write transaction used for admission,
+*before* the shared runtime prunes expired records. For a record
+with known supervised child `pid`, it checks whether the original
+process group has any live non-zombie members. The lease metadata
+also now captures its dedicated Linux `service_cgroup` when available,
+so a still-running descendant that called `setsid()` cannot be
+mistaken for a stopped heavy job merely because the original PGID
+disappeared. Any known live process or unverifiable/inconsistent
+recovery evidence refuses admission; no process is signaled or killed
+by this inspection.
+
+The incident-retention code preserves the original `pid` and
+`service_cgroup` in its bounded private SQLite metadata along with
+the cleanup-failure marker. Previously it discarded the PID, making
+subsequent orphan detection impossible after the retained TTL expired.
+The census returns a generic reason rather than leaking PIDs, lease
+owners, commands or process paths.
+
+**Important coverage limit:** the underlying shared runtime's
+`_cleanup_expired` method can DELETE an expired heavy row from
+*other* callers (for example an unrelated lease acquisition or a
+status call which prunes). If the last durable evidence is deleted,
+the wrapper cannot reconstruct its orphan from this check alone.
+Cross-project crash recovery is **not fully delivered** until the
+runtime lease writer owned by [PR #1547](https://github.com/Zennay/zCloud/pull/1547)
+implements an agreed liveness-aware/durable recovery policy and
+the authorized service owners wire the real launchers to one DB.
+That owner has received a concrete integration note; its code
+has not been taken over here. Expired metadata lacking a supervised
+child PID identifies only a pre-launch reservation and is not proof
+that an unknown process is absent; the separate known-legacy coach
+veto and dedicated-unit admission gates still apply.
+
+No new tests/QA suites were created or run for these source changes.
+Neither live SQLite nor active VPS workloads were modified.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
