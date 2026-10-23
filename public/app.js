@@ -8,6 +8,7 @@ const clock=x=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',hour
 const rel=x=>{const m=Math.floor((Date.now()-Date.parse(x))/60000);return m<1?'zojuist':m<60?m+' min geleden':m<1440?Math.floor(m/60)+' u geleden':date(x)};
 const STATUS_TIMEOUT_MS=30000,STATUS_CACHE_KEY='zcloud:last-status:v1',STATUS_CACHE_MAX_AGE_MS=24*60*60*1000;
 let DATA=null,ACTIVITY=[],HOST=[],HISTORY={},WORKER_SCALING=null,WORKER_SCALING_ERROR='',BLOCKED_QUEUE=null,BLOCKED_QUEUE_ERROR='',PORTFOLIO_QUEUE_SNAPSHOT=null,route='',range='7d',filter='',busy=false,routeVersion=0,dynamicWorkerSaveTimer=null,scrollToWorkersOnOverview=false,mobileWorkersActive=false;
+let STATUS_CONNECTION_OK=false;
 const ACTIVITY_CACHE_INTERVAL_MS=120000,ACTIVITY_MAX_PROJECTS=24,ACTIVITY_MAX_VISIBLE=240;
 let ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:0,projectsTotal:0,projectsRead:0,failed:0,limited:false,pending:false,scope:'',lastError:''};
 let ACTIVITY_PROJECT_FETCH=null;
@@ -296,7 +297,7 @@ function statusSnapshotFreshness(){
   if(typeof raw!=='string'||!raw.trim())return 'unknown';
   const timestamp=Date.parse(raw),now=Date.now();
   if(!Number.isFinite(timestamp)||timestamp>now+120000)return 'unknown';
-  if(DATA?.stale===true||now-timestamp>90000)return 'stale';
+  if(!STATUS_CONNECTION_OK||DATA?.stale===true||now-timestamp>90000)return 'stale';
   return 'fresh';
 }
 function attentionPanel(projectId=''){
@@ -1846,7 +1847,8 @@ async function loadExtras(){
   render();if(route==='activity')void refreshProjectActivity(version)
 }
 function setConnection(ok){$('connection').classList.toggle('offline',!ok);$('connection').innerHTML='<span class="status-dot"></span>'+(ok?'Live connected':'Connection lost')}
-async function refresh(initial=false){if(busy)return false;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const freshness=statusSnapshotFreshness(),stale=freshness!=='fresh';setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=freshness==='unknown'?'The status timestamp is missing or untrusted. Treat this snapshot as historical and refresh before relying on it.':stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+(freshness==='unknown'?'time unknown':clock(DATA.time))+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling();return true}catch(e){
+async function refresh(initial=false){if(busy)return false;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);STATUS_CONNECTION_OK=true;saveCachedStatus(DATA);const freshness=statusSnapshotFreshness(),stale=freshness!=='fresh';setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=freshness==='unknown'?'The status timestamp is missing or untrusted. Treat this snapshot as historical and refresh before relying on it.':stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+(freshness==='unknown'?'time unknown':clock(DATA.time))+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling();return true}catch(e){
+    STATUS_CONNECTION_OK=false;
     // The status read failed: do not keep a prior queue snapshot looking live.
     // Queue-bound operator controls must wait for a new authorized source read.
     BLOCKED_QUEUE=null;
