@@ -3630,3 +3630,8 @@ is als diagnostische aanwijzing aan de bestaande P0-issue #1326
 toegevoegd; noch die teller noch de afwezige jobtoewijzing is bewijs
 voor een offline listener. De daadwerkelijke correctie vereist nog
 de bevoegde runnerbeheerder en live uitvoeringsbewijs.
+
+
+## Explicit issue freshness is required before publishing a PR HEAD
+
+The merge-first issue workorder rejects any issue card whose `issue_evidence_stale` field is absent or not a real boolean. Only an explicit `false`, coherent source clocks and a stable second-read PR HEAD can populate `source_head_observed`. Missing or malformed freshness must never be interpreted as “not stale”; the operator can still refresh the source, but cannot reuse an unverified HEAD receipt.
