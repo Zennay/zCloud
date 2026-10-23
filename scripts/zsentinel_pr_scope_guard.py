@@ -577,6 +577,12 @@ def selected_source_pr(repo, number, token, expanded_files=False):
     # A PR title alone cannot establish product eligibility: its branch and
     # structured labels may mark it QA-only despite a feature-like title.
     product_candidate = not explicit_qa_only_pr(receipt)
+    if not product_candidate:
+        # Direct --source-pr is a PRODUCT work candidate, unlike passive
+        # open-PR collision observation. Reject every QA-only origin here,
+        # before consuming additional GitHub file-page requests, regardless
+        # of whether --expanded-source-files was requested.
+        raise ValueError("QA-only PR cannot be selected as a product source")
     if expanded_files:
         files, observed_pages = changed_paths_focused(repo, number, token)
     else:
