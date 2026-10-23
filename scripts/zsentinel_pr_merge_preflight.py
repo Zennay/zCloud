@@ -509,7 +509,7 @@ def _branch_protection_summary(payload, full_name, branch):
 
 
 def observe_exact_pr(pr_url, *, token=None):
-    """At most nine bounded GETs; pin PR, default-branch name and tip to stable reads."""
+    """At most eleven bounded GETs; pin PR, default-branch name, tip and protection config to stable reads."""
     match = REPO_URL.fullmatch(pr_url) if isinstance(pr_url, str) else None
     if match is None or len(pr_url) > 250:
         raise GitHubReadError("provide one canonical Zennay GitHub pull-request URL")
