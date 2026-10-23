@@ -412,6 +412,7 @@ def _notion_owner_status_summary(observed, source_mode, registry):
                 or type(windows) is not list or len(windows) != len(expected)):
             raise ValueError("private Notion handoff cannot carry live source receipts")
         pages, total_rows, partial = 0, 0, False
+        unresolved_relations_from_windows = 0
         for row, (status, budget) in zip(windows, expected):
             if (type(row) is not dict or row.get("status") != status
                     or row.get("page_budget") != budget
@@ -419,6 +420,8 @@ def _notion_owner_status_summary(observed, source_mode, registry):
                     or not 1 <= row["pages_read"] <= budget
                     or type(row.get("observed_rows")) is not int
                     or not 0 <= row["observed_rows"] <= 100 * row["pages_read"]
+                    or type(row.get("unresolved_project_relations")) is not int
+                    or not 0 <= row["unresolved_project_relations"] <= row["observed_rows"]
                     or row.get("coverage") not in
                     ("complete_within_source", "partial")
                     or row.get("read_only") is not True
@@ -426,6 +429,7 @@ def _notion_owner_status_summary(observed, source_mode, registry):
                 raise ValueError("invalid Notion handoff status window")
             pages += row["pages_read"]
             total_rows += row["observed_rows"]
+            unresolved_relations_from_windows += row["unresolved_project_relations"]
             partial |= row["coverage"] == "partial"
             status_windows.append({
                 "status": status, "page_budget": budget,
@@ -436,6 +440,7 @@ def _notion_owner_status_summary(observed, source_mode, registry):
         if (type(observed.get("total_pages_read")) is not int
                 or observed["total_pages_read"] != pages or pages > 4
                 or total_rows != count
+                or unresolved_relations_from_windows != unresolved_relations
                 or (observed["coverage"] == "incomplete") != partial):
             raise ValueError("inconsistent Notion handoff source totals")
     known = []
