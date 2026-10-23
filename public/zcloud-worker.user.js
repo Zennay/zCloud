@@ -815,13 +815,13 @@
     if (current && current.token !== tabToken && Number(current.expiresAt || 0) > now) return false;
     try {
       GM_setValue(claimKey(projectId), {
-        token=[REDACTED]
+        token: tabToken,
         expiresAt: now + TAB_CLAIM_LEASE_MS,
         provider: candidateProvider(candidate),
         href: location.href
       });
       const verified = readClaim(projectId);
-      return !!verified && verified.token=[REDACTED] tabToken;
+      return !!verified && verified.token === tabToken;
     } catch (_) {
       return true;
     }
@@ -834,7 +834,7 @@
     if (current && current.token !== tabToken && Number(current.expiresAt || 0) > Date.now()) return;
     try {
       GM_setValue(claimKey(projectId), {
-        token=[REDACTED]
+        token: tabToken,
         expiresAt: Date.now() + TAB_CLAIM_LEASE_MS,
         provider: candidateProvider(candidate),
         href: location.href
@@ -846,7 +846,7 @@
     const projectId = String(candidate?.project_id || "");
     if (!projectId) return;
     const current = readClaim(projectId);
-    if (current && current.token=[REDACTED] tabToken) {
+    if (current && current.token === tabToken) {
       try { GM_deleteValue(claimKey(projectId)); } catch (_) {}
     }
   }
