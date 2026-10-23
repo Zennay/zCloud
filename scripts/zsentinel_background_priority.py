@@ -306,62 +306,82 @@ def memory_oom_observation():
     }
 
 
-def disk_used_fraction():
-    """Check root filesystem pressure without traversing or reading files."""
+def root_capacity_observation():
+    """Read root block/inode capacity from one statvfs sample and stable root identity."""
+    result = {
+        "disk_used_fraction": None,
+        "root_free_gib": None,
+        "root_inode_available_percent": None,
+        "root_inode_total": None,
+        "root_mount_device": None,
+        "root_volume_bytes": None,
+    }
     try:
-        st = os.statvfs("/")
-        if st.f_blocks <= 0 or st.f_bavail < 0 or st.f_bavail > st.f_blocks:
-            return None
-        return 1.0 - st.f_bavail / st.f_blocks
-    except OSError:
-        return None
+        before = os.stat("/")
+        fs = os.statvfs("/")
+        after = os.stat("/")
+        # Do not combine capacity from one mount with identity from another
+        # if the root mount is replaced while the snapshot is being collected.
+        if (before.st_dev != after.st_dev or before.st_ino != after.st_ino
+                or after.st_dev < 0):
+            return result
+        result["root_mount_device"] = str(after.st_dev)
+
+        blocks = fs.f_blocks
+        available_blocks = fs.f_bavail
+        block_size = fs.f_frsize or fs.f_bsize
+        if (blocks > 0 and block_size > 0
+                and 0 <= available_blocks <= blocks):
+            total_bytes = blocks * block_size
+            free_bytes = available_blocks * block_size
+            if total_bytes > 0 and 0 <= free_bytes <= total_bytes:
+                result["disk_used_fraction"] = 1.0 - available_blocks / blocks
+                result["root_free_gib"] = round(free_bytes / (1024 ** 3), 2)
+                result["root_volume_bytes"] = int(total_bytes)
+
+        if (fs.f_files > 0 and
+                0 <= fs.f_favail <= fs.f_files):
+            result["root_inode_available_percent"] = round(
+                100 * fs.f_favail / fs.f_files, 2
+            )
+            result["root_inode_total"] = int(fs.f_files)
+        return result
+    except (OSError, ValueError, OverflowError, AttributeError):
+        return result
+
+
+# Keep the small observation helpers available for existing callers. The main
+# policy snapshot uses root_capacity_observation() once for coherent metrics.
+def disk_used_fraction():
+    return root_capacity_observation()["disk_used_fraction"]
 
 
 def root_free_gib():
-    """Available root capacity, not proof that cleanup or recovery occurred."""
-    try:
-        fs = os.statvfs("/")
-        total = fs.f_blocks * fs.f_frsize
-        free = fs.f_bavail * fs.f_frsize
-        if total <= 0 or free < 0 or free > total:
-            return None
-        return round(free / (1024 ** 3), 2)
-    except (OSError, ValueError, OverflowError):
-        return None
+    return root_capacity_observation()["root_free_gib"]
 
 
 def root_inode_availability():
-    """Optional available inode percentage/total; no filesystem traversal."""
-    try:
-        fs = os.statvfs("/")
-        if fs.f_files <= 0 or fs.f_favail < 0 or fs.f_favail > fs.f_files:
-            return None, None
-        return round(100 * fs.f_favail / fs.f_files, 2), int(fs.f_files)
-    except (OSError, ValueError, OverflowError):
-        return None, None
+    observation = root_capacity_observation()
+    return (observation["root_inode_available_percent"],
+            observation["root_inode_total"])
 
 
 def root_volume_identity():
-    """Observe Linux root mount identity/capacity without traversing files."""
-    try:
-        filesystem = os.statvfs("/")
-        device = os.stat("/").st_dev
-        size = filesystem.f_blocks * filesystem.f_frsize
-        if device < 0 or size <= 0:
-            return None, None
-        return str(device), size
-    except (OSError, ValueError, OverflowError):
-        return None, None
-
+    observation = root_capacity_observation()
+    return (observation["root_mount_device"],
+            observation["root_volume_bytes"])
 
 def snapshot():
     runner, sentinel, proc_ok = workers()
     memory, swap_used = memory_pressure()
     oom = memory_oom_observation()
-    disk_used = disk_used_fraction()
-    root_dev, root_total = root_volume_identity()
-    root_free = root_free_gib()
-    inode_available, inode_total = root_inode_availability()
+    capacity = root_capacity_observation()
+    disk_used = capacity["disk_used_fraction"]
+    root_dev = capacity["root_mount_device"]
+    root_total = capacity["root_volume_bytes"]
+    root_free = capacity["root_free_gib"]
+    inode_available = capacity["root_inode_available_percent"]
+    inode_total = capacity["root_inode_total"]
     try:
         cores = max(1, len(os.sched_getaffinity(0)))
         load = os.getloadavg()[0]
