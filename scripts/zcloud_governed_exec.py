@@ -237,6 +237,19 @@ def _exit_code(returncode: int) -> int:
     return returncode if returncode >= 0 else 128 + abs(returncode)
 
 
+def _matches_admitted_contract(lease: dict, compute: dict) -> bool:
+    """Do not launch against a pool/budget different from what was reserved."""
+    try:
+        return (
+            str(lease["pool"]) == str(compute["pool"])
+            and str(lease["workload_class"]) == str(compute["class"])
+            and int(lease["memory_soft_mb"]) == int(compute["memory_soft_mb"])
+            and float(lease["cpu_soft_cores"]) == float(compute["cpu_soft_cores"])
+        )
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
 def _safe_owner(owner_id: str) -> str:
     """Never create a lease with a truncated or unreleasable owner key."""
     if (not isinstance(owner_id, str) or not 1 <= len(owner_id) <= 200
@@ -513,10 +526,17 @@ def run_governed(
             lease_seconds=lease_seconds,
             metadata=_metadata(command),
         )
-        if not result.get("acquired") or result.get("renewed"):
+        if (not result.get("acquired") or result.get("renewed")
+                or not _matches_admitted_contract(result.get("lease") or {}, compute)):
             conn.rollback()
-            _admission_denied(result if not result.get("renewed") else {
-                "reason": "resource_owner_already_running", "project_id": project_id})
+            _admission_denied({
+                "reason": ("resource_owner_already_running"
+                           if result.get("renewed") else
+                           "resource_contract_admission_mismatch"
+                           if result.get("acquired") else
+                           result.get("reason") or "resource_admission_unavailable"),
+                "project_id": project_id,
+            })
             return 75
         conn.commit()
         acquired = True
