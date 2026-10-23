@@ -27,6 +27,8 @@ REASON_NL = {
     "elevated-system-load": "Verhoogde systeemload",
     "low-available-memory": "Weinig beschikbaar werkgeheugen",
     "limited-available-memory": "Beperkt beschikbaar werkgeheugen",
+    "critical-memory-pressure-stalls": "Kritieke hostbrede geheugenstagnatie (PSI full avg10)",
+    "elevated-memory-pressure-stalls": "Verhoogde hostbrede geheugenstagnatie (PSI)",
     "high-swap-use": "Hoog swapgebruik",
     "elevated-swap-use": "Verhoogd swapgebruik",
     "no-swap-configured": "Geen swap geconfigureerd; geen swapbuffer voor geheugenpieken",
