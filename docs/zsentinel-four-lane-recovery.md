@@ -1,3 +1,25 @@
+## 23 October 2026 · herstelactie-overflow wordt zichtbaar
+
+De lokale herstelcockpit begrenst de incidentenlijst tot negen kaarten. Eerder
+werden alle acties na de rangschikking stilzwijgend afgekapt, waardoor de
+operator niet kon zien hoeveel aanvullende acties buiten beeld vielen of welke
+categorieën nog aandacht vroegen.
+
+Wanneer de lijst meer dan negen acties bevat, toont de cockpit nu de acht
+hoogst gerangschikte concrete acties plus één expliciete overflowkaart. Die
+kaart bevat het exacte aantal weggelaten acties, de aantallen per ernstniveau
+(urgent/review/info), en maximaal acht veilig gevormde actiecodes als
+voorbeelden. De machineleesbare velden `omitted_count`,
+`omitted_severity_counts`, `omitted_action_codes` en
+`omitted_action_codes_truncated` ondersteunen eigenarenoverdracht en
+integraties. Als er negen of minder acties zijn, blijft de bestaande lijst
+ongewijzigd.
+
+De overflowkaart waarschuwt dat de korte lijst niet volledig is en verwijst
+naar het volledige private eigenaarrapport. Zij autoriseert geen claim, queue-
+wijziging, runneractie, merge of deployment; verborgen acties worden niet als
+opgelost of afwezig geïnterpreteerd.
+
 ## 22 October 2026 · bind runner presence to one process lifetime
 
 The local runner observer now reads the bounded `/proc/<pid>/stat` start-time field before and after collecting a candidate runner's executable identity and, for zCloud, service-cgroup membership. It counts the candidate only when the numeric PID and kernel start-time ticks still match. If the process exits during the observation, that transient process is skipped; if identity cannot be established or the PID has been reused, the runner source stays incomplete rather than mixing evidence from two process lifetimes. The receipt never exports PIDs, start-time ticks, executable paths, argv or environment.
