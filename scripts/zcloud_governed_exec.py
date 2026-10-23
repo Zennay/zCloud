@@ -44,6 +44,35 @@ def _assert_shared_resource_db(db_path: Path) -> None:
             raise RuntimeError("resource_database_identity_mismatch")
 
 
+def _effective_cgroup_memory_ceiling_mb(host_mb: int) -> int:
+    """Honor inherited cgroup-v2 memory.max ceilings at every parent slice."""
+    try:
+        controls = Path("/proc/self/cgroup").read_text().splitlines()
+        unified = [line.split("::", 1)[1] for line in controls if line.startswith("0::")]
+        if not unified:
+            return host_mb  # Linux cgroup v1: host pressure remains required.
+        if len(unified) != 1:
+            raise RuntimeError("resource_cgroup_identity_ambiguous")
+        components = [part for part in unified[0].split("/") if part]
+        if any(part in (".", "..") for part in components):
+            raise RuntimeError("resource_cgroup_path_invalid")
+        path = Path("/sys/fs/cgroup")
+        for component in [""] + components:
+            if component:
+                path = path / component
+            source = path / "memory.max"
+            raw = source.read_text().strip()
+            if raw == "max":
+                continue
+            ceiling_bytes = int(raw)
+            if ceiling_bytes <= 0:
+                raise RuntimeError("resource_cgroup_memory_unavailable")
+            host_mb = min(host_mb, ceiling_bytes // (1024 * 1024))
+        return host_mb
+    except (OSError, ValueError, IndexError) as exc:
+        raise RuntimeError("resource_cgroup_memory_unavailable") from exc
+
+
 def _nonprotected_memory_admission(conn, project_id: str,
                                    compute: dict) -> dict | None:
     """Protect host memory for both control-plane projects across pools.
@@ -53,7 +82,7 @@ def _nonprotected_memory_admission(conn, project_id: str,
     host RAM. Check aggregate active lease reservations atomically with
     first admission and reject unsupported/unobservable host headroom.
     """
-    if compute.get("pool") == "protected":
+    if compute.get("pool") in ("protected", "disabled"):
         return None
     try:
         mem = {}
@@ -62,8 +91,8 @@ def _nonprotected_memory_admission(conn, project_id: str,
             if len(fields) == 3 and fields[2] == "kB":
                 if fields[0] in ("MemTotal:", "MemAvailable:"):
                     mem[fields[0][:-1]] = int(fields[1]) // 1024
-        host_mb = mem["MemTotal"]
-        available_mb = mem["MemAvailable"]
+        host_mb = _effective_cgroup_memory_ceiling_mb(mem["MemTotal"])
+        available_mb = min(host_mb, mem["MemAvailable"])
         if host_mb <= 0 or available_mb < 0:
             raise ValueError("host memory numbers invalid")
     except (OSError, ValueError, KeyError) as exc:
