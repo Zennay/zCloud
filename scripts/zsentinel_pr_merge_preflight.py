@@ -480,6 +480,22 @@ def _branch_protection_summary(payload, full_name, branch):
                 raise GitHubReadError("push restriction list is malformed: " + key)
             if any(type(value) is not dict for value in values):
                 raise GitHubReadError("push restriction entry is malformed: " + key)
+    app_rules = []
+    app_contexts = set()
+    if required is not None:
+        for item in required["checks"]:
+            context = item["context"].strip()
+            app_id = item.get("app_id")
+            pair = (context, app_id)
+            if pair not in {(rule["context"], rule["app_id"]) for rule in app_rules}:
+                app_rules.append({"context": context, "app_id": app_id})
+            app_contexts.add(context)
+    status_rules = [
+        {"context": context, "app_id": None}
+        for context in sorted(set(contexts) - app_contexts)
+    ]
+    status_rules.extend(app_rules)
+    status_rules.sort(key=lambda item: (item["context"], -1 if item["app_id"] is None else item["app_id"]))
     return {
         "schema_version": "zsentinel-branch-protection-observation-v1",
         "repository": full_name,
@@ -487,6 +503,7 @@ def _branch_protection_summary(payload, full_name, branch):
         "branch_protected": True,
         "required_status_checks_enabled": required is not None,
         "required_status_check_contexts": sorted(set(contexts)),
+        "required_status_check_rules": status_rules,
         "required_status_checks_strict": strict,
         "required_pull_request_reviews_enabled": reviews is not None,
         "required_approving_review_count": (
@@ -515,8 +532,118 @@ def _branch_protection_summary(payload, full_name, branch):
     }
 
 
+
+def _required_context_observations(protection, protection_stable, checks, commit_statuses):
+    """Map branch-required contexts to bounded exact-HEAD samples without issuing a CI verdict."""
+    unknown = {
+        "state": "UNKNOWN",
+        "reason": "Stable branch-protection configuration is unavailable.",
+        "items": [],
+        "required_ci_verified": False,
+        "merge_authorized": False,
+    }
+    if not protection_stable or type(protection) is not dict:
+        return unknown
+    rules = protection.get("required_status_check_rules")
+    if type(rules) is not list or len(rules) > 128:
+        return {**unknown, "reason": "Required status-check rule list is missing or malformed."}
+    if not rules:
+        return {
+            "state": "NO_NAMED_REQUIRED_CONTEXTS_OBSERVED",
+            "reason": "Protection configuration exposes no named status-check contexts; this does not establish overall CI success.",
+            "items": [],
+            "required_ci_verified": False,
+            "merge_authorized": False,
+        }
+
+    check_rows = checks.get("sampled_check_observations") if type(checks) is dict else None
+    status_rows = commit_statuses.get("sampled_statuses") if type(commit_statuses) is dict else None
+    check_incomplete = type(checks) is not dict or checks.get("sample_incomplete") is True
+    status_incomplete = type(commit_statuses) is not dict or commit_statuses.get("sample_incomplete") is True
+    if type(check_rows) is not list:
+        check_rows = []
+    if type(status_rows) is not list:
+        status_rows = []
+    items = []
+    for rule in rules:
+        if type(rule) is not dict:
+            return {**unknown, "reason": "A required status-check rule is malformed."}
+        context = rule.get("context")
+        app_id = rule.get("app_id")
+        if not isinstance(context, str) or not context or (app_id is not None and (type(app_id) is not int or app_id < 0)):
+            return {**unknown, "reason": "A required status-check rule identity is malformed."}
+        matching_checks = [
+            row for row in check_rows
+            if type(row) is dict and row.get("name") == context
+            and (app_id is None or row.get("app_id") == app_id)
+        ]
+        matching_statuses = (
+            [row for row in status_rows if type(row) is dict and row.get("context") == context]
+            if app_id is None else []
+        )
+        check_states = [
+            {
+                "status": row.get("status"),
+                "conclusion": row.get("conclusion"),
+                "app_id": row.get("app_id"),
+            }
+            for row in matching_checks[:12]
+        ]
+        status_states = [
+            {"state": row.get("state"), "updated_at": row.get("updated_at")}
+            for row in matching_statuses[:12]
+        ]
+        outcomes = set()
+        for row in matching_checks:
+            if row.get("status") != "completed":
+                outcomes.add("pending")
+            elif row.get("conclusion") == "success":
+                outcomes.add("success")
+            elif row.get("conclusion") in ("neutral", "skipped"):
+                outcomes.add("neutral_or_skipped")
+            else:
+                outcomes.add("non_success")
+        for row in matching_statuses:
+            outcomes.add("success" if row.get("state") == "success" else
+                         "pending" if row.get("state") == "pending" else "non_success")
+        if len(outcomes) > 1:
+            observation_state = "CONFLICTING_SAMPLED_STATES"
+        elif matching_checks or matching_statuses:
+            observation_state = "OBSERVED_MATCH_NOT_A_CI_VERDICT"
+        elif check_incomplete or status_incomplete:
+            observation_state = "UNKNOWN_SAMPLE_INCOMPLETE"
+        else:
+            observation_state = "NOT_OBSERVED_IN_BOUNDED_SAMPLES"
+        items.append({
+            "context": context,
+            "required_app_id": app_id,
+            "state": observation_state,
+            "sampled_check_run_observations": check_states,
+            "sampled_commit_status_observations": status_states,
+        })
+
+    states = {item["state"] for item in items}
+    if states == {"OBSERVED_MATCH_NOT_A_CI_VERDICT"}:
+        overall = "OBSERVATIONS_PRESENT_NOT_A_CI_VERDICT"
+    elif states <= {"OBSERVED_MATCH_NOT_A_CI_VERDICT", "CONFLICTING_SAMPLED_STATES"}:
+        overall = "CONFLICTING_OR_PARTIAL_OBSERVATIONS"
+    elif any(state == "OBSERVED_MATCH_NOT_A_CI_VERDICT" for state in states):
+        overall = "PARTIAL_OBSERVATIONS"
+    else:
+        overall = "NO_COMPLETE_CONTEXT_OBSERVATIONS"
+    return {
+        "state": overall,
+        "reason": "Required contexts are matched to bounded exact-HEAD samples only; effective required-CI satisfaction remains UNKNOWN.",
+        "items": items,
+        "check_sample_incomplete": check_incomplete,
+        "commit_status_sample_incomplete": status_incomplete,
+        "required_ci_verified": False,
+        "merge_authorized": False,
+    }
+
+
 def observe_exact_pr(pr_url, *, token=None):
-    """At most eleven bounded GETs; pin PR, default-branch name, tip and protection config to stable reads."""
+    """At most twelve bounded GETs; pin PR, default-branch name, tip and protection config to stable reads."""
     match = REPO_URL.fullmatch(pr_url) if isinstance(pr_url, str) else None
     if match is None or len(pr_url) > 250:
         raise GitHubReadError("provide one canonical Zennay GitHub pull-request URL")
@@ -531,6 +658,7 @@ def observe_exact_pr(pr_url, *, token=None):
     first_requested = _review_request_identities(first_payload)
     del first_payload
     checks = None
+    commit_statuses = None
     reviews = None
     missing = []
     attempted = 1
@@ -594,6 +722,21 @@ def observe_exact_pr(pr_url, *, token=None):
         ), first["exact_head_sha"], full_name)
     except GitHubReadError as exc:
         missing.append("check-runs: " + str(exc))
+        if "authentication, quota or provider admission" in str(exc):
+            return _unknown_pr(pr_url, first, missing, attempted, default_branch=default_branch)
+
+    try:
+        attempted += 1
+        commit_statuses = _commit_status_summary(
+            _limited_json(
+                api + "/commits/" + first["exact_head_sha"] + "/status?per_page=" + str(MAX_LIST_PAGE),
+                token=token,
+            ),
+            first["exact_head_sha"],
+            full_name,
+        )
+    except GitHubReadError as exc:
+        missing.append("commit statuses: " + str(exc))
         if "authentication, quota or provider admission" in str(exc):
             return _unknown_pr(pr_url, first, missing, attempted, default_branch=default_branch)
 
@@ -824,6 +967,10 @@ def observe_exact_pr(pr_url, *, token=None):
         "branch_protection_observation": branch_protection,
         "branch_protection_config_stable": branch_protection_stable,
         "branch_protection_observed_at_utc": utc() if branch_protection_stable else None,
+        "sampled_commit_statuses": commit_statuses,
+        "required_status_context_observations": _required_context_observations(
+            branch_protection, branch_protection_stable, checks, commit_statuses,
+        ),
         "base_tip_matches_default": base_tip_matches_default,
         "base_head_history": history_comparison,
         "merge_policy_input_hint": {
@@ -886,6 +1033,11 @@ def _unknown_pr(pr_url, first, gaps, attempted, *, default_branch=None,
         "branch_protection_observation": None,
         "branch_protection_config_stable": False,
         "branch_protection_observed_at_utc": None,
+        "sampled_commit_statuses": None,
+        "required_status_context_observations": {
+            "state": "UNKNOWN", "reason": "PR source was not stable.",
+            "items": [], "required_ci_verified": False, "merge_authorized": False,
+        },
         "base_head_history": None,
         "merge_policy_input_hint": {
             "pr_base_sync": "unknown",
@@ -961,6 +1113,12 @@ def as_markdown(report):
         "- Branch protection configuration (not gate satisfaction): " +
         json.dumps(report.get("branch_protection_observation") or "UNKNOWN", sort_keys=True),
         "- Branch protection verified/satisfied: false (this observer never grants merge authority)",
+        "- Commit-status sample: " + (
+            str((report.get("sampled_commit_statuses") or {}).get("sampled_count", "UNKNOWN")) +
+            " of " + str((report.get("sampled_commit_statuses") or {}).get("provider_total_count", "UNKNOWN"))
+        ),
+        "- Required status-context observations (not a CI verdict): " +
+        json.dumps(report.get("required_status_context_observations") or "UNKNOWN", sort_keys=True),
         "- Sampled checks: " + str(checks.get("sampled_count", "UNKNOWN")) +
         " of " + str(checks.get("provider_total_count", "UNKNOWN")),
         "- Sampled review states (all observed commits): " +
@@ -1046,6 +1204,10 @@ def as_html(report):
         ("Branch protection configuration (not gate satisfaction)",
          json.dumps(report.get("branch_protection_observation") or "UNKNOWN", sort_keys=True)),
         ("Branch protection verified/satisfied", False),
+        ("Commit-status sample",
+         json.dumps(report.get("sampled_commit_statuses") or "UNKNOWN", sort_keys=True)),
+        ("Required status-context observations (not a CI verdict)",
+         json.dumps(report.get("required_status_context_observations") or "UNKNOWN", sort_keys=True)),
         ("Reported merged", observed.get("reported_merged", "UNKNOWN")),
         ("Check sample", str(checks.get("sampled_count", "UNKNOWN")) + " / " +
          str(checks.get("provider_total_count", "UNKNOWN"))),
