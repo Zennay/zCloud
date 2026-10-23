@@ -25,11 +25,13 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 MAX_ENTRIES = 24
 MAX_HOURS = 72
+MAX_CURRENT_SOURCE_AGE = timedelta(minutes=10)
 
 # Operator priority, not automatic incident severity or scheduler admission.
 # Slots disappearing from the bounded observation demand an owner check
 # before routine activity signals; none of these classes proves recovery.
 OPERATOR_ORDER = {
+    "source_snapshot_stale_requires_refresh": 0,
     "missing_in_current_sample_not_resolved": 0,
     "claim_window_changed_requires_owner_recheck": 1,
     "claim_window_unavailable_requires_owner_recheck": 1,
@@ -43,6 +45,7 @@ OPERATOR_ORDER = {
     "other_bounded": 8,
 }
 OPERATOR_LABELS = {
+    "source_snapshot_stale_requires_refresh": "Bron ouder dan 10 minuten; eerst vernieuwen",
     "missing_in_current_sample_not_resolved": "Niet meer waargenomen (geen herstel)",
     "claim_window_changed_requires_owner_recheck": "Queue-claimvenster gewijzigd; eigenaarcontrole nodig",
     "claim_window_unavailable_requires_owner_recheck": "Queue-claimvenster ontbreekt; eigenaarcontrole nodig",
@@ -180,8 +183,14 @@ def compare(previous, current, now=None):
             or not timedelta(0) < t1 - t0 <= timedelta(hours=MAX_HOURS)
             or t1 > now + timedelta(minutes=2)):
         raise ValueError("same live indexed SQLite and selected projects, ordered UTC snapshots required")
+    source_age = now - t1
+    source_age_seconds = max(0, int(source_age.total_seconds()))
+    source_freshness = (
+        "stale" if source_age > MAX_CURRENT_SOURCE_AGE else "fresh"
+    )
     items = []
     counts = {
+        "source_snapshot_stale_requires_refresh": 0,
         "generation_progress_signal_observed": 0,
         "new_events_without_indexed_progress": 0,
         "first_cursor_observed_not_delta": 0,
@@ -242,10 +251,17 @@ def compare(previous, current, now=None):
             and before["claim_window_fingerprint"] is not None
             and before["claim_window_fingerprint"] == after["claim_window_fingerprint"]
         )
-        if not comparable_claim_window:
+        if not comparable_claim_window or source_freshness == "stale":
             event_advanced = False
             progress_advanced = False
-        if before is None:
+        if source_freshness == "stale":
+            stage = "source_snapshot_stale_requires_refresh"
+            action = (
+                "De huidige workerbron is ouder dan tien minuten. Vernieuw eerst "
+                "de toegestane read-only waarneming; deze historische vergelijking "
+                "bewijst geen actuele voortgang, stagnatie, claimstatus of herstel."
+            )
+        elif before is None:
             stage = "new_in_bounded_sample_not_new_claim"
             action = "Controleer met eigenaar of dit een bestaande toewijzing is; geen claim of vrije capaciteit bewezen."
         elif after is None:
@@ -329,6 +345,8 @@ def compare(previous, current, now=None):
         "schema": SCHEMA,
         "previous_observed_at_utc": t0.isoformat(),
         "current_observed_at_utc": t1.isoformat(),
+        "source_freshness": source_freshness,
+        "current_source_age_seconds": source_age_seconds,
         "source_coverage": "same_indexed_db_two_bounded_snapshots_not_claim_epoch",
         "source_selected_projects": list(projects1),
         "shared_worker_slots_observed": len(shared),
@@ -360,12 +378,20 @@ def public_summary(report):
             or type(report.get("counts")) is not dict
             or type(report.get("items")) is not list
             or len(report["items"]) > 2 * MAX_ENTRIES
+            or report.get("source_freshness") not in ("fresh", "stale")
+            or type(report.get("current_source_age_seconds")) is not int
+            or report["current_source_age_seconds"] < 0
+            or type(report.get("counts", {}).get("source_snapshot_stale_requires_refresh")) is not int
+            or not 0 <= report["counts"]["source_snapshot_stale_requires_refresh"] <= len(report["items"])
             or type(report.get("progress_timestamp_window_changes_observed")) is not int
             or not 0 <= report["progress_timestamp_window_changes_observed"] <= len(report["items"])):
         raise ValueError("unsafe worker progress trend")
     return {
         "schema": "zsentinel-worker-progress-delta-public-v1",
         "coverage": report["source_coverage"],
+        "source_freshness": report["source_freshness"],
+        "current_source_age_seconds": report["current_source_age_seconds"],
+        "stale_source_requires_refresh": report["counts"]["source_snapshot_stale_requires_refresh"],
         "shared_worker_slots": report["shared_worker_slots_observed"],
         "progress_signals_observed": report["counts"]["generation_progress_signal_observed"],
         "new_event_without_progress": report["counts"]["new_events_without_indexed_progress"],
@@ -388,8 +414,16 @@ def public_summary(report):
 
 def human_text(report):
     data = public_summary(report)
+    freshness = (
+        "STALE — eerst nieuwe bronwaarneming nodig"
+        if data["source_freshness"] == "stale"
+        else "FRESH binnen 10-minutengrens"
+    )
     return (
-        "zSentinel workers #1342 · " +
+        "zSentinel workers #1342 · bron " + freshness +
+        " (" + str(data["current_source_age_seconds"]) + " s oud); " +
+        str(data["stale_source_requires_refresh"]) +
+        " workerkaarten geblokkeerd door verouderde bron; " +
         str(data["progress_signals_observed"]) +
         " expliciete voortgangssignalen, " +
         str(data["new_event_without_progress"]) +
@@ -417,6 +451,10 @@ def public_html(report):
     return (
         '<section aria-label="Worker voortgang tussen twee meetpunten">'
         '<h2>Worker · heartbeat versus echte events (#1342)</h2>'
+        '<p>Huidige bron: <strong>' + escape(data["source_freshness"].upper()) +
+        '</strong>, ' + str(data["current_source_age_seconds"]) +
+        ' seconden oud; stale kaarten die eerst ververst moeten worden: ' +
+        str(data["stale_source_requires_refresh"]) + '.</p>' +
         '<p>Nieuwe expliciete generatiesignalen: ' +
         str(data["progress_signals_observed"]) +
         '; alleen andere/heartbeat events: ' + str(data["new_event_without_progress"]) +
@@ -459,6 +497,9 @@ def private_markdown(report):
         "",
         "- Vorige bron: " + report["previous_observed_at_utc"],
         "- Huidige bron: " + report["current_observed_at_utc"],
+        "- Actualiteitsgrens: " + data["source_freshness"] +
+        " (" + str(data["current_source_age_seconds"]) +
+        " seconden oud; grens 600 seconden)",
         "- Beide keren waargenomen slots: " + str(data["shared_worker_slots"]),
         "- Nieuw in beperkte bron (niet nieuwe claim): " +
         str(data["new_in_sample_not_new_claim"]),
