@@ -391,8 +391,11 @@ a preceding wrapper crash and lease expiry.
 The same pinned heavy-service admission additionally checks its
 actual Linux cgroup-v2 `cpu.max` and `memory.max` files. Both must
 contain numeric kernel-enforced limits no higher than the project's
-declared `cpu_soft_cores` and `memory_soft_mb`. Missing/unlimited
-limits, non-dedicated service scopes and malformed values deny startup
+declared `cpu_soft_cores` and `memory_soft_mb`. The CPU/RAM limit
+preflight repeats before every still-active lease renewal, so a later
+systemd quota widening cannot be silently treated as the original
+bounded admission. Missing/unlimited limits, non-dedicated service
+scopes and malformed values deny startup
 rather than relying on per-process `RLIMIT_AS` or CPU affinity alone.
 This is important for multi-process FTMO backtests, HaxLab training
 and LightUp lab bursts, which could otherwise exceed their aggregate
@@ -414,8 +417,12 @@ external-disk migration. This PR does not change either unit or
 interrupt either service.
 
 On exit, the wrapper first stops and observes its own process group.
-For pinned production service commands, it then reads the entire
-dedicated unit's `cgroup.procs` subtree. A process which called
+For pinned **heavy** service commands only, it then reads the entire
+dedicated unit's `cgroup.procs` subtree. This additional exclusive-
+service requirement does not apply to protected zCloud/zSSH work or
+normal build jobs: they may legitimately share a worker service scope,
+and denying their normal process-group cleanup could exhaust their
+separately protected capacity. A process which called
 `setsid()` and left the original process group but remained in the
 systemd unit prevents successful release of the heavy lease.
 Unreadable cgroup membership, nested/ambiguous cgroup paths, and
