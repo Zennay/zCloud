@@ -280,6 +280,8 @@ def _notion_owner_status_summary(observed, source_mode, registry):
         "observed_at_utc": None,
         "source_age_seconds": None,
         "status_windows": [],
+        "project_relation_coverage": "not_observed",
+        "unresolved_project_relation_count": None,
         "claim_window_observation_counts": None,
         "projects": [],
         "unregistered_work_status_min": None,
@@ -330,6 +332,16 @@ def _notion_owner_status_summary(observed, source_mode, registry):
     verifying = observed.get("verifying_project_counts")
     count = observed.get("active_count")
     verifying_total = observed.get("verifying_count")
+    relation_coverage = observed.get("project_relation_coverage")
+    unresolved_relations = observed.get("unresolved_project_relation_count")
+    if mode[0] == "notion_readonly_data_source_pages":
+        if (relation_coverage not in ("complete", "partial")
+                or type(unresolved_relations) is not int
+                or not 0 <= unresolved_relations <= count
+                or (relation_coverage == "complete") != (unresolved_relations == 0)):
+            raise ValueError("invalid Notion project-relation coverage")
+    elif relation_coverage is not None or unresolved_relations is not None:
+        raise ValueError("saved Notion snapshot cannot assert live project-relation coverage")
     if (type(counts) is not dict or len(counts) > 50
             or type(verifying) is not dict or len(verifying) > 50
             or type(count) is not int or not 0 <= count <= 400
@@ -478,6 +490,12 @@ def _notion_owner_status_summary(observed, source_mode, registry):
         "observed_at_utc": when.astimezone(timezone.utc).isoformat(timespec="seconds"),
         "source_age_seconds": max(0, age),
         "status_windows": status_windows,
+        "project_relation_coverage": (
+            relation_coverage if mode[0] == "notion_readonly_data_source_pages"
+            else "not_observed"),
+        "unresolved_project_relation_count": (
+            unresolved_relations if mode[0] == "notion_readonly_data_source_pages"
+            else None),
         "claim_window_observation_counts": (
             dict(sorted(window_counts.items())) if window_counts is not None else None),
         "projects": known[:12],
@@ -1976,6 +1994,16 @@ def _notion_review_summary(report):
     unknown = value.get("unregistered_work_status_min")
     if unknown is not None and (type(unknown) is not int or not 0 <= unknown <= 400):
         raise ValueError("invalid unregistered Notion work count")
+    relation_coverage = value.get("project_relation_coverage")
+    unresolved_relations = value.get("unresolved_project_relation_count")
+    if value["coverage"] in ("live_readonly_bounded", "live_readonly_incomplete"):
+        if (relation_coverage not in ("complete", "partial")
+                or type(unresolved_relations) is not int
+                or not 0 <= unresolved_relations <= 400
+                or (relation_coverage == "complete") != (unresolved_relations == 0)):
+            raise ValueError("invalid Notion project-relation handoff")
+    elif relation_coverage != "not_observed" or unresolved_relations is not None:
+        raise ValueError("non-live Notion handoff cannot claim project-relation coverage")
     lease_categories = {
         "missing_worker_or_lease_fields", "date_only_not_a_lease",
         "invalid_lease_timestamp", "invalid_lease_interval",
@@ -2195,7 +2223,16 @@ def _notion_clock_owner_overview(report):
     count = source["affected_project_groups_in_sample"]
     if count > len(notion["projects"]):
         raise ValueError("owner workboard exceeds bounded Notion projects")
-    return (str(count) + " projectgroepen met verdachte Notion-claimklokken "
+    relation_note = (
+        "PROJECTRELATIES ONVOLLEDIG: " +
+        str(notion["unresolved_project_relation_count"]) +
+        " actieve rij(en) zonder eenduidige canonieke projectmapping; geen vrije-werkconclusie. "
+        if notion["project_relation_coverage"] == "partial" else
+        "Projectrelaties compleet binnen de beperkte bron, maar geen lease- of eigendomsbewijs. "
+        if notion["project_relation_coverage"] == "complete" else
+        "Projectrelaties niet live geverifieerd. ")
+    return (relation_note +
+            str(count) + " projectgroepen met verdachte Notion-claimklokken "
             "in de beperkte bron; " +
             str(source["owner_cards_shown"]) +
             " eigenaaracties werkelijk zichtbaar in de P0/PR-werkbak. " +
