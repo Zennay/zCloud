@@ -1,3 +1,21 @@
+## 23 October 2026 · training-output inode exhaustion is a separate HOLD
+
+The owner-only `/zssh workers` receipt now checks inode capacity at the actual
+`/opt/fuckball-training` output path, not only free bytes. This check is
+admitted only after the output directory is observed as a stable mounted,
+local-block-backed, writable target; root capacity or an unverified mount is
+not substituted for the training filesystem.
+
+The receipt reports `inode_observation_attempted`, `inode_status`,
+`inodes_total`, `inodes_free`, `inodes_available`,
+`inodes_unavailable_percent` and `inode_pressure_hint`. At least 99%
+unavailable is `CRITICAL`, 95% is `HIGH`, and 90% is `ELEVATED`.
+Unknown inode counters prevent an otherwise eligible 30-GiB storage candidate
+from being described as ready. The operator action feed preserves the inode
+HOLD/review code even when a separate low-space or mount blocker is also
+present. This remains advisory: no training is started, no data is moved and
+no runner/service/queue/claim state is changed.
+
 # ChatGPT → GitHub Actions → VPS (no MCP, no Claude)
 
 This is an **independent owner-only control path** in zCloud for the existing
