@@ -422,8 +422,8 @@ Iedere bron draagt expliciet `claim_authorized=false`,
 `service_restart_authorized=false`, `merge_authorized=false` en
 `deploy_authorized=false`. Een oude bron wordt nooit als vrijgave
 voor nieuwe werkzaamheden of automatische recovery geïnterpreteerd.
-Zonder `--snapshot` kan `--previous` niet gebruikt worden; `--report`
-en `--snapshot` zijn bewust afzonderlijke create-only uitvoeracties.
+Zonder `--snapshot` of `--report` kan `--previous` niet gebruikt worden;
+`--report` en `--snapshot` zijn bewust afzonderlijke create-only uitvoeracties.
 
 ## Historische HTML: twee opgeslagen bronnen zonder VPS-toegang
 
@@ -447,7 +447,10 @@ onbekend schema of een verschil groter dan 72 uur.
 
 Het HTML toont expliciet de T0- en T1-tijd, dekkingsgraad, waargenomen
 statusovergangen en stabiele incidentcodes, plus de bij T1 **opgeslagen**
-capaciteitswaarden en CPU-aanbeveling. Voor nieuwe bronbestanden bewaart
+capaciteitswaarden en CPU-aanbeveling. De historische PSI-vergelijking houdt
+`full` en `some` apart vergelijkbaar: als één PSI-bron ontbreekt, blijft
+een betrouwbaar verschil voor de andere bron zichtbaar in plaats van beide
+metingen onterecht als onbekend te verbergen. Voor nieuwe bronbestanden bewaart
 zSentinel ook de waargenomen Linux-root-mount-identiteit en het totale
 volume. Het historische overzicht toont verschillen in beschikbare RAM,
 swapdruk en load, en toont een schijfdelta **uitsluitend** wanneer zowel
