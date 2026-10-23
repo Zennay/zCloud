@@ -99,6 +99,16 @@ authenticated_dashboard_ready() {
   curl --proto '=https' --noproxy '*' --fail --silent --max-time 12 \
     --max-filesize 2097152 --netrc-file "$netrc" "https://$DOMAIN/api/status" |
     python3 -c 'import datetime,json,sys; b=sys.stdin.buffer.read(2097153); assert len(b)<=2097152; x=json.loads(b); assert isinstance(x,dict) and isinstance(x.get("projects"),list); t=datetime.datetime.fromisoformat(x["time"].replace("Z","+00:00")); assert t.tzinfo and t.utcoffset() is not None; age=(datetime.datetime.now(datetime.timezone.utc)-t.astimezone(datetime.timezone.utc)).total_seconds(); assert -120<=age<=300' || return 1
+
+  # An authenticated HTML page and status alone are insufficient for the
+  # operator dashboard: require its actual queue and runner-control read APIs.
+  # Consume bounded JSON without ever printing queue prompts or worker data.
+  curl --proto '=https' --noproxy '*' --fail --silent --max-time 12 \
+    --max-filesize 4194304 --netrc-file "$netrc" "https://$DOMAIN/api/portfolio-queue" |
+    python3 -c 'import json,sys; b=sys.stdin.buffer.read(4194305); assert len(b)<=4194304; x=json.loads(b); assert isinstance(x,dict) and x.get("backend")=="sqlite" and isinstance(x.get("items"),list) and isinstance(x.get("allocation"),dict)' || return 1
+  curl --proto '=https' --noproxy '*' --fail --silent --max-time 12 \
+    --max-filesize 4194304 --netrc-file "$netrc" "https://$DOMAIN/api/runner-targets" |
+    python3 -c 'import json,sys; b=sys.stdin.buffer.read(4194305); assert len(b)<=4194304; x=json.loads(b); assert isinstance(x,dict) and isinstance(x.get("projects"),dict) and type(x.get("max_workers")) is int and x["max_workers"]>0' || return 1
 }
 
 SITE_ID=''
@@ -137,7 +147,7 @@ if [[ "$MODE" = --verify ]]; then
   dns_ready || die 'resolver DNS target does not match the approved host'
   public_requires_login || die 'anonymous dashboard or critical API endpoint is not protected'
   authenticated_dashboard_ready || die 'authenticated HTML/API response not verified; check private root-owned netrc file'
-  say 'authenticated_dashboard=HTML_AND_FRESH_API_VERIFIED'
+  say 'authenticated_dashboard=HTML_STATUS_QUEUE_AND_RUNNER_APIS_VERIFIED'
   exit 0
 fi
 
