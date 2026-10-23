@@ -23,7 +23,7 @@ flowchart LR
 
 ## Routing and trust boundary
 
-`capability_route.choose_execution_route(item)` supports metadata `{"execution_capability":"browser"|"system"|"none", "zssh_target_id":"zt_..."}`. If absent, it heuristically chooses browser for DOM/web automation terms or zSSH system for VPS/deployment/system terms. The hint reports `authorized: false` because **routing is not permission**.
+`capability_route.choose_execution_route(item)` supports metadata `{"execution_capability":"browser"|"system"|"none", "zssh_target_id":"zt_..."}`. If absent, it heuristically chooses browser for DOM/web automation terms or zSSH system for VPS/deployment/system terms. Persisted JSON is parsed strictly: duplicate keys are rejected, and a supplied malformed `zssh_target_id` disables the route instead of silently falling back to a default target. The hint reports `authorized: false` because **routing is not permission**.
 
 `lane_generator.classify_backlog_item` and `generate_execution_lanes` include this advisory `execution_route`. zCloud prompt generation advises `zssh_browser` only for claimed browser tasks; otherwise the existing zSSH tools. No queue record can authorize an arbitrary command or select a privileged account merely by setting metadata. The effective zSSH identity, paired target, allowed domains, restricted OS roots and human approvals remain authoritative.
 
