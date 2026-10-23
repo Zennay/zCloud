@@ -282,6 +282,14 @@ def _unavailable_report(
     source_coverage: dict | None = None,
 ) -> dict:
     return {
+        "schema_version": "zcloud-worker-scaling-report-v1",
+        "read_only_observation": True,
+        "claim_authorized": False,
+        "dispatch_authorized": False,
+        "scale_change_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "active_claim_verified": False,
         "generated_at": now.isoformat(),
         "window_hours": float(hours),
         "cutoff": cutoff.isoformat(),
@@ -434,6 +442,14 @@ def report(db: Path, hours: float = 12.0, project: str | None = None, now: datet
         "alerts": "observed" if alerts_source_available else "unavailable",
     }
     return {
+        "schema_version": "zcloud-worker-scaling-report-v1",
+        "read_only_observation": True,
+        "claim_authorized": False,
+        "dispatch_authorized": False,
+        "scale_change_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "active_claim_verified": False,
         "generated_at": now.isoformat(),
         "window_hours": window_hours,
         "cutoff": cutoff.isoformat(),
