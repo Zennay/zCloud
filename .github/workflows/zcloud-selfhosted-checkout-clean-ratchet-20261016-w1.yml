@@ -16,7 +16,6 @@ concurrency:
 jobs:
   trusted-event:
     name: Explicitly fail untrusted checkout hygiene PR events
-    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
     # Static source-only tests run on ephemeral hosted CI, never on production VPS.
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -43,7 +42,6 @@ jobs:
           echo "CHECKOUT_CLEAN_EVENT_ADMITTED=1"
   validate:
     needs: trusted-event
-    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
     # Static source-only tests run on ephemeral hosted CI, never on production VPS.
     runs-on: ubuntu-latest
     timeout-minutes: 10
