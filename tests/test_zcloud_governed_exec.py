@@ -683,6 +683,60 @@ class GovernedExecTests(unittest.TestCase):
         conn.commit()
         return conn
 
+    def test_protected_admission_retains_expired_foreign_heavy_recovery_row(self):
+        # Runtime.acquire_resource prunes expired rows in every pool. A
+        # protected zCloud launch must continue WITHOUT destroying the
+        # only recovery evidence for a potentially orphaned heavy job
+        # on another VPS or previous boot.
+        conn = self._connect()
+        old_metadata = {
+            "executor": "zcloud-governed-exec",
+            "host_boot_id": "foreign-vps-boot",
+            "pid": 43210,
+        }
+        conn.execute(
+            "INSERT INTO resource_leases ("
+            "project_id,owner_id,pool,workload_class,cpu_soft_cores,"
+            "memory_soft_mb,acquired_at,lease_until,metadata_json"
+            ") VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                "ftmo", "orphan-owner", "heavy", "research-heavy", 1.0,
+                1024, "2020-01-01T00:00:00+00:00",
+                "2020-01-01T00:01:00+00:00", json.dumps(old_metadata),
+            ),
+        )
+        conn.commit()
+        marker = self.root / "protected-with-orphan.txt"
+        try:
+            with mock.patch.dict(os.environ, {"ZCLOUD_RESOURCE_DB": str(self.db)}):
+                rc = governed.run_governed(
+                    self.db, "cloud", "healthy-control-plane",
+                    [
+                        sys.executable, "-c",
+                        f"from pathlib import Path; Path({str(marker)!r}).write_text('healthy')",
+                    ],
+                )
+            self.assertEqual(0, rc)
+            self.assertEqual("healthy", marker.read_text())
+            old = conn.execute(
+                "SELECT metadata_json,lease_until FROM resource_leases "
+                "WHERE project_id='ftmo' AND owner_id='orphan-owner'"
+            ).fetchone()
+            self.assertIsNotNone(old, "protected admission deleted orphan evidence")
+            self.assertEqual(old_metadata, json.loads(old["metadata_json"]))
+            from datetime import datetime, timezone
+            self.assertGreater(
+                datetime.fromisoformat(old["lease_until"]),
+                datetime.now(timezone.utc),
+            )
+            self.assertEqual(
+                0, conn.execute(
+                    "SELECT COUNT(*) FROM resource_leases WHERE pool='protected'"
+                ).fetchone()[0],
+            )
+        finally:
+            conn.close()
+
     def test_expired_foreign_heavy_lease_never_uses_local_pid_probe(self):
         conn = self._expired_lease_connection({
             "pid": 43210, "host_boot_id": "different-vps-boot",
