@@ -240,6 +240,51 @@ a running worker, bypass an external-disk preflight, or infer free system-disk
 capacity from this receipt. No shell, device writes, service actions, claims,
 training jobs or file migration are performed by this advisory.
 
+## zSentinel: actual Fuckball training-output path (separate from archive)
+
+The same owner-only read-only `/zssh workers` receipt now includes
+`host_capacity_observation.training_output_observation` for the fixed
+`/opt/fuckball-training` path. Unlike the archive advisory, this reports the
+**actual known training output location**. It never creates the directory,
+remounts it, copies data, restarts a service or starts training.
+
+- If the directory is on the **same filesystem as `/`**, the status is
+  `training_output_on_root` and the operator action is
+  `HOLD_TRAINING_SYSTEM_DISK`, even when root has hundreds of GiB free.
+- Missing, inaccessible, non-directory or symlink paths remain explicit
+  `path_missing`, `path_unavailable`, or
+  `path_not_directory_or_symlink` with safe owner follow-ups.
+- When the directory is on another filesystem, a stable exact mountpoint,
+  bounded local block-device backing, a non-read-only flag and **30 GiB free**
+  are all necessary for `training_capacity_candidate_owner_proof_required`.
+  An unverified mount, FUSE/rclone/network source, read-only mount, low free
+  space or changed source gets a specific HOLD/refresh code.
+- Source identity (`st_dev`, `st_ino`), direct mount membership, block
+  backing, read-only flag and measured capacity are sampled twice around
+  `statvfs`. Unstable observations are not credited. The public receipt
+  exposes only enums, bounded capacity and booleans, not device/mount IDs,
+  inode numbers, paths from kernel evidence or secret content.
+- Every training receipt explicitly preserves
+  `physical_external_disk_verified=false`,
+  `dataset_checkpoint_temp_paths_verified=false`,
+  `application_write_permissions_verified=false`,
+  `training_running_verified=false`,
+  `training_start_authorized=false`, and `mutation_performed=false`.
+
+A candidate remains **HOLD for training** until the real launcher on the
+correct host independently verifies a separate *physical* block device,
+application-user write access and all model/checkpoint/dataset/log/cache/temp
+paths. An observed second filesystem can still be a partition on the system
+disk. The existing reviewed launcher and release-owner gate are authoritative.
+This diagnostic must never bypass them or claim training is live.
+
+On the new VPS observed on 23 October, the zSSH read-only `df -h
+/opt/fuckball-training` command returned the root device `/dev/sda2`.
+This is **host evidence at one moment**, not proof of any subsequent runtime
+state. The independent migration issue
+[Zennay/zCloud#1588](https://github.com/Zennay/zCloud/issues/1588)
+contains the operator handoff.
+
 ## zSentinel process identity and PID reuse
 
 The current `Runner.Worker` is identified through the bounded parent chain and excluded from the other-worker count using the pair `PID + /proc/<pid>/stat start_ticks`, not PID alone. This prevents a process that reuses the same PID between ancestry discovery and the inventory scan from being silently treated as the current worker. The public receipt exposes only the basis label `pid_and_start_ticks` or `unknown`; it never returns raw PIDs or start ticks. A missing self-identity remains unknown and does not authorize takeover.
