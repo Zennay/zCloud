@@ -293,15 +293,19 @@ def memory_oom_changes(previous, current, same_boot):
     a, b = previous.get("capacity"), current.get("capacity")
     if not isinstance(a, dict) or not isinstance(b, dict):
         a, b = {}, {}
-    def pressure(src, name):
+    def pressure(src, name, kind):
         number = src.get(name)
-        return (number if src.get("memory_psi_observed") is True
+        flag = src.get(f"memory_psi_{kind}_observed")
+        observed = flag if type(flag) is bool else src.get("memory_psi_observed") is True
+        return (number if observed is True
                 and type(number) in (int, float) and math.isfinite(number)
                 and 0 <= number <= 100 else None)
-    before_full = pressure(a, "memory_psi_full_avg10_percent")
-    after_full = pressure(b, "memory_psi_full_avg10_percent")
-    before_some = pressure(a, "memory_psi_some_avg10_percent")
-    after_some = pressure(b, "memory_psi_some_avg10_percent")
+    before_full = pressure(a, "memory_psi_full_avg10_percent", "full")
+    after_full = pressure(b, "memory_psi_full_avg10_percent", "full")
+    before_some = pressure(a, "memory_psi_some_avg10_percent", "some")
+    after_some = pressure(b, "memory_psi_some_avg10_percent", "some")
+    full_comparable = before_full is not None and after_full is not None
+    some_comparable = before_some is not None and after_some is not None
     before_kills = a.get("kernel_oom_kills_since_boot")
     after_kills = b.get("kernel_oom_kills_since_boot")
     counter_comparable = (
@@ -312,9 +316,9 @@ def memory_oom_changes(previous, current, same_boot):
         and 0 <= before_kills <= after_kills < 2 ** 63
     )
     return {
-        "memory_psi_source_comparable": (
-            before_full is not None and after_full is not None
-            and before_some is not None and after_some is not None),
+        "memory_psi_source_comparable": full_comparable and some_comparable,
+        "memory_psi_full_comparable": full_comparable,
+        "memory_psi_some_comparable": some_comparable,
         "previous_psi_full_avg10_percent": before_full,
         "current_psi_full_avg10_percent": after_full,
         "previous_psi_some_avg10_percent": before_some,
