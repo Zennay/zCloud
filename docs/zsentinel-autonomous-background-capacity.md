@@ -170,10 +170,12 @@ its command line is present. The process scan is capped at 8,192 numeric
 or reading an oversized/unreadable command line makes source coverage
 incomplete; truncated prefixes are never used to classify a runner. An idle
 listener alone is not a running job.
-Disappearing processes during the scan are ignored. If a still-running process
-cannot be inspected, or a Runner.Worker has no readable argv, source coverage
-is incomplete and the conservative band applies. A failed whole-/proc
-observation likewise cannot be treated as proof of idle runner capacity.
+A process that disappears with `FileNotFoundError` during the scan is ignored.
+Any other read/permission error is UNKNOWN; a second path-existence probe is not
+used to guess that an inaccessible process disappeared. If a Runner.Worker has
+no readable argv, source coverage is incomplete and the conservative band
+applies. A failed whole-/proc observation likewise cannot be treated as proof
+of idle runner capacity.
 The `zcloud_runner_active` field is a **path marker**, not proof that an
 AI browser worker or merge job is active. Load, memory, swap and root disk
 are independent capacity indicators; CPU throttling does not actually free
