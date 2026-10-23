@@ -855,3 +855,28 @@ werkbak vallen. De samenvatting meldt dan expliciet dat niet alle
 P0/P1-groepen zichtbaar zijn; 8 vooraf geselecteerde kandidaten worden
 nooit meer ten onrechte als 8 getoonde kaarten geteld. De volledige
 geselecteerde bron is daarmee niet bewezen verwerkt of vrijgegeven.
+
+
+## Fresh runtime-contract fault routing
+
+The offline diagnosis input may include an explicit `runtime.error_kind` of
+`missing_explicit_runtime_contract` together with its own timezone-aware
+`runtime.error_observed_at`. The outer snapshot timestamp does not refresh
+this separate service-log evidence. The error must be no older than ten
+minutes; stale evidence is returned as UNKNOWN and appears in the separate
+`runtime_contract_faults` collection.
+
+A fresh missing-contract fault is classified as `blocked` only when no
+active owner/serialized release is declared. If an owner PR or runtime
+ownership lock exists, it is classified as `owner_held` and the same fault
+is surfaced without taking over the owner's files. The next action is to
+complete the existing owner-approved contract change—not restart, retry,
+claim, or deploy based on a log line.
+
+**Live handoff, 23 October 2026 02:50 UTC:** read-only zSSH reported
+`zennay-cloud.service` active on
+`VM-7eb5ee16-2c71-440d-b7fd-8095d204e930`, while its current log still
+contained `ValueError: missing explicit runtime contract for project 'browseragent'`.
+Existing [PR #1599](https://github.com/Zennay/zCloud/pull/1599) remains the
+runtime-contract owner's work; this diagnosis feature does not modify it or
+claim production recovery.
