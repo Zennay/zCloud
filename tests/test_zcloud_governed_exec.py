@@ -92,6 +92,57 @@ class GovernedExecTests(unittest.TestCase):
         runtime.init_tables(conn)
         return conn
 
+    def test_missing_pinned_sqlite_must_not_create_new_heavy_authority(self):
+        # Production mounts can disappear during new-VPS migration. An
+        # explicit canonical pin must never silently initialize a fresh
+        # one-heavy-slot resource DB at that same path.
+        missing = self.root / "missing-canonical-history.db"
+        with mock.patch.dict(os.environ, {"ZCLOUD_RESOURCE_DB": str(missing)}):
+            governed._assert_shared_resource_db(missing)
+            with self.assertRaisesRegex(
+                RuntimeError, "resource_shared_database_unavailable"
+            ):
+                governed.connect(missing)
+        self.assertFalse(missing.exists())
+
+    def test_existing_uninitialized_pinned_sqlite_is_rejected_without_schema_write(self):
+        # An unrelated SQLite file is not permission to create the
+        # resource_leases table and pretend it is the shared authority.
+        unrelated = self.root / "unrelated-existing.sqlite"
+        with sqlite3.connect(unrelated) as conn:
+            conn.execute("CREATE TABLE unrelated_payload (value TEXT)")
+        with mock.patch.dict(os.environ, {"ZCLOUD_RESOURCE_DB": str(unrelated)}):
+            with self.assertRaisesRegex(
+                RuntimeError, "resource_shared_database_schema_unavailable"
+            ):
+                governed.connect(unrelated)
+        with sqlite3.connect(unrelated) as conn:
+            tables = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+        self.assertEqual({"unrelated_payload"}, tables)
+
+    def test_pinned_sqlite_inode_swap_invalidates_original_lease_authority(self):
+        # Mount replacements must fence the *old* lease generation. Test
+        # only disposable files: the actual VPS history.db is not read.
+        canonical = self.root / "pinned-original.sqlite"
+        with sqlite3.connect(canonical) as conn:
+            runtime.init_tables(conn)
+        with mock.patch.dict(os.environ, {"ZCLOUD_RESOURCE_DB": str(canonical)}):
+            original_id = governed._pinned_database_identity(canonical)
+            with governed.connect(canonical) as conn:
+                self.assertIsNotNone(original_id)
+            replacement = self.root / "replacement.sqlite"
+            with sqlite3.connect(replacement) as conn:
+                runtime.init_tables(conn)
+            os.replace(replacement, canonical)
+            with self.assertRaisesRegex(
+                RuntimeError, "resource_shared_database_identity_changed"
+            ):
+                governed._assert_database_identity(canonical, original_id)
+
     def test_busy_heavy_pool_fails_closed_before_child_starts(self):
         conn = self._connect()
         self.assertTrue(runtime.acquire_resource(conn, "ftmo", "holder")["acquired"])
