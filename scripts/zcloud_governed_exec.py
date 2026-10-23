@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import math
 import os
@@ -173,8 +174,8 @@ def run_governed(
         conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute(
             "SELECT 1 FROM resource_leases WHERE project_id=? AND owner_id=? "
-            "AND lease_until>strftime('%Y-%m-%dT%H:%M:%f', 'now')",
-            (project_id, owner_id),
+            "AND lease_until>?",
+            (project_id, owner_id, datetime.now(timezone.utc).isoformat()),
         ).fetchone()
         if existing:
             conn.rollback()
