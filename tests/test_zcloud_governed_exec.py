@@ -185,6 +185,9 @@ class GovernedExecTests(unittest.TestCase):
             def __truediv__(self, other):
                 return FakePath(self.value.rstrip("/") + "/" + str(other))
 
+            def exists(self):
+                return self.value in values
+
             def read_text(self):
                 return values[self.value]
 
@@ -198,6 +201,14 @@ class GovernedExecTests(unittest.TestCase):
             self.assertEqual(
                 (4608, 4544, None),
                 governed._effective_cgroup_memory_limits_mb(11000),
+            )
+            # A real cgroup-v2 mount root may omit memory.max entirely.
+            del values["/sys/fs/cgroup/memory.max"]
+            self.assertEqual(
+                (4608, 4608, 4608),
+                governed._effective_cgroup_memory_limits_mb(
+                    11000, dedicated_heavy_leaf=True
+                ),
             )
             values["/sys/fs/cgroup/user.slice/memory.max"] = str(2048 * mib)
             values["/sys/fs/cgroup/user.slice/memory.current"] = "0"
