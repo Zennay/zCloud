@@ -22,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from zsentinel_product_issue_inbox import explicit_qa_only_pr
+from zsentinel_product_issue_inbox import QA as QA_ONLY_TITLE
 from zsentinel_private_report_writer import write_private_report
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -40,6 +40,30 @@ MAX_SOURCE_FILES = 80
 SHA = re.compile(r"^[a-f0-9]{40}$")
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
+
+# This PR is intentionally mergeable on current main WITHOUT depending on the
+# separately unmerged issue-inbox PR. Keep the QA-only decision in sync with
+# that branch's product predicate until both branches can be integrated.
+def explicit_qa_only_pr(pr):
+    """Conservative product selection; QA-only PRs still appear in collisions."""
+    if not isinstance(pr, dict):
+        raise ValueError("invalid PR metadata")
+    title = pr.get("title")
+    labels = pr.get("labels")
+    head = pr.get("head")
+    head_ref = head.get("ref") if isinstance(head, dict) else None
+    marked = isinstance(labels, list) and any(
+        isinstance(label, dict)
+        and isinstance(label.get("name"), str)
+        and label["name"].lower() in (
+            "qa", "qa-only", "tests-only", "quality-validation",
+            "qa-validation", "regression")
+        for label in labels[:30])
+    branch_only = isinstance(head_ref, str) and head_ref.lower().startswith(
+        ("qa/", "test/", "tests/", "quality-validation/"))
+    return bool((isinstance(title, str) and QA_ONLY_TITLE.match(title))
+                or marked or branch_only)
+
 
 COVERAGE_REASON_LABELS = {
     "open_pr_snapshot_changed_or_duplicate":
