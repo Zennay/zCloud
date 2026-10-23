@@ -149,6 +149,51 @@ class GovernedExecTests(unittest.TestCase):
             holder.close()
 
     @unittest.skipUnless(sys.platform == "linux", "Linux process groups required")
+    @unittest.skipUnless(sys.platform == "linux", "Linux process groups required")
+    def test_group_memory_violation_stops_child_and_releases_lease(self):
+        # No actual memory stress: force one over-budget aggregate RSS
+        # observation against a bounded, sleeping test-only child.
+        marker = self.root / "memory-child-pid.txt"
+        program = (
+            "import os,time; from pathlib import Path; "
+            f"Path({str(marker)!r}).write_text(str(os.getpid())); "
+            "time.sleep(8)"
+        )
+        with mock.patch.object(
+            governed, "_group_rss_bytes", return_value=2 * 1024 * 1024 * 1024
+        ) as sample:
+            rc = governed.run_governed(
+                self.db,
+                "ftmo",
+                "memory-breach-test",
+                [sys.executable, "-c", program],
+            )
+        self.assertEqual(75, rc)
+        sample.assert_called()
+        with self._connect() as conn:
+            self.assertEqual(
+                0, conn.execute(
+                    "SELECT COUNT(*) FROM resource_leases "
+                    "WHERE project_id='ftmo' AND owner_id='memory-breach-test'"
+                ).fetchone()[0],
+            )
+        if marker.exists():
+            pid = int(marker.read_text())
+            # A process can be awaiting reaping as a zombie, which is not
+            # a running research workload.
+            deadline = time.monotonic() + 2.0
+            running = True
+            while time.monotonic() < deadline:
+                status = Path(f"/proc/{pid}/stat")
+                if not status.exists():
+                    running = False
+                    break
+                if status.read_text().rpartition(")")[2].split()[0] in {"Z", "X"}:
+                    running = False
+                    break
+                time.sleep(0.05)
+            self.assertFalse(running, "over-budget child survived release")
+
     @unittest.skipUnless(sys.platform == "linux", "Linux signals required")
     def test_sigterm_stops_running_child_before_releasing_lease(self):
         # Terminate the test-only wrapper, not any real VPS service.
