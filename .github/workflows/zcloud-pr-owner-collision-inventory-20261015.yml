@@ -1,0 +1,282 @@
+name: zCloud PR ownership collision inventory (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      current_branch:
+        description: "Optional PR-less branch to compare against recent PR-less owners"
+        required: false
+        type: string
+        default: ""
+      recent_days:
+        description: "Recency window for candidate owners (1-30 days)"
+        required: false
+        type: number
+        default: 7
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: zcloud-pr-owner-collision-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable source without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+          clean: true
+
+      - name: Prove exact current main with canonical remote
+        shell: bash
+        env:
+          EXPECTED: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          current="$(timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test -n "$current"
+          test "$current" = "$EXPECTED"
+
+      - name: Run focused fail-closed tests (hosted only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_deployops_pr_owner_collision_20261015 tests.test_zcloud_deployops_pr_owner_snapshot_20261015
+
+      - name: Fetch exact-main, fully paginated PR ownership metadata without mutation
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.zcloud_deployops_pr_owner_snapshot_20261015 > "$RUNNER_TEMP/zcloud-pr-ownership-input.json"
+
+      - name: Fetch complete PR-less branch inventory without mutation
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.zcloud_deployops_prless_branch_inventory_20261021 > "$RUNNER_TEMP/zcloud-prless-branch-inventory.json"
+
+      - name: Run optional current-slice ownership guard (read-only)
+        if: ${{ inputs.current_branch != '' }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CURRENT_BRANCH: ${{ inputs.current_branch }}
+          RECENT_DAYS: ${{ inputs.recent_days }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RECENT_DAYS" =~ ^[0-9]+$ ]] || (( RECENT_DAYS < 1 || RECENT_DAYS > 30 )); then
+            printf '%s\n' '{"state":"refused","reason":"invalid_recent_window","mutation_performed":false,"release_authorized":false,"deployment_authorized":false}' > "$RUNNER_TEMP/zcloud-current-slice.json"
+            printf '2\n' > "$RUNNER_TEMP/zcloud-current-slice-command-status"
+            exit 0
+          fi
+          set +e
+          python3 scripts/zcloud_deployops_prless_branch_inventory_20261021.py \
+            --current-branch "$CURRENT_BRANCH" --recent-days "$RECENT_DAYS" \
+            > "$RUNNER_TEMP/zcloud-current-slice.json"
+          status="$?"
+          set -e
+          printf '%s\n' "$status" > "$RUNNER_TEMP/zcloud-current-slice-command-status"
+          # The later summary step performs the final exact-main reread before
+          # returning conflict/refusal status; do not short-circuit that gate.
+          exit 0
+
+      - name: Print bounded advisory result and fail on collisions or incomplete input
+        shell: bash
+        env:
+          REQUESTED_CURRENT_BRANCH: ${{ inputs.current_branch }}
+          REQUESTED_RECENT_DAYS: ${{ inputs.recent_days }}
+        run: |
+          set -euo pipefail
+          set +e
+          python3 scripts/zcloud_deployops_pr_owner_collision_20261015.py \
+            --snapshot "$RUNNER_TEMP/zcloud-pr-ownership-input.json" > "$RUNNER_TEMP/zcloud-pr-ownership-result.json"
+          status="$?"
+          set -e
+          STATUS="$status" python3 - <<'PY'
+          import json, os
+          from html import escape as html_escape
+          from pathlib import Path
+          temp = Path(os.environ["RUNNER_TEMP"])
+          def code(value):
+              return "<code>" + html_escape(str(value), quote=True) + "</code>"
+          result = json.loads((temp / "zcloud-pr-ownership-result.json").read_text())
+          branches = json.loads((temp / "zcloud-prless-branch-inventory.json").read_text())
+          branch_ok = (
+              branches.get("policy") == "zcloud-deployops-prless-branch-inventory-v1"
+              and branches.get("branch_inventory_complete") is True
+              and branches.get("open_pr_inventory_complete") is True
+              and branches.get("main_sha") == result.get("main_sha") == os.environ["GITHUB_SHA"]
+              and branches.get("mutation_performed") is False
+              and branches.get("release_authorized") is False
+              and branches.get("deployment_authorized") is False
+              and type(branches.get("branches")) is list
+              and type(branches.get("prless_branches")) is list
+              and type(branches.get("prless_branch_count")) is int
+              and branches["prless_branch_count"] == len(branches["prless_branches"])
+          )
+          if not branch_ok:
+              (Path(os.environ["GITHUB_STEP_SUMMARY"])).write_text(
+                  "## zCloud owner inventory refused\n\n"
+                  "PR and branch evidence did not share a complete, stable exact-main identity. "
+                  "No ownership or release conclusion is available.\n")
+              raise SystemExit(2)
+          lines = [
+              "## zCloud open-PR file ownership + PR-less branch inventory (advisory only)",
+              "No release, deployment, production or branch-deletion authority.",
+              "PR-less means no same-repository open PR was observed for that branch; it does not mean abandoned or safe to delete.",
+              "Both bounded inventories were independently re-read and bound to the same exact main SHA.",
+          ]
+          current_slice_exit = 0
+          if result.get("policy") == "zcloud-deployops-pr-owner-collision-v1":
+              lines.extend([
+                  f"Main snapshot SHA: {code(result['main_sha'])}",
+                  f"Evidence fingerprint (unverified SHA-256): {code(result['snapshot_sha256'])}",
+                  f"Open PRs checked: {result['prs_scanned']}",
+                  f"Changed files checked: {result['files_scanned']}",
+                  f"Stale-base PRs: {result['stale_base_count']}",
+                  f"Exact-path collisions: {result['collision_count']}",
+                  f"File-versus-directory collisions: {result['hierarchy_collision_count']}",
+                  f"Conflicting PR groups: {result['conflict_group_count']}",
+                  f"PRs with file conflicts: {result['conflicted_pr_count']}",
+                  f"File-disjoint PRs in snapshot (NOT reviewed): {result['uncontested_pr_count']}",
+                  f"Branches checked: {branches['branches_scanned']}",
+                  f"Open PR heads checked for branch matching: {branches['open_prs_scanned']}",
+                  f"PR-less branches: {branches['prless_branch_count']}",
+                  f"Branch inventory fingerprint (unverified SHA-256): {code(branches['snapshot_sha256_unverified'])}",
+              ])
+              for branch_row in branches["prless_branches"][:20]:
+                  protection = "protected" if branch_row["protected"] else "not protected"
+                  lines.append(
+                      f"- PR-less branch {code(branch_row['name'])} @ {code(branch_row['head_sha'][:12])} ({protection})")
+              if branches["prless_branch_count"] > 20:
+                  lines.append("Remaining PR-less branches are in the attached bounded JSON artifact.")
+              for index, group in enumerate(result["conflict_groups"][:12], 1):
+                  ids = ", ".join(f"#{n}" for n in group["prs"][:12])
+                  if group["pr_ids_truncated"] or len(group["prs"]) > 12:
+                      ids += ", …"
+                  lines.append(
+                      f"- Conflict group {index}: {group['pr_count']} PRs; " + ids)
+              if result["conflict_group_report_truncated"]:
+                  lines.append("More conflict groups omitted; see bounded JSON output.")
+              for row in result["hierarchy_collisions"][:10]:
+                  lines.append(
+                      f"- File/map: {code(row['ancestor'])} ↔ {code(row['descendant'])}"
+                      f" ({row['pr_count']} PRs)")
+              if result["hierarchy_collision_report_truncated"]:
+                  lines.append("More file/map collisions omitted.")
+              for row in result["collisions"][:20]:
+                  lines.append(f"- {code(row['path'])}: " + ", ".join(
+                      f"#{n}" for n in row["prs"][:20]))
+          else:
+              lines.append("Inventory was refused; no completeness or ownership claim.")
+          current_path = temp / "zcloud-current-slice.json"
+          current_status_path = temp / "zcloud-current-slice-command-status"
+          if current_path.exists() or current_status_path.exists():
+              try:
+                  command_status = int(current_status_path.read_text().strip())
+                  slice_report = json.loads(current_path.read_text())
+                  current = slice_report.get("current_slice")
+                  expected_days = int(os.environ["REQUESTED_RECENT_DAYS"])
+                  valid = (
+                      slice_report.get("policy") == "zcloud-deployops-prless-current-slice-v1"
+                      and slice_report.get("repo") == "Zennay/zCloud"
+                      and slice_report.get("main_sha") == result.get("main_sha") == os.environ["GITHUB_SHA"]
+                      and slice_report.get("branch_inventory_complete") is True
+                      and slice_report.get("open_pr_inventory_complete") is True
+                      and slice_report.get("mutation_performed") is False
+                      and slice_report.get("release_authorized") is False
+                      and slice_report.get("deployment_authorized") is False
+                      and type(current) is dict
+                      and current.get("current_branch") == os.environ["REQUESTED_CURRENT_BRANCH"]
+                      and current.get("recent_window_days") == expected_days
+                      and current.get("main_sha") == os.environ["GITHUB_SHA"]
+                      and current.get("state") in {"clear", "conflict"}
+                      and type(current.get("overlap_count")) is int
+                      and current.get("mutation_performed") is False
+                      and current.get("release_authorized") is False
+                      and current.get("deployment_authorized") is False
+                      and type(current.get("recent_owner_branches")) is list
+                      and type(current.get("overlaps")) is list
+                  )
+                  expected_status = 1 if type(current) is dict and current.get("state") == "conflict" else 0
+                  if not valid or command_status != expected_status:
+                      current_slice_exit = 2
+                      lines.extend([
+                          "## Current-slice branch ownership guard",
+                          "The current-slice evidence was refused or inconsistent; no clear ownership result is available.",
+                      ])
+                  else:
+                      current_slice_exit = expected_status
+                      lines.extend([
+                          "## Current-slice branch ownership guard",
+                          f"State: **{current['state'].upper()}**",
+                          f"Current branch: {code(current['current_branch'])} @ {code(current['current_head_sha'][:12])}",
+                          f"Exact main SHA: {code(current['main_sha'])}",
+                          f"Recency window: {current['recent_window_days']} days",
+                          f"Recent ahead PR-less owners: {current['recent_prless_ahead_owner_count']}",
+                          f"Path overlaps: {current['overlap_count']}",
+                          "This is read-only advisory evidence, not merge/release authorization.",
+                      ])
+                      for overlap in current["overlaps"][:10]:
+                          lines.append(
+                              f"- {code(overlap['current_path'])} ↔ {code(overlap['owner_path'])} "
+                              f"on {code(overlap['owner_branch'])} ({code(overlap['relation'])})")
+                      if current["overlaps_omitted"]:
+                          lines.append("Additional overlaps omitted from the bounded preview.")
+              except Exception:
+                  current_slice_exit = 2
+                  lines.extend([
+                      "## Current-slice branch ownership guard",
+                      "The report could not be read as bounded JSON; no clear ownership result is available.",
+                  ])
+          (temp / "zcloud-current-slice-exit").write_text(str(current_slice_exit))
+          (Path(os.environ["GITHUB_STEP_SUMMARY"])).write_text("\n".join(lines) + "\n")
+          PY
+          # Snapshot evidence cannot remain current after a new main commit.
+          # This final anonymous re-read is independent of the GitHub token.
+          current="$(GIT_TERMINAL_PROMPT=0 timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test -n "$current"
+          test "$current" = "$GITHUB_SHA"
+          current_slice_status=0
+          if [ -f "$RUNNER_TEMP/zcloud-current-slice-exit" ]; then
+            current_slice_status="$(cat "$RUNNER_TEMP/zcloud-current-slice-exit")"
+          fi
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          exit "$current_slice_status"
+
+      - name: Upload bounded read-only PR and branch inventory evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: zcloud-pr-owner-inventory-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zcloud-pr-ownership-input.json
+            ${{ runner.temp }}/zcloud-pr-ownership-result.json
+            ${{ runner.temp }}/zcloud-prless-branch-inventory.json
+            ${{ runner.temp }}/zcloud-current-slice.json
+            ${{ runner.temp }}/zcloud-current-slice-command-status
+          if-no-files-found: warn
+          retention-days: 14
