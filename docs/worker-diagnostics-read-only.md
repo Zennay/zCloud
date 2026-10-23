@@ -62,7 +62,14 @@ incident response exposes `alerts_source_status="unavailable"`,
 unavailable alert source is **not** a clean zero-alert observation.
 `GET /api/v1/alerts` exposes the same source status and completeness fields
 while preserving the existing `time` and `alerts` fields. A normal empty
-source is `observed` with an empty array. The legacy `GET /api/alerts`
+source is `observed` with an empty array. Both the incident panel (max 80
+recent alerts) and v1 alert API (max 20 important alerts) also disclose
+`alerts_window_has_more` and `alerts_window_complete`. They obtain one
+extra row to detect an incomplete bounded window; a missing source reports
+`null` for `has_more` and `false` for completeness rather than fabricating
+an empty complete snapshot. These fields describe the **returned alert
+window**, not all historical alert evidence or a live worker recovery.
+The legacy `GET /api/alerts`
 remains an array for backward compatibility and does not carry a source
 receipt; use the incident panel or v1 route when completeness matters.
 
