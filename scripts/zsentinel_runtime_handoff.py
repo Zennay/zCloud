@@ -437,6 +437,7 @@ def _notion_owner_status_summary(observed, source_mode, registry):
                 "status": status, "page_budget": budget,
                 "pages_read": row["pages_read"],
                 "observed_rows": row["observed_rows"],
+                "unresolved_project_relations": row["unresolved_project_relations"],
                 "coverage": row["coverage"], "owner_verified": False,
             })
         if (type(observed.get("total_pages_read")) is not int
@@ -818,6 +819,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     # suggest reclaim/retry, including when every Notion field is empty.
     notion_clock_review_count = 0
     notion_clock_review_truncated = False
+    notion_relation_owner_review_count = 0
     if (notion_owner_status is not None
             and notion_owner_status["coverage"] in
             ("live_readonly_bounded", "live_readonly_incomplete")
@@ -857,6 +859,36 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             card["notion_claim_owner_verified"] = False
             card["queue_lease_same_work_verified"] = False
             cards.append(card)
+    # An unresolved Project relation cannot be assigned to a guessed project
+    # owner. Surface one cloud registry-owner handoff, P1 only when that SAME
+    # source status window contains a Claimed/Running row; Verifying-only is P2.
+    # This does not suggest that the underlying worker lease is active or free.
+    if (notion_owner_status is not None
+            and notion_owner_status["coverage"] == "live_readonly_incomplete"
+            and notion_owner_status["source_age_seconds"] is not None
+            and notion_owner_status["source_age_seconds"] <= 600
+            and notion_owner_status["project_relation_coverage"] == "partial"):
+        relation_total = notion_owner_status["unresolved_project_relation_count"]
+        in_progress_relations = sum(
+            window["unresolved_project_relations"]
+            for window in notion_owner_status["status_windows"]
+            if window["status"] in ("Claimed", "Running"))
+        if relation_total > 0:
+            priority = "P1" if in_progress_relations else "P2"
+            card = _card(
+                priority, "cloud", "notion_project_relation_owner_review",
+                "Notion: " + str(relation_total) + " actieve statusregels zonder "
+                "canonieke Project-relatie, waarvan " + str(in_progress_relations) +
+                " Claimed/Running. Register-/taakeigenaar koppelt handmatig "
+                "de juiste bron en controleert bestaande claims; GEEN overname.",
+                source="live_bounded_notion_project_relation_unresolved")
+            card["notion_unresolved_project_relations"] = relation_total
+            card["notion_unresolved_claimed_running_relations"] = in_progress_relations
+            card["notion_observed_at_utc"] = notion_owner_status["observed_at_utc"]
+            card["notion_claim_owner_verified"] = False
+            card["queue_lease_same_work_verified"] = False
+            cards.append(card)
+            notion_relation_owner_review_count = 1
     pr_cards, pr_coverage = _observed_pr_owner_cards(pr_desk, registry)
     pr_change_source = decision.get("pr_gate_continuity")
     if pr_change_source is not None:
@@ -1624,6 +1656,7 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
                   "vps_capacity_owner_review": 5,
                   "vps_capacity_source_incomplete": 6,
                   "notion_claim_clock_owner_review": 8,
+                  "notion_project_relation_owner_review": 9,
                   "open_pr_owner_review": 7, "open_product_issue": 8}
     cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
                               c.get("review_by_utc", "9999"),
@@ -1634,6 +1667,9 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
     # not merely selected before the global P0/P1/PR limit.
     visible_notion = sum(
         row["kind"] == "notion_claim_clock_owner_review"
+        for row in cards[:MAX_ITEMS])
+    visible_relation = sum(
+        row["kind"] == "notion_project_relation_owner_review"
         for row in cards[:MAX_ITEMS])
     notion_clock_meta = {
         "visible": visible_notion,
@@ -1694,6 +1730,29 @@ def build_handoff(decision, registry=None, queue_trend=None, pr_desk=None):
             "runtime_recovered_verified": False,
         },
         "notion_owner_status_review": notion_owner_status,
+        "notion_project_relation_owner_review": {
+            "coverage": (
+                notion_owner_status["coverage"]
+                if notion_owner_status is not None
+                and notion_owner_status["coverage"] in
+                ("live_readonly_bounded", "live_readonly_incomplete")
+                and notion_owner_status["source_age_seconds"] is not None
+                and notion_owner_status["source_age_seconds"] <= 600
+                else "not_observed_or_stale"),
+            "source_count": (
+                notion_owner_status["unresolved_project_relation_count"]
+                if notion_owner_status is not None
+                and notion_owner_status["coverage"] in
+                ("live_readonly_bounded", "live_readonly_incomplete")
+                and notion_owner_status["source_age_seconds"] is not None
+                and notion_owner_status["source_age_seconds"] <= 600
+                else None),
+            "owner_card_shown": bool(visible_relation),
+            "owner_card_omitted": bool(notion_relation_owner_review_count and not visible_relation),
+            "source_only_not_owner_proof": True,
+            "claim_authorized": False, "retry_authorized": False,
+            "dispatch_authorized": False,
+        },
         "notion_claim_clock_owner_review": {
             "affected_project_groups_in_sample": notion_clock_review_count,
             "coverage": (
