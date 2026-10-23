@@ -19,7 +19,7 @@ IMPORT='import /etc/caddy/sites-enabled/*'
 die() { printf 'REFUSED: %s\n' "$*" >&2; exit 2; }
 [[ $# -le 1 ]] || die 'usage: --status | --apply'
 say() { printf '%s\n' "$*"; }
-[[ "$MODE" = --status || "$MODE" = --apply ]] || die 'usage: --status | --apply'
+[[ "$MODE" = --status || "$MODE" = --verify || "$MODE" = --apply ]] || die 'usage: --status | --verify | --apply'
 [[ "$(hostname)" = "$HOST" ]] || die 'wrong host'
 for cmd in curl python3 ss getent caddy systemctl stat flock awk sort grep mktemp chmod ln unlink date mv mkdir rm cat; do
   command -v "$cmd" >/dev/null || die "missing command: $cmd"
@@ -82,6 +82,25 @@ public_requires_login() {
   done
 }
 
+# Optional read-only authenticated end-to-end check. An operator may provide
+# a root-owned 0600 netrc file; never place secrets in arguments, logs, PRs or
+# service environment. This is a verification option, not a deploy grant.
+authenticated_dashboard_ready() {
+  local netrc="${ZCLOUD_DASHBOARD_NETRC:-}" metadata
+  [[ "$EUID" -eq 0 && "$netrc" == /* && -f "$netrc" && ! -L "$netrc" ]] || return 1
+  metadata="$(stat -c '%U:%G:%a:%s' -- "$netrc")" || return 1
+  case "$metadata" in root:root:600:*) ;; *) return 1 ;; esac
+  [[ "${metadata##*:}" =~ ^[0-9]+$ ]] || return 1
+  (( ${metadata##*:} > 0 && ${metadata##*:} <= 4096 )) || return 1
+
+  curl --proto '=https' --noproxy '*' --fail --silent --max-time 12 \
+    --max-filesize 1048576 --netrc-file "$netrc" "https://$DOMAIN/" |
+    python3 -c 'import sys; b=sys.stdin.buffer.read(1048577); t=b.decode("utf-8","replace").lower(); assert len(b)<=1048576 and "<html" in t and "</html>" in t and "<title>zcloud" in t' || return 1
+  curl --proto '=https' --noproxy '*' --fail --silent --max-time 12 \
+    --max-filesize 2097152 --netrc-file "$netrc" "https://$DOMAIN/api/status" |
+    python3 -c 'import datetime,json,sys; b=sys.stdin.buffer.read(2097153); assert len(b)<=2097152; x=json.loads(b); assert isinstance(x,dict) and isinstance(x.get("projects"),list); t=datetime.datetime.fromisoformat(x["time"].replace("Z","+00:00")); assert t.tzinfo and t.utcoffset() is not None; age=(datetime.datetime.now(datetime.timezone.utc)-t.astimezone(datetime.timezone.utc)).total_seconds(); assert -120<=age<=300' || return 1
+}
+
 SITE_ID=''
 quarantine_dir_ready() {
   [[ ! -L "$QUARANTINE" ]] || return 1
@@ -112,6 +131,15 @@ if import_ready; then say 'caddy_import=ready'; else say 'caddy_import=missing';
 if auth_ready; then say 'auth=valid'; else say 'auth=missing_or_invalid'; fi
 if systemctl is-active --quiet caddy; then say 'caddy=active'; else say 'caddy=inactive'; fi
 if public_requires_login; then say 'external_https=homepage_and_critical_api_auth_required'; else say 'external_https=auth_not_proven_for_all_paths'; fi
+
+if [[ "$MODE" = --verify ]]; then
+  backend_ready || die 'backend cannot be verified as fresh and loopback-only'
+  dns_ready || die 'resolver DNS target does not match the approved host'
+  public_requires_login || die 'anonymous dashboard or critical API endpoint is not protected'
+  authenticated_dashboard_ready || die 'authenticated HTML/API response not verified; check private root-owned netrc file'
+  say 'authenticated_dashboard=HTML_AND_FRESH_API_VERIFIED'
+  exit 0
+fi
 
 [[ "$MODE" = --apply ]] || exit 0
 [[ "$(printenv ZCLOUD_DNS_CUTOVER_CONFIRMED || true)" = yes ]] ||
