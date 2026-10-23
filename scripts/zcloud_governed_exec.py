@@ -38,8 +38,20 @@ def connect(path: Path):
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=15000")
-        runtime.init_tables(conn)
-        conn.commit()  # admission below opens its own explicit write transaction
+        if os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+            # An existing, unrelated SQLite database at the pinned path
+            # must not be silently initialized as an empty resource pool.
+            columns = {row["name"] for row in conn.execute(
+                "PRAGMA table_info(resource_leases)"
+            )}
+            required = {"project_id", "owner_id", "pool", "workload_class",
+                        "cpu_soft_cores", "memory_soft_mb", "acquired_at",
+                        "lease_until", "metadata_json"}
+            if not required.issubset(columns):
+                raise RuntimeError("resource_shared_database_schema_unavailable")
+        else:
+            runtime.init_tables(conn)
+            conn.commit()  # isolated canary DB only
         return conn
     except Exception:
         conn.close()
