@@ -211,8 +211,14 @@ A consumer may now request a bounded admission wait without holding the
 shared SQLite writer transaction or a resource lease while the pool is
 occupied. The default remains fail-fast, and the maximum wait is 3,600
 seconds. A process receives the normal lease only when a subsequent
-serialized capacity check succeeds. A busy-pool timeout retains the
-ordinary denied-admission exit status (75).
+serialized capacity check succeeds. Host and delegated-cgroup memory
+headroom are checked *after* that tentative lease reservation but *before*
+commit, in the same SQLite write transaction. The new lease is excluded
+from the already-reserved-memory sum, avoiding double counting. This order
+prevents a still-running pool holder's RAM consumption from incorrectly
+terminating a bounded slot wait; genuinely insufficient host memory still
+denies admission immediately. A busy-pool timeout retains the ordinary
+denied-admission exit status (75).
 
 ```sh
 python3 scripts/zcloud_governed_exec.py \
