@@ -607,17 +607,46 @@ def _renew_existing_lease(conn, project_id: str, owner_id: str,
 
 def _retain_owned_lease(conn, project_id: str, owner_id: str,
                         acquired_at: str) -> bool:
-    """Retain a stuck process lease without renewing a newer owner instance."""
+    """Extend only the still-active original generation for orphan recovery.
+
+    Keep its child process identity in metadata. Overwriting the whole
+    metadata with just a cleanup flag would remove the PID that later
+    admission needs to detect surviving process groups after lease expiry.
+    """
     from datetime import timedelta
     conn.execute("BEGIN IMMEDIATE")
     try:
-        until = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()
         now = datetime.now(timezone.utc).isoformat()
+        row = conn.execute(
+            "SELECT metadata_json FROM resource_leases "
+            "WHERE project_id=? AND owner_id=? AND acquired_at=? "
+            "AND lease_until>?",
+            (project_id, owner_id, acquired_at, now),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return False
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, ValueError):
+            conn.rollback()
+            return False
+        if not isinstance(metadata, dict):
+            conn.rollback()
+            return False
+        # Retain only minimal bounded, non-secret incident evidence.
+        incident = {
+            "executor": "zcloud-governed-exec",
+            "cleanup": "process_group_unverified",
+        }
+        if type(metadata.get("pid")) is int and metadata["pid"] > 1:
+            incident["pid"] = metadata["pid"]
+        encoded = json.dumps(incident, separators=(",", ":"), sort_keys=True)
+        until = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()
         cursor = conn.execute(
             "UPDATE resource_leases SET lease_until=?,metadata_json=? "
             "WHERE project_id=? AND owner_id=? AND acquired_at=? AND lease_until>?",
-            (until, '{"cleanup":"process_group_unverified","executor":"zcloud-governed-exec"}',
-             project_id, owner_id, acquired_at, now),
+            (until, encoded, project_id, owner_id, acquired_at, now),
         )
         if cursor.rowcount != 1:
             conn.rollback()
@@ -627,7 +656,6 @@ def _retain_owned_lease(conn, project_id: str, owner_id: str,
     except Exception:
         conn.rollback()
         raise
-
 
 def _release_owned_lease(conn, project_id: str, owner_id: str,
                          acquired_at: str) -> bool:
