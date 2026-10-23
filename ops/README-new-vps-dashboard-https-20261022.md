@@ -84,9 +84,14 @@ The read-only verifier requires a healthy loopback backend, matching resolver
 DNS, anonymous HTTP 401 for the homepage and critical API endpoints, a valid
 authenticated zCloud HTML page and an authenticated `/api/status` JSON
 response with timezone-aware freshness (at most five minutes old and at most
-two minutes in the future). HTML and JSON are size- and time-bounded and
-are not printed. Only a constant success indicator is emitted. This does
-not grant deployment rights or certify external network reachability.
+two minutes in the future). It also checks that authenticated
+`/api/portfolio-queue` returns the live SQLite queue read-model and
+`/api/runner-targets` returns the runner map with a positive global limit.
+The authenticated read-models are never used to claim ownership, dispatch
+jobs, reconfigure capacity or write database rows. HTML and JSON are
+size- and time-bounded and never printed; only one constant success indicator
+is emitted. This does not grant deployment rights or certify external
+network reachability.
 
 The script refuses extra arguments, a wrong host, unhealthy or non-loopback
 API, missing cutover/DNS-owner attestations, IPv4/IPv6 DNS drift, invalid
