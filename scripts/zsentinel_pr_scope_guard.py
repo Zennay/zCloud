@@ -436,7 +436,7 @@ def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
             r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b",
             body or "")} if body_covered else set())
         title_refs = ({int(m.group(1)) for m in re.finditer(
-            r"(?<![A-Za-z0-9_])#([1-9][0-9]{0,6})(?![0-9])",
+            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b",
             title)} if title_covered else set())
         refs_covered = (body_covered and title_covered
                         and len(body_refs | title_refs) <= MAX_REFERENCED_ISSUES)
