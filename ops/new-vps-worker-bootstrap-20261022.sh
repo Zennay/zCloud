@@ -14,6 +14,7 @@ ACTION="${1:-prepare}"
 
 die() { printf 'REFUSED: %s\n' "$*" >&2; exit 2; }
 msg() { printf '\n=== %s ===\n' "$*"; }
+[[ $# -le 1 ]] || die "exactly one action argument is supported: prepare, status, or activate"
 [[ "$EUID" -eq 0 ]] || die "run this as root on the new VPS"
 [[ "$(hostname)" == "$EXPECTED_HOST" ]] || die "wrong host: $(hostname)"
 [[ "$ACTION" == prepare || "$ACTION" == activate || "$ACTION" == status ]] ||
@@ -87,6 +88,9 @@ try:
         with sqlite3.connect(tmp) as target:
             source.backup(target, pages=1000, sleep=0.1)
     with sqlite3.connect(f"file:{tmp}?mode=ro", uri=True) as db:
+        integrity = db.execute("PRAGMA integrity_check").fetchone()
+        if not integrity or integrity[0] != "ok":
+            raise RuntimeError(f"historical database integrity_check failed: {integrity!r}")
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if not {'portfolio_queue', 'runner_workers', 'runner_targets'} <= tables:
             raise RuntimeError(f"historical database lacks worker tables: {sorted(tables)}")
