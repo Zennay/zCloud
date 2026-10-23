@@ -509,6 +509,18 @@ def changed_paths_focused(repo, number, token):
     raise ValueError("focused PR file pagination remains incomplete")
 
 
+def current_base_ref_head(repo, base_ref, token):
+    """Read one exact target branch tip; never infer it from the PR's stored base SHA."""
+    path = "/branches/" + urllib.parse.quote(base_ref, safe="")
+    receipt = github_json(repo, path, token)
+    commit = receipt.get("commit") if isinstance(receipt, dict) else None
+    sha = commit.get("sha") if isinstance(commit, dict) else None
+    if (not isinstance(receipt, dict) or receipt.get("name") != base_ref
+            or not isinstance(sha, str) or not SHA.fullmatch(sha)):
+        raise ValueError("target branch head unavailable or inconsistent")
+    return sha
+
+
 def selected_source_pr(repo, number, token, expanded_files=False):
     """Pin one explicitly selected existing PR, never infer its owner."""
     if type(number) is not int or not 0 < number < 100000000:
@@ -621,7 +633,14 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
     if source is not None and expanded_source_files:
         if source["product_candidate_based_on_title"] is not True:
             raise ValueError("expanded source scope is product-only")
+    base_ref_before = None
     if source is not None:
+        try:
+            base_ref_before = current_base_ref_head(repo, source["base_ref"], token)
+        except (GitHubSourceError, ValueError):
+            # Keep the scope observation available, but never imply its target
+            # branch SHA is current when the independent read is unavailable.
+            base_ref_before = None
         wanted = sorted(set(wanted).union(source["paths"]))
     page_size = limit if page_count > 1 else min(MAX_OPEN_PAGE, limit + 1)
     page_numbers = list(range(open_page, open_page + page_count))
@@ -683,6 +702,7 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
     snapshots_after = [open_prs(repo, token, page_size, page=p) for p in page_numbers]
     snapshot_stable = not duplicate_numbers and snapshots_before == snapshots_after
     source_stable = True
+    base_ref_after = None
     if source is not None:
         fresh = github_json(repo, "/pulls/" + str(source["number"]), token)
         if not isinstance(fresh, dict):
@@ -695,7 +715,22 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
                          and isinstance(current_base, dict)
                          and current_base.get("sha") == source["base_sha"]
                          and current_base.get("ref") == source["base_ref"])
+        try:
+            base_ref_after = current_base_ref_head(repo, source["base_ref"], token)
+        except (GitHubSourceError, ValueError):
+            base_ref_after = None
+    if source is None:
+        base_ref_freshness = "not_applicable"
+    elif base_ref_before is None or base_ref_after is None:
+        base_ref_freshness = "unavailable"
+    elif base_ref_before != base_ref_after:
+        base_ref_freshness = "changed_during_observation"
+    elif base_ref_before != source["base_sha"]:
+        base_ref_freshness = "stale"
+    else:
+        base_ref_freshness = "current"
     complete = (page_count == 1 and open_page == 1 and source_stable
+                and (source is None or base_ref_freshness == "current")
                 and len(before) < page_size and len(before) <= limit
                 and not truncated_files and snapshot_stable
                 and not alias_hits_truncated
@@ -711,6 +746,10 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
             "base_sha": source["base_sha"],
             "base_ref": source["base_ref"],
             "source_head_stable": source_stable,
+            "base_ref_freshness": base_ref_freshness,
+            "current_base_ref_sha": base_ref_after,
+            "base_ref_snapshot_stable": (
+                base_ref_before is not None and base_ref_before == base_ref_after),
             "source_file_count": len(source["paths"]),
             "source_file_pages_observed": source["source_file_pages_observed"],
             "expanded_source_file_pages_requested": bool(expanded_source_files),
@@ -787,6 +826,11 @@ def operator_text(report):
             " paden uit " + str(src["source_file_pages_observed"]) +
             " gelezen pagina('s); uitgebreide bron: " +
             str(src["expanded_source_file_pages_requested"]) + ".")
+        lines.append(
+            "Doelbranch-tip: " + src["base_ref_freshness"] +
+            "; SHA " + str(src["current_base_ref_sha"] or "onbekend") +
+            ". Alleen 'current' bewijst dat de opgeslagen PR-base tijdens " +
+            "deze dubbele read overeenkomt met de actuele doelbranch.")
     if report["observed_overlaps"]:
         for hit in report["observed_overlaps"]:
             relations = "; ".join(
@@ -881,6 +925,9 @@ def html_view(report):
                    str(source["source_file_pages_observed"]) +
                    " pagina('s) · uitgebreid: " +
                    str(source["expanded_source_file_pages_requested"]) +
+                   " · doelbranch-tip: " + escape(source["base_ref_freshness"]) +
+                   " · actuele SHA: " +
+                   escape(source["current_base_ref_sha"] or "onbekend") +
                    "</p>" if source else "")
     targets = "<ul>" + "".join(
         "<li><code>" + escape(path) + "</code></li>"
@@ -2019,7 +2066,10 @@ def as_markdown(report):
             " uit " + str(selected["source_file_pages_observed"]) +
             " pagina('s). Uitgebreide bron: " +
             str(selected["expanded_source_file_pages_requested"]) + ".",
-            "Doelbranch: " + selected["base_ref"] + ".",
+            "Doelbranch: " + selected["base_ref"] +
+            "; tip-status: " + selected["base_ref_freshness"] +
+            "; actuele SHA: " + str(selected["current_base_ref_sha"] or "onbekend") + ".",
+            "Alleen status current telt als complete bron-PR-scope; stale, changed of unavailable blijft onzeker.",
             "",
         ])
     lines.extend([
