@@ -610,7 +610,13 @@ def _required_context_observations(protection, protection_stable, checks, commit
         if len(outcomes) > 1:
             observation_state = "CONFLICTING_SAMPLED_STATES"
         elif matching_checks or matching_statuses:
-            observation_state = "OBSERVED_MATCH_NOT_A_CI_VERDICT"
+            outcome = next(iter(outcomes), "unknown")
+            observation_state = {
+                "success": "OBSERVED_SUCCESS_NOT_A_CI_VERDICT",
+                "pending": "OBSERVED_PENDING_NOT_A_CI_VERDICT",
+                "non_success": "OBSERVED_NON_SUCCESS_NOT_A_CI_VERDICT",
+                "neutral_or_skipped": "OBSERVED_NEUTRAL_OR_SKIPPED_NOT_A_CI_VERDICT",
+            }.get(outcome, "OBSERVED_MATCH_NOT_A_CI_VERDICT")
         elif check_incomplete or status_incomplete:
             observation_state = "UNKNOWN_SAMPLE_INCOMPLETE"
         else:
@@ -619,18 +625,26 @@ def _required_context_observations(protection, protection_stable, checks, commit
             "context": context,
             "required_app_id": app_id,
             "state": observation_state,
+            "observed_outcomes": sorted(outcomes),
             "sampled_check_run_observations": check_states,
             "sampled_commit_status_observations": status_states,
         })
 
     states = {item["state"] for item in items}
+    observed_states = {
+        "OBSERVED_MATCH_NOT_A_CI_VERDICT",
+        "OBSERVED_SUCCESS_NOT_A_CI_VERDICT",
+        "OBSERVED_PENDING_NOT_A_CI_VERDICT",
+        "OBSERVED_NON_SUCCESS_NOT_A_CI_VERDICT",
+        "OBSERVED_NEUTRAL_OR_SKIPPED_NOT_A_CI_VERDICT",
+    }
     if check_incomplete or status_incomplete:
         overall = "PARTIAL_OBSERVATIONS"
-    elif states == {"OBSERVED_MATCH_NOT_A_CI_VERDICT"}:
-        overall = "OBSERVATIONS_PRESENT_NOT_A_CI_VERDICT"
-    elif states <= {"OBSERVED_MATCH_NOT_A_CI_VERDICT", "CONFLICTING_SAMPLED_STATES"}:
+    elif "CONFLICTING_SAMPLED_STATES" in states:
         overall = "CONFLICTING_OR_PARTIAL_OBSERVATIONS"
-    elif any(state == "OBSERVED_MATCH_NOT_A_CI_VERDICT" for state in states):
+    elif states and states <= observed_states:
+        overall = "OBSERVATIONS_PRESENT_NOT_A_CI_VERDICT"
+    elif states & observed_states:
         overall = "PARTIAL_OBSERVATIONS"
     else:
         overall = "NO_COMPLETE_CONTEXT_OBSERVATIONS"
