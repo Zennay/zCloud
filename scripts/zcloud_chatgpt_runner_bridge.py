@@ -420,6 +420,132 @@ def _archive_bulk_storage_gate(archive: dict[str, object]) -> dict[str, object]:
     }
 
 
+TRAINING_OUTPUT_PATH = "/opt/fuckball-training"
+
+
+def _training_path_observation() -> dict[str, object]:
+    """Report the actual fixed training output directory without writing to it.
+
+    This observation must never replace the training launcher's own external
+    block-device admission or claim that training has been started.
+    """
+    receipt: dict[str, object] = {
+        "state": "unknown",
+        "minimum_free_bytes": BULK_ARCHIVE_MIN_FREE_BYTES,
+        "available_bytes": None,
+        "separate_from_root_filesystem": None,
+        "direct_mount_state": "unknown",
+        "local_block_backing": "unknown",
+        "mount_read_only": None,
+        "physical_external_disk_verified": False,
+        "dataset_checkpoint_temp_paths_verified": False,
+        "application_write_permissions_verified": False,
+        "training_running_verified": False,
+        "training_start_authorized": False,
+        "mutation_performed": False,
+    }
+    try:
+        before = os.stat(TRAINING_OUTPUT_PATH, follow_symlinks=False)
+        root = os.stat("/", follow_symlinks=True)
+    except FileNotFoundError:
+        receipt["state"] = "path_missing"
+    except OSError:
+        receipt["state"] = "path_unavailable"
+    else:
+        if not stat.S_ISDIR(before.st_mode):
+            receipt["state"] = "path_not_directory_or_symlink"
+        elif before.st_dev == root.st_dev:
+            receipt["state"] = "training_output_on_root"
+            receipt["separate_from_root_filesystem"] = False
+        else:
+            receipt["separate_from_root_filesystem"] = True
+            try:
+                mount_state = _mountinfo_target_state(TRAINING_OUTPUT_PATH)
+                receipt["direct_mount_state"] = mount_state
+                backing_before = _mountinfo_target_backing(TRAINING_OUTPUT_PATH)
+                receipt["local_block_backing"] = backing_before
+                vfs = os.statvfs(TRAINING_OUTPUT_PATH)
+                flag = getattr(os, "ST_RDONLY", None)
+                flags_before = getattr(vfs, "f_flag", None)
+                if (type(flag) is not int or flag <= 0
+                        or type(flags_before) is not int or flags_before < 0):
+                    raise ValueError("training_mount_flags_unavailable")
+                readonly_before = bool(flags_before & flag)
+                block_size = int(vfs.f_frsize or vfs.f_bsize)
+                free_blocks = int(vfs.f_bavail)
+                blocks = int(vfs.f_blocks)
+                if (block_size <= 0 or blocks <= 0
+                        or free_blocks < 0 or free_blocks > blocks):
+                    raise ValueError("training_capacity_invalid")
+                available = block_size * free_blocks
+                vfs_after = os.statvfs(TRAINING_OUTPUT_PATH)
+                flags_after = getattr(vfs_after, "f_flag", None)
+                after = os.stat(TRAINING_OUTPUT_PATH, follow_symlinks=False)
+                if (not stat.S_ISDIR(after.st_mode)
+                        or (before.st_dev, before.st_ino)
+                        != (after.st_dev, after.st_ino)
+                        or mount_state != _mountinfo_target_state(TRAINING_OUTPUT_PATH)
+                        or backing_before != _mountinfo_target_backing(TRAINING_OUTPUT_PATH)
+                        or type(flags_after) is not int or flags_after < 0
+                        or bool(flags_after & flag) != readonly_before):
+                    raise ValueError("training_path_source_changed")
+                receipt["available_bytes"] = available
+                receipt["mount_read_only"] = readonly_before
+                if mount_state != "mounted":
+                    receipt["state"] = "direct_mount_unverified"
+                elif backing_before == "virtual_or_network":
+                    receipt["state"] = "virtual_or_network_training_storage"
+                elif backing_before != "local_block_candidate":
+                    receipt["state"] = "training_block_device_unverified"
+                elif readonly_before:
+                    receipt["state"] = "training_mount_read_only"
+                elif available < BULK_ARCHIVE_MIN_FREE_BYTES:
+                    receipt["state"] = "training_space_below_30_gib"
+                else:
+                    receipt["state"] = "training_capacity_candidate_owner_proof_required"
+            except (OSError, ValueError, TypeError, OverflowError, AttributeError):
+                receipt["state"] = "training_source_unavailable_or_changed"
+                receipt["available_bytes"] = None
+                receipt["local_block_backing"] = "unknown"
+                receipt["mount_read_only"] = None
+
+    actions = {
+        "path_missing": "VERIFY_TRAINING_PATH_EXISTS",
+        "path_unavailable": "REQUEST_TRAINING_PATH_ACCESS",
+        "path_not_directory_or_symlink": "RESOLVE_TRAINING_PATH_TYPE",
+        "training_output_on_root": "HOLD_TRAINING_SYSTEM_DISK",
+        "direct_mount_unverified": "VERIFY_TRAINING_MOUNT_MEMBERSHIP",
+        "virtual_or_network_training_storage": "HOLD_TRAINING_FUSE_OR_NETWORK",
+        "training_block_device_unverified": "VERIFY_TRAINING_BLOCK_DEVICE",
+        "training_mount_read_only": "HOLD_TRAINING_READ_ONLY_MOUNT",
+        "training_space_below_30_gib": "HOLD_TRAINING_INSUFFICIENT_SPACE",
+        "training_capacity_candidate_owner_proof_required": "VERIFY_TRAINING_EXTERNAL_DRIVE_AND_PATHS",
+        "training_source_unavailable_or_changed": "REFRESH_TRAINING_STORAGE_EVIDENCE",
+    }
+    summaries = {
+        "path_missing": "Training output directory is missing; preserve the launcher gate.",
+        "path_unavailable": "Training output source is inaccessible; do not infer mounted storage.",
+        "path_not_directory_or_symlink": "Training output path is not a stable direct directory.",
+        "training_output_on_root": "Training output is on the system filesystem. Do not start or resume bulk training.",
+        "direct_mount_unverified": "Training directory is on another filesystem, but a stable direct block mount is unverified.",
+        "virtual_or_network_training_storage": "Training output is FUSE, virtual or network-backed, not a local block device.",
+        "training_block_device_unverified": "Training mount has no verified local block source.",
+        "training_mount_read_only": "Training output mount is read-only.",
+        "training_space_below_30_gib": "Training output mount has less than 30 GiB available.",
+        "training_capacity_candidate_owner_proof_required": (
+            "A local block-backed mount with at least 30 GiB is a candidate only; "
+            "a distinct physical disk, all artifact/temp paths and app-user access "
+            "remain unverified. Do not start training from this receipt."
+        ),
+        "training_source_unavailable_or_changed": "Training mount identity, flags or capacity changed or are unavailable.",
+    }
+    receipt["next_step_code"] = actions.get(receipt["state"], "REFRESH_TRAINING_STORAGE_EVIDENCE")
+    receipt["operator_summary"] = summaries.get(
+        receipt["state"], "Training storage evidence is unknown."
+    )
+    return receipt
+
+
 def _host_capacity_observation() -> dict[str, object]:
     """Bounded resource pressure hints; never infer cause or authorize cleanup."""
     result: dict[str, object] = {
@@ -445,6 +571,7 @@ def _host_capacity_observation() -> dict[str, object]:
                           "total_bytes": None, "available_bytes": None,
                           "available_percent": None},
         "bulk_storage_advisory": _archive_bulk_storage_gate({}),
+        "training_output_observation": _training_path_observation(),
         "warnings": [],
         "evidence_warnings": [],
         "operator_summary": "Capacity evidence is partial; do not infer runner health or authorize cleanup.",
