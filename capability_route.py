@@ -25,19 +25,41 @@ SYSTEM = (
 TOOLS = {"browser": "zssh_browser", "system": "zssh", "none": None}
 
 
+def _unique_object(pairs):
+    """Reject duplicate JSON keys instead of accepting last-value-wins metadata."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate execution metadata key")
+        result[key] = value
+    return result
+
+
 def choose_execution_route(item: dict) -> dict:
     """Return a bounded tool hint; no command, credentials, consent or hostname."""
     metadata = item.get("metadata")
+    metadata_invalid = False
     if not isinstance(metadata, dict):
-        try:
-            metadata = json.loads(item.get("metadata_json") or "{}")
-        except (ValueError, TypeError):
+        raw_metadata = item.get("metadata_json")
+        if raw_metadata in (None, ""):
             metadata = {}
-    if not isinstance(metadata, dict):
-        metadata = {}
+            metadata_invalid = metadata is not None and item.get("metadata") is not None
+        else:
+            try:
+                metadata = json.loads(raw_metadata, object_pairs_hook=_unique_object)
+            except (ValueError, TypeError):
+                metadata = {}
+                metadata_invalid = True
+            if not isinstance(metadata, dict):
+                metadata = {}
+                metadata_invalid = True
 
     explicit = str(metadata.get("execution_capability") or "").strip().lower()
-    if explicit == "none":
+    if metadata_invalid:
+        capability = "none"
+        selection_source = "metadata_error"
+        route_reason = "invalid_metadata_json"
+    elif explicit == "none":
         capability = "none"
         selection_source = "explicit"
         route_reason = "explicitly_disabled"
