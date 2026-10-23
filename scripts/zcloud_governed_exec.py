@@ -1030,7 +1030,13 @@ def run_governed(
         # A pinned production service must prove that its *entire*
         # dedicated systemd unit is drained, not just the original PGID.
         # Detached setsid descendants still occupy the same unit cgroup.
-        if group_stopped and proc is not None and os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+        if (group_stopped and proc is not None
+                and compute.get("pool") == "heavy"
+                and os.environ.get("ZCLOUD_RESOURCE_DB") is not None):
+            # Protected zCloud/zSSH work is allowed to use shared control-
+            # plane units; demanding an exclusive service cgroup there would
+            # needlessly exhaust protected slots. The hard detached-worker
+            # policy applies only to pinned multi-process heavy workloads.
             group_stopped = _owned_service_cgroup_drained()
         release_ok = not acquired
         try:
