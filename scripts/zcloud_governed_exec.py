@@ -419,7 +419,13 @@ def _effective_cgroup_memory_limits_mb(
         for index, component in enumerate([""] + components):
             if component:
                 path = path / component
-            raw = (path / "memory.max").read_text().strip()
+            # cgroup-v2 mount root has controllers but is not itself a
+            # limited child cgroup; Linux can omit memory.max there.
+            # Every non-root ancestor and leaf remains mandatory.
+            control = path / "memory.max"
+            if index == 0 and not control.exists():
+                continue
+            raw = control.read_text().strip()
             if raw == "max":
                 continue
             maximum = int(raw)
