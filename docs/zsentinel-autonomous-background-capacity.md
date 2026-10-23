@@ -165,7 +165,9 @@ move files or bypass a merge/deploy gate.
 | None of the above | 175% / 70 | Allow bounded idle background training. |
 
 A process is a job worker only if `/proc/*/comm` is `Runner.Worker` and
-its command line is present. An idle listener alone is not a running job.
+its command line is present. The argv read is capped at 8 KiB; oversized or
+unreadable command lines are treated as incomplete evidence, not silently
+classified from a truncated prefix. An idle listener alone is not a running job.
 Disappearing processes during the scan are ignored. If a still-running process
 cannot be inspected, or a Runner.Worker has no readable argv, source coverage
 is incomplete and the conservative band applies. A failed whole-/proc
