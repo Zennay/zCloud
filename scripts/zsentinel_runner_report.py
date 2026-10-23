@@ -751,24 +751,45 @@ def timeline_footprint(receipts):
             continue
         swap, disk = cap.get("swap_used_percent"), cap.get("disk_unavailable_percent")
         load, cores = cap.get("host_load"), cap.get("cores")
-        if not (type(swap) in (int, float) and 0 <= swap <= 100
-                and type(disk) in (int, float) and 0 <= disk <= 100
-                and type(load) in (int, float) and 0 <= load < 1e6
-                and type(cores) is int and 1 <= cores <= 4096):
-            unknown_capacity += 1
-            continue
         swap_status = cap.get("swap_status")
-        if swap_status == "NO_SWAP_CONFIGURED":
-            no_swap_samples += 1
+        swap_numeric_valid = (
+            type(swap) in (int, float) and 0 <= swap <= 100
+        )
+        swap_source_valid = (
+            (swap_status == "OBSERVED" and swap_numeric_valid)
+            or swap_status == "NO_SWAP_CONFIGURED"
+        )
+        disk_valid = type(disk) in (int, float) and 0 <= disk <= 100
+        load_valid = (
+            type(load) in (int, float) and 0 <= load < 1e6
+            and type(cores) is int and 1 <= cores <= 4096
+        )
+        # Legacy receipts may contain swap_used_percent=0 without proving
+        # that swap exists. Preserve the other valid metrics, but mark the
+        # overall sample incomplete and never treat the legacy zero as healthy.
+        if not (swap_source_valid and disk_valid and load_valid):
+            unknown_capacity += 1
         if index == len(receipts) - 1:
             latest_swap_status = (swap_status if swap_status in {
                 "OBSERVED", "NO_SWAP_CONFIGURED"} else "UNKNOWN")
-        high_swap += swap >= 80 and swap_status != "NO_SWAP_CONFIGURED"
+        if not (disk_valid and load_valid):
+            if index == len(receipts) - 1:
+                latest_pressure_high = None
+            continue
+        if swap_status == "NO_SWAP_CONFIGURED":
+            no_swap_samples += 1
+        if swap_status == "OBSERVED" and swap_numeric_valid:
+            high_swap += swap >= 80
         high_disk += disk >= 90
         high_load += load > 1.35 * cores
         if index == len(receipts) - 1:
-            latest_pressure_high = (swap >= 80 or disk >= 90 or
-                                    load > 1.35 * cores)
+            known_high = (disk >= 90 or load > 1.35 * cores or
+                          (swap_status == "OBSERVED" and swap_numeric_valid
+                           and swap >= 80))
+            latest_pressure_high = (
+                True if known_high else
+                False if swap_source_valid else None
+            )
     latest_failed = sorted(name for name, row in latest_service_rows.items()
                            if row["state"] == "failed")
     latest_user_failed = sorted(
