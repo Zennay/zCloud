@@ -418,7 +418,11 @@ def _renew_existing_lease(conn, project_id: str, owner_id: str,
             conn.rollback()
             return {"acquired": False, "reason": "resource_lease_lost",
                     "project_id": project_id}
-        current_compute = runtime.project_contract(project_id).get("compute") or {}
+        current_contracts = runtime.load_contracts()
+        _assert_portfolio_pool_capacities(current_contracts)
+        current_compute = runtime.project_contract(
+            project_id, current_contracts
+        ).get("compute") or {}
         if any(str(current_compute.get(key)) != str(admitted_compute.get(key))
                for key in ("pool", "class", "cpu_soft_cores", "memory_soft_mb")):
             conn.rollback()
@@ -626,6 +630,7 @@ def run_governed(
         deadline = time.monotonic() + wait_seconds
         while True:
             _assert_database_identity(Path(db_path), db_identity)
+            _assert_portfolio_pool_capacities(runtime.load_contracts())
             if termination_requested is not None:
                 return 128 + int(termination_requested)
             conn.execute("BEGIN IMMEDIATE")
