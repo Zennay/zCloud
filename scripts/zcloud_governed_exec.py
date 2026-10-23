@@ -616,6 +616,43 @@ def _signal_process_group(proc: subprocess.Popen | None, signum: int) -> None:
         return
 
 
+def _require_heavy_unit_bounds(compute: dict) -> None:
+    """Require a dedicated heavy service's hard cgroup CPU/RAM ceilings.
+
+    Individual RLIMIT_AS and process affinity cannot bound a forked research
+    tree's total resident memory or CPU usage. A pinned live heavy unit must
+    supply hard kernel limits before admitting any child process.
+    """
+    try:
+        root = Path("/sys/fs/cgroup").resolve(strict=True)
+        rows = Path("/proc/self/cgroup").read_text().splitlines()
+        owned = [row.partition("::")[2].strip()
+                 for row in rows if row.startswith("0::")]
+        if len(owned) != 1:
+            raise RuntimeError("resource_heavy_cgroup_identity_unavailable")
+        parts = [part for part in owned[0].split("/") if part]
+        if (not parts or not parts[-1].endswith(".service")
+                or any(part in (".", "..") for part in parts)):
+            raise RuntimeError("resource_heavy_dedicated_service_required")
+        unit = root.joinpath(*parts)
+        if not unit.is_dir() or unit.is_symlink():
+            raise RuntimeError("resource_heavy_dedicated_service_required")
+        cpu = (unit / "cpu.max").read_text().strip().split()
+        memory = (unit / "memory.max").read_text().strip()
+        if len(cpu) != 2 or cpu[0] == "max" or memory == "max":
+            raise RuntimeError("resource_heavy_cgroup_bounds_missing")
+        quota, period, memory_bytes = int(cpu[0]), int(cpu[1]), int(memory)
+        cpu_budget = float(compute.get("cpu_soft_cores") or 0)
+        memory_budget = int(compute.get("memory_soft_mb") or 0) * 1024 * 1024
+        if (quota <= 0 or period <= 0 or memory_bytes <= 0
+                or cpu_budget <= 0 or memory_budget <= 0
+                or quota > cpu_budget * period
+                or memory_bytes > memory_budget):
+            raise RuntimeError("resource_heavy_cgroup_bounds_unsafe")
+    except (OSError, ValueError, OverflowError) as exc:
+        raise RuntimeError("resource_heavy_cgroup_bounds_unavailable") from exc
+
+
 def _owned_service_cgroup_drained() -> bool:
     """Verify the wrapper's private systemd service contains no live workers.
 
@@ -784,10 +821,10 @@ def run_governed(
     # child may share the unit before the next lease is even requested.
     # This closes the window after a crashed wrapper's lease has expired:
     # a new invocation cannot run beside the surviving unleased worker.
-    if (compute.get("pool") == "heavy"
-            and os.environ.get("ZCLOUD_RESOURCE_DB") is not None
-            and not _owned_service_cgroup_drained()):
-        raise RuntimeError("resource_dedicated_heavy_unit_not_idle")
+    if compute.get("pool") == "heavy" and os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+        _require_heavy_unit_bounds(compute)
+        if not _owned_service_cgroup_drained():
+            raise RuntimeError("resource_dedicated_heavy_unit_not_idle")
     conn = connect(Path(db_path))
     try:
         _assert_database_identity(Path(db_path), db_identity)
