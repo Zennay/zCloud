@@ -76,6 +76,25 @@ def _exit_code(returncode: int) -> int:
     return returncode if returncode >= 0 else 128 + abs(returncode)
 
 
+def _safe_owner(owner_id: str) -> str:
+    """Never create a lease with a truncated or unreleasable owner key."""
+    if (not isinstance(owner_id, str) or not 1 <= len(owner_id) <= 200
+            or owner_id != owner_id.strip() or not owner_id.strip()
+            or "\x00" in owner_id):
+        raise ValueError("invalid resource owner identifier")
+    return owner_id
+
+
+def _admission_denied(result: dict) -> None:
+    """Never print other heavy workload owners or receipt metadata."""
+    print(json.dumps({
+        "acquired": False,
+        "reason": str(result.get("reason") or "resource_admission_unavailable")[:80],
+        "project_id": str(result.get("project_id") or "")[:60],
+        "pool": str(result.get("pool") or "")[:40],
+    }, sort_keys=True), file=sys.stderr)
+
+
 def _signal_process_group(proc: subprocess.Popen | None, signum: int) -> None:
     if proc is None:
         return
@@ -138,6 +157,7 @@ def run_governed(
 ) -> int:
     if not command:
         raise ValueError("command is required")
+    owner_id = _safe_owner(owner_id)
 
     lease_seconds = max(60, min(6 * 3600, int(lease_seconds or 300)))
     renew_seconds = max(5, min(int(renew_seconds or 60), max(5, lease_seconds // 2)))
@@ -155,7 +175,7 @@ def run_governed(
         )
         conn.commit()
         if not result.get("acquired"):
-            print(json.dumps(result, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+            _admission_denied(result)
             return 75
         acquired = True
 
@@ -179,7 +199,7 @@ def run_governed(
         conn.commit()
         if not renewed.get("acquired"):
             _stop_process_group(proc)
-            print(json.dumps(renewed, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+            _admission_denied(renewed)
             return 75
 
         def forward(signum, _frame):
@@ -208,7 +228,7 @@ def run_governed(
                 conn.commit()
                 if not renewed.get("acquired"):
                     _stop_process_group(proc)
-                    print(json.dumps(renewed, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+                    _admission_denied(renewed)
                     return 75
                 next_renewal = now + renew_seconds
             time.sleep(0.5)
@@ -241,7 +261,6 @@ def run_governed(
                             "released": False,
                             "reason": "resource_release_failed",
                             "project_id": project_id,
-                            "owner_id": owner_id,
                             "error": type(exc).__name__,
                         },
                         sort_keys=True,
