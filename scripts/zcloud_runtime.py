@@ -35,6 +35,10 @@ def main(argv=None) -> int:
     receipt.add_argument("--blocker", default="")
     receipt.add_argument("--next-gate", default="")
     receipt.add_argument("--source", default="cli")
+    receipt.add_argument(
+        "--observed-at",
+        help="Timezone-aware ISO-8601 source observation time; defaults to current UTC",
+    )
     receipt.add_argument("--evidence-json", default="{}")
 
     acquire = sub.add_parser("acquire")
@@ -53,8 +57,10 @@ def main(argv=None) -> int:
     # A rejected receipt must not even initialize its SQLite database. This
     # applies to CLI producers in addition to the core record_receipt guard.
     evidence = None
+    observed_at = None
     if args.command == "receipt":
         runtime.project_contract(args.project)
+        observed_at = runtime.validated_receipt_timestamp(args.observed_at)
         runtime.validated_receipt_text(
             phase=args.phase, action=args.action, commit_sha=args.commit,
             blocker=args.blocker, next_gate=args.next_gate, source=args.source,
@@ -92,6 +98,7 @@ def main(argv=None) -> int:
                 blocker=args.blocker,
                 next_gate=args.next_gate,
                 source=args.source,
+                observed_at=observed_at,
                 evidence=evidence,
             )
             conn.commit()
