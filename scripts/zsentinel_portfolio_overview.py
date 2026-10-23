@@ -364,6 +364,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
     status_source_windows = None
     project_relation_coverage = "not_observed"
     unresolved_project_relation_count = None
+    unresolved_in_progress_project_relation_count = None
     if notion is not None:
         if (not isinstance(notion, dict)
                 or notion.get("source") not in (
@@ -438,6 +439,9 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                     or (notion.get("coverage") == "incomplete") != any_partial):
                 raise ValueError("Notion source-window totals disagree")
             status_source_windows = [dict(item) for item in live_windows]
+            unresolved_in_progress_project_relation_count = sum(
+                item["unresolved_project_relations"]
+                for item in live_windows if item["status"] in ("Claimed", "Running"))
         verifying = notion.get("verifying_project_counts")
         if verifying is not None and type(verifying) is not dict:
             raise ValueError("invalid Notion verifying-status counts")
@@ -524,6 +528,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         "notion_status_source_windows": status_source_windows,
         "notion_project_relation_coverage": project_relation_coverage,
         "unresolved_project_relation_count": unresolved_project_relation_count,
+        "unresolved_in_progress_project_relation_count": unresolved_in_progress_project_relation_count,
         "unregistered_queue_project_groups": None if queue_missing else unknown_count,
         "rows": list(summary.values()),
         "actions_performed": False,
@@ -770,13 +775,27 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             for item in notion_windows
         ) + ". GEEN bewijs van actieve lease, claimvrijgave of volledige queue.</p>"
     )
+    relation_in_progress = summary.get("unresolved_in_progress_project_relation_count")
+    relation_total = summary.get("unresolved_project_relation_count")
+    if notion_windows is None:
+        if relation_in_progress is not None:
+            raise ValueError("unverified Notion status window carries registry urgency")
+    elif (type(relation_total) is not int or not 0 <= relation_total <= 400
+          or type(relation_in_progress) is not int
+          or not 0 <= relation_in_progress <= relation_total
+          or relation_in_progress != sum(
+              row["unresolved_project_relations"] for row in notion_windows
+              if row["status"] in ("Claimed", "Running"))):
+        raise ValueError("untrusted Notion project-relation urgency")
     notion_relation_html = (
         '<p class="muted">Projectrelaties: ONBEKEND; geen vrije-werkconclusie uit deze bron.</p>'
         if summary.get("notion_project_relation_coverage") == "not_observed" else
         ('<p class="banner">PROJECTRELATIES ONVOLLEDIG — ' +
-         str(summary["unresolved_project_relation_count"]) +
-         ' actieve rij(en) zonder eenduidige canonieke projectmapping. '
-         'Geen vrije-werkconclusie; bevoegde eigenaar hercontroleert de bron.</p>')
+         str(relation_total) + ' actieve statusregels zonder eenduidige '
+         'canonieke Project-relatie, waarvan ' +
+         str(relation_in_progress) + ' Claimed/Running. ' +
+         ('P1' if relation_in_progress else 'P2') +
+         ' register-/taakeigenaarcontrole; geen claim, herverdeling of dispatch.</p>')
         if summary.get("notion_project_relation_coverage") == "partial" else
         '<p class="muted">Projectrelaties compleet binnen deze begrensde bronwaarneming; '
         'dit bewijst geen lease, bestandseigendom of vrijgave.</p>'
