@@ -188,7 +188,7 @@ def _live_service_members(cgroup_path: str) -> bool:
     return False
 
 
-def _expired_heavy_group_active(conn) -> bool:
+def _expired_heavy_group_active(conn, *, live_authority: bool) -> bool:
     """Don't recycle an expired heavy lease while its known process group lives.
 
     The shared runtime deletes expired rows during acquisition. Before that
@@ -214,7 +214,7 @@ def _expired_heavy_group_active(conn) -> bool:
                 return True
             pid = metadata.get("pid")
             scope = metadata.get("service_cgroup")
-            if metadata.get("executor") == "zcloud-governed-exec":
+            if live_authority and metadata.get("executor") == "zcloud-governed-exec":
                 # The original lease may come from another VPS or a prior
                 # boot. Local PID/cgroup absence cannot prove remote cleanup.
                 # Missing legacy boot evidence is likewise inconclusive.
@@ -1063,7 +1063,8 @@ def run_governed(
             # The underlying runtime prunes expired leases inside acquire.
             # Preserve heavy exclusivity when a known supervised child group
             # survived the TTL (e.g. a paused or crashed renewal wrapper).
-            if compute.get("pool") == "heavy" and _expired_heavy_group_active(conn):
+            if (compute.get("pool") == "heavy"
+                    and _expired_heavy_group_active(conn, live_authority=live_authority)):
                 conn.rollback()
                 _admission_denied({
                     "reason": "resource_expired_heavy_process_still_active",
