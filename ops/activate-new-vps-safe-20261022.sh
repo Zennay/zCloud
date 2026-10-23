@@ -141,7 +141,7 @@ command -v flock >/dev/null 2>&1 || {
 
 # Serialize this exact host-bound activation before any service start or
 # persistent enablement. --status exits above and remains entirely read-only.
-exec 9>/run/lock/zcloud-new-vps-base-activation.lock
+exec 9>/run/zcloud-new-vps-base-activation.lock
 flock -n 9 || {
   echo 'REFUSED: another base activation is already running' >&2
   exit 4
