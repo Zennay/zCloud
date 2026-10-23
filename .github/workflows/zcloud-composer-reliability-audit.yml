@@ -1,0 +1,45 @@
+name: zCloud composer reliability audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "public/zcloud-worker.user.js"
+      - "firefox-extension/background.js"
+      - "scripts/zcloud_composer_reliability_audit.py"
+      - "tests/test_composer_reliability_audit.py"
+      - "tests/test_composer_reliability_audit_workflow.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact pull-request head
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Run focused composer reliability regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_composer_reliability_audit \
+            tests.test_composer_reliability_audit_workflow
+
+      - name: Audit current browser sources
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_composer_reliability_audit.py --json
