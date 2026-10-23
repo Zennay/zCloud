@@ -77,7 +77,7 @@ of productiedeploy.
 
 ## Non-blocking private receipt reads
 
-Operatorbronmodules, opgeslagen T0/T1-receipts en incidentbundelbestanden worden
+Operatorbronmodules, private CPU-beleidstatus, opgeslagen T0/T1-receipts en incidentbundelbestanden worden
 met `O_NONBLOCK` geopend vóór de descriptor op een regulier bestand wordt gecontroleerd.
 Een FIFO die een verwacht JSON-/bronbestand vervangt, wordt daardoor geweigerd
 in plaats van de operatoropdracht te laten hangen. De descriptor blijft daarna
