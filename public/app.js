@@ -297,7 +297,7 @@ function statusSnapshotFreshness(){
   // Require an explicit RFC3339 timezone; Date.parse alone accepts local-time
   // and date-only strings that are not safe cross-host freshness evidence.
   const valid=typeof raw==='string'
-    &&/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$/.test(raw);
+    &&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(raw);
   if(!valid)return 'unknown';
   const timestamp=Date.parse(raw),now=Date.now();
   if(!Number.isFinite(timestamp)||timestamp>now+120000)return 'unknown';
