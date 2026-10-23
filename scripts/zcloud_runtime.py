@@ -50,12 +50,27 @@ def main(argv=None) -> int:
     sub.add_parser("status")
 
     args = parser.parse_args(argv)
+    # A rejected receipt must not even initialize its SQLite database. This
+    # applies to CLI producers in addition to the core record_receipt guard.
+    evidence = None
+    if args.command == "receipt":
+        runtime.project_contract(args.project)
+        runtime.validated_receipt_text(
+            phase=args.phase, action=args.action, commit_sha=args.commit,
+            blocker=args.blocker, next_gate=args.next_gate, source=args.source,
+        )
+        normalized_status = str(args.ci_status or "").lower()
+        if normalized_status not in {
+            "", "queued", "in_progress", "success", "failure", "cancelled", "skipped"
+        }:
+            raise ValueError("unsupported ci_status")
+        evidence = json.loads(args.evidence_json)
+        if not isinstance(evidence, dict):
+            raise ValueError("--evidence-json must be an object")
+        runtime._serialize_receipt_evidence(evidence)
     conn = connect(args.db)
     try:
         if args.command == "receipt":
-            evidence = json.loads(args.evidence_json)
-            if not isinstance(evidence, dict):
-                raise ValueError("--evidence-json must be an object")
             result = runtime.record_receipt(
                 conn,
                 args.project,
