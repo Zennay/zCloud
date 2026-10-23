@@ -180,6 +180,31 @@ receipt still requires authorized owner inspection of the deployed
 service/cgroup, actual controlled contention and the production
 release gate.
 
+## Operator shutdown and exact contract fencing
+
+The governed executor installs SIGINT/SIGTERM forwarding **before**
+spawning its child, so an operator stop in the startup/first-renewal
+window cannot silently abandon an unmanaged workload. A direct child
+that ignores termination is then subject to the existing bounded
+process-group TERM/KILL cleanup. Its wrapper returns a signal exit
+status rather than running forever while renewing the resource lease.
+Cleanup must still prove no runnable group remains before release.
+
+The wrapper captures the canonical compute contract before admission
+and applies **that same snapshot** inside the fork to CPU affinity and
+memory limits. It rejects first admission if the actual reserved
+lease's pool, workload class, CPU or RAM budget differs from that
+snapshot. During renewable execution, changing any of those values in
+the canonical contract causes renewal to fail closed rather than
+silently continuing under inconsistent reservation and process limits.
+This is a source-level safety guard, not permission to edit contracts
+or restart live research/training.
+
+The production SQLite creation race remains a separate release
+concern: pinned source paths must refer to the existing canonical
+database, never a brand-new independent authority. Do not switch a
+live service to an unverified or unreachable DB as a workaround.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
