@@ -126,6 +126,21 @@ def _admitted_pool_over_limit(conn, pool_name: str) -> bool:
     return occupied > ceiling
 
 
+def _uses_live_governor_authority(path: Path) -> bool:
+    """Separate the canonical live pool from deliberately isolated canaries.
+
+    An operator-pinned DB is always a live authority. The repository's
+    default history.db is also treated as live when no pin was provided.
+    An explicit alternate unpinned SQLite path is an isolated canary and
+    cannot establish cross-project production exclusion or an incident
+    receipt. Service owners must pin ZCLOUD_RESOURCE_DB for production.
+    """
+    if os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+        return True
+    return (Path(path).expanduser().resolve(strict=False) ==
+            (ROOT / "history.db").resolve(strict=False))
+
+
 def _legacy_haxlab_training_active() -> bool:
     """Deny a NEW heavy lease if the observed ungoverned self-play is active.
 
@@ -786,7 +801,9 @@ def run_governed(
                     "project_id": project_id,
                 })
                 return 75
-            if compute.get("pool") == "heavy" and _legacy_haxlab_training_active():
+            if (compute.get("pool") == "heavy"
+                    and _uses_live_governor_authority(Path(db_path))
+                    and _legacy_haxlab_training_active()):
                 conn.rollback()
                 remaining = deadline - time.monotonic()
                 if wait_seconds and remaining > 0:
@@ -813,7 +830,9 @@ def run_governed(
 
         if termination_requested is not None:
             return 128 + int(termination_requested)
-        if compute.get("pool") == "heavy" and _legacy_haxlab_training_active():
+        if (compute.get("pool") == "heavy"
+                and _uses_live_governor_authority(Path(db_path))
+                and _legacy_haxlab_training_active()):
             # A legacy trainer may have started after our transactional
             # /proc veto but before the supervised child was launched.
             # Fail without starting competing research; finally releases
@@ -969,10 +988,16 @@ def inspect_pool(db_path: Path, project_id: str) -> dict:
         # Slots visible in SQLite are not actually available if the
         # known pre-migration HaxLab coach is running outside lease control.
         # Keep raw lease availability distinct from conservative admission.
-        legacy_active = _legacy_haxlab_training_active()
+        live_authority = _uses_live_governor_authority(target)
+        legacy_active = (_legacy_haxlab_training_active()
+                         if live_authority else None)
         if "heavy" in pools:
             heavy = pools["heavy"]
             heavy["legacy_unleased_training_detected"] = legacy_active
+            heavy["legacy_detection_scope"] = (
+                "canonical_live_authority" if live_authority
+                else "not_checked_isolated_canary"
+            )
             heavy["effective_remaining"] = (
                 0 if legacy_active else heavy["remaining"]
             )
