@@ -5,6 +5,7 @@
 #        ZCLOUD_DNS_CUTOVER_CONFIRMED=yes ZCLOUD_SQLITE_CUTOVER_CONFIRMED=yes sudo -E bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --apply
 set -Eeuo pipefail
 
+[[ $# -le 1 ]] || die 'usage: --status | --apply'
 MODE="${1:---status}"
 HOST='VM-7eb5ee16-2c71-440d-b7fd-8095d204e930'
 IP='95.211.40.88'
@@ -42,8 +43,14 @@ dns_ready() {
 }
 
 import_ready() {
-  [[ -f "$CADDYFILE" && ! -L "$CADDYFILE" && -d "$SITES" && ! -L "$SITES" ]] &&
-    grep -Fxq "$IMPORT" "$CADDYFILE"
+  [[ -f "$CADDYFILE" && ! -L "$CADDYFILE" && -d "$SITES" && ! -L "$SITES" ]] || return 1
+  [[ "$(stat -c '%U' "$CADDYFILE")" = root && "$(stat -c '%U' "$SITES")" = root ]] || return 1
+  local caddy_mode sites_mode
+  caddy_mode="$(stat -c '%a' "$CADDYFILE")" || return 1
+  sites_mode="$(stat -c '%a' "$SITES")" || return 1
+  (( (8#$caddy_mode & 0022) == 0 )) || return 1
+  (( (8#$sites_mode & 0022) == 0 )) || return 1
+  grep -Fxq "$IMPORT" "$CADDYFILE"
 }
 
 auth_ready() {
