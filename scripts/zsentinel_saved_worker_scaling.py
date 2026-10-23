@@ -216,10 +216,20 @@ def _project_snapshot(project):
     desired_source = project.get("desired_workers_source", "legacy_unknown")
     if desired_source not in {"observed", "unavailable", "legacy_unknown"}:
         desired_source = "legacy_unknown"
+    if desired is None and desired_source == "observed":
+        desired_source = "unavailable"
+    elif desired is not None and desired_source == "unavailable":
+        desired = None
 
     coverage = project.get("worker_coverage")
     coverage = coverage if isinstance(coverage, dict) else {}
     coverage_state = _safe_text(coverage.get("state"), 80) or "unknown"
+    if coverage_state not in {
+        "complete_fresh", "missing_worker_slots", "stale_heartbeats",
+        "unknown_heartbeat_freshness", "desired_worker_count_out_of_range",
+        "desired_worker_count_unknown",
+    }:
+        coverage_state = "unknown"
     observed_slots = _slot_list(project.get("observed_worker_slots", []))
     missing_slots = _slot_list(coverage.get("missing_worker_slots", []))
     stale_slots = _slot_list(coverage.get("stale_worker_slots", []))
@@ -316,6 +326,12 @@ def normalize_report(data, raw_sha256, now=None):
         if status in {"partial", "unavailable"} and source_complete:
             source_complete = False
             source_reasons.append("source_completeness_conflict")
+        if status == "observed" and source_complete and any(
+            coverage.get(key) != "observed" for key in ("runner_events", "runner_targets", "alerts")
+        ):
+            status = "partial"
+            source_complete = False
+            source_reasons.append("source_coverage_incomplete")
         if status == "partial" and not source_reasons:
             source_reasons.append("source_incomplete")
 
@@ -325,6 +341,13 @@ def normalize_report(data, raw_sha256, now=None):
     window_empty = data.get("window_empty")
     if window_empty is not None and type(window_empty) is not bool:
         raise ValueError("invalid_window_empty")
+    if rows is not None and window_empty is not None and window_empty != (rows == 0):
+        if status == "observed":
+            status = "partial"
+        source_complete = False
+        source_reasons.append("window_empty_conflict")
+    if status == "unavailable" and rows not in (None, 0):
+        source_reasons.append("unavailable_source_has_telemetry_rows")
 
     raw_projects = data.get("projects", [])
     if not isinstance(raw_projects, list) or len(raw_projects) > MAX_PROJECTS:
