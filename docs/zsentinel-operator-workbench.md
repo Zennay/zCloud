@@ -4711,3 +4711,23 @@ geen extern spreadsheet, netwerkendpoint of queuewriter aangeroepen.
 ## 22 October · Resuming interrupted private bundle publication
 
 The private multi-file operator bundle now supports `--resume-partial`. A hidden owner-only checkpoint pins exact input SHA-256/byte fingerprints, output-affecting options, the original UTC generation clock and expected artifact/receipt digests. Resume is allowed only with the same saved source bytes and options; every existing artifact must be a stable current-user-owned regular file with mode `0600` and exact expected bytes. Missing files are created without clobbering, and the receipt remains last. The checkpoint is retained as private recovery metadata and never represents live state or release authority. Legacy partial bundles without a checkpoint are not guessed or deleted; use a new name. See [private bundle recovery](zsentinel-operator-bundle-resume.md) for the operator procedure.
+
+
+## Saved worker-scaling handoff (offline)
+
+Use \`scripts/zsentinel_saved_worker_scaling.py\` to turn an already-saved JSON response from \`GET /api/worker-scaling\` into a private static HTML, Markdown, or JSON operator handoff. This is a separate, offline observation path: it makes no HTTP requests and does not read or write SQLite, Notion, GitHub, queues, claims, worker controls, or deployment state.
+
+Example (prepare a private directory first, then save the API response there with mode 0600):
+
+\`\`\`sh
+install -d -m 700 "$HOME/.local/share/zsentinel"
+chmod 600 "$HOME/.local/share/zsentinel/worker-scaling.json"
+python3 scripts/zsentinel_saved_worker_scaling.py \\
+  --input "$HOME/.local/share/zsentinel/worker-scaling.json" \\
+  --output "$HOME/.local/share/zsentinel/worker-scaling-handoff.html" \\
+  --format html
+\`\`\`
+
+The source must be a regular owner-private file in an owner-private directory, is capped at 1 MiB, is read through a no-follow descriptor, and is rejected if its identity changes during reading. Outputs are create-only, mode 0600, capped at 1 MiB, and never overwrite existing files. Duplicate JSON keys, non-finite numbers, malformed project/worker identities, over-wide reports and timezone-naive observation clocks fail closed. The report digest and original observation time remain visible.
+
+The handoff preserves the distinction between a complete observation, a partial/unavailable source and a legacy report without source-coverage fields. Missing target configuration means desired worker count is unknown; missing alert evidence means duplicate-work count is unknown, not zero. Old, future-dated or incomplete source snapshots are clearly labelled. Every export explicitly sets claim/dispatch/scale-change/merge/deploy authorization and active-claim verification to false. It is a private historical operator aid, not proof of live worker health or permission to change runtime state.
