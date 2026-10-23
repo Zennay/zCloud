@@ -145,18 +145,31 @@ def _legacy_haxlab_training_active() -> bool:
                 count += 1
                 if count > 20000:
                     raise RuntimeError("resource_process_inventory_unbounded")
+                # The ownerless coach unit may still contain an exited
+                # zombie or a newly admitted governor wrapper. Neither is
+                # evidence of an *ungoverned running trainer* by itself.
+                if int(item.name) == os.getpid():
+                    continue
                 directory = Path("/proc") / item.name
                 try:
-                    # The observed trainer can spawn Python/Node descendants
-                    # with new argv values; its dedicated user-systemd scope
-                    # remains a more reliable signal that it is still active.
-                    cgroup = (directory / "cgroup").read_text()
-                    if any(line.partition("::")[2].strip().endswith(
-                            "/fuckball-ai-coach.service")
-                           for line in cgroup.splitlines()
-                           if line.startswith("0::")):
-                        return True
+                    stat_fields = (directory / "stat").read_text().rpartition(")")[2].split()
+                    if len(stat_fields) < 3:
+                        raise RuntimeError("resource_process_stat_invalid")
+                    if stat_fields[0] in {"Z", "X"}:
+                        continue
                     name = (directory / "comm").read_text().strip()
+                    cgroup = (directory / "cgroup").read_text()
+                    in_legacy_coach = any(
+                        line.partition("::")[2].strip().endswith(
+                            "/fuckball-ai-coach.service")
+                        for line in cgroup.splitlines()
+                        if line.startswith("0::")
+                    )
+                    # Count runnable training workers, not the presence of
+                    # systemd or our own governor in the same service scope.
+                    if in_legacy_coach and (
+                            name in {"node", "nodejs"} or name.startswith("python")):
+                        return True
                 except FileNotFoundError:
                     continue
                 except OSError as exc:
@@ -953,6 +966,16 @@ def inspect_pool(db_path: Path, project_id: str) -> dict:
             }
             for name, cfg in capacities.items()
         }
+        # Slots visible in SQLite are not actually available if the
+        # known pre-migration HaxLab coach is running outside lease control.
+        # Keep raw lease availability distinct from conservative admission.
+        legacy_active = _legacy_haxlab_training_active()
+        if "heavy" in pools:
+            heavy = pools["heavy"]
+            heavy["legacy_unleased_training_detected"] = legacy_active
+            heavy["effective_remaining"] = (
+                0 if legacy_active else heavy["remaining"]
+            )
         return {
             "source": "readonly_shared_sqlite_snapshot",
             "project_id": project_id,
