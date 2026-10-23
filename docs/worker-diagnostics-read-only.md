@@ -107,3 +107,10 @@ status is `unavailable`, while independently observed worker and service
 incidents remain visible. Bounded alert truncation and unknown/legacy lease
 evidence retain their own explicit warning fields. This is a local database
 snapshot, not a synchronized GitHub, Notion or runner claim receipt.
+
+
+## Worker-scaling coverage and heartbeat freshness
+
+`GET /api/worker-scaling` remains read-only, but a throughput window is not proof that every configured worker is currently observable. Each worker now reports `last_heartbeat`, `last_heartbeat_age_seconds` and `heartbeat_freshness` (`fresh`, `stale`, `future`, `unknown` or `no_heartbeat`). A heartbeat is fresh only when it is no more than 150 seconds old at the report's fixed observation time.
+
+Each project exposes `worker_coverage`: desired versus observed slots, missing slots, stale heartbeat slots and unknown heartbeat slots. The scaling assessment returns `insufficient_data` rather than `single_worker`, `useful_scaling` or `diminishing_returns` when any configured slot is absent from the selected window or any desired worker lacks a fresh heartbeat. Historical throughput metrics remain visible, but they cannot turn incomplete or stale worker evidence into a current scale recommendation. Malformed heartbeat intervals are excluded from observed time; an unparseable latest heartbeat remains unknown.
