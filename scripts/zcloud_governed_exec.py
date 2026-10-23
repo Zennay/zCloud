@@ -49,8 +49,20 @@ def _bounded_cpu_count(value, available: int) -> int:
     return max(1, min(max(1, int(available)), requested))
 
 
-def _apply_process_limits(project_id: str) -> None:
+def _apply_process_limits(project_id: str, parent_pid: int | None = None) -> None:
     """Apply inherited Linux process bounds from the canonical project contract."""
+    if sys.platform == "linux" and parent_pid is not None:
+        # If the governor wrapper itself is SIGKILLed or crashes, Linux
+        # should also kill its *direct* supervised child instead of letting
+        # it outlive the renewable lease unnoticed. This does not replace
+        # systemd/cgroup containment for descendants that start new sessions.
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(1, int(signal.SIGKILL), 0, 0, 0) != 0:
+            raise RuntimeError("resource_parent_death_watch_unavailable")
+        if os.getppid() != parent_pid:
+            os._exit(75)
+
     compute = dict(runtime.project_contract(project_id).get("compute") or {})
 
     if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
@@ -342,10 +354,11 @@ def run_governed(
         env = os.environ.copy()
         env["ZCLOUD_RESOURCE_PROJECT"] = str(project_id)
         env["ZCLOUD_RESOURCE_OWNER"] = str(owner_id)
+        wrapper_pid = os.getpid()
         proc = subprocess.Popen(
             list(command),
             env=env,
-            preexec_fn=lambda: _apply_process_limits(project_id),
+            preexec_fn=lambda: _apply_process_limits(project_id, wrapper_pid),
             start_new_session=True,
         )
 
