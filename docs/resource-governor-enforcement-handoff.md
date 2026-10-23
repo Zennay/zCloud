@@ -205,6 +205,37 @@ concern: pinned source paths must refer to the existing canonical
 database, never a brand-new independent authority. Do not switch a
 live service to an unverified or unreachable DB as a workaround.
 
+## Bounded heavy-pool waiting (opt-in)
+
+A consumer may now request a bounded admission wait without holding the
+shared SQLite writer transaction or a resource lease while the pool is
+occupied. The default remains fail-fast, and the maximum wait is 3,600
+seconds. A process receives the normal lease only when a subsequent
+serialized capacity check succeeds. A busy-pool timeout retains the
+ordinary denied-admission exit status (75).
+
+```sh
+python3 scripts/zcloud_governed_exec.py \
+  --db /home/ubuntu/zennay-cloud/history.db \
+  --project haxlab --owner a-unique-training-invocation \
+  --wait-seconds 120 --lease-seconds 300 --renew-seconds 60 \
+  -- /path/to/approved/training-command
+```
+
+A service owner must select `--wait-seconds` explicitly in an approved
+entrypoint; no current FTMO/HaxLab/LightUp production unit was changed.
+An owner-identity collision, invalid contract, missing DB, inadequate host
+memory headroom, or denied policy **does not** loop: only a genuinely busy
+pool is eligible. SIGINT and SIGTERM are observed during waiting, including
+before the first child launch. Wakeups are limited to about one per second
+and use fresh `BEGIN IMMEDIATE` checks.
+
+This is a bounded retry, **not a globally fair FIFO scheduler or a
+no-starvation proof**. Achieving deterministic wait order across projects,
+crash-safe fairness and CPU-intensity ranking requires an authorized
+integration of the separately owned scheduler/runtime sources. Unrelated
+protected pool capacity remains separately reserved.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
