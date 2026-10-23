@@ -230,3 +230,10 @@ not erased, no retry is issued, and the current queue/lease remains untouched.
 
 Both source engine copies carry the same refusal. The code is in open #1552;
 it does not assert that the userscript is installed or that a workflow passed.
+
+
+## 23 October · Visible-but-disabled composer guard
+
+The v2 worker now distinguishes a visible DOM node from an actually editable composer. Native disabled/read-only controls, `aria-disabled`/`aria-readonly` states, and inert or disabled ancestors are treated as unavailable. When responsive duplicates exist, the worker prefers an enabled visible editor; if a disabled visible field contains text, it is preserved as a blocker instead of silently switching editors and risking a human draft.
+
+The same guard is used for missing-composer recovery, terminal conversation-error classification, in-flight New chat transition handling, and the final prompt-fill boundary. Existing 45-second one-shot recovery and manual-reconciliation rules remain unchanged. Both the standalone v2 engine and the embedded engine in the served userscript are kept byte-identical. This is source-only; no browser deployment or merge is implied.
