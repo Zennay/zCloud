@@ -623,7 +623,9 @@ def _required_context_observations(protection, protection_stable, checks, commit
         })
 
     states = {item["state"] for item in items}
-    if states == {"OBSERVED_MATCH_NOT_A_CI_VERDICT"}:
+    if check_incomplete or status_incomplete:
+        overall = "PARTIAL_OBSERVATIONS"
+    elif states == {"OBSERVED_MATCH_NOT_A_CI_VERDICT"}:
         overall = "OBSERVATIONS_PRESENT_NOT_A_CI_VERDICT"
     elif states <= {"OBSERVED_MATCH_NOT_A_CI_VERDICT", "CONFLICTING_SAMPLED_STATES"}:
         overall = "CONFLICTING_OR_PARTIAL_OBSERVATIONS"
