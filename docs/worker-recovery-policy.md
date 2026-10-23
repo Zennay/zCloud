@@ -1445,7 +1445,7 @@ Within the separate compact recovery-workorder board, urgency is explicit and no
 
 ## GitHub issue assignees are not active worker claims — 23 October 2026
 
-The live issue inbox now exposes a bounded list of GitHub issue assignee logins in JSON, Markdown, offline HTML and CSV. The list is accepted only when the source contains a complete array of at most 20 valid GitHub logins; otherwise the assignee field is `UNKNOWN`. An empty, complete array is rendered as “none assigned in issue metadata”.
+The live issue inbox now exposes a bounded list of GitHub issue assignee logins in JSON, Markdown, offline HTML and CSV. The multi-repository portfolio issue desk carries the same fields through its JSON, Markdown, HTML and CSV workorders. The list is accepted only when the source contains a complete array of at most 20 valid GitHub logins; otherwise the assignee field is `UNKNOWN`. An empty, complete array is rendered as “none assigned in issue metadata”.
 
 This is deliberately separate from zCloud queue leases and Notion task claims. An issue assignee is not proof that a worker is currently active, that the task is claimed, or that a fix is underway. The output keeps `issue_claim_verified=false`, `merge_authorized=false` and `deploy_authorized=false`. If repeated bounded search windows show different assignee metadata, the issue workorder asks the operator to recheck the current assignees and active claim before acting; priority evidence is kept separate from assignment drift.
 
