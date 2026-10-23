@@ -71,7 +71,9 @@ API, missing cutover/DNS-owner attestations, IPv4/IPv6 DNS drift, invalid
 auth, a missing Caddy import, or a Caddyfile/import directory that is not
 root-owned and non-group/world-writable, as well as an unexpected existing
 site. It stages one drop-in, validates Caddy, reloads
-and checks that anonymous HTTPS returns HTTP 401. Rollback quarantines only
+and checks that anonymous HTTPS returns HTTP 401 for the homepage and all three
+critical API entry points: `/api/status`, `/api/portfolio-queue` and
+`/api/runner-targets`. A homepage-only 401 is explicitly insufficient. Rollback quarantines only
 the exact site inode created by that invocation into a root-owned 0700
 quarantine outside the entire Caddy configuration tree. The move is allowed
 only on the same filesystem, so it remains atomic and cannot be picked up by
@@ -82,13 +84,16 @@ is not treated as a successful publication.
 
 The operator must independently confirm from another network that:
 - TLS certificate and hostname are correct;
-- anonymous dashboard and API calls are denied;
+- anonymous dashboard and critical API calls are denied, including
+  `/api/status`, `/api/portfolio-queue` and `/api/runner-targets`;
 - authorized login returns actual dashboard HTML and live API status;
 - /api/portfolio-queue and /api/runner-targets reflect the new VPS;
 - port 8765 is not directly reachable from the internet;
 - no old/new scheduler duplicate writes or worker leases exist.
 
-HTTP 401 alone is an auth check, not proof that the dashboard works.
+HTTP 401 on the four unauthenticated probes is an auth-boundary check, not
+proof that an authorized user can see the dashboard. No credentials are
+provided or printed by the script.
 Do not mark public-live until an authenticated application response is shown.
 
 ## Release truth
