@@ -1,0 +1,1116 @@
+#!/usr/bin/env python3
+"""Offline, source-only merge-first owner CSV from admitted zSentinel board/ZIPs.
+
+No network access, worker assignment, claim acquisition, CI retry, merge,
+deployment, or modification of any original source is performed.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+from html import escape
+from io import StringIO
+from pathlib import Path
+from datetime import datetime, timezone
+import re
+import sys
+import unicodedata
+from zipfile import BadZipFile
+
+from zsentinel_operator_workbench import read_source_and_sha, validated_view
+from zsentinel_product_delivery_board import ISSUE_COVERAGE_NOTES, write_create_only
+from zsentinel_saved_dossier_timeline import build_timeline, source_freshness
+from zsentinel_saved_issue_timeline import issue_worklist
+
+RANK = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
+MAX_CSV_BYTES = 1024 * 1024
+FIELDS = (
+    "original_board_sha256", "board_observed_at_utc",
+    "board_age_at_export", "archive_age_at_export",
+    "device_clock_authoritative", "priority",
+    "source_issue_urls", "source_issue_titles", "project_scope",
+    "pr_reference_state", "pr_url", "linked_issue_count",
+    "multiple_issues_share_pr", "issue_has_alternative_prs",
+    "saved_peer_pr_count", "saved_peer_pr_urls", "saved_peer_inventory_current",
+    "archive_only_issue_count", "archive_only_source_issue_urls",
+    "board_issue_count", "board_issue_inventory_complete_verified",
+    "issue_source_coverage", "issue_source_coverage_note",
+    "issue_coverage_project_count", "issue_coverage_partial_project_count",
+    "issue_coverage_degraded_project_count", "issue_coverage_unavailable_project_count",
+    "issue_coverage_summary_note",
+    "board_heads_observed", "archive_heads_observed",
+    "head_variation_is_historical_not_merge_conflict",
+    "historical_gate_labels", "sampled_board_unknown_gates",
+    "pr_missing_last_saved_snapshot", "issue_link_missing_in_saved_source",
+    "historical_candidates_truncated", "unlinked_in_saved_archive",
+    "source_archive_manifest_sha256s", "saved_pr_archive_supplied",
+    "saved_archive_batches_missing", "human_next_step_only",
+    "claim_authorized", "dispatch_authorized", "required_ci_verified",
+    "independent_review_verified", "main_merge_verified", "deploy_authorized",
+    "live_state_verified",
+    "selection_repository", "selection_priority", "selection_record_type",
+    "selection_pr_url", "selection_issue_url", "selection_attention",
+    "source_record_count", "selected_record_count",
+    "excluded_source_record_count", "selection_filter_applied",
+    "selected_existing_pr_count", "selected_issue_without_pr_count",
+    "selected_unlinked_pr_count", "selected_competing_pr_count",
+    "selected_missing_final_pr_count", "selected_head_variation_count",
+    "selected_archive_only_pr_count",
+)
+
+
+def _cell(value):
+    """Keep spreadsheet formulas inert, including Unicode-obfuscated prefixes.
+
+    CSV quoting does not prevent spreadsheet formula execution. Preserve the
+    original evidence except for control characters, and inspect past Unicode
+    whitespace, separators, zero-width and bidirectional format marks before
+    deciding whether to prefix the whole cell with an apostrophe.
+    """
+    if isinstance(value, bool):
+        return str(value).lower()
+    if value is None:
+        return ""
+    result = "".join(
+        " " if unicodedata.category(char) == "Cc" else char
+        for char in str(value)
+    )
+    index = 0
+    while index < len(result):
+        char = result[index]
+        category = unicodedata.category(char)
+        if char.isspace() or category in ("Cf", "Zs", "Zl", "Zp"):
+            index += 1
+            continue
+        break
+    if result[index:].startswith(("=", "+", "-", "@")):
+        return "'" + result
+    return result
+
+
+def prepare_rows(view, board_sha, saved, exported_at=None, repository_scope=None):
+    if saved is not None and (
+        saved.get("owner_claim_verified") is not False
+        or saved.get("main_merge_verified") is not False
+    ):
+        raise ValueError("historical PR source cannot authorize work")
+    archives = saved["source_snapshots"] if saved is not None else []
+    # Advisory source age is calculated at export time, not board creation.
+    exported_at = exported_at or datetime.now(timezone.utc)
+    board_age = source_freshness(
+        [{"latest_observed_utc": view["observed_at_utc"]}],
+        evaluated_at=exported_at)["status"]
+    archive_age = (source_freshness(archives, evaluated_at=exported_at)["status"]
+                   if archives else "not-provided")
+    manifests = " | ".join(row["original_review_manifest_sha256"] for row in archives) or "not-provided"
+    missing_batches = any(bool(row["missing_batch_indexes"]) for row in archives)
+    historical = {row["issue_url"]: row for row in (saved["issues"] if saved else [])}
+    unlinked = {row["url"]: row for row in (saved["unlinked_prs"] if saved else [])}
+    if len(unlinked) != len(saved["unlinked_prs"] if saved else []):
+        raise ValueError("duplicate unlinked source PR")
+    if len(historical) != len(saved["issues"] if saved else []):
+        raise ValueError("duplicate archived issue")
+    mapped = {}
+    unknown = []
+    # A private archive may cover additional repositories. Keep unlinked
+    # PRs only when their canonical repository has a selected original
+    # issue-card counterpart; never broaden a handoff through ZIP scope.
+    selected_repositories = {
+        card["url"].split("/issues/", 1)[0] for card in view["cards"]
+    }
+    if repository_scope is not None:
+        if not re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", repository_scope):
+            raise ValueError("repository scope must be canonical Zennay/<repo>")
+        # Explicitly selected archival-only repositories must remain visible
+        # even when this bounded issue board contains ZERO issue cards from
+        # that repository. No implicit cross-project inventory expansion.
+        selected_repositories.add("https://github.com/" + repository_scope)
+    # Retain previously sampled linked PRs even when their issues are
+    # outside the limited original issue board. Scope never expands to
+    # unrelated repositories without an explicit operator selection.
+    observed_board_issues = {card["url"] for card in view["cards"]}
+    candidate_cards = list(view["cards"])
+    for issue_url, archived_issue in historical.items():
+        if issue_url in observed_board_issues:
+            continue
+        if issue_url.split("/issues/", 1)[0] not in selected_repositories:
+            continue
+        if not re.fullmatch(
+            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}",
+            issue_url
+        ):
+            raise ValueError("noncanonical historical issue identity")
+        if not archived_issue["linked_existing_prs"]:
+            continue
+        candidate_cards.append({
+            "url": issue_url, "issue": archived_issue["issue_number"],
+            "title": "Issue title not observed in bounded original board",
+            "project": archived_issue["repository"],
+            "priority": archived_issue["highest_source_priority"],
+            "issue_coverage": "unavailable",
+            "issue_coverage_note": "This archive-only issue was not observed in the current bounded board; issue-source coverage is UNKNOWN.",
+            "open_pr_candidates": [], "pr_gate_observations": [],
+            "_archive_only": True,
+        })
+    for card in candidate_cards:
+        current = historical.get(card["url"])
+        archive_refs = {p["pr_url"]: p for p in
+                        current["linked_existing_prs"]} if current else {}
+        refs = set(card["open_pr_candidates"]) | set(archive_refs)
+        # The issue-first PR source is independently bounded to at most
+        # 600 distinct saved PR identities. An issue can legitimately
+        # reference more than twelve historical PRs: do not silently drop
+        # them or reject a valid P0 owner worklist because of a UI-only
+        # twelve-card display limit. The whole output stays capped below.
+        if len(refs) > 600:
+            raise ValueError("unbounded existing PR references for one issue")
+        if not refs:
+            unknown.append(card)
+        # Board "project" is an internal slug (e.g. cloud), not the
+        # GitHub owner/repository. The already validated issue URL is
+        # authoritative for repository identity.
+        repository_url, _, issue_number = card["url"].partition("/issues/")
+        if not issue_number or not repository_url.startswith("https://github.com/"):
+            raise ValueError("original board issue lacks canonical repository")
+        for url in refs:
+            if not re.fullmatch(
+                re.escape(repository_url) + r"/pull/[1-9][0-9]{0,8}", url
+            ):
+                raise ValueError("cross-repository or noncanonical saved PR candidate")
+            slot = mapped.setdefault(url, {
+                "url": url, "issues": {}, "board_heads": set(),
+                "archive_heads": set(), "gates": set(),
+                "unknown_gates": set(), "missing": False,
+                "lost_link": False, "truncated": False,
+                "archive_only_issues": set(), "board_issues": set(),
+                "issue_coverage_statuses": set(), "issue_coverage_notes": set(),
+            })
+            coverage_status = card.get("issue_coverage", "unavailable")
+            coverage_note = card.get(
+                "issue_coverage_note",
+                ISSUE_COVERAGE_NOTES.get(
+                    coverage_status,
+                    "Issue coverage is UNKNOWN; backlog completeness cannot be inferred."))
+            if (coverage_status not in ("partial", "degraded", "unavailable")
+                    or type(coverage_note) is not str or not coverage_note
+                    or len(coverage_note) > 300):
+                raise ValueError("invalid issue source coverage in owner packet")
+            slot["issue_coverage_statuses"].add(coverage_status)
+            slot["issue_coverage_notes"].add(coverage_note)
+            slot["issues"][card["issue"]] = (card, len(refs) > 1)
+            if card.get("_archive_only"):
+                slot["archive_only_issues"].add(card["url"])
+            else:
+                slot["board_issues"].add(card["url"])
+            board = next((p for p in card["pr_gate_observations"]
+                          if p["url"] == url), None)
+            if board:
+                slot["board_heads"].add(board["head_sha"])
+                slot["unknown_gates"].update(board["blocking_unknowns"])
+            archived = archive_refs.get(url)
+            if archived:
+                for key in ("observed_head", "head_at_last_issue_link"):
+                    if archived.get(key):
+                        slot["archive_heads"].add(archived[key])
+                slot["gates"].add(archived["observed_primary_gate"])
+                slot["missing"] |= archived["missing_from_final_sample"]
+                slot["lost_link"] |= (archived["issue_ref_absent_in_last_snapshot"]
+                                      or archived["pr_observed_after_link_absent"])
+                slot["truncated"] |= len(current["linked_existing_prs"]) > 12
+
+    shared = {
+        "original_board_sha256": board_sha,
+        "board_observed_at_utc": view["observed_at_utc"],
+        "board_age_at_export": board_age,
+        "archive_age_at_export": archive_age,
+        "device_clock_authoritative": False,
+        "source_archive_manifest_sha256s": manifests,
+        "saved_pr_archive_supplied": bool(archives),
+        "saved_archive_batches_missing": missing_batches,
+        "claim_authorized": False, "dispatch_authorized": False,
+        "required_ci_verified": False, "independent_review_verified": False,
+        "main_merge_verified": False, "deploy_authorized": False,
+        "live_state_verified": False,
+    }
+    # Build historical peer links from the complete, already admitted mapped
+    # issue associations, not from a UI-limited page or a live GitHub guess.
+    issue_to_prs = {}
+    for pr_url, candidate in mapped.items():
+        for card, _has_alternatives in candidate["issues"].values():
+            issue_to_prs.setdefault(card["url"], set()).add(pr_url)
+    rows = []
+    for pr in mapped.values():
+        issues = sorted((item for item, _ in pr["issues"].values()),
+                        key=lambda item: (RANK[item["priority"]], item["issue"]))
+        heads = pr["board_heads"] | pr["archive_heads"]
+        peers = sorted(set().union(
+            *(issue_to_prs[card["url"]] for card, _ in pr["issues"].values())
+        ) - {pr["url"]})
+        alternative = bool(peers)
+        variation = len(heads) > 1
+        action = ("inspect_archive_only_issue_links_and_current_pr_owner"
+                  if pr["archive_only_issues"] else
+                  "inspect_competing_existing_prs_and_owner_claims" if alternative else
+                  "refresh_current_exact_head_and_required_gates" if variation else
+                  "refresh_live_pr_and_issue_association" if pr["missing"] or pr["lost_link"] else
+                  "inspect_existing_pr_exact_head_owner_ci_review_and_protection")
+        rows.append({
+            **shared, "priority": issues[0]["priority"],
+            "source_issue_urls": " | ".join(i["url"] for i in issues),
+            "source_issue_titles": " | ".join(i["title"] for i in issues),
+            "project_scope": " | ".join(sorted({i["project"] for i in issues})),
+            "pr_reference_state": (
+                "historical_pr_linked_to_issue_absent_from_board"
+                if pr["archive_only_issues"] and not pr["board_issues"] else
+                "saved_pr_candidate_with_archive_only_issues_not_live"
+                if pr["archive_only_issues"] else "saved_pr_candidate_not_live"),
+            "archive_only_issue_count": len(pr["archive_only_issues"]),
+            "archive_only_source_issue_urls": " | ".join(sorted(pr["archive_only_issues"])),
+            "board_issue_count": len(pr["board_issues"]),
+            "board_issue_inventory_complete_verified": False,
+            "issue_source_coverage": " | ".join(sorted(pr["issue_coverage_statuses"])),
+            "issue_source_coverage_note": " | ".join(sorted(pr["issue_coverage_notes"])),
+            "pr_url": pr["url"], "linked_issue_count": len(issues),
+            "multiple_issues_share_pr": len(issues) > 1,
+            "issue_has_alternative_prs": alternative,
+            "saved_peer_pr_count": len(peers),
+            "saved_peer_pr_urls": " | ".join(peers),
+            "saved_peer_inventory_current": False,
+            "board_heads_observed": " | ".join(sorted(pr["board_heads"])),
+            "archive_heads_observed": " | ".join(sorted(pr["archive_heads"])),
+            "head_variation_is_historical_not_merge_conflict": variation,
+            "historical_gate_labels": " | ".join(sorted(pr["gates"])),
+            "sampled_board_unknown_gates": " | ".join(sorted(pr["unknown_gates"])),
+            "pr_missing_last_saved_snapshot": pr["missing"],
+            "issue_link_missing_in_saved_source": pr["lost_link"],
+            "historical_candidates_truncated": pr["truncated"],
+            "unlinked_in_saved_archive": pr["url"] in unlinked,
+            "human_next_step_only": action,
+        })
+    for card in unknown:
+        rows.append({
+            **shared, "priority": card["priority"],
+            "source_issue_urls": card["url"],
+            "source_issue_titles": card["title"],
+            "project_scope": card["project"],
+            "pr_reference_state": "not_observed_in_bounded_sources_unknown",
+            "archive_only_issue_count": 0, "archive_only_source_issue_urls": "",
+            "board_issue_count": 1,
+            "board_issue_inventory_complete_verified": False,
+            "issue_source_coverage": card.get("issue_coverage", "unavailable"),
+            "issue_source_coverage_note": card.get(
+                "issue_coverage_note", ISSUE_COVERAGE_NOTES["unavailable"]),
+            "pr_url": "", "linked_issue_count": 1,
+            "multiple_issues_share_pr": False, "issue_has_alternative_prs": False,
+            "saved_peer_pr_count": 0, "saved_peer_pr_urls": "",
+            "saved_peer_inventory_current": False,
+            "board_heads_observed": "UNKNOWN", "archive_heads_observed": "UNKNOWN",
+            "head_variation_is_historical_not_merge_conflict": False,
+            "historical_gate_labels": "UNKNOWN",
+            "sampled_board_unknown_gates": "UNKNOWN",
+            "pr_missing_last_saved_snapshot": False,
+            "issue_link_missing_in_saved_source": False,
+            "historical_candidates_truncated": False,
+            "unlinked_in_saved_archive": False,
+            "human_next_step_only": "check_live_issue_pr_inventory_and_owner_before_new_work",
+        })
+    # The original saved ZIP inventory can contain PRs without any issue
+    # link in its bounded sample. They still exist as previously observed
+    # PR candidates and must not disappear from a merge-first owner handoff.
+    for pr_url, unlinked_pr in unlinked.items():
+        if pr_url in mapped:
+            continue  # Original issue board had an independent PR link.
+        repo = pr_url.split("/pull/", 1)[0]
+        if repo not in selected_repositories:
+            continue  # Outside selected board issue repository scope.
+        if not re.fullmatch(
+            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}", repo
+        ):
+            raise ValueError("noncanonical unlinked historical PR")
+        rows.append({
+            **shared, "priority": unlinked_pr["priority"],
+            "source_issue_urls": "",
+            "source_issue_titles": "No issue relationship observed in bounded PR ZIP",
+            "project_scope": repo.removeprefix("https://github.com/"),
+            "pr_reference_state": "historical_pr_without_sampled_issue_link",
+            "archive_only_issue_count": 0, "archive_only_source_issue_urls": "",
+            "board_issue_count": 0,
+            "board_issue_inventory_complete_verified": False,
+            "issue_source_coverage": "unavailable",
+            "issue_source_coverage_note": "No linked issue was observed for this PR in the saved source; issue-source coverage cannot be inferred from this PR-only record.",
+            "pr_url": pr_url, "linked_issue_count": 0,
+            "multiple_issues_share_pr": False,
+            "issue_has_alternative_prs": False,
+            "saved_peer_pr_count": 0, "saved_peer_pr_urls": "",
+            "saved_peer_inventory_current": False,
+            "board_heads_observed": "UNKNOWN", "archive_heads_observed": "UNKNOWN",
+            "head_variation_is_historical_not_merge_conflict": False,
+            "historical_gate_labels": "UNKNOWN",
+            "sampled_board_unknown_gates": "UNKNOWN",
+            "pr_missing_last_saved_snapshot": unlinked_pr["missing_from_final_sample"],
+            "issue_link_missing_in_saved_source": False,
+            "historical_candidates_truncated": False,
+            "unlinked_in_saved_archive": True,
+            "human_next_step_only": "inspect_unlinked_existing_pr_current_owner_and_issue_relations",
+        })
+    rows.sort(key=lambda row: (RANK[row["priority"]],
+                               row["pr_reference_state"] != "saved_pr_candidate_not_live",
+                               row["pr_url"] or row["source_issue_urls"]))
+    if len(rows) > 900:
+        raise ValueError("source-only PR worklist exceeds bounded inventory")
+    # No pagination or truncation in the machine-readable owner handoff:
+    # either preserve all admitted candidates, or refuse before writing.
+    return rows
+
+
+ATTENTION = (
+    "all", "shared-issue-prs", "missing-final-sample", "lost-issue-link",
+    "historical-head-changes", "archive-only-linked", "unlinked-pr"
+)
+
+
+def select_owner_rows(rows, *, repository=None, priority=None, record_type="all",
+                      pr_url=None, issue_url=None, attention="all"):
+    """Narrow a fully admitted historical owner list without granting ownership.
+
+    Repository identity always comes from canonical issue/PR URLs, not from
+    inconsistent internal project slugs. A missing match never means that
+    the complete live issue/PR inventory was checked.
+    """
+    if repository is not None and (
+        type(repository) is not str or not re.fullmatch(
+            r"Zennay/[A-Za-z0-9_.-]{1,100}", repository
+        )
+    ):
+        raise ValueError("repository filter must be canonical Zennay/<repo>")
+    if priority is not None and (type(priority) is not str or priority not in RANK):
+        raise ValueError("unrecognized owner priority filter")
+    if record_type not in (
+        "all", "existing-pr", "issue-without-pr", "unlinked-pr",
+        "archive-only-linked-pr"
+    ):
+        raise ValueError("unrecognized owner record type")
+    if type(attention) is not str or attention not in ATTENTION:
+        raise ValueError("unknown historical attention filter")
+    if pr_url is not None and (
+        type(pr_url) is not str or not re.fullmatch(
+            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
+            pr_url
+        )
+    ):
+        raise ValueError("PR selector must be a canonical full GitHub PR URL")
+    if issue_url is not None and (
+        type(issue_url) is not str or not re.fullmatch(
+            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}",
+            issue_url
+        )
+    ):
+        raise ValueError("issue selector must be a canonical full GitHub issue URL")
+    result = []
+    for row in rows:
+        original = row["pr_url"] or row["source_issue_urls"].split(" | ", 1)[0]
+        source_repo = original.split("/pull/", 1)[0].split("/issues/", 1)[0]
+        if repository and source_repo != "https://github.com/" + repository:
+            continue
+        if priority and row["priority"] != priority:
+            continue
+        if pr_url is not None and row["pr_url"] != pr_url:
+            continue
+        if issue_url is not None and issue_url not in row["source_issue_urls"].split(" | "):
+            continue
+        state = row["pr_reference_state"]
+        if record_type == "existing-pr" and not row["pr_url"]:
+            continue
+        if record_type == "issue-without-pr" and row["pr_url"]:
+            continue
+        if record_type == "unlinked-pr" and state != "historical_pr_without_sampled_issue_link":
+            continue
+        if record_type == "archive-only-linked-pr" and not row["archive_only_issue_count"]:
+            continue
+        if attention == "shared-issue-prs" and not row["issue_has_alternative_prs"]:
+            continue
+        if attention == "missing-final-sample" and not row["pr_missing_last_saved_snapshot"]:
+            continue
+        if attention == "lost-issue-link" and not row["issue_link_missing_in_saved_source"]:
+            continue
+        if attention == "historical-head-changes" and not row["head_variation_is_historical_not_merge_conflict"]:
+            continue
+        if attention == "archive-only-linked" and not row["archive_only_issue_count"]:
+            continue
+        if attention == "unlinked-pr" and row["pr_reference_state"] != "historical_pr_without_sampled_issue_link":
+            continue
+        result.append(row)
+    # Exact PR/issue packets must exist in the admitted source selection.
+    # An absent observation is not evidence that work has been completed.
+    if (pr_url is not None or issue_url is not None) and not result:
+        raise ValueError(
+            "requested PR/issue not observed in this bounded source selection; "
+            "refresh current evidence before preparing an owner packet")
+    return result
+
+
+def selection_metadata(total, rows, *, repository=None, priority=None,
+                       record_type="all", pr_url=None, issue_url=None,
+                       attention="all"):
+    """Explicit whole-source vs selected coverage for every export format."""
+    return {
+        "selection_repository": repository or "ALL_SOURCE_REPOSITORIES",
+        "selection_priority": priority or "ALL_SOURCE_PRIORITIES",
+        "selection_record_type": record_type,
+        "selection_pr_url": pr_url or "NOT_SELECTED",
+        "selection_issue_url": issue_url or "NOT_SELECTED",
+        "selection_attention": attention,
+        "source_record_count": total,
+        "selected_record_count": len(rows),
+        "excluded_source_record_count": total - len(rows),
+        "selection_filter_applied": bool(
+            repository or priority or record_type != "all"
+            or pr_url or issue_url or attention != "all"),
+        # Direct renderer callers may not have the validated board object.
+        # Defaults remain explicitly UNKNOWN until main supplies its summary.
+        "issue_coverage_project_count": 0,
+        "issue_coverage_partial_project_count": 0,
+        "issue_coverage_degraded_project_count": 0,
+        "issue_coverage_unavailable_project_count": 0,
+        "issue_coverage_summary_note": (
+            "Coverage summary was not supplied; backlog completeness is unknown."),
+        # Cohort counts refer ONLY to rows selected from admitted snapshots.
+        "selected_existing_pr_count": sum(bool(row["pr_url"]) for row in rows),
+        "selected_issue_without_pr_count": sum(not row["pr_url"] for row in rows),
+        "selected_unlinked_pr_count": sum(
+            row["pr_reference_state"] == "historical_pr_without_sampled_issue_link"
+            for row in rows),
+        "selected_competing_pr_count": sum(
+            bool(row["issue_has_alternative_prs"]) for row in rows),
+        "selected_missing_final_pr_count": sum(
+            bool(row["pr_missing_last_saved_snapshot"]) for row in rows),
+        "selected_head_variation_count": sum(
+            bool(row["head_variation_is_historical_not_merge_conflict"])
+            for row in rows),
+        "selected_archive_only_pr_count": sum(
+            bool(row["archive_only_issue_count"]) for row in rows),
+    }
+
+
+def render_private_html(rows, source_metadata=None):
+    """One standalone script-free private owner worklist; source evidence only."""
+    parts = [
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width,initial-scale=1">',
+        '<meta name="referrer" content="no-referrer">',
+        '<meta http-equiv="Content-Security-Policy" content="default-src '
+        "'none'; style-src 'unsafe-inline'; script-src 'none'; "
+        "img-src 'none'; connect-src 'none'; form-action 'none'; "
+        "frame-src 'none'; object-src 'none'; base-uri 'none'" '>',
+        '<title>zSentinel · Saved PR owner worklist</title>',
+        '<style>body{font:15px/1.55 system-ui,sans-serif;max-width:900px;'
+        'margin:20px auto;padding:0 16px;color:#14243b;background:#fff}'
+        'a{color:#075b91}article{border:1px solid #afc0d0;border-radius:8px;'
+        'margin:12px 0;padding:14px;break-inside:avoid}p,small{overflow-wrap:'
+        'anywhere}small{display:block;color:#42556c}nav{border:1px solid #afc0d0;' 
+        'border-radius:8px;padding:12px;margin:16px 0}nav a{display:inline-block;'
+        'margin:4px 12px 4px 0}article:target{outline:2px solid #075b91}'
+        '@media print{body{margin:0}nav{display:none}}'
+        '</style></head><body><h1>zSentinel · P0-first existing PR review</h1>',
+        '<p>SAVED source only. Active owner, required exact-head CI, independent '
+        'review, main merge and production release: NOT VERIFIED.</p>',
+        '<p>' + str(len(rows)) + ' source-bound records, including issues '
+        'without an observed PR. A missing PR is UNKNOWN, not a clear queue.</p>',
+    ]
+    metadata = source_metadata if isinstance(source_metadata, dict) else (
+        rows[0] if rows else {})
+    board_age = metadata.get("board_age_at_export", "unknown")
+    archive_age = metadata.get("archive_age_at_export", "not-provided")
+    board_sha = metadata.get("original_board_sha256", "UNKNOWN")
+    board_moment = metadata.get("board_observed_at_utc", "UNKNOWN")
+    manifests = metadata.get("source_archive_manifest_sha256s", "not-provided")
+    archive_supplied = metadata.get("saved_pr_archive_supplied", "UNKNOWN")
+    missing_batches = metadata.get("saved_archive_batches_missing", "UNKNOWN")
+    selection = {key: metadata.get(key, "UNKNOWN") for key in (
+        "selection_repository", "selection_priority", "selection_record_type",
+        "selection_pr_url", "selection_issue_url", "selection_attention",
+        "source_record_count", "selected_record_count",
+        "excluded_source_record_count", "selection_filter_applied",
+        "selected_existing_pr_count", "selected_issue_without_pr_count",
+        "selected_unlinked_pr_count", "selected_competing_pr_count",
+        "selected_missing_final_pr_count", "selected_head_variation_count",
+        "selected_archive_only_pr_count",
+        "issue_coverage_project_count", "issue_coverage_partial_project_count",
+        "issue_coverage_degraded_project_count", "issue_coverage_unavailable_project_count",
+        "issue_coverage_summary_note")}
+    parts.append(
+        '<section aria-label="Owner selection and bounded coverage">'
+        '<h2>Owner selection · saved source scope</h2>'
+        '<p>Repository: ' + escape(str(selection["selection_repository"])) +
+        ' · priority: ' + escape(str(selection["selection_priority"])) +
+        ' · record type: ' + escape(str(selection["selection_record_type"])) + '</p>'
+        '<p>Historical attention: ' +
+        escape(str(selection["selection_attention"])) + '</p>'
+        '<p>Exact selected PR: ' + escape(str(selection["selection_pr_url"])) +
+        ' · exact issue: ' + escape(str(selection["selection_issue_url"])) + '</p>'
+        '<p>Source records before filtering: ' +
+        escape(str(selection["source_record_count"])) +
+        ' · displayed: ' + escape(str(selection["selected_record_count"])) +
+        ' · excluded from this selection: ' +
+        escape(str(selection["excluded_source_record_count"])) + '</p>'
+        '<p>Selected existing PR candidates: ' +
+        escape(str(selection["selected_existing_pr_count"])) +
+        ' · issues without an observed PR: ' +
+        escape(str(selection["selected_issue_without_pr_count"])) +
+        ' · saved unlinked PRs: ' +
+        escape(str(selection["selected_unlinked_pr_count"])) + '</p>'
+        '<p>Shared-issue competing PR references: ' +
+        escape(str(selection["selected_competing_pr_count"])) +
+        ' · PRs missing final historical sample: ' +
+        escape(str(selection["selected_missing_final_pr_count"])) +
+        ' · historically changing HEADs: ' +
+        escape(str(selection["selected_head_variation_count"])) + '</p>'
+        '<p>Saved PRs referencing issues absent from original issue board: ' +
+        escape(str(selection["selected_archive_only_pr_count"])) + '</p>'
+        '<p>Counts are source-only, may overlap, and are not live project or '
+        'merge-gate evidence.</p>'
+        '<p>Filtered: ' + escape(str(selection["selection_filter_applied"])) +
+        '. Excluded or absent entries are UNKNOWN, not fixed, merged or free.</p>'
+        '<p>Issue-source coverage across observed project rows: ' +
+        escape(str(selection["issue_coverage_project_count"])) + ' projects · partial ' +
+        escape(str(selection["issue_coverage_partial_project_count"])) + ' · degraded ' +
+        escape(str(selection["issue_coverage_degraded_project_count"])) + ' · unavailable ' +
+        escape(str(selection["issue_coverage_unavailable_project_count"])) + '. ' +
+        escape(str(selection["issue_coverage_summary_note"])) + '</p>'
+        '</section>'
+    )
+    if not rows:
+        parts.append('<p role="status">No saved records match this selection. '
+                     'This is NOT a current PR inventory or backlog clearance.</p>')
+    parts.append(
+        '<section aria-label="Original source custody"><h2>Original source custody</h2>'
+        '<p>Original board SHA256: ' + escape(str(board_sha)) +
+        ' · source UTC: ' + escape(str(board_moment)) + '</p>'
+        '<p>Saved PR archive supplied: ' + escape(str(archive_supplied)) +
+        ' · manifest SHA256(s): ' + escape(str(manifests)) +
+        ' · missing batches: ' + escape(str(missing_batches)) + '</p>'
+        '<p>Board age at export: ' + escape(str(board_age)) +
+        ' · historical PR archive age: ' + escape(str(archive_age)) +
+        '. Device time is advisory; this is not live GitHub or worker validation.</p>'
+        '</section>'
+    )
+    # Script-free, direct navigation into potentially hundreds of P0/P1 PRs.
+    # Index keys are derived only from admitted canonical GitHub URL identities.
+    groups = {}
+    for idx, row in enumerate(rows, 1):
+        source_url = row["pr_url"] or row["source_issue_urls"].split(" | ", 1)[0]
+        repo_url = source_url.split("/pull/", 1)[0].split("/issues/", 1)[0]
+        if not re.fullmatch(
+            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}", repo_url
+        ):
+            raise ValueError("noncanonical source repository in owner index")
+        key = (row["priority"], repo_url.removeprefix("https://github.com/"))
+        if key not in groups:
+            groups[key] = [idx, 0]
+        groups[key][1] += 1
+    if groups:
+        parts.append('<nav aria-label="Jump to saved owner group">'
+                     '<strong>Go to source-priority / repository group</strong><p>')
+        for (priority, repo), (first, count) in sorted(
+            groups.items(), key=lambda item: (RANK[item[0][0]], item[0][1])
+        ):
+            label = escape(priority + " · " + repo + " (" + str(count) + ")")
+            parts.append('<a href="#owner-' + str(first) + '">' + label + '</a>')
+        parts.append('</p></nav>')
+    # Only peers still present under the user's filters receive a local
+    # offline jump. Peers outside the selection are still explicitly linked
+    # to GitHub, but not fabricated as hidden or completed local records.
+    local_peer_anchor = {
+        row["pr_url"]: index for index, row in enumerate(rows, 1)
+        if row["pr_url"]
+    }
+    for index, row in enumerate(rows, 1):
+        priority = escape(str(row["priority"]))
+        has_pr = bool(row["pr_url"])
+        parts.append('<article id="owner-' + str(index) + '"><h2>' + priority + ' · ' +
+                     ('Existing saved PR candidate' if has_pr else
+                      'PR relationship UNKNOWN') + '</h2>')
+        parts.append('<p><strong>' + escape(str(row["source_issue_titles"])) +
+                     '</strong> · ' + escape(str(row["project_scope"])) + '</p>')
+        parts.append('<p><strong>Issue-source coverage:</strong> ' +
+                     escape(str(row["issue_source_coverage"])) + ' — ' +
+                     escape(str(row["issue_source_coverage_note"])) +
+                     ' This is bounded snapshot evidence, not a complete backlog.</p>')
+        if not row["source_issue_urls"]:
+            parts.append('<p>No linked source issue was observed for '
+                         'this existing PR. Relation to a current issue '
+                         'and present owner remain UNKNOWN.</p>')
+        archived_issue_urls = set(filter(
+            None, row["archive_only_source_issue_urls"].split(" | ")
+        ))
+        for url in filter(None, row["source_issue_urls"].split(" | ")):
+            if not re.fullmatch(
+                r'https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}', url
+            ):
+                raise ValueError("noncanonical original issue URL")
+            safe = escape(url, quote=True)
+            label = ("Archive-only issue (absent from original issue board): "
+                     if url in archived_issue_urls else
+                     "Original issue-board issue: ")
+            parts.append('<p>' + label + '<a href="' + safe +
+                         '" target="_blank" rel="noopener noreferrer">' +
+                         safe + '</a></p>')
+        if has_pr:
+            url = row["pr_url"]
+            if not re.fullmatch(
+                r'https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}', url
+            ):
+                raise ValueError("noncanonical saved PR URL")
+            safe = escape(url, quote=True)
+            parts.append('<p>Existing PR: <a href="' + safe +
+                         '" target="_blank" rel="noopener noreferrer">' +
+                         safe + '</a></p>')
+        else:
+            parts.append('<p>No saved PR reference found. Inspect the live '
+                         'GitHub issue and current owner before creating work.</p>')
+        parts.append('<small>Original issue-board HEAD(s): ' +
+                     escape(str(row["board_heads_observed"])) +
+                     ' · historical archive HEAD(s): ' +
+                     escape(str(row["archive_heads_observed"])) + '</small>')
+        if row["archive_only_issue_count"]:
+            parts.append('<p>Archive-only source issues: ' +
+                         str(row["archive_only_issue_count"]) +
+                         '. They are absent from the original issue board. '
+                         'Issue titles, current status and completeness UNKNOWN.</p>')
+        if row["head_variation_is_historical_not_merge_conflict"]:
+            parts.append('<p>Saved HEAD observations differ; this is NOT '
+                         'proof of conflict. Refresh current exact HEAD.</p>')
+        if row["issue_has_alternative_prs"]:
+            parts.append('<p>Other historically sampled PR candidates share '
+                         'at least one source issue; this does NOT prove a '
+                         'file conflict, live PR status or owner release.</p>')
+            for peer in filter(None, row["saved_peer_pr_urls"].split(" | ")):
+                if not re.fullmatch(
+                    r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
+                    peer,
+                ):
+                    raise ValueError("noncanonical saved peer PR URL")
+                safe_peer = escape(peer, quote=True)
+                local = local_peer_anchor.get(peer)
+                if local is not None:
+                    parts.append('<p><a href="#owner-' + str(local) +
+                                 '">Jump to saved peer card in this file</a></p>')
+                else:
+                    parts.append('<p>Peer record is outside this local '
+                                 'selection; full live inventory UNKNOWN.</p>')
+                parts.append('<p>Saved peer PR: <a href="' + safe_peer +
+                             '" target="_blank" rel="noopener noreferrer">' +
+                             safe_peer + '</a></p>')
+        parts.append('<p>Owner next step (advisory): ' +
+                     escape(str(row["human_next_step_only"])) + '</p>')
+        # Printed handoffs must contain the actual provenance without
+        # depending on recipients expanding a collapsed disclosure widget.
+        parts.append('<section aria-label="Original source custody">'
+                     '<h3>Original source custody</h3>'
+                     '<small>Original board SHA256: ' +
+                     escape(str(row["original_board_sha256"])) +
+                     ' · UTC ' + escape(str(row["board_observed_at_utc"])) +
+                     '</small><small>Saved archive manifest SHA256s: ' +
+                     escape(str(row["source_archive_manifest_sha256s"])) +
+                     ' · archive supplied: ' + escape(str(row["saved_pr_archive_supplied"])) +
+                     '</small><small>Missing saved batches: ' +
+                     escape(str(row["saved_archive_batches_missing"])) +
+                     '; historic gate labels: ' +
+                     escape(str(row["historical_gate_labels"])) +
+                     '; PR absent final sample: ' +
+                     escape(str(row["pr_missing_last_saved_snapshot"])) +
+                     '</small></section>')
+        parts.append('<small>Claim / CI / approval / merge / dispatch / '
+                     'deployment: NOT AUTHORIZED.</small></article>')
+    parts.append('<p>Recheck current GitHub/Notion/queue source and all '
+                 'normal exact-head security and release gates before '
+                 'any action.</p></body></html>\n')
+    return ''.join(parts)
+
+
+
+def _markdown_evidence(value):
+    """Render saved human text as inert Markdown, showing hidden controls.
+
+    Issue titles and action labels are evidence, never markdown instructions.
+    Keep URLs in dedicated canonical link slots instead of allowing inline
+    Markdown to be supplied by source fields.
+    """
+    if value is None:
+        return "UNKNOWN"
+    raw = str(value)
+    visible = []
+    for char in raw:
+        category = unicodedata.category(char)
+        if category in ("Cc", "Cf", "Zl", "Zp", "Cs") or (
+            char.isspace() and char != " "
+        ):
+            visible.append("⟦U+" + format(ord(char), "04X") + "⟧")
+        elif char in r"\`*_{}[]()#+-.!|>~":
+            visible.append("\\" + char)
+        else:
+            visible.append(char)
+    return "".join(visible)
+
+
+def render_private_markdown(rows, source_metadata):
+    """Human-readable private owner packet with original source provenance.
+
+    Bounded historical observations are NEVER current CI/claim authorization.
+    """
+    metadata = source_metadata
+    lines = [
+        "# zSentinel — Existing PR owner handoff (saved evidence only)",
+        "",
+        "**NOT LIVE:** This is an offline historical selection, not current "
+        "GitHub, ownership, CI, approval, main merge or deployment evidence.",
+        "",
+        "## Original source custody",
+        "",
+        "- Board SHA-256: `" + _markdown_evidence(
+            metadata["original_board_sha256"]) + "`",
+        "- Board observed UTC: " + _markdown_evidence(
+            metadata["board_observed_at_utc"]),
+        "- Board age at export: " + _markdown_evidence(
+            metadata["board_age_at_export"]),
+        "- Saved PR archive supplied: " + str(
+            metadata["saved_pr_archive_supplied"]).lower(),
+        "- Saved PR manifest SHA-256(s): " + _markdown_evidence(
+            metadata["source_archive_manifest_sha256s"]),
+        "- Archive age: " + _markdown_evidence(
+            metadata["archive_age_at_export"]),
+        "- Missing archive batches: " + str(
+            metadata["saved_archive_batches_missing"]).lower(),
+        "",
+        "## Exact human selection (not a live inventory)",
+        "",
+        "- Repository: " + _markdown_evidence(
+            metadata["selection_repository"]),
+        "- Priority: " + _markdown_evidence(metadata["selection_priority"]),
+        "- Record type: " + _markdown_evidence(
+            metadata["selection_record_type"]),
+        "- Historical attention: " + _markdown_evidence(
+            metadata["selection_attention"]),
+        "- Selected PR: " + _markdown_evidence(metadata["selection_pr_url"]),
+        "- Selected issue: " + _markdown_evidence(metadata["selection_issue_url"]),
+        "- Fully admitted saved records: " + str(metadata["source_record_count"]),
+        "- Selected records: " + str(metadata["selected_record_count"]),
+        "- Excluded by selection: " + str(
+            metadata["excluded_source_record_count"]),
+        "- Existing saved PR candidates: " + str(
+            metadata["selected_existing_pr_count"]),
+        "- Issues without observed PR: " + str(
+            metadata["selected_issue_without_pr_count"]),
+        "- Saved unlinked PR candidates: " + str(
+            metadata["selected_unlinked_pr_count"]),
+        "- Competing PR candidates on sampled issues: " + str(
+            metadata["selected_competing_pr_count"]),
+        "- PR candidates missing from final historical sample: " + str(
+            metadata["selected_missing_final_pr_count"]),
+        "- Historically varied HEAD references: " + str(
+            metadata["selected_head_variation_count"]),
+        "- PRs with archive-only issue links: " + str(
+            metadata["selected_archive_only_pr_count"]),
+        "- Project coverage rows observed: " + str(metadata["issue_coverage_project_count"]),
+        "- Partial / degraded / unavailable project rows: " +
+            str(metadata["issue_coverage_partial_project_count"]) + " / " +
+            str(metadata["issue_coverage_degraded_project_count"]) + " / " +
+            str(metadata["issue_coverage_unavailable_project_count"]),
+        "- Coverage limitation: " + _markdown_evidence(metadata["issue_coverage_summary_note"]),
+        "",
+        "**Selection exclusions and unobserved records remain UNKNOWN, "
+        "never cleared, claimed or completed.**",
+        "",
+    ]
+    if not rows:
+        lines.extend([
+            "No records matched these saved filters. Inspect current "
+            "GitHub and Notion before taking any action.",
+            "",
+        ])
+    for idx, row in enumerate(rows, 1):
+        lines.extend([
+            "## " + str(idx) + ". " + _markdown_evidence(row["priority"]) +
+            " — " + ("Saved existing PR" if row["pr_url"] else
+                      "PR relationship UNKNOWN"),
+            "",
+            "**Project:** " + _markdown_evidence(row["project_scope"]),
+            "",
+            "**Issue-source coverage:** " + _markdown_evidence(
+                row["issue_source_coverage"]) + " — " + _markdown_evidence(
+                row["issue_source_coverage_note"]) +
+                " (bounded snapshot, not a complete backlog).",
+            "",
+            "**Original issue titles:** " + _markdown_evidence(
+                row["source_issue_titles"]),
+            "",
+        ])
+        archived_issue_urls = set(filter(
+            None, row["archive_only_source_issue_urls"].split(" | ")
+        ))
+        for issue in filter(None, row["source_issue_urls"].split(" | ")):
+            if not re.fullmatch(
+                r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}",
+                issue,
+            ):
+                raise ValueError("noncanonical saved issue URL")
+            label = ("Inspect archive-only issue missing from original board"
+                     if issue in archived_issue_urls else
+                     "Inspect original issue-board issue")
+            lines.append("- [" + label + "](" + issue + ")")
+        if row["pr_url"]:
+            url = row["pr_url"]
+            if not re.fullmatch(
+                r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
+                url,
+            ):
+                raise ValueError("noncanonical saved PR URL")
+            lines.append("- [Inspect existing PR](" + url + ")")
+        else:
+            lines.append("- No observed PR in this bounded saved source; "
+                         "check current PR inventory before creating new work.")
+        for peer in filter(None, row["saved_peer_pr_urls"].split(" | ")):
+            if not re.fullmatch(
+                r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8}",
+                peer,
+            ):
+                raise ValueError("noncanonical saved peer PR URL")
+            lines.append("- [Inspect historically associated peer PR](" + peer + ")")
+        if row["saved_peer_pr_urls"]:
+            lines.append("- Shared source issue is not proof of file conflict "
+                         "or current ownership; refresh live PR inventory.")
+
+        lines.extend([
+            "",
+            "- Historical PR state: " + _markdown_evidence(
+                row["pr_reference_state"]),
+            "- Original board HEAD(s): " + _markdown_evidence(
+                row["board_heads_observed"] or "UNKNOWN"),
+            "- Saved archive HEAD(s): " + _markdown_evidence(
+                row["archive_heads_observed"] or "UNKNOWN"),
+            "- Historical gate labels: " + _markdown_evidence(
+                row["historical_gate_labels"] or "UNKNOWN"),
+            "- Archive-only issues absent from original board: " + str(
+                row["archive_only_issue_count"]),
+            "- Board issue inventory complete: false",
+            "- Historical missing batches: " + str(
+                row["saved_archive_batches_missing"]).lower(),
+            "- Other PRs sharing a saved issue: " + str(
+                row["saved_peer_pr_count"]),
+            "- Peer PR inventory current: false",
+            "- Multiple candidates for linked issue: " + str(
+                row["issue_has_alternative_prs"]).lower(),
+            "- Missing from final saved snapshot: " + str(
+                row["pr_missing_last_saved_snapshot"]).lower(),
+            "- Historical HEAD variation is NOT a merge conflict: " + str(
+                row["head_variation_is_historical_not_merge_conflict"]).lower(),
+            "- **Human next step only:** " + _markdown_evidence(
+                row["human_next_step_only"]),
+            "",
+        ])
+    lines.extend([
+        "## Authorizations",
+        "",
+        "Claim = false; CI verified = false; independent review verified = false; "
+        "dispatch = false; main merge verified = false; deploy = false; "
+        "live state verified = false.",
+        "",
+        "**Before an action:** independently refresh exact live GitHub HEAD, "
+        "issue status, current Notion and queue owner claims, required CI, "
+        "independent review, branch protection and deployment authorization.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--board", type=Path, required=True)
+    parser.add_argument("--pr-dossier", action="append", type=Path,
+                        help="Optional original private PR archive ZIP; repeat 1-12")
+    parser.add_argument("--format", choices=("csv", "html", "json", "markdown"), default="csv",
+                        help="P0-first CSV, printable HTML, structured JSON or private Markdown")
+    parser.add_argument("--repository",
+                        help="Optional canonical repository filter, e.g. Zennay/zCloud")
+    parser.add_argument("--priority", choices=tuple(RANK),
+                        help="Filter P0/P1/P2/Unspecified after full source admission")
+    parser.add_argument("--record-type", default="all",
+                        choices=("all", "existing-pr", "issue-without-pr", "unlinked-pr",
+                                 "archive-only-linked-pr"),
+                        help="Select saved PRs, unmatched issue links, unlinked PRs or archive-only linked PRs")
+    parser.add_argument("--attention", choices=ATTENTION, default="all",
+                        help="Focus on shared-issue PRs, missing saved links, "
+                             "archive-only records or historical HEAD changes")
+    parser.add_argument("--inspect-pr-url",
+                        help="Create a source-observed exact-PR owner packet")
+    parser.add_argument("--inspect-issue-url",
+                        help="Select rows referencing an exact canonical source issue")
+    parser.add_argument("--output", type=Path, required=True,
+                        help="New private create-only destination")
+    args = parser.parse_args(argv)
+    try:
+        expected_suffix = ".md" if args.format == "markdown" else "." + args.format
+        if args.output.suffix != expected_suffix:
+            raise ValueError("output suffix must match selected format")
+        sources = [args.board, *(args.pr_dossier or [])]
+        if len(sources) > 13 or len({str(x.resolve()) for x in sources + [args.output]}) != len(sources) + 1:
+            raise ValueError("source archives, board and output must be distinct")
+        source, sha = read_source_and_sha(args.board)
+        view = validated_view(source)
+        saved = None
+        if args.pr_dossier:
+            saved = issue_worklist(build_timeline(args.pr_dossier, minimum_sources=1))
+        exported_at = datetime.now(timezone.utc)
+        archives = saved["source_snapshots"] if saved is not None else []
+        board_age = source_freshness(
+            [{"latest_observed_utc": view["observed_at_utc"]}],
+            evaluated_at=exported_at)["status"]
+        archive_age = (source_freshness(archives, evaluated_at=exported_at)["status"]
+                       if archives else "not-provided")
+        archive_manifests = [
+            item["original_review_manifest_sha256"] for item in archives]
+        missing_archive_batches = any(
+            bool(item["missing_batch_indexes"]) for item in archives)
+        coverage_projects = view["coverage"]["projects"]
+        coverage_summary = {
+            "issue_coverage_project_count": len(coverage_projects),
+            "issue_coverage_partial_project_count": sum(
+                status == "partial" for status in coverage_projects.values()),
+            "issue_coverage_degraded_project_count": sum(
+                status == "degraded" for status in coverage_projects.values()),
+            "issue_coverage_unavailable_project_count": sum(
+                status == "unavailable" for status in coverage_projects.values()),
+            "issue_coverage_summary_note": (
+                "No complete issue inventory is established by this bounded source; "
+                "per-record coverage notes remain authoritative."),
+        }
+        html_metadata = {
+            "original_board_sha256": sha,
+            "board_observed_at_utc": view["observed_at_utc"],
+            "board_age_at_export": board_age,
+            "archive_age_at_export": archive_age,
+            "source_archive_manifest_sha256s": " | ".join(archive_manifests) or "not-provided",
+            "saved_pr_archive_supplied": bool(archives),
+            "saved_archive_batches_missing": missing_archive_batches,
+            **coverage_summary,
+        }
+        admitted_rows = prepare_rows(
+            view, sha, saved, exported_at=exported_at,
+            repository_scope=args.repository)
+        rows = select_owner_rows(
+            admitted_rows, repository=args.repository, priority=args.priority,
+            record_type=args.record_type, pr_url=args.inspect_pr_url,
+            issue_url=args.inspect_issue_url, attention=args.attention)
+        selection = selection_metadata(
+            len(admitted_rows), rows, repository=args.repository,
+            priority=args.priority, record_type=args.record_type,
+            pr_url=args.inspect_pr_url, issue_url=args.inspect_issue_url,
+            attention=args.attention)
+        # Keep source coverage explicit even when filters select zero records.
+        selection.update(coverage_summary)
+        html_metadata.update(selection)
+        for row in rows:
+            row.update(selection)
+        if args.format == "csv":
+            if not rows:
+                # A header-only file loses provenance and can be misread as a
+                # clear backlog. Emit one explicitly non-actionable metadata row.
+                rows = [{
+                    "original_board_sha256": sha,
+                    "board_observed_at_utc": view["observed_at_utc"],
+                    "board_age_at_export": board_age,
+                    "archive_age_at_export": archive_age,
+                    "device_clock_authoritative": False,
+                    "priority": "Unspecified",
+                    "source_issue_urls": "",
+                    "source_issue_titles": "Metadata only: no owner rows in bounded saved source",
+                    "project_scope": "",
+                    "pr_reference_state": "metadata_only_no_owner_rows",
+                    "archive_only_issue_count": 0,
+                    "archive_only_source_issue_urls": "",
+                    "board_issue_count": 0,
+                    "board_issue_inventory_complete_verified": False,
+                    "issue_source_coverage": "unavailable",
+                    "issue_source_coverage_note": (
+                        "No owner row matched the selected filter; use the aggregate "
+                        "portfolio coverage counts in this metadata-only export."),
+                    "pr_url": "",
+                    "linked_issue_count": 0,
+                    "multiple_issues_share_pr": False,
+                    "issue_has_alternative_prs": False,
+                    "saved_peer_pr_count": 0,
+                    "saved_peer_pr_urls": "",
+                    "saved_peer_inventory_current": False,
+                    "board_heads_observed": "UNKNOWN",
+                    "archive_heads_observed": "UNKNOWN",
+                    "head_variation_is_historical_not_merge_conflict": False,
+                    "historical_gate_labels": "UNKNOWN",
+                    "sampled_board_unknown_gates": "UNKNOWN",
+                    "pr_missing_last_saved_snapshot": False,
+                    "issue_link_missing_in_saved_source": False,
+                    "historical_candidates_truncated": False,
+                    "unlinked_in_saved_archive": False,
+                    "source_archive_manifest_sha256s": " | ".join(archive_manifests) or "not-provided",
+                    "saved_pr_archive_supplied": bool(archives),
+                    "saved_archive_batches_missing": missing_archive_batches,
+                    "human_next_step_only": (
+                        "Inspect live issue/PR inventory; empty saved selection is not live backlog clearance"),
+                    "claim_authorized": False,
+                    "dispatch_authorized": False,
+                    "required_ci_verified": False,
+                    "independent_review_verified": False,
+                    "main_merge_verified": False,
+                    "deploy_authorized": False,
+                    "live_state_verified": False,
+                }]
+            stream = StringIO()
+            for row in rows:
+                row.update(selection)
+            writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\r\n")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: _cell(row.get(key)) for key in FIELDS})
+            payload = stream.getvalue()
+        elif args.format == "html":
+            payload = render_private_html(rows, html_metadata)
+        elif args.format == "markdown":
+            payload = render_private_markdown(rows, html_metadata)
+        else:
+            envelope = {
+                "schema": "zsentinel-merge-first-owner-export-v1",
+                "source": "validated_saved_board_and_optional_saved_pr_archives",
+                "exported_at_utc": exported_at.isoformat(),
+                "original_board_sha256": sha,
+                "board_observed_at_utc": view["observed_at_utc"],
+                "board_age_at_export": board_age,
+                "archive_age_at_export": archive_age,
+                "device_clock_authoritative": False,
+                "source_archive_manifest_sha256s": archive_manifests,
+                "saved_pr_archive_supplied": bool(archives),
+                "saved_archive_batches_missing": missing_archive_batches,
+                "record_count": len(rows),
+                **selection,
+                "records": rows,
+                "claim_authorized": False,
+                "dispatch_authorized": False,
+                "required_ci_verified": False,
+                "independent_review_verified": False,
+                "main_merge_verified": False,
+                "deploy_authorized": False,
+                "live_state_verified": False,
+            }
+            payload = json.dumps(
+                envelope, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        if len(payload.encode("utf-8")) > MAX_CSV_BYTES:
+            raise ValueError("private owner export exceeds one MiB size limit")
+        write_create_only(args.output, payload)
+        print(args.output)
+        return 0
+    except (OSError, ValueError, KeyError, TypeError, UnicodeError, BadZipFile) as exc:
+        print("zSentinel merge-first export refused: " + str(exc), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

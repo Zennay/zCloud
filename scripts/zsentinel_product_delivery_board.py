@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import stat
 import sys
-import tempfile
+import secrets
 
 SCHEMAS = {
     "inbox": "zsentinel-product-issue-inbox-v1",
@@ -24,7 +24,13 @@ PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ISSUE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$")
 URL = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[1-9][0-9]{0,8}$")
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
+ISSUE_COVERAGE_NOTES = {
+    "partial": "GitHub issue coverage is PARTIAL; issues outside the observed window remain unknown.",
+    "degraded": "GitHub issue source is DEGRADED; prioritization may omit current issues.",
+    "unavailable": "GitHub issue source is UNAVAILABLE; an empty issue list does not mean no issues exist.",
+}
 MAX_INPUT = 2 * 1024 * 1024
+MAX_OUTPUT_BYTES = 6 * 1024 * 1024
 
 
 def unique(pairs):
@@ -42,7 +48,7 @@ def read(path: Path, schema: str) -> dict:
         raise ValueError("source is not a bounded regular file")
     if not hasattr(os, "O_NOFOLLOW"):
         raise ValueError("secure no-follow opening not supported")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         opened = os.fstat(fd)
         if not stat.S_ISREG(opened.st_mode) or (
@@ -95,7 +101,7 @@ def count(value):
 
 
 def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
-            hours=24, limit=40):
+            hours=24, limit=40, evaluated_at=None):
     if (inbox.get("actions_authorized") is not False
             or inbox.get("active_claims_verified") is not False
             or inbox.get("queue_ownership_known") is not False):
@@ -286,12 +292,29 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
                 "merge_authorized": False,
             }
 
-    now = datetime.now(timezone.utc)
-    fresh = {name: (now - stamp <= timedelta(hours=hours))
-             for name, stamp in source_times.items()}
+    now = evaluated_at or datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("board evaluation clock must be timezone-aware")
+    now = now.astimezone(timezone.utc)
+    freshness_status = {}
+    fresh = {}
+    for name, stamp in source_times.items():
+        age = now - stamp
+        # Match the recovery policy's bounded clock-skew allowance. A source
+        # clock several minutes in the future is not fresh merely because its
+        # negative age compares below the maximum-age threshold.
+        status = (
+            "future_dated" if age < -timedelta(minutes=2)
+            else "stale" if age > timedelta(hours=hours)
+            else "fresh"
+        )
+        freshness_status[name] = status
+        fresh[name] = status == "fresh"
     for name in ("retry", "branches", "claims", "prs"):
         if name in fresh and abs(source_times[name] - observed) > timedelta(hours=6):
             fresh[name] = False
+            if freshness_status[name] != "future_dated":
+                freshness_status[name] = "outside_inbox_window"
     issues.sort(key=lambda x: (PRIORITY[x["priority"]],
                 -retry_by_project.get(x["project"], {}).get("high_claim_attempts", 0),
                 x["project"], x["issue"]))
@@ -305,7 +328,7 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         matching_prs = [pr_evidence[link] for link in row["open_pr_candidates"]
                         if fresh.get("prs") is True and link in pr_evidence]
         if claim_ids:
-            next_step = "Coordinate with the current claim holder, do not displace."
+            next_step = "Reconcile observed claim IDs with the live lease source before coordination; do not infer current ownership from the snapshot."
         elif matching_prs:
             next_step = "Inspect exact-head PR gates and unresolved release authorization."
         elif row["open_pr_candidates"]:
@@ -319,8 +342,12 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         gaps = []
         if fresh.get("inbox") is not True:
             gaps.append("Issue evidence is stale; verify GitHub before deciding.")
-        if coverage[pid] != "partial" or inbox["truncated"]:
-            gaps.append("The GitHub issue window is bounded/incomplete.")
+        # All admitted source statuses are partial/degraded/unavailable. In
+        # particular, PARTIAL must not be treated as complete coverage.
+        coverage_note = ISSUE_COVERAGE_NOTES[coverage[pid]]
+        gaps.append(coverage_note)
+        if inbox["truncated"]:
+            gaps.append("The issue inbox is truncated; omitted issues remain unknown.")
         if claim_ids is None:
             gaps.append("Fresh active-claim snapshot unavailable; never infer free ownership.")
         else:
@@ -336,6 +363,7 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         cards.append({**row, "queue": queue, "observed_claim_ids": claim_ids,
                       "pr_delivery_candidates": matching_prs,
                       "project_issue_coverage": coverage[pid],
+                      "project_issue_coverage_note": coverage_note,
                       "recommended_next_step": next_step, "evidence_gaps": gaps,
                       "claim_authorized": False, "merge_authorized": False,
                       "deploy_authorized": False})
@@ -353,30 +381,46 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
             retry_meta["scope"] in ("all", pid)) else None
         active = (claims_by_project.get(pid, []) if claims_by_project is not None
                   and fresh.get("claims") else None)
+        coverage_status = coverage.get(pid, "unavailable")
         if active:
-            action = "Preserve active owner; review claim-specific next steps."
+            action = "Reconcile observed claim IDs against the live lease source before coordination; do not infer current ownership from the snapshot."
+        elif issue_totals.get(pid, {}).get("P0", 0):
+            action = "Review sampled P0 issues and verify live owner/PR state."
+        elif issue_totals.get(pid, {}).get("P1", 0):
+            action = "Review sampled P1 issues and verify live owner/PR state."
         elif queue and queue["expired_active_leases"]:
             action = "Escalate expired leases to the authorized queue owner."
         elif queue and queue["high_claim_attempts"]:
             action = "Inspect recurring claim cycles; do not auto-retry."
-        elif issue_totals.get(pid, {}).get("P0", 0):
-            action = "Review P0 issue and current owner/PR state."
+        elif coverage_status == "unavailable":
+            action = "Restore GitHub issue-source coverage; zero observed issues are not a clean backlog."
+        elif coverage_status == "degraded":
+            action = "Repair degraded GitHub issue coverage before trusting backlog prioritization."
+        elif coverage_status == "partial":
+            action = "Refresh the bounded issue inventory; unseen issues remain unknown."
         else:
             action = "Review live claims and existing PRs before action."
+        coverage_status = coverage.get(pid, "unavailable")
+        coverage_note = ISSUE_COVERAGE_NOTES.get(
+            coverage_status,
+            "No issue coverage row was observed for this project; backlog status is unknown.")
         project_operations.append({
             "project": pid, "issue_counts_in_sample": issue_totals.get(pid, {
                 "P0": 0, "P1": 0, "P2": 0, "Unspecified": 0}),
             "queue_observation": queue,
             "observed_claim_ids": active,
-            "issue_coverage": coverage.get(pid, "unavailable"),
+            "issue_coverage": coverage_status,
+            "issue_coverage_note": coverage_note,
             "recommended_next_step": action,
             "is_complete_inventory": False,
             "action_authorized": False,
         })
     project_operations.sort(key=lambda item: (
         -item["issue_counts_in_sample"]["P0"],
+        -item["issue_counts_in_sample"]["P1"],
+        -(item["queue_observation"] or {}).get("expired_active_leases", 0),
         -(item["queue_observation"] or {}).get("high_claim_attempts", 0),
-        -item["issue_counts_in_sample"]["P1"], item["project"],
+        item["project"],
     ))
 
     return {
@@ -384,6 +428,7 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
         "observed_at_utc": now.isoformat(),
         "source_times_utc": {k: v.isoformat() for k, v in source_times.items()},
         "fresh": fresh,
+        "freshness_status": freshness_status,
         "coverage": {"projects": coverage, "inbox_truncated": inbox["truncated"],
                      "github_denial": inbox["stopped_after_rate_or_auth_denial"],
                      "retry": retry_meta, "branches": branch_meta,
@@ -402,6 +447,48 @@ def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
                          "Recheck live Notion/queue claims, exact-head CI, independent "
                          "review and release permissions before any mutation.",
     }
+
+
+def handoff_freshness(data):
+    """Render saved-source freshness without implying that a snapshot is live."""
+    statuses = data.get("freshness_status")
+    if type(statuses) is dict and statuses:
+        allowed = {"fresh", "stale", "future_dated", "outside_inbox_window"}
+        return ", ".join(
+            "{}={}".format(name, state if state in allowed else "unknown")
+            for name, state in sorted(statuses.items())
+        )
+    # Backward-compatible rendering for snapshots produced before explicit
+    # freshness reasons were added.
+    fresh = data.get("fresh")
+    if type(fresh) is not dict or not fresh:
+        return "unknown"
+    return ", ".join(
+        "{}={}".format(name, "fresh" if state is True else "stale/unknown")
+        for name, state in sorted(fresh.items())
+    )
+
+
+def queue_handoff_rows(data):
+    """Return bounded queue incidents in P0-first, owner-safe order."""
+    rows = [
+        row for row in data["project_operations"]
+        if row["queue_observation"] is not None and (
+            row["queue_observation"]["high_claim_attempts"] > 0 or
+            row["queue_observation"]["expired_active_leases"] > 0
+        )
+    ]
+    def rank(row):
+        queue = row["queue_observation"]
+        counts = row["issue_counts_in_sample"]
+        return (
+            0 if counts["P0"] else
+            1 if queue["expired_active_leases"] else
+            2 if queue["high_claim_attempts"] else
+            3 if counts["P1"] else 4,
+            row["project"],
+        )
+    return sorted(rows, key=rank)
 
 
 def markdown(data):
@@ -431,8 +518,8 @@ def markdown(data):
     if not data["pr_delivery_observations"]:
         lines.append("No fresh PR exact-head observation supplied or accepted.")
     lines.extend(["", "## Project-wide queue and ownership context",
-                  "| Project | P0 | P1 | High claim cycles | Expired leases | Operator next step |",
-                  "|---|---:|---:|---:|---:|---|"])
+                  "| Project | P0 | P1 | High claim cycles | Expired leases | Issue source coverage | Operator next step |",
+                  "|---|---:|---:|---:|---:|---|---|"])
     for row in data["project_operations"]:
         queue = row["queue_observation"] or {}
         lines.append("| " + " | ".join(map(safe, (
@@ -440,8 +527,51 @@ def markdown(data):
             row["issue_counts_in_sample"]["P1"],
             queue.get("high_claim_attempts", "unknown"),
             queue.get("expired_active_leases", "unknown"),
+            row["issue_coverage"] + ": " + row["issue_coverage_note"],
             row["recommended_next_step"],
         ))) + " |")
+    lines.extend(["", "## Three-line incident handoffs (human-only)", ""])
+    for row in data["cards"]:
+        # Keep each portable escalation to exactly Problem / Action / Status.
+        # The summary is advisory and cannot release ownership or gates.
+        lines.extend([
+            "Problem: " + safe(row["priority"]) + " · " +
+            safe(row["project"]) + " · " + safe(row["issue"]) + " — " +
+            safe(row["title"]),
+            "Action: " + safe(row["recommended_next_step"]) +
+            " (human-only; no automatic claim, retry or merge).",
+            "Status: HOLD · board UTC=" + safe(data["observed_at_utc"]) +
+            " · source freshness=" + safe(handoff_freshness(data)) +
+            " · coverage=" + safe(row["issue_coverage"]) + " — " +
+            safe(row["issue_coverage_note"]) +
+            " · current claim, exact-head CI, independent review and release " +
+            "authority UNKNOWN.",
+            "",
+        ])
+    queue_handoffs = queue_handoff_rows(data)
+    lines.extend(["", "## Queue-only incident handoffs (human-only)", ""])
+    if not queue_handoffs:
+        lines.append(
+            "No queue-only handoff in this bounded sample; this does not prove "
+            "the queue is clear."
+        )
+    for row in queue_handoffs:
+        queue = row["queue_observation"]
+        lines.extend([
+            "Problem: " + safe(row["project"]) + " · P0=" +
+            safe(row["issue_counts_in_sample"]["P0"]) + " P1=" +
+            safe(row["issue_counts_in_sample"]["P1"]) + " · queue active=" +
+            safe(queue["active_items"]) + ", high claim cycles=" +
+            safe(queue["high_claim_attempts"]) + ", expired leases=" +
+            safe(queue["expired_active_leases"]) + ".",
+            "Action: " + safe(row["recommended_next_step"]) +
+            " (human-only; no automatic retry or reclaim).",
+            "Status: HOLD · queue source UTC=" +
+            safe(row["queue_source_observed_at_utc"] or "UNKNOWN") +
+            " · source freshness=" + safe(handoff_freshness(data)) +
+            " · current lease owner and release authority UNKNOWN.",
+            "",
+        ])
     return "\n".join(lines + ["", data["operator_note"], ""])
 
 
@@ -465,6 +595,7 @@ def html(data):
             str(entry["issue_counts_in_sample"]["P1"]) + "</td><td>" +
             escape(str(queue.get("high_claim_attempts", "unknown"))) + "</td><td>" +
             escape(str(queue.get("expired_active_leases", "unknown"))) + "</td><td>" +
+            escape(entry["issue_coverage"] + " — " + entry["issue_coverage_note"]) + "</td><td>" +
             escape(entry["recommended_next_step"]) + "</td></tr>")
     rows = []
     for row in data["cards"]:
@@ -472,14 +603,50 @@ def html(data):
             escape(link, quote=True) + '">Existing PR ' +
             escape(link.rsplit("/", 1)[-1]) + '</a> ' for link in row["open_pr_candidates"])
         gaps = "".join("<li>" + escape(g) + "</li>" for g in row["evidence_gaps"])
+        # A copyable three-line handoff follows the Notion recovery contract:
+        # problem, human-only next action, and honest source/release status.
+        # It deliberately does not infer live ownership or authorize a retry.
+        handoff = "\n".join((
+            "Problem: {} · {} · {} — {}".format(
+                row["priority"], row["project"], row["issue"], row["title"]),
+            "Action: {} (human-only; no automatic claim, retry or merge).".format(
+                row["recommended_next_step"]),
+            "Status: HOLD · board UTC={} · source freshness={} · coverage={} — {} · "
+            "current claim, exact-head CI, independent review and release "
+            "authority UNKNOWN.".format(
+                data["observed_at_utc"], handoff_freshness(data),
+                row["issue_coverage"], row["project_issue_coverage_note"]),
+        ))
         rows.append('<article><small>' + escape(row["priority"]) + " · " +
             escape(row["project"]) + " · " + escape(row["issue"]) +
             '</small><h2><a target="_blank" rel="noopener noreferrer" href="' +
             escape(row["url"], quote=True) + '">' + escape(row["title"]) +
             '</a></h2><p><strong>Next:</strong> ' +
             escape(row["recommended_next_step"]) + '</p><p>' + links +
-            '</p><details><summary>Evidence gaps</summary><ul>' + gaps +
+            '</p><details><summary>Three-line incident handoff (copy manually)</summary><pre>' +
+            escape(handoff) + '</pre></details>' +
+            '<details><summary>Evidence gaps</summary><ul>' + gaps +
             '</ul></details></article>')
+    queue_handoffs = []
+    for row in queue_handoff_rows(data):
+        queue = row["queue_observation"]
+        counts = row["issue_counts_in_sample"]
+        handoff = "\n".join((
+            "Problem: {} · P0={} P1={} · queue active={}, high claim cycles={}, expired leases={}.".format(
+                row["project"], counts["P0"], counts["P1"], queue["active_items"],
+                queue["high_claim_attempts"], queue["expired_active_leases"]),
+            "Action: {} (human-only; no automatic retry or reclaim).".format(
+                row["recommended_next_step"]),
+            "Status: HOLD · queue source UTC={} · source freshness={} · "
+            "current lease owner and release authority UNKNOWN.".format(
+                row["queue_source_observed_at_utc"] or "UNKNOWN",
+                handoff_freshness(data)),
+        ))
+        queue_handoffs.append(
+            '<article><h2>Queue incident · ' + escape(row["project"]) +
+            '</h2><details open><summary>Three-line incident handoff (copy manually)</summary><pre>' +
+            escape(handoff) + '</pre></details></article>'
+        )
     css = """
 :root{color-scheme:dark;background:#101722;color:#edf3fa;font:16px/1.5 system-ui,sans-serif}
 body{max-width:1140px;margin:auto;padding:clamp(14px,4vw,36px)}
@@ -488,7 +655,7 @@ a{color:#bddfff}a:focus-visible,summary:focus-visible{outline:3px solid #ffd98b}
 .board{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr));gap:14px}
 article{padding:18px;background:#1d2b3c;border:1px solid #3b5268;border-radius:12px}
 small{color:#cad8e8}.notice{border-left:4px solid #ffcf77;padding:14px;background:#302921}
-summary{cursor:pointer}
+summary{cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0}
 table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;padding:8px;border-bottom:1px solid #395165}
 .scroll{overflow-x:auto}
 """
@@ -505,24 +672,133 @@ table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;pa
             "".join(pr_rows) + '</tbody></table></div>'
             '<h2>Project-wide operations</h2><div class="scroll"><table>'
             '<thead><tr><th>Project</th><th>P0</th><th>P1</th>'
-            '<th>Claim cycles</th><th>Expired leases</th><th>Next step</th>'
+            '<th>Claim cycles</th><th>Expired leases</th><th>Issue source coverage</th><th>Next step</th>'
             '</tr></thead><tbody>' + "".join(projects) + '</tbody></table></div>'
-            '<section class="board">' + "".join(rows) +
+            '<h2>Queue-only incident handoffs (human-only)</h2>' +
+            ('<section class="board">' + "".join(queue_handoffs) + '</section>'
+             if queue_handoffs else
+             '<p>No queue-only handoff in this bounded sample; this does not prove the queue is clear.</p>') +
+            '<h2>Issue incident handoffs</h2><section class="board">' + "".join(rows) +
             '</section><footer>Offline: no scripts, fetches, queue or lease writes.</footer>'
             '</body></html>')
 
 
 def write_create_only(path, payload):
-    temporary = None
+    """Atomically publish one private UTF-8 report without clobbering a target."""
+    if not isinstance(path, Path) or not isinstance(payload, str):
+        raise ValueError("invalid private report arguments")
+    destination = Path(os.path.abspath(os.fspath(path)))
+    if destination.name in ("", ".", ".."):
+        raise ValueError("invalid private report filename")
+    data = payload.encode("utf-8")
+    if not 1 <= len(data) <= MAX_OUTPUT_BYTES:
+        raise ValueError("private report is empty or exceeds its byte limit")
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise ValueError("private directory-bound no-follow writes unsupported")
+
+    parent = destination.parent
+    before = parent.lstat()
+    if (not stat.S_ISDIR(before.st_mode) or before.st_uid != os.geteuid()
+            or stat.S_IMODE(before.st_mode) & 0o077):
+        raise ValueError("private output directory must be owned by current user and inaccessible to group/others")
+    directory_fd = os.open(
+        parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
+        getattr(os, "O_CLOEXEC", 0))
+    temporary_name = None
+    temporary_identity = None
+    published = False
+    published_identity = None
+    fd = None
+
+    def remove_if_owned(name, identity):
+        if name is None or identity is None:
+            return
+        try:
+            current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) == identity:
+                os.unlink(name, dir_fd=directory_fd)
+        except OSError:
+            pass
+
     try:
-        fd, name = tempfile.mkstemp(prefix=".zsentinel-board-", dir=path.parent)
-        temporary = Path(name)
-        with os.fdopen(fd, "w", encoding="utf-8") as output:
-            output.write(payload)
-        os.link(temporary, path)
+        actual = os.fstat(directory_fd)
+        if (not stat.S_ISDIR(actual.st_mode)
+                or (actual.st_dev, actual.st_ino) != (before.st_dev, before.st_ino)
+                or actual.st_uid != os.geteuid()
+                or stat.S_IMODE(actual.st_mode) & 0o077):
+            raise ValueError("private output directory was replaced or became accessible to group/others")
+
+        for _ in range(8):
+            candidate = ".zsentinel-board-" + secrets.token_hex(16)
+            try:
+                fd = os.open(
+                    candidate,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW |
+                    getattr(os, "O_CLOEXEC", 0),
+                    0o600, dir_fd=directory_fd)
+                temporary_name = candidate
+                break
+            except FileExistsError:
+                continue
+        if fd is None or temporary_name is None:
+            raise FileExistsError("could not allocate a unique private report inode")
+
+        info = os.fstat(fd)
+        temporary_identity = (info.st_dev, info.st_ino)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ValueError("temporary report inode is not private and regular")
+        os.fchmod(fd, 0o600)
+        output = os.fdopen(fd, "wb")
+        fd = None
+        with output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+
+        current_temp = os.stat(
+            temporary_name, dir_fd=directory_fd, follow_symlinks=False)
+        if ((current_temp.st_dev, current_temp.st_ino) != temporary_identity
+                or not stat.S_ISREG(current_temp.st_mode)
+                or current_temp.st_nlink != 1
+                or stat.S_IMODE(current_temp.st_mode) & 0o077):
+            raise ValueError("temporary report inode changed before publication")
+        current_dir = os.fstat(directory_fd)
+        if (current_dir.st_uid != os.geteuid()
+                or stat.S_IMODE(current_dir.st_mode) & 0o077):
+            raise ValueError("private output directory permissions changed before publication")
+
+        os.link(
+            temporary_name, destination.name,
+            src_dir_fd=directory_fd, dst_dir_fd=directory_fd,
+            follow_symlinks=False)
+        published = True
+        published_identity = temporary_identity
+        current_target = os.stat(
+            destination.name, dir_fd=directory_fd, follow_symlinks=False)
+        if ((current_target.st_dev, current_target.st_ino) != published_identity
+                or not stat.S_ISREG(current_target.st_mode)
+                or current_target.st_nlink != 2
+                or current_target.st_uid != os.geteuid()
+                or stat.S_IMODE(current_target.st_mode) & 0o077):
+            raise ValueError("published report inode changed or is not private")
+        remove_if_owned(temporary_name, temporary_identity)
+        temporary_name = None
+        os.fsync(directory_fd)
+    except BaseException:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        remove_if_owned(temporary_name, temporary_identity)
+        if published:
+            remove_if_owned(destination.name, published_identity)
+        raise
     finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+        os.close(directory_fd)
+    return len(data)
 
 
 def main(argv=None):

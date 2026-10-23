@@ -1,0 +1,447 @@
+#!/usr/bin/env python3
+"""Reopen a private saved zSentinel issue-continuity ZIP for human product triage.
+
+This offline reader verifies archive consistency and displays the source-bound
+issue/PR handoff. It does not authenticate GitHub, authorize merges or change
+claims, work queues, workflows, or production state.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timedelta, timezone
+from io import BytesIO
+import hashlib
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
+
+from zsentinel_saved_gate_dossier import (
+    ISSUE_URL, PR_URL, SHA, _open_private_extract_parent, _save_private_handoff,
+    read_archive, strict_json,
+)
+from zsentinel_saved_dossier_timeline import source_freshness
+
+FILES = ("issue-dossier.html", "issue-actions.md", "issue-prs.csv",
+         "source-receipt.json", "source-checksums.json")
+SCHEMA = "zsentinel-private-issue-continuity-zip-v1"
+SOURCE = "previously_saved_private_zip_sources_not_live"
+JSON_SCHEMA = "zsentinel-private-saved-issue-first-handoff-v1"
+PRIORITIES = ("P0", "P1", "P2", "Unspecified")
+MAX_MEMBER = 1024 * 1024
+MAX_TOTAL = 4 * MAX_MEMBER
+MAX_ISSUES = 100
+MAX_LINKED_PRS = 300
+HEAD = re.compile(r"[0-9a-f]{40}\Z")
+
+
+def canonical_issue(value):
+    return type(value) is str and ISSUE_URL.fullmatch(value) is not None
+
+
+def canonical_pr(value, repo):
+    match = PR_URL.fullmatch(value) if type(value) is str else None
+    return match is not None and match.group(1) == repo
+
+
+def _readonly_flags(obj, names):
+    if any(obj.get(name) is not False for name in names):
+        raise ValueError("Source claims privileged authority")
+
+
+def _validate_receipt(report, manifest):
+    if (type(report) is not dict or report.get("schema") != JSON_SCHEMA
+            or report.get("source") !=
+            "existing_pr_issue_links_in_saved_private_snapshots_not_live"):
+        raise ValueError("Unrecognized historical issue evidence")
+    _readonly_flags(report, (
+        "issue_inventory_known_complete", "github_open_or_closed_state_verified",
+        "owner_claim_verified", "required_ci_review_verified",
+        "main_merge_verified", "live_verified",
+        "writes_performed_to_external_systems",
+    ))
+    snapshots = report.get("source_snapshots")
+    if type(snapshots) is not list or not 1 <= len(snapshots) <= 12:
+        raise ValueError("Invalid source snapshot count")
+    actual_hashes = []
+    previous_end = None
+    for index, sample in enumerate(snapshots, 1):
+        if type(sample) is not dict or sample.get("index") != index:
+            raise ValueError("Invalid ordered source snapshot")
+        digest = sample.get("original_review_manifest_sha256")
+        missing = sample.get("missing_batch_indexes")
+        if (type(digest) is not str or SHA.fullmatch(digest) is None
+                or type(missing) is not list or len(missing) > 300
+                or any(type(n) is not int or not 1 <= n <= 300 for n in missing)
+                or len(set(missing)) != len(missing)):
+            raise ValueError("Invalid source hash or incomplete-batch receipt")
+        start_text = sample.get("earliest_observed_utc")
+        end_text = sample.get("latest_observed_utc")
+        if (type(start_text) is not str or type(end_text) is not str
+                or not 20 <= len(start_text) <= 48
+                or not 20 <= len(end_text) <= 48):
+            raise ValueError("Missing canonical bounded source time")
+        try:
+            first = datetime.fromisoformat(start_text.replace("Z", "+00:00"))
+            last = datetime.fromisoformat(end_text.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("Noncanonical saved source time") from None
+        if (first.utcoffset() != timedelta(0)
+                or last.utcoffset() != timedelta(0)
+                or first > last or last > datetime.now(timezone.utc)
+                or (previous_end is not None and first <= previous_end)):
+            raise ValueError("Unordered, future or contradictory source times")
+        previous_end = last
+        actual_hashes.append(digest)
+    if actual_hashes != manifest.get("original_manifest_sha256"):
+        raise ValueError("Source snapshot manifest mismatch")
+    selection = report.get("selection")
+    if type(selection) is not dict:
+        raise ValueError("Missing human issue selection")
+    selected = selection.get("exact_source_issue_filter")
+    if selected is not None and not canonical_issue(selected):
+        raise ValueError("Invalid selected issue URL")
+    if selected != manifest.get("selected_issue"):
+        raise ValueError("Archive issue selection disagrees with source receipt")
+    rows = report.get("issues")
+    if (type(rows) is not list or len(rows) > MAX_ISSUES
+            or type(selection.get("shown_source_issues")) is not int
+            or selection["shown_source_issues"] != len(rows)
+            or type(selection.get("matched_source_issues")) is not int
+            or selection["matched_source_issues"] < len(rows)
+            or type(selection.get("total_source_issues")) is not int
+            or selection["total_source_issues"] < selection["matched_source_issues"]
+            or (selected is not None and
+                (len(rows) != 1 or rows[0].get("issue_url") != selected))):
+        raise ValueError("Issue selection count or identity mismatch")
+    rank = {name: i for i, name in enumerate(PRIORITIES)}
+    seen_issues = set()
+    for issue in rows:
+        if type(issue) is not dict:
+            raise ValueError("Invalid issue row")
+        url, repo = issue.get("issue_url"), issue.get("repository")
+        if (not canonical_issue(url) or type(repo) is not str
+                or not url.startswith("https://github.com/" + repo + "/issues/")
+                or url in seen_issues
+                or issue.get("issue_number") != int(url.rsplit("/", 1)[-1])):
+            raise ValueError("Malformed or duplicated source issue")
+        seen_issues.add(url)
+        prs = issue.get("linked_existing_prs")
+        if type(prs) is not list or not 1 <= len(prs) <= MAX_LINKED_PRS:
+            raise ValueError("Invalid bounded saved PR links")
+        seen_prs = set()
+        observed_for_issue = set()
+        missing_pr_count = 0
+        disappeared_link_count = 0
+        for pr in prs:
+            if type(pr) is not dict:
+                raise ValueError("Invalid saved PR reference")
+            link = pr.get("pr_url")
+            if (not canonical_pr(link, repo)
+                    or link in seen_prs
+                    or pr.get("pr_number") != int(link.rsplit("/", 1)[-1])
+                    or type(pr.get("source_priority")) is not str
+                    or pr.get("source_priority") not in rank
+                    or type(pr.get("issue_link_priority")) is not str
+                    or pr.get("issue_link_priority") not in rank
+                    or pr.get("owner_claim_verified") is not False
+                    or pr.get("required_ci_review_verified") is not False
+                    or pr.get("main_merge_verified") is not False):
+                raise ValueError("Unsafe or authorizing historical PR link")
+            seen_prs.add(link)
+            observed_head = pr.get("observed_head")
+            if observed_head is not None and (
+                    type(observed_head) is not str or
+                    HEAD.fullmatch(observed_head) is None):
+                raise ValueError("Noncanonical saved PR HEAD")
+            spans = pr.get("issue_ref_observed_in_snapshots")
+            if (type(spans) is not list or not spans or len(spans) > len(snapshots)
+                    or any(type(n) is not int or not 1 <= n <= len(snapshots)
+                           for n in spans)
+                    or sorted(set(spans)) != spans
+                    or pr.get("issue_ref_last_seen_snapshot") != spans[-1]
+                    or pr.get("issue_ref_absent_in_last_snapshot") is not
+                    (spans[-1] != len(snapshots))):
+                raise ValueError("Contradictory sampled issue relationship")
+            observed_for_issue.update(spans)
+            latest_pr_sample = pr.get("last_seen_snapshot")
+            if (type(latest_pr_sample) is not int or
+                    not 1 <= latest_pr_sample <= len(snapshots)):
+                raise ValueError("Invalid last-seen sampled PR position")
+            pr_missing = latest_pr_sample != len(snapshots)
+            if pr.get("missing_from_final_sample") is not pr_missing:
+                raise ValueError("PR disappearance contradicts saved windows")
+            missing_pr_count += pr_missing
+            disappeared_link_count += (
+                spans[-1] != len(snapshots) and not pr_missing
+            )
+        observed = issue.get("observed_in_snapshots")
+        if (type(observed) is not list
+                or observed != sorted(observed_for_issue)
+                or issue.get("last_link_observed_snapshot") != max(observed_for_issue)
+                or issue.get("link_unobserved_in_final_sample") is not
+                (max(observed_for_issue) != len(snapshots))
+                or issue.get("sampled_prs_missing_from_final") != missing_pr_count
+                or issue.get("links_lost_while_pr_still_sampled") !=
+                disappeared_link_count
+                or issue.get("multiple_candidate_prs_need_owner_review") is not
+                (len(prs) > 1)
+                or issue.get("last_snapshot_missing_batches") is not
+                bool(snapshots[-1]["missing_batch_indexes"])):
+            raise ValueError("Issue continuity inconsistent with sampled PR links")
+        if (type(issue.get("highest_source_priority")) is not str
+                or issue.get("highest_source_priority") not in rank or
+                issue["highest_source_priority"] !=
+                min((p["issue_link_priority"] for p in prs),
+                    key=lambda v: rank[v]) or
+                issue.get("read_only") is not True):
+            raise ValueError("Issue priority or read-only receipt disagrees")
+        _readonly_flags(issue, (
+            "issue_open_state_verified", "owners_verified",
+            "existing_prs_merged_verified", "worker_dispatch_authorized",
+        ))
+    return rows, snapshots
+
+
+def read_issue_dossier(path: Path):
+    """Admit exactly the five fixed original 0600 members and their hashes."""
+    raw = read_archive(path)
+    extracted = {}
+    with ZipFile(BytesIO(raw), mode="r") as archive:
+        infos = archive.infolist()
+        if len(infos) != len(FILES) or {i.filename for i in infos} != set(FILES):
+            raise ValueError("Unexpected or duplicate issue archive members")
+        if sum(i.file_size for i in infos) > MAX_TOTAL:
+            raise ValueError("Issue archive expansion exceeds private budget")
+        for info in infos:
+            if (info.filename not in FILES or info.is_dir()
+                    or info.flag_bits & 1 or info.compress_type != ZIP_DEFLATED
+                    or not 1 <= info.file_size <= MAX_MEMBER
+                    or info.create_system != 3
+                    or info.external_attr >> 16 != 0o100600):
+                raise ValueError("Noncanonical or unsafe issue ZIP member")
+            with archive.open(info, "r") as reader:
+                data = reader.read(MAX_MEMBER + 1)
+            if len(data) != info.file_size:
+                raise ValueError("Issue ZIP member exceeded size limit")
+            extracted[info.filename] = data
+    manifest = strict_json(extracted["source-checksums.json"])
+    if (manifest.get("schema") != SCHEMA
+            or manifest.get("source") != SOURCE
+            or manifest.get("read_only") is not True
+            or type(manifest.get("files_sha256")) is not dict
+            or set(manifest["files_sha256"]) != set(FILES[:-1])):
+        raise ValueError("Unrecognized issue package schema")
+    _readonly_flags(manifest, (
+        "known_complete_github_inventory", "owner_claim_verified",
+        "required_exact_head_ci_and_review_verified", "merge_authorized",
+        "worker_dispatch_authorized", "main_merge_verified", "live_verified",
+    ))
+    for filename in FILES[:-1]:
+        expected = manifest["files_sha256"][filename]
+        if (type(expected) is not str or SHA.fullmatch(expected) is None
+                or hashlib.sha256(extracted[filename]).hexdigest() != expected):
+            raise ValueError("Issue package member checksum mismatch")
+    receipt = strict_json(extracted["source-receipt.json"])
+    rows, samples = _validate_receipt(receipt, manifest)
+    return extracted, manifest, receipt, rows, samples
+
+
+def extract_private(files, destination: Path):
+    """Create only a new 0700 folder and its five 0600 original files."""
+    if not destination.name or destination.name in (".", ".."):
+        raise ValueError("Invalid destination directory name")
+    parentfd = _open_private_extract_parent(destination.parent)
+    childfd = None
+    created = []
+    try:
+        os.mkdir(destination.name, mode=0o700, dir_fd=parentfd)
+        try:
+            childfd = os.open(
+                destination.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=parentfd)
+            d = os.fstat(childfd)
+            if (not stat.S_ISDIR(d.st_mode) or d.st_uid != os.geteuid()
+                    or stat.S_IMODE(d.st_mode) & 0o077):
+                raise ValueError("Cannot guarantee private extraction folder")
+            for name in FILES:
+                fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                             os.O_NOFOLLOW, 0o600, dir_fd=childfd)
+                created.append(name)
+                with os.fdopen(fd, "wb") as output:
+                    output.write(files[name])
+                    output.flush()
+                    os.fsync(output.fileno())
+            os.fsync(childfd)
+        except BaseException:
+            if childfd is not None:
+                for name in created:
+                    os.unlink(name, dir_fd=childfd)
+            os.rmdir(destination.name, dir_fd=parentfd)
+            raise
+        finally:
+            if childfd is not None:
+                os.close(childfd)
+        os.fsync(parentfd)
+    finally:
+        os.close(parentfd)
+
+
+
+def human_issue_handoff(manifest, source, issue, *, stale_after_hours=6):
+    """Read-only human handoff from admitted receipt; not a release decision."""
+    if (not canonical_issue(issue["issue_url"]) or
+            manifest.get("selected_issue") not in (None, issue["issue_url"])):
+        raise ValueError("Handoff issue not part of original source scope")
+    freshness = source_freshness(
+        source["source_snapshots"], stale_after_hours=stale_after_hours)
+    age = (str(freshness["age_hours"]) + " hours"
+           if freshness["age_hours"] is not None else "UNKNOWN")
+    lines = [
+        "# zSentinel · private historical issue owner handoff",
+        "",
+        "**SOURCE-BOUND / NOT LIVE: no ownership, required CI, review, "
+        "main merge or deployment authorization.**",
+        "",
+        "- Original GitHub issue: " + issue["issue_url"],
+        "- Historical linked priority: " + issue["highest_source_priority"],
+        "- Source freshness: " + freshness["status"].upper() +
+          " · age " + age + " · threshold " +
+          str(freshness["stale_after_hours"]) + " hours",
+        "- Latest source UTC: " + str(freshness["latest_observed_utc"] or "UNKNOWN"),
+        "- Freshness evaluated UTC: " + freshness["evaluated_at_utc"] +
+          " · live recheck required before action",
+        "- Saved PR candidates: " + str(len(issue["linked_existing_prs"])),
+        "- Source manifest SHA256 identities (not provider signatures):",
+    ]
+    for item in source["source_snapshots"]:
+        lines.append("  - " + item["original_review_manifest_sha256"] +
+                     " · " + str(item["latest_observed_utc"]) +
+                     " · missing batches " + str(len(item["missing_batch_indexes"])))
+    lines.extend(["", "## Existing sampled PR links"])
+    for pr in issue["linked_existing_prs"][:30]:
+        lines.extend([
+            "- " + pr["pr_url"] + " (issue-linked " +
+            pr["issue_link_priority"] + "; latest general PR " +
+            pr["source_priority"] + "; old HEAD " +
+            (pr["observed_head"] or "UNKNOWN") + ")",
+        ])
+    if len(issue["linked_existing_prs"]) > 30:
+        lines.append("- " + str(len(issue["linked_existing_prs"]) - 30) +
+                     " more saved PR references omitted; NOT free or resolved.")
+    lines.extend([
+        "", "## Mandatory live human follow-up",
+        "1. Check the original issue and each relevant existing PR on GitHub.",
+        "2. Recheck actual owner/worker claims and file-scope collisions.",
+        "3. Recheck exact current PR HEAD, required CI, independent reviewer "
+        "decisions and protected-main policy.",
+        "4. Merge only when the existing GitHub and release authority allow it; "
+        "otherwise hold that PR and continue another free product task.",
+        "",
+        "Absence in saved source never proves resolution, released claim, "
+        "main merge or live recovery. No external action performed.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", type=Path, required=True,
+                        help="One previously generated private issue continuity ZIP")
+    parser.add_argument("--inspect-issue", help="Canonical issue URL in saved source")
+    parser.add_argument("--stale-after-hours", type=int, default=6,
+                        help="Mark saved evidence stale after 1..168 hours (default: 6)")
+    parser.add_argument("--limit", type=int, default=20,
+                        help="Maximum printed issue groups (1..50)")
+    parser.add_argument("--extract-to", type=Path,
+                        help="New private directory for original HTML/Markdown/CSV/JSON")
+    parser.add_argument("--handoff-markdown", type=Path,
+                        help="Create-only human issue owner note from one saved issue")
+    args = parser.parse_args(argv)
+    try:
+        if (not 1 <= args.limit <= 50 or
+                (args.inspect_issue is not None and
+                 not canonical_issue(args.inspect_issue))
+                or (args.extract_to is not None and
+                    args.handoff_markdown is not None)):
+            raise ValueError("Invalid issue selection")
+        files, manifest, report, issues, samples = read_issue_dossier(args.input)
+        if args.inspect_issue:
+            issues = [row for row in issues
+                      if row["issue_url"] == args.inspect_issue]
+            if len(issues) != 1:
+                raise ValueError("Selected issue absent from this bounded ZIP")
+        print("zSentinel PRIVATE historic issue dossier (not live).")
+        print("Original source observations: " + str(len(samples)))
+        print("Original manifest identities: " +
+              ", ".join(s["original_review_manifest_sha256"][:12]
+                        for s in samples))
+        freshness = source_freshness(
+            samples, stale_after_hours=args.stale_after_hours)
+        print("Source freshness: " + freshness["status"].upper() +
+              " / age hours " + str(freshness["age_hours"]) +
+              " / stale threshold " + str(freshness["stale_after_hours"]))
+        print("Freshness evaluated UTC: " + freshness["evaluated_at_utc"] +
+              " / live state remains UNKNOWN")
+        print("Human issue groups shown: " + str(min(len(issues), args.limit)) +
+              " of " + str(len(issues)) + " in this saved selection")
+        for issue in issues[:args.limit]:
+            print(issue["highest_source_priority"] + " " + issue["issue_url"] +
+                  " / historical existing PR candidates " +
+                  str(len(issue["linked_existing_prs"])))
+            # Text in a self-consistent archive is still unauthenticated.
+            # Produce operator wording from validated fixed status fields,
+            # not attacker-controlled free-form narrative or terminal codes.
+            if issue.get("link_unobserved_in_final_sample") is True:
+                print("  Historical issue link not seen in last saved sample; "
+                      "NOT proof of closure or merge.")
+            elif len(issue["linked_existing_prs"]) > 1:
+                print("  Multiple sampled PR candidates: recheck each live "
+                      "owner, file scope, exact-head CI and review.")
+            else:
+                print("  Recheck current issue/PR state and actual owner "
+                      "before any merge or claim.")
+            for candidate in issue["linked_existing_prs"][:5]:
+                print("    " + candidate["pr_url"] + " / issue-link " +
+                      candidate["issue_link_priority"] + " / HEAD " +
+                      (candidate["observed_head"] or "UNKNOWN"))
+            if len(issue["linked_existing_prs"]) > 5:
+                print("    Further saved PR references omitted, NOT resolved")
+        print("CURRENT OWNER / REQUIRED CI / REVIEW / MAIN / DEPLOY: UNKNOWN")
+        if args.handoff_markdown is not None:
+            if len(issues) != 1:
+                raise ValueError("Choose exactly one saved issue for handoff")
+            target = args.inspect_issue or manifest["selected_issue"]
+            if target is None or target != issues[0]["issue_url"]:
+                raise ValueError("Private handoff requires one exact saved issue")
+            note = human_issue_handoff(
+                manifest, report, issues[0],
+                stale_after_hours=args.stale_after_hours)
+            _save_private_handoff(args.handoff_markdown, note)
+            print("New private source-bound issue handoff created; "
+                  "no release or owner authority.")
+        if args.extract_to is not None:
+            # A targeted CLI inspection must not silently extract unrelated
+            # private issue cards from a broader saved portfolio archive.
+            if (args.inspect_issue is not None and
+                    (len(report["issues"]) != 1 or
+                     manifest["selected_issue"] != args.inspect_issue)):
+                raise ValueError(
+                    "For one-issue extraction, create a source-pinned "
+                    "ZIP with --inspect-issue first")
+            extract_private(files, args.extract_to)
+            print("Original validated issue dossier extracted to a NEW private "
+                  "directory. No external writes or approvals.")
+        return 0
+    except (OSError, ValueError, KeyError, TypeError, UnicodeError, BadZipFile,
+            OverflowError) as exc:
+        print("Refused unsafe or incomplete issue archive: " +
+              type(exc).__name__, file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
