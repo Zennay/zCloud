@@ -194,6 +194,93 @@ class GovernedExecTests(unittest.TestCase):
                 time.sleep(0.05)
             self.assertFalse(running, "over-budget child survived release")
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux process groups required")
+    def test_lost_lease_generation_stops_child_without_deleting_successor(self):
+        # Emulate another writer replacing the lease generation while a
+        # bounded child is running. The wrapper must terminate its child
+        # at renewal rather than reacquire, and must not delete that new
+        # owner's generation during cleanup.
+        marker = self.root / "lost-lease-child-pid.txt"
+        program = (
+            "import os,time; from pathlib import Path; "
+            f"Path({str(marker)!r}).write_text(str(os.getpid())); "
+            "time.sleep(20)"
+        )
+        wrapper_code = (
+            "import sys; from pathlib import Path; "
+            f"sys.path.insert(0, {str(ROOT)!r}); "
+            "import project_runtime as runtime; "
+            f"runtime.CONTRACT_FILE = Path({str(self.contract)!r}); "
+            "from scripts import zcloud_governed_exec as governed; "
+            "raise SystemExit(governed.run_governed("
+            f"Path({str(self.db)!r}), 'ftmo', 'lost-generation-owner', "
+            f"[sys.executable, '-c', {program!r}], "
+            "lease_seconds=90, renew_seconds=5))"
+        )
+        wrapper = subprocess.Popen(
+            [sys.executable, "-c", wrapper_code],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        child_pid = None
+        try:
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and not marker.exists():
+                self.assertIsNone(wrapper.poll(), "governor exited before child startup")
+                time.sleep(0.05)
+            self.assertTrue(marker.exists(), "test child never started")
+            child_pid = int(marker.read_text())
+            with self._connect() as conn:
+                old = conn.execute(
+                    "SELECT acquired_at FROM resource_leases "
+                    "WHERE project_id='ftmo' AND owner_id='lost-generation-owner'"
+                ).fetchone()
+                self.assertIsNotNone(old)
+                self.assertNotEqual("2099-01-01T00:00:00+00:00", old["acquired_at"])
+                # Deliberately preserve a different generation as another
+                # lease holder would. No production DB is ever touched.
+                conn.execute(
+                    "UPDATE resource_leases SET acquired_at=? "
+                    "WHERE project_id='ftmo' AND owner_id='lost-generation-owner'",
+                    ("2099-01-01T00:00:00+00:00",),
+                )
+                conn.commit()
+            stdout, stderr = wrapper.communicate(timeout=12)
+            self.assertNotEqual(0, wrapper.returncode, (stdout, stderr))
+            deadline = time.monotonic() + 2.0
+            running = True
+            while time.monotonic() < deadline:
+                status = Path(f"/proc/{child_pid}/stat")
+                if not status.exists():
+                    running = False
+                    break
+                if status.read_text().rpartition(")")[2].split()[0] in {"Z", "X"}:
+                    running = False
+                    break
+                time.sleep(0.05)
+            self.assertFalse(running, "lost lease left governed child running")
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT acquired_at FROM resource_leases "
+                    "WHERE project_id='ftmo' AND owner_id='lost-generation-owner'"
+                ).fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual("2099-01-01T00:00:00+00:00", row["acquired_at"])
+        finally:
+            if wrapper.poll() is None:
+                wrapper.terminate()
+                try:
+                    wrapper.communicate(timeout=3)
+                except subprocess.TimeoutExpired:
+                    wrapper.kill()
+                    wrapper.communicate(timeout=3)
+            if child_pid is not None:
+                status = Path(f"/proc/{child_pid}/stat")
+                try:
+                    if status.exists() and status.read_text().rpartition(")")[2].split()[0] not in {"Z", "X"}:
+                        os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
     @unittest.skipUnless(sys.platform == "linux", "Linux signals required")
     def test_sigterm_stops_running_child_before_releasing_lease(self):
         # Terminate the test-only wrapper, not any real VPS service.
