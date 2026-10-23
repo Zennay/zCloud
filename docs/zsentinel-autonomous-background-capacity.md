@@ -94,6 +94,35 @@ urgente reden om CPU te laten wijken; deze wijziging leest alleen `statvfs` en
 start, stopt of herconfigureert geen runner of trainer buiten de bestaande
 geautoriseerde policy-route.
 
+## Geen swap geconfigureerd op de nieuwe VPS (23 oktober)
+
+Een afzonderlijke read-only zSSH-waarneming van
+`VM-7eb5ee16-2c71-440d-b7fd-8095d204e930` toont
+`SwapTotal: 0 kB` en `SwapFree: 0 kB`. Dit is **geen** bewijs
+voor 0% van een bestaande swapruimte in gebruik. De CPU-governor meldt nu
+`swap_status=NO_SWAP_CONFIGURED` en `no-swap-configured` als gematigde
+drukreden. Zonder verdere urgente signalen betekent dit maximaal de
+intermediaire 100% / CPUWeight 40-trede in plaats van idle 175% / 70.
+De bestaande onmiddellijke verlaging bij CPU-/RAM-/rootdruk blijft intact.
+
+`/proc/meminfo` wordt begrensd gelezen. Dubbele, ontbrekende, ongeldige of
+te grote bronvelden leveren `swap_status=UNKNOWN` en een conservatief
+onvolledige-bronbesluit. De numerieke oude `swap_used_percent=0` blijft bij
+`NO_SWAP_CONFIGURED` uitsluitend voor compatibiliteit met oudere bewaarformaten;
+de HTML-werkbank toont nu expliciet **Geen swap geconfigureerd** in plaats van
+een misleidende gebruiksmeter. T0/T1-vergelijkingen van swappercentages worden
+alleen als vergelijkbaar verklaard als beide bonnen `OBSERVED` melden; oude
+bonnen zonder `swap_status` blijven voor die metriek niet vergelijkbaar.
+De privé-eigenaarhandoff voegt een P1-opdracht toe om geheugenrisico te beoordelen.
+Dit is geen toestemming voor het inschakelen van swap, herstarten van runners,
+extra training, CI-reruns of een productiedeploy.
+
+Een tweede read-only broncontrole op hetzelfde host toont `/opt/fuckball-training`
+en `/` beide op device `2050` en `/dev/sda2`. Daarmee blijft de daadwerkelijke
+training-outputlocatie op de **systeemschijf**; deze CPU-fix maakt dat pad niet
+veilig en autoriseert geen trainingstart. De aparte externe-opslag/cutover-gate
+uit issue #1588 en het bestaande training-PR moet onafhankelijk worden voldaan.
+
 ## Coherente root-capaciteitsopname
 
 De hoofd-snapshot leest root-schijfruimte, vrije inodes en volumeomvang nu uit één
