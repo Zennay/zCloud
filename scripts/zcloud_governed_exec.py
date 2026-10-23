@@ -23,6 +23,7 @@ def connect(path: Path):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=15000")
     runtime.init_tables(conn)
+    conn.commit()  # admission below opens its own explicit write transaction
     return conn
 
 
@@ -166,6 +167,20 @@ def run_governed(
     old_handlers = {}
     acquired = False
     try:
+        # Serialize same-owner admission with the pool capacity reservation.
+        # Reusing an active owner key would otherwise renew one lease while
+        # starting a second real process without consuming another slot.
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            "SELECT 1 FROM resource_leases WHERE project_id=? AND owner_id=? "
+            "AND lease_until>strftime('%Y-%m-%dT%H:%M:%f', 'now')",
+            (project_id, owner_id),
+        ).fetchone()
+        if existing:
+            conn.rollback()
+            _admission_denied({"reason": "resource_owner_already_running",
+                               "project_id": project_id})
+            return 75
         result = runtime.acquire_resource(
             conn,
             project_id,
@@ -173,10 +188,12 @@ def run_governed(
             lease_seconds=lease_seconds,
             metadata=_metadata(command),
         )
-        conn.commit()
-        if not result.get("acquired"):
-            _admission_denied(result)
+        if not result.get("acquired") or result.get("renewed"):
+            conn.rollback()
+            _admission_denied(result if not result.get("renewed") else {
+                "reason": "resource_owner_already_running", "project_id": project_id})
             return 75
+        conn.commit()
         acquired = True
 
         env = os.environ.copy()
