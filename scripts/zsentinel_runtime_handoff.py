@@ -2351,10 +2351,9 @@ def _notion_relation_owner_overview(report):
             or (meta["owner_card_omitted"] != (count > 0 and not visible))):
         raise ValueError("Notion registry-owner count/visibility source mismatch")
     if count == 0:
-        if meta["coverage"] != "live_readonly_bounded":
-            raise ValueError("incomplete project mapping source claims no missing relations")
         return ("Geen onopgeloste projectrelaties gezien binnen het beperkte "
-                "Notion-venster; geen lease-/eigenaarsbewijs.")
+                "Notion-venster; overige ongeziene projectrelaties blijven ONBEKEND. "
+                "Geen lease-/eigenaarsbewijs.")
     if meta["coverage"] != "live_readonly_incomplete":
         raise ValueError("positive missing relations with complete coverage")
     in_progress = sum(
