@@ -331,6 +331,10 @@ def normalize_report(data, raw_sha256, now=None):
         if status in {"partial", "unavailable"} and source_complete:
             source_complete = False
             source_reasons.append("source_completeness_conflict")
+        if status == "observed" and source_reasons:
+            status = "partial"
+            source_complete = False
+            source_reasons.append("observed_status_has_source_reasons")
         if status == "observed" and source_complete and any(
             coverage.get(key) != "observed" for key in ("runner_events", "runner_targets", "alerts")
         ):
@@ -339,6 +343,8 @@ def normalize_report(data, raw_sha256, now=None):
             source_reasons.append("source_coverage_incomplete")
         if status == "partial" and not source_reasons:
             source_reasons.append("source_incomplete")
+        if status == "unavailable" and not source_reasons:
+            source_reasons.append("source_unavailable")
 
     rows = data.get("telemetry_rows")
     if rows is not None:
