@@ -609,6 +609,57 @@ def run_governed(
         if not release_ok:
             raise RuntimeError("resource_lease_release_unverified")
 
+def inspect_pool(db_path: Path, project_id: str) -> dict:
+    """Read-only, bounded admission visibility without creating DB or leases.
+
+    This is an advisory instant snapshot, never evidence that concurrent
+    admission will succeed or that the binary is deployed in production.
+    """
+    _assert_shared_resource_db(db_path)
+    contracts = runtime.load_contracts()
+    compute = runtime.project_contract(project_id, contracts).get("compute") or {}
+    pool = str(compute.get("pool") or "")
+    capacities = contracts["resource_pools"]
+    target = Path(db_path)
+    if target.is_symlink() or not target.is_file():
+        raise RuntimeError("resource_shared_database_unavailable")
+    from urllib.parse import quote
+    uri = "file:" + quote(str(target.resolve(strict=True)), safe="/") + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=5)
+    try:
+        conn.execute("PRAGMA query_only=ON")
+        now = datetime.now(timezone.utc).isoformat()
+        rows = conn.execute(
+            "SELECT pool,COUNT(*) FROM resource_leases "
+            "WHERE lease_until>? GROUP BY pool", (now,),
+        ).fetchall()
+        observed = {str(row[0]): int(row[1]) for row in rows}
+        unexpected = sorted(set(observed) - set(capacities))
+        pools = {
+            name: {
+                "capacity": int(cfg["slots"]),
+                "admitted": int(observed.get(name, 0)),
+                "remaining": max(0, int(cfg["slots"]) - int(observed.get(name, 0))),
+            }
+            for name, cfg in capacities.items()
+        }
+        return {
+            "source": "readonly_shared_sqlite_snapshot",
+            "project_id": project_id,
+            "pool": pool,
+            "observed_at": now,
+            "pool_snapshot": pools,
+            "unknown_pool_count": len(unexpected),
+            "overcommitted": any(value["admitted"] > value["capacity"]
+                                 for value in pools.values()),
+            "pinned_database": bool(os.environ.get("ZCLOUD_RESOURCE_DB")),
+            "admission_granted": False,
+            "runtime_deployment_verified": False,
+        }
+    finally:
+        conn.close()
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", type=Path, default=ROOT / "history.db")
@@ -616,12 +667,20 @@ def main(argv=None) -> int:
     parser.add_argument("--owner", required=True)
     parser.add_argument("--lease-seconds", type=int, default=300)
     parser.add_argument("--renew-seconds", type=int, default=60)
+    parser.add_argument("--inspect-pool", action="store_true",
+                        help="Read a redacted shared-pool snapshot, without launching a workload")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
 
     command = list(args.command)
     if command and command[0] == "--":
         command = command[1:]
+    if args.inspect_pool:
+        if command:
+            parser.error("--inspect-pool does not accept a workload command")
+        print(json.dumps(inspect_pool(args.db, args.project),
+                         ensure_ascii=False, sort_keys=True))
+        return 0
     if not command:
         parser.error("command is required after --")
 
