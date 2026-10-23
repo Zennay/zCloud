@@ -325,6 +325,36 @@ must explicitly connect each real process entrypoint to the shared
 authority, keep systemd/cgroup containment for detached descendants
 and verify exclusion during the authorized live concurrency canary.
 
+## Interim legacy self-play admission veto (not service migration)
+
+The connected new VPS had a separately managed, already running
+HaxLab/Fuckball coach under `fuckball-ai-coach.service`. Its visible
+process tree included Node `training/continuous.cjs` and
+`training/haxlab_selfplay.cjs`, **without** a zCloud governed-executor
+parent or a confirmed shared lease. The service has its own 2-CPU quota
+and 3-GiB memory cap, but those systemd limits alone do not prevent an
+FTMO or LightUp heavy workload from running simultaneously.
+
+To avoid admitting competing new heavy work during that migration gap,
+the same governor now applies a **conservative, read-only Linux /proc
+veto** to every new `heavy` pool admission: it searches live Node
+command identities for those observed self-play / continuous-training
+scripts. If an instance exists outside confirmed lease coordination,
+the attempted new heavy admission rolls back without launching a child.
+With `--wait-seconds`, it checks again within the bounded window,
+sleeping outside the SQLite transaction and holding no leased slot.
+The source does not signal, stop or take over that legacy coach.
+
+**Limitations:** a filename-based fallback recognizes only these
+observed Node entrypoints, and cannot discover unknown or renamed
+FTMO/HaxLab/LightUp jobs, hidden process namespaces, training on
+another host, or child processes that have changed executable identity.
+Consequently it does **not** prove one shared heavy pool. A full
+authorized migration to the canonical SQLite lease owner, together
+with supervised systemd/cgroup containment and a live concurrency
+receipt, is still required. Never mark the release as complete based
+on this interim veto.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
