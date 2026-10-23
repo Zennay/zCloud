@@ -325,9 +325,11 @@ class GovernedExecTests(unittest.TestCase):
             self.assertLess(elapsed, 4.0)
             self.assertFalse(marker.exists())
             self.assertEqual(
-                1, runtime.resource_status(holder, prune_expired=False)[
-                    "pools"
-                ]["heavy"]["used"]
+                1,
+                holder.execute(
+                    "SELECT COUNT(*) FROM resource_leases "
+                    "WHERE pool='heavy' AND owner_id='persistent-holder'"
+                ).fetchone()[0],
             )
         finally:
             runtime.release_resource(holder, "ftmo", "persistent-holder")
