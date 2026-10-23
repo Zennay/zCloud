@@ -335,11 +335,12 @@ def _retain_owned_lease(conn, project_id: str, owner_id: str,
     conn.execute("BEGIN IMMEDIATE")
     try:
         until = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         cursor = conn.execute(
             "UPDATE resource_leases SET lease_until=?,metadata_json=? "
-            "WHERE project_id=? AND owner_id=? AND acquired_at=?",
+            "WHERE project_id=? AND owner_id=? AND acquired_at=? AND lease_until>?",
             (until, '{"cleanup":"process_group_unverified","executor":"zcloud-governed-exec"}',
-             project_id, owner_id, acquired_at),
+             project_id, owner_id, acquired_at, now),
         )
         if cursor.rowcount != 1:
             conn.rollback()
