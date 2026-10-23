@@ -177,7 +177,7 @@ def host_source_coverage_table(host):
     labels = (
         ("meminfo", "RAM / swap"),
         ("loadavg", "CPU-load"),
-        ("root_disk", "Root-schijfruimte"),
+        ("root_disk", "Root-schijfruimte + inodes"),
         ("psi", "Linux PSI"),
     )
     display = {
@@ -320,7 +320,7 @@ def operator_admission(
     )
     source_labels = {
         "meminfo": "RAM/swap", "loadavg": "load/CPU",
-        "root_disk": "root-schijf", "psi": "PSI",
+        "root_disk": "root-schijfruimte/inodes", "psi": "PSI",
     }
     incomplete_sources = []
     if isinstance(source_coverage, dict):
