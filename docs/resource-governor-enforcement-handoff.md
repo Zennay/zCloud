@@ -568,6 +568,43 @@ No workflow was relabelled and no runner changed in this PR. The
 workflow titles are not an assertion that GitHub-hosted capacity
 has failed; the YAML labels are the actual runner requirement.
 
+## Dedicated heavy cgroup memory-headroom correction
+
+Previously the admission guard used `memory.max - memory.current`
+as the free headroom **inside the same dedicated heavy service unit**,
+then required that remainder to be at least the *entire* declared
+workload budget. With a correctly bounded FTMO unit
+(`memory.max=4608 MiB`) and even 64 MiB consumed by the governor
+wrapper before the child starts, the old formula reported only
+4,544 MiB free and always denied a 4,608-MiB job. This made the
+required hard service cap and the admission guard contradict each
+other.
+
+A verified dedicated canonical heavy unit now treats its **leaf
+`memory.max` as a ceiling on the total unit memory**, which already
+includes the wrapper's existing usage. It no longer subtracts the
+same leaf's `memory.current` when comparing that whole-service
+ceiling to the declared budget. The calculations still check
+`memory.max-memory.current` headroom in every **ancestor** cgroup
+which can contain unrelated work, plus host `MemAvailable`, reserved
+zCloud/zSSH control-plane RAM, aggregate active non-protected leases,
+and the kernel-enforced leaf CPU/RAM limit at admission and renewal.
+Shared build/canary scopes continue to subtract their leaf's current
+memory because unrelated processes may also occupy that scope.
+For stricter heavy service caps below the project soft RAM budget,
+the total project budget remains reserved in the portfolio RAM check
+while the actually enforceable smaller cap is used for the leaf
+check; a stricter cap is not a license to oversubscribe the host.
+
+Verification was isolated: the exact immutable PR-head Python helper
+was executed with an in-memory fake cgroup tree and no VPS database
+access. With a 4,608-MiB service ceiling and 64 MiB wrapper usage,
+dedicated admission headroom was 4,608 MiB; shared scope headroom was
+4,544 MiB. When the parent slice had only 3,500 MiB free, dedicated
+headroom was reduced to 3,500 MiB. These are focused arithmetic
+checks, **not** existing CI, a complete integration test, or a live
+FTMO/HaxLab/LightUp governor canary.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
