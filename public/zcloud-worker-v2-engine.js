@@ -81,6 +81,18 @@
   sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
   const label=el=>String(el?.getAttribute?.("aria-label")||el?.getAttribute?.("aria-valuetext")||el?.innerText||el?.textContent||"").trim();
   const visible=el=>{if(!el)return false;const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=="none"&&s.visibility!=="hidden"&&r.width>0&&r.height>0};
+  // A visible DOM node is not necessarily an interactive composer. Treat native
+  // disabled/readonly state and ARIA/inert wrappers as unavailable.
+  const composerReady=el=>{
+    if(!visible(el)||el.disabled===true||el.readOnly===true||
+       el.matches?.(":disabled")||
+       el.getAttribute("aria-disabled")==="true"||
+       el.getAttribute("aria-readonly")==="true"||
+       el.closest?.('[aria-disabled="true"],[aria-readonly="true"],[inert]'))return false;
+    const tag=String(el.tagName||"").toUpperCase();
+    return el.isContentEditable===true||
+      ((tag==="TEXTAREA"||tag==="INPUT")&&!el.disabled&&!el.readOnly);
+  };
   // Responsive portals can retain a hidden old stop button. Only the visible
   // control indicates that the assigned conversation is currently generating.
   const generating=()=>[...document.querySelectorAll('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]')].some(visible);
@@ -177,7 +189,7 @@
     // Never treat a quoted error in an actual conversation as an error page.
     // A terminal load failure has no usable composer and no visible chat turns.
     const main=document.querySelector("main");
-    if(!main||visible(composer()))return false;
+    if(!main||composerReady(composer()))return false;
     if([...main.querySelectorAll('[data-message-author-role],[data-testid="conversation-turn"]')].some(visible))
       return false;
     const t=String(main.innerText||"").trim().toLowerCase();
@@ -272,7 +284,7 @@
       await blocked("previous-queue-send-after-reload-manual-review");
       return true;
     }
-    if(visible(composer())){
+    if(composerReady(composer())){
       if(missingComposerSince>0){
         lastBlock="";
         await status("composer-restored",{reason:"composer-visible-on-owned-worker"});
@@ -310,20 +322,26 @@
     return true;
   }
   const composer=()=>{
-    // Responsive layouts can leave a hidden duplicate composer in the DOM.
-    // Never mistake the first hidden match for a missing live input.
+    // Prefer an actually editable candidate over disabled responsive duplicates.
     const selectors=['#prompt-textarea','[contenteditable="true"][role="textbox"]','textarea'];
-    for(const selector of selectors){
-      const shown=[...document.querySelectorAll(selector)].find(visible);
-      if(shown)return shown;
-    }
-    return document.querySelector(selectors.join(",")); // Preserve draft detection if all are hidden.
+    const candidates=[];
+    for(const selector of selectors)for(const el of document.querySelectorAll(selector))
+      if(!candidates.includes(el))candidates.push(el);
+    // A disabled/read-only field containing text may hold a human draft. Keep it
+    // visible to the guard instead of silently switching to another editor.
+    const blockedDraft=candidates.find(el=>visible(el)&&!composerReady(el)&&
+      String(el.value??el.innerText??el.textContent??"").trim());
+    if(blockedDraft)return blockedDraft;
+    const ready=candidates.find(composerReady);
+    if(ready)return ready;
+    const shown=candidates.find(visible);
+    return shown||document.querySelector(selectors.join(","));
   };
   const sendButton=()=>[...document.querySelectorAll('button[data-testid="send-button"],button[aria-label="Send message"],button[aria-label="Verzenden"]')].find(visible)||null;
   const composerText=box=>String(box?.value??box?.innerText??box?.textContent??"")
     .replace(/\r\n?/g,"\n").trim();
   async function fill(text){
-    const box=composer();if(!visible(box))return "missing";
+    const box=composer();if(!composerReady(box))return "missing";
     const wanted=String(text).replace(/\r\n?/g,"\n").trim();
     // Never overwrite a human draft or a previous assignment's unsent text.
     // Check again here because ensureHigh() can spend seconds in UI menus.
@@ -642,7 +660,7 @@
         await status("generation-progress");return;
       }
       if(resetRoute!==null){
-        if(failedConversation()||!visible(composer())||
+        if(failedConversation()||!composerReady(composer())||
            (location.pathname===resetRoute&&/^\/c\//.test(resetRoute))){
           // Only one in-tab UI transition was requested. Escalate a stale
           // transition to its operator, without clicking New chat again.
