@@ -27,12 +27,23 @@ def connect(path: Path):
         if (path.is_symlink() or not path.is_file()
                 or not os.access(path, os.R_OK | os.W_OK)):
             raise RuntimeError("resource_shared_database_unavailable")
-    conn = sqlite3.connect(path, timeout=15)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=15000")
-    runtime.init_tables(conn)
-    conn.commit()  # admission below opens its own explicit write transaction
-    return conn
+    if os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+        # The existing file can vanish after preflight. SQLite mode=rw
+        # refuses to create a replacement when a shared mount disappears.
+        from urllib.parse import quote
+        uri = "file:" + quote(str(path.resolve(strict=True)), safe="/") + "?mode=rw"
+        conn = sqlite3.connect(uri, uri=True, timeout=15)
+    else:
+        conn = sqlite3.connect(path, timeout=15)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=15000")
+        runtime.init_tables(conn)
+        conn.commit()  # admission below opens its own explicit write transaction
+        return conn
+    except Exception:
+        conn.close()
+        raise
 
 
 def _assert_shared_resource_db(db_path: Path) -> None:
