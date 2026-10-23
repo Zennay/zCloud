@@ -782,7 +782,7 @@ def current_gate_lines(board, markdown=False):
         "Totaal GitHub GET-budget voor huidige extra gatelezing: " +
         str(observation["max_additional_github_gets"]),
         "Gatebronnen gezien: " + str(observation["pr_gate_receipts_requested"]) +
-        "; QA-only titels bewust niet geselecteerd: " +
+        "; QA-only PR's (titel/labels/branch) bewust niet geselecteerd: " +
         str(observation["qa_only_title_prs_not_inspected"]) +
         "; overige PRs in steekproef niet bekeken: " +
         str(observation["more_sampled_prs_not_gate_checked"]) +
@@ -1617,7 +1617,7 @@ def as_html(board):
             str(live["direct_explicit_prs_outside_recent_sample"]) +
             " · bron onbekend of niet-product: " +
             str(live["direct_explicit_pr_lookup_failed_or_not_product"]) +
-            ". QA-only titels niet voor product-gatecontrole gekozen: " +
+            ". QA-only PR's (titel/labels/branch) niet voor product-gatecontrole gekozen: " +
             str(live["qa_only_title_prs_not_inspected"]) +
             ". Maximaal " + str(live["max_additional_github_gets"]) +
             " extra GitHub GETs in deze optionele opname.</p></section>"
