@@ -84,6 +84,14 @@ def validate_projects(data, errors: list[str]) -> set[str]:
         if not isinstance(project, dict):
             errors.append(f"{prefix}: must be an object")
             continue
+        # Projects.json is presentation metadata only. Runtime-owned keys
+        # cannot silently override the versioned canonical contract.
+        legacy_runtime_keys = sorted(set(project) & {
+            "queue_mode", "lane_profile", "ai_worker_cap",
+            "autonomy", "compute", "protected",
+        })
+        add(errors, not legacy_runtime_keys,
+            f"{prefix}: duplicated runtime contract keys {legacy_runtime_keys}")
         pid = project.get("id")
         add(errors, isinstance(pid, str) and bool(ID_RE.fullmatch(pid or "")), f"{prefix}.id: lowercase slug required")
         if isinstance(pid, str):
@@ -189,7 +197,8 @@ def validate_project_contracts(
         if not isinstance(contract, dict):
             errors.append(f"{prefix}: object required")
             continue
-        add(errors, isinstance(contract.get("queue_mode"), str) and bool(contract.get("queue_mode", "").strip()), f"{prefix}.queue_mode: non-empty string required")
+        add(errors, contract.get("queue_mode") in {"execution", "human-gated"},
+            f"{prefix}.queue_mode: execution or human-gated required")
         lane_profile = str(contract.get("lane_profile") or "").strip().lower()
         add(
             errors,
@@ -225,6 +234,9 @@ def validate_project_contracts(
         add(errors, isinstance(memory, int) and not isinstance(memory, bool) and memory >= 0, f"{prefix}.compute.memory_soft_mb: non-negative integer required")
         add(errors, compute.get("priority") in priorities, f"{prefix}.compute.priority: expected one of {sorted(priorities)}")
         add(errors, isinstance(compute.get("protected"), bool), f"{prefix}.compute.protected: boolean required")
+        if isinstance(compute.get("protected"), bool) and pool_name in pools:
+            add(errors, compute["protected"] == (pool_name == "protected"),
+                f"{prefix}.compute.protected: must match canonical resource pool")
 
         if contract.get("queue_mode") == "human-gated":
             add(errors, autonomy.get("auto_start") is False, f"{prefix}: human-gated project must not auto-start")
