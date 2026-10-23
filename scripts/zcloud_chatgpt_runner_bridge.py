@@ -377,9 +377,17 @@ def _archive_bulk_storage_gate(archive: dict[str, object]) -> dict[str, object]:
         state, next_code = "free_space_unknown", "REFRESH_ARCHIVE_CAPACITY_EVIDENCE"
     elif available < BULK_ARCHIVE_MIN_FREE_BYTES:
         state, next_code = "below_30_gib", "REQUEST_LARGER_ARCHIVE_WITH_OWNER"
+    elif archive.get("inode_observation_attempted") is not True or archive.get("inode_capacity_status") != "OBSERVED":
+        state, next_code = "inode_capacity_unknown", "REFRESH_ARCHIVE_INODE_CAPACITY_EVIDENCE"
+    elif archive.get("inode_pressure_hint") in ("CRITICAL", "HIGH"):
+        state, next_code = "inode_pressure_high", "HOLD_ARCHIVE_INODE_PRESSURE"
+    elif archive.get("inode_pressure_hint") == "ELEVATED":
+        state, next_code = "inode_pressure_elevated", "REVIEW_ARCHIVE_INODE_PRESSURE"
+    elif archive.get("inode_pressure_hint") != "NO_LOCAL_THRESHOLD_CROSSED":
+        state, next_code = "inode_capacity_unknown", "REFRESH_ARCHIVE_INODE_CAPACITY_EVIDENCE"
     else:
-        # Even separate + writable + 30 GiB does not prove a second physical
-        # drive, that the training path is mounted there, or app-user access.
+        # Even separate + writable + 30 GiB + normal inode headroom does not
+        # prove a second physical drive, training-path identity, or app access.
         state, next_code = (
             "capacity_candidate_not_training_authorization",
             "VERIFY_PHYSICAL_DRIVE_AND_TRAINING_PATH_WITH_OWNER",
@@ -395,6 +403,15 @@ def _archive_bulk_storage_gate(archive: dict[str, object]) -> dict[str, object]:
         "block_backing_unknown": "The archive has no verified local block-device backing; obtain owner inspection.",
         "free_space_unknown": "Archive free-space evidence is missing or invalid; do not infer capacity.",
         "below_30_gib": "The archive has less than 30 GiB free; request an owner-approved larger destination.",
+        "inode_capacity_unknown": (
+            "The archive has sufficient free bytes, but inode capacity is unknown; do not credit it as a bulk offload target."
+        ),
+        "inode_pressure_high": (
+            "The archive has high or critical inode pressure; do not credit it as a bulk offload target."
+        ),
+        "inode_pressure_elevated": (
+            "The archive has elevated inode pressure; request owner review before any offload."
+        ),
         "capacity_candidate_not_training_authorization": (
             "The archive has at least 30 GiB, a separate non-read-only filesystem and a "
             "local block-device source hint, but its independent physical drive, training "
@@ -410,6 +427,13 @@ def _archive_bulk_storage_gate(archive: dict[str, object]) -> dict[str, object]:
         "available_bytes_observed": (
             available if type(available) is int and available >= 0 else None
         ),
+        "inode_observation_attempted": archive.get("inode_observation_attempted") is True,
+        "inode_capacity_status": archive.get("inode_capacity_status", "UNKNOWN"),
+        "inodes_total": archive.get("inodes_total"),
+        "inodes_free": archive.get("inodes_free"),
+        "inodes_available": archive.get("inodes_available"),
+        "inodes_unavailable_percent": archive.get("inodes_unavailable_percent"),
+        "inode_pressure_hint": archive.get("inode_pressure_hint", "UNKNOWN"),
         "physical_drive_separation_verified": False,
         "training_output_path_verified": False,
         "training_user_write_permission_verified": False,
@@ -654,7 +678,13 @@ def _host_capacity_observation() -> dict[str, object]:
                           "mount_detection_basis": "unknown", "separate_filesystem": None,
                           "read_only": None, "filesystem_backing": "unknown",
                           "total_bytes": None, "available_bytes": None,
-                          "available_percent": None},
+                          "available_percent": None,
+                          "inode_observation_attempted": False,
+                          "inode_capacity_status": "UNKNOWN",
+                          "inodes_total": None, "inodes_free": None,
+                          "inodes_available": None,
+                          "inodes_unavailable_percent": None,
+                          "inode_pressure_hint": "UNKNOWN"},
         "bulk_storage_advisory": _archive_bulk_storage_gate({}),
         "training_output_observation": _training_path_observation(),
         "warnings": [],
@@ -846,6 +876,54 @@ def _host_capacity_observation() -> dict[str, object]:
                 raise ValueError("invalid_archive_filesystem_capacity")
             total, available = block_size * total_blocks, block_size * archive_available_blocks
 
+            # Inode capacity is independent from byte capacity. Observe it only
+            # for a stable candidate target, never credit an underlying root
+            # directory or a read-only/virtual/network mount as archive capacity.
+            inode_target_admitted = (
+                mount_state == "mounted"
+                and separate_filesystem is True
+                and read_only is False
+                and archive.get("filesystem_backing") == "local_block_candidate"
+            )
+            archive["inode_observation_attempted"] = inode_target_admitted
+            if inode_target_admitted:
+                try:
+                    inode_total = int(vfs.f_files)
+                    inode_free = int(vfs.f_ffree)
+                    inode_available = int(vfs.f_favail)
+                    if (inode_total <= 0 or inode_free < 0
+                            or inode_available < 0 or inode_free > inode_total
+                            or inode_available > inode_free):
+                        raise ValueError("invalid_archive_inode_capacity")
+                    inode_unavailable = 100.0 * (
+                        inode_total - inode_available
+                    ) / inode_total
+                    inode_hint = (
+                        "CRITICAL" if inode_unavailable >= 99
+                        else "HIGH" if inode_unavailable >= 95
+                        else "ELEVATED" if inode_unavailable >= 90
+                        else "NO_LOCAL_THRESHOLD_CROSSED"
+                    )
+                    archive.update({
+                        "inode_capacity_status": "OBSERVED",
+                        "inodes_total": inode_total,
+                        "inodes_free": inode_free,
+                        "inodes_available": inode_available,
+                        "inodes_unavailable_percent": round(inode_unavailable, 1),
+                        "inode_pressure_hint": inode_hint,
+                    })
+                except (AttributeError, TypeError, ValueError, OverflowError):
+                    complete = False
+                    evidence_warnings.append("archive_inode_capacity_unavailable")
+                    archive.update({
+                        "inode_capacity_status": "UNKNOWN",
+                        "inodes_total": None,
+                        "inodes_free": None,
+                        "inodes_available": None,
+                        "inodes_unavailable_percent": None,
+                        "inode_pressure_hint": "UNKNOWN",
+                    })
+
             # Recheck both mount membership and path identity around the path-based
             # statvfs call; a changed target must not be credited as archive capacity.
             vfs_after = os.statvfs(ARCHIVE_MOUNT_PATH)
@@ -890,6 +968,13 @@ def _host_capacity_observation() -> dict[str, object]:
             backing_lost = str(exc) == "archive_mount_backing_changed_during_observation"
             if path_identity_lost or backing_lost:
                 archive["filesystem_backing"] = "unknown"
+                archive["inode_observation_attempted"] = False
+                archive["inode_capacity_status"] = "UNKNOWN"
+                archive["inodes_total"] = None
+                archive["inodes_free"] = None
+                archive["inodes_available"] = None
+                archive["inodes_unavailable_percent"] = None
+                archive["inode_pressure_hint"] = "UNKNOWN"
             if path_identity_lost:
                 evidence_warnings.append("archive_mount_changed_during_observation")
             elif backing_lost:
@@ -926,6 +1011,9 @@ def _host_capacity_observation() -> dict[str, object]:
         and archive.get("separate_filesystem") is True
         and archive.get("read_only") is False
         and type(archive_available) is int and archive_available > 0
+        and archive.get("inode_observation_attempted") is True
+        and archive.get("inode_capacity_status") == "OBSERVED"
+        and archive.get("inode_pressure_hint") == "NO_LOCAL_THRESHOLD_CROSSED"
     )
     if (archive.get("mount_detected") is True
             and archive.get("separate_filesystem") is True
@@ -1091,6 +1179,9 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
             "block_backing_unknown": "ARCHIVE_BULK_BLOCK_DEVICE_NOT_VERIFIED",
             "free_space_unknown": "ARCHIVE_BULK_CAPACITY_UNKNOWN",
             "below_30_gib": "ARCHIVE_BULK_BELOW_30_GIB",
+            "inode_capacity_unknown": "ARCHIVE_BULK_INODE_CAPACITY_UNKNOWN",
+            "inode_pressure_high": "ARCHIVE_BULK_INODE_PRESSURE_HIGH",
+            "inode_pressure_elevated": "ARCHIVE_BULK_INODE_PRESSURE_ELEVATED",
             "capacity_candidate_not_training_authorization": (
                 "ARCHIVE_BULK_CAPACITY_CANDIDATE_REQUIRES_EXTERNAL_PROOF"
             ),
@@ -1098,6 +1189,17 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
         codes.append(state_to_code.get(
             bulk.get("state"), "ARCHIVE_BULK_GATE_UNKNOWN"
         ))
+        if bulk.get("inode_observation_attempted") is True:
+            inode_code = (
+                "ARCHIVE_BULK_INODE_CAPACITY_UNKNOWN"
+                if bulk.get("inode_capacity_status") != "OBSERVED" else
+                "ARCHIVE_BULK_INODE_PRESSURE_HIGH"
+                if bulk.get("inode_pressure_hint") in ("CRITICAL", "HIGH") else
+                "ARCHIVE_BULK_INODE_PRESSURE_ELEVATED"
+                if bulk.get("inode_pressure_hint") == "ELEVATED" else None
+            )
+            if inode_code and inode_code not in codes:
+                codes.append(inode_code)
     else:
         codes.append("ARCHIVE_BULK_GATE_UNKNOWN")
     # The actual output directory is a separate observation from the archive:
