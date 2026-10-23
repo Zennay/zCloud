@@ -88,3 +88,36 @@ It remains a private, non-executable owner workspace.
 A live claim row whose `Project` relation is missing, ambiguous, or points outside the canonical project registry is still shown to the operator, but it is **not** complete ownership evidence. The observer emits `project_relation_status=resolved|unresolved`, `project_relation_coverage=complete|partial`, and `unresolved_project_relation_count`. Each bounded Claimed/Running/Verifying source window carries its own `unresolved_project_relations` count.
 
 The recovery cockpit, portfolio overview, and owner handoff reconcile the per-status counts against the global count. A mismatch, absent per-status receipt on a live-labelled source, or a saved snapshot claiming live project-relation coverage is rejected. An unresolved relation produces an explicit **PROJECTRELATIES ONVOLLEDIG** warning and no free-work conclusion. This is a source-integrity signal only: it never proves a live lease, authorizes a claim transfer, retry, dispatch, service restart, or deployment.
+
+
+## Canonical-project owner action cards (23 October 2026)
+
+The operator handoff now promotes a **positive, recent** unresolved Project-relation
+observation into **one bounded registry-owner action card**, in addition to the
+read-only warning. This closes the gap where an unidentified active task was
+visible in source statistics but never entered the owner follow-up queue.
+
+- If any unresolved relation belongs to a `Claimed` or `Running` status
+  window, the advisory owner action is **P1**; if every unresolved relation
+  belongs only to `Verifying`, it is **P2**. These are Notion *status*
+  observations, not verified leases or current worker assignments.
+- The card is assigned to the `cloud` **registry coordinator for review only**;
+  it does **not** assign the original task to zCloud or guess the task's
+  canonical owner. The authorized project/queue owner must reconcile the
+  original Notion relation and current claim before taking action.
+- The card is generated only from a live, ≤10-minute bounded Notion source.
+  The total unresolved count and the Claimed/Running subset must reconcile
+  with all three exact source status windows. Saved snapshots, stale feeds,
+  missing status windows or contradictory counts cannot create a live card.
+- The owner action competes in the existing **24-card P0-first workbench**.
+  The HTML/Markdown overview distinguishes *card visible* from *card
+  omitted because higher-priority work filled the list*. Both states retain
+  a prominent source-bound operator instruction, not a false zero.
+- The same per-card source validation is reused by HTML and Markdown output;
+  neither output can promote a changed priority, project, source timestamp
+  or ownership claim. The JSON handoff contains the corresponding bounded
+  summary without any claim/dispatch/retry permissions.
+
+This is an operator follow-up, **not** automated reassignment, claim release,
+CI retry, registry write, worker recovery, or deployment. All existing GitHub
+exact-HEAD CI, independent review, protection, and release gates still apply.
