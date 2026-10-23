@@ -592,17 +592,30 @@ and the kernel-enforced leaf CPU/RAM limit at admission and renewal.
 Shared build/canary scopes continue to subtract their leaf's current
 memory because unrelated processes may also occupy that scope.
 For stricter heavy service caps below the project soft RAM budget,
-the total project budget remains reserved in the portfolio RAM check
-while the actually enforceable smaller cap is used for the leaf
-check; a stricter cap is not a license to oversubscribe the host.
+the total project budget remains reserved in the portfolio RAM check.
+For local cgroup admission, the needed RAM is the smaller of the
+project budget and the **dedicated leaf** memory ceiling, **not** the
+smallest inherited ancestor memory ceiling. An ancestor with only
+2,048 MiB total available must therefore reject a 4,608-MiB heavy
+service even if its own parent reports 2,048 MiB free; interpreting
+that ancestor as a deliberately stricter leaf would incorrectly
+permit the workload. A genuinely stricter 3,072-MiB **leaf** on a
+4,608-MiB project remains enforceable when the ancestors have adequate
+headroom; it is not a license to oversubscribe the host.
 
 Verification was isolated: the exact immutable PR-head Python helper
 was executed with an in-memory fake cgroup tree and no VPS database
 access. With a 4,608-MiB service ceiling and 64 MiB wrapper usage,
 dedicated admission headroom was 4,608 MiB; shared scope headroom was
 4,544 MiB. When the parent slice had only 3,500 MiB free, dedicated
-headroom was reduced to 3,500 MiB. These are focused arithmetic
-checks, **not** existing CI, a complete integration test, or a live
+headroom was reduced to 3,500 MiB. In an additional read-only exact-source fixture, the helper
+returned `dedicated=(4608,4608,4608)`,
+`shared=(4608,4544,null)`,
+`ancestor_2048=(2048,2048,4608)`, and
+`stricter_leaf_3072=(3072,3072,3072)` (limit, available
+headroom, dedicated leaf ceiling; units MiB).
+These are focused arithmetic checks, **not** existing CI,
+a complete integration test, or a live
 FTMO/HaxLab/LightUp governor canary.
 
 ## What remains before this milestone is DONE
