@@ -157,7 +157,7 @@ fi
 [[ "$(printenv ZCLOUD_SQLITE_CUTOVER_CONFIRMED || true)" = yes ]] ||
   die 'old-VPS writer fence and final SQLite handoff must be independently confirmed'
 [[ "$EUID" -eq 0 ]] || die 'root required'
-exec 9>/run/lock/zcloud-dashboard-publication.lock
+exec 9>/run/zcloud-dashboard-publication.lock
 flock -n 9 || die 'another dashboard publisher is active'
 backend_ready || die 'API not active, healthy and loopback-only'
 systemctl is-active --quiet caddy || die 'Caddy inactive'
