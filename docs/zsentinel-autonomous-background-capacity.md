@@ -75,6 +75,15 @@ Bestanden zijn nieuw/privé (0600); bestaande snapshot- en reviewgates blijven
 verplicht. Geen systemctl restart, GitHub workflowdispatch, portfoliolease
 of productiedeploy.
 
+## Non-blocking private receipt reads
+
+Operatorbronmodules, opgeslagen T0/T1-receipts en incidentbundelbestanden worden
+met `O_NONBLOCK` geopend vóór de descriptor op een regulier bestand wordt gecontroleerd.
+Een FIFO die een verwacht JSON-/bronbestand vervangt, wordt daardoor geweigerd
+in plaats van de operatoropdracht te laten hangen. De descriptor blijft daarna
+het object waarvan de metadata en begrensde bytes worden gelezen. Dit is alleen
+invoerbescherming: het geeft geen release-, herstel- of deploymentautorisatie.
+
 ## 21 oktober · systeem- én gebruikersmanager GitHub runnerherstel
 
 De herstelwerkbank las eerder alleen `systemctl list-units` zonder `--user`.
