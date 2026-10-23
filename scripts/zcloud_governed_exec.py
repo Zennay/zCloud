@@ -126,6 +126,53 @@ def _admitted_pool_over_limit(conn, pool_name: str) -> bool:
     return occupied > ceiling
 
 
+def _legacy_haxlab_training_active() -> bool:
+    """Deny a NEW heavy lease if the observed ungoverned self-play is active.
+
+    A running trainer from the historical service may consume the exact
+    heavy resource the SQLite pool does not yet know about. Never migrate,
+    signal, or claim ownership of that process here. This is a temporary
+    admission veto, not evidence of FTMO/LightUp coverage or a live release.
+    """
+    if sys.platform != "linux":
+        raise RuntimeError("resource_process_visibility_unsupported")
+    count = 0
+    try:
+        with os.scandir("/proc") as procs:
+            for item in procs:
+                if not item.name.isdecimal():
+                    continue
+                count += 1
+                if count > 20000:
+                    raise RuntimeError("resource_process_inventory_unbounded")
+                directory = Path("/proc") / item.name
+                try:
+                    name = (directory / "comm").read_text().strip()
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    raise RuntimeError("resource_process_inventory_unavailable") from exc
+                if name not in {"node", "nodejs"}:
+                    continue
+                try:
+                    tokens = (directory / "cmdline").read_bytes().split(b"\\x00")
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    raise RuntimeError("resource_process_inventory_unavailable") from exc
+                if any(token in {
+                        b"training/haxlab_selfplay.cjs",
+                        b"training/continuous.cjs",
+                    } or token.endswith((
+                        b"/training/haxlab_selfplay.cjs",
+                        b"/training/continuous.cjs",
+                    )) for token in tokens):
+                    return True
+    except OSError as exc:
+        raise RuntimeError("resource_process_inventory_unavailable") from exc
+    return False
+
+
 def _pinned_database_identity(path: Path) -> tuple[int, int] | None:
     """Observe canonical production file identity without opening a new DB.
 
@@ -714,6 +761,13 @@ def run_governed(
                 conn.rollback()
                 _admission_denied({
                     "reason": "resource_pool_capacity_unsafe",
+                    "project_id": project_id,
+                })
+                return 75
+            if compute.get("pool") == "heavy" and _legacy_haxlab_training_active():
+                conn.rollback()
+                _admission_denied({
+                    "reason": "resource_unleased_training_active",
                     "project_id": project_id,
                 })
                 return 75
