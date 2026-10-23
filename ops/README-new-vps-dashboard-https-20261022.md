@@ -121,9 +121,15 @@ Do not mark public-live until an authenticated application response is shown.
 
 ## Release truth
 
-This is currently source preparation only. The connected zSSH 3.0 profile
-confirms exec_mode=disabled, allowed root limited to
-/home/zssh/zssh-workspace and empty systemd inspection/restart grants.
-It cannot start zCloud or reload Caddy. Production actions require
-a scoped operator authorization or an existing approved host-bound deploy
-gate. Do not expand zSSH to unrestricted root shell to bypass the gate.
+This is currently source preparation only. On 23 October 2026 the
+connected private zSSH 0.1.2 profile reported `exec_mode=full` with an
+inspect/restart capability for `zennay-cloud.service`. The read-only status
+inspection found the service running but still logging a missing explicit
+`browseragent` runtime contract. Those technical capabilities are **not**
+approval to restart the service, run this publisher, edit Caddy, mutate
+SQLite or claim the final old/new writer cutover. Its Caddy systemd grant
+was not observed in the dedicated service capability list.
+Production publication still requires authorized DNS/Caddy ownership,
+current exact-head review/CI, final writer-fence receipts and a deliberate
+operator release. Do not use unrestricted shell access as a substitute
+for those gates.
