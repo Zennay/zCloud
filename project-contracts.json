@@ -48,6 +48,23 @@
         "protected": true
       }
     },
+    "browseragent": {
+      "queue_mode": "human-gated",
+      "lane_profile": "human-gated",
+      "ai_worker_cap": 0,
+      "autonomy": {
+        "mode": "external_gate",
+        "auto_start": false
+      },
+      "compute": {
+        "class": "human-gated",
+        "pool": "disabled",
+        "cpu_soft_cores": 0,
+        "memory_soft_mb": 0,
+        "priority": "background",
+        "protected": false
+      }
+    },
     "zssh": {
       "queue_mode": "execution",
       "lane_profile": "platform",
