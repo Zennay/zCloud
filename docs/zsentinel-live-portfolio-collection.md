@@ -446,3 +446,9 @@ beneden gekwantiseerd; bezettingspercentages, load-per-core en inode-
 onbeschikbaarheid worden naar boven gekwantiseerd. De weergegeven precisie kan
 zo geen drempel stilzwijgend versoepelen of de router laten afwijken van de
 capaciteitsbanden en warning-codes.
+
+## 23 oktober 2026 · hergebruik product-PR met alleen titelverwijzing
+
+De bestaande read-only GitHub issue-inbox koppelt open product-PR's nu op basis van expliciete `#123`-verwijzingen in **zowel de PR-titel als de optionele beschrijving**. Eerder werd een bestaande productreparatie met een issueverwijzing uitsluitend in de titel niet getoond als verwante PR in het P0/P1-issuebord, waardoor een operator ten onrechte dubbel werk kon kiezen. De merge-first-rij, issueverwijzingen en offline HTML gebruiken dezelfde samengevoegde bronset.
+
+Een titel- of beschrijvingsverwijzing is nadrukkelijk **alleen een tekstverwijzing**: geen bewezen issue-fix, bron-HEAD, huidige claimeigenaar, verplichte CI, review of merge-autorisatie. Bestaande uitsluiting van QA-only PR's blijft gelden; de open PR-paginering blijft bewust begrensd en onvolledig. Een ontbrekende body of body buiten de begrensde tekst wordt niet meer als reden gebruikt om een verder geldige expliciete titelverwijzing weg te gooien. Er zijn geen queue-, claim-, runner-, GitHub-workflow- of VPS-writes gekoppeld aan deze bronroute.
