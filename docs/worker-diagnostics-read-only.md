@@ -88,3 +88,22 @@ No GET here renews, expires or releases a claim, authorizes a worker, or writes
 an incident. These changes are source-only on this PR until independent review,
 exact-head mandatory CI, protected-main integration and authorized deployment
 are completed.
+
+
+### One coherent incident/claim read window
+
+The incident panel now samples up to 80 alerts and checks the matching
+claim-conflict leases under **one deferred read transaction** on a single
+existing-file, query-only SQLite connection. This prevents a claim expiring
+or being replaced between separately opened alert and claim database reads
+from silently mixing two source moments. The connection is closed without a
+commit and is never used to claim, renew, expire or release task ownership.
+
+`list_alerts()` and `_claim_conflict_is_active()` accept an optional
+already-established read connection for this snapshot; their independent
+callers continue to use separate read-only connections. If the snapshot
+fails, any partially collected alert incidents are discarded and source
+status is `unavailable`, while independently observed worker and service
+incidents remain visible. Bounded alert truncation and unknown/legacy lease
+evidence retain their own explicit warning fields. This is a local database
+snapshot, not a synchronized GitHub, Notion or runner claim receipt.
