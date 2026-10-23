@@ -643,7 +643,11 @@ def render_markdown(report):
             f"- Comparison state: **{_md(comparison['state'])}**",
             f"- Previous observation: {_md(comparison['previous_observed_at'])}",
             f"- Current observation: {_md(comparison['current_observed_at'])}",
+            f"- Previous source SHA-256: {comparison['previous_source_sha256']}",
+            f"- Current source SHA-256: {comparison['current_source_sha256']}",
             f"- Elapsed seconds: {_md(comparison['elapsed_seconds'] if comparison['elapsed_seconds'] is not None else 'unknown')}",
+            f"- Projects missing from current: {_md(', '.join(comparison['projects_missing_from_current']) or 'none')}",
+            f"- Projects missing from previous: {_md(', '.join(comparison['projects_missing_from_previous']) or 'none')}",
             f"- Current snapshot fresh: {str(comparison['current_snapshot_fresh']).lower()}",
             f"- Historical only: {str(comparison['historical_only']).lower()}",
             "- Descriptive telemetry delta only; no causal attribution or scaling authority.",
@@ -747,6 +751,10 @@ def _render_comparison_html(report):
         f"Previous: <code>{esc(comparison['previous_observed_at'])}</code> · "
         f"Current: <code>{esc(comparison['current_observed_at'])}</code> · "
         f"Elapsed seconds: {esc(comparison['elapsed_seconds'] if comparison['elapsed_seconds'] is not None else 'unknown')}</p>"
+        f"<p>Previous SHA-256: <code>{esc(comparison['previous_source_sha256'])}</code><br>"
+        f"Current SHA-256: <code>{esc(comparison['current_source_sha256'])}</code></p>"
+        f"<p>Projects missing from current: {esc(', '.join(comparison['projects_missing_from_current']) or 'none')} · "
+        f"Projects missing from previous: {esc(', '.join(comparison['projects_missing_from_previous']) or 'none')}</p>"
         f"<p>Current snapshot fresh: <strong>{str(comparison['current_snapshot_fresh']).lower()}</strong> · "
         f"Historical only: <strong>{str(comparison['historical_only']).lower()}</strong></p>"
         "<p>Descriptive telemetry delta only; no causal attribution or scaling authority.</p>"
