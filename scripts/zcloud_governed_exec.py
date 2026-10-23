@@ -694,6 +694,27 @@ def _group_rss_bytes(group_id: int) -> int:
     return used
 
 
+def _owned_heavy_generation_active(conn, project_id: str, owner_id: str,
+                                   acquired_at: str) -> bool:
+    """Observe the original active generation without changing any lease.
+
+    Other authorized paths can delete or replace a lease while its child
+    still executes. Do not wait until the next scheduled lease renewal
+    (potentially 60 seconds) before supervising the old process tree.
+    A missing/expired/replaced generation is unsafe, never a free slot.
+    """
+    observed = conn.execute(
+        "SELECT acquired_at,lease_until FROM resource_leases "
+        "WHERE project_id=? AND owner_id=?",
+        (project_id, owner_id),
+    ).fetchone()
+    return bool(
+        observed is not None
+        and observed["acquired_at"] == acquired_at
+        and str(observed["lease_until"]) > datetime.now(timezone.utc).isoformat()
+    )
+
+
 def _renew_existing_lease(conn, project_id: str, owner_id: str,
                           acquired_at: str, lease_seconds: int,
                           metadata: dict, admitted_compute: dict,
@@ -1224,6 +1245,7 @@ def run_governed(
 
         next_renewal = time.monotonic() + renew_seconds
         next_memory_check = time.monotonic()
+        next_generation_check = time.monotonic()
         while True:
             # A swapped/detached shared SQLite file can allow an independent
             # concurrent heavy admission under the same path. Stop the old
@@ -1239,6 +1261,22 @@ def run_governed(
                 return _exit_code(returncode)
 
             now = time.monotonic()
+            if (compute.get("pool") == "heavy" and live_authority
+                    and now >= next_generation_check):
+                # Never let an externally deleted/replaced canonical lease
+                # leave the old research tree working until its next renewal.
+                # This is a read-only owner-generation check; cleanup is
+                # handled by the existing fenced finally path below.
+                if not _owned_heavy_generation_active(
+                    conn, project_id, owner_id, acquired_at
+                ):
+                    _stop_process_group(proc)
+                    _admission_denied({
+                        "reason": "resource_heavy_lease_generation_lost",
+                        "project_id": project_id,
+                    })
+                    return 75
+                next_generation_check = now + 1.0
             if memory_budget > 0 and now >= next_memory_check:
                 try:
                     memory_used = _group_rss_bytes(proc.pid)
