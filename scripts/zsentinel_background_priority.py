@@ -430,6 +430,10 @@ def pressure_reasons(s):
             urgent.append("critical-root-inodes")
         elif inode < 5:
             moderate.append("limited-root-inodes")
+    else:
+        # Inode exhaustion can block writes while GiB remain available. Do not
+        # classify an unreadable inode source as idle CPU capacity.
+        moderate.append("root-inode-source-unavailable")
     return urgent, moderate
 
 
@@ -605,6 +609,7 @@ REASON_LABELS = {
     "limited-root-free-gib": "minder dan 5 GiB root-schijfruimte beschikbaar",
     "critical-root-inodes": "minder dan 1% vrije root-inodes beschikbaar",
     "limited-root-inodes": "minder dan 5% vrije root-inodes beschikbaar",
+    "root-inode-source-unavailable": "vrije root-inodes zijn niet betrouwbaar meetbaar; capaciteitsadvies blijft conservatief",
 }
 
 
