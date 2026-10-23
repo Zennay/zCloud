@@ -880,3 +880,21 @@ contained `ValueError: missing explicit runtime contract for project 'browserage
 Existing [PR #1599](https://github.com/Zennay/zCloud/pull/1599) remains the
 runtime-contract owner's work; this diagnosis feature does not modify it or
 claim production recovery.
+
+
+Minimal input example for the diagnosis CLI:
+
+```json
+{
+  "id": "browseragent",
+  "notion": {},
+  "github": {"active_owner_pr": true},
+  "runtime": {
+    "error_kind": "missing_explicit_runtime_contract",
+    "error_observed_at": "2026-10-23T02:50:20Z",
+    "ownership_locked": true
+  }
+}
+```
+
+This is a per-project fragment, not a complete top-level diagnosis snapshot. Supply the real observation timestamp from the service log; do not copy the example timestamp as if it were a new observation. When `active_owner_pr` or `ownership_locked` is true, the expected route is `owner_held`, not independent remediation.
