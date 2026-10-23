@@ -293,7 +293,7 @@ def pressure_sentence(report):
     if report.get("status") != "HOST_SNAPSHOT_OBSERVED":
         labels = {
             "meminfo": "RAM/swap", "loadavg": "load/CPU",
-            "root_disk": "root-schijf", "psi": "PSI",
+            "root_disk": "root-schijfruimte/inodes", "psi": "PSI",
         }
         coverage = report.get("source_coverage") or {}
         incomplete = [
