@@ -306,6 +306,17 @@ fails closed. These guards are evaluated on initial admission,
 during bounded waiting and on renewal; intentional future policy
 changes require the usual reviewed, authorized rollout.
 
+After every tentative new admission, while the same SQLite
+`BEGIN IMMEDIATE` transaction still owns the writer lock, the
+governor also counts actual active leases in that pool and refuses
+the commit if there would be more than one heavy lease or two build
+leases. This independently closes the contract-load race where a
+different, stale checkout briefly reports a wider pool between
+the governor's preflight and the underlying runtime acquire call.
+The protected pool is deliberately exempt from this extra global
+count gate so a misconfigured non-protected lease cannot prevent
+zCloud/zSSH control-plane admission.
+
 None of this proves that **every actual service launcher** has been
 converted to invoke the governed runner. In particular the observed
 `fuckball-ai-coach.service` training process is not controlled merely
