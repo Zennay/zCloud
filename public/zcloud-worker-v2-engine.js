@@ -21,7 +21,7 @@
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
   window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
   sessionStorage.setItem("zcloud-v2-worker",id);
-  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.7");
+  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.8");
   document.documentElement?.setAttribute("data-zcloud-v2-owner",id);
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -68,7 +68,7 @@
       target:location.href,targetConversation:conversation(),title:document.title,
       event,at,progressAt:at,generating:generating(),sending,
       assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.7",...extra
+      provider:"chatgpt",runnerVersion:"2.0.8",...extra
     });return true}catch(_){return false}
   }
   async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
@@ -134,8 +134,8 @@
     await status("conversation-reset-requested",{reason});
     return true;
   }
-  const composer=()=>document.querySelector('#prompt-textarea,[contenteditable="true"][role="textbox"],textarea');
-  const sendButton=()=>[...document.querySelectorAll('button[data-testid="send-button"],button[aria-label="Send"],button[aria-label="Send message"],button[aria-label="Verzenden"]')]
+  const composer=()=>[...document.querySelectorAll('#prompt-textarea,[contenteditable="true"][role="textbox"],textarea')].find(el=>visible(el)&&!el.disabled)||null;
+  const sendButton=()=>[...(composer()?.closest("form")||document).querySelectorAll('button[data-testid="send-button"],button[aria-label="Send"],button[aria-label="Send message"],button[aria-label="Verzenden"]')]
     .find(el=>visible(el)&&!el.disabled&&el.getAttribute("aria-disabled")!=="true")||null;
   async function fill(text){
     const box=composer();if(!visible(box))return false;
@@ -146,7 +146,8 @@
       if(setter)setter.call(box,text);else box.value=text;
       box.dispatchEvent(new Event("input",{bubbles:true}));
     }else{
-      document.execCommand("selectAll",false,null);
+      const range=document.createRange();range.selectNodeContents(box);
+      const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);
       document.execCommand("insertText",false,text);
       box.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:text}));
     }
