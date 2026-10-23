@@ -1691,13 +1691,23 @@ def render_private_immediate_handoff(data):
     for field, label, suffix in (
         ("host_load", "Load", ""), ("cores", "CPU-kernen", ""),
         ("memory_available_gib", "RAM beschikbaar", " GiB"),
-        ("swap_used_percent", "Swap gebruikt", "%"),
         ("disk_unavailable_percent", "Root niet beschikbaar", "%"),
         ("root_available_gib", "Root beschikbaar", " GiB"),
         ("root_inode_available_percent", "Root-inodes vrij", "%"),
     ):
         rows.append("- " + label + ": " +
                     _handoff_number(readings.get(field), suffix) + ".")
+    swap_status = readings.get("swap_status")
+    if swap_status == "OBSERVED":
+        rows.append("- Swapstatus: geconfigureerde swap geobserveerd.")
+        rows.append("- Swap gebruikt: " +
+                    _handoff_number(readings.get("swap_used_percent"), "%") + ".")
+    elif swap_status == "NO_SWAP_CONFIGURED":
+        rows.append("- Swapstatus: GEEN SWAP GECONFIGUREERD.")
+        rows.append("- Swap gebruikt: niet van toepassing.")
+    else:
+        rows.append("- Swapstatus: UNKNOWN (bron niet betrouwbaar vastgesteld).")
+        rows.append("- Swap gebruikt: onbekend; een oude numerieke nul is geen bewijs.")
     rows += ["", "## Hostbreed OOM/PSI-bronbewijs", ""]
     rows.append("- Memory PSI some avg10: " + _handoff_number(
         readings.get("memory_psi_some_avg10_percent"), "%") +
