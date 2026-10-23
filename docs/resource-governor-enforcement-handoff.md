@@ -348,6 +348,20 @@ With `--wait-seconds`, it checks again within the bounded window,
 sleeping outside the SQLite transaction and holding no leased slot.
 The source does not signal, stop or take over that legacy coach.
 
+The legacy admission veto applies to **canonical live authorities** only:
+launchers with `ZCLOUD_RESOURCE_DB` pinned and launchers using the
+repository's default `history.db`. A deliberately separate, explicitly
+specified unpinned SQLite database is an isolated canary, not an
+admission decision about live research. It must remain able to check
+the lease mechanics even while legacy training is active on the same
+physical runner. The read-only `--inspect-pool` output now reports
+`legacy_detection_scope`, plus `legacy_unleased_training_detected`
+(`null` when not checked for an isolated canary), and
+`effective_remaining` alongside raw `remaining`.
+**Never interpret an isolated-canary snapshot as live shared-pool status.**
+A new production service must pin the shared DB; choosing an alternate
+private unpinned DB does not grant production safety or release approval.
+
 **Limitations:** this temporary scope/filename fallback recognizes
 only the observed `fuckball-ai-coach.service` unit and two Node script
 entrypoints. It cannot discover unknown FTMO/LightUp jobs, other
