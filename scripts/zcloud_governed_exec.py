@@ -616,6 +616,70 @@ def _signal_process_group(proc: subprocess.Popen | None, signum: int) -> None:
         return
 
 
+def _owned_service_cgroup_drained() -> bool:
+    """Verify the wrapper's private systemd service contains no live workers.
+
+    A governed child can escape its original process group using setsid().
+    Releasing a production heavy lease on PGID cleanup alone could then
+    admit a second project while the escaped descendant is still running.
+    The unit cgroup is read only; never kill or alter an unrelated process.
+    An ambiguous/shared/non-systemd cgroup is NOT evidence of cleanup.
+    """
+    if sys.platform != "linux":
+        return False
+    try:
+        root = Path("/sys/fs/cgroup").resolve(strict=True)
+        rows = (Path("/proc/self/cgroup").read_text()).splitlines()
+        unified = [line.partition("::")[2].strip()
+                   for line in rows if line.startswith("0::")]
+        if len(unified) != 1:
+            return False
+        parts = [value for value in unified[0].split("/") if value]
+        if not parts or not parts[-1].endswith(".service"):
+            return False  # No dedicated systemd unit: cannot prove cleanup.
+        if any(value in (".", "..") for value in parts):
+            return False
+        parent = root
+        for part in parts:
+            parent = parent / part
+            if parent.is_symlink():
+                return False
+        if not parent.is_dir() or parent.resolve(strict=True) == root:
+            return False
+
+        # cgroup.procs lists only direct members. Descendants can be placed
+        # in child cgroups, so examine the whole finite subtree.
+        pending = [parent]
+        scanned = 0
+        while pending:
+            path = pending.pop()
+            scanned += 1
+            if scanned > 1024:
+                return False
+            for child in path.iterdir():
+                if child.is_dir():
+                    if child.is_symlink():
+                        return False
+                    pending.append(child)
+            pids = (path / "cgroup.procs").read_text().splitlines()
+            if len(pids) > 20000:
+                return False
+            for pid in pids:
+                if not pid.isdecimal():
+                    return False
+                if int(pid) == os.getpid():
+                    continue
+                try:
+                    fields = (Path("/proc") / pid / "stat").read_text().rpartition(")")[2].split()
+                except FileNotFoundError:
+                    continue
+                if len(fields) < 3 or fields[0] not in {"Z", "X"}:
+                    return False
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def _group_exists(proc: subprocess.Popen) -> bool:
     """Check for live (non-zombie) members of our private process group.
 
@@ -918,6 +982,11 @@ def run_governed(
         # before cleanup lets a second SIGTERM kill this wrapper halfway
         # through group termination or SQLite release.
         group_stopped = _stop_process_group(proc)
+        # A pinned production service must prove that its *entire*
+        # dedicated systemd unit is drained, not just the original PGID.
+        # Detached setsid descendants still occupy the same unit cgroup.
+        if group_stopped and proc is not None and os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+            group_stopped = _owned_service_cgroup_drained()
         release_ok = not acquired
         try:
             if acquired and not group_stopped:
