@@ -800,6 +800,16 @@ def run_governed(
 
         if termination_requested is not None:
             return 128 + int(termination_requested)
+        if compute.get("pool") == "heavy" and _legacy_haxlab_training_active():
+            # A legacy trainer may have started after our transactional
+            # /proc veto but before the supervised child was launched.
+            # Fail without starting competing research; finally releases
+            # the lease we just acquired. Never stop the legacy trainer.
+            _admission_denied({
+                "reason": "resource_unleased_training_active",
+                "project_id": project_id,
+            })
+            return 75
 
         env = os.environ.copy()
         env["ZCLOUD_RESOURCE_PROJECT"] = str(project_id)
