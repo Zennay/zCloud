@@ -25,6 +25,7 @@ retire() {
 }
 retire user chatgpt-runner-watchdog
 retire user zcloud-watchdog
-retire system zcloud-self-heal
+# Keep zcloud-self-heal.timer active: it owns Actions runner liveness and
+# the memory-pressure worker watchdog. Retire only legacy prompt timers.
 # Keep the independent real crash recovery owner.
 systemctl is-active zcloud-firefox-supervisor.timer
