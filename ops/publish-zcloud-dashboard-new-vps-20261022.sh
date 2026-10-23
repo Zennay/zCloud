@@ -13,6 +13,7 @@ DOMAIN='zcloud.zennay.nl'
 CADDYFILE='/etc/caddy/Caddyfile'
 SITES='/etc/caddy/sites-enabled'
 SITE='/etc/caddy/sites-enabled/zcloud-dashboard.caddy'
+QUARANTINE='/var/lib/zcloud-dashboard-quarantine'
 AUTH='/etc/caddy/zcloud-dashboard-auth.caddy'
 IMPORT='import /etc/caddy/sites-enabled/*'
 
@@ -20,7 +21,7 @@ die() { printf 'REFUSED: %s\n' "$*" >&2; exit 2; }
 say() { printf '%s\n' "$*"; }
 [[ "$MODE" = --status || "$MODE" = --apply ]] || die 'usage: --status | --apply'
 [[ "$(hostname)" = "$HOST" ]] || die 'wrong host'
-for cmd in curl python3 ss getent caddy systemctl stat flock awk sort grep mktemp chmod ln unlink date mv rm cat; do
+for cmd in curl python3 ss getent caddy systemctl stat flock awk sort grep mktemp chmod ln unlink date mv mkdir rm cat; do
   command -v "$cmd" >/dev/null || die "missing command: $cmd"
 done
 
@@ -77,12 +78,22 @@ public_requires_login() {
 }
 
 SITE_ID=''
+quarantine_dir_ready() {
+  [[ ! -L "$QUARANTINE" ]] || return 1
+  if [[ ! -e "$QUARANTINE" ]]; then
+    mkdir -m 0700 -- "$QUARANTINE" || return 1
+  fi
+  [[ -d "$QUARANTINE" && ! -L "$QUARANTINE" ]] || return 1
+  [[ "$(stat -c '%U:%G:%a' "$QUARANTINE")" = 'root:root:700' ]] || return 1
+  # A same-filesystem move is atomic; fail closed if /var/lib is a separate mount.
+  [[ "$(stat -c '%d' "$QUARANTINE")" = "$(stat -c '%d' "$SITES")" ]] || return 1
+}
 quarantine_own_site() {
   local reason="$1" current_id destination
   [[ -n "$SITE_ID" && -f "$SITE" && ! -L "$SITE" ]] || return 1
   current_id="$(stat -c '%d:%i' "$SITE")" || return 1
   [[ "$current_id" = "$SITE_ID" ]] || return 1
-  destination="/etc/caddy/zcloud-dashboard-${reason}-$(date +%s)-$BASHPID.caddy"
+  destination="$QUARANTINE/zcloud-dashboard-${reason}-$(date +%s)-$BASHPID.caddy"
   [[ ! -e "$destination" && ! -L "$destination" ]] || return 1
   mv -n -- "$SITE" "$destination" || return 1
   [[ ! -e "$SITE" && ! -L "$SITE" && -f "$destination" ]] || return 1
@@ -116,6 +127,7 @@ if [[ -e "$SITE" || -L "$SITE" ]]; then
   fi
   die 'existing Caddy site is not verified; no changes made'
 fi
+quarantine_dir_ready || die 'cannot prepare a root-owned, same-filesystem quarantine outside the Caddy config tree'
 
 # Stage outside the imported directory to avoid half-written public config.
 STAGED="$(mktemp /etc/caddy/.zcloud-dashboard-staged.XXXXXXXX)"
