@@ -118,6 +118,11 @@ blijft zichtbaar. Er is geen daemon-reload, restart, queue-writer, API-call
 of GitHub-workflowdispatch. Per scope maximaal twintig services en
 maximaal 20 KB tekst, met een korte (max. 8 s) bron-timeout.
 
+Runner service names may contain dots inside owner/repository or runner names; the
+inventory accepts those names. A malformed or unrecognized `actions.runner.*`
+line makes that manager's coverage partial instead of silently implying that
+all runner services were enumerated.
+
 De bestaande `runner_units`-velden bewaren hun historische system-scope
 betekenis. Drie nieuwe velden (`user_runner_units_observed`,
 `user_runner_units`, `user_runner_units_truncated`) bewaren de onafhankelijke
