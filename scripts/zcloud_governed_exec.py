@@ -68,6 +68,29 @@ def connect(path: Path):
         raise
 
 
+def _assert_portfolio_pool_capacities(contracts: dict) -> None:
+    """Fail closed on pool widening that breaks portfolio exclusivity.
+
+    These are safety ceilings from the canonical portfolio contract, not
+    adjustable per-worker local hints. In particular, two projects with
+    different contract checkouts must not turn the single heavy slot into
+    independent two-slot admissions against the same SQLite database.
+    """
+    pools = contracts["resource_pools"]
+    limits = {"heavy": 1, "build": 2, "disabled": 0}
+    for name, ceiling in limits.items():
+        if name not in pools:
+            continue
+        actual = pools[name].get("slots")
+        if type(actual) is not int or actual > ceiling:
+            raise RuntimeError("resource_pool_capacity_unsafe")
+    protected = pools.get("protected")
+    if protected is not None:
+        slots = protected.get("slots")
+        if type(slots) is not int or slots < 2:
+            raise RuntimeError("resource_control_pool_capacity_unsafe")
+
+
 def _pinned_database_identity(path: Path) -> tuple[int, int] | None:
     """Observe canonical production file identity without opening a new DB.
 
@@ -563,7 +586,9 @@ def run_governed(
     lease_seconds = max(60, min(6 * 3600, int(lease_seconds or 300)))
     renew_seconds = max(5, min(int(renew_seconds or 60), max(5, lease_seconds // 2)))
     wait_seconds = max(0, min(3600, int(wait_seconds or 0)))
-    compute = dict(runtime.project_contract(project_id).get("compute") or {})
+    contracts = runtime.load_contracts()
+    _assert_portfolio_pool_capacities(contracts)
+    compute = dict(runtime.project_contract(project_id, contracts).get("compute") or {})
     memory_budget = int(compute.get("memory_soft_mb") or 0) * 1024 * 1024
     if compute.get("pool") == "heavy" and memory_budget <= 0:
         raise RuntimeError("heavy_memory_budget_unavailable")
@@ -774,6 +799,7 @@ def inspect_pool(db_path: Path, project_id: str) -> dict:
     """
     _assert_shared_resource_db(db_path)
     contracts = runtime.load_contracts()
+    _assert_portfolio_pool_capacities(contracts)
     compute = runtime.project_contract(project_id, contracts).get("compute") or {}
     pool = str(compute.get("pool") or "")
     capacities = contracts["resource_pools"]
