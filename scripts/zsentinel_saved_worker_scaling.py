@@ -285,6 +285,27 @@ def normalize_report(data, raw_sha256, now=None):
     if not isinstance(data, dict):
         raise ValueError("report_root_not_object")
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    expected_schema = "zcloud-worker-scaling-report-v1"
+    auth_fields = (
+        "claim_authorized", "dispatch_authorized", "scale_change_authorized",
+        "merge_authorized", "deploy_authorized", "active_claim_verified",
+    )
+    source_schema = data.get("schema_version")
+    if "schema_version" in data and source_schema != expected_schema:
+        raise ValueError("unsupported_source_schema")
+    if "read_only_observation" in data and data["read_only_observation"] is not True:
+        raise ValueError("source_read_only_contract_not_true")
+    for key in auth_fields:
+        if key in data and data[key] is not False:
+            raise ValueError("source_authorization_flag_not_false")
+    if source_schema == expected_schema:
+        if data.get("read_only_observation") is not True or any(
+            key not in data or data[key] is not False for key in auth_fields
+        ):
+            raise ValueError("source_contract_incomplete")
+        authorization_contract = "explicitly_non_authorizing"
+    else:
+        authorization_contract = "legacy_unverified"
     generated = _timestamp(data.get("generated_at"))
     raw_age = (now - generated).total_seconds()
     if raw_age < -MAX_FUTURE_SKEW_SECONDS:
@@ -394,10 +415,13 @@ def normalize_report(data, raw_sha256, now=None):
             and coverage.get("runner_targets") == "observed"
             and project["desired_workers_source"] == "observed"
             and project["worker_coverage_state"] == "complete_fresh"
+            and authorization_contract == "explicitly_non_authorizing"
         )
 
     return {
         "schema_version": "zsentinel-saved-worker-scaling-handoff-v1",
+        "source_schema_version": source_schema or "legacy_unknown",
+        "source_authorization_contract": authorization_contract,
         "source_sha256": raw_sha256,
         "source_generated_at": generated.isoformat(),
         "source_age_seconds": age_seconds,
@@ -436,6 +460,7 @@ def render_markdown(report):
         f"- Source observation: {report['source_generated_at']}",
         f"- Source freshness: **{report['source_freshness']}**",
         f"- Source status: **{report['source_status']}** (complete: {str(report['source_complete']).lower()})",
+        f"- Source authorization contract: **{report['source_authorization_contract']}**",
         f"- Telemetry rows: {report['telemetry_rows']}; empty window: {report['window_empty']}",
         f"- Assessment context complete: {str(report['assessment_context_complete']).lower()}",
         "",
@@ -543,6 +568,7 @@ def render_html(report):
         f"<p>Source SHA-256: <code>{esc(report['source_sha256'])}</code></p>"
         f"<p>Observed at: <code>{esc(report['source_generated_at'])}</code> · Freshness: <strong>{esc(report['source_freshness'])}</strong></p>"
         f"<p>Source status: <strong>{esc(report['source_status'])}</strong> · Complete: <strong>{str(report['source_complete']).lower()}</strong> · "
+        f"Authorization contract: <strong>{esc(report['source_authorization_contract'])}</strong> · "
         f"Telemetry rows: {esc(report['telemetry_rows'] if report['telemetry_rows'] is not None else 'unknown')} · "
         f"Empty window: {esc(report['window_empty'] if report['window_empty'] is not None else 'unknown')}</p>"
         f"<p>Assessment context complete and fresh: <strong>{str(report['assessment_context_complete']).lower()}</strong></p>"
