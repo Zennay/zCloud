@@ -260,6 +260,8 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
             work_package += " Toolroute: zssh_browser via bestaande zSSH-verbinding; alleen gekoppelde target en operator-goedgekeurde acties."
         elif route["tool"] == "zssh":
             work_package += " Toolroute: zSSH voor VPS/Git/services; respecteer scopes, approvals en beschikbare connector."
+        else:
+            work_package += " Toolroute: geen zSSH/browser-capability geselecteerd; voer geen remote browser- of systeemactie uit. Gebruik alleen andere expliciet beschikbare tools of vraag om een expliciete capability."
     worker_total = max(1, int(total or 1))
     lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
     lane_id = str(lane.get('lane_id') or '').strip() if isinstance(lane, dict) else ''
