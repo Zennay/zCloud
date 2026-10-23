@@ -385,3 +385,10 @@ Wanneer de bron expliciet is aangevraagd maar tijdelijk onleesbaar blijkt,
 maakt de gebundelde runtime-handoff een P2 eigenaaractie voor verificatie van
 de SQLite-bron of het schema; hij leidt geen vrije slot of voltooide taak af.
 Geen QA-suites of handmatige workflows zijn onderdeel van deze implementatie.
+
+
+## 23 October · stale progress snapshots cannot drive current recovery advice
+
+The standalone worker progress delta now applies the same ten-minute current-source freshness boundary documented for worker handoffs. A comparison whose latest snapshot is older than ten minutes keeps its historical context but labels the source `stale`, changes each sampled worker card to `source_snapshot_stale_requires_refresh`, and suppresses cursor-advance and running-without-events classifications. Text, public HTML and private Markdown/HTML/JSON carry the source age and explicit refresh-first guidance.
+
+A stale snapshot is not treated as a current stuck worker, missing lease, free slot, completed task or recovery signal. The operator must take a new authorized read-only observation before acting. Future timestamps beyond the existing two-minute tolerance remain rejected; no queue, claim, runner or deployment state is changed.
