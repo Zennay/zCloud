@@ -198,16 +198,24 @@ def _expired_heavy_group_active(conn) -> bool:
             if not isinstance(metadata, dict):
                 return True
             pid = metadata.get("pid")
+            scope = metadata.get("service_cgroup")
             if pid is None:
-                continue  # pre-launch reservation, not a supervised child
+                # Child may have started and detached before its first
+                # PID-bearing renewal. The pre-launch lease already
+                # carries our dedicated service cgroup for this reason.
+                # Old executor rows without that recovery identity are
+                # ambiguous, not evidence of a safely stopped workload.
+                if metadata.get("executor") == "zcloud-governed-exec":
+                    if scope is None or _live_service_members(scope):
+                        return True
+                continue
             if type(pid) is not int or pid <= 1:
                 return True
             if _process_group_has_live_members(pid):
                 return True
-            scope = metadata.get("service_cgroup")
             if scope is not None and _live_service_members(scope):
                 return True
-        except (TypeError, ValueError, KeyError, OSError):
+        except (TypeError, ValueError, KeyError, OSError, RuntimeError):
             return True
     return False
 
@@ -521,7 +529,7 @@ def _apply_process_limits(project_id: str, parent_pid: int | None = None,
         resource.setrlimit(resource.RLIMIT_AS, (new_soft, hard))
 
 
-def _metadata(command, *, pid=None):
+def _metadata(command, *, pid=None, service_cgroup=None):
     # Only bounded command identity belongs in the lease, not arguments,
     # private file paths, environment values or unbounded free-form text.
     basename = Path(str(command[0])).name if command else ""
@@ -541,9 +549,10 @@ def _metadata(command, *, pid=None):
             payload[key] = value[:200]
     if pid is not None:
         payload["pid"] = int(pid)
-        service_cgroup = _service_cgroup_for_pid(int(pid))
-        if service_cgroup is not None:
-            payload["service_cgroup"] = service_cgroup[:256]
+        if service_cgroup is None:
+            service_cgroup = _service_cgroup_for_pid(int(pid))
+    if service_cgroup is not None:
+        payload["service_cgroup"] = service_cgroup[:256]
     return payload
 
 
@@ -964,6 +973,7 @@ def run_governed(
         raise RuntimeError("heavy_memory_budget_unavailable")
     db_identity = _pinned_database_identity(Path(db_path))
     live_authority = _uses_live_governor_authority(Path(db_path))
+    heavy_scope = None
     # On a pinned live heavy service, no old orphan or detached training
     # child may share the unit before the next lease is even requested.
     # This closes the window after a crashed wrapper's lease has expired:
@@ -972,6 +982,9 @@ def run_governed(
         _require_heavy_unit_bounds(compute)
         if not _owned_service_cgroup_drained():
             raise RuntimeError("resource_dedicated_heavy_unit_not_idle")
+        heavy_scope = _service_cgroup_for_pid(os.getpid())
+        if heavy_scope is None:
+            raise RuntimeError("resource_heavy_service_identity_unavailable")
     conn = connect(Path(db_path))
     try:
         _assert_database_identity(Path(db_path), db_identity)
@@ -1039,7 +1052,7 @@ def run_governed(
                 project_id,
                 owner_id,
                 lease_seconds=lease_seconds,
-                metadata=_metadata(command),
+                metadata=_metadata(command, service_cgroup=heavy_scope),
             )
             if (not result.get("acquired") or result.get("renewed")
                     or not _matches_admitted_contract(result.get("lease") or {}, compute)):
@@ -1129,7 +1142,8 @@ def run_governed(
         _assert_database_identity(Path(db_path), db_identity)
         renewed = _renew_existing_lease(
             conn, project_id, owner_id, acquired_at, lease_seconds,
-            _metadata(command, pid=proc.pid), compute, live_authority,
+            _metadata(command, pid=proc.pid, service_cgroup=heavy_scope),
+            compute, live_authority,
         )
         if not renewed.get("acquired"):
             _stop_process_group(proc)
@@ -1170,7 +1184,8 @@ def run_governed(
             if now >= next_renewal:
                 renewed = _renew_existing_lease(
                     conn, project_id, owner_id, acquired_at, lease_seconds,
-                    _metadata(command, pid=proc.pid), compute, live_authority,
+                    _metadata(command, pid=proc.pid, service_cgroup=heavy_scope),
+                    compute, live_authority,
                 )
                 if not renewed.get("acquired"):
                     _stop_process_group(proc)
