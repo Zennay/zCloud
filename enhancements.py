@@ -940,7 +940,8 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
     now_ts=datetime.now(timezone.utc)
     items=[]
     claim_sources=[]
-    alerts, alerts_source_status = list_alerts(db_path,80,False,with_source_status=True)
+    alerts, alerts_source_status, alerts_more = list_alerts(
+        db_path,80,False,with_window_status=True)
     for alert in alerts:
         if str(alert.get("kind") or "").strip().lower().replace("-","_")=="claim_conflict":
             active, claim_source = _claim_conflict_is_active(
@@ -1023,6 +1024,8 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
             "recovery":recovery,
             "alerts_source_status":alerts_source_status,
             "alerts_source_complete":alerts_source_status=="observed",
+            "alerts_window_has_more":alerts_more,
+            "alerts_window_complete":(alerts_more is False),
             "alerts_source_next_step":(
                 "Controleer de bestaande SQLite-bron en herstel de leesroute; geen meldingen is niet bewezen."
                 if alerts_source_status!="observed" else None),
@@ -1039,19 +1042,24 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
                 if alerts_source_status!="observed" or
                    any(source!="observed" for source in claim_sources) else None)}
 
-def list_alerts(db_path, limit=20, important_only=False, *, with_source_status=False):
-    """List persisted alerts; optionally expose unavailable source separately from empty."""
+def list_alerts(db_path, limit=20, important_only=False, *,
+                with_source_status=False, with_window_status=False):
+    """Read a bounded alert window and expose unavailable/truncated coverage."""
     try:
+        cap=max(1,min(200,int(limit)))
         with _db_connect_readonly(db_path) as c:
             c.row_factory = sqlite3.Row
             where = "WHERE important=1" if important_only else ""
-            rows = c.execute("SELECT * FROM alerts %s ORDER BY ts DESC LIMIT ?" % where, (limit,)).fetchall()
-        alerts = [dict(r) for r in rows]
+            rows = c.execute("SELECT * FROM alerts %s ORDER BY ts DESC LIMIT ?" % where, (cap+1,)).fetchall()
+        more = len(rows) > cap
+        alerts = [dict(r) for r in rows[:cap]]
         source = "observed"
     except Exception:
         # Missing, corrupt or unreadable SQLite must not be presented by the
         # operator cockpit as proof that no alerts exist.
-        alerts, source = [], "unavailable"
+        alerts, source, more = [], "unavailable", None
+    if with_window_status:
+        return alerts, source, more
     return (alerts, source) if with_source_status else alerts
 
 def _state_for(data):
