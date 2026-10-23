@@ -3652,3 +3652,11 @@ Only `current` permits the selected-source scan to count as complete. The tool s
 ## Machine-readable owner next step
 
 Every observation now includes `source_scope_blockers` and `recommended_next_step_code`. Codes distinguish a stale selected-PR base, a target branch that moved during the scan, an unavailable branch-tip read, a changed source PR, unstable open-PR snapshots, truncated file lists, and bounded-window/alias coverage limits. The recommendation routes to owner-led branch refresh or a new bounded observation; it never grants claim, edit, merge or deploy authority. Text, HTML and Markdown expose the same next-step code and blocker list as JSON.
+
+## 23 oktober 2026 · één QA-only productselectiebeleid voor alle PR-routes
+
+Het PR-overlapbord behoudt alle geopende PR's in de **botsingsobservatie**, ook QA-only-PR's: gedeelde bestandsnamen en directory-voorouders blijven zichtbaar voor een mogelijke echte productmerge. Maar voor de **merge-first productkandidaten** gebruikt zowel de algemene open-PR-lijst als de rechtstreeks geselecteerde `--source-pr` nu de bestaande gedeelde `explicit_qa_only_pr`-classificatie uit de product-inbox. Die beoordeelt niet alleen een `QA`/`test`-titel, maar ook expliciete `qa`, `qa-only`, `tests-only`, `quality-validation`, `qa-validation`, `regression`-labels en branches met `qa/`, `test/`, `tests/` of `quality-validation/`.
+
+Het bestaande rapportveld `product_candidate_based_on_title` blijft uit compatibiliteit bestaan, maar de boolean betekent voortaan **geschikt onder het gedeelde titel/label/branch-beleid**; het is geen eigenaarschap, bronclaim, goedgekeurde review, groene verplichte CI of mergeautorisatie. Ook een expliciet aangewezen QA-only-PR kan daardoor niet via de uitgebreide productbron- of portfolio-route de policy passeren. De operatorinterface gebruikt nu de correcte formulering ‘QA-only PR’s (titel/labels/branch)’.
+
+Deze codewijziging verandert geen GitHub-staat, workflow, claim, runner, queue, productbranchbeveiliging of huidige releasebevoegdheid. Geen QA-/regressiesuites geschreven of handmatig gestart.
