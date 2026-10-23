@@ -443,6 +443,32 @@ HaxLab/Fuckball training or changing FTMO/LightUp services.
 Unpinned isolated canaries retain their existing process-group
 lifecycle checks.
 
+## Canonical default history.db is live even without environment pin
+
+The full live heavy-workload service ownership policy now applies to **both**
+the explicitly pinned `ZCLOUD_RESOURCE_DB` path and the checkout's
+canonical default `history.db` path. Previously the HaxLab migration
+veto recognized the unpinned canonical path as live, but hard
+`cpu.max`/`memory.max` admission/renewal checks and entire-systemd-unit
+drain only applied when the environment variable was present. That
+inconsistency could allow a real default-path FTMO/LightUp heavy
+launcher to bypass the dedicated-service and orphan-cleanup gates.
+
+The default canonical file also now participates in the exact
+`(st_dev, st_ino)` identity check, SQLite non-creating `mode=rw`
+open and existing `resource_leases` table/primary-key validation.
+Consequently an omitted environment pin is no longer permission for
+a default-path workload to recreate an empty split-brain pool when
+the original database disappears. Heavy-service CPU/RAM bounds are
+rechecked before renewal as well as at admission.
+
+Explicitly separate unpinned `--db` values remain **isolated
+canaries only**. Their success is never proof of real admission or
+permission to start autonomous production research. Actual service
+owners should still configure one pinned canonical shared database
+and a dedicated bounded cgroup. Live workers must not be restarted,
+stopped, or reconfigured merely to prove the source checks.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
