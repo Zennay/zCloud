@@ -6,6 +6,7 @@ set -Eeuo pipefail
 
 EXPECTED_HOST='VM-7eb5ee16-2c71-440d-b7fd-8095d204e930'
 ARCHIVE_UNIT='zcloud-external-archive.service'
+ARCHIVE_MOUNT='/home/ubuntu/VPS-Archief'
 DOCKER_UNIT='docker.service'
 
 usage() {
@@ -35,6 +36,12 @@ docker_api_version() {
   timeout 10s docker info --format '{{.ServerVersion}}' 2>/dev/null
 }
 
+archive_mount_is_verified() {
+  command -v findmnt >/dev/null 2>&1 || return 1
+  findmnt -rn -o TARGET,FSTYPE --target "$ARCHIVE_MOUNT" 2>/dev/null |
+    awk -v expected="$ARCHIVE_MOUNT" '$1 == expected && $2 ~ /^fuse[.]rclone$/ { verified=1 } END { exit !verified }'
+}
+
 echo "=== NEW VPS BASE SERVICES: $MODE ==="
 echo "host=$EXPECTED_HOST"
 echo "archive=$(unit_load "$ARCHIVE_UNIT")/$(unit_active "$ARCHIVE_UNIT")"
@@ -43,6 +50,11 @@ if DOCKER_VERSION="$(docker_api_version)" && [[ -n "$DOCKER_VERSION" ]]; then
   echo "docker_api=reachable/$DOCKER_VERSION"
 else
   echo "docker_api=unavailable"
+fi
+if archive_mount_is_verified; then
+  echo "archive_mount=verified_fuse_rclone"
+else
+  echo "archive_mount=not_verified"
 fi
 
 echo '=== GITHUB RUNNER UNITS (OBSERVE ONLY) ==='
@@ -108,15 +120,28 @@ command -v timeout >/dev/null 2>&1 || {
   echo 'REFUSED: timeout utility missing; cannot bound Docker API inspection' >&2
   exit 3
 }
+command -v findmnt >/dev/null 2>&1 || {
+  echo 'REFUSED: findmnt utility missing; cannot verify archive mount' >&2
+  exit 3
+}
+command -v awk >/dev/null 2>&1 || {
+  echo 'REFUSED: awk utility missing; cannot verify archive mount' >&2
+  exit 3
+}
 
 # Explicit, narrowly scoped operator action. No production containers started.
+# Do not start Docker if the archive service does not establish its real mount.
 systemctl enable --now "$ARCHIVE_UNIT"
-systemctl enable --now "$DOCKER_UNIT"
 
 systemctl is-active --quiet "$ARCHIVE_UNIT" || {
   echo 'ERROR: archive service not active after enable' >&2
   exit 4
 }
+archive_mount_is_verified || {
+  echo "ERROR: archive service is active but $ARCHIVE_MOUNT is not a verified fuse.rclone mount" >&2
+  exit 4
+}
+systemctl enable --now "$DOCKER_UNIT"
 systemctl is-active --quiet "$DOCKER_UNIT" || {
   echo 'ERROR: Docker service not active after enable' >&2
   exit 4
@@ -131,6 +156,6 @@ DOCKER_VERSION="$(docker_api_version)" || {
 }
 echo "Docker API reachable: server_version=$DOCKER_VERSION"
 
-echo 'BASE_SERVICES_READY: Docker and external archive active.'
+echo 'BASE_SERVICES_READY: Docker API reachable and external archive mount verified.'
 echo 'No GitHub runners, zCloud, training, browser or containers altered.'
 echo 'The final SQLite writer fence, independent training disk and worker registration are separate gated cutovers.'
