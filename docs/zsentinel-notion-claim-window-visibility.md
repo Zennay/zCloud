@@ -81,3 +81,10 @@ anomaly count, sorted top project groups and a visible **partial-coverage**
 disclaimer. It independently reconciles the per-project clock classifications
 with the source's portfolio aggregates and refuses contradictory statuses.
 It remains a private, non-executable owner workspace.
+
+
+## Project-relation coverage is part of the source contract (23 October 2026)
+
+A live claim row whose `Project` relation is missing, ambiguous, or points outside the canonical project registry is still shown to the operator, but it is **not** complete ownership evidence. The observer emits `project_relation_status=resolved|unresolved`, `project_relation_coverage=complete|partial`, and `unresolved_project_relation_count`. Each bounded Claimed/Running/Verifying source window carries its own `unresolved_project_relations` count.
+
+The recovery cockpit, portfolio overview, and owner handoff reconcile the per-status counts against the global count. A mismatch, absent per-status receipt on a live-labelled source, or a saved snapshot claiming live project-relation coverage is rejected. An unresolved relation produces an explicit **PROJECTRELATIES ONVOLLEDIG** warning and no free-work conclusion. This is a source-integrity signal only: it never proves a live lease, authorizes a claim transfer, retry, dispatch, service restart, or deployment.
