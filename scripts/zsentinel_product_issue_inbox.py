@@ -387,6 +387,12 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                         )
                     }
                     for issue_num in referenced:
+                        reference_origin = (
+                            "title_and_body" if (issue_num in references_in_title
+                                                 and issue_num in references_in_body)
+                            else "title_only" if issue_num in references_in_title
+                            else "body_only"
+                        )
                         record = records.get(repo + "#" + str(issue_num))
                         if record is not None and len(record["related_open_prs"]) < 3:
                             record["related_open_prs"].append({
@@ -396,6 +402,7 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                                 "relationship": ("closing_keyword_only" if issue_num in closing_references
                                                  else "text_reference_only"),
                                 "active_claim": "not_verified",
+                                "reference_origin": reference_origin,
                             })
                 pr_coverage = "bounded_truncated" if len(open_prs) == 8 else "bounded_window"
             except ValueError as error:
@@ -481,6 +488,7 @@ def merge_first_board(open_prs, all_issues, projects, limit=45):
                     "url": issue["url"], "number": issue["number"],
                     "priority": issue["priority"],
                     "relationship": reference["relationship"],
+                    "reference_origin": reference.get("reference_origin", "unknown"),
                 })
     ranks = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
     grouped = defaultdict(list)
@@ -557,8 +565,11 @@ def html_view(data):
                     ref = escape(candidate["url"], quote=True)
                     relationship = ("mentions" if candidate["relationship"] == "text_reference_only"
                                     else "closing keyword")
+                    origin = {"title_only": "title", "body_only": "body",
+                              "title_and_body": "title + body"}.get(
+                                  candidate.get("reference_origin"), "source unknown")
                     label = (("Draft PR #" if candidate["draft"] else "Open PR #") +
-                             str(candidate["number"]) + " · " + relationship)
+                             str(candidate["number"]) + " · " + relationship + " · " + origin)
                     refs.append("<a href='" + ref + "' target='_blank' rel='noopener noreferrer'>" +
                                 escape(label) + "</a>")
                 lines.append("<div class='muted'><small>Open PR title/body references (not verified fixes or owners): " +
@@ -574,7 +585,11 @@ def html_view(data):
             hints.append("<a href='" + escape(issue["url"], quote=True) +
                          "' target='_blank' rel='noopener noreferrer'>" +
                          escape(issue["priority"]) + " issue #" +
-                         str(issue["number"]) + " (text reference)</a>")
+                         str(issue["number"]) + " (text: " +
+                         escape({"title_only": "title", "body_only": "body",
+                                 "title_and_body": "title + body"}.get(
+                                     issue.get("reference_origin"), "source unknown")) +
+                         ")</a>")
         pr_rows.append(
             "<div class='issue'><a class='issue-title' href='" +
             escape(pr["url"], quote=True) +
