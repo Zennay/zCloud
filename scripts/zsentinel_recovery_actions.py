@@ -348,7 +348,7 @@ def suggested_actions(packet):
         coverage = pressure.get("source_coverage")
         labels = {
             "meminfo": "RAM/swap", "loadavg": "load/CPU",
-            "root_disk": "root-schijf", "psi": "PSI",
+            "root_disk": "root-schijfruimte/inodes", "psi": "PSI",
         }
         incomplete = []
         if isinstance(coverage, dict):
@@ -365,7 +365,7 @@ def suggested_actions(packet):
             result.append(action(
                 "host-pressure-owner-review",
                 "urgent" if hint == "HIGH_LOCAL_PRESSURE" else "review",
-                "De lokale host heeft verhoogde RAM-, swap-, CPU- of schijfruimtedruk; "
+                "De lokale host heeft verhoogde RAM-, swap-, CPU-, root-schijf- of inodecapaciteitsdruk; "
                 "dit is geen bewijs dat een GitHub-job vastzit."
                 + _psi_owner_context(pressure)
                 + _runner_pressure_context(packet)
