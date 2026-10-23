@@ -2,7 +2,7 @@
 # New VPS: publish an ALREADY-HEALTHY zCloud API under authenticated HTTPS.
 # Read-only by default; intentionally does NOT start SQLite/scheduler/workers.
 # Usage: bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --status
-#        ZCLOUD_SQLITE_CUTOVER_CONFIRMED=yes sudo -E bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --apply
+#        ZCLOUD_DNS_CUTOVER_CONFIRMED=yes ZCLOUD_SQLITE_CUTOVER_CONFIRMED=yes sudo -E bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --apply
 set -Eeuo pipefail
 
 MODE="${1:---status}"
@@ -84,13 +84,15 @@ quarantine_own_site() {
 
 say "target=$HOST ipv4=$IP domain=$DOMAIN"
 if backend_ready; then say 'backend=healthy_loopback'; else say 'backend=not_ready'; fi
-if dns_ready; then say 'dns=target_ipv4'; else say 'dns=not_target'; fi
+if dns_ready; then say 'dns=resolver_addresses_target_ipv4_no_ipv6'; else say 'dns=resolver_addresses_mismatch_or_ipv6'; fi
 if import_ready; then say 'caddy_import=ready'; else say 'caddy_import=missing'; fi
 if auth_ready; then say 'auth=valid'; else say 'auth=missing_or_invalid'; fi
 if systemctl is-active --quiet caddy; then say 'caddy=active'; else say 'caddy=inactive'; fi
 if public_requires_login; then say 'external_https=401_auth_required'; else say 'external_https=not_proven'; fi
 
 [[ "$MODE" = --apply ]] || exit 0
+[[ "$(printenv ZCLOUD_DNS_CUTOVER_CONFIRMED || true)" = yes ]] ||
+  die 'DNS owner must independently confirm current delegation and intended A/AAAA records'
 [[ "$(printenv ZCLOUD_SQLITE_CUTOVER_CONFIRMED || true)" = yes ]] ||
   die 'old-VPS writer fence and final SQLite handoff must be independently confirmed'
 [[ "$EUID" -eq 0 ]] || die 'root required'
