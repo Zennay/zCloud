@@ -1120,6 +1120,21 @@ def render_timeline(pairs, observations):
                 metric_rows.append(escape(name) + ": " + escape(f"{amount:+g}{unit}"))
             else:
                 metric_rows.append(escape(name) + ": niet vergelijkbaar")
+        swap_source = capacity.get("swap_status") or {}
+        swap_labels = {
+            "OBSERVED": "swap geconfigureerd",
+            "NO_SWAP_CONFIGURED": "geen swap geconfigureerd",
+            "UNKNOWN": "swapbron UNKNOWN",
+        }
+        swap_previous = swap_labels.get(swap_source.get("previous"), "swapbron UNKNOWN")
+        swap_current = swap_labels.get(swap_source.get("current"), "swapbron UNKNOWN")
+        if swap_source.get("comparable") is True:
+            swap_relation = ("status gewijzigd" if swap_source.get("changed") is True
+                             else "status ongewijzigd")
+        else:
+            swap_relation = "status niet vergelijkbaar"
+        swap_line = ("Swapbron: " + swap_previous + " → " + swap_current
+                     + " (" + swap_relation + ")")
         coach = pair.get("coach_comparison") or {}
         if coach.get("same_boot_policy_comparable") is True:
             before, after = coach.get("previous") or {}, coach.get("current") or {}
@@ -1136,6 +1151,7 @@ def render_timeline(pairs, observations):
             + escape(continuity) + " · "
             + str(len(transitions)) + " waargenomen serviceverschillen</summary>"
             + "<p class='muted'>Capaciteit: " + "; ".join(metric_rows) + "</p>"
+            + "<p class='muted'>" + escape(swap_line) + "</p>"
             + "<p>" + cpu + "</p><ul>" + items + "</ul>"
             + "<p class='muted'>Waarneming, geen bewijs van herstel, "
             "toewijzing, geslaagde CI of doorlopende modeltraining.</p></details>"
@@ -1270,7 +1286,23 @@ def render_private_handoff(data):
                     f"{_handoff_text(pair.get('current_utc'))}")
         rows.append("Bron: " + continuity + " | runnerinventaris: "
                     + ("volledig binnen limieten" if coverage else "GEDEELTELIJK/ONBEKEND") + ".")
-        metrics = (pair.get("capacity_comparison") or {}).get("metrics", [])
+        capacity_pair = pair.get("capacity_comparison") or {}
+        swap_source = capacity_pair.get("swap_status") or {}
+        swap_labels = {
+            "OBSERVED": "swap geconfigureerd",
+            "NO_SWAP_CONFIGURED": "geen swap geconfigureerd",
+            "UNKNOWN": "swapbron UNKNOWN",
+        }
+        swap_previous = swap_labels.get(swap_source.get("previous"), "swapbron UNKNOWN")
+        swap_current = swap_labels.get(swap_source.get("current"), "swapbron UNKNOWN")
+        if swap_source.get("comparable") is True:
+            swap_relation = ("status gewijzigd" if swap_source.get("changed") is True
+                             else "status ongewijzigd")
+        else:
+            swap_relation = "status niet vergelijkbaar"
+        rows.append("- Swapbron: " + swap_previous + " → " + swap_current
+                    + " (" + swap_relation + ").")
+        metrics = capacity_pair.get("metrics", [])
         for m in metrics[:6]:
             name = m.get("metric")
             if name not in {"host_load", "memory_available_gib",
