@@ -28,6 +28,22 @@ def connect(path: Path):
     return conn
 
 
+def _assert_shared_resource_db(db_path: Path) -> None:
+    """Prevent accidental split-brain pools when a service pins its DB path.
+
+    Unit/service launchers should export ZCLOUD_RESOURCE_DB to the single
+    shared SQLite authority. Production paths must not be silently replaced
+    by local checkout or temporary per-project database files. Temporary
+    canary databases without an explicitly pinned environment stay supported.
+    """
+    configured = os.environ.get("ZCLOUD_RESOURCE_DB")
+    if configured:
+        supplied = Path(db_path).expanduser().resolve(strict=False)
+        canonical = Path(configured).expanduser().resolve(strict=False)
+        if supplied != canonical:
+            raise RuntimeError("resource_database_identity_mismatch")
+
+
 def _bounded_cpu_count(value, available: int) -> int:
     requested = max(1, int(math.ceil(float(value or 1))))
     return max(1, min(max(1, int(available)), requested))
@@ -281,6 +297,7 @@ def run_governed(
     if not command:
         raise ValueError("command is required")
     owner_id = _safe_owner(owner_id)
+    _assert_shared_resource_db(Path(db_path))
 
     lease_seconds = max(60, min(6 * 3600, int(lease_seconds or 300)))
     renew_seconds = max(5, min(int(renew_seconds or 60), max(5, lease_seconds // 2)))
