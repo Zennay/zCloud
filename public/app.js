@@ -7,7 +7,8 @@ const date=(x,full=false)=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Ams
 const clock=x=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(x));
 const rel=x=>{const m=Math.floor((Date.now()-Date.parse(x))/60000);return m<1?'zojuist':m<60?m+' min geleden':m<1440?Math.floor(m/60)+' u geleden':date(x)};
 const STATUS_TIMEOUT_MS=30000,STATUS_CACHE_KEY='zcloud:last-status:v1',STATUS_CACHE_MAX_AGE_MS=24*60*60*1000;
-let DATA=null,ACTIVITY=[],HOST=[],HISTORY={},WORKER_SCALING=null,WORKER_SCALING_ERROR='',route='',range='7d',filter='',busy=false,routeVersion=0,dynamicWorkerSaveTimer=null,scrollToWorkersOnOverview=false,mobileWorkersActive=false;
+let DATA=null,ACTIVITY=[],HOST=[],HISTORY={},WORKER_SCALING=null,WORKER_SCALING_ERROR='',BLOCKED_QUEUE=null,BLOCKED_QUEUE_ERROR='',PORTFOLIO_QUEUE_SNAPSHOT=null,route='',range='7d',filter='',busy=false,routeVersion=0,dynamicWorkerSaveTimer=null,scrollToWorkersOnOverview=false,mobileWorkersActive=false;
+let STATUS_CONNECTION_OK=false;
 const ACTIVITY_CACHE_INTERVAL_MS=120000,ACTIVITY_MAX_PROJECTS=24,ACTIVITY_MAX_VISIBLE=240;
 let ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:0,projectsTotal:0,projectsRead:0,failed:0,limited:false,pending:false,scope:'',lastError:''};
 let ACTIVITY_PROJECT_FETCH=null;
@@ -281,21 +282,1092 @@ function projectPrimaryActions(p,placement='card'){
   const pause=active?`<button type="button" class="project-secondary-button" data-runner-toggle="${esc(p.id)}" data-runner-action="pause" ${pending?'disabled':''}>Pause</button>`:'';
   return `<div class="project-primary-actions project-primary-actions-${esc(placement)}"><div class="project-action-copy"><small>${placement==='detail'?'PROJECT CONTROL':'WORK'}</small><span><i class="${active?'is-active':''}"></i>${esc(state)}</span></div><div class="project-action-buttons">${primary}${force}${pause}</div></div>`;
 }
-function projectCard(p){const draggable=!(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches);return `<article class="project-card" style="--accent:${p.accent}" draggable="${draggable}" data-project-id="${esc(p.id)}"><div class="project-card-top"><span class="project-icon">${icon(p.icon)}</span><div class="project-card-actions"><span class="drag-handle" title="Drag to move" aria-hidden="true">⋮⋮</span><button class="archive-button" data-archive="${esc(p.id)}" type="button">Archive</button></div></div><a class="project-card-link" href="#project/${esc(p.id)}" aria-label="View ${esc(p.name)}: ${num(p.progress)} percent of project steps"><div class="card-badge-row">${badge(p)}</div><div class="eyebrow">${p.eyebrow}</div><h3>${p.name}</h3><p>${p.goal}</p><div class="progress-row"><span>${p.completed} / ${p.milestones.length} project steps</span><strong>${num(p.progress)}<small>%</small></strong></div><div class="progress-track"><span style="width:${p.progress}%"></span></div><div class="project-bottom">${icon('target')}<span>${p.phase?'Phase: '+esc(p.phase):'Next: '+esc(p.next)}</span><span class="arrow">${icon('arrow')}</span></div></a></article>`}
+function projectCard(p){const queueFresh=blockedQueueSourceIsFresh();const holds=Array.isArray(BLOCKED_QUEUE)?BLOCKED_QUEUE.filter(row=>row?.status==='blocked'&&row.project_id===p.id):null;const urgent=holds?.filter(row=>row.priority==='P0'||row.priority==='P1').length||0;const holdTag=holds?.length?'<span class="card-hold-tag" title="Parked tasks in the last loaded queue observation; check freshness before recovery">'+holds.length+(queueFresh?' parked':' last observed parked')+(urgent?' · '+urgent+' P0/P1':'')+'</span>':'';const churn=Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)?PORTFOLIO_QUEUE_SNAPSHOT.filter(row=>row?.project_id===p.id&&['queued','claimed','running','verifying'].includes(row.status)&&Number.isSafeInteger(row.attempts)&&row.attempts>=3):null;const expired=churn?.filter(row=>claimChurnLeaseStatus(row)==='expired-at-observation').length||0;const churnTag=churn?.length?'<span class="card-churn-tag" title="Last observed queue snapshot; claim attempts are not proven failures">'+churn.length+(queueFresh?' repeated claims':' last observed repeated claims')+(expired?' · '+expired+' expired lease'+(expired===1?'':'s'):'')+'</span>':'';const integrity=Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)?ownerIntegrityRows(p.id).all:null;const integrityUrgent=integrity?.filter(row=>row.item.priority==='P0'||row.item.priority==='P1').length||0;const integrityTag=integrity?.length?'<span class="card-integrity-tag" title="Last observed owner/lease inconsistencies · not release or claim authority">'+integrity.length+(queueFresh?' owner warning':' last observed owner warning')+(integrity.length===1?'':'s')+(integrityUrgent?' · '+integrityUrgent+' P0/P1':'')+'</span>':'';const draggable=!(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches);return `<article class="project-card" style="--accent:${p.accent}" draggable="${draggable}" data-project-id="${esc(p.id)}"><div class="project-card-top"><span class="project-icon">${icon(p.icon)}</span><div class="project-card-actions"><span class="drag-handle" title="Drag to move" aria-hidden="true">⋮⋮</span><button class="archive-button" data-archive="${esc(p.id)}" type="button">Archive</button></div></div><a class="project-card-link" href="#project/${esc(p.id)}" aria-label="View ${esc(p.name)}: ${num(p.progress)} percent of project steps"><div class="card-badge-row">${badge(p)}${holdTag}${integrityTag}${churnTag}</div><div class="eyebrow">${p.eyebrow}</div><h3>${p.name}</h3><p>${p.goal}</p><div class="progress-row"><span>${p.completed} / ${p.milestones.length} project steps</span><strong>${num(p.progress)}<small>%</small></strong></div><div class="progress-track"><span style="width:${p.progress}%"></span></div><div class="project-bottom">${icon('target')}<span>${p.phase?'Phase: '+esc(p.phase):'Next: '+esc(p.next)}</span><span class="arrow">${icon('arrow')}</span></div></a></article>`}
+function safeAttentionSourceUrl(raw){
+  // Never render a user-supplied javascript:, file: or credential-bearing URL.
+  // Issue/PR links have the more restrictive blockedQueueSourceUrl contract.
+  try{
+    const url=new URL(String(raw||''));
+    return url.protocol==='https:'&&!url.username&&!url.password&&!url.port
+      &&url.hostname&&url.hostname.length<=253?url.href:'';
+  }catch(_){return ''}
+}
+function statusSnapshotFreshness(){
+  const raw=DATA?.time;
+  // Require an explicit RFC3339 timezone; Date.parse alone accepts local-time
+  // and date-only strings that are not safe cross-host freshness evidence.
+  const valid=typeof raw==='string'
+    &&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(raw);
+  if(!valid)return 'unknown';
+  const timestamp=Date.parse(raw),now=Date.now();
+  if(!Number.isFinite(timestamp)||timestamp>now+120000)return 'unknown';
+  if(!STATUS_CONNECTION_OK||DATA?.stale===true||now-timestamp>90000)return 'stale';
+  return 'fresh';
+}
 function attentionPanel(projectId=''){
-  const all=Array.isArray(DATA?.attention_needed)?DATA.attention_needed:[];
+  if(!Array.isArray(DATA?.attention_needed)){
+    return '<section class="attention-panel"><div class="attention-head"><div>'
+      +'<span class="eyebrow">ATTENTION SOURCE UNKNOWN</span><h2>Human-action source unavailable</h2>'
+      +'<p>Cannot confirm whether this '+(projectId?'project':'portfolio')
+      +' has pending human requests. No action has been dismissed.</p>'
+      +'</div><span class="attention-count">?</span></div></section>';
+  }
+  const all=DATA.attention_needed;
   const items=projectId?all.filter(item=>item.project_id===projectId):all;
+  const freshness=statusSnapshotFreshness();
+  const sourceNotice=freshness==='fresh'?''
+    :freshness==='stale'
+      ?'<p class="blocked-queue-warning" role="status">Showing last observed requests. Refresh before relying on this list or resolving an item.</p>'
+      :'<p class="blocked-queue-warning" role="status">The current status timestamp is missing or untrusted. Refresh before taking action.</p>';
   const notion=DATA?.portfolio_queue_health?.notion_attention_url||'';
   if(!items.length){
-    if(projectId)return '';
-    return `<section class="attention-panel attention-clear"><div class="attention-head"><div><span class="eyebrow">ATTENTION NEEDED</span><h2>Nothing needs you right now</h2></div><span class="attention-count">0</span></div><p>Workers can keep moving without a human gate.</p>${notion?`<a class="text-link" href="${esc(notion)}" target="_blank" rel="noreferrer">Open Notion list →</a>`:''}</section>`;
+    if(projectId&&freshness==='fresh')return '';
+    const headline=freshness==='fresh'?'Nothing needs you right now'
+      :freshness==='stale'?'No human gates in the last snapshot':'Human-action status unconfirmed';
+    const count=freshness==='unknown'?'?':'0';
+    const note=freshness==='fresh'?'Workers can keep moving without a human gate.'
+      :freshness==='stale'?'The last observed snapshot had no pending human requests, but it is stale. Refresh before relying on it.'
+      :'The status timestamp is missing or untrusted. This is not proof that no human action is needed.';
+    return `<section class="attention-panel ${freshness==='fresh'?'attention-clear':''}"><div class="attention-head"><div><span class="eyebrow">ATTENTION NEEDED</span><h2>${headline}</h2></div><span class="attention-count">${count}</span></div><p>${note}</p>${notion&&!projectId?`<a class="text-link" href="${esc(notion)}" target="_blank" rel="noreferrer">Open Notion list →</a>`:''}</section>`;
   }
   const rows=items.map(item=>{
     const project=DATA.projects.find(p=>p.id===item.project_id);
     const detail=String(item.detail||'').trim();
-    return `<article class="attention-item ${item.severity==='urgent'?'is-urgent':''}"><div class="attention-copy"><small>${esc(project?.name||item.project_id)}</small><strong>${esc(item.action)}</strong>${detail?`<p>${esc(detail.length>220?detail.slice(0,217)+'…':detail)}</p>`:''}<div class="attention-links">${item.source_url?`<a href="${esc(item.source_url)}" target="_blank" rel="noreferrer">Open source</a>`:''}</div></div><button type="button" data-attention-resolve="${esc(item.attention_id)}">Done</button></article>`;
+    const attentionId=String(item.attention_id||'');
+    const queueId=attentionId.startsWith('queue:')?attentionId.slice(6):'';
+    const taskAvailable=!!queueId&&blockedQueueSourceIsFresh()&&Array.isArray(BLOCKED_QUEUE)&&BLOCKED_QUEUE.some(task=>String(task?.queue_id)===queueId&&blockedQueueIsParked(task));
+    // Queue-bound Attention must be cleared by an attested resume of the original task.
+    const control=queueId
+      ?'<button type="button" data-resume-blocked="'+esc(queueId)+'"'+(taskAvailable?'':' disabled title="Read the parked queue before resuming"')+'>'+(taskAvailable?'Confirm & resume':'Parked task unavailable')+'</button>'
+      :'<button type="button" data-attention-resolve="'+esc(attentionId)+'"'+(freshness==='fresh'?'':' disabled title="Refresh the status source before resolving an older attention item"')+'>Done</button>'; 
+    const queueNotice=queueId?'<p>Linked to the original parked task. Confirm the cleared dependency to resolve both; dismissing the alert alone does not unblock work.</p>':'';
+    return `<article class="attention-item ${item.severity==='urgent'?'is-urgent':''}"><div class="attention-copy"><small>${esc(project?.name||item.project_id)}</small><strong>${esc(item.action)}</strong>${queueNotice}${detail?`<p>${esc(detail.length>220?detail.slice(0,217)+'…':detail)}</p>`:''}<div class="attention-links">${safeAttentionSourceUrl(item.source_url)?`<a href="${esc(safeAttentionSourceUrl(item.source_url))}" target="_blank" rel="noopener noreferrer">Open source</a>`:''}</div></div>${control}</article>`;
   }).join('');
-  return `<section class="attention-panel"><div class="attention-head"><div><span class="eyebrow">ATTENTION NEEDED</span><h2>${items.length===1?'1 thing needs you':items.length+' things need you'}</h2><p>Only human, physical or external gates appear here. They never occupy a worker slot.</p></div><span class="attention-count">${items.length}</span></div><div class="attention-list">${rows}</div>${notion&&!projectId?`<a class="text-link attention-notion" href="${esc(notion)}" target="_blank" rel="noreferrer">Open the simple Notion list →</a>`:''}</section>`;
+  return `<section class="attention-panel"><div class="attention-head"><div><span class="eyebrow">${freshness==='fresh'?'ATTENTION NEEDED':'LAST OBSERVED ATTENTION'}</span><h2>${items.length===1?'1 thing needs you':items.length+' things need you'}</h2><p>Only human, physical or external gates appear here. They never occupy a worker slot.</p></div><span class="attention-count">${items.length}</span></div>${sourceNotice}<div class="attention-list">${rows}</div>${notion&&!projectId?`<a class="text-link attention-notion" href="${esc(notion)}" target="_blank" rel="noreferrer">Open the simple Notion list →</a>`:''}</section>`;
+}
+let blockedQueueVisible=12;
+let blockedQueueUrgentOnly=false;
+let blockedQueueProject='all';
+let blockedQueueSearch='';
+let blockedQueueHumanOnly=false;
+let blockedQueueRepeatClaimsOnly=false;
+// Read-only severity drill-down for the loaded (not necessarily complete) queue snapshot.
+let blockedQueueSeverity='all';
+let claimChurnVisible=12,claimChurnUrgentOnly=false,claimChurnStatus='all',claimChurnExpiredOnly=false;
+let claimChurnAnomaliesOnly=false;
+let ownerIntegrityVisible=12,ownerIntegrityUrgentOnly=false,ownerIntegrityProject='all';
+let blockedQueueFilterTimer=null;
+let blockedQueueObservedAt='';
+// A delayed dashboard history response must never replace a newer queue view.
+// Changes to recovery/write state also invalidate older read completions.
+let blockedQueueObservationVersion=0;
+function blockedQueueSourceIsFresh(){
+  // An old/unknown queue read is an observation, never write admission.
+  // Rendering and confirmation handlers must both fail closed; the server
+  // independently rechecks the current queue and ownership transaction.
+  return claimChurnSnapshotFreshness().state==='recent_observation';
+}
+function blockedQueueIsParked(item){
+  // The queue row and the separate task_claims lease must both prove clear.
+  // Missing claim-source fields are UNKNOWN, never an implicit free claim.
+  return !!item&&item.status==='blocked'&&(item.eligible===false||item.eligible===0)
+    &&item.worker_slot==null&&item.claimed_at==null&&item.claim_expires==null
+    &&item.task_claim_source_available===true&&item.task_claim_state==='none';
+}
+function blockedQueueTaskClaimNotice(item){
+  const state=item?.task_claim_source_available===true
+    ?String(item?.task_claim_state||'unknown'):'source-unavailable';
+  if(state==='none')return '';
+  const messages={
+    active:'A separate task claim has a live lease. Resume and close are disabled until its owner reconciles/releases it.',
+    'expired-record':'A task-claim record remains after lease expiry. Expiry alone is not takeover permission; the owner must reconcile it.',
+    unknown:'The separate task-claim lease or project identity is malformed or unknown. Resume and close are disabled.',
+    'source-unavailable':'The separate task-claim source could not be read. Claim-free status is unknown; resume and close are disabled.'
+  };
+  const lease=typeof item?.task_claim_lease_until==='string'&&item.task_claim_lease_until
+    ?' Observed lease expiry: '+item.task_claim_lease_until.slice(0,80)+'.':'';
+  return '<p class="blocked-queue-warning" role="alert">'+esc((messages[state]||messages.unknown)+lease)+'</p>';
+}
+function blockedQueueSourceUrl(raw){
+  // Queue evidence can contain user-supplied URLs. Only link exact GitHub
+  // issues/PRs owned by this portfolio; never render arbitrary href schemes.
+  try{
+    const url=new URL(String(raw||''));
+    if(url.protocol!=='https:'||url.hostname!=='github.com'||url.port||
+       url.username||url.password||url.search||url.hash)return '';
+    return /^\/Zennay\/[A-Za-z0-9_.-]+\/(issues|pull)\/[1-9][0-9]*$/.test(url.pathname)?url.href:'';
+  }catch(_){return ''}
+}
+function blockedQueueTime(value){
+  const timestamp=typeof value==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(value)?Date.parse(value):NaN;
+  if(!Number.isFinite(timestamp)||timestamp>Date.now()+120000)return '';
+  return new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',dateStyle:'medium',timeStyle:'short'}).format(new Date(timestamp));
+}
+function blockedQueueChurnHint(item){
+  const attempts=Number.isSafeInteger(item?.attempts)&&item.attempts>=3?item.attempts:0;
+  if(!attempts)return '';
+  // Attempt counts are observations for THIS task, not proven #677 incidents
+  // and never permission to retry, release a lease or reassign a worker.
+  const source=blockedQueueSourceUrl(item.source_url);
+  return '<p class="blocked-queue-churn" role="note"><strong>'+attempts+
+    ' recorded claim attempts</strong> · not proven failures or a known retry defect. '
+    +(source?'<a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Open this task’s source ↗</a>':'No canonical issue/PR is linked.')+'</p>';
+}
+function blockedQueueSelectedRows(items){
+  const scoped=blockedQueueProject==='all'?items:items.filter(item=>String(item.project_id||'')===blockedQueueProject);
+  const urgency=blockedQueueUrgentOnly?scoped.filter(item=>item.priority==='P0'||item.priority==='P1'):scoped;
+  const priorities=blockedQueueSeverity==='all'?urgency:urgency.filter(item=>
+    (['P0','P1','P2','P3'].includes(item.priority)?item.priority:'unknown')===blockedQueueSeverity);
+  const humanFiltered=blockedQueueHumanOnly
+    ?(Array.isArray(DATA.attention_needed)
+      ?priorities.filter(item=>DATA.attention_needed.some(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'))
+      :[])
+    :priorities;
+  const repeatFiltered=blockedQueueRepeatClaimsOnly
+    ?humanFiltered.filter(item=>Number.isSafeInteger(item.attempts)&&item.attempts>=3)
+    :humanFiltered;
+  const search=blockedQueueSearch.trim().toLocaleLowerCase();
+  if(!search)return repeatFiltered;
+  return repeatFiltered.filter(item=>{
+    const project=DATA.projects.find(p=>p.id===item.project_id);
+    return [project?.name,item.project_id,item.title,item.blocker,item.evidence,item.priority,item.source_url]
+      .some(value=>String(value??'').toLocaleLowerCase().includes(search));
+  });
+}
+function downloadBlockedQueueHandoff(){
+  if(!Array.isArray(BLOCKED_QUEUE)||!blockedQueueTime(blockedQueueObservedAt)){
+    window.alert('The queue has no reliable observation time. Refresh the source before exporting.');return;
+  }
+  const rank={P0:0,P1:1,P2:2,P3:3};
+  const rows=blockedQueueSelectedRows(BLOCKED_QUEUE.filter(row=>row&&row.status==='blocked')
+    .sort((a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9)));
+  if(!rows.length){window.alert('There are no selected dependency holds to export.');return}
+  const freshness=claimChurnSnapshotFreshness();
+  if(!window.confirm('Create a LOCAL PRIVATE read-only operator handoff for '+rows.length+
+    ' selected parked tasks? '+(freshness.state!=='recent_observation'?'WARNING: source is '+freshness.state+', NOT CURRENT. ':'')+
+    'This contains queue identifiers and source links. Review it before sharing. No claims or tasks will change.'))return;
+  const selected=rows.slice(0,100);
+  const packet={
+    schema:'zsentinel.dependency-holds.local-handoff.v1',
+    exported_at:new Date().toISOString(),
+    queue_observed_at:blockedQueueObservedAt,
+    source_freshness:freshness,
+    authority:'read-only local snapshot; not a claim, dependency clearance, retry or release permission',
+    coverage:{sample_blocked_total:BLOCKED_QUEUE.length,selected_count:rows.length,
+      exported_count:selected.length,truncated:rows.length>selected.length,
+      selected_project:blockedQueueProject,priority_filter:blockedQueueSeverity!=='all'?blockedQueueSeverity:(blockedQueueUrgentOnly?'P0-P1':'all'),
+      human_attention_filter:blockedQueueHumanOnly,repeat_claim_filter:blockedQueueRepeatClaimsOnly,
+      text_filter_applied:!!blockedQueueSearch.trim()},
+    tasks:selected.map(item=>({
+      queue_id:String(item.queue_id||'').slice(0,180),
+      project_id:String(item.project_id||'').slice(0,80),
+      priority:['P0','P1','P2','P3'].includes(item.priority)?item.priority:'UNKNOWN',
+      status:'blocked',
+      updated_at:typeof item.updated_at==='string'?item.updated_at.slice(0,80):null,
+      task_claim_source_available:item.task_claim_source_available===true,
+      task_claim_state:['none','active','expired-record','unknown','source-unavailable'].includes(item.task_claim_state)
+        ?item.task_claim_state:'unknown',
+      task_claim_lease_until:typeof item.task_claim_lease_until==='string'
+        ?item.task_claim_lease_until.slice(0,80):null,
+      source_url:blockedQueueSourceUrl(item.source_url)||null,
+      human_attention:!!(DATA.attention_needed||[]).find(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'),
+      recommended_owner_step:'Review exact source and dependency; do not resume without authorization and fresh evidence'
+    }))
+  };
+  // Exclude raw blocker/evidence and task title by design. Limit local file size.
+  const serialized=JSON.stringify(packet,null,2);
+  if(new TextEncoder().encode(serialized).length>100000){window.alert('Export exceeds the private snapshot size limit. Narrow the filters.');return}
+  const url=URL.createObjectURL(new Blob([serialized],{type:'application/json;charset=utf-8'}));
+  const link=document.createElement('a');
+  link.href=url;link.download='zsentinel-dependency-holds-'+new Date().toISOString().slice(0,10)+'.json';
+  document.body.append(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function claimChurnLeaseStatus(item){
+  if(!['claimed','running','verifying'].includes(item?.status))return 'not-applicable';
+  const observed=typeof blockedQueueObservedAt==='string'
+    &&blockedQueueTime(blockedQueueObservedAt)?Date.parse(blockedQueueObservedAt):NaN;
+  const expiry=typeof item.claim_expires==='string'?Date.parse(item.claim_expires):NaN;
+  if(!Number.isFinite(observed)||!Number.isFinite(expiry))return 'unknown';
+  return expiry<=observed?'expired-at-observation':'valid-at-observation';
+}
+// Claim counter churn is not itself a failure. Independently surface queue
+// records whose persisted owner/lease identity is internally inconsistent.
+// Never interpret an expired or malformed lease as takeover authorization.
+function claimChurnOwnerIntegrity(item){
+  const active=['claimed','running','verifying'].includes(item?.status);
+  const anyClaim=item?.worker_slot!=null||item?.claimed_at!=null||item?.claim_expires!=null;
+  if(!active)return anyClaim?'unexpected-claim-fields':'unclaimed';
+  const slot=Number.isSafeInteger(item.worker_slot)&&item.worker_slot>0;
+  const claimed=typeof item.claimed_at==='string'?Date.parse(item.claimed_at):NaN;
+  const expires=typeof item.claim_expires==='string'?Date.parse(item.claim_expires):NaN;
+  const observed=typeof blockedQueueObservedAt==='string'?Date.parse(blockedQueueObservedAt):NaN;
+  if(!slot||!Number.isFinite(claimed)||!Number.isFinite(expires)||!Number.isFinite(observed))
+    return 'incomplete-active-claim';
+  if(expires<=claimed||claimed>observed+120000)return 'invalid-lease-window';
+  return 'consistent';
+}
+function claimChurnNeedsOwnerReview(item){
+  return !['consistent','unclaimed'].includes(claimChurnOwnerIntegrity(item))
+    ||claimChurnLeaseStatus(item)==='expired-at-observation'
+    ||claimChurnLeaseStatus(item)==='unknown';
+}
+function claimChurnSnapshotFreshness(){
+  // A browser may interpret locale-only dates in its own timezone. Only the
+  // backend's explicit RFC3339/ISO8601 timestamp is valid operator evidence.
+  // Treat missing timezone and implausible server clock as UNKNOWN.
+  const raw=blockedQueueObservedAt;
+  const valid=typeof raw==='string'&&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(raw);
+  const observed=valid?Date.parse(raw):NaN;
+  if(!Number.isFinite(observed))
+    return {state:'unknown',age_seconds:null,reason:'invalid-or-untimed-source'};
+  if(observed>Date.now()+120000)
+    return {state:'unknown',age_seconds:null,reason:'source-clock-ahead'};
+  const age=Math.max(0,Math.floor((Date.now()-observed)/1000));
+  return {state:age>900?'stale_observation':'recent_observation',
+    age_seconds:age,reason:age>900?'source-too-old':null};
+}
+function claimChurnRows(projectId=''){
+  const statuses=new Set(['queued','claimed','running','verifying']);
+  const all=(Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)?PORTFOLIO_QUEUE_SNAPSHOT:[])
+    .filter(item=>item&&statuses.has(item.status)
+      &&Number.isSafeInteger(item.attempts)&&item.attempts>=3
+      &&(!projectId||item.project_id===projectId));
+  const rank={P0:0,P1:1,P2:2,P3:3};
+  all.sort((a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9)
+    ||Number(b.attempts)-Number(a.attempts)
+    ||String(a.queue_id).localeCompare(String(b.queue_id)));
+  const matching=projectId?all:all.filter(item=>
+    (!claimChurnUrgentOnly||item.priority==='P0'||item.priority==='P1')
+    &&(claimChurnStatus==='all'||item.status===claimChurnStatus)
+    &&(!claimChurnExpiredOnly||claimChurnLeaseStatus(item)==='expired-at-observation')
+    &&(!claimChurnAnomaliesOnly||claimChurnNeedsOwnerReview(item)));
+  return {all,matching};
+}
+function downloadClaimChurnHandoff(){
+  if(!Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)||!blockedQueueTime(blockedQueueObservedAt)){
+    window.alert('The active queue source has no trustworthy observation time. Private export refused.');return;
+  }
+  const {matching}=claimChurnRows();
+  if(!matching.length){window.alert('No repeated-claim work matches this selection.');return}
+  const sample=matching.slice(0,100);
+  const freshness=claimChurnSnapshotFreshness();
+  if(!window.confirm('Create a LOCAL PRIVATE read-only handoff for '+sample.length+' of '+matching.length+
+    ' observed claim-attempt rows? '+(freshness.state==='recent_observation'?'Source recently observed.':
+      'WARNING: source is '+freshness.state+'; current owner/lease status is UNKNOWN.')+
+    ' This may include active worker identities; no claim or retry will change.'))return;
+  const payload={
+    schema:'zsentinel.claim-churn.readonly-handoff.v1',
+    created_at:new Date().toISOString(),
+    queue_observed_at:blockedQueueObservedAt,
+    source_freshness:freshness,
+    authority:'observed allocation counter only; not a failure claim, retry, worker takeover or release permission',
+    coverage:{queue_rows:PORTFOLIO_QUEUE_SNAPSHOT.length,matched:matching.length,
+      exported:sample.length,truncated:matching.length>sample.length,
+      priority_filter:claimChurnUrgentOnly?'P0-P1':'all',status_filter:claimChurnStatus,
+      expired_lease_filter:claimChurnExpiredOnly,claim_anomaly_filter:claimChurnAnomaliesOnly,
+      observed_owner_review_required:matching.filter(claimChurnNeedsOwnerReview).length},
+    tasks:sample.map(item=>({
+      queue_id:String(item.queue_id||'').slice(0,160),
+      project_id:String(item.project_id||'').slice(0,90),
+      priority:['P0','P1','P2','P3'].includes(item.priority)?item.priority:'UNKNOWN',
+      status:item.status,recorded_claim_attempts:item.attempts,
+      worker_slot:Number.isSafeInteger(item.worker_slot)&&item.worker_slot>0?item.worker_slot:null,
+      last_updated:typeof item.updated_at==='string'?item.updated_at.slice(0,80):null,
+      lease_status_at_observation:claimChurnLeaseStatus(item),
+      claim_integrity:claimChurnOwnerIntegrity(item),
+      needs_owner_review:claimChurnNeedsOwnerReview(item),
+      lease_expires:typeof item.claim_expires==='string'?item.claim_expires.slice(0,80):null,
+      source_url:blockedQueueSourceUrl(item.source_url)||null,
+      owner_next_step:'Inspect source and current claim owner; do not cancel, retry or reassign without authorization'
+    }))
+  };
+  const json=JSON.stringify(payload,null,2);
+  if(new TextEncoder().encode(json).length>100000){
+    window.alert('Private export exceeds the 100 KB size limit. Narrow the queue selection.');return;
+  }
+  const url=URL.createObjectURL(new Blob([json],{type:'application/json;charset=utf-8'}));
+  const anchor=document.createElement('a');anchor.href=url;
+  anchor.download='zsentinel-claim-churn-'+new Date().toISOString().slice(0,10)+'.json';
+  document.body.append(anchor);anchor.click();anchor.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function claimChurnPanel(projectId=''){
+  // Repeated allocation does not automatically attribute a task to issue #677.
+  // Use a bounded per-task source view, not an invented portfolio-level link.
+  if(!Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)){
+    return '<section class="claim-churn-panel" aria-label="Claim churn">'
+      +'<div class="claim-churn-head"><div><span class="eyebrow">REPEATED CLAIM ATTEMPTS</span>'
+      +'<h2>Active queue source unavailable</h2><p>Cannot determine claim-attempt history. No task is modified.</p></div></div></section>';
+  }
+  const {all,matching}=claimChurnRows(projectId);
+  const show=projectId?6:claimChurnVisible;
+  const observed=blockedQueueTime(blockedQueueObservedAt);
+  const freshness=claimChurnSnapshotFreshness();
+  const warnings=all.filter(claimChurnNeedsOwnerReview).length;
+  const sourceQualifier=freshness.state==='recent_observation'?'Current queue observation':
+    'Historical queue observation · current claim state UNKNOWN';
+  const rows=matching.slice(0,show).map(item=>{
+    const owned=['claimed','running','verifying'].includes(item.status);
+    const slot=Number.isSafeInteger(item.worker_slot)&&item.worker_slot>0
+      ?'Worker slot '+item.worker_slot:'Worker slot unknown';
+    const source=blockedQueueSourceUrl(item.source_url);
+    const displayStatus={queued:'Queued · not claimed',claimed:'Claimed',running:'Running',verifying:'Verifying'}[item.status];
+    const lease=claimChurnLeaseStatus(item);
+    const integrity=claimChurnOwnerIntegrity(item);
+    const anomaly=claimChurnNeedsOwnerReview(item);
+    const ownerCopy=integrity==='unexpected-claim-fields'?'Queued task has leftover worker/claim/lease fields · owner review required'
+      :integrity==='incomplete-active-claim'?'Active task lacks complete worker/claim/lease evidence · preserve owner'
+      :integrity==='invalid-lease-window'?'Impossible claim/lease time window · owner review required':'';
+    const leaseCopy=lease==='expired-at-observation'?'Lease expired at queue observation · owner review needed'
+      :lease==='valid-at-observation'?'Lease valid at queue observation · do not take over'
+      :lease==='unknown'?'Lease expiry unverified · treat owner as active':'No active lease';
+    return '<article class="claim-churn-item">'
+      +'<div class="claim-churn-item-head"><strong>'+esc(String(item.title||item.queue_id||'Untitled task'))+'</strong>'
+      +'<span class="claim-churn-count">'+Number(item.attempts)+' claims</span></div>'
+      +'<p><b>'+esc(String(item.priority||'UNKNOWN'))+'</b> · '+esc(integrity==='unexpected-claim-fields'?'Queued · inconsistent claim fields':displayStatus)
+      +' · '+esc(owned||integrity==='unexpected-claim-fields'?slot:'No recorded queue claim')
+      +' · '+esc(DATA.projects.find(p=>p.id===item.project_id)?.name||item.project_id||'Unknown project')+'</p>'
+      +'<div class="claim-churn-lease '+(anomaly?'is-expired':'')+'">'+esc(ownerCopy||leaseCopy)+'</div>'
+      +'<small>'+esc(sourceQualifier)+' · Last queue update '+esc(blockedQueueTime(item.updated_at)||'unknown')
+      +' · Attempts are not proven failures or issue #677 attribution. No retry or reassignment is offered.</small>'
+      +(source?'<div class="claim-churn-source"><a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Open canonical issue or PR ↗</a></div>':'')
+      +'</article>';
+  }).join('');
+  const filters=projectId?'':('<div class="claim-churn-filters"><button type="button" data-claim-churn-priority aria-pressed="'
+    +claimChurnUrgentOnly+'">'+(claimChurnUrgentOnly?'All priorities':'Only P0/P1')+'</button>'
+    +'<label>Status <select data-claim-churn-status aria-label="Claim churn status">'
+    +[['all','All active states'],['queued','Queued'],['claimed','Claimed'],['running','Running'],['verifying','Verifying']]
+      .map(([id,title])=>'<option value="'+id+'"'+(claimChurnStatus===id?' selected':'')+'>'+title+'</option>').join('')
+    +'</select></label>'
+    +'<button type="button" data-claim-churn-expired aria-pressed="'+claimChurnExpiredOnly+'">'
+    +(claimChurnExpiredOnly?'Show all leases':'Only expired leases')+'</button>'
+    +'<button type="button" data-claim-churn-anomalies aria-pressed="'+claimChurnAnomaliesOnly+'">'
+    +(claimChurnAnomaliesOnly?'Show all claims':'Only owner/lease warnings')+'</button></div>');
+  return '<section class="claim-churn-panel" aria-label="Claim churn">'
+    +'<div class="claim-churn-head"><div><span class="eyebrow">REPEATED CLAIM ATTEMPTS</span>'
+    +'<h2>'+(freshness.state==='recent_observation'?'':'Last observed: ')+all.length+
+       ' queued or active task'+(all.length===1?'':'s')+' with ≥3 attempts</h2>'
+    +'<p>Claim attempts are an allocation counter, not proof of failure. '+warnings+
+      ' owner/lease warnings '+(freshness.state==='recent_observation'?'warrant owner review':
+      'were recorded historically; current owner/lease status is UNKNOWN')+
+      '. Never reclaim automatically.</p>'
+    +'</div><span class="reduced">Source links are tied to each task, never inferred from attempt count.</span></div>'
+    +filters
+    +(matching.length?'<div class="claim-churn-list">'+rows+'</div>'
+      :'<p class="claim-churn-empty">'+(all.length?'No claim-churn tasks match this selection.':'No tasks with ≥3 recorded claims in the loaded active queue snapshot.')+'</p>')
+    +'<div class="claim-churn-foot"><span>'+(observed?'Observed '+esc(observed):'Queue observation time unavailable')
+    +(freshness.state==='stale_observation'?' · STALE SOURCE ('+Math.ceil(freshness.age_seconds/60)+' min old; not live)':freshness.state==='unknown'?' · SOURCE UNKNOWN (invalid clock or time format; not live)':'')
+    +' · '+Math.min(show,matching.length)+' of '+matching.length+' matching entries'
+    +' · '+PORTFOLIO_QUEUE_SNAPSHOT.length+' rows in authorized queue snapshot</span>'
+    +(projectId?'<button type="button" data-claim-churn-open>Open portfolio claim churn</button>'
+      :matching.length>show?'<button type="button" data-claim-churn-more>Show next 12</button>'
+      :matching.length>12&&show>12?'<button type="button" data-claim-churn-less>Show first 12</button>':'')
+    +(projectId?'':('<button type="button" data-claim-churn-export'+(matching.length?'':' disabled')+'>Export private handoff</button>'))
+    +'</div></section>';
+}
+
+// Read-only owner-integrity incident desk. Churn (attempts >=3) is a
+// separate indicator, never a prerequisite for inspecting unsafe leases.
+function ownerIntegritySignals(item){
+  if(!item||!['queued','blocked','claimed','running','verifying'].includes(item.status))return [];
+  const issues=[];
+  const active=['claimed','running','verifying'].includes(item.status);
+  const hasClaim=item.worker_slot!=null||item.claimed_at!=null||item.claim_expires!=null;
+  if(!active){
+    if(hasClaim)issues.push({code:'parked_or_queued_claim_residue',
+      description:'Task is not active but still carries owner/lease fields.'});
+    if(item.status==='blocked'&&!blockedQueueIsParked(item))
+      issues.push({code:'blocked_not_safely_parked',
+        description:'Blocked task is not a free, ineligible parked item. No operator resume or close.'});
+    return issues;
+  }
+  if(!Number.isSafeInteger(item.worker_slot)||item.worker_slot<=0)
+    issues.push({code:'owner_slot_missing',description:'Active task has no valid worker-slot identity.'});
+  const start=typeof item.claimed_at==='string'?Date.parse(item.claimed_at):NaN;
+  const end=typeof item.claim_expires==='string'?Date.parse(item.claim_expires):NaN;
+  const observed=typeof blockedQueueObservedAt==='string'?Date.parse(blockedQueueObservedAt):NaN;
+  if(!Number.isFinite(start)||!Number.isFinite(end)){
+    issues.push({code:'lease_evidence_incomplete',
+      description:'Active owner has missing or unparseable claim time/lease expiry.'});
+  }else{
+    if(end<=start)issues.push({code:'lease_window_invalid',
+      description:'Recorded expiry is not later than the claim start.'});
+    if(Number.isFinite(observed)&&start>observed+120000)
+      issues.push({code:'claim_after_observation',
+        description:'Claim start is after the observation time; clocks or source may differ.'});
+    if(Number.isFinite(observed)&&end<=observed)
+      issues.push({code:'lease_expired_at_observation',
+        description:'Lease was expired at source observation; owner must verify before any action.'});
+  }
+  if(!Number.isFinite(observed))
+    issues.push({code:'source_clock_unknown',
+      description:'Queue source time cannot establish a valid owner/lease window.'});
+  return issues;
+}
+function ownerIntegrityRows(projectId=''){
+  const scope=projectId||(ownerIntegrityProject==='all'?'':ownerIntegrityProject);
+  const all=(Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)?PORTFOLIO_QUEUE_SNAPSHOT:[])
+    .filter(item=>item&&(!scope||item.project_id===scope))
+    .map(item=>({item,signals:ownerIntegritySignals(item)}))
+    .filter(row=>row.signals.length);
+  const rank={P0:0,P1:1,P2:2,P3:3};
+  all.sort((a,b)=>(rank[a.item.priority]??9)-(rank[b.item.priority]??9)
+    ||String(a.item.project_id||'').localeCompare(String(b.item.project_id||''))
+    ||String(a.item.queue_id||'').localeCompare(String(b.item.queue_id||'')));
+  return {all,matching:projectId||!ownerIntegrityUrgentOnly?all:
+    all.filter(row=>row.item.priority==='P0'||row.item.priority==='P1')};
+}
+function downloadOwnerIntegrityHandoff(){
+  if(!Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)||!blockedQueueTime(blockedQueueObservedAt)){
+    window.alert('Queue source or observation time unavailable. No owner report exported.');return;
+  }
+  const {matching}=ownerIntegrityRows();
+  if(!matching.length){window.alert('No source-observed owner or lease warnings selected.');return;}
+  const sample=matching.slice(0,100);
+  const freshness=claimChurnSnapshotFreshness();
+  const stale=freshness.state==='stale_observation';
+  if(!window.confirm('Export a LOCAL PRIVATE, READ-ONLY owner-integrity handoff for '+sample.length
+      +' of '+matching.length+' observed warnings? '
+      +(stale?'WARNING: the source is STALE; it is not current worker authority. ':'')
+      +'Includes private queue/worker identifiers and never grants permission to reassign work.'))return;
+  const packet={
+    schema:'zsentinel.owner-integrity.readonly-handoff.v1',
+    exported_at:new Date().toISOString(),
+    queue_observed_at:blockedQueueObservedAt,
+    source_freshness:freshness,
+    authority:'read-only observation only; verify current owner, never release, retry, drop, resume or reassign',
+    coverage:{sample_queue_rows:PORTFOLIO_QUEUE_SNAPSHOT.length,
+      observed_warnings:matching.length,exported:sample.length,
+      truncated:matching.length>sample.length,urgency_filter:ownerIntegrityUrgentOnly?'P0-P1':'all',
+      selected_project:ownerIntegrityProject},
+    tasks:sample.map(({item,signals})=>({
+      queue_id:String(item.queue_id||'').slice(0,160),
+      project_id:String(item.project_id||'').slice(0,80),
+      status:item.status,
+      priority:['P0','P1','P2','P3'].includes(item.priority)?item.priority:'UNKNOWN',
+      worker_slot:Number.isSafeInteger(item.worker_slot)&&item.worker_slot>0?item.worker_slot:null,
+      recorded_claim_attempts:Number.isSafeInteger(item.attempts)&&item.attempts>=0?item.attempts:null,
+      last_updated:typeof item.updated_at==='string'?item.updated_at.slice(0,80):null,
+      lease_expires:typeof item.claim_expires==='string'?item.claim_expires.slice(0,80):null,
+      warning_codes:signals.map(signal=>signal.code),
+      source_url:blockedQueueSourceUrl(item.source_url)||null,
+      owner_next_step:'Independently verify current source and owner before any recovery or release'
+    }))
+  };
+  // No untrusted titles, blocker text, evidence, free-form runtime logs or credentials.
+  const body=JSON.stringify(packet,null,2);
+  if(new TextEncoder().encode(body).length>100000){
+    window.alert('Report exceeds private 100 KB limit. Select only P0/P1 warnings.');return;
+  }
+  const url=URL.createObjectURL(new Blob([body],{type:'application/json;charset=utf-8'}));
+  const link=document.createElement('a');
+  link.href=url;link.download='zsentinel-owner-integrity-'+new Date().toISOString().slice(0,10)+'.json';
+  document.body.append(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function ownerIntegrityPanel(projectId=''){
+  if(!Array.isArray(PORTFOLIO_QUEUE_SNAPSHOT)){
+    return '<section class="owner-integrity-panel" aria-label="Queue owner integrity"><div class="owner-integrity-head">'
+      +'<div><span class="eyebrow">OWNER INTEGRITY · READ ONLY</span><h2>Queue source unavailable</h2>'
+      +'<p>Owner and lease warnings are unknown, never zero. No action is authorized.</p></div></div></section>';
+  }
+  const {all,matching}=ownerIntegrityRows(projectId);
+  const show=projectId?6:ownerIntegrityVisible;
+  const freshness=claimChurnSnapshotFreshness();
+  const projectIds=[...new Set(PORTFOLIO_QUEUE_SNAPSHOT
+    .filter(row=>row&&ownerIntegritySignals(row).length)
+    .map(row=>String(row.project_id||'')))].filter(Boolean).sort();
+  const projectOptions='<option value="all">All projects</option>'+projectIds.map(id=>{
+    const label=DATA.projects.find(p=>p.id===id)?.name||id;
+    return '<option value="'+esc(id)+'"'+(ownerIntegrityProject===id?' selected':'')+'>'+esc(label)+'</option>';
+  }).join('');
+  const records=matching.slice(0,show).map(({item,signals})=>{
+    const source=blockedQueueSourceUrl(item.source_url);
+    const name=DATA.projects.find(p=>p.id===item.project_id)?.name||item.project_id||'Unknown project';
+    return '<article class="owner-integrity-item"><div class="owner-integrity-item-top">'
+      +'<strong>'+esc(String(item.title||item.queue_id||'Unidentified queue task'))+'</strong>'
+      +'<span>'+esc(item.priority||'UNKNOWN')+' · '+esc(item.status)+'</span></div>'
+      +'<small>'+(freshness.state==='recent_observation'?'Current observation · ':'Historical/unknown observation · ')
+      +esc(name)+' · '+signals.length+' warning'+(signals.length===1?'':'s')
+      +' · '+(Number.isSafeInteger(item.attempts)?item.attempts+' observed claims':'claim count unknown')+'</small>'
+      +'<ul>'+signals.map(signal=>'<li><b>'+esc(signal.code.replaceAll('_',' '))+'</b>: '+esc(signal.description)+'</li>').join('')+'</ul>'
+      +(source?'<a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Inspect original GitHub issue/PR ↗</a>':'')
+      +'</article>';
+  }).join('');
+  return '<section class="owner-integrity-panel" aria-label="Queue owner integrity">'
+    +'<div class="owner-integrity-head"><div><span class="eyebrow">OWNER INTEGRITY · READ ONLY</span>'
+    +'<h2>'+(freshness.state==='recent_observation'?'':'Last observed: ')+all.length+' task'+(all.length===1?'':'s')+' with owner-integrity warning'+(all.length===1?'':'s')+'</h2>'
+    +'<p>Every loaded queue item is screened, including first claims. '
+      +(freshness.state==='recent_observation'
+        ?'Current snapshot warnings require the actual owner to review.'
+        :'This snapshot is stale/unknown. Current ownership cannot be inferred.')+
+      ' No warning permits a claim takeover or retry.</p>'
+    +'</div><span class="reduced">Canonical source links are per task only.</span></div>'
+    +(projectId?'':'<div class="owner-integrity-filters"><label>Project <select data-owner-integrity-project aria-label="Filter owner-integrity warnings by project">'+projectOptions+'</select></label><button type="button" data-owner-integrity-priority aria-pressed="'
+      +ownerIntegrityUrgentOnly+'">'+(ownerIntegrityUrgentOnly?'Show all priorities':'Only P0/P1')+'</button>'
+      +'<button type="button" data-owner-integrity-export'+(matching.length?'':' disabled')+'>Export private owner handoff</button></div>')
+    +(matching.length?'<div class="owner-integrity-items">'+records+'</div>'
+      :'<p class="owner-integrity-empty">'+(all.length?'No owner warnings for this filter.':
+      'No owner warnings observed in the loaded queue sample. This is not a full-database audit.')+'</p>')
+    +'<div class="owner-integrity-foot"><span>'
+    +(blockedQueueTime(blockedQueueObservedAt)?'Observed '+esc(blockedQueueTime(blockedQueueObservedAt)):'Observation time unknown')
+    +(freshness.state==='stale_observation'?' · STALE ('+Math.ceil(freshness.age_seconds/60)+' min)':'')
+    +' · '+Math.min(show,matching.length)+' of '+matching.length+' warnings'
+    +' · '+PORTFOLIO_QUEUE_SNAPSHOT.length+' sampled rows</span>'
+    +(projectId?'<button type="button" data-owner-integrity-open="'+esc(projectId)+'">Open portfolio owner integrity</button>'
+      :matching.length>show?'<button type="button" data-owner-integrity-more>Show next 12</button>'
+      :matching.length>12&&show>12?'<button type="button" data-owner-integrity-less>Show first 12</button>':'')
+    +'</div></section>';
+}
+
+function blockedQueuePanel(){
+  const loaded=Array.isArray(BLOCKED_QUEUE);
+  // Important claims must not disappear below the twelve-card preview.
+  // Preserve source order within each priority for a predictable worklist.
+  const rank={P0:0,P1:1,P2:2,P3:3};
+  const items=loaded?BLOCKED_QUEUE.filter(item=>item&&item.status==='blocked').sort(
+    (a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9)):[];
+  const total=items.length;
+  const snapshotFresh=blockedQueueSourceIsFresh();
+  const unboundFieldsCount=items.filter(blockedQueueIsParked).length;
+  const summary=DATA?.portfolio_queue_health;
+  // Keep queue summary labels consistent with the connection-aware status gate.
+  const statusCurrent=statusSnapshotFreshness()==='fresh';
+  const admissionSummary=summary&&Number.isSafeInteger(summary.owner_clear_queued)
+    &&Number.isSafeInteger(summary.owner_held_queued)
+    ?'<p class="blocked-queue-claim-summary" role="status">'
+      +(statusCurrent?'Latest status snapshot: ':'Historical status snapshot (NOT LIVE): ')
+      +summary.owner_clear_queued+' queued tasks have clear owner/claim fields; '
+      +summary.owner_held_queued+' remain held by queue or separate-claim evidence. '
+      +'These counts do not prove a runnable lane or authorize recovery.</p>'
+    :'<p class="blocked-queue-claim-summary" role="status">'
+      +'Queue owner-clearance breakdown unavailable; no safe allocation conclusion is possible.</p>';
+  const claimStateSummary=loaded
+    ?'<p class="blocked-queue-claim-summary">'
+      +(snapshotFresh?'Current sampled queue/claim fields unbound: ':'Last-observed queue/claim fields unbound (NOT CURRENT): ')
+      +unboundFieldsCount+' · owner/claim/source review required: '
+      +(total-unboundFieldsCount)+'. '
+      +(snapshotFresh?'Clear fields are not a dependency-resolution or resume authorization.'
+        :'The queue observation is stale or unknown. All recovery actions require a refreshed source.')
+      +'</p>':'';
+  const observation=blockedQueueTime(blockedQueueObservedAt);
+  const freshness=claimChurnSnapshotFreshness();
+  const projectIds=[...new Set(items.map(item=>String(item.project_id||'')))].filter(Boolean).sort();
+  if(loaded&&blockedQueueProject!=='all'&&!projectIds.includes(blockedQueueProject)){
+    blockedQueueProject='all';
+  }
+  const search=blockedQueueSearch.trim().toLocaleLowerCase();
+  const visibleItems=blockedQueueSelectedRows(items);
+  const count=visibleItems.length;
+  const projectOptions='<option value="all">All projects</option>'+
+    projectIds.map(id=>{
+      const name=DATA.projects.find(project=>project.id===id)?.name||id;
+      return '<option value="'+esc(id)+'"'+(id===blockedQueueProject?' selected':'')+'>'+esc(name)+'</option>';
+    }).join('');
+  const body=!loaded
+    ?'<p class="blocked-queue-state" role="status">'+esc(BLOCKED_QUEUE_ERROR||'Reading the parked queue…')+'</p>'
+    :count
+      ?'<div class="blocked-queue-list">'+visibleItems.slice(0,blockedQueueVisible).map(item=>{
+        const project=DATA.projects.find(p=>p.id===item.project_id);
+        const blocker=String(item.blocker||item.evidence||'No dependency evidence recorded').trim();
+        const title=String(item.title||'Untitled blocked task').trim();
+        const sourceLink=blockedQueueSourceUrl(item.source_url);
+        const lastUpdated=blockedQueueTime(item.updated_at);
+        const createdAt=blockedQueueTime(item.created_at);
+        const attempts=Number.isSafeInteger(item.attempts)&&item.attempts>=0?item.attempts:null;
+        const evidence=String(item.evidence||'').trim();
+        const attention=Array.isArray(DATA.attention_needed)
+          ?DATA.attention_needed.find(att=>att.attention_id==='queue:'+item.queue_id&&att.status!=='resolved'):null;
+        const eligibilityConflict=!blockedQueueIsParked(item)||!snapshotFresh;
+        const actionBlockedReason=!snapshotFresh?'Refresh queue source: observation is stale or unknown':
+          'Queue or separate task-claim state is unknown or bound';
+        const taskClaimNotice=blockedQueueTaskClaimNotice(item);
+        const action=attention?'Human action recorded — inspect its source and confirm the dependency has cleared.'
+          :'Review the original dependency and its evidence. No automatic resolution is established.';
+        const context='<details class="blocked-queue-context" data-disclosure="block-'+esc(item.queue_id)+'">'
+          +'<summary>Operator context and next step</summary>'
+          +'<p><strong>Next step:</strong> '+esc(action)+'</p>'
+          +(eligibilityConflict?'<p class="blocked-queue-warning">Queue state, separate task claim, or observation freshness is unknown/bound. Refresh and inspect the source before acting.</p>':'')
+          +'<dl>'
+          +'<div><dt>Queue update</dt><dd>'+esc(lastUpdated||'Unknown')+'</dd></div>'
+          +'<div><dt>Original queue entry</dt><dd>'+esc(createdAt||'Unknown')+'</dd></div>'
+          +'<div><dt>Claim attempts</dt><dd>'+esc(attempts===null?'Unknown':String(attempts)+' recorded; not a failure count')+'</dd></div>'
+          +'<div><dt>Operator attention</dt><dd>'+esc(attention?'Linked human attention present':'No linked attention in this loaded status snapshot')+'</dd></div>'
+          +'</dl>'
+          +(evidence&&evidence!==blocker?'<p><strong>Recorded evidence:</strong> '+esc(evidence.length>800?evidence.slice(0,797)+'…':evidence)+'</p>':'')
+          +'</details>';
+        return '<article class="blocked-queue-item"><div class="blocked-queue-copy">'
+          +'<div class="blocked-queue-meta"><span>'+esc(project?.name||item.project_id||'Unknown project')+'</span><b>'+esc(item.priority||'P2')+'</b></div>'
+          +'<strong>'+esc(title)+'</strong><p>'+esc(blocker.length>360?blocker.slice(0,357)+'…':blocker)+'</p>'
+          +blockedQueueChurnHint(item)
+          +taskClaimNotice
+          +'<small>'+(eligibilityConflict
+            ?'Protected dependency hold · current claim or source clearance is NOT confirmed'
+            :'Observed parked queue row and no separate task claim · dependency clearance still unverified')+'</small>'
+          +(sourceLink?'<div class="blocked-queue-links"><a href="'+esc(sourceLink)+'" target="_blank" rel="noopener noreferrer">Open '+(sourceLink.includes('/pull/')?'pull request':'source issue')+' ↗</a></div>':'')
+          +context
+          +'</div><div class="blocked-queue-actions">'
+          +'<button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="'+esc(actionBlockedReason)+'"':'')+'>Resume after confirmation</button>'
+          +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'+(eligibilityConflict?' disabled title="'+esc(actionBlockedReason)+'"':'')+'>Close permanently…</button>'
+          +'<button type="button" class="blocked-queue-inspect" data-inspect-blocked="'+esc(item.queue_id)+'">Inspect current recovery conditions</button>'
+          +'</div></article>';
+      }).join('')+'</div>'
+      :'<p class="blocked-queue-state">'+(search
+          ?'No parked tasks match this search in the loaded queue sample.'
+          :blockedQueueHumanOnly&&!Array.isArray(DATA.attention_needed)
+            ?'Human Attention source unavailable; this filter cannot be evaluated. Clear filters to see all parked tasks.'
+          :blockedQueueRepeatClaimsOnly
+            ?'No parked tasks with 3 or more recorded claim attempts match these filters in the loaded queue sample.'
+            :blockedQueueProject!=='all'||blockedQueueHumanOnly
+              ?'No parked tasks match the selected project, priority or human-attention filters in the loaded source sample.'
+            :blockedQueueUrgentOnly
+              ?'No P0/P1 parked tasks were returned in this loaded queue sample.'
+              :'No dependency-blocked tasks were returned in this queue sample.')
+        +' A failed read is never shown as zero.</p>';
+  const sourceWarning=freshness.reason==='source-clock-ahead'
+    ?'Source clock is over two minutes ahead; verify host time before trusting a recovery decision.'
+    :freshness.reason==='invalid-or-untimed-source'
+      ?'Source observation lacks a trusted timestamp and timezone; operator recovery is disabled.'
+      :freshness.reason==='source-too-old'
+        ?'Queue observation is over 15 minutes old; refresh it before operator recovery.'
+        :'Source read is recent, but never proves dependency clearance.';
+  const severityCounts=Object.fromEntries(['P0','P1','P2','P3','unknown'].map(key=>[key,
+    items.filter(item=>(['P0','P1','P2','P3'].includes(item.priority)?item.priority:'unknown')===key).length]));
+  // Severity counts describe the loaded queue sample only, not the full database.
+  const severityControls=loaded&&total?'<nav class="blocked-queue-severity" aria-label="Inspect dependency holds by priority">'
+    +['all','P0','P1','P2','P3','unknown'].map(key=>'<button type="button" data-blocked-severity="'+key+'" aria-pressed="'
+      +(blockedQueueSeverity===key)+'" aria-label="Show '+(key==='all'?'all':key)+' parked tasks in the loaded sample">'
+      +(key==='all'?'All':' '+(key==='unknown'?'Unknown':key))+' <span>'+(key==='all'?total:severityCounts[key])+'</span></button>').join('')
+    +'</nav>':'';
+  const reloadControl='<div class="blocked-queue-state"><button type="button" data-blocked-reload'+
+    (blockedQueueReloading||blockedResumesPending.size?' disabled':'')+
+    '>Refresh queue source</button> <span role="status">'+esc(sourceWarning)+
+    ' Read-only refresh; no claim, retry or release.</span></div>';
+  return '<section class="blocked-queue-panel"><div class="blocked-queue-head"><div><span class="eyebrow">DEPENDENCY HOLDS</span><h2>'+(loaded?(snapshotFresh?'':'Last observed: ')+total+' parked task'+(total===1?'':'s'):'Parked tasks')+'</h2><p>Only the dependent task is parked. Independent work can continue; resume requires an explicit operator note that the dependency is cleared.</p>'+claimStateSummary+admissionSummary+'</div><span class="blocked-queue-count">'+(loaded?total:'—')+'</span></div>'
+    +reloadControl+severityControls
+    +(loaded&&total?'<div class="blocked-queue-state"><label class="blocked-queue-project-label">Project <select data-blocked-project aria-label="Filter parked tasks by project">'+projectOptions+'</select></label>'
+      +'<label class="blocked-queue-search-label">Search <input type="search" data-blocked-search aria-label="Search loaded parked tasks by title, project or dependency" maxlength="120" autocomplete="off" placeholder="Task or dependency" value="'+esc(blockedQueueSearch)+'"></label>'
+      +'<button type="button" data-blocked-toggle-urgent aria-pressed="'+blockedQueueUrgentOnly+'">'
+      +(blockedQueueUrgentOnly?'Show all priorities':'Only P0/P1')+'</button> '
+      +'<button type="button" data-blocked-human-only aria-pressed="'+blockedQueueHumanOnly+'"'+(Array.isArray(DATA.attention_needed)?'':' disabled title="Human Attention source unavailable"')+'>'+(blockedQueueHumanOnly?'Show all parked tasks':'Only human Attention')+'</button> '
+      +'<button type="button" data-blocked-repeat-claims aria-pressed="'+blockedQueueRepeatClaimsOnly+'">'+(blockedQueueRepeatClaimsOnly?'Show all claims':'Only repeated claims')+'</button> '
+      +(blockedQueueProject!=='all'||blockedQueueUrgentOnly||blockedQueueSeverity!=='all'||blockedQueueSearch||blockedQueueHumanOnly||blockedQueueRepeatClaimsOnly?'<button type="button" data-blocked-clear-filters>Clear filters</button>':'')
+      +'<button type="button" data-blocked-export-handoff'+(count?'':' disabled')+' title="Private read-only local JSON handoff">Export selected handoff</button>'
+      +'<span role="status" aria-live="polite">Viewing '+count+' of '+total+' parked tasks from the loaded queue sample. '+(observation?'Observed '+esc(observation)+'.':'Queue observation time unavailable.')+(freshness.state==='stale_observation'?' STALE SNAPSHOT ('+Math.ceil(freshness.age_seconds/60)+' min old); controls disabled until refreshed.':freshness.state==='unknown'?' UNKNOWN SNAPSHOT; controls disabled until refreshed.':'')+'</span></div>':'')
+    +body+(loaded&&count>12?'<div class="blocked-queue-state" aria-live="polite">Showing '+Math.min(blockedQueueVisible,count)+' of '+count+' parked tasks in the loaded queue sample. '
+    +(blockedQueueVisible<count?'<button type="button" data-blocked-show-more>Show next 12</button>':'<button type="button" data-blocked-show-less>Show first 12</button>')
+    +'</div>':'')+'</section>';
+}
+let blockedQueueReloading=false;
+async function reloadBlockedQueueSnapshot(button){
+  if(blockedQueueReloading||blockedResumesPending.size)return;
+  blockedQueueReloading=true;
+  ++blockedQueueObservationVersion;
+  const label=button.textContent;
+  button.disabled=true;
+  button.textContent='Refreshing queue…';
+  try{
+    // Only the queue source is refreshed. No status write or task claim
+    // operation is performed by this operator-facing read.
+    const current=await api('/api/portfolio-queue');
+    if(!Array.isArray(current?.items))throw new Error('Queue source returned no readable items');
+    PORTFOLIO_QUEUE_SNAPSHOT=current.items;
+    BLOCKED_QUEUE=current.items.filter(row=>row&&row.status==='blocked');
+    blockedQueueObservedAt=typeof current.time==='string'?current.time:'';
+    if(!blockedQueueSourceIsFresh()){
+      // Fail closed: even a successful HTTP GET can contain an old observation.
+      throw new Error('Queue source returned a stale or unknown observation time');
+    }
+    BLOCKED_QUEUE_ERROR='';
+  }catch(error){
+    BLOCKED_QUEUE=null;
+    PORTFOLIO_QUEUE_SNAPSHOT=null;
+    blockedQueueObservedAt='';
+    BLOCKED_QUEUE_ERROR='Queue refresh unavailable: '+String(error?.message||error).slice(0,180)+'. No operator action is permitted.';
+  }finally{
+    ++blockedQueueObservationVersion;
+    blockedQueueReloading=false;
+    button.textContent=label;
+    button.disabled=false;
+    render();
+  }
+}
+const blockedResumesPending=new Set();
+// Compare only the exact dependency and work identity. Display refreshes alone
+// cannot authorize resuming a changed or reassigned queue item.
+function blockedResumeFingerprint(item){
+  return JSON.stringify([
+    String(item?.queue_id??''),String(item?.project_id??''),
+    String(item?.title??''),String(item?.priority??''),
+    String(item?.status??''),String(item?.eligible??''),
+    String(item?.blocker??''),String(item?.evidence??''),
+    String(item?.updated_at??''),String(item?.worker_slot??''),
+    String(item?.claimed_at??''),String(item?.claim_owner??''),
+    String(item?.claim_expires??''),String(item?.source_url??''),
+    String(item?.task_claim_source_available??''),String(item?.task_claim_state??''),
+    String(item?.task_claim_lease_until??'')
+  ]);
+}
+
+const BLOCKED_INSPECT_REASON_TEXT={
+  task_not_found:'The queue item does not exist in the current source.',
+  task_not_blocked:'The item is no longer blocked.',
+  blocked_task_eligible:'The blocked item is marked eligible; the owner must reconcile queue state.',
+  claim_or_lease_still_bound:'A worker claim or lease field is still present; do not take over.',
+  task_claim_source_unavailable:'The separate task-claim source could not be read; no claim-free conclusion is safe.',
+  task_claim_lease_still_bound:'A separate task claim has a live lease; its owner must reconcile/release it before recovery.',
+  task_claim_record_still_present:'A task-claim record remains after lease expiry; expiry alone does not authorize takeover.',
+  task_claim_lease_unknown:'The separate task-claim lease is malformed or unknown; do not resume or close this task.',
+  project_registration_missing:'Project registration is missing; no durable recovery receipt can be guaranteed.',
+  project_not_active:'The owning project is not active; resumption is not permitted.',
+  project_human_gated:'The project requires human admission rather than worker allocation.',
+  operator_decision_and_fresh_source_required:'A human must verify the dependency or closure reason; a new guarded transaction is required.'
+};
+async function requireBlockedRecoveryPreflight(queueId,original,action){
+  // Advisory diagnostic read: no queue, claim, service, or Attention write.
+  // The final GET and backend transaction remain separate authoritative gates.
+  const response=await fetch('/api/portfolio-queue',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'inspect_blocked',queue_id:queueId}),
+    signal:AbortSignal.timeout(10000)
+  });
+  const packet=await response.json().catch(()=>({}));
+  if(!response.ok||packet.ok!==true||packet.result?.read_only!==true){
+    throw new Error('Read-only recovery inspection unavailable. No action sent.');
+  }
+  const state=packet.result;
+  const observed=typeof state.observed_at==='string'?Date.parse(state.observed_at):NaN;
+  if(!Number.isFinite(observed)||observed>Date.now()+120000||Date.now()-observed>120000){
+    throw new Error('Recovery inspection observation is stale or unknown. Refresh the source.');
+  }
+  if(state.found!==true||state.queue_id!==queueId||
+     state.project_id!==original.project_id||state.queue_status!=='blocked'||
+     state.queue_updated_at!==original.updated_at){
+    throw new Error('The original task, project, status or version changed during inspection. No mutation sent.');
+  }
+  const approved=action==='resume'?state.resume_candidate===true:state.close_candidate===true;
+  if(!approved){
+    const reasons=Array.isArray(state.reason_codes)
+      ?state.reason_codes.filter(code=>code!=='operator_decision_and_fresh_source_required').slice(0,3)
+      :[];
+    const message=reasons.map(code=>BLOCKED_INSPECT_REASON_TEXT[String(code)]||'Owner review required').join(' ');
+    throw new Error('Recovery inspection refused this action. '+(message||'Check the current owner, claim and project gate.'));
+  }
+  return state;
+}
+async function inspectBlockedQueue(queueId,button){
+  if(blockedQueueReloading||blockedResumesPending.size)return;
+  const card=button.closest('.blocked-queue-item');
+  if(!card){window.alert('Original queue card unavailable. No action performed.');return;}
+  const old=button.textContent;
+  button.disabled=true;button.textContent='Reading current source…';
+  let region=card.querySelector('[data-blocked-inspection]');
+  if(!region){
+    region=document.createElement('div');
+    region.setAttribute('data-blocked-inspection','');
+    region.className='blocked-queue-inspection';
+    region.setAttribute('role','status');
+    card.append(region);
+  }
+  region.textContent='Reading the authorized queue state; this is not recovery authorization.';
+  try{
+    const response=await fetch('/api/portfolio-queue',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'inspect_blocked',queue_id:queueId}),
+      signal:AbortSignal.timeout(10000)
+    });
+    const packet=await response.json().catch(()=>({}));
+    if(!response.ok||packet.ok!==true||packet.result?.read_only!==true){
+      throw new Error(packet.error||'Current queue inspection unavailable');
+    }
+    const result=packet.result;
+    if(String(result.queue_id||'')!==queueId)throw new Error('Queue identity mismatch; inspect the original source.');
+    const original=(BLOCKED_QUEUE||[]).find(row=>String(row.queue_id)===queueId);
+    const changed=!result.found||!original||String(original.updated_at||'')!==String(result.queue_updated_at||'')
+      ||String(original.status||'')!==String(result.queue_status||'');
+    const reasons=Array.isArray(result.reason_codes)?result.reason_codes.slice(0,12):[];
+    const details=reasons.map(code=>'<li>'+esc(BLOCKED_INSPECT_REASON_TEXT[String(code)]||String(code))+'</li>').join('');
+    region.innerHTML='<strong>Read-only recovery inspection · '+esc(blockedQueueTime(result.observed_at)||'time unknown')+'</strong>'
+      +'<p>'+(changed?'<b>Source changed since the loaded card. Refresh before any operator decision.</b> '
+         :'Observed status and update timestamp match the card, but the complete source may still differ; permissions and dependencies require separate confirmation. ')
+      +esc(result.found?('Queue: '+String(result.queue_status||'unknown')+'. '
+          +'Resume candidate: '+(result.resume_candidate===true?'yes':'no')+'. '
+          +'Terminal-close candidate: '+(result.close_candidate===true?'yes':'no')+'. '
+          +'Separate task claim: '+String(result.task_claim_state||'unknown')
+          +(result.task_claim_lease_until?' (lease_until '+String(result.task_claim_lease_until).slice(0,80)+')':'')+'. '
+          +'Linked human Attention: '+String(result.linked_attention_status||'unknown')+'.')
+        :'Queue item not found.')+'</p>'
+      +(details?'<ul>'+details+'</ul>':'')
+      +(result.receipt_source_available===false
+        ?'<p><b>Recovery receipt history unavailable; no prior decision can be verified.</b></p>'
+        :result.latest_operator_receipt
+          ?'<p>Latest matching durable operator receipt: '
+            +esc(result.latest_operator_receipt.operation)+' #'
+            +esc(result.latest_operator_receipt.id)+' · '
+            +esc(blockedQueueTime(result.latest_operator_receipt.observed_at)||'time unknown')
+            +'. This proves an earlier recorded decision, not that an unacknowledged request was yours.</p>'
+          :'<p>No matching recent operator receipt in the bounded project history'
+            +(result.receipt_scan_limited===true?' (limited coverage)':'')+'.</p>')
+      +'<small>This observation never clears a dependency or lease. Final writes still require a fresh complete source guard and operator authorization.</small>';
+  }catch(error){
+    region.textContent='Inspection unavailable: '+String(error?.message||error)+'. No queue state changed.';
+  }finally{
+    button.disabled=false;button.textContent=old;
+  }
+}
+
+async function resumeBlockedQueue(queueId,button){
+  // Keep operator confirmations serialized across queue rows: a second write
+  // must not reuse a view that another in-flight decision is changing.
+  if(blockedQueueReloading||blockedResumesPending.size){
+    window.alert('A queue refresh or recovery decision is still in progress. Wait for the current result before selecting another task.');
+    return;
+  }
+  if(!blockedQueueSourceIsFresh()){window.alert('Queue observation is stale or unknown. Refresh the source before confirming any recovery.');return;}
+  const item=(BLOCKED_QUEUE||[]).find(row=>String(row?.queue_id)===queueId&&blockedQueueIsParked(row));
+  if(!item){window.alert('The parked task is no longer visible. Refresh the queue before acting.');return}
+  const note=window.prompt('Confirm the dependency has genuinely cleared. Describe the resolution (at least 12 characters). This records your attestation; it does not independently verify the dependency.');
+  if(note==null)return;
+  if(note.trim().length<12){window.alert('Add a concrete resolution note of at least 12 characters.');return}
+  if(!window.confirm('Return “'+String(item.title||queueId)+'” to normal queue selection? The scheduler still applies its normal capacity and claim checks.'))return;
+  blockedResumesPending.add(queueId);
+  ++blockedQueueObservationVersion;
+  const previous=button.textContent;
+  let writeMayHaveReachedServer=false,serverExplicitlyRefused=false;
+  button.disabled=true;
+  button.textContent='Checking latest task…';
+  try{
+    // Verify that the current project is active and that the existing separate
+    // claim/receipt guard actually admits operator consideration before any write.
+    await requireBlockedRecoveryPreflight(queueId,item,'resume');
+    // The confirmation may have been open for minutes. Observe the CURRENT
+    // authorized queue read before sending any operator attestation.
+    const current=await api('/api/portfolio-queue');
+    if(!Array.isArray(current?.items))throw new Error('Cannot confirm current parked-task state. Resume refused.');
+    const freshItems=current.items.filter(row=>row&&row.status==='blocked');
+    BLOCKED_QUEUE=freshItems;
+    PORTFOLIO_QUEUE_SNAPSHOT=current.items;
+    BLOCKED_QUEUE_ERROR='';
+    blockedQueueObservedAt=typeof current.time==='string'?current.time:'';
+    if(!blockedQueueSourceIsFresh()){
+      render();
+      throw new Error('Fresh queue observation time missing, stale, or future-dated. No task mutation sent.');
+    }
+    const matches=freshItems.filter(row=>String(row.queue_id)===queueId&&blockedQueueIsParked(row));
+    if(matches.length!==1||blockedResumeFingerprint(matches[0])!==blockedResumeFingerprint(item)){
+      render();
+      throw new Error('The dependency or task state changed since confirmation. Review the refreshed card and confirm again.');
+    }
+    // The server rechecks the exact version and dependency evidence within
+    // its SQLite BEGIN IMMEDIATE transaction. No update is accepted when
+    // another owner has replaced the blocked task since this GET.
+    const expectedVersion=matches[0].updated_at;
+    if(typeof expectedVersion!=='string'||!expectedVersion||expectedVersion.length>80){
+      throw new Error('The queue source has no valid update version. Resume refused.');
+    }
+    button.textContent='Resuming…';
+    writeMayHaveReachedServer=true;
+    const response=await fetch('/api/portfolio-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      action:'resume_blocked',queue_id:queueId,resolution_note:note.trim(),
+      expected_updated_at:expectedVersion,
+      expected_project_id:String(matches[0].project_id||''),
+      expected_title:String(matches[0].title||''),
+      expected_priority:String(matches[0].priority||''),
+      expected_source_url:String(matches[0].source_url||''),
+      expected_blocker:String(matches[0].blocker||''),
+      expected_evidence:String(matches[0].evidence||'')
+    }),signal:AbortSignal.timeout(10000)});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok||!result.ok){
+      const reason=result.result?.reason||result.error||'';
+      serverExplicitlyRefused=response.status>=400&&response.status<500&&result.ok===false&&!!reason;
+      if(reason==='parked-task-still-bound-to-worker'){
+        throw new Error('Resume refused: the parked task still carries a worker claim or lease. Ask the current owner to settle it; no task was changed.');
+      }
+      if(reason==='task-claim-record-still-bound'){
+        throw new Error('Resume refused: a separate task-claim record remains ('+String(result.result?.task_claim_state||'unknown')+'). Lease expiry alone is not takeover permission; ask its owner to reconcile/release it.');
+      }
+      if(reason==='task-claim-source-unavailable'){
+        throw new Error('Resume refused: the separate task-claim source is unavailable. Claim-free state cannot be established.');
+      }
+      if(reason==='dependency-source-changed-reconfirm'){
+        throw new Error('The dependency source changed. Review the refreshed task and confirm again before resuming.');
+      }
+      throw new Error(reason||'Could not resume the parked task');
+    }
+    // HTTP 200 / ok:true may be an idempotent no-op if another worker moved
+    // the row. Require the exact successful transaction receipt.
+    if(result.result?.resumed!==true||result.result?.status!=='queued'||
+       String(result.result?.queue_id||'')!==queueId||result.result?.dependency_source_guarded!==true){
+      await refresh(true);
+      throw new Error('The parked task was not resumed ('+(result.result?.reason||'state changed')+'). Review the refreshed queue before acting again.');
+    }
+    BLOCKED_QUEUE=freshItems.filter(row=>String(row.queue_id)!==queueId);
+    if(result.result?.attention_resolved===true){
+      DATA.attention_needed=(DATA.attention_needed||[]).filter(row=>row.attention_id!=='queue:'+queueId);
+    }
+    render();
+    const refreshed=await refresh(true);
+    if(refreshed!==true||!Array.isArray(BLOCKED_QUEUE)){
+      $('notice').hidden=false;
+      $('notice').textContent='The server confirmed this task was resumed. A later dashboard refresh could not verify the new queue snapshot; do not repeat the action. Reconnect to inspect its current status.';
+    }
+  }catch(error){
+    // A 409 means the operator's confirmed dependency source changed.
+    // Restore the actual queue, never leave a stale resume button enabled.
+    try{
+      const latest=await api('/api/portfolio-queue');
+      if(!Array.isArray(latest?.items))throw new Error('incomplete queue source');
+      BLOCKED_QUEUE=latest.items.filter(row=>row&&row.status==='blocked');
+      PORTFOLIO_QUEUE_SNAPSHOT=latest.items;
+      BLOCKED_QUEUE_ERROR='';
+      blockedQueueObservedAt=typeof latest.time==='string'?latest.time:'';
+    }catch(_){
+      BLOCKED_QUEUE=null;
+      PORTFOLIO_QUEUE_SNAPSHOT=null;
+      blockedQueueObservedAt='';
+      BLOCKED_QUEUE_ERROR='Could not refresh the parked queue; resume disabled until the source is available.';
+    }
+    render();
+    window.alert(writeMayHaveReachedServer&&!serverExplicitlyRefused
+      ?'Resume outcome is NOT CONFIRMED. The request may have reached the server without a reliable receipt. Inspect the current queue and operator history; do not repeat this action blindly. '+String(error?.message||'')
+      :(error?.message||'Could not safely resume the parked task.'));
+  }finally{
+    blockedResumesPending.delete(queueId);
+    ++blockedQueueObservationVersion;
+    button.disabled=false;
+    button.textContent=previous;
+  }
+}
+async function closeBlockedQueue(queueId,button){
+  if(blockedQueueReloading||blockedResumesPending.size){
+    window.alert('A queue refresh or recovery decision is still in progress. Wait for the current result before selecting another task.');
+    return;
+  }
+  if(!blockedQueueSourceIsFresh()){window.alert('Queue observation is stale or unknown. Refresh the source before confirming permanent closure.');return;}
+  const item=(BLOCKED_QUEUE||[]).find(row=>String(row?.queue_id)===queueId&&blockedQueueIsParked(row));
+  if(!item){window.alert('This task is not safely parked. Read the queue again before any terminal action.');return}
+  const note=window.prompt('This PERMANENTLY CLOSES the selected blocked task; it does not prove the dependency cleared. Describe why the original work is no longer required and where any unfinished work is tracked (at least 12 characters).');
+  if(note==null)return;
+  if(note.trim().length<12){window.alert('Record a concrete terminal closure reason of at least 12 characters.');return}
+  if(!window.confirm('PERMANENTLY close “'+String(item.title||queueId)+'”? This will mark the exact queue item dropped and resolve only its linked human Attention. It will NOT cancel other tasks or bypass project gates.'))return;
+  blockedResumesPending.add(queueId);
+  ++blockedQueueObservationVersion;
+  const old=button.textContent;
+  let writeMayHaveReachedServer=false,serverExplicitlyRefused=false;
+  button.disabled=true;
+  button.textContent='Checking queue identity…';
+  try{
+    await requireBlockedRecoveryPreflight(queueId,item,'close');
+    const current=await api('/api/portfolio-queue');
+    if(!Array.isArray(current?.items))throw new Error('Current source not readable. Terminal closure refused.');
+    BLOCKED_QUEUE=current.items.filter(row=>row&&row.status==='blocked');
+    PORTFOLIO_QUEUE_SNAPSHOT=current.items;
+    BLOCKED_QUEUE_ERROR='';
+    blockedQueueObservedAt=typeof current.time==='string'?current.time:'';
+    if(!blockedQueueSourceIsFresh()){
+      render();
+      throw new Error('Fresh queue observation time missing, stale, or future-dated. No task mutation sent.');
+    }
+    const matches=BLOCKED_QUEUE.filter(row=>String(row.queue_id)===queueId&&blockedQueueIsParked(row));
+    if(matches.length!==1||blockedResumeFingerprint(matches[0])!==blockedResumeFingerprint(item)){
+      render();
+      throw new Error('The task or dependency changed. Review the refreshed queue and confirm terminal closure again.');
+    }
+    const fresh=matches[0];
+    if(typeof fresh.updated_at!=='string'||!fresh.updated_at||fresh.updated_at.length>80){
+      throw new Error('No valid source version for terminal closure. Request refused.');
+    }
+    button.textContent='Closing parked task…';
+    writeMayHaveReachedServer=true;
+    const response=await fetch('/api/portfolio-queue',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        action:'drop',queue_id:queueId,evidence:note.trim(),
+        expected_status:'blocked',expected_updated_at:fresh.updated_at,
+        expected_project_id:String(fresh.project_id||''),
+        expected_title:String(fresh.title||''),
+        expected_priority:String(fresh.priority||''),
+        expected_source_url:String(fresh.source_url||''),
+        expected_blocker:String(fresh.blocker||''),
+        expected_evidence:String(fresh.evidence||'')
+      }),signal:AbortSignal.timeout(10000)
+    });
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok||!result.ok){
+      const reason=result.result?.reason||result.error||'';
+      serverExplicitlyRefused=response.status>=400&&response.status<500&&result.ok===false&&!!reason;
+      if(reason==='dependency-source-changed-reconfirm'){
+        throw new Error('The dependency changed while closing. Review the fresh source and confirm again.');
+      }
+      if(reason==='active-claim-or-lease'){
+        throw new Error('Terminal closure refused: worker or lease remains bound. Contact its owner.');
+      }
+      if(reason==='task-claim-record-still-bound'){
+        throw new Error('Terminal closure refused: a separate task-claim record remains ('+String(result.result?.task_claim_state||'unknown')+'). Lease expiry alone is not permission to take over; ask its owner to reconcile/release it.');
+      }
+      if(reason==='task-claim-source-unavailable'){
+        throw new Error('Terminal closure refused: the separate task-claim source is unavailable. Claim-free state cannot be established.');
+      }
+      if(reason==='blocked-task-not-parked'){
+        throw new Error('Terminal closure refused: this blocked item is not safely parked and ineligible. The queue owner must correct the state.');
+      }
+      if(reason==='missing-project-receipt-context'){
+        throw new Error('Terminal closure refused: project registration is missing. Preserve this task and ask the project owner to restore its receipt context.');
+      }
+      throw new Error(reason||'Could not close the parked task');
+    }
+    if(result.result?.dropped!==true||result.result?.status!=='dropped'||
+       result.result?.source_guarded!==true||String(result.result?.queue_id||'')!==queueId){
+      throw new Error('The source did not acknowledge a guarded terminal closure. Recheck current queue state.');
+    }
+    BLOCKED_QUEUE=BLOCKED_QUEUE.filter(row=>String(row.queue_id)!==queueId);
+    PORTFOLIO_QUEUE_SNAPSHOT=current.items.filter(row=>String(row.queue_id)!==queueId);
+    if(result.result?.attention_resolved===true){
+      DATA.attention_needed=(DATA.attention_needed||[]).filter(row=>row.attention_id!=='queue:'+queueId);
+    }
+    render();
+    const refreshed=await refresh(true);
+    // A verified transaction receipt is permanent even when a separate
+    // scheduler refill or a later network read fails. Do not invite retries.
+    const followups=[];
+    if(result.result?.queue_audit_deferred===true){
+      followups.push('Queue refill was deferred after the closure. Ask the scheduler owner to inspect normal admission.');
+    }
+    if(refreshed!==true||!Array.isArray(BLOCKED_QUEUE)){
+      followups.push('The subsequent dashboard read was unavailable; inspect the queue after reconnecting.');
+    }
+    if(followups.length){
+      $('notice').hidden=false;
+      $('notice').textContent='The task was permanently closed and acknowledged by the server. '+followups.join(' ')+' Do not repeat the close.';
+    }
+  }catch(error){
+    // Refuse to leave any old write affordance enabled when a source read fails.
+    try{
+      const latest=await api('/api/portfolio-queue');
+      if(!Array.isArray(latest?.items))throw new Error('incomplete queue source');
+      BLOCKED_QUEUE=latest.items.filter(row=>row&&row.status==='blocked');
+      PORTFOLIO_QUEUE_SNAPSHOT=latest.items;
+      BLOCKED_QUEUE_ERROR='';
+      blockedQueueObservedAt=typeof latest.time==='string'?latest.time:'';
+    }catch(_){
+      BLOCKED_QUEUE=null;
+      PORTFOLIO_QUEUE_SNAPSHOT=null;
+      BLOCKED_QUEUE_ERROR='Current parked queue is unavailable; terminal close disabled.';
+      blockedQueueObservedAt='';
+    }
+    render();
+    window.alert(writeMayHaveReachedServer&&!serverExplicitlyRefused
+      ?'Terminal closure outcome is NOT CONFIRMED. The request may have committed without a returned receipt. Inspect the durable source and operator history; do not repeat the close blindly. '+String(error?.message||'')
+      :(error?.message||'Could not safely close the parked task.'));
+  }finally{
+    blockedResumesPending.delete(queueId);
+    ++blockedQueueObservationVersion;
+    button.disabled=false;
+    button.textContent=old;
+  }
 }
 function archivedPanel(){const list=DATA.archived_projects||[];if(!list.length)return '';return `<div class="archived-panel"><div><strong>Archived</strong><span>Hidden from the dashboard and Watch</span></div><div class="archived-list">${list.map(p=>`<button type="button" data-restore="${esc(p.id)}"><span style="--accent:${p.accent}" class="project-dot"></span>${esc(p.name)}<b>Restore</b></button>`).join('')}</div></div>`}
 function activityItem(a){const p=DATA.projects.find(p=>p.id===a.project);return `<div class="activity-item" style="--accent:${p?.accent||'#aab5c4'}"><span class="activity-symbol">${icon(a.kind==='commit'?'commit':'check')}</span><div class="activity-copy"><p>${esc(a.title)}</p><div class="activity-meta"><strong>${esc(p?.name||a.project)}</strong><span>·</span><time datetime="${esc(a.ts)}" title="${date(a.ts,true)}">${rel(a.ts)}</time><span title="${esc(a.detail)}">${a.kind==='commit'?esc(a.detail):'Project step'}</span></div></div></div>`}
@@ -628,12 +1700,69 @@ async function requestGlobalWorkerProject(slot,button,force=false){
   finally{button.disabled=false;button.innerHTML=old;button.removeAttribute('aria-busy')}
 }
 
-function overview(){const p=DATA.projects,done=p.reduce((n,p)=>n+p.completed,0),total=p.reduce((n,p)=>n+p.milestones.length,0),active=p.filter(p=>p.health==='healthy').length,recent=ACTIVITY.filter(a=>a.kind==='commit'&&Date.parse(a.ts)>Date.now()-86400000).length;return globalWorkerConsole()+heading('PROJECT PORTFOLIO','Keep the work moving.','Check project progress and activity below the worker controls.',`<span class="date-label">${icon('calendar')}${new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',weekday:'short',day:'numeric',month:'long',year:'numeric'}).format(new Date())}</span>`)+attentionPanel()+`<div class="section-title project-section-title"><div><h2>Projects <span class="count">${p.length}</span></h2><span class="reduced">Open a project for context · drag to reorder</span></div></div><div class="project-grid" id="projectGrid">${p.map(projectCard).join('')}</div>${archivedPanel()}<div class="section-title snapshot-title"><div><h2>Portfolio snapshot</h2><span class="reduced">Useful context after the actions above</span></div></div><div class="stat-grid">${stat('Active projects',active+'<span>/ '+p.length+'</span>',active===p.length?'Everything is operating normally':'Check service status','layers',active===p.length)}${stat('Project steps completed',done+'<span>/ '+total+'</span>','According to the project plans','target')}${stat('Recent commits',recent,'Recorded in the last 24 hours','commit')}${stat('VPS uptime',Math.floor(DATA.host.uptime/86400)+'<span>d '+Math.floor(DATA.host.uptime%86400/3600)+'u</span>',DATA.host.cores+' vCPU · load '+num(DATA.host.load),'server')}</div><div class="dashboard-grid">${graphPanel(p)}${activityPanel()}</div>${infraStrip()}`}
+function overview(){const p=DATA.projects,done=p.reduce((n,p)=>n+p.completed,0),total=p.reduce((n,p)=>n+p.milestones.length,0),active=p.filter(p=>p.health==='healthy').length,recent=ACTIVITY.filter(a=>a.kind==='commit'&&Date.parse(a.ts)>Date.now()-86400000).length;return globalWorkerConsole()+heading('PROJECT PORTFOLIO','Keep the work moving.','Check project progress and activity below the worker controls.',`<span class="date-label">${icon('calendar')}${new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',weekday:'short',day:'numeric',month:'long',year:'numeric'}).format(new Date())}</span>`)+attentionPanel()+blockedQueuePanel()+ownerIntegrityPanel()+claimChurnPanel()+`<div class="section-title project-section-title"><div><h2>Projects <span class="count">${p.length}</span></h2><span class="reduced">Open a project for context · drag to reorder</span></div></div><div class="project-grid" id="projectGrid">${p.map(projectCard).join('')}</div>${archivedPanel()}<div class="section-title snapshot-title"><div><h2>Portfolio snapshot</h2><span class="reduced">Useful context after the actions above</span></div></div><div class="stat-grid">${stat('Active projects',active+'<span>/ '+p.length+'</span>',active===p.length?'Everything is operating normally':'Check service status','layers',active===p.length)}${stat('Project steps completed',done+'<span>/ '+total+'</span>','According to the project plans','target')}${stat('Recent commits',recent,'Recorded in the last 24 hours','commit')}${stat('VPS uptime',Math.floor(DATA.host.uptime/86400)+'<span>d '+Math.floor(DATA.host.uptime%86400/3600)+'u</span>',DATA.host.cores+' vCPU · load '+num(DATA.host.load),'server')}</div><div class="dashboard-grid">${graphPanel(p)}${activityPanel()}</div>${infraStrip()}`}
 function aiRunPanel(p){const r=p.last_chatgpt_run;return `<div class="panel"><div class="panel-header"><div><h2>Latest ChatGPT action</h2><div class="panel-subtitle">${r?(r.estimated?'Estimate based on project activity':'Automation measurement'):'No ChatGPT action measured yet'}</div></div>${icon('clock')}</div><div class="detail-note">${r?`${esc(r.label)}<br><br>${date(r.time,true)} · ${rel(r.time)}`:'No ChatGPT action is linked to this project yet.'}</div></div>`}
 function codePanel(p){if(p.updated)return `<div class="panel"><div class="panel-header"><h2>Latest code update</h2>${icon('commit')}</div><div class="detail-note">${esc(p.message)}<br><br>${esc(p.commit)} · ${date(p.updated,true)}${p.shallow?'<br>The runner uses a shallow Git checkout; the commit count is not the project total.':''}</div></div>`;if(p.source_status==='empty')return `<div class="panel"><div class="panel-header"><h2>Latest code update</h2>${icon('commit')}</div><div class="detail-note">Repository linked · no commits yet. New commits are picked up automatically by zCloud.</div></div>`;return ''}
 function services(p){const labels={active:'Active',activating:'Starting',waiting:'Waiting for next run',inactive:'Inactive',failed:'Failed',unknown:'Unknown'};return `<div class="panel"><div class="panel-header"><div><h2>Services</h2><div class="panel-subtitle">Live status · read-only</div></div>${badge(p)}</div><div class="service-list">${p.services.length?p.services.map(s=>`<div class="service-row"><div>${esc(s.name)}${s.name==='Research'&&s.last_run?`<div class="service-sub">Last run: ${Number.isFinite(Date.parse(s.last_run))?date(s.last_run,true):esc(s.last_run)}</div>`:''}</div><span class="service-state ${['active','activating','waiting'].includes(s.state)?'':'warn'}">${labels[s.state]||esc(s.state)}</span></div>`).join(''):'<div class="service-row"><span>Dashboard API</span><span class="service-state">Active</span></div>'}</div>${p.id==='ftmo'?'<div class="detail-note">The research task runs every five minutes. Waiting between runs is normal.</div>':''}</div>`}
 function componentPanel(p){const c=(p.components||[])[0];if(!c)return '';const rows=(c.milestones||[]).map((m,i)=>`<div class="milestone ${m.done?'done':i===0?'next':''}"><span class="milestone-check">${m.done?'✓':String(i+1).padStart(2,'0')}</span><span>${esc(m.title)}</span><em>${m.done?'Completed':''}</em></div>`).join('');return `<div class="panel" style="--accent:${esc(c.accent||p.accent)}"><div class="panel-header"><div><h2>${esc(c.name)}</h2><div class="panel-subtitle">Part of ${esc(p.name)}</div></div>${icon('watch')}</div><div class="detail-note">${esc(c.summary)}<br><br><strong>${num(c.progress)}%</strong> · ${esc(c.next_step)}</div><div class="progress-track"><span style="width:${c.progress}%"></span></div><div class="milestones">${rows}</div></div>`}
-function detail(p){let mini='';if(p.metrics?.available)mini=`<div class="metrics-mini"><div><strong>${num(p.metrics.analyzed)}</strong><span>Replays analyzed</span></div><div><strong>${num(p.metrics.hours)}</strong><span>Hours of replay data</span></div><div><strong>${num(p.metrics.failed)}</strong><span>Analysis errors</span></div></div>`;else if(p.id==='haxlab')mini='<p class="muted">Replay measurements are temporarily unavailable.</p>';return `<a class="back" href="#overview" data-nav="overview">${icon('back')}All projects</a><div class="page-heading"><div class="detail-heading" style="--accent:${p.accent}"><span class="project-icon">${icon(p.icon)}</span><div><div class="eyebrow">${p.eyebrow}</div><h1>${p.name}</h1></div></div><div class="detail-heading-actions">${badge(p)}</div></div>${attentionPanel(p.id)}<div class="detail-summary" style="--accent:${p.accent}"><div class="detail-progress">${num(p.progress)}<small>%</small></div><div class="detail-summary-copy"><strong>${p.goal}</strong>${p.phase?`<p><b>Phase:</b> ${esc(p.phase)} · <b>Status:</b> ${esc(p.status||'active')}</p>`:''}<p>${p.progress_basis}</p><div class="progress-track"><span style="width:${p.progress}%"></span></div>${mini}</div></div><div class="detail-columns"><div class="detail-primary">${graphPanel([p])}${activityPanel(p.id,6)}${codePanel(p)}${aiRunPanel(p)}</div><div class="detail-primary"><div class="panel" style="--accent:${p.accent}"><div class="panel-header"><h2>Project steps</h2><span class="count">${p.completed} / ${p.milestones.length}</span></div><div class="milestones">${p.milestones.map((m,i)=>`<div class="milestone ${m.done?'done':m.title===p.next?'next':''}"><span class="milestone-check">${m.done?'✓':String(i+1).padStart(2,'0')}</span><span>${m.title}</span><em>${m.done?'Completed':m.title===p.next?'NEXT':''}</em></div>`).join('')}</div><div class="detail-note">This is plan progress. Live results and model quality are not evaluated by this metric.</div></div>${services(p)}${componentPanel(p)}</div></div>`}
+function projectBlockedQueuePanel(project){
+  // Use only the portfolio queue snapshot already loaded for the dashboard.
+  // Unknown or inaccessible is not equivalent to zero parked tasks.
+  if(!Array.isArray(BLOCKED_QUEUE)){
+    return '<section class="blocked-queue-panel blocked-project-panel">'
+      +'<div class="blocked-queue-head"><div><span class="eyebrow">DEPENDENCY HOLDS</span>'
+      +'<h2>Parked project work · source unavailable</h2>'
+      +'<p>Task recovery is unavailable until the authorized queue source can be read.</p></div></div>'
+      +'<p class="blocked-queue-state" role="status">'+esc(BLOCKED_QUEUE_ERROR||'Queue source unknown')+'</p></section>';
+  }
+  const rank={P0:0,P1:1,P2:2,P3:3};
+  const rows=BLOCKED_QUEUE.filter(row=>row&&row.status==='blocked'&&row.project_id===project.id)
+    .sort((a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9));
+  if(!rows.length)return '';
+  const observed=blockedQueueTime(blockedQueueObservedAt);
+  const freshness=claimChurnSnapshotFreshness();
+  const cards=rows.slice(0,6).map(item=>{
+    const blocker=String(item.blocker||item.evidence||'No dependency evidence recorded').trim();
+    const source=blockedQueueSourceUrl(item.source_url);
+    const parked=blockedQueueIsParked(item);
+    const taskClaimNotice=blockedQueueTaskClaimNotice(item);
+    const attention=Array.isArray(DATA.attention_needed)
+      ?DATA.attention_needed.some(row=>row.attention_id==='queue:'+item.queue_id&&row.status!=='resolved')
+      :null;
+    return '<article class="blocked-queue-item"><div class="blocked-queue-copy">'
+      +'<div class="blocked-queue-meta"><b>'+esc(item.priority||'UNKNOWN')+'</b>'
+      +'<span>'+esc(item.updated_at&&blockedQueueTime(item.updated_at)||'Update time unknown')+'</span></div>'
+      +'<strong>'+esc(String(item.title||'Untitled blocked task'))+'</strong>'
+      +'<p>'+esc(blocker.length>220?blocker.slice(0,217)+'…':blocker)+'</p>'
+      +blockedQueueChurnHint(item)
+      +taskClaimNotice
+      +'<small>'+esc(attention===null?'Human Attention source unavailable':
+        attention?'Human Attention linked':'No human Attention in loaded snapshot')+'</small>'
+      +(source?'<div class="blocked-queue-links"><a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Open source issue / PR ↗</a></div>':'')
+      +'</div><div class="blocked-queue-actions">'
+      +'<button type="button" data-resume-blocked="'+esc(item.queue_id)+'"'
+      +(parked?'':' disabled title="Current queue or separate task-claim state is unknown or bound"')
+      +'>Confirm dependency cleared</button>'
+      +'<button type="button" class="blocked-queue-close" data-close-blocked="'+esc(item.queue_id)+'"'
+      +(parked?'':' disabled title="Current queue or separate task-claim state is unknown or bound"')
+      +'>Close permanently…</button>'
+          +'<button type="button" class="blocked-queue-inspect" data-inspect-blocked="'+esc(item.queue_id)+'">Inspect current recovery conditions</button>'
+      +'</div></article>';
+  }).join('');
+  return '<section class="blocked-queue-panel blocked-project-panel">'
+    +'<div class="blocked-queue-head"><div><span class="eyebrow">DEPENDENCY HOLDS</span>'
+    +'<h2>'+rows.length+' parked task'+(rows.length===1?'':'s')+' for '+esc(project.name)+'</h2>'
+    +'<p>Only the original blocked task can be resumed with a fresh authorized operator attestation; unrelated work remains free.</p>'
+    +'</div><span class="blocked-queue-count">'+rows.length+'</span></div>'
+    +'<div class="blocked-queue-list">'+cards+'</div>'
+    +'<div class="blocked-queue-state"><span>'
+    +(observed?'Queue observed '+esc(observed):'Queue observation time unknown')
+    +(freshness.state==='stale_observation'?' · STALE SNAPSHOT ('+Math.ceil(freshness.age_seconds/60)+' min; not live)':'')
+    +' · '+Math.min(rows.length,6)+' of '+rows.length+' loaded parked tasks</span>'
+    +'<button type="button" data-blocked-jump-project="'+esc(project.id)+'">Open project holds in portfolio workbench</button>'
+    +'</div></section>';
+}
+function detail(p){let mini='';if(p.metrics?.available)mini=`<div class="metrics-mini"><div><strong>${num(p.metrics.analyzed)}</strong><span>Replays analyzed</span></div><div><strong>${num(p.metrics.hours)}</strong><span>Hours of replay data</span></div><div><strong>${num(p.metrics.failed)}</strong><span>Analysis errors</span></div></div>`;else if(p.id==='haxlab')mini='<p class="muted">Replay measurements are temporarily unavailable.</p>';return `<a class="back" href="#overview" data-nav="overview">${icon('back')}All projects</a><div class="page-heading"><div class="detail-heading" style="--accent:${p.accent}"><span class="project-icon">${icon(p.icon)}</span><div><div class="eyebrow">${p.eyebrow}</div><h1>${p.name}</h1></div></div><div class="detail-heading-actions">${badge(p)}</div></div>${attentionPanel(p.id)}${projectBlockedQueuePanel(p)}${ownerIntegrityPanel(p.id)}${claimChurnPanel(p.id)}<div class="detail-summary" style="--accent:${p.accent}"><div class="detail-progress">${num(p.progress)}<small>%</small></div><div class="detail-summary-copy"><strong>${p.goal}</strong>${p.phase?`<p><b>Phase:</b> ${esc(p.phase)} · <b>Status:</b> ${esc(p.status||'active')}</p>`:''}<p>${p.progress_basis}</p><div class="progress-track"><span style="width:${p.progress}%"></span></div>${mini}</div></div><div class="detail-columns"><div class="detail-primary">${graphPanel([p])}${activityPanel(p.id,6)}${codePanel(p)}${aiRunPanel(p)}</div><div class="detail-primary"><div class="panel" style="--accent:${p.accent}"><div class="panel-header"><h2>Project steps</h2><span class="count">${p.completed} / ${p.milestones.length}</span></div><div class="milestones">${p.milestones.map((m,i)=>`<div class="milestone ${m.done?'done':m.title===p.next?'next':''}"><span class="milestone-check">${m.done?'✓':String(i+1).padStart(2,'0')}</span><span>${m.title}</span><em>${m.done?'Completed':m.title===p.next?'NEXT':''}</em></div>`).join('')}</div><div class="detail-note">This is plan progress. Live results and model quality are not evaluated by this metric.</div></div>${services(p)}${componentPanel(p)}</div></div>`}
 function workerDetailPanel(p){
   const r=(DATA?.chatgpt_runners||{})[p.id]||{},workers=r.workers||[];
   if(!workers.length)return '';
@@ -683,10 +1812,54 @@ svg+='</svg>';el.innerHTML=svg;const countTimes=new Set(points.map(p=>p.date)).s
 }
 function paintCharts(){if(route==='overview')chart('progressChart',DATA.projects.map(p=>({name:p.name,color:p.accent,data:(HISTORY[p.id]||[]).map(r=>({date:r.date,value:r.progress}))})));else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p)chart('progressChart',[{name:p.name,color:p.accent,data:(HISTORY[p.id]||[]).map(r=>({date:r.date,value:r.progress}))}])}else if(route==='infrastructure')chart('hostChart',[['cpu','CPU','#c2f970'],['memory','Memory','#82b8ff'],['disk','Storage','#a899ff']].map(([key,name,color])=>({name,color,data:HOST.map(r=>({date:r.ts,value:r[key]}))}))) }
 function render(){if(!DATA)return;const focused=document.activeElement;const restore=focused?.dataset.range?'[data-range="'+focused.dataset.range+'"]':focused?.id==='activityFilter'?'#activityFilter':null;const openDisclosures=[...document.querySelectorAll('details[data-disclosure][open]')].map(el=>el.dataset.disclosure);const selectedProject=document.activeElement?.dataset.globalWorkerProject;syncNav();let title='Overview',html;if(route==='activity'){html=activityPage();title='Activity'}else if(route==='infrastructure'){html=infrastructure();title='Infrastructure'}else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p){html=detail(p);title=p.name}else{html='<div class="empty">This project was not found. <a href="#overview">Back to overview</a></div>';title='Unknown project'}}else html=overview();$('crumb').textContent=title;document.title='zCloud — '+title;$('view').innerHTML=html;[...document.querySelectorAll('details[data-disclosure]')].forEach(el=>{if(openDisclosures.includes(el.dataset.disclosure))el.open=true});paintCharts();hydrate();document.querySelectorAll('[data-global-worker-project]').forEach(el=>{const slot=Number(el.dataset.globalWorkerProject);const w=(WORKER_DEBUG?.workers||[]).find(x=>Number(x.global_slot)===slot);el.value=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:(w?.project||'')});if(selectedProject)document.querySelector('[data-global-worker-project="'+selectedProject+'"]')?.focus({preventScroll:true});if(restore)document.querySelector(restore)?.focus({preventScroll:true})}
-async function loadExtras(){const version=++routeVersion;const results=await Promise.allSettled([api('/api/activity'),api('/api/host-history'),...DATA.projects.map(p=>api('/api/history?project='+p.id+'&range='+range))]);if(version!==routeVersion)return;const fails=results.filter(r=>r.status==='rejected').length;if(results[0].status==='fulfilled'&&Array.isArray(results[0].value)&&
-    (route!=='activity'||ACTIVITY_COVERAGE.projectsRead===0))ACTIVITY=results[0].value;if(results[1].status==='fulfilled')HOST=results[1].value;DATA.projects.forEach((p,i)=>{if(results[i+2].status==='fulfilled')HISTORY[p.id]=results[i+2].value;else HISTORY[p.id]=[]});if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}render();if(route==='activity')void refreshProjectActivity(version)}
+async function loadExtras(){
+  const version=++routeVersion;
+  const queueObservationVersion=blockedQueueObservationVersion;
+  const queueIndex=2+DATA.projects.length;
+  const results=await Promise.allSettled([
+    api('/api/activity'),api('/api/host-history'),
+    ...DATA.projects.map(p=>api('/api/history?project='+p.id+'&range='+range)),
+    api('/api/portfolio-queue')
+  ]);
+  if(version!==routeVersion)return;
+  const historyResults=results.slice(0,queueIndex);
+  const queueResult=results[queueIndex];
+  // Other history or host calls can keep Promise.allSettled pending while a
+  // focused queue refresh or operator decision has already superseded it.
+  // Keep such old responses out of the queue/Attention control surface.
+  if(queueObservationVersion===blockedQueueObservationVersion&&
+     !blockedQueueReloading&&!blockedResumesPending.size){
+  if(queueResult?.status==='fulfilled'&&Array.isArray(queueResult.value?.items)){
+    BLOCKED_QUEUE=queueResult.value.items.filter(item=>item&&item.status==='blocked');
+    PORTFOLIO_QUEUE_SNAPSHOT=queueResult.value.items;
+    BLOCKED_QUEUE_ERROR='';
+    blockedQueueObservedAt=typeof queueResult.value.time==='string'?queueResult.value.time:'';
+  }else{
+    BLOCKED_QUEUE=null;
+    PORTFOLIO_QUEUE_SNAPSHOT=null;
+    blockedQueueObservedAt='';
+    BLOCKED_QUEUE_ERROR='Parked queue unavailable; access/read failure does not mean there are no blockers.';
+  }
+  }
+  const fails=historyResults.filter(r=>r.status==='rejected').length;
+  if(historyResults[0].status==='fulfilled'&&Array.isArray(historyResults[0].value)&&
+    (route!=='activity'||ACTIVITY_COVERAGE.projectsRead===0))ACTIVITY=historyResults[0].value;
+  if(historyResults[1].status==='fulfilled')HOST=historyResults[1].value;
+  DATA.projects.forEach((p,i)=>{if(historyResults[i+2].status==='fulfilled')HISTORY[p.id]=historyResults[i+2].value;else HISTORY[p.id]=[]});
+  if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}
+  render();if(route==='activity')void refreshProjectActivity(version)
+}
 function setConnection(ok){$('connection').classList.toggle('offline',!ok);$('connection').innerHTML='<span class="status-dot"></span>'+(ok?'Live connected':'Connection lost')}
-async function refresh(initial=false){if(busy)return false;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const stale=DATA.stale||Date.now()-Date.parse(DATA.time)>90000;setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+clock(DATA.time)+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling();return true}catch(e){setConnection(false);$('notice').hidden=false;$('notice').textContent=DATA?'Connection lost. The last loaded data remains visible; we will retry automatically.':'The VPS is temporarily unreachable. Try again or wait for the next refresh.';if(!DATA)$('view').innerHTML='<div class="loading">Not connected to zCloud yet.<button class="error-action" data-retry>Try again</button></div>';return false}finally{busy=false;$('refresh').disabled=false}}
+async function refresh(initial=false){if(busy)return false;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);STATUS_CONNECTION_OK=true;saveCachedStatus(DATA);const freshness=statusSnapshotFreshness(),stale=freshness!=='fresh';setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=freshness==='unknown'?'The status timestamp is missing or untrusted. Treat this snapshot as historical and refresh before relying on it.':stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+(freshness==='unknown'?'time unknown':clock(DATA.time))+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling();return true}catch(e){
+    STATUS_CONNECTION_OK=false;
+    // The status read failed: do not keep a prior queue snapshot looking live.
+    // Queue-bound operator controls must wait for a new authorized source read.
+    BLOCKED_QUEUE=null;
+    PORTFOLIO_QUEUE_SNAPSHOT=null;
+    BLOCKED_QUEUE_ERROR='Queue observation unavailable after a failed refresh; no recovery action can use this snapshot.';
+    blockedQueueObservedAt='';
+    ++blockedQueueObservationVersion;
+    setConnection(false);$('notice').hidden=false;$('notice').textContent=DATA?'Connection lost. The last loaded data remains visible; we will retry automatically.':'The VPS is temporarily unreachable. Try again or wait for the next refresh.';if(!DATA)$('view').innerHTML='<div class="loading">Not connected to zCloud yet.<button class="error-action" data-retry>Try again</button></div>';else render();return false}finally{busy=false;$('refresh').disabled=false}}
 function navigate(){const hash=location.hash.slice(1)||'overview';const [path,query]=hash.split('?');route=path;if(route!=='overview')mobileWorkersActive=false;if(scrollToWorkersOnOverview)mobileWorkersActive=true;filter=new URLSearchParams(query||'').get('project')||'';routeVersion++;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'});if(route==='overview'&&scrollToWorkersOnOverview){scrollToWorkersOnOverview=false;window.requestAnimationFrame(()=>{const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}})}}
 let draggedProject=null;
 document.addEventListener('dragstart',e=>{const card=e.target.closest('[data-project-id]');if(!card)return;draggedProject=card.dataset.projectId;card.classList.add('dragging');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',draggedProject)});
@@ -694,8 +1867,31 @@ document.addEventListener('dragover',e=>{const card=e.target.closest('[data-proj
 document.addEventListener('dragleave',e=>{e.target.closest('[data-project-id]')?.classList.remove('drag-over')});
 document.addEventListener('drop',async e=>{const target=e.target.closest('[data-project-id]');if(!target||!draggedProject)return;e.preventDefault();if(projectLayoutActionPending){draggedProject=null;projectLayoutNotice('Finish archiving or restoring before reordering projects.');return}const ids=DATA.projects.map(p=>p.id).filter(id=>id!==draggedProject);const targetIndex=ids.indexOf(target.dataset.projectId);const rect=target.getBoundingClientRect();const after=e.clientY>rect.top+rect.height/2;ids.splice(targetIndex+(after?1:0),0,draggedProject);const archived=(DATA.archived_projects||[]).map(p=>p.id);const tail=(DATA.project_layout?.order||[]).filter(id=>archived.includes(id));await saveProjectLayout([...ids,...tail],archived);draggedProject=null});
 document.addEventListener('dragend',()=>{document.querySelectorAll('.dragging,.drag-over').forEach(el=>el.classList.remove('dragging','drag-over'));draggedProject=null});
-document.addEventListener('click',async e=>{const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
+document.addEventListener('click',async e=>{const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();if(String(attentionResolve.dataset.attentionResolve||'').startsWith('queue:')){window.alert('This alert belongs to a parked task. Confirm the dependency clearance through Resume after approval instead.');return}attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const repeatBlocked=e.target.closest('[data-blocked-repeat-claims]');if(repeatBlocked){e.preventDefault();e.stopPropagation();blockedQueueRepeatClaimsOnly=!blockedQueueRepeatClaimsOnly;blockedQueueVisible=12;render();return}const humanBlocked=e.target.closest('[data-blocked-human-only]');if(humanBlocked){e.preventDefault();e.stopPropagation();if(!Array.isArray(DATA.attention_needed))return;blockedQueueHumanOnly=!blockedQueueHumanOnly;blockedQueueVisible=12;render();return}const reloadBlocked=e.target.closest('[data-blocked-reload]');if(reloadBlocked){e.preventDefault();e.stopPropagation();await reloadBlockedQueueSnapshot(reloadBlocked);return}const exportBlocked=e.target.closest('[data-blocked-export-handoff]');if(exportBlocked){e.preventDefault();e.stopPropagation();downloadBlockedQueueHandoff();return}const clearBlocked=e.target.closest('[data-blocked-clear-filters]');if(clearBlocked){e.preventDefault();e.stopPropagation();blockedQueueProject='all';blockedQueueUrgentOnly=false;blockedQueueSeverity='all';blockedQueueHumanOnly=false;blockedQueueRepeatClaimsOnly=false;blockedQueueSearch='';blockedQueueVisible=12;clearTimeout(blockedQueueFilterTimer);render();return}const severityBlocked=e.target.closest('[data-blocked-severity]');if(severityBlocked){e.preventDefault();e.stopPropagation();const value=severityBlocked.dataset.blockedSeverity;if(!['all','P0','P1','P2','P3','unknown'].includes(value))return;blockedQueueSeverity=value;blockedQueueUrgentOnly=false;blockedQueueVisible=12;render();return}const urgentBlocked=e.target.closest('[data-blocked-toggle-urgent]');if(urgentBlocked){e.preventDefault();e.stopPropagation();blockedQueueUrgentOnly=!blockedQueueUrgentOnly;blockedQueueSeverity='all';blockedQueueVisible=12;render();return}const showBlockedMore=e.target.closest('[data-blocked-show-more]');if(showBlockedMore){e.preventDefault();e.stopPropagation();blockedQueueVisible+=12;render();return}const showBlockedLess=e.target.closest('[data-blocked-show-less]');if(showBlockedLess){e.preventDefault();e.stopPropagation();blockedQueueVisible=12;render();return}const openBlockedProject=e.target.closest('[data-blocked-jump-project]');if(openBlockedProject){e.preventDefault();e.stopPropagation();blockedQueueProject=openBlockedProject.dataset.blockedJumpProject;blockedQueueVisible=12;blockedQueueHumanOnly=false;blockedQueueUrgentOnly=false;blockedQueueSeverity='all';blockedQueueRepeatClaimsOnly=false;blockedQueueSearch='';location.hash='#overview';return}const integrityUrgent=e.target.closest('[data-owner-integrity-priority]');if(integrityUrgent){e.preventDefault();ownerIntegrityUrgentOnly=!ownerIntegrityUrgentOnly;ownerIntegrityVisible=12;render();return}
+const integrityExport=e.target.closest('[data-owner-integrity-export]');if(integrityExport){e.preventDefault();downloadOwnerIntegrityHandoff();return}
+const integrityMore=e.target.closest('[data-owner-integrity-more]');if(integrityMore){e.preventDefault();ownerIntegrityVisible+=12;render();return}
+const integrityLess=e.target.closest('[data-owner-integrity-less]');if(integrityLess){e.preventDefault();ownerIntegrityVisible=12;render();return}
+const integrityOpen=e.target.closest('[data-owner-integrity-open]');if(integrityOpen){e.preventDefault();ownerIntegrityProject=integrityOpen.dataset.ownerIntegrityOpen;ownerIntegrityUrgentOnly=false;ownerIntegrityVisible=12;location.hash='#overview';return}
+const churnAnomalies=e.target.closest('[data-claim-churn-anomalies]');if(churnAnomalies){e.preventDefault();claimChurnAnomaliesOnly=!claimChurnAnomaliesOnly;claimChurnVisible=12;render();return}const churnExpired=e.target.closest('[data-claim-churn-expired]');if(churnExpired){e.preventDefault();claimChurnExpiredOnly=!claimChurnExpiredOnly;claimChurnVisible=12;render();return}const churnExport=e.target.closest('[data-claim-churn-export]');if(churnExport){e.preventDefault();downloadClaimChurnHandoff();return}const churnMore=e.target.closest('[data-claim-churn-more]');if(churnMore){e.preventDefault();claimChurnVisible+=12;render();return}const churnLess=e.target.closest('[data-claim-churn-less]');if(churnLess){e.preventDefault();claimChurnVisible=12;render();return}const churnUrgent=e.target.closest('[data-claim-churn-priority]');if(churnUrgent){e.preventDefault();claimChurnUrgentOnly=!claimChurnUrgentOnly;claimChurnVisible=12;render();return}const churnOpen=e.target.closest('[data-claim-churn-open]');if(churnOpen){e.preventDefault();claimChurnVisible=12;location.hash='#overview';return}const inspectBlocked=e.target.closest('[data-inspect-blocked]');if(inspectBlocked){e.preventDefault();e.stopPropagation();await inspectBlockedQueue(inspectBlocked.dataset.inspectBlocked,inspectBlocked);return}const closeBlocked=e.target.closest('[data-close-blocked]');if(closeBlocked){e.preventDefault();e.stopPropagation();await closeBlockedQueue(closeBlocked.dataset.closeBlocked,closeBlocked);return}const resumeBlocked=e.target.closest('[data-resume-blocked]');if(resumeBlocked){e.preventDefault();e.stopPropagation();await resumeBlockedQueue(resumeBlocked.dataset.resumeBlocked,resumeBlocked);return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
-document.addEventListener('change',async e=>{const projectSelector=e.target.closest?.('[data-global-worker-project]');if(projectSelector){const slot=Number(projectSelector.dataset.globalWorkerProject);GLOBAL_WORKER_PROJECT_REQUESTS[slot]=projectSelector.value;delete GLOBAL_WORKER_REQUEST_RESULTS[slot];render();return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
+document.addEventListener('input',e=>{
+  const input=e.target.closest?.('[data-blocked-search]');
+  if(!input)return;
+  blockedQueueSearch=String(input.value||'').slice(0,120);
+  blockedQueueVisible=12;
+  const position=input.selectionStart;
+  clearTimeout(blockedQueueFilterTimer);
+  blockedQueueFilterTimer=setTimeout(()=>{
+    if(route!=='overview')return;
+    const restoreFocus=document.activeElement===input;
+    render();
+    if(restoreFocus){
+      const replacement=document.querySelector('[data-blocked-search]');
+      if(replacement){replacement.focus({preventScroll:true});replacement.setSelectionRange(position,position)}
+    }
+  },180);
+});
+document.addEventListener('change',async e=>{const projectSelector=e.target.closest?.('[data-global-worker-project]');if(projectSelector){const slot=Number(projectSelector.dataset.globalWorkerProject);GLOBAL_WORKER_PROJECT_REQUESTS[slot]=projectSelector.value;delete GLOBAL_WORKER_REQUEST_RESULTS[slot];render();return}const churnStatus=e.target.closest?.('[data-claim-churn-status]');if(churnStatus){claimChurnStatus=churnStatus.value;claimChurnVisible=12;render();return}const blockedProject=e.target.closest?.('[data-blocked-project]');if(blockedProject){blockedQueueProject=blockedProject.value;blockedQueueVisible=12;render();return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
 $('refresh').addEventListener('click',()=>refresh(true));window.addEventListener('hashchange',navigate);hydrate();navigate();const cachedStatus=loadCachedStatus();if(cachedStatus){DATA=cachedStatus;setConnection(false);$('notice').hidden=false;$('notice').textContent='Live connection is temporarily unavailable. Showing the last successful dashboard snapshot while reconnecting automatically.';$('syncTime').textContent='Last successful measurement '+clock(DATA.time)+' · reconnecting…';render()}refresh(true);setInterval(()=>{if(!document.hidden)refresh()},15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
+document.addEventListener('change',e=>{const selector=e.target.closest?.('[data-owner-integrity-project]');if(!selector)return;const wanted=String(selector.value||'all');if(wanted!=='all'&&!PORTFOLIO_QUEUE_SNAPSHOT?.some(row=>String(row?.project_id||'')===wanted&&ownerIntegritySignals(row).length))return;ownerIntegrityProject=wanted;ownerIntegrityVisible=12;render()});
