@@ -517,7 +517,8 @@ def _group_rss_bytes(group_id: int) -> int:
 
 def _renew_existing_lease(conn, project_id: str, owner_id: str,
                           acquired_at: str, lease_seconds: int,
-                          metadata: dict, admitted_compute: dict) -> dict:
+                          metadata: dict, admitted_compute: dict,
+                          live_authority: bool = False) -> dict:
     """Renew only a STILL-ACTIVE lease, never reacquire a lost heavy slot.
 
     A scheduled renewal may be delayed beyond TTL by a paused worker or
@@ -525,8 +526,7 @@ def _renew_existing_lease(conn, project_id: str, owner_id: str,
     lease after expiry; that would allow a running orphan and a second
     heavyweight project to overlap. Serialize verification and renewal.
     """
-    if (admitted_compute.get("pool") == "heavy"
-            and os.environ.get("ZCLOUD_RESOURCE_DB") is not None):
+    if admitted_compute.get("pool") == "heavy" and live_authority:
         # Dynamic service changes cannot quietly widen CPU/memory limits
         # after the initial heavy admission.
         _require_heavy_unit_bounds(admitted_compute)
@@ -822,11 +822,12 @@ def run_governed(
     if compute.get("pool") == "heavy" and memory_budget <= 0:
         raise RuntimeError("heavy_memory_budget_unavailable")
     db_identity = _pinned_database_identity(Path(db_path))
+    live_authority = _uses_live_governor_authority(Path(db_path))
     # On a pinned live heavy service, no old orphan or detached training
     # child may share the unit before the next lease is even requested.
     # This closes the window after a crashed wrapper's lease has expired:
     # a new invocation cannot run beside the surviving unleased worker.
-    if compute.get("pool") == "heavy" and os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+    if compute.get("pool") == "heavy" and live_authority:
         _require_heavy_unit_bounds(compute)
         if not _owned_service_cgroup_drained():
             raise RuntimeError("resource_dedicated_heavy_unit_not_idle")
@@ -977,7 +978,7 @@ def run_governed(
         _assert_database_identity(Path(db_path), db_identity)
         renewed = _renew_existing_lease(
             conn, project_id, owner_id, acquired_at, lease_seconds,
-            _metadata(command, pid=proc.pid), compute,
+            _metadata(command, pid=proc.pid), compute, live_authority,
         )
         if not renewed.get("acquired"):
             _stop_process_group(proc)
@@ -1018,7 +1019,7 @@ def run_governed(
             if now >= next_renewal:
                 renewed = _renew_existing_lease(
                     conn, project_id, owner_id, acquired_at, lease_seconds,
-                    _metadata(command, pid=proc.pid), compute,
+                    _metadata(command, pid=proc.pid), compute, live_authority,
                 )
                 if not renewed.get("acquired"):
                     _stop_process_group(proc)
@@ -1037,7 +1038,7 @@ def run_governed(
         # Detached setsid descendants still occupy the same unit cgroup.
         if (group_stopped and proc is not None
                 and compute.get("pool") == "heavy"
-                and os.environ.get("ZCLOUD_RESOURCE_DB") is not None):
+                and live_authority):
             # Protected zCloud/zSSH work is allowed to use shared control-
             # plane units; demanding an exclusive service cgroup there would
             # needlessly exhaust protected slots. The hard detached-worker
