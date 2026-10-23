@@ -44,6 +44,55 @@ def _assert_shared_resource_db(db_path: Path) -> None:
             raise RuntimeError("resource_database_identity_mismatch")
 
 
+def _nonprotected_memory_admission(conn, project_id: str,
+                                   compute: dict) -> dict | None:
+    """Protect host memory for both control-plane projects across pools.
+
+    Heavy/build slot limits prevent within-pool collisions, but they alone
+    permit one heavy plus two build jobs whose declared maxima may exceed
+    host RAM. Check aggregate active lease reservations atomically with
+    first admission and reject unsupported/unobservable host headroom.
+    """
+    if compute.get("pool") == "protected":
+        return None
+    try:
+        mem = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            fields = line.split()
+            if len(fields) == 3 and fields[2] == "kB":
+                if fields[0] in ("MemTotal:", "MemAvailable:"):
+                    mem[fields[0][:-1]] = int(fields[1]) // 1024
+        host_mb = mem["MemTotal"]
+        available_mb = mem["MemAvailable"]
+        if host_mb <= 0 or available_mb < 0:
+            raise ValueError("host memory numbers invalid")
+    except (OSError, ValueError, KeyError) as exc:
+        raise RuntimeError("resource_host_memory_evidence_unavailable") from exc
+
+    contracts = runtime.load_contracts()
+    protected_mb = sum(
+        int((p.get("compute") or {}).get("memory_soft_mb") or 0)
+        for p in contracts["projects"].values()
+        if (p.get("compute") or {}).get("pool") == "protected"
+    )
+    safety_mb = max(512, int(host_mb * 0.05))
+    budget_mb = int(compute.get("memory_soft_mb") or 0)
+    if budget_mb <= 0:
+        return {"acquired": False, "reason": "resource_memory_budget_missing",
+                "project_id": project_id}
+    now = datetime.now(timezone.utc).isoformat()
+    other_mb = int(conn.execute(
+        "SELECT COALESCE(SUM(memory_soft_mb),0) FROM resource_leases "
+        "WHERE pool != 'protected' AND lease_until>?", (now,)
+    ).fetchone()[0])
+    # MemAvailable is an additional pressure gate, not a proxy for leases.
+    if (budget_mb + other_mb > host_mb - protected_mb - safety_mb
+            or available_mb < budget_mb + safety_mb):
+        return {"acquired": False, "reason": "resource_protected_memory_headroom",
+                "project_id": project_id}
+    return None
+
+
 def _bounded_cpu_count(value, available: int) -> int:
     requested = max(1, int(math.ceil(float(value or 1))))
     return max(1, min(max(1, int(available)), requested))
@@ -385,6 +434,11 @@ def run_governed(
             conn.rollback()
             _admission_denied({"reason": "resource_owner_already_running",
                                "project_id": project_id})
+            return 75
+        pressure = _nonprotected_memory_admission(conn, project_id, compute)
+        if pressure is not None:
+            conn.rollback()
+            _admission_denied(pressure)
             return 75
         result = runtime.acquire_resource(
             conn,
