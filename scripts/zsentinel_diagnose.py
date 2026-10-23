@@ -88,7 +88,7 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
     # the outer snapshot clock alone cannot refresh an old service-log excerpt.
     runtime_error_kind = runtime.get("error_kind")
     if runtime_error_kind is not None:
-        if runtime_error_kind not in RUNTIME_ERROR_KINDS:
+        if type(runtime_error_kind) is not str or runtime_error_kind not in RUNTIME_ERROR_KINDS:
             raise ValueError(f"{pid}.runtime.error_kind: unsupported explicit runtime fault")
         runtime_error_at = required_time(runtime, "error_observed_at", now,
                                          pid + ".runtime")
