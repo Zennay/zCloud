@@ -1027,14 +1027,17 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
                 "Controleer de bestaande SQLite-bron en herstel de leesroute; geen meldingen is niet bewezen."
                 if alerts_source_status!="observed" else None),
             "claim_conflict_source_status":(
+                "unavailable" if alerts_source_status!="observed" else
                 "not_applicable" if not claim_sources else
                 "observed" if all(source=="observed" for source in claim_sources)
                 else "partial"),
-            "claim_conflict_source_complete":all(
-                source=="observed" for source in claim_sources),
+            "claim_conflict_source_complete":(
+                alerts_source_status=="observed" and
+                all(source=="observed" for source in claim_sources)),
             "claim_conflict_source_next_step":(
-                "Verifieer de actieve taakclaims bij de eigenaar voordat een conflict wordt gesloten."
-                if any(source!="observed" for source in claim_sources) else None)}
+                "Verifieer de alertbron en actieve taakclaims vóór het sluiten van een conflict."
+                if alerts_source_status!="observed" or
+                   any(source!="observed" for source in claim_sources) else None)}
 
 def list_alerts(db_path, limit=20, important_only=False, *, with_source_status=False):
     """List persisted alerts; optionally expose unavailable source separately from empty."""
