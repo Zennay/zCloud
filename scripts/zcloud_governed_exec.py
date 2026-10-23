@@ -766,6 +766,13 @@ def run_governed(
                 return 75
             if compute.get("pool") == "heavy" and _legacy_haxlab_training_active():
                 conn.rollback()
+                remaining = deadline - time.monotonic()
+                if wait_seconds and remaining > 0:
+                    # The legacy self-play service is not yet lease-aware.
+                    # Wait cooperatively instead of permitting a second
+                    # heavy job or restarting the existing trainer.
+                    time.sleep(min(1.0, remaining))
+                    continue
                 _admission_denied({
                     "reason": "resource_unleased_training_active",
                     "project_id": project_id,
