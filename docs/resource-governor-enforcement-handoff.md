@@ -504,6 +504,15 @@ This prevents a new VPS from interpreting its own empty `/proc`
 as proof that an orphaned worker on another VPS has stopped.
 Cross-host lease recovery still needs authorized operator evidence;
 a reboot/boot-ID mismatch is not itself proof of a clean release.
+This origin check now covers **any expired canonical heavy lease that
+carries a child PID or service-cgroup identity**, including rows
+written by older or differently labelled admission tools; a missing
+executor label must not make a foreign PID safe to reuse. A legacy
+PID-bearing record without `host_boot_id` fails closed until its
+original owner proves a clean shutdown and the runtime performs a
+reviewed, fenced recovery. Records from unrelated writers without any
+child process identity remain only provisional, never proof that
+unleased heavy processes elsewhere are absent.
 Deliberately separate, unpinned canary SQLite databases continue
 using their own local process checks and do not claim shared-pool
 protection. Synthetic legacy lease reservations not owned by the
@@ -533,6 +542,31 @@ veto and dedicated-unit admission gates still apply.
 
 No new tests/QA suites were created or run for these source changes.
 Neither live SQLite nor active VPS workloads were modified.
+
+## Current exact-head CI routing blocker · 23 October
+
+Read-only inspection of all **10** currently queued/pending
+`main` workflow definitions used by PR #583 found that they all
+request a self-hosted GitHub runner. Most use
+`runs-on: [self-hosted, zcloud, vps]`; the dashboard workflow also
+uses the generic `self-hosted` label. Even workflows titled
+`hosted-only` and `hosted read only` actually require
+`[self-hosted, zcloud, vps]` in their checked-in source.
+No runner assignment was visible for representative queued jobs.
+
+On the connected new VPS, the exact
+`actions.runner.Zennay-zCloud.zcloud-vps-1.service` is
+`inactive/dead/disabled`. Other project runner processes remain
+active and must not be interrupted to work around this. The connected
+zSSH policy explicitly grants **only**
+`zennay-cloud.service` as an inspect/restart target and does not
+authorize restarting/re-registering the GitHub Actions listener.
+PR #1592 owns serialized new-VPS migration safety; the
+authorized runner owner must reconcile its registration/labels and
+start the correct listener, then prove exact-head job assignment.
+No workflow was relabelled and no runner changed in this PR. The
+workflow titles are not an assertion that GitHub-hosted capacity
+has failed; the YAML labels are the actual runner requirement.
 
 ## What remains before this milestone is DONE
 
