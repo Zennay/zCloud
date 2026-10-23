@@ -56,3 +56,10 @@ Keep both branches separate; inspect exact patches at integration time and
 merge only once current owners and mandatory gates permit.
 
 This note documents product behavior; it is **not** a QA plan or test suite.
+
+
+## Observation timestamp integrity
+
+`observed_at` is validated by `project_runtime.validated_receipt_timestamp()` before a receipt INSERT. Inputs must be bounded (at most 48 characters), timezone-aware ISO-8601 timestamps without NULs. Valid offsets are normalized to canonical UTC with a trailing `Z`; naive, malformed or more than 120 seconds future-dated observations are rejected. Historical timestamps remain valid for explicitly dated evidence, but are not proof of current state.
+
+The CLI accepts `receipt --observed-at 2026-10-22T19:30:00Z`. When omitted, it captures the current UTC time during pre-admission and passes that exact normalized value to the core writer. Invalid timestamps are rejected before SQLite is opened or initialized. Direct callers receive the same core validation, so bypassing the CLI cannot insert a malformed or future-dated observation.
