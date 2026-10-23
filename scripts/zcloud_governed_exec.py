@@ -664,7 +664,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", type=Path, default=ROOT / "history.db")
     parser.add_argument("--project", required=True)
-    parser.add_argument("--owner", required=True)
+    parser.add_argument("--owner", help="Unique live lease owner; not needed for --inspect-pool")
     parser.add_argument("--lease-seconds", type=int, default=300)
     parser.add_argument("--renew-seconds", type=int, default=60)
     parser.add_argument("--inspect-pool", action="store_true",
@@ -681,6 +681,8 @@ def main(argv=None) -> int:
         print(json.dumps(inspect_pool(args.db, args.project),
                          ensure_ascii=False, sort_keys=True))
         return 0
+    if not args.owner:
+        parser.error("--owner is required when launching a governed command")
     if not command:
         parser.error("command is required after --")
 
