@@ -70,6 +70,53 @@ process to a still-active owner. The supported FTMO TASK-125 unit template is
 already rendered using this governed wrapper, but that fact alone is not proof
 of its current live unit contents or an actual retained heavy lease.
 
+## Runtime admission hardening · 23 October
+
+The same existing pull request now closes additional lost-lease and
+resource-starvation bugs in the real process launcher:
+
+- **Lease generation fencing:** first admission records the returned
+  `acquired_at` identity. Both startup/periodic renewal and final release
+  use the same project, owner and acquisition generation. A lease which
+  expires, disappears or is replaced under a recycled owner ID is never
+  silently acquired again by an already-running process. The old executor
+  also cannot delete a newer process's lease in its `finally` path.
+  A stuck group's bounded retention updates only the original lease row.
+- **Pinned database identity:** launchers that set
+  `ZCLOUD_RESOURCE_DB` require `--db` to resolve to that same canonical
+  path, preventing accidental split-brain pool state when a service
+  inherits a different local checkout.
+- **Protected host CPU reserve:** non-protected commands cannot use the
+  first available CPU on two-core hosts, or the first two on hosts with
+  three or more schedulable CPUs. The separate zSSH control route can
+  use the second schedulable CPU; actual zSSH service startup remains
+  owner-authorized and is not triggered by the governor.
+- **Cross-pool host memory admission:** under the existing SQLite
+  `BEGIN IMMEDIATE` lease transaction, a non-protected job's declared
+  RAM budget is checked against all existing non-protected lease budgets,
+  while retaining the sum of the zCloud and zSSH protected project
+  memory budgets and a 512-MiB-or-5% host safety reserve. It also checks
+  host `MemAvailable`. On cgroup-v2 hosts, inherited `memory.max`
+  limits and `memory.current` headroom at each ancestor slice further
+  restrict the allowed amount. Invalid/unavailable data refuses new
+  non-protected admission before a command starts; it does not kill or
+  evict currently active work.
+- **Linux crash mitigation:** a direct supervised child receives a
+  parent-death SIGKILL setting and a fork-race check, complementing
+  the existing process-group signal forwarding. Descendants that call
+  `setsid()`, wrapper SIGKILL and remote host crashes still require
+  supervised systemd/cgroup containment; do not claim this source
+  alone provides full crash recovery.
+- **Zombie-safe cleanup:** terminated zombie-only process groups are
+  distinguished from a group with genuinely running descendants;
+  unreadable or inconsistent process evidence remains fail-closed.
+
+These are **code-path behavior changes**, not a dashboard-only indicator
+or an extra release bypass. The quota is based on contract budgets and
+observed system headroom, not a claim of precise attributable CPU usage.
+No new manual QA suites or production actions were performed for this
+source change.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
