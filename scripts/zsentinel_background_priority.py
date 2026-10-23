@@ -721,7 +721,7 @@ def human_preview(data):
     print(f"VPS: load {data['host_load'] if data['host_load'] is not None else 'onbekend'}"
           f" op {data['cores']} cores; swapgebruik "
           f"{data['swap_used_percent'] if data['swap_used_percent'] is not None else 'onbekend'}%;"
-          f" root niet beschikbaar "
+          f" rootvolume niet vrij voor gebruiker "
           f"{data['disk_unavailable_percent'] if data['disk_unavailable_percent'] is not None else 'onbekend'}%")
     print("Swapstatus: " + {
         "OBSERVED": "swapruimte geconfigureerd",
@@ -811,7 +811,7 @@ def main():
     parser.add_argument("--snapshot", metavar="NEW_PRIVATE_JSON",
                         help="Create a private runner evidence receipt, optionally comparing a previous receipt")
     parser.add_argument("--previous", metavar="PRIVATE_JSON",
-                        help="Previous owner-private snapshot, valid only with --snapshot")
+                        help="Previous owner-private snapshot, valid with --snapshot or --report")
     args = parser.parse_args()
     if (args.human or args.runners or args.report or args.snapshot or args.previous) and not args.preview:
         parser.error("read-only options require --preview")
