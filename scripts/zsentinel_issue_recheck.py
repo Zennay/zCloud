@@ -105,6 +105,8 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
         item["live_issue_recheck_observed_at_utc"] = None
         item["live_issue_state_reason"] = None
         item["live_issue_priority_label"] = None
+        item["live_issue_github_assignees"] = None
+        item["live_issue_github_assignees_source_complete"] = False
         item["live_issue_closed_does_not_prove_fix_merged"] = True
         if not source_read_admitted:
             _set_status(item, "NOT_CHECKED_PRIOR_PROVIDER_STOP")
@@ -154,6 +156,10 @@ def recheck_missing_live(report, *, token=None, max_reads=3,
         item["live_issue_recheck_observed_at_utc"] = summary["observed_at_utc"]
         item["live_issue_state_reason"] = summary["reported_state_reason"]
         item["live_issue_priority_label"] = summary["priority_from_explicit_labels"]
+        item["live_issue_github_assignees"] = summary["github_assignees"]
+        item["live_issue_github_assignees_source_complete"] = (
+            summary["github_assignees_source_complete"]
+        )
         if state == "closed" and item["live_issue_state_reason"] == "not_planned":
             item["live_next_action_code"] = "inspect_not_planned_closure_decision"
             item["live_next_action"] = (
