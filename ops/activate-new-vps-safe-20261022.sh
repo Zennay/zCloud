@@ -38,8 +38,8 @@ docker_api_version() {
 
 archive_mount_is_verified() {
   command -v findmnt >/dev/null 2>&1 || return 1
-  findmnt -rn -o TARGET,FSTYPE --target "$ARCHIVE_MOUNT" 2>/dev/null |
-    awk -v expected="$ARCHIVE_MOUNT" '$1 == expected && $2 ~ /^fuse[.]rclone$/ { verified=1 } END { exit !verified }'
+  findmnt -rn -o TARGET,FSTYPE,OPTIONS --target "$ARCHIVE_MOUNT" 2>/dev/null |
+    awk -v expected="$ARCHIVE_MOUNT" '$1 == expected && $2 ~ /^fuse[.]rclone$/ && $3 ~ /(^|,)ro(,|$)/ { verified=1 } END { exit !verified }'
 }
 
 echo "=== NEW VPS BASE SERVICES: $MODE ==="
@@ -52,7 +52,7 @@ else
   echo "docker_api=unavailable"
 fi
 if archive_mount_is_verified; then
-  echo "archive_mount=verified_fuse_rclone"
+  echo "archive_mount=verified_readonly_fuse_rclone"
 else
   echo "archive_mount=not_verified"
 fi
@@ -138,7 +138,7 @@ systemctl is-active --quiet "$ARCHIVE_UNIT" || {
   exit 4
 }
 archive_mount_is_verified || {
-  echo "ERROR: archive service is active but $ARCHIVE_MOUNT is not a verified fuse.rclone mount" >&2
+  echo "ERROR: archive service is active but $ARCHIVE_MOUNT is not a verified read-only fuse.rclone mount" >&2
   exit 4
 }
 systemctl enable --now "$DOCKER_UNIT"
