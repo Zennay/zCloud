@@ -1,0 +1,46 @@
+name: Start Fuckball 4v4 training on NEW VPS external disk
+on:
+  push:
+    branches:
+      - ops/fuckball-external-training-20261022
+    paths:
+      - .github/workflows/fuckball-external-training-new-vps-20261022.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuckball-external-training-new-vps-20261022
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/ops/fuckball-external-training-20261022' &&
+      github.event_name == 'push' &&
+      github.run_attempt == 1
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 40
+    steps:
+      - name: Verify NEW VPS host before running any downloaded content
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "RUNNER_NAME=$RUNNER_NAME"
+          echo "HOSTNAME=$(hostname)"
+          test "$(hostname)" = 'VM-7eb5ee16-2c71-440d-b7fd-8095d204e930'
+          test "$GITHUB_REPOSITORY" = 'Zennay/zCloud'
+          test "$GITHUB_RUN_ATTEMPT" = 1
+      - name: Run exact source-only bootstrap from RAM, writes on external disk only
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="$(mktemp /dev/shm/fuckball-external-trainer.XXXXXXXX)"
+          trap 'rm -f "$script"' EXIT
+          curl --fail --silent --show-error --location --max-time 30 \
+            "https://raw.githubusercontent.com/Zennay/zCloud/$GITHUB_SHA/ops/start-fuckball-external-training-20261022.sh" \
+            -o "$script"
+          test "$(git hash-object "$script")" = '18b8eb90a48c973d688f00a73baef18a2165edff'
+          bash "$script"
+          echo 'External-only trainer admission and activation completed.'
