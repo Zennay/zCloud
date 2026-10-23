@@ -52,7 +52,8 @@ def _has_table(c: sqlite3.Connection, name: str) -> bool:
     return bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
 
 
-def worker_metrics(rows: list[sqlite3.Row]) -> dict:
+def worker_metrics(rows: list[sqlite3.Row], now: datetime | None = None) -> dict:
+    observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if not rows:
         return {
             "observed_seconds": 0,
@@ -67,6 +68,9 @@ def worker_metrics(rows: list[sqlite3.Row]) -> dict:
             "blocked_events": 0,
             "first_event": None,
             "last_event": None,
+            "last_heartbeat": None,
+            "last_heartbeat_age_seconds": None,
+            "heartbeat_freshness": "no_heartbeat",
         }
 
     ordered = sorted(rows, key=lambda r: r["ts"])
@@ -87,7 +91,10 @@ def worker_metrics(rows: list[sqlite3.Row]) -> dict:
 
     working = idle = blocked = observed = 0.0
     for (left, left_blocked), (right, _right_blocked) in zip(heartbeats, heartbeats[1:]):
-        delta = (_dt(right["ts"]) - _dt(left["ts"])).total_seconds()
+        try:
+            delta = (_dt(right["ts"]) - _dt(left["ts"])).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            continue
         if delta <= 0 or delta > MAX_HEARTBEAT_GAP_SECONDS:
             continue
         observed += delta
@@ -99,6 +106,22 @@ def worker_metrics(rows: list[sqlite3.Row]) -> dict:
             idle += delta
 
     throughput = round(completed / (observed / 3600.0), 2) if observed >= 60 and completed else (0.0 if observed >= 60 else None)
+    last_heartbeat = heartbeats[-1][0]["ts"] if heartbeats else None
+    last_heartbeat_age_seconds = None
+    heartbeat_freshness = "no_heartbeat"
+    if last_heartbeat is not None:
+        try:
+            heartbeat_age = (observed_at - _dt(last_heartbeat)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            heartbeat_freshness = "unknown"
+        else:
+            if heartbeat_age < 0:
+                heartbeat_freshness = "future"
+            else:
+                last_heartbeat_age_seconds = round(heartbeat_age)
+                heartbeat_freshness = (
+                    "fresh" if heartbeat_age <= MAX_HEARTBEAT_GAP_SECONDS else "stale"
+                )
     return {
         "observed_seconds": round(observed),
         "working_seconds": round(working),
@@ -112,18 +135,85 @@ def worker_metrics(rows: list[sqlite3.Row]) -> dict:
         "blocked_events": blocked_events,
         "first_event": first_event,
         "last_event": last_event,
+        "last_heartbeat": last_heartbeat,
+        "last_heartbeat_age_seconds": last_heartbeat_age_seconds,
+        "heartbeat_freshness": heartbeat_freshness,
+    }
+
+
+def worker_coverage(workers: list[dict], desired_workers: int) -> dict:
+    """Require every configured slot and a recent heartbeat before comparing scale."""
+    desired = max(1, int(desired_workers or 1))
+    considered = [
+        w for w in workers
+        if 1 <= int(w["worker_slot"]) <= desired
+    ]
+    observed_slots = sorted({int(w["worker_slot"]) for w in considered})
+    missing_slots = [slot for slot in range(1, desired + 1) if slot not in observed_slots]
+    stale_slots = []
+    unknown_slots = []
+    for worker in considered:
+        slot = int(worker["worker_slot"])
+        freshness = (worker.get("metrics") or {}).get("heartbeat_freshness")
+        if freshness == "stale":
+            stale_slots.append(slot)
+        elif freshness != "fresh":
+            unknown_slots.append(slot)
+
+    if missing_slots:
+        state = "missing_worker_slots"
+    elif stale_slots:
+        state = "stale_heartbeats"
+    elif unknown_slots:
+        state = "unknown_heartbeat_freshness"
+    else:
+        state = "complete_fresh"
+    return {
+        "state": state,
+        "desired_workers": desired,
+        "observed_worker_slots": observed_slots,
+        "observed_worker_count": len(observed_slots),
+        "missing_worker_slots": missing_slots,
+        "stale_worker_slots": sorted(stale_slots),
+        "unknown_heartbeat_worker_slots": sorted(unknown_slots),
+        "freshness_threshold_seconds": MAX_HEARTBEAT_GAP_SECONDS,
     }
 
 
 def scaling_assessment(workers: list[dict], desired_workers: int) -> dict:
-    considered = [w for w in workers if int(w["worker_slot"]) <= max(1, int(desired_workers or 1))]
-    if desired_workers <= 1 or len(considered) <= 1:
-        return {"state": "single_worker", "reason": "Er is geen actuele multi-worker vergelijking nodig."}
+    desired = max(1, int(desired_workers or 1))
+    coverage = worker_coverage(workers, desired)
+    if coverage["state"] != "complete_fresh":
+        if coverage["missing_worker_slots"]:
+            reason = "Geen schaaladvies: telemetry ontbreekt voor één of meer gewenste worker-slots."
+        elif coverage["stale_worker_slots"]:
+            reason = "Geen schaaladvies: minstens één gewenste worker heeft een verouderde heartbeat."
+        else:
+            reason = "Geen schaaladvies: actuele heartbeat-versheid is onbekend."
+        return {
+            "state": "insufficient_data",
+            "reason": reason,
+            "worker_coverage": coverage,
+        }
+    if desired <= 1:
+        return {
+            "state": "single_worker",
+            "reason": "Er is één gewenste worker; een multi-worker vergelijking is niet nodig.",
+            "worker_coverage": coverage,
+        }
 
+    considered = [
+        w for w in workers
+        if 1 <= int(w["worker_slot"]) <= desired
+    ]
     primary = next((w for w in considered if int(w["worker_slot"]) == 1), None)
     extras = [w for w in considered if int(w["worker_slot"]) > 1]
     if not primary or primary["metrics"]["throughput_per_observed_hour"] is None:
-        return {"state": "insufficient_data", "reason": "De primaire worker heeft nog te weinig betrouwbare observatietijd."}
+        return {
+            "state": "insufficient_data",
+            "reason": "De primaire worker heeft nog te weinig betrouwbare observatietijd.",
+            "worker_coverage": coverage,
+        }
 
     eligible = [
         w for w in extras
@@ -135,6 +225,7 @@ def scaling_assessment(workers: list[dict], desired_workers: int) -> dict:
         return {
             "state": "insufficient_data",
             "reason": "Minstens één extra worker heeft minder dan 30 minuten of 3 afgeronde generaties betrouwbare data.",
+            "worker_coverage": coverage,
         }
 
     primary_rate = max(float(primary["metrics"]["throughput_per_observed_hour"] or 0), 0.01)
@@ -160,6 +251,7 @@ def scaling_assessment(workers: list[dict], desired_workers: int) -> dict:
         "reason": reason,
         "extra_vs_primary_throughput_ratio": round(avg_ratio, 2),
         "extra_idle_blocked_pct": round(avg_nonwork * 100.0, 1),
+        "worker_coverage": coverage,
     }
 
 
@@ -193,7 +285,7 @@ def report(db: Path, hours: float = 12.0, project: str | None = None, now: datet
 
     by_project: dict[str, list[dict]] = defaultdict(list)
     for (pid, slot), events in grouped.items():
-        by_project[pid].append({"worker_slot": slot, "metrics": worker_metrics(events)})
+        by_project[pid].append({"worker_slot": slot, "metrics": worker_metrics(events, now=now)})
 
     projects = []
     for pid, workers in sorted(by_project.items()):
@@ -201,10 +293,12 @@ def report(db: Path, hours: float = 12.0, project: str | None = None, now: datet
         desired_count = desired.get(pid, max((w["worker_slot"] for w in workers), default=1))
         total_finished = sum(w["metrics"]["completed_generations"] for w in workers if w["worker_slot"] <= desired_count)
         total_worker_hours = sum(w["metrics"]["observed_seconds"] for w in workers if w["worker_slot"] <= desired_count) / 3600.0
+        coverage = worker_coverage(workers, desired_count)
         projects.append({
             "project_id": pid,
             "desired_workers": desired_count,
             "observed_worker_slots": [w["worker_slot"] for w in workers],
+            "worker_coverage": coverage,
             "completed_generations": total_finished,
             "completed_per_worker_hour": round(total_finished / total_worker_hours, 2) if total_worker_hours > 0 else None,
             "duplicate_work_prevented": conflicts.get(pid, 0),
@@ -216,7 +310,7 @@ def report(db: Path, hours: float = 12.0, project: str | None = None, now: datet
         "generated_at": now.isoformat(),
         "window_hours": float(hours),
         "cutoff": cutoff.isoformat(),
-        "method": "observational runner telemetry; heartbeat gaps >150s excluded; no causal claim",
+        "method": "observational runner telemetry; heartbeat gaps >150s excluded; scaling assessment requires every desired slot and a fresh heartbeat; no causal claim",
         "projects": projects,
     }
 
