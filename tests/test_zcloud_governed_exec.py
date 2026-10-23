@@ -2,6 +2,8 @@ import importlib.util
 import json
 import os
 import sqlite3
+import subprocess
+import time
 import sys
 import tempfile
 import unittest
@@ -296,6 +298,58 @@ class GovernedExecTests(unittest.TestCase):
                     )
         finally:
             conn.close()
+
+
+    def test_waiting_heavy_contender_starts_only_after_holder_releases(self):
+        # Exercise two independent SQLite users, not a mocked capacity
+        # calculator. The wrapper must rollback while waiting and must
+        # launch the child only after the original heavy lease is gone.
+        holder = self._connect()
+        self.assertTrue(
+            runtime.acquire_resource(holder, "ftmo", "first-owner")["acquired"]
+        )
+        holder.commit()
+        output = self.root / "waiter-started.txt"
+        command = [
+            sys.executable,
+            str(ROOT / "scripts" / "zcloud_governed_exec.py"),
+            "--db", str(self.db), "--project", "haxlab",
+            "--owner", "second-owner", "--wait-seconds", "5",
+            "--lease-seconds", "180", "--renew-seconds", "30",
+            "--", sys.executable, "-c",
+            f"from pathlib import Path; Path({str(output)!r}).write_text('started')",
+        ]
+        contender = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            # The contender must have reached its wait loop before the
+            # existing holder releases the one-slot heavy pool.
+            time.sleep(0.8)
+            self.assertIsNone(contender.poll())
+            self.assertFalse(output.exists())
+            runtime.release_resource(holder, "ftmo", "first-owner")
+            holder.commit()
+            stdout, stderr = contender.communicate(timeout=12)
+            self.assertEqual(0, contender.returncode, (stdout, stderr))
+            self.assertEqual("started", output.read_text())
+            check = self._connect()
+            try:
+                self.assertEqual(
+                    0, runtime.resource_status(check)["pools"]["heavy"]["used"]
+                )
+            finally:
+                check.close()
+        finally:
+            if contender.poll() is None:
+                contender.terminate()
+                try:
+                    contender.communicate(timeout=3)
+                except subprocess.TimeoutExpired:
+                    contender.kill()
+                    contender.communicate(timeout=3)
+            holder.close()
 
 
 if __name__ == "__main__":
