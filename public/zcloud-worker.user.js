@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      2.0.5
+// @version      2.0.6
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -35,7 +35,7 @@
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
   window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
   sessionStorage.setItem("zcloud-v2-worker",id);
-  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.5");
+  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.6");
   document.documentElement?.setAttribute("data-zcloud-v2-owner",id);
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -62,7 +62,7 @@
   const visible=el=>{if(!el)return false;const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=="none"&&s.visibility!=="hidden"&&r.width>0&&r.height>0};
   const generating=()=>!!document.querySelector('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]');
   const reply=()=>{const a=[...document.querySelectorAll('[data-message-author-role="assistant"]')];return a.length?String(a[a.length-1].innerText||a[a.length-1].textContent||"").trim():""};
-  const conversation=()=>location.pathname.match(/^\/c\/([0-9a-f-]{20,})/i)?.[1]||"";
+  const conversation=()=>location.pathname.match(/\/c\/([0-9a-f-]{20,})(?:\/|$)/i)?.[1]||"";
   const assistantCount=()=>document.querySelectorAll('[data-message-author-role="assistant"]').length;
   function api(path,method="GET",body=null){
     return new Promise((resolve,reject)=>GM_xmlhttpRequest({
@@ -82,8 +82,8 @@
       target:location.href,targetConversation:conversation(),title:document.title,
       event,at,progressAt:at,generating:generating(),sending,
       assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.5",...extra
-    })}catch(_){}
+      provider:"chatgpt",runnerVersion:"2.0.6",...extra
+    });return true}catch(_){return false}
   }
   async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
   function high(){
@@ -149,7 +149,8 @@
     return true;
   }
   const composer=()=>document.querySelector('#prompt-textarea,[contenteditable="true"][role="textbox"],textarea');
-  const sendButton=()=>document.querySelector('button[data-testid="send-button"],button[aria-label="Send message"],button[aria-label="Verzenden"]');
+  const sendButton=()=>[...document.querySelectorAll('button[data-testid="send-button"],button[aria-label="Send"],button[aria-label="Send message"],button[aria-label="Verzenden"]')]
+    .find(el=>visible(el)&&!el.disabled&&el.getAttribute("aria-disabled")!=="true")||null;
   async function fill(text){
     const box=composer();if(!visible(box))return false;
     box.focus({preventScroll:true});
@@ -232,7 +233,8 @@
       if(!ready(fresh.projects?.[id])||fresh.projects[id].queue_item.queue_id!==target.queue_item.queue_id){
         await blocked("assignment-changed-before-send");return false;
       }
-      const button=sendButton();
+      let button=sendButton();
+      for(let n=0;!button&&n<30;n++){await sleep(100);button=sendButton()}
       if(!visible(button)||button.disabled||button.getAttribute("aria-disabled")==="true"){
         await blocked("send-button-unavailable");return false;
       }
@@ -296,17 +298,22 @@
       }
       await status("heartbeat",{reason:"worker-v2-check-30s"});
       const cid=conversation();
-      if(cid && cid!==reportedConversation) {
-        reportedConversation=cid;
-        sessionStorage.setItem("zcloud-v2-reported-conversation",cid);
-        await status("conversation-adopted",{
+      // The durable server binding, not a sessionStorage cache, acknowledges
+      // adoption. Retry failed delivery and repair a restored/missing binding.
+      if(cid && (cid!==reportedConversation || cid!==actual.conversation_id)) {
+        const adopted=await status("conversation-adopted",{
           reason:"v2-in-place-conversation",targetConversation:cid
         });
+        if(adopted){
+          reportedConversation=cid;
+          sessionStorage.setItem("zcloud-v2-reported-conversation",cid);
+        }
       }
       if(generating()){
+        const started=!observedGenerating;
         observedGenerating=true;
         everGenerating=true;awaiting=false;
-        await status("generation-progress");return;
+        await status(started?"generation-started":"generation-progress");return;
       }
       if(resetRoute!==null){
         if(failedConversation()||!visible(composer())||
@@ -414,7 +421,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "2.0.5";
+  const SCRIPT_VERSION = "2.0.6";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -734,13 +741,13 @@
     if (current && current.token !== tabToken && Number(current.expiresAt || 0) > now) return false;
     try {
       GM_setValue(claimKey(projectId), {
-        token: tabToken,
+        token=[REDACTED]
         expiresAt: now + TAB_CLAIM_LEASE_MS,
         provider: candidateProvider(candidate),
         href: location.href
       });
       const verified = readClaim(projectId);
-      return !!verified && verified.token === tabToken;
+      return !!verified && verified.token=[REDACTED] tabToken;
     } catch (_) {
       return true;
     }
@@ -753,7 +760,7 @@
     if (current && current.token !== tabToken && Number(current.expiresAt || 0) > Date.now()) return;
     try {
       GM_setValue(claimKey(projectId), {
-        token: tabToken,
+        token=[REDACTED]
         expiresAt: Date.now() + TAB_CLAIM_LEASE_MS,
         provider: candidateProvider(candidate),
         href: location.href
@@ -765,7 +772,7 @@
     const projectId = String(candidate?.project_id || "");
     if (!projectId) return;
     const current = readClaim(projectId);
-    if (current && current.token === tabToken) {
+    if (current && current.token=[REDACTED] tabToken) {
       try { GM_deleteValue(claimKey(projectId)); } catch (_) {}
     }
   }
