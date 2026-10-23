@@ -354,21 +354,36 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                     # claim, a merge, or a declaration that the issue is fixed.
                     body = pr.get("body")
                     body = body if isinstance(body, str) and len(body) <= 32000 else ""
+                    # Match ONLY explicit same-repository issue links.
+                    # Cross-project issues and PR URLs are not candidates for
+                    # same-repository fixes, even if their numeric IDs match.
+                    issue_link = re.compile(
+                        re.escape("https://github.com/" + repo + "/issues/") +
+                        r"([1-9][0-9]{0,7})(?![A-Za-z0-9/_-])"
+                    )
+                    hash_reference = re.compile(
+                        r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b"
+                    )
                     references_in_title = {
-                        int(m.group(1)) for m in re.finditer(
-                            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b", title
-                        )
+                        int(m.group(1)) for m in hash_reference.finditer(title)
+                    } | {
+                        int(m.group(1)) for m in issue_link.finditer(title)
                     }
                     references_in_body = {
-                        int(m.group(1)) for m in re.finditer(
-                            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b", body
-                        )
+                        int(m.group(1)) for m in hash_reference.finditer(body)
+                    } | {
+                        int(m.group(1)) for m in issue_link.finditer(body)
                     }
                     referenced = references_in_title | references_in_body
                     closing_references = {
                         int(m.group(1)) for m in re.finditer(
                             r"(?i)\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\s+#([1-9][0-9]{0,7})\b",
                             body
+                        )
+                    } | {
+                        int(m.group(1)) for m in re.finditer(
+                            r"(?i)\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\s+" +
+                            issue_link.pattern, body
                         )
                     }
                     for issue_num in referenced:
