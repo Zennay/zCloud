@@ -362,6 +362,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             summary[pid]["historical_unresolved_sample_hits"] += 1
     notion = decision.get("notion_claims_observation")
     status_source_windows = None
+    project_relation_coverage = "not_observed"
+    unresolved_project_relation_count = None
     if notion is not None:
         if (not isinstance(notion, dict)
                 or notion.get("source") not in (
@@ -378,6 +380,21 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                          or notion.get("live_claim_ownership_verified") is not False))
                 or not isinstance(notion.get("active_project_counts"), dict)):
             raise ValueError("invalid Notion project statuses")
+        live_notion = notion["source"] == "notion_readonly_data_source_pages"
+        if live_notion:
+            project_relation_coverage = notion.get("project_relation_coverage")
+            unresolved_project_relation_count = notion.get("unresolved_project_relation_count")
+            active_count = notion.get("active_count")
+            if (project_relation_coverage not in ("complete", "partial")
+                    or type(active_count) is not int or not 0 <= active_count <= 400
+                    or type(unresolved_project_relation_count) is not int
+                    or not 0 <= unresolved_project_relation_count <= active_count
+                    or (project_relation_coverage == "complete") !=
+                       (unresolved_project_relation_count == 0)):
+                raise ValueError("invalid Notion project-relation coverage")
+        elif ("project_relation_coverage" in notion
+              or "unresolved_project_relation_count" in notion):
+            raise ValueError("saved Notion snapshot cannot claim live project-relation coverage")
         counts = notion["active_project_counts"]
         # Native live observation exports one bounded coverage receipt for
         # each status; a manually saved snapshot cannot claim this provenance.
@@ -390,6 +407,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 raise ValueError("untrusted live Notion per-status windows")
             total_pages = 0
             total_matched = 0
+            unresolved_relations_from_windows = 0
             any_partial = False
             for item, (expected_status, expected_budget) in zip(live_windows, expected):
                 if (type(item) is not dict
@@ -400,17 +418,21 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                         or item["page_budget"] != expected_budget
                         or type(item.get("observed_rows")) is not int
                         or not 0 <= item["observed_rows"] <= item["pages_read"] * 100
+                        or type(item.get("unresolved_project_relations")) is not int
+                        or not 0 <= item["unresolved_project_relations"] <= item["observed_rows"]
                         or item.get("coverage") not in ("partial", "complete_within_source")
                         or item.get("read_only") is not True
                         or item.get("claim_scope_verified") is not False):
                     raise ValueError("invalid Notion source window receipt")
                 total_pages += item["pages_read"]
                 total_matched += item["observed_rows"]
+                unresolved_relations_from_windows += item["unresolved_project_relations"]
                 any_partial |= item["coverage"] == "partial"
             if (type(notion.get("total_pages_read")) is not int
                     or notion["total_pages_read"] != total_pages
                     or total_pages > 4
                     or notion.get("active_count") != total_matched
+                    or unresolved_relations_from_windows != unresolved_project_relation_count
                     or (notion.get("coverage") == "incomplete") != any_partial):
                 raise ValueError("Notion source-window totals disagree")
             status_source_windows = [dict(item) for item in live_windows]
@@ -498,6 +520,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                          else "local_sqlite_transaction_query_only"),
         "queue_owner_authorized": False,
         "notion_status_source_windows": status_source_windows,
+        "notion_project_relation_coverage": project_relation_coverage,
+        "unresolved_project_relation_count": unresolved_project_relation_count,
         "unregistered_queue_project_groups": None if queue_missing else unknown_count,
         "rows": list(summary.values()),
         "actions_performed": False,
@@ -744,6 +768,17 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             for item in notion_windows
         ) + ". GEEN bewijs van actieve lease, claimvrijgave of volledige queue.</p>"
     )
+    notion_relation_html = (
+        '<p class="muted">Projectrelaties: ONBEKEND; geen vrije-werkconclusie uit deze bron.</p>'
+        if summary.get("notion_project_relation_coverage") == "not_observed" else
+        ('<p class="banner">PROJECTRELATIES ONVOLLEDIG — ' +
+         str(summary["unresolved_project_relation_count"]) +
+         ' actieve rij(en) zonder eenduidige canonieke projectmapping. '
+         'Geen vrije-werkconclusie; bevoegde eigenaar hercontroleert de bron.</p>')
+        if summary.get("notion_project_relation_coverage") == "partial" else
+        '<p class="muted">Projectrelaties compleet binnen deze begrensde bronwaarneming; '
+        'dit bewijst geen lease, bestandseigendom of vrijgave.</p>'
+    )
     coverage = (
         "Huidige wachtrijmomentopname is volledig binnen de observerlimiet; "
         "maar er is GEEN geverifieerd bestandseigendom."
@@ -752,7 +787,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
     )
     table = (
         '<section><h2>Volledig portfolio · gedeeltelijke broncontrole</h2>'
-        '<p class="muted">' + caption + '</p>' + notion_coverage_html +
+        '<p class="muted">' + caption + '</p>' + notion_relation_html + notion_coverage_html +
         '<p class="banner">' + coverage +
         ' Geen claim, workflow, herstart, lease of deploy uitgevoerd.</p>'
         '<div class="wrap"><table><thead><tr><th scope="col">Project</th>'
