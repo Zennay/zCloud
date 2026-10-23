@@ -75,7 +75,7 @@ quarantine_own_site() {
   [[ -n "$SITE_ID" && -f "$SITE" && ! -L "$SITE" ]] || return 1
   current_id="$(stat -c '%d:%i' "$SITE")" || return 1
   [[ "$current_id" = "$SITE_ID" ]] || return 1
-  destination="/etc/caddy/zcloud-dashboard-${reason}-$(date +%s)-$.caddy"
+  destination="/etc/caddy/zcloud-dashboard-${reason}-$(date +%s)-$BASHPID.caddy"
   [[ ! -e "$destination" && ! -L "$destination" ]] || return 1
   mv -n -- "$SITE" "$destination" || return 1
   [[ ! -e "$SITE" && ! -L "$SITE" && -f "$destination" ]] || return 1
