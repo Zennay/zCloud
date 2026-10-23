@@ -209,7 +209,12 @@
     return navigator.locks.request("zcloud-chatgpt-composer",{ifAvailable:true},
       lock=>lock?sendLocked(reason):false);
   }
+  function approvalPending(){
+    return [...document.querySelectorAll("button")].some(el=>visible(el)&&
+      /^(Allow once|Always allow|Eenmalig toestaan|Altijd toestaan)/i.test(label(el)));
+  }
   async function sendLocked(reason){
+    if(approvalPending()){await blocked("human-approval-pending");return false}
     if(sending||awaiting||generating()||!target||!ready(target))return false;
     if(!(await forceAllowed())){await blocked("force-tab-handoff-required");return false}
     const fullPrompt=String(target.prompt||"").trim();if(!fullPrompt)return false;

@@ -170,6 +170,15 @@
       await rememberWorker(id);
       if (workerWindow === null) workerWindow = tab.windowId;
     }
+    // A restored Firefox session tag is the durable authority. Bootstrap
+    // the page even if document-start messaging raced extension startup.
+    for(const [key,tabId] of ownership){
+      const tab=tabs.find(t=>t.id===tabId);
+      if(!tab || !isWorkerUrl(tab.url) || await tagOf(tab)!==key)continue;
+      try{await browser.tabs.executeScript(tabId,{code:
+        '(() => { const key='+JSON.stringify(key)+'; const prior=sessionStorage.getItem("zcloud-v2-worker"); if(prior && prior!==key)return; sessionStorage.setItem("zcloud-v2-worker",key); document.documentElement?.dispatchEvent(new Event("zcloud-worker-identity-ready")); })()'
+      })}catch(_){}
+    }
     return tabs;
   }
   async function chooseWindow(tabs) {
