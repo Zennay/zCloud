@@ -201,17 +201,30 @@ A complete `state` is one of:
   separate filesystem; an archive directory is not a separate drive.
 - `read_only_mount` / `mount_writability_unknown`: archive mount flags
   cannot support or prove writes.
+- `virtual_or_network_mount`: the kernel reports FUSE (including rclone),
+  network, or virtual storage. **Not a local block-device training target**,
+  even if the provider advertises ample capacity.
+- `block_backing_unknown`: no verified block-special device node for the
+  configured local filesystem source; owner inspection is required.
 - `free_space_unknown` / `below_30_gib`: free-space evidence unavailable or
   below the minimum, even when other mount evidence is valid.
 - `capacity_candidate_not_training_authorization`: separate mounted
-  filesystem, non-read-only mount flag, at least 30 GiB free. **This is only an
-  archive-capacity candidate, not an external physical drive or training
-  readiness verdict.**
+  filesystem, non-read-only mount flag, verified block-special device source
+  hint, at least 30 GiB free. **This is only a capacity candidate, not proof
+  of an external physical drive or a permitted training output target.**
 
 Every state has a concise `operator_summary`, a stable
 `next_step_code`, and a matching `operator_action_codes` entry (for example
-`ARCHIVE_BULK_BELOW_30_GIB` or
-`ARCHIVE_BULK_CAPACITY_CANDIDATE_REQUIRES_EXTERNAL_PROOF`). The receipt
+`ARCHIVE_BULK_BELOW_30_GIB`, `ARCHIVE_BULK_REJECT_VIRTUAL_OR_NETWORK`,
+`ARCHIVE_BULK_BLOCK_DEVICE_NOT_VERIFIED`, or
+`ARCHIVE_BULK_CAPACITY_CANDIDATE_REQUIRES_EXTERNAL_PROOF`).
+The backing clue is obtained from bounded exact-target `/proc/self/mountinfo`
+filesystem/source data; common local Linux filesystems require an actual
+block-special `/dev` source, not a path name alone. Backing classification
+is re-observed after the capacity sample. Only the privacy-safe
+`filesystem_backing` enum is returned; source device paths, major/minor IDs,
+mount IDs, credentials, and raw mountinfo remain private. Malformed, changing,
+unreadable and unsupported evidence remains UNKNOWN. The receipt
 **always** sets `physical_drive_separation_verified=false`,
 `training_output_path_verified=false`,
 `training_user_write_permission_verified=false`,
