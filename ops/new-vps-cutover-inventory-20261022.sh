@@ -4,6 +4,10 @@
 set -Eeuo pipefail
 
 expected='VM-7eb5ee16-2c71-440d-b7fd-8095d204e930'
+[[ $# -le 1 ]] || {
+  echo "Refusing extra arguments; use --help for the supported modes." >&2
+  exit 2
+}
 mode='status'
 case "${1:-}" in
   '') ;;
@@ -20,12 +24,28 @@ esac
   exit 2
 }
 if [[ "$mode" == 'apply-base' ]]; then
+  # Validate every prerequisite before the first state change to avoid partial activation.
+  archive_load="$(systemctl show zcloud-external-archive.service -p LoadState --value 2>/dev/null || true)"
+  docker_load="$(systemctl show docker.service -p LoadState --value 2>/dev/null || true)"
+  [[ "$archive_load" == 'loaded' ]] || {
+    echo 'Refusing base activation: zcloud-external-archive.service is not installed.' >&2
+    exit 3
+  }
+  [[ "$docker_load" == 'loaded' ]] || {
+    echo 'Refusing base activation: docker.service is not installed.' >&2
+    exit 3
+  }
+  command -v docker >/dev/null 2>&1 || {
+    echo 'Refusing base activation: Docker CLI is missing; no package install will be attempted.' >&2
+    exit 3
+  }
   # Deliberately narrow opt-in: no GitHub runner, scheduler, queue or browser mutation.
   out="/var/log/zcloud-cutover-base-$(date +%Y%m%d-%H%M%S).log"
   exec > >(tee "$out") 2>&1
   echo "-- explicit base-service activation --"
-  systemctl enable --now docker.service
+  echo "preflight archive=$archive_load docker=$docker_load docker_cli=present"
   systemctl enable --now zcloud-external-archive.service
+  systemctl enable --now docker.service
 fi
 
 echo "=== $(date -Is) / $(hostname) / mode=$mode ==="
