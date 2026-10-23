@@ -2100,6 +2100,16 @@ def _notion_review_summary(report):
                 or source.get("coverage") not in ("partial", "complete_within_source")
                 or source.get("owner_verified") is not False):
             raise ValueError("untrusted displayed Notion source window")
+    if value["coverage"] in ("live_readonly_bounded", "live_readonly_incomplete"):
+        if (len(status_windows) != 3
+                or any(type(win.get("unresolved_project_relations")) is not int
+                       or not 0 <= win["unresolved_project_relations"] <= win["observed_rows"]
+                       for win in status_windows)
+                or sum(win["unresolved_project_relations"] for win in status_windows)
+                   != unresolved_relations):
+            raise ValueError("Notion project relation status-window counts disagree")
+    elif any("unresolved_project_relations" in win for win in status_windows):
+        raise ValueError("saved Notion source cannot assert live relation windows")
     seen = set()
     for row in value["projects"]:
         if type(row) is not dict or row.get("project") in seen:
@@ -2307,8 +2317,47 @@ def _notion_clock_owner_overview(report):
              if source["owner_cards_sample_truncated"] else "") +
             "GEEN queueclaim of hersteltoestemming.")
 
+def _notion_relation_card_detail(card, report):
+    """Validate the single registry-owner action against the exact live windows."""
+    if card.get("kind") != "notion_project_relation_owner_review":
+        return ""
+    notion = _notion_review_summary(report)
+    meta = report.get("notion_project_relation_owner_review")
+    if (notion is None or type(meta) is not dict
+            or notion["coverage"] != "live_readonly_incomplete"
+            or notion["project_relation_coverage"] != "partial"
+            or meta.get("coverage") != notion["coverage"]
+            or meta.get("source_count") != notion["unresolved_project_relation_count"]
+            or meta.get("source_only_not_owner_proof") is not True
+            or any(meta.get(k) is not False for k in (
+                "claim_authorized", "retry_authorized", "dispatch_authorized"))
+            or meta.get("owner_card_shown") is not True
+            or meta.get("owner_card_omitted") is not False
+            or card.get("project") != "cloud"
+            or card.get("notion_claim_owner_verified") is not False
+            or card.get("queue_lease_same_work_verified") is not False
+            or card.get("notion_observed_at_utc") != notion["observed_at_utc"]
+            or notion["source_age_seconds"] is None
+            or notion["source_age_seconds"] > 600):
+        raise ValueError("untrusted Notion project-relation owner card")
+    unresolved = notion["unresolved_project_relation_count"]
+    in_progress = sum(win["unresolved_project_relations"]
+                      for win in notion["status_windows"]
+                      if win["status"] in ("Claimed", "Running"))
+    if (type(unresolved) is not int or not 1 <= unresolved <= 400
+            or card.get("notion_unresolved_project_relations") != unresolved
+            or card.get("notion_unresolved_claimed_running_relations") != in_progress
+            or card.get("priority") != ("P1" if in_progress else "P2")):
+        raise ValueError("Notion registry-owner card contradicts source status")
+    return ("Notion bron " + notion["observed_at_utc"] +
+            " · " + str(unresolved) + " projectrelaties onbekend, " +
+            str(in_progress) + " bij Claimed/Running; alleen handmatige "
+            "register-/taakeigenaarcontrole, GEEN claim of herverdeling.")
+
 def _notion_clock_card_detail(card, report):
     """Bind a suggested owner recheck to the original bounded Notion read."""
+    if card.get("kind") == "notion_project_relation_owner_review":
+        return _notion_relation_card_detail(card, report)
     if card.get("kind") != "notion_claim_clock_owner_review":
         return ""
     summary = report.get("notion_claim_clock_owner_review")
