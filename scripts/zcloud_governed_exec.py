@@ -150,6 +150,41 @@ def _group_rss_bytes(group_id: int) -> int:
     return used
 
 
+def _renew_existing_lease(conn, project_id: str, owner_id: str,
+                          lease_seconds: int, metadata: dict) -> dict:
+    """Renew only a STILL-ACTIVE lease, never reacquire a lost heavy slot.
+
+    A scheduled renewal may be delayed beyond TTL by a paused worker or
+    SQLite contention. The normal public acquire API can admit a *new*
+    lease after expiry; that would allow a running orphan and a second
+    heavyweight project to overlap. Serialize verification and renewal.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        row = conn.execute(
+            "SELECT lease_until FROM resource_leases "
+            "WHERE project_id=? AND owner_id=?", (project_id, owner_id)
+        ).fetchone()
+        if row is None or not str(row["lease_until"]) > now:
+            conn.rollback()
+            return {"acquired": False, "reason": "resource_lease_lost",
+                    "project_id": project_id}
+        result = runtime.acquire_resource(
+            conn, project_id, owner_id, lease_seconds=lease_seconds,
+            metadata=metadata,
+        )
+        if not result.get("acquired") or result.get("renewed") is not True:
+            conn.rollback()
+            return {"acquired": False, "reason": "resource_renewal_not_confirmed",
+                    "project_id": project_id}
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def _signal_process_group(proc: subprocess.Popen | None, signum: int) -> None:
     if proc is None:
         return
@@ -264,14 +299,10 @@ def run_governed(
             start_new_session=True,
         )
 
-        renewed = runtime.acquire_resource(
-            conn,
-            project_id,
-            owner_id,
-            lease_seconds=lease_seconds,
-            metadata=_metadata(command, pid=proc.pid),
+        renewed = _renew_existing_lease(
+            conn, project_id, owner_id, lease_seconds,
+            _metadata(command, pid=proc.pid),
         )
-        conn.commit()
         if not renewed.get("acquired"):
             _stop_process_group(proc)
             _admission_denied(renewed)
@@ -308,14 +339,10 @@ def run_governed(
                     return 75
                 next_memory_check = now + 2.0
             if now >= next_renewal:
-                renewed = runtime.acquire_resource(
-                    conn,
-                    project_id,
-                    owner_id,
-                    lease_seconds=lease_seconds,
-                    metadata=_metadata(command, pid=proc.pid),
+                renewed = _renew_existing_lease(
+                    conn, project_id, owner_id, lease_seconds,
+                    _metadata(command, pid=proc.pid),
                 )
-                conn.commit()
                 if not renewed.get("acquired"):
                     _stop_process_group(proc)
                     _admission_denied(renewed)
