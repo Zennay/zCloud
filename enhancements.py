@@ -942,6 +942,7 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
     now_ts=datetime.now(timezone.utc)
     items=[]
     claim_sources=[]
+    alert_items=[]
     # Bind alert rows and matching lease evidence to one short-lived,
     # read-only SQLite snapshot. Multiple per-alert opens could otherwise
     # combine incompatible claim/alert moments during scheduler churn.
@@ -959,12 +960,14 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
                         continue
                 incident=_incident_from_alert(alert,recovery,now_ts)
                 if incident:
-                    items.append(incident)
+                    alert_items.append(incident)
+        items.extend(alert_items)
     except Exception:
         # Keep independently observed worker/service incidents available.
         # An alert read failure is never a clean/no-conflict receipt.
         alerts_source_status, alerts_more = "unavailable", None
         claim_sources=[]
+        alert_items=[]
     for project in (data or {}).get("projects", []):
         if project.get("health")=="healthy" or project.get("status")=="archived":
             continue
