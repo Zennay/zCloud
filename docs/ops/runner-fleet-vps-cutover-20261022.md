@@ -55,3 +55,7 @@
 - No new runner has yet been registered or job-assignment-proven by this migration.
 
 **Release acceptance:** 14/14 fresh registrations; all correct per-repository custom labels and GitHub online status; each new `systemd` unit active; no source/destination duplicate identity; source services retired; genuine positive GitHub runner IDs from assigned jobs. Track separately from zCloud production deploy readiness.
+
+## Assignment-proof command exit status
+
+`--action verify-jobs` is read-only and fail-closed: it exits successfully only when every selected repository has at least one **completed successful** workflow job with a positive runner ID and the exact newly registered runner name. Queued, in-progress, failed, or unavailable job receipts do not count as proof; the command exits non-zero while any selected repository remains unproven. A safe, separately approved job dispatch is required to create missing receipts.
