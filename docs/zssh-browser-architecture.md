@@ -69,6 +69,7 @@ considered resolved; service-active alone is not proof of that.
 
 - A valid explicit `execution_capability` (`browser`, `system` or `none`) takes precedence over keyword inference.
 - A non-empty unsupported explicit capability is treated as `none`; it does not fall back to heuristics.
+- `metadata_json` rejects duplicate JSON keys (including nested objects), malformed JSON and non-object JSON. Invalid metadata returns `capability=none`, `tool=null` and `route_reason=invalid_metadata_json`; it never falls through to keyword inference.
 - Without an explicit capability, mixed browser and system action signals return `capability=none` with `route_reason=ambiguous_mixed_capability`. A human or the source task metadata must disambiguate it.
 - Mentions of the zSSH transport or a VPS are not by themselves system-action signals, so a browser task can still select the browser module when it says that it runs through zSSH/on a VPS.
 - The result is only a routing hint. `authorized` remains false, pairing is still required, and all zSSH policy/approval gates remain authoritative.
