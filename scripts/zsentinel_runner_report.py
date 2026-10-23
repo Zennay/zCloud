@@ -298,16 +298,25 @@ def render_comparison(comparison):
         else:
             kill_text = ("Kernel-OOM-verschil ONBEKEND (bron ontbreekt, "
                          "tegenstrijdig of opnieuw opgestart).")
-        psi_text = (
+        full_flag = oom.get("memory_psi_full_comparable")
+        some_flag = oom.get("memory_psi_some_comparable")
+        full_comparable = (full_flag if type(full_flag) is bool else
+                           oom.get("memory_psi_source_comparable") is True)
+        some_comparable = (some_flag if type(some_flag) is bool else
+                           oom.get("memory_psi_source_comparable") is True)
+        full_text = (
             "Hostbrede PSI full avg10: "
             + _value(oom.get("previous_psi_full_avg10_percent"), "%") +
-            " → " + _value(oom.get("current_psi_full_avg10_percent"), "%") +
-            "; some avg10: "
-            + _value(oom.get("previous_psi_some_avg10_percent"), "%") +
-            " → " + _value(oom.get("current_psi_some_avg10_percent"), "%") + "."
-            if oom.get("memory_psi_source_comparable") is True
-            else "Geheugen-PSI-bron op een of beide momenten ONBEKEND."
+            " → " + _value(oom.get("current_psi_full_avg10_percent"), "%")
+            if full_comparable else "Hostbrede PSI full avg10: ONBEKEND."
         )
+        some_text = (
+            "some avg10: "
+            + _value(oom.get("previous_psi_some_avg10_percent"), "%") +
+            " → " + _value(oom.get("current_psi_some_avg10_percent"), "%")
+            if some_comparable else "some avg10: ONBEKEND."
+        )
+        psi_text = full_text + "; " + some_text
     else:
         kill_text = "Geen kerneltellervergelijking in dit oude bronformaat."
         psi_text = "Geen geheugen-PSI-vergelijking in dit oude bronformaat."
