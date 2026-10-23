@@ -107,6 +107,21 @@ def _assert_portfolio_pool_capacities(contracts: dict) -> None:
             raise RuntimeError("resource_project_pool_contract_unsafe")
 
 
+def _local_boot_identity() -> str:
+    """Identify the Linux host boot owning a heavy supervised lease.
+
+    A PID, PGID or systemd cgroup path is local to one host/boot. A
+    different VPS must never treat its own empty /proc as proof that
+    an expired heavy process from the other host has stopped.
+    """
+    try:
+        value = Path("/proc/sys/kernel/random/boot_id").read_text().strip().lower()
+        import uuid
+        return str(uuid.UUID(value))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("resource_host_boot_identity_unavailable") from exc
+
+
 def _service_cgroup_for_pid(pid: int) -> str | None:
     """Capture the dedicated systemd service identity of a supervised child."""
     if sys.platform != "linux":
@@ -199,6 +214,12 @@ def _expired_heavy_group_active(conn) -> bool:
                 return True
             pid = metadata.get("pid")
             scope = metadata.get("service_cgroup")
+            if metadata.get("executor") == "zcloud-governed-exec":
+                # The original lease may come from another VPS or a prior
+                # boot. Local PID/cgroup absence cannot prove remote cleanup.
+                # Missing legacy boot evidence is likewise inconclusive.
+                if metadata.get("host_boot_id") != _local_boot_identity():
+                    return True
             if pid is None:
                 # Child may have started and detached before its first
                 # PID-bearing renewal. The pre-launch lease already
@@ -529,7 +550,8 @@ def _apply_process_limits(project_id: str, parent_pid: int | None = None,
         resource.setrlimit(resource.RLIMIT_AS, (new_soft, hard))
 
 
-def _metadata(command, *, pid=None, service_cgroup=None):
+def _metadata(command, *, pid=None, service_cgroup=None,
+              host_boot_id=None):
     # Only bounded command identity belongs in the lease, not arguments,
     # private file paths, environment values or unbounded free-form text.
     basename = Path(str(command[0])).name if command else ""
@@ -553,6 +575,8 @@ def _metadata(command, *, pid=None, service_cgroup=None):
             service_cgroup = _service_cgroup_for_pid(int(pid))
     if service_cgroup is not None:
         payload["service_cgroup"] = service_cgroup[:256]
+    if host_boot_id is not None:
+        payload["host_boot_id"] = host_boot_id
     return payload
 
 
@@ -724,6 +748,8 @@ def _retain_owned_lease(conn, project_id: str, owner_id: str,
             incident["pid"] = metadata["pid"]
         if isinstance(metadata.get("service_cgroup"), str):
             incident["service_cgroup"] = metadata["service_cgroup"][:256]
+        if isinstance(metadata.get("host_boot_id"), str):
+            incident["host_boot_id"] = metadata["host_boot_id"][:36]
         encoded = json.dumps(incident, separators=(",", ":"), sort_keys=True)
         until = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()
         cursor = conn.execute(
@@ -974,6 +1000,7 @@ def run_governed(
     db_identity = _pinned_database_identity(Path(db_path))
     live_authority = _uses_live_governor_authority(Path(db_path))
     heavy_scope = None
+    heavy_boot_id = None
     # On a pinned live heavy service, no old orphan or detached training
     # child may share the unit before the next lease is even requested.
     # This closes the window after a crashed wrapper's lease has expired:
@@ -985,6 +1012,7 @@ def run_governed(
         heavy_scope = _service_cgroup_for_pid(os.getpid())
         if heavy_scope is None:
             raise RuntimeError("resource_heavy_service_identity_unavailable")
+        heavy_boot_id = _local_boot_identity()
     conn = connect(Path(db_path))
     try:
         _assert_database_identity(Path(db_path), db_identity)
@@ -1052,7 +1080,8 @@ def run_governed(
                 project_id,
                 owner_id,
                 lease_seconds=lease_seconds,
-                metadata=_metadata(command, service_cgroup=heavy_scope),
+                metadata=_metadata(command, service_cgroup=heavy_scope,
+                                   host_boot_id=heavy_boot_id),
             )
             if (not result.get("acquired") or result.get("renewed")
                     or not _matches_admitted_contract(result.get("lease") or {}, compute)):
@@ -1142,7 +1171,8 @@ def run_governed(
         _assert_database_identity(Path(db_path), db_identity)
         renewed = _renew_existing_lease(
             conn, project_id, owner_id, acquired_at, lease_seconds,
-            _metadata(command, pid=proc.pid, service_cgroup=heavy_scope),
+            _metadata(command, pid=proc.pid, service_cgroup=heavy_scope,
+                      host_boot_id=heavy_boot_id),
             compute, live_authority,
         )
         if not renewed.get("acquired"):
@@ -1184,7 +1214,8 @@ def run_governed(
             if now >= next_renewal:
                 renewed = _renew_existing_lease(
                     conn, project_id, owner_id, acquired_at, lease_seconds,
-                    _metadata(command, pid=proc.pid, service_cgroup=heavy_scope),
+                    _metadata(command, pid=proc.pid, service_cgroup=heavy_scope,
+                      host_boot_id=heavy_boot_id),
                     compute, live_authority,
                 )
                 if not renewed.get("acquired"):
