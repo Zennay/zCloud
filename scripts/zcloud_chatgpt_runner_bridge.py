@@ -437,6 +437,14 @@ def _training_path_observation() -> dict[str, object]:
         "direct_mount_state": "unknown",
         "local_block_backing": "unknown",
         "mount_read_only": None,
+        "inode_observation_attempted": False,
+        "inode_status": "UNKNOWN",
+        "inodes_total": None,
+        "inodes_free": None,
+        "inodes_available": None,
+        "inodes_unavailable_percent": None,
+        "inode_pressure_hint": "UNKNOWN",
+        "evidence_warnings": [],
         "physical_external_disk_verified": False,
         "dataset_checkpoint_temp_paths_verified": False,
         "application_write_permissions_verified": False,
@@ -478,6 +486,47 @@ def _training_path_observation() -> dict[str, object]:
                         or free_blocks < 0 or free_blocks > blocks):
                     raise ValueError("training_capacity_invalid")
                 available = block_size * free_blocks
+
+                # A training target can have ample free bytes but no free
+                # inodes for checkpoints, shards or temporary files. Only
+                # attribute inode capacity when the actual output path is a
+                # stable, mounted, local-block, writable target.
+                if (mount_state == "mounted"
+                        and backing_before == "local_block_candidate"
+                        and not readonly_before):
+                    receipt["inode_observation_attempted"] = True
+                    try:
+                        inode_total = int(vfs.f_files)
+                        inode_free = int(vfs.f_ffree)
+                        inode_available = int(vfs.f_favail)
+                        if (inode_total <= 0 or inode_free < 0
+                                or inode_available < 0 or inode_free > inode_total
+                                or inode_available > inode_free):
+                            raise ValueError("invalid_training_inode_capacity")
+                        inode_unavailable = 100.0 * (
+                            inode_total - inode_available
+                        ) / inode_total
+                        inode_hint = (
+                            "CRITICAL" if inode_unavailable >= 99
+                            else "HIGH" if inode_unavailable >= 95
+                            else "ELEVATED" if inode_unavailable >= 90
+                            else "NO_LOCAL_THRESHOLD_CROSSED"
+                        )
+                        receipt.update({
+                            "inode_status": "OBSERVED",
+                            "inodes_total": inode_total,
+                            "inodes_free": inode_free,
+                            "inodes_available": inode_available,
+                            "inodes_unavailable_percent": round(inode_unavailable, 1),
+                            "inode_pressure_hint": inode_hint,
+                        })
+                    except (AttributeError, TypeError, ValueError, OverflowError):
+                        receipt["inode_status"] = "UNKNOWN"
+                        receipt["inode_pressure_hint"] = "UNKNOWN"
+                        receipt["evidence_warnings"].append(
+                            "training_inode_capacity_unavailable"
+                        )
+
                 vfs_after = os.statvfs(TRAINING_OUTPUT_PATH)
                 flags_after = getattr(vfs_after, "f_flag", None)
                 after = os.stat(TRAINING_OUTPUT_PATH, follow_symlinks=False)
@@ -501,6 +550,12 @@ def _training_path_observation() -> dict[str, object]:
                     receipt["state"] = "training_mount_read_only"
                 elif available < BULK_ARCHIVE_MIN_FREE_BYTES:
                     receipt["state"] = "training_space_below_30_gib"
+                elif receipt["inode_status"] != "OBSERVED":
+                    receipt["state"] = "training_inode_capacity_unknown"
+                elif receipt["inode_pressure_hint"] in ("CRITICAL", "HIGH"):
+                    receipt["state"] = "training_inode_pressure_high"
+                elif receipt["inode_pressure_hint"] == "ELEVATED":
+                    receipt["state"] = "training_inode_pressure_elevated"
                 else:
                     receipt["state"] = "training_capacity_candidate_owner_proof_required"
             except (OSError, ValueError, TypeError, OverflowError, AttributeError):
@@ -508,6 +563,13 @@ def _training_path_observation() -> dict[str, object]:
                 receipt["available_bytes"] = None
                 receipt["local_block_backing"] = "unknown"
                 receipt["mount_read_only"] = None
+                receipt["inode_observation_attempted"] = False
+                receipt["inode_status"] = "UNKNOWN"
+                receipt["inodes_total"] = None
+                receipt["inodes_free"] = None
+                receipt["inodes_available"] = None
+                receipt["inodes_unavailable_percent"] = None
+                receipt["inode_pressure_hint"] = "UNKNOWN"
 
     actions = {
         "path_missing": "VERIFY_TRAINING_PATH_EXISTS",
@@ -519,6 +581,9 @@ def _training_path_observation() -> dict[str, object]:
         "training_block_device_unverified": "VERIFY_TRAINING_BLOCK_DEVICE",
         "training_mount_read_only": "HOLD_TRAINING_READ_ONLY_MOUNT",
         "training_space_below_30_gib": "HOLD_TRAINING_INSUFFICIENT_SPACE",
+        "training_inode_capacity_unknown": "HOLD_TRAINING_INODE_CAPACITY_UNKNOWN",
+        "training_inode_pressure_high": "HOLD_TRAINING_INODE_PRESSURE",
+        "training_inode_pressure_elevated": "REVIEW_TRAINING_INODE_PRESSURE",
         "training_capacity_candidate_owner_proof_required": "VERIFY_TRAINING_EXTERNAL_DRIVE_AND_PATHS",
         "training_source_unavailable_or_changed": "REFRESH_TRAINING_STORAGE_EVIDENCE",
     }
@@ -532,6 +597,15 @@ def _training_path_observation() -> dict[str, object]:
         "training_block_device_unverified": "Training mount has no verified local block source.",
         "training_mount_read_only": "Training output mount is read-only.",
         "training_space_below_30_gib": "Training output mount has less than 30 GiB available.",
+        "training_inode_capacity_unknown": (
+            "Training output inode capacity is unknown; do not start or resume training."
+        ),
+        "training_inode_pressure_high": (
+            "Training output mount has high inode pressure; do not start or resume training."
+        ),
+        "training_inode_pressure_elevated": (
+            "Training output mount has elevated inode pressure; request owner review."
+        ),
         "training_capacity_candidate_owner_proof_required": (
             "A local block-backed mount with at least 30 GiB is a candidate only; "
             "a distinct physical disk, all artifact/temp paths and app-user access "
@@ -543,6 +617,17 @@ def _training_path_observation() -> dict[str, object]:
     receipt["operator_summary"] = summaries.get(
         receipt["state"], "Training storage evidence is unknown."
     )
+    if receipt["inode_observation_attempted"]:
+        if receipt["inode_status"] == "OBSERVED":
+            receipt["operator_summary"] += (
+                f" Training-output inodes available: {receipt['inodes_available']} "
+                f"of {receipt['inodes_total']} ({receipt['inodes_unavailable_percent']}% "
+                f"unavailable; {receipt['inode_pressure_hint']})."
+            )
+        else:
+            receipt["operator_summary"] += (
+                " Training-output inode capacity is UNKNOWN; preserve the training HOLD."
+            )
     return receipt
 
 
@@ -1028,6 +1113,9 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
         "VERIFY_TRAINING_BLOCK_DEVICE",
         "HOLD_TRAINING_READ_ONLY_MOUNT",
         "HOLD_TRAINING_INSUFFICIENT_SPACE",
+        "HOLD_TRAINING_INODE_CAPACITY_UNKNOWN",
+        "HOLD_TRAINING_INODE_PRESSURE",
+        "REVIEW_TRAINING_INODE_PRESSURE",
         "VERIFY_TRAINING_EXTERNAL_DRIVE_AND_PATHS",
         "REFRESH_TRAINING_STORAGE_EVIDENCE",
     }
@@ -1036,6 +1124,17 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
         codes.append(str(training["next_step_code"]))
     else:
         codes.append("REFRESH_TRAINING_STORAGE_EVIDENCE")
+    if isinstance(training, dict) and training.get("inode_observation_attempted") is True:
+        inode_code = (
+            "HOLD_TRAINING_INODE_CAPACITY_UNKNOWN"
+            if training.get("inode_status") != "OBSERVED" else
+            "HOLD_TRAINING_INODE_PRESSURE"
+            if training.get("inode_pressure_hint") in ("CRITICAL", "HIGH") else
+            "REVIEW_TRAINING_INODE_PRESSURE"
+            if training.get("inode_pressure_hint") == "ELEVATED" else None
+        )
+        if inode_code and inode_code not in codes:
+            codes.append(inode_code)
     evidence_warnings = capacity.get("evidence_warnings", [])
     if isinstance(evidence_warnings, list):
         if any(reason in evidence_warnings for reason in (
