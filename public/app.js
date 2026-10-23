@@ -309,9 +309,13 @@ function attentionPanel(projectId=''){
   }
   const all=DATA.attention_needed;
   const items=projectId?all.filter(item=>item.project_id===projectId):all;
+  const freshness=statusSnapshotFreshness();
+  const sourceNotice=freshness==='fresh'?''
+    :freshness==='stale'
+      ?'<p class="blocked-queue-warning" role="status">Showing last observed requests. Refresh before relying on this list or resolving an item.</p>'
+      :'<p class="blocked-queue-warning" role="status">The current status timestamp is missing or untrusted. Refresh before taking action.</p>';
   const notion=DATA?.portfolio_queue_health?.notion_attention_url||'';
   if(!items.length){
-    const freshness=statusSnapshotFreshness();
     if(projectId&&freshness==='fresh')return '';
     const headline=freshness==='fresh'?'Nothing needs you right now'
       :freshness==='stale'?'No human gates in the last snapshot':'Human-action status unconfirmed';
@@ -330,11 +334,11 @@ function attentionPanel(projectId=''){
     // Queue-bound Attention must be cleared by an attested resume of the original task.
     const control=queueId
       ?'<button type="button" data-resume-blocked="'+esc(queueId)+'"'+(taskAvailable?'':' disabled title="Read the parked queue before resuming"')+'>'+(taskAvailable?'Confirm & resume':'Parked task unavailable')+'</button>'
-      :'<button type="button" data-attention-resolve="'+esc(attentionId)+'">Done</button>'; 
+      :'<button type="button" data-attention-resolve="'+esc(attentionId)+'"'+(freshness==='fresh'?'':' disabled title="Refresh the status source before resolving an older attention item"')+'>Done</button>'; 
     const queueNotice=queueId?'<p>Linked to the original parked task. Confirm the cleared dependency to resolve both; dismissing the alert alone does not unblock work.</p>':'';
     return `<article class="attention-item ${item.severity==='urgent'?'is-urgent':''}"><div class="attention-copy"><small>${esc(project?.name||item.project_id)}</small><strong>${esc(item.action)}</strong>${queueNotice}${detail?`<p>${esc(detail.length>220?detail.slice(0,217)+'…':detail)}</p>`:''}<div class="attention-links">${safeAttentionSourceUrl(item.source_url)?`<a href="${esc(safeAttentionSourceUrl(item.source_url))}" target="_blank" rel="noopener noreferrer">Open source</a>`:''}</div></div>${control}</article>`;
   }).join('');
-  return `<section class="attention-panel"><div class="attention-head"><div><span class="eyebrow">ATTENTION NEEDED</span><h2>${items.length===1?'1 thing needs you':items.length+' things need you'}</h2><p>Only human, physical or external gates appear here. They never occupy a worker slot.</p></div><span class="attention-count">${items.length}</span></div><div class="attention-list">${rows}</div>${notion&&!projectId?`<a class="text-link attention-notion" href="${esc(notion)}" target="_blank" rel="noreferrer">Open the simple Notion list →</a>`:''}</section>`;
+  return `<section class="attention-panel"><div class="attention-head"><div><span class="eyebrow">${freshness==='fresh'?'ATTENTION NEEDED':'LAST OBSERVED ATTENTION'}</span><h2>${items.length===1?'1 thing needs you':items.length+' things need you'}</h2><p>Only human, physical or external gates appear here. They never occupy a worker slot.</p></div><span class="attention-count">${items.length}</span></div>${sourceNotice}<div class="attention-list">${rows}</div>${notion&&!projectId?`<a class="text-link attention-notion" href="${esc(notion)}" target="_blank" rel="noreferrer">Open the simple Notion list →</a>`:''}</section>`;
 }
 let blockedQueueVisible=12;
 let blockedQueueUrgentOnly=false;
