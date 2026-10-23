@@ -256,11 +256,28 @@ def capacity_changes(previous, current):
             "comparable": comparable,
             "difference": round(new - old, 2) if comparable else None,
         })
+    previous_swap_status = a.get("swap_status")
+    current_swap_status = b.get("swap_status")
+    swap_status_comparable = (
+        previous_swap_status in {"OBSERVED", "NO_SWAP_CONFIGURED"}
+        and current_swap_status in {"OBSERVED", "NO_SWAP_CONFIGURED"}
+    )
     return {
         "source_complete": a.get("source_complete") is True
                            and b.get("source_complete") is True,
         "root_comparable": mount_ok,
         "root_inode_comparable": inode_ok,
+        "swap_status": {
+            "previous": (previous_swap_status if previous_swap_status in {
+                "OBSERVED", "NO_SWAP_CONFIGURED"} else "UNKNOWN"),
+            "current": (current_swap_status if current_swap_status in {
+                "OBSERVED", "NO_SWAP_CONFIGURED"} else "UNKNOWN"),
+            "comparable": swap_status_comparable,
+            "changed": (
+                previous_swap_status != current_swap_status
+                if swap_status_comparable else None
+            ),
+        },
         "metrics": metrics,
         "explanation": (
             "Observed host capacity difference only; no proof of recovered "
