@@ -484,6 +484,16 @@ disappeared. Any known live process or unverifiable/inconsistent
 recovery evidence refuses admission; no process is signaled or killed
 by this inspection.
 
+The initial lease metadata for canonical live heavy jobs now records
+the **own dedicated systemd-service cgroup before spawning the child**,
+even while there is no supervised child PID. If the wrapper crashes
+between `Popen` and the first PID-bearing renewal, a later admission
+can inspect this service scope for detached children; an old
+governor-executor record with no PID and no trusted service-cgroup
+identity is treated as **ambiguous and refused** rather than silently
+recycled. Synthetic legacy lease reservations not owned by the
+governor retain the old pre-launch handling.
+
 The incident-retention code preserves the original `pid` and
 `service_cgroup` in its bounded private SQLite metadata along with
 the cleanup-failure marker. Previously it discarded the PID, making
