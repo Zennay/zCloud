@@ -672,5 +672,5 @@ def suggested_actions(packet):
     overflow["omitted_count"] = len(omitted)
     overflow["omitted_severity_counts"] = severity_counts
     overflow["omitted_action_codes"] = code_sample
-    overflow["omitted_action_codes_truncated"] = len(safe_codes) > len(code_sample)
+    overflow["omitted_action_codes_truncated"] = len(omitted) > len(code_sample)
     return visible + [overflow]
