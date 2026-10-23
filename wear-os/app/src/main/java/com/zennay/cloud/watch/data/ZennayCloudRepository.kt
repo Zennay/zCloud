@@ -1,9 +1,11 @@
 package com.zennay.cloud.watch.data
 
 import com.zennay.cloud.watch.BuildConfig
+import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -22,9 +24,27 @@ class ZennayCloudRepository(
         parseProject(request("/api/v1/watch/project?project=$encoded").getJSONObject("project"))
     }
 
+    private companion object {
+        const val MAX_RESPONSE_BYTES = 512 * 1024
+        // WorkManager polls roughly every 15 minutes, but each HTTP response
+        // should be a recent origin snapshot, never an old proxy cache.
+        const val MAX_SOURCE_AGE_MS = 15L * 60_000L
+        const val MAX_CLOCK_SKEW_MS = 2L * 60_000L
+    }
+
+    private fun sourceTimeIsRecent(value: String): Boolean = try {
+        val observedAt = Instant.parse(value).toEpochMilli()
+        val age = System.currentTimeMillis() - observedAt
+        age in -MAX_CLOCK_SKEW_MS..MAX_SOURCE_AGE_MS
+    } catch (_: Exception) {
+        false
+    }
+
     private fun request(path: String): JSONObject {
         val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
+            // Do not forward the bearer credential across an unexpected redirect.
+            instanceFollowRedirects = false
             connectTimeout = 5_000
             readTimeout = 5_000
             setRequestProperty("Accept", "application/json")
@@ -33,9 +53,22 @@ class ZennayCloudRepository(
         }
         try {
             val code = connection.responseCode
-            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            // Never buffer untrusted HTTP errors or arbitrarily large JSON on a watch.
             if (code !in 200..299) throw IllegalStateException("Cloud HTTP $code")
+            if (connection.contentLengthLong > MAX_RESPONSE_BYTES)
+                throw IllegalStateException("Cloud response exceeds watch memory limit")
+            val body = connection.inputStream.use { stream ->
+                val output = ByteArrayOutputStream()
+                val chunk = ByteArray(8192)
+                while (true) {
+                    val count = stream.read(chunk)
+                    if (count < 0) break
+                    if (output.size() + count > MAX_RESPONSE_BYTES)
+                        throw IllegalStateException("Cloud response exceeds watch memory limit")
+                    output.write(chunk, 0, count)
+                }
+                output.toString(Charsets.UTF_8.name())
+            }
             return JSONObject(body)
         } finally {
             connection.disconnect()
@@ -44,10 +77,13 @@ class ZennayCloudRepository(
 
     private fun parseHome(root: JSONObject): WatchSnapshot {
         val host = root.getJSONObject("host")
+        val generatedAt = root.getString("time")
+        // A cached or unparseable origin response is not a LIVE incident feed,
+        // even when its JSON includes stale=false and active_blockers.
+        val stale = root.optBoolean("stale", true) || !sourceTimeIsRecent(generatedAt)
         return WatchSnapshot(
-
-            generatedAt = root.getString("time"),
-            stale = root.optBoolean("stale", false),
+            generatedAt = generatedAt,
+            stale = stale,
             overallProgress = root.getInt("overall_progress"),
             activeProjects = root.getInt("active_projects"),
             host = HostSummary(
@@ -56,8 +92,12 @@ class ZennayCloudRepository(
                 load = host.optDouble("load", 0.0)
             ),
             warnings = root.getJSONArray("warnings").mapObjects(::parseWarning),
-            alerts = root.optJSONArray("alerts")?.mapObjects(::parseAlert).orEmpty(),
-            projects = root.getJSONArray("projects").mapObjects(::parseSummary)
+            // Use resolved/expired-aware Incident Center data when available.
+            // Legacy servers only expose an historical feed under "alerts".
+            alerts = (if (root.has("active_blockers")) root.optJSONArray("active_blockers")
+                      else root.optJSONArray("alerts"))?.mapObjects(::parseAlert).orEmpty(),
+            projects = root.getJSONArray("projects").mapObjects(::parseSummary),
+            currentBlockerFeedAvailable = root.optJSONArray("active_blockers") != null
         )
     }
 
@@ -115,8 +155,19 @@ class ZennayCloudRepository(
         severity = o.optString("severity"),
         project = o.optNullableString("project"),
         title = o.optString("title"),
-        message = o.optString("message"),
-        occurredAt = o.optNullableString("occurred_at")
+        // The real /api/v1/watch alert rows originate from enhancements.list_alerts:
+        // they use "detail" and "ts", not the legacy "message"/"occurred_at".
+        message = o.optNullableString("detail")
+            ?: o.optNullableString("message")
+            ?: "Open zCloud voor meer informatie.",
+        occurredAt = (o.optNullableString("ts") ?: o.optNullableString("occurred_at"))
+            ?.takeIf { it.length <= 64 && it.none { ch -> Character.isISOControl(ch) } },
+        humanActionRequired = o.optBoolean("human_action_required", false),
+        cause = o.optNullableString("cause"),
+        impact = o.optNullableString("impact"),
+        action = o.optNullableString("action"),
+        episodeId = o.optNullableString("episode_id")
+            ?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }
     )
 }
 

@@ -43,7 +43,16 @@ data class AlertItem(
     val project: String?,
     val title: String,
     val message: String,
-    val occurredAt: String?
+    val occurredAt: String?,
+    // Explicitly asserted by the current server incident source. A high
+    // severity or an old-server historical alert alone is never enough.
+    val humanActionRequired: Boolean = false,
+    val cause: String? = null,
+    val impact: String? = null,
+    val action: String? = null,
+    // Opaque stable identity for one currently unresolved episode. A changing
+    // provider poll timestamp alone must not re-notify the same condition.
+    val episodeId: String? = null
 )
 
 data class WatchSnapshot(
@@ -54,7 +63,10 @@ data class WatchSnapshot(
     val host: HostSummary,
     val warnings: List<WarningItem>,
     val alerts: List<AlertItem>,
-    val projects: List<ProjectSummary>
+    val projects: List<ProjectSummary>,
+    // Legacy servers expose historical alerts only. Never notify those as if
+    // they were current unresolved blockers.
+    val currentBlockerFeedAvailable: Boolean = false
 )
 
 data class ServiceState(

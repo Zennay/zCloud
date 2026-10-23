@@ -30,6 +30,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.zennay.cloud.watch.IncidentSnoozeStore
 import com.zennay.cloud.watch.data.ProjectDetail
 import com.zennay.cloud.watch.data.ProjectSummary
 import com.zennay.cloud.watch.data.ProgressPoint
@@ -51,6 +53,7 @@ import com.zennay.cloud.watch.data.WatchSnapshot
 import com.zennay.cloud.watch.data.ZennayCloudRepository
 import java.time.Duration
 import java.time.Instant
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val Bg = Color(0xFF05070A)
@@ -65,12 +68,26 @@ private val Danger = Color(0xFFFF7D86)
 private val Track = Color(0xFF202A35)
 
 @Composable
-fun ZennayWearApp(repository: ZennayCloudRepository = remember { ZennayCloudRepository() }) {
+fun ZennayWearApp(
+    repository: ZennayCloudRepository = remember { ZennayCloudRepository() },
+    openIncidentId: String? = null,
+    openIncidentProject: String? = null,
+    onIncidentHandled: () -> Unit = {}
+) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(openIncidentId, openIncidentProject) {
+        if (openIncidentId != null) selectedId = null
+    }
     MaterialTheme {
         Box(Modifier.fillMaxSize().background(Bg)) {
             if (selectedId == null) {
-                HomeScreen(repository = repository, onProject = { selectedId = it })
+                HomeScreen(
+                    repository = repository,
+                    onProject = { selectedId = it },
+                    openIncidentId = openIncidentId,
+                    openIncidentProject = openIncidentProject,
+                    onIncidentHandled = onIncidentHandled
+                )
             } else {
                 BackHandler { selectedId = null }
                 DetailScreen(
@@ -86,21 +103,80 @@ fun ZennayWearApp(repository: ZennayCloudRepository = remember { ZennayCloudRepo
 @Composable
 private fun HomeScreen(
     repository: ZennayCloudRepository,
-    onProject: (String) -> Unit
+    onProject: (String) -> Unit,
+    openIncidentId: String?,
+    openIncidentProject: String?,
+    onIncidentHandled: () -> Unit
 ) {
     var data by remember { mutableStateOf<WatchSnapshot?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val appContext = LocalContext.current
+    var snoozeVersion by remember { mutableStateOf(0) }
+    var snoozeMinuteTick by remember { mutableStateOf(0) }
+    var expandedIncidentKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var disappearedIncidentNotice by rememberSaveable { mutableStateOf(false) }
 
     suspend fun reload() {
         loading = true
+        disappearedIncidentNotice = false
         runCatching { repository.loadHome() }
-            .onSuccess { data = it; error = null }
-            .onFailure { error = it.message ?: "Cloud offline" }
+            .onSuccess {
+                data = it
+                error = null
+                // Invalidate expansion if the blocker was resolved, the feed
+                // is historical, or the source became stale.
+                if (it.stale || !it.currentBlockerFeedAvailable ||
+                    it.alerts.none { alert ->
+                        IncidentSnoozeStore.notificationTag(alert) == expandedIncidentKey
+                    }) {
+                    expandedIncidentKey = null
+                }
+            }
+            .onFailure {
+                error = it.message ?: "Cloud offline"
+                expandedIncidentKey = null
+            }
         loading = false
     }
-    LaunchedEffect(Unit) { reload() }
+    // Refresh only an expanded card's local snooze countdown. Compose
+    // cancels the coroutine on collapse; no extra HTTP requests or background
+    // pollers are created, and incident state is never mutated.
+    LaunchedEffect(expandedIncidentKey) {
+        if (expandedIncidentKey != null) {
+            while (true) {
+                delay(30_000L)
+                snoozeMinuteTick++
+            }
+        }
+    }
+    LaunchedEffect(openIncidentId, openIncidentProject) {
+        // A notification can arrive while the watch is already running.
+        // Always obtain new evidence before opening the named blocker;
+        // never navigate by ID into historical or offline cached data.
+        reload()
+        if (openIncidentId != null) {
+            val snapshot = data
+            val current = snapshot?.takeIf {
+                error == null && !it.stale && it.currentBlockerFeedAvailable
+            }
+            val requestedKey = if (openIncidentId != null &&
+                openIncidentProject != null) "$openIncidentProject:$openIncidentId"
+                else null
+            expandedIncidentKey = requestedKey?.takeIf { key ->
+                current?.alerts?.any { alert ->
+                    IncidentSnoozeStore.notificationTag(alert) == key && (
+                        alert.severity.equals("high", true) ||
+                        alert.severity.equals("critical", true) ||
+                        alert.severity.equals("error", true) ||
+                        alert.severity.equals("needs_attention", true))
+                } == true
+            }
+            disappearedIncidentNotice = current != null && expandedIncidentKey == null
+            onIncidentHandled()
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -110,14 +186,219 @@ private fun HomeScreen(
         item {
             HeaderRow(
                 title = "Zennay Cloud",
-                subtitle = if (loading) "SYNCING" else "LIVE",
+                subtitle = when {
+                    loading -> "SYNCING"
+                    error != null -> "OFFLINE"
+                    data?.stale == true -> "STALE"
+                    else -> "LIVE"
+                },
                 onRefresh = { scope.launch { reload() } }
             )
         }
         if (error != null && data == null) {
             item { ErrorCard(error ?: "Cloud offline", onRetry = { scope.launch { reload() } }) }
         }
+        if (disappearedIncidentNotice && error == null) {
+            item {
+                SurfaceCard(modifier = Modifier.clickable {
+                    disappearedIncidentNotice = false
+                }) {
+                    Label("MELDING NIET MEER ACTIEF", Accent)
+                    Text("Het incident uit je notificatie staat niet meer in " +
+                         "de actuele blokkadelijst. Tik om deze melding te sluiten.",
+                         color = TextMain, fontSize = 11.sp)
+                }
+            }
+        }
         data?.let { snapshot ->
+            // A failed refresh may leave the last successful snapshot in memory.
+            // Never label it LIVE or show its old incidents as current blockers.
+            if (error != null) {
+                item {
+                    ErrorCard("Offline: laatste succesvolle gegevens blijven zichtbaar. " +
+                              "Ververs voordat je een blokkade opvolgt.",
+                              onRetry = { scope.launch { reload() } })
+                }
+            }
+            // Source incident IDs can be empty/duplicated. Compose requires
+            // stable unique lazy-list keys, and only fresh incident evidence
+            // may receive current blocker emphasis.
+            val urgent = snapshot.alerts
+                .filter { error == null && !snapshot.stale &&
+                          snapshot.currentBlockerFeedAvailable && it.id.isNotBlank() }
+                .filter { it.severity.equals("critical", true) ||
+                          it.severity.equals("high", true) ||
+                          it.severity.equals("error", true) ||
+                          it.severity.equals("needs_attention", true) }
+                // A recurring incident may have more than one source row.
+                // Show the highest-priority, latest episode for each project
+                // before dropping duplicates; different projects remain distinct.
+                .sortedWith(compareBy<com.zennay.cloud.watch.data.AlertItem> {
+                    if (it.severity.equals("critical", true) ||
+                        it.severity.equals("error", true)) 0 else 1
+                }.thenByDescending { it.occurredAt.orEmpty() })
+                .distinctBy { IncidentSnoozeStore.notificationTag(it) }
+            if (urgent.isNotEmpty()) {
+                item { SectionLabel("AANDACHT NODIG · ${urgent.size}") }
+                items(urgent, key = {
+                    "alert:" + IncidentSnoozeStore.notificationTag(it)
+                }) { alert ->
+                    val incidentKey = IncidentSnoozeStore.notificationTag(alert)
+                    val expanded = expandedIncidentKey == incidentKey
+                    // The operator can inspect the actual cause and next
+                    // action without losing their place in the incident list.
+                    SurfaceCard(modifier = Modifier.clickable {
+                        expandedIncidentKey = if (expanded) null else incidentKey
+                    }) {
+                        Label(
+                            "${alert.project?.uppercase() ?: "ZCLOUD"} · ${alert.severity.uppercase()}",
+                            if (alert.severity.equals("critical", true) ||
+                                alert.severity.equals("error", true)) Danger else Warning
+                        )
+                        Text(
+                            alert.title, color = TextMain, fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = if (expanded) Int.MAX_VALUE else 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        if (expanded) {
+                            val cause = alert.cause?.takeIf { it.isNotBlank() }
+                            val action = alert.action?.takeIf { it.isNotBlank() }
+                            val impact = alert.impact?.takeIf { it.isNotBlank() }
+                            if (cause != null && action != null) {
+                                Label("OORZAAK", Warning)
+                                Text(cause, color = TextMain, fontSize = 11.sp)
+                                if (impact != null) {
+                                    Spacer(Modifier.height(7.dp))
+                                    Label("IMPACT", Blue)
+                                    Text(impact, color = TextMain, fontSize = 11.sp)
+                                }
+                                Spacer(Modifier.height(7.dp))
+                                Label("VOLGENDE ACTIE", Accent)
+                                Text(action, color = TextMain, fontSize = 11.sp)
+                            } else {
+                                // Backward-compatible with older watch servers:
+                                // use the combined description if source fields
+                                // have not yet reached the deployed endpoint.
+                                val parts = alert.message.split(" · Actie: ", limit = 2)
+                                if (parts.size == 2 && parts[0].startsWith("Oorzaak: ")) {
+                                    Label("OORZAAK", Warning)
+                                    Text(parts[0].removePrefix("Oorzaak: "),
+                                         color = TextMain, fontSize = 11.sp)
+                                    Spacer(Modifier.height(7.dp))
+                                    Label("VOLGENDE ACTIE", Accent)
+                                    Text(parts[1], color = TextMain, fontSize = 11.sp)
+                                } else {
+                                    Label("DETAILS", Blue)
+                                    Text(alert.message, color = TextMain, fontSize = 11.sp)
+                                }
+                            }
+                            alert.occurredAt?.let { seen ->
+                                Spacer(Modifier.height(7.dp))
+                                Text("Waargenomen: ${shortAge(seen)}",
+                                     color = TextMuted, fontSize = 9.sp)
+                            }
+                            if (alert.humanActionRequired && alert.id.isNotBlank() &&
+                                alert.id.length <= 256) {
+                                // Read only on recomposition; local button taps
+                                // bump the version. No remote acknowledgement.
+                                val version = snoozeVersion
+                                val observedTime = remember(snoozeMinuteTick, snoozeVersion) {
+                                    System.currentTimeMillis()
+                                }
+                                val remaining = IncidentSnoozeStore.remainingMillis(
+                                    appContext, alert, now = observedTime
+                                )
+                                Spacer(Modifier.height(9.dp))
+                                Label("LOKALE MELDINGSINSTELLING", Blue)
+                                Text(
+                                    if (remaining > 0) "Melding gedempt · nog maximaal ${(remaining + 59_999L) / 60_000L} min"
+                                    else "Incident blijft actief, ook als meldingen stil zijn.",
+                                    color = TextMuted, fontSize = 10.sp
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp)
+                                        .height(42.dp)
+                                        .background(Surface2, RoundedCornerShape(14.dp))
+                                        .clickable {
+                                            if (remaining > 0) {
+                                                IncidentSnoozeStore.resume(appContext, alert)
+                                            } else {
+                                                IncidentSnoozeStore.snoozeForOneHour(appContext, alert)
+                                            }
+                                            snoozeVersion = version + 1
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        if (remaining > 0) "Meldingen hervatten"
+                                        else "Notificaties 1 uur dempen",
+                                        color = Accent, fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            val project = snapshot.projects.firstOrNull { it.id == alert.project }
+                            if (project != null) {
+                                Spacer(Modifier.height(9.dp))
+                                Text("Open ${project.name} ›",
+                                     modifier = Modifier
+                                         .fillMaxWidth()
+                                         .clickable { onProject(project.id) }
+                                         .padding(vertical = 7.dp),
+                                     color = Accent, fontSize = 11.sp,
+                                     fontWeight = FontWeight.Bold)
+                            }
+                            Text("Tik om te sluiten", color = TextMuted, fontSize = 9.sp)
+                        } else {
+                            Text(
+                                alert.message, color = TextMuted, fontSize = 11.sp,
+                                maxLines = 3, overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                if (alert.humanActionRequired) "Menselijke actie nodig · tik voor details ›"
+                                else "Actuele status · tik voor details ›",
+                                color = if (alert.humanActionRequired) Warning else Accent,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
+            }
+            if (!snapshot.currentBlockerFeedAvailable && error == null) {
+                item {
+                    SurfaceCard {
+                        Label("ALLEEN HISTORISCHE MELDINGEN", Warning)
+                        Text("Deze server levert geen bevestigde actuele blokkades. " +
+                             "Urgente meldingen zijn daarom tijdelijk uitgeschakeld.",
+                             color = TextMain, fontSize = 10.sp)
+                    }
+                }
+            }
+            if (snapshot.stale || error != null) {
+                item {
+                    SurfaceCard {
+                        Label("GEGEVENS VEROUDERD", Warning)
+                        Text("De bron is ouder dan toegestaan of niet verifieerbaar. " +
+                             "Geen actuele incidentbevestiging of urgente meldingen.",
+                            color = TextMain, fontSize = 10.sp)
+                        Spacer(Modifier.height(7.dp))
+                        Text(
+                            "Ververs bron ›",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { scope.launch { reload() } }
+                                .padding(vertical = 8.dp),
+                            color = Accent, fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
             item {
                 OverviewHero(
                     progress = snapshot.overallProgress,
@@ -149,8 +430,8 @@ private fun HomeScreen(
             }
             item {
                 Text(
-                    if (snapshot.stale) "Data stale" else "Live · ${shortAge(snapshot.generatedAt)}",
-                    color = if (snapshot.stale) Warning else TextMuted,
+                    if (snapshot.stale || error != null) "Niet actueel · ${shortAge(snapshot.generatedAt)}" else "Live · ${shortAge(snapshot.generatedAt)}",
+                    color = if (snapshot.stale || error != null) Warning else TextMuted,
                     fontSize = 9.sp,
                     modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                     textAlign = TextAlign.Center
@@ -188,7 +469,11 @@ private fun DetailScreen(
         item {
             HeaderRow(
                 title = detail?.name?.uppercase() ?: projectId.uppercase(),
-                subtitle = if (loading) "syncing" else "project",
+                subtitle = when {
+                    loading -> "syncing"
+                    error != null -> "offline"
+                    else -> "project"
+                },
                 leading = "‹",
                 onLeading = onBack,
                 onRefresh = { scope.launch { reload() } }
@@ -198,6 +483,13 @@ private fun DetailScreen(
             item { ErrorCard(error ?: "Cloud offline", onRetry = { scope.launch { reload() } }) }
         }
         detail?.let { p ->
+            if (error != null) {
+                item {
+                    ErrorCard("Projectdetails zijn mogelijk verouderd. " +
+                              "Ververs voor een actuele beslissing.",
+                              onRetry = { scope.launch { reload() } })
+                }
+            }
             item { ProjectHero(p) }
             item {
                 SurfaceCard {

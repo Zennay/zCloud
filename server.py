@@ -4261,6 +4261,34 @@ def watch_warnings(data):
             warnings.append({'level':'warning','project':p['id'],'message':f"{p['name']} needs attention"})
     return warnings
 
+def watch_incident_episode_id(incident):
+    """Opaque incident episode, stable across periodic status refreshes.
+
+    A service-health observation's detected_at can be the current snapshot
+    time, not the beginning of an outage. Source identity plus status cause
+    must remain stable until the underlying condition changes. Other incident
+    types use a real detection receipt (if available) to distinguish events.
+    No free text is returned to the client in this identifier.
+    """
+    # Source labels are semantically case-insensitive elsewhere in the
+    # incident pipeline. Normalize them before fingerprinting so harmless
+    # casing/whitespace changes do not create a fresh notification episode.
+    category = str(incident.get('type') or '').strip().lower()
+    identity = str(incident.get('id') or '')
+    severity = str(incident.get('severity') or '').strip().lower()
+    if not identity or len(identity) > 256 or not category:
+        return None
+    # Scope the fingerprint to the project as well. Separate projects can
+    # legitimately reuse an incident's local name or worker identifier.
+    project = str(incident.get('project') or 'cloud')
+    parts = [project[:80], category, identity, severity]
+    if category == 'service_health':
+        parts.append(str(incident.get('cause') or '')[:512])
+    else:
+        parts.append(str(incident.get('detected_at') or '')[:64])
+    return hashlib.sha256('\x1f'.join(parts).encode('utf-8')).hexdigest()
+
+
 def watch_summary(data):
     projects=[]
     runner=runner_status()
@@ -4288,7 +4316,40 @@ def watch_summary(data):
         },
         'warnings':warnings,
         'chatgpt_runner':runner,
+        # Keep the historical alert feed for old clients, but expose a separate
+        # current, actionable incident feed for blocker-first watch notifications.
+        # Incident Center applies TTL and claim-resolution filtering; raw alert
+        # history must never be described as a currently open blocker.
         'alerts':enhancements.list_alerts(DB,5,True),
+        'active_blockers':[
+            {
+                'id':str(item.get('id') or ''),
+                # Stable within the same unresolved incident. Not a lease,
+                # proof of resolution, or authority to perform remediation.
+                'episode_id':watch_incident_episode_id(item),
+                'project':str(item.get('project') or 'cloud'),
+                'severity':str(item.get('severity') or 'high'),
+                # Escalation requires a known human-gated remediation class.
+                # High severity alone is not authority to interrupt a user.
+                # Recovery/deploy failures need explicit owner inspection
+                # before any new irreversible or privileged release action.
+                'human_action_required':str(item.get('type') or '').lower()
+                    in ('recovery_failed','deploy_failed'),
+                'title':str(item.get('title') or 'Aandacht nodig')[:140],
+                # Preserve all three operator answers as separate, bounded
+                # fields. A long cause must not truncate away the next action.
+                'cause':str(item.get('cause') or 'Nog onbekend')[:240],
+                'impact':str(item.get('impact') or 'Nog onbekend')[:240],
+                'action':str(item.get('action') or 'Controleer zCloud')[:240],
+                # Older watch builds still need their existing detail string.
+                'detail':('Oorzaak: '+str(item.get('cause') or 'Nog onbekend')[:180]+
+                          ' · Actie: '+str(item.get('action') or 'Controleer zCloud')[:180]),
+                'ts':item.get('detected_at'),
+            }
+            for item in enhancements.incident_center(DB,data=data,limit=30).get('items',[])
+            if str(item.get('severity') or '').lower() in ('critical','high','error')
+            and str(item.get('type') or '').lower() not in ('breakthrough','milestone')
+        ][:8],
         'projects':projects
     }
 

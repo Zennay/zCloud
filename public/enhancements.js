@@ -77,13 +77,39 @@
     return '<div class="panel evidence-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Evidence-backed progress</h2><div class="panel-subtitle">Checkpoint progress, change and current bottleneck</div></div><strong class="evidence-progress-value">'+num(p.progress)+'%</strong></div><div class="evidence-summary"><div><span>Change ('+esc(range)+')</span><strong>'+esc(deltaText)+'</strong></div><div><span>Current bottleneck</span><strong>'+esc(bottleneck)+'</strong></div></div>'+comparison+'<details class="section-details evidence-details"><summary>Sources and technical details</summary><p>'+esc(sourceBits.join(' · ')||'No source metadata available')+'</p></details></div>';
   }
 
+  function monitoringSourceStatus(){
+    if(DATA.stale===true)return {unconfirmed:true,code:'SERVER_MARKED_STALE',label:'Server marked the snapshot stale'};
+    var rawTimestamp=typeof DATA.time==='string'?DATA.time.trim():'';
+    if(!rawTimestamp)return {unconfirmed:true,code:'TIMESTAMP_MISSING',label:'Snapshot timestamp is missing'};
+    if(!/(?:Z|[+-]\d{2}:\d{2})$/i.test(rawTimestamp))return {unconfirmed:true,code:'TIMESTAMP_TIMEZONE_MISSING',label:'Snapshot timestamp has no explicit timezone'};
+    var stamp=Date.parse(rawTimestamp);
+    if(!Number.isFinite(stamp))return {unconfirmed:true,code:'TIMESTAMP_INVALID',label:'Snapshot timestamp is invalid'};
+    var age=Date.now()-stamp;
+    // Match the watch client's freshness contract: at most 15 minutes old,
+    // with no more than two minutes of future clock skew.
+    if(age>15*60*1000)return {unconfirmed:true,code:'TIMESTAMP_TOO_OLD',label:'Snapshot is '+Math.floor(age/60000)+' minutes old'};
+    if(age< -2*60*1000)return {unconfirmed:true,code:'TIMESTAMP_FUTURE',label:'Snapshot timestamp is more than two minutes in the future'};
+    return {unconfirmed:false,code:'FRESH',label:'Snapshot timestamp is within the 15-minute freshness window'};
+  }
+
+  function monitoringSourceUnconfirmed(){
+    return monitoringSourceStatus().unconfirmed;
+  }
+
+  function monitoringSourceWarning(){
+    var status=monitoringSourceStatus();
+    return 'Monitoring source unconfirmed ('+status.code+'): '+status.label+'.';
+  }
+
   function qPanel(p){
     var q=p&&p.quality;
     if(!q||!q.available||!q.headline)return '';
+    var sourceUnconfirmed=monitoringSourceUnconfirmed();
     var items=(q.items||[]).map(function(x){
       return '<div><span>'+esc(x.label)+'</span><strong>'+esc(x.value)+esc(x.unit||'')+'</strong></div>';
     }).join('');
-    return '<div class="panel quality-panel"><div class="panel-header"><div><h2>Live kwaliteit</h2><div class="panel-subtitle">'+esc(q.stage||'Evidence-backed')+'</div></div>'+icon('pulse')+'</div><div class="quality-hero">'+esc(q.headline.label)+'<strong>'+esc(q.headline.value)+esc(q.headline.unit||'')+'</strong><span>'+esc(q.headline.note||'')+'</span></div><div class="quality-grid">'+items+'</div></div>';
+    var sourceNotice=sourceUnconfirmed?'<div class="alert-empty" role="status">'+esc(monitoringSourceWarning())+' Quality values below are last-known, not live. <a class="events-link" href="/">Dashboard opnieuw laden</a></div>':'';
+    return '<div class="panel quality-panel'+(sourceUnconfirmed?' source-unconfirmed':'')+'"><div class="panel-header"><div><h2>'+(sourceUnconfirmed?'Last-known quality':'Live kwaliteit')+'</h2><div class="panel-subtitle">'+esc(q.stage||'Evidence-backed')+(sourceUnconfirmed?' · monitoring data is stale':'')+'</div></div>'+icon('pulse')+'</div>'+sourceNotice+'<div class="quality-hero">'+esc(q.headline.label)+'<strong>'+esc(q.headline.value)+esc(q.headline.unit||'')+'</strong><span>'+esc(q.headline.note||'')+'</span></div><div class="quality-grid">'+items+'</div></div>';
   }
   function readinessPanel(p){
     if(!p||p.id!=='ftmo')return '';
@@ -109,6 +135,7 @@
   }
 
   function resourcePanel(){
+    var sourceUnconfirmed=monitoringSourceUnconfirmed();
     var list=(DATA.projects||[]).filter(function(p){return !!p.resource});
     if(!list.length)return '';
     var weights={background:100,normal:400,high:800,turbo:3000};
@@ -128,14 +155,23 @@
       var unattributed=summary.unattributed_cpu_percent==null?'being measured':num(summary.unattributed_cpu_percent)+'%';
       summaryRow='<div class="resource-tech-row resource-tech-summary"><strong>VPS total</strong><span>CPU '+num(summary.host_cpu_percent)+'% · attributed '+attributed+' · system/unattributed '+unattributed+' · '+esc(summary.cores||'?')+' cores</span></div>';
     }
-    var details='<section class="resource-tech-panel" aria-labelledby="resource-tech-title"><div class="resource-tech-heading"><h3 id="resource-tech-title">Technical details</h3><span>Live allocation</span></div><div class="resource-tech-list">'+summaryRow+tech.join('')+'</div><p>Project CPU is normalized to the same 0–100% host scale as VPS CPU. System/unattributed is CPU that is real on the VPS but cannot yet be assigned to a project. Weights: Background 100 · Normal 400 · High 800 · Turbo 3000.</p></section>';
-    return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Resource usage</h2><div class="panel-subtitle">Live CPU, memory and worker allocation by project</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div>'+details+'</div>';
+    var details='<section class="resource-tech-panel" aria-labelledby="resource-tech-title"><div class="resource-tech-heading"><h3 id="resource-tech-title">Technical details</h3><span>'+(sourceUnconfirmed?'Last-known allocation':'Live allocation')+'</span></div><div class="resource-tech-list">'+summaryRow+tech.join('')+'</div><p>Project CPU is normalized to the same 0–100% host scale as VPS CPU. System/unattributed is CPU that is real on the VPS but cannot yet be assigned to a project. Weights: Background 100 · Normal 400 · High 800 · Turbo 3000.</p></section>';
+    var sourceNotice=sourceUnconfirmed?'<div class="alert-empty" role="status">'+esc(monitoringSourceWarning())+' Resource values below are last-known, not live. <a class="events-link" href="/">Dashboard opnieuw laden</a></div>':'';
+    return '<div class="panel resource-panel'+(sourceUnconfirmed?' source-unconfirmed':'')+'"><div class="panel-header"><div><h2>Resource usage</h2><div class="panel-subtitle">'+(sourceUnconfirmed?'Last-known CPU, memory and worker allocation · monitoring data is stale':'Live CPU, memory and worker allocation by project')+'</div></div>'+icon('cpu')+'</div>'+sourceNotice+'<div class="resource-grid">'+rows+'</div>'+details+'</div>';
   }
   function incidentPanel(){
     var center=DATA.incidents||{items:[],recovery:null},items=center.items||[];
+    var sourceStatus=monitoringSourceStatus();
+    var sourceUnconfirmed=sourceStatus.unconfirmed||center.current_blocker_feed_available===false;
+    var sourceReason=sourceStatus.unconfirmed
+      ? 'Monitoring source unconfirmed ('+sourceStatus.code+'): '+sourceStatus.label+'.'
+      : 'The current blocker feed is unavailable.';
     if(!items.length){
       var recovery=center.recovery||{};
       var recoveryText=recovery.available?'Recovery point available':'No recovery point yet';
+      if(sourceUnconfirmed){
+        return '<div class="panel alert-panel incident-panel source-unconfirmed"><div class="panel-header"><div><h2>Status unknown</h2><div class="panel-subtitle">'+esc(sourceReason)+'</div></div></div><div class="alert-empty" role="status">No current blocker state was verified. Refresh the dashboard before concluding that no intervention is needed.</div><p><a class="events-link" href="/">Dashboard opnieuw laden</a></p></div>';
+      }
       return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Needs attention</h2><div class="panel-subtitle">No action needed · '+esc(recoveryText)+'</div></div>'+icon('check')+'</div><div class="alert-empty">Everything currently running needs no intervention.</div></div>';
     }
     var names={};(DATA.projects||[]).forEach(function(p){names[p.id]=p.name});
@@ -144,7 +180,19 @@
       var recovery=!rollback.available?'No recovery point':rollback.status==='tested'?'Recovery tested':rollback.status==='problem'?'Recovery check needed':rollback.status==='in_progress'?'Recovery in progress':'Recovery point ready';
       return '<article class="incident-card '+esc(x.severity||'warning')+'"><div class="incident-card-head"><div><span>'+esc(project)+'</span><strong>'+esc(trText(x.title))+'</strong></div><b>'+esc(x.health||'Needs attention')+'</b></div><dl><div><dt>Cause</dt><dd>'+esc(trText(x.cause||'Unknown'))+'</dd></div><div><dt>Impact</dt><dd>'+esc(trText(x.impact||'Unknown'))+'</dd></div><div><dt>Restore</dt><dd>'+esc(recovery)+'</dd></div></dl><p class="incident-action"><b>Next step:</b> '+esc(trText(x.action||'Check this incident.'))+'</p><details class="section-details incident-details"><summary>Technical details</summary><p>'+esc(trText(x.technical_detail||'No additional technical details'))+(x.detected_at?' · '+esc(date(x.detected_at,true)):'')+'</p></details></article>';
     }).join('');
-    return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Needs attention</h2><div class="panel-subtitle">'+items.length+' concrete '+(items.length===1?'action':'actions')+' · no log spam</div></div><a class="events-link" href="#activity">History</a></div><div class="incident-list">'+rows+'</div></div>';
+    // Short decision layer for quick checks between work shifts; preserve the
+    // full cause/impact/rollback cards one disclosure below, not removed.
+    var brief=items.slice(0,5).map(function(x){
+      var project=names[x.project]||x.project||'zCloud';
+      return '<li><strong>'+esc(project)+'</strong> · '+esc(trText(x.title||'Blokkade'))+
+        '<br><b>Actie:</b> '+esc(trText(x.action||'Controleer de huidige blokkade'))+'</li>';
+    }).join('');
+    var sourceNotice=sourceUnconfirmed
+      ? '<div class="alert-empty" role="status">'+esc(sourceReason)+' These are last-known incidents, not confirmation that the blockers are still active. <a class="events-link" href="/">Dashboard opnieuw laden</a></div>'
+      : '';
+    return '<div class="panel alert-panel incident-panel'+(sourceUnconfirmed?' source-unconfirmed':'')+'"><div class="panel-header"><div><h2>'+(sourceUnconfirmed?'Last-known blockers · status unconfirmed':'Wat zit vast?')+'</h2><div class="panel-subtitle">'+items.length+' aandachtspunten'+(sourceUnconfirmed?' · monitoringbron niet actueel':' · belangrijkste eerst')+'</div></div><a class="events-link" href="#activity">Historie</a></div>'+
+      sourceNotice+'<ol class="incident-quick" aria-label="Vijf belangrijkste blokkades">'+brief+'</ol>'+
+      '<details class="section-details"><summary>Volledige oorzaken, impact en herstelstappen</summary><div class="incident-list">'+rows+'</div></details></div>';
   }
 
   function milestonePanel(p){
@@ -167,7 +215,7 @@
   var baseOverview=overview;
   overview=function(){
     var html=baseOverview();
-    var controls='<div class="dashboard-grid top-controls">'+resourcePanel()+incidentPanel()+'</div>';
+    var controls='<div class="dashboard-grid top-controls">'+incidentPanel()+resourcePanel()+'</div>';
     return html.replace('<div class="dashboard-grid">',controls+'<div class="dashboard-grid">');
   };
 
