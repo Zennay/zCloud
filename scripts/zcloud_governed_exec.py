@@ -525,6 +525,11 @@ def _renew_existing_lease(conn, project_id: str, owner_id: str,
     lease after expiry; that would allow a running orphan and a second
     heavyweight project to overlap. Serialize verification and renewal.
     """
+    if (admitted_compute.get("pool") == "heavy"
+            and os.environ.get("ZCLOUD_RESOURCE_DB") is not None):
+        # Dynamic service changes cannot quietly widen CPU/memory limits
+        # after the initial heavy admission.
+        _require_heavy_unit_bounds(admitted_compute)
     conn.execute("BEGIN IMMEDIATE")
     try:
         now = datetime.now(timezone.utc).isoformat()
