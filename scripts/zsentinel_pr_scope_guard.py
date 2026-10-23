@@ -735,6 +735,44 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
                 and not truncated_files and snapshot_stable
                 and not alias_hits_truncated
                 and not any(hit["matches_truncated"] for hit in alias_hits))
+    scope_blockers = []
+    if source is not None and not source_stable:
+        scope_blockers.append("selected_source_pr_changed")
+    if base_ref_freshness == "stale":
+        scope_blockers.append("selected_source_pr_base_stale")
+    elif base_ref_freshness == "changed_during_observation":
+        scope_blockers.append("selected_source_pr_base_changed")
+    elif base_ref_freshness == "unavailable":
+        scope_blockers.append("selected_source_pr_base_unavailable")
+    if not snapshot_stable:
+        scope_blockers.append("open_pr_snapshot_changed")
+    if truncated_files:
+        scope_blockers.append("pr_file_list_truncated")
+    if alias_hits_truncated or any(hit["matches_truncated"] for hit in alias_hits):
+        scope_blockers.append("portable_path_aliases_truncated")
+    if (page_count != 1 or open_page != 1 or len(before) >= page_size
+            or len(before) > limit):
+        scope_blockers.append("bounded_open_pr_window_incomplete")
+    if not complete and not scope_blockers:
+        scope_blockers.append("scope_coverage_incomplete")
+    if "selected_source_pr_base_stale" in scope_blockers:
+        recommended_next_step_code = "update_existing_pr_branch_with_owner_then_refresh"
+    elif "selected_source_pr_base_changed" in scope_blockers:
+        recommended_next_step_code = "repeat_observation_after_target_branch_stabilizes"
+    elif "selected_source_pr_base_unavailable" in scope_blockers:
+        recommended_next_step_code = "restore_target_branch_tip_visibility"
+    elif "selected_source_pr_changed" in scope_blockers:
+        recommended_next_step_code = "reobserve_exact_source_pr"
+    elif "open_pr_snapshot_changed" in scope_blockers:
+        recommended_next_step_code = "repeat_bounded_open_pr_observation"
+    elif "pr_file_list_truncated" in scope_blockers:
+        recommended_next_step_code = "inspect_remaining_pr_file_pages"
+    elif scope_blockers:
+        recommended_next_step_code = "expand_or_refresh_bounded_scope_observation"
+    elif hits or alias_hits:
+        recommended_next_step_code = "review_observed_overlaps_with_owners_no_merge_authority"
+    else:
+        recommended_next_step_code = "review_scope_observation_no_merge_authority"
     return {
         "schema": "zsentinel-pr-scope-observation-v1",
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -775,6 +813,8 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
         "pr_file_lists_truncated": truncated_files,
         "open_pr_snapshot_stable": snapshot_stable,
         "pr_file_scope_sample_complete": complete,
+        "source_scope_blockers": scope_blockers,
+        "recommended_next_step_code": recommended_next_step_code,
         "observed_overlaps": hits,
         "observed_portable_path_aliases": alias_hits,
         "portable_path_aliases_truncated": alias_hits_truncated,
@@ -855,6 +895,12 @@ def operator_text(report):
                      " | " + str(hit["alias_count_observed"]) +
                      " mogelijke aliassen | " + relations +
                      (" | aliasvoorbeelden afgekapt" if hit["matches_truncated"] else ""))
+    lines.append("Vervolgactie (geen uitvoerrecht): " +
+                 report["recommended_next_step_code"])
+    if report["source_scope_blockers"]:
+        lines.append("Bronblokkades: " + ", ".join(report["source_scope_blockers"]))
+    else:
+        lines.append("Bronblokkades: geen aanvullende dekkingblokkade waargenomen.")
     if report["portable_path_aliases_truncated"]:
         lines.append("ONVOLLEDIG: meer padalias-hits dan de bounded weergave.")
     if not report["open_pr_snapshot_stable"]:
@@ -948,7 +994,11 @@ def html_view(report):
             (" · eerdere pagina's niet onderzocht" if report["earlier_pages_not_inspected"] else "") +
             " · geen uitspraak over overige pagina's.</p><ul>" +
             page_list + "</ul>" + source_link +
-            "<details><summary>Bekeken doelpaden (" +
+            "<p><strong>Vervolgactie:</strong> " +
+            escape(report["recommended_next_step_code"]) +
+            "</p><p>Bronblokkades: " +
+            escape(", ".join(report["source_scope_blockers"]) or "geen aanvullende dekkingblokkade waargenomen") +
+            "</p><details><summary>Bekeken doelpaden (" +
             str(len(report["requested_paths"])) + ")</summary>" +
             targets + "</details><p>Geïnspecteerde andere PR's: " +
             str(report["inspected_prs"]) + " / " +
@@ -2054,6 +2104,8 @@ def as_markdown(report):
         ("Volledige, stabiele huidige open-PR-steekproef."
          if report["pr_file_scope_sample_complete"]
          else "ONVOLLEDIG of veranderd: geen uitspraken over ongeziene PR's."),
+        "Vervolgactie (geen uitvoerrecht): " + report["recommended_next_step_code"],
+        "Bronblokkades: " + (", ".join(report["source_scope_blockers"]) or "geen aanvullende dekkingblokkade waargenomen"),
         "",
     ]
     selected = report["selected_source_pr"]
