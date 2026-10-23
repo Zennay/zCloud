@@ -33,6 +33,7 @@ MAX_LIST_PAGE = 30
 MAX_DISCOVERY_PAGES = 4  # Bounded open-PR inventory; never an exhaustive ownership claim.
 MAX_DISCOVERY_HINTS = 12  # Navigation-only hints; at most 3 can get live PR reads.
 MAX_TIMELINE_PAGES = 3  # First + at most two recent tail pages.
+MAX_ASSIGNEES = 20
 
 
 class GitHubReadError(ValueError):
@@ -201,12 +202,32 @@ def _issue_summary(payload, full_name, number):
         if labels_complete and len(observed_priorities) == 1
         else "UNKNOWN"
     )
+    raw_assignees = payload.get("assignees")
+    assignees_complete = (
+        isinstance(raw_assignees, list) and len(raw_assignees) <= MAX_ASSIGNEES
+    )
+    assignee_logins = []
+    if assignees_complete:
+        for assignee in raw_assignees:
+            login = assignee.get("login") if isinstance(assignee, dict) else None
+            if (not isinstance(login, str)
+                    or re.fullmatch(r"[A-Za-z0-9-]{1,39}", login) is None):
+                assignees_complete = False
+                break
+            assignee_logins.append(login)
+    if assignees_complete:
+        assignee_logins = sorted(set(assignee_logins))
+    else:
+        assignee_logins = None
     return {
         "observed_state": state,
         "reported_state_reason": reason or "UNKNOWN",
         "priority_from_explicit_labels": explicit_priority,
         "priority_label_source_complete": labels_complete,
         "priority_label_conflict": conflict,
+        "github_assignees": assignee_logins,
+        "github_assignees_source_complete": assignees_complete,
+        "github_assignees_are_active_claims": False,
         "priority_is_authority": False,
         "source_issue_still_open": state == "open",
         "closed_does_not_prove_fix_merged": True,
@@ -215,6 +236,16 @@ def _issue_summary(payload, full_name, number):
         "issue_work_cleared": False,
         "observed_at_utc": utc(),
     }
+
+
+def _assignee_display(issue):
+    """Render current GitHub assignment without implying a worker lease."""
+    if issue.get("github_assignees_source_complete") is not True:
+        return "UNKNOWN"
+    names = issue.get("github_assignees")
+    if not isinstance(names, list):
+        return "UNKNOWN"
+    return ", ".join(names) if names else "none assigned in issue metadata"
 
 
 def _body_issue_reference(payload, full_name, issue_number):
@@ -1279,6 +1310,10 @@ def owner_html(report):
             "priority_from_explicit_labels", "UNKNOWN")) +
         " · priority conflict: " +
         esc(report["current_issue"].get("priority_label_conflict", "UNKNOWN")) +
+        " · GitHub issue assignees (not active claims): " +
+        esc(_assignee_display(report["current_issue"])) +
+        " · assignee metadata complete: " +
+        esc(report["current_issue"].get("github_assignees_source_complete", "UNKNOWN")) +
         " · reason: " + esc(report["current_issue"].get(
             "reported_state_reason", "UNKNOWN")) +
         " · CLOSED never means a fix is merged or the worker claim released."
@@ -1583,7 +1618,11 @@ def markdown(report):
         report["current_issue"].get("priority_from_explicit_labels", "UNKNOWN"),
         "- Priority labels conflicted: " +
         str(report["current_issue"].get("priority_label_conflict", "UNKNOWN")),
-        "- Issue labels do not establish worker authority: YES",
+        "- GitHub issue assignees (not active claims): " +
+        _assignee_display(report["current_issue"]),
+        "- Assignee metadata complete: " +
+        str(report["current_issue"].get("github_assignees_source_complete", "UNKNOWN")),
+        "- Issue labels or assignees establish worker authority: NO",
         "- Current issue source was reobserved once, not continuously",
         "- Closed issue implies merged repair: NO",
         "- Observed live PRs: " + report["observed_at_utc"],
