@@ -1,0 +1,96 @@
+name: zCloud dashboard static candidate offline proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_dashboard_static_candidate_plan_20261012_w1.py"
+      - "tests/test_dashboard_static_candidate_plan_20261012_w1.py"
+      - ".github/workflows/zcloud-dashboard-static-candidate-offline-20261012-w1.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-dashboard-static-candidate-offline-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-static-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Fetch only the PR's exact candidate head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          clean: true
+          persist-credentials: false
+          # The immutable historical audit baseline may be >96 commits behind.
+          # Full history on GitHub-hosted checkout only; no runner/VPS writes.
+          fetch-depth: 0
+      - name: Prove immutable candidate identity
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Verify offline static candidate planning against local Git fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_dashboard_static_candidate_plan_20261012_w1.py' -v
+          python3 -m py_compile scripts/zcloud_dashboard_static_candidate_plan_20261012_w1.py
+          echo "DASHBOARD_STATIC_CANDIDATE_PLAN_OFFLINE_GREEN=1"
+      - name: Inventory exact PR-head source dashboard bundle (no deployment)
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_dashboard_static_candidate_plan_20261012_w1.py \
+            --root . --snapshot-sha "$EXPECTED_SHA"
+          echo "DASHBOARD_SOURCE_SNAPSHOT_ONLY=1"
+
+      - name: Read-only cache drift audit against pinned historical main (never release)
+        shell: bash
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          KNOWN_BASELINE_SHA: 3f71c1be1fbe9a2fe8780ce33c377c42136371b5
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          argv = [
+              sys.executable,
+              "scripts/zcloud_dashboard_static_candidate_plan_20261012_w1.py",
+              "--root", ".",
+              "--baseline-sha", os.environ["KNOWN_BASELINE_SHA"],
+              "--candidate-sha", os.environ["EXPECTED_HEAD_SHA"],
+              "--audit-cache-pins",
+          ]
+          result = subprocess.run(argv, capture_output=True, text=True, timeout=35)
+          try:
+              body = json.loads(result.stdout)
+          except (ValueError, TypeError) as exc:
+              raise SystemExit("cache-audit invalid evidence JSON") from exc
+          assert body["schema"] == "zcloud-dashboard-cache-pin-audit-v1", body
+          assert body["baseline_sha"] == os.environ["KNOWN_BASELINE_SHA"]
+          assert body["candidate_sha"] == os.environ["EXPECTED_HEAD_SHA"]
+          assert body["static_diff_eligible"] is False
+          assert body["structural_static_diff_not_evaluated"] is True
+          assert body["release_authorized"] is False
+          assert body["promotion_authorized"] is False
+          assert body["runtime_bytes_observed"] is False
+          assert result.returncode == (0 if body["cache_pins_coherent"] else 2)
+          print(json.dumps(body, sort_keys=True))
+          if not body["cache_pins_coherent"]:
+              print("::warning::CACHE_PIN_SOURCE_MISMATCH=1 (no deploy authority)")
+          else:
+              print("CACHE_PIN_SOURCE_COHERENCE_OBSERVED=1 (no deploy authority)")
+          PY
