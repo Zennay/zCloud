@@ -303,9 +303,11 @@ attribution:
   `memory_psi_some_avg10_percent >= 10.0`: moderate pressure; cap it at
   100% / weight 40 unless another existing signal requires the stricter band.
 - Missing, malformed, non-finite or out-of-range PSI values do not become
-  zero and do not create a new claim of source completeness. The existing
-  required RAM, swap, load, disk and inode observations continue to govern
-  unknown-source handling. The kernel OOM counter remains diagnostic only:
+  zero and do not create a new claim of source completeness. The `some` and
+  `full` fields are tracked independently in live previews; an unavailable
+  field no longer hides the other field when it was actually observed. The
+  existing required RAM, swap, load, disk and inode observations continue to
+  govern unknown-source handling. The kernel OOM counter remains diagnostic only:
   its cumulative host-wide value is not used as evidence against a particular
   runner or as a standalone current-pressure trigger.
 
