@@ -107,6 +107,42 @@ def _assert_portfolio_pool_capacities(contracts: dict) -> None:
             raise RuntimeError("resource_project_pool_contract_unsafe")
 
 
+def _expired_heavy_group_active(conn) -> bool:
+    """Don't recycle an expired heavy lease while its known process group lives.
+
+    The shared runtime deletes expired rows during acquisition. Before that
+    irreversible cleanup, inspect *known* supervised heavy PID generations
+    under the same BEGIN IMMEDIATE transaction. This closes the ordinary
+    TTL-expiry/restarted-wrapper overlap for descendants that remain in
+    the original process group. Detached sessions additionally need their
+    authorized dedicated systemd service to be drained (and full live proof).
+    """
+    if sys.platform != "linux":
+        return True
+    cutoff = datetime.now(timezone.utc).isoformat()
+    rows = conn.execute(
+        "SELECT metadata_json FROM resource_leases "
+        "WHERE pool='heavy' AND lease_until<=? LIMIT 257", (cutoff,)
+    ).fetchall()
+    if len(rows) > 256:
+        return True
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+            if not isinstance(metadata, dict):
+                return True
+            pid = metadata.get("pid")
+            if pid is None:
+                continue  # pre-launch reservation, not a supervised child
+            if type(pid) is not int or pid <= 1:
+                return True
+            if _process_group_has_live_members(pid):
+                return True
+        except (TypeError, ValueError, KeyError, OSError):
+            return True
+    return False
+
+
 def _admitted_pool_over_limit(conn, pool_name: str) -> bool:
     """Enforce hard slot ceiling after tentative admission, before commit.
 
@@ -722,8 +758,8 @@ def _owned_service_cgroup_drained() -> bool:
         return False
 
 
-def _group_exists(proc: subprocess.Popen) -> bool:
-    """Check for live (non-zombie) members of our private process group.
+def _process_group_has_live_members(group_id: int) -> bool:
+    """Check for live (non-zombie) members of one Linux process group.
 
     Linux keeps a process group addressable through killpg(0) while orphan
     zombies await their reaper, even though those zombies consume no work.
@@ -731,7 +767,7 @@ def _group_exists(proc: subprocess.Popen) -> bool:
     claiming safe release.
     """
     try:
-        os.killpg(proc.pid, 0)
+        os.killpg(group_id, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
@@ -755,7 +791,7 @@ def _group_exists(proc: subprocess.Popen) -> bool:
                     group = int(fields[2])
                 except ValueError:
                     return True
-                if group != proc.pid:
+                if group != group_id:
                     continue
                 found = True
                 if fields[0] not in ("Z", "X"):
@@ -765,6 +801,9 @@ def _group_exists(proc: subprocess.Popen) -> bool:
     # All observed group members are already dead; a zombie cannot do work.
     # If killpg said yes but no group member was visible, stay conservative.
     return not found
+
+def _group_exists(proc: subprocess.Popen) -> bool:
+    return _process_group_has_live_members(proc.pid)
 
 def _stop_process_group(proc: subprocess.Popen | None, *, grace_seconds: float = 2.0) -> bool:
     """Stop the owned session before a resource lease can be released.
@@ -877,6 +916,16 @@ def run_governed(
                 conn.rollback()
                 _admission_denied({"reason": "resource_owner_already_running",
                                    "project_id": project_id})
+                return 75
+            # The underlying runtime prunes expired leases inside acquire.
+            # Preserve heavy exclusivity when a known supervised child group
+            # survived the TTL (e.g. a paused or crashed renewal wrapper).
+            if compute.get("pool") == "heavy" and _expired_heavy_group_active(conn):
+                conn.rollback()
+                _admission_denied({
+                    "reason": "resource_expired_heavy_process_still_active",
+                    "project_id": project_id,
+                })
                 return 75
             # Check pool occupancy before host-memory pressure: if another
             # heavy job owns the only slot, bounded waiters must sleep
