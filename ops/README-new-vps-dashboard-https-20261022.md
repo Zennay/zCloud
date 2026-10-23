@@ -20,11 +20,15 @@ Use loopback-only backend binding and authenticated HTTPS Caddy instead.
    Never start a second production writer.
 2. The new zennay-cloud.service is already live on 127.0.0.1:8765 only.
    Its local /api/status returns a current timestamp and projects array.
-3. The zcloud.zennay.nl address set must resolve only to 95.211.40.88.
-   The publisher checks the complete getent ahosts result and refuses
-   --apply if any IPv6/AAAA address is present; this target has no approved
-   IPv6 endpoint configured. Remove an unintended AAAA record or add a
-   separately reviewed IPv6-aware implementation before publication.
+3. The DNS owner must independently confirm the authoritative delegation
+   and the intended address records before publication. The publisher's
+   getent ahosts check is a resolver-view preflight, not authoritative DNS
+   proof; it requires the complete resolver address set to contain only
+   95.211.40.88 and refuses any IPv6/AAAA result because this target has no
+   approved IPv6 endpoint. `--apply` additionally requires the separate
+   `ZCLOUD_DNS_CUTOVER_CONFIRMED=yes` attestation. Remove an unintended
+   AAAA record or add a separately reviewed IPv6-aware implementation before
+   publication.
    The zSSH repository's last observed authoritative nameservers for
    zennay.nl are ns1.site.eu, ns2.site.nl, ns3.site.be and ns4.site.de,
    **not Cloudflare**. Confirm current delegation with the DNS owner before
@@ -57,12 +61,13 @@ Use loopback-only backend binding and authenticated HTTPS Caddy instead.
 cd /home/ubuntu/zennay-cloud
 bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --status
 # Only when old writers are fenced and the final DB handoff is complete:
-sudo env ZCLOUD_SQLITE_CUTOVER_CONFIRMED=yes \
+sudo env ZCLOUD_DNS_CUTOVER_CONFIRMED=yes \
+  ZCLOUD_SQLITE_CUTOVER_CONFIRMED=yes \
   bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --apply
 ~~~
 
 The script refuses a wrong host, unhealthy or non-loopback API, missing
-cutover attestation, IPv4/IPv6 DNS drift, invalid auth, missing Caddy import
+cutover attestation, missing DNS-owner confirmation, IPv4/IPv6 DNS drift, invalid auth, missing Caddy import
 or unexpected existing site. It stages one drop-in, validates Caddy, reloads
 and checks that anonymous HTTPS returns HTTP 401. Rollback quarantines only
 the exact site inode created by that invocation, outside the imported glob.
