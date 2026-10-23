@@ -321,41 +321,39 @@ def run_governed(
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
         group_stopped = _stop_process_group(proc)
-        if acquired:
-            try:
-                if not group_stopped:
-                    # An orphan that still uses the heavy pool must not
-                    # immediately grant another project the same slot.
-                    # Preserve the lease at the maximum bounded TTL for
-                    # owner recovery; do not report successful completion.
-                    result = runtime.acquire_resource(
-                        conn, project_id, owner_id, lease_seconds=6 * 3600,
-                        metadata={"executor": "zcloud-governed-exec",
-                                  "cleanup": "process_group_unverified"},
-                    )
-                    conn.commit()
-                    if not result.get("acquired"):
-                        raise RuntimeError("unable to retain resource after incomplete cleanup")
-                    raise RuntimeError("governed_process_group_not_stopped; resource lease retained")
-                runtime.release_resource(conn, project_id, owner_id)
-                conn.commit()
-            except Exception as exc:
-                print(
-                    json.dumps(
-                        {
-                            "released": False,
-                            "reason": "resource_release_failed",
-                            "project_id": project_id,
-                            "error": type(exc).__name__,
-                        },
-                        sort_keys=True,
-                    ),
-                    file=sys.stderr,
+        release_ok = not acquired
+        try:
+            if acquired and not group_stopped:
+                # An orphan may keep using the heavy pool. Retain the slot
+                # at the maximum bounded TTL for explicit owner recovery.
+                retained = runtime.acquire_resource(
+                    conn, project_id, owner_id, lease_seconds=6 * 3600,
+                    metadata={"executor": "zcloud-governed-exec",
+                              "cleanup": "process_group_unverified"},
                 )
-        conn.close()
+                conn.commit()
+                if not retained.get("acquired"):
+                    raise RuntimeError("resource_lease_retention_failed")
+            elif acquired:
+                result = runtime.release_resource(conn, project_id, owner_id)
+                conn.commit()
+                if not result.get("released"):
+                    raise RuntimeError("resource_lease_release_unconfirmed")
+                release_ok = True
+        except Exception as exc:
+            conn.rollback()
+            print(json.dumps({
+                "released": False,
+                "reason": "resource_lease_cleanup_unverified",
+                "project_id": project_id,
+                "error": type(exc).__name__,
+            }, sort_keys=True), file=sys.stderr)
+        finally:
+            conn.close()
         if acquired and not group_stopped:
-            raise RuntimeError("Resource admission held: governed process group could not be stopped")
-
+            raise RuntimeError("governed_process_group_not_stopped; resource lease not released")
+        if not release_ok:
+            raise RuntimeError("resource_lease_release_unverified")
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
