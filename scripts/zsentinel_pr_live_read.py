@@ -476,6 +476,10 @@ def _checks_summary(payload, sha, full_name):
 
 def _commit_status_summary(payload, sha, full_name):
     """Bounded commit-status observation pinned to one immutable SHA."""
+    if not isinstance(full_name, str) or not re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", full_name):
+        raise GitHubReadError("commit-status repository identity is invalid")
+    if not isinstance(sha, str) or not re.fullmatch(r"[a-f0-9]{40}", sha):
+        raise GitHubReadError("commit-status exact HEAD SHA is invalid")
     if type(payload) is not dict or payload.get("sha") != sha:
         raise GitHubReadError("commit-status response SHA does not match exact HEAD")
     count = payload.get("total_count")
