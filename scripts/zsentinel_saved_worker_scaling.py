@@ -143,9 +143,14 @@ def _native_int(value, *, minimum=0, maximum=1_000_000):
 
 
 def _number(value, *, minimum=None, maximum=None):
-    if type(value) not in (int, float) or not math.isfinite(float(value)):
+    if type(value) not in (int, float):
         raise ValueError("invalid_numeric_field")
-    number = float(value)
+    try:
+        number = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("invalid_numeric_field") from exc
+    if not math.isfinite(number):
+        raise ValueError("invalid_numeric_field")
     if minimum is not None and number < minimum:
         raise ValueError("numeric_field_below_minimum")
     if maximum is not None and number > maximum:
@@ -170,7 +175,7 @@ def _metric_snapshot(worker):
     if not isinstance(metrics, dict):
         raise ValueError("invalid_worker_metrics")
     freshness = metrics.get("heartbeat_freshness", "unknown")
-    if freshness not in HEARTBEAT_STATES:
+    if not isinstance(freshness, str) or freshness not in HEARTBEAT_STATES:
         freshness = "unknown"
     heartbeat = metrics.get("last_heartbeat")
     if heartbeat is not None:
@@ -214,7 +219,7 @@ def _project_snapshot(project):
     if desired is not None:
         desired = _native_int(desired, minimum=1)
     desired_source = project.get("desired_workers_source", "legacy_unknown")
-    if desired_source not in {"observed", "unavailable", "legacy_unknown"}:
+    if not isinstance(desired_source, str) or desired_source not in {"observed", "unavailable", "legacy_unknown"}:
         desired_source = "legacy_unknown"
     if desired is None and desired_source == "observed":
         desired_source = "unavailable"
@@ -238,7 +243,7 @@ def _project_snapshot(project):
     assessment = project.get("assessment")
     assessment = assessment if isinstance(assessment, dict) else {}
     assessment_state = assessment.get("state")
-    if assessment_state not in ASSESSMENT_STATES:
+    if not isinstance(assessment_state, str) or assessment_state not in ASSESSMENT_STATES:
         assessment_state = "insufficient_data"
     assessment_reason = _safe_text(assessment.get("reason"), 500) or "Geen onderbouwde schaalbeoordeling beschikbaar."
 
@@ -246,7 +251,7 @@ def _project_snapshot(project):
     if duplicate is not None:
         duplicate = _native_int(duplicate)
     conflict_source = project.get("claim_conflict_source_status", "unknown")
-    if conflict_source not in COVERAGE_STATUSES:
+    if not isinstance(conflict_source, str) or conflict_source not in COVERAGE_STATUSES:
         conflict_source = "unknown"
 
     workers = project.get("workers", [])
@@ -302,7 +307,7 @@ def normalize_report(data, raw_sha256, now=None):
         source_reasons = ["legacy_report_without_source_coverage"]
         coverage = {"runner_events": "unknown", "runner_targets": "unknown", "alerts": "unknown"}
     else:
-        if status not in SOURCE_STATUSES:
+        if not isinstance(status, str) or status not in SOURCE_STATUSES:
             raise ValueError("invalid_source_status")
         source_complete = data.get("source_complete", False)
         if type(source_complete) is not bool:
@@ -319,7 +324,7 @@ def normalize_report(data, raw_sha256, now=None):
         coverage = {}
         for key in ("runner_events", "runner_targets", "alerts"):
             value = raw_coverage.get(key, "unknown")
-            coverage[key] = value if value in COVERAGE_STATUSES else "unknown"
+            coverage[key] = value if isinstance(value, str) and value in COVERAGE_STATUSES else "unknown"
         if status == "observed" and not source_complete:
             status = "partial"
             source_reasons.append("observed_status_without_complete_source")
