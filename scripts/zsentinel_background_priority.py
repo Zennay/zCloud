@@ -26,6 +26,7 @@ PROMOTION_MIN_OBSERVATIONS = 3
 PROMOTION_MIN_GAP = 45
 PROMOTION_MAX_SAMPLE_GAP = 240
 MAX_PRIVATE_STATE = 16 * 1024
+MAX_RUNNER_CMDLINE_BYTES = 8 * 1024
 
 
 def _boot_token():
@@ -215,7 +216,14 @@ def workers():
             try:
                 if (directory / "comm").read_text().strip() != "Runner.Worker":
                     continue
-                cmd = (directory / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+                # Bound argv reads. A truncated command line cannot prove
+                # which runner family owns this process, so preserve UNKNOWN.
+                with (directory / "cmdline").open("rb") as cmdline_file:
+                    raw_cmd = cmdline_file.read(MAX_RUNNER_CMDLINE_BYTES + 1)
+                if len(raw_cmd) > MAX_RUNNER_CMDLINE_BYTES:
+                    complete = False
+                    continue
+                cmd = raw_cmd.replace(b"\0", b" ").decode("utf-8", "replace")
                 if not cmd.strip():
                     # Empty argv on an extant process cannot prove no active job.
                     complete = False
