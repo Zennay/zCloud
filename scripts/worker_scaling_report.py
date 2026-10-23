@@ -30,6 +30,7 @@ UNBLOCK_EVENTS = {
     "conversation-adopted",
 }
 MAX_HEARTBEAT_GAP_SECONDS = 150
+MAX_DESIRED_WORKER_SLOTS = 64
 MIN_EXTRA_OBSERVED_SECONDS = 30 * 60
 MIN_EXTRA_COMPLETIONS = 3
 
@@ -144,12 +145,18 @@ def worker_metrics(rows: list[sqlite3.Row], now: datetime | None = None) -> dict
 def worker_coverage(workers: list[dict], desired_workers: int) -> dict:
     """Require every configured slot and a recent heartbeat before comparing scale."""
     desired = max(1, int(desired_workers or 1))
+    supported_desired = min(desired, MAX_DESIRED_WORKER_SLOTS)
     considered = [
         w for w in workers
-        if 1 <= int(w["worker_slot"]) <= desired
+        if 1 <= int(w["worker_slot"]) <= supported_desired
     ]
     observed_slots = sorted({int(w["worker_slot"]) for w in considered})
-    missing_slots = [slot for slot in range(1, desired + 1) if slot not in observed_slots]
+    # A corrupt/out-of-contract desired count must not allocate an unbounded
+    # range or masquerade as a complete fleet observation.
+    missing_slots = (
+        [] if desired > MAX_DESIRED_WORKER_SLOTS else
+        [slot for slot in range(1, desired + 1) if slot not in observed_slots]
+    )
     stale_slots = []
     unknown_slots = []
     for worker in considered:
@@ -160,7 +167,9 @@ def worker_coverage(workers: list[dict], desired_workers: int) -> dict:
         elif freshness != "fresh":
             unknown_slots.append(slot)
 
-    if missing_slots:
+    if desired > MAX_DESIRED_WORKER_SLOTS:
+        state = "desired_worker_count_out_of_range"
+    elif missing_slots:
         state = "missing_worker_slots"
     elif stale_slots:
         state = "stale_heartbeats"
@@ -171,9 +180,11 @@ def worker_coverage(workers: list[dict], desired_workers: int) -> dict:
     return {
         "state": state,
         "desired_workers": desired,
+        "max_supported_desired_workers": MAX_DESIRED_WORKER_SLOTS,
         "observed_worker_slots": observed_slots,
         "observed_worker_count": len(observed_slots),
         "missing_worker_slots": missing_slots,
+        "missing_worker_slots_enumeration_complete": desired <= MAX_DESIRED_WORKER_SLOTS,
         "stale_worker_slots": sorted(stale_slots),
         "unknown_heartbeat_worker_slots": sorted(unknown_slots),
         "freshness_threshold_seconds": MAX_HEARTBEAT_GAP_SECONDS,
@@ -184,7 +195,9 @@ def scaling_assessment(workers: list[dict], desired_workers: int) -> dict:
     desired = max(1, int(desired_workers or 1))
     coverage = worker_coverage(workers, desired)
     if coverage["state"] != "complete_fresh":
-        if coverage["missing_worker_slots"]:
+        if coverage["state"] == "desired_worker_count_out_of_range":
+            reason = "Geen schaaladvies: het gewenste aantal workers valt buiten de ondersteunde grens."
+        elif coverage["missing_worker_slots"]:
             reason = "Geen schaaladvies: telemetry ontbreekt voor één of meer gewenste worker-slots."
         elif coverage["stale_worker_slots"]:
             reason = "Geen schaaladvies: minstens één gewenste worker heeft een verouderde heartbeat."
