@@ -24,6 +24,7 @@ from zsentinel_recovery_policy import (
 
 MAX_DELTA_CARDS = 100
 MAX_OPERATOR_ISSUE_WORKORDERS = 20
+MAX_SNAPSHOT_ASSIGNEES = 20
 CHANGE_FOLLOWUP = {
     "NEWLY_OBSERVED_NOT_PROVEN_NEW": (
         "inspect_existing_prs_and_current_worker_claims",
@@ -32,6 +33,10 @@ CHANGE_FOLLOWUP = {
     "OBSERVED_PRIORITY_CHANGE": (
         "verify_current_priority_labels_and_owner",
         "Check current GitHub priority labels and the existing product owner before reordering work.",
+    ),
+    "OBSERVED_GITHUB_ASSIGNEE_CHANGE": (
+        "recheck_changed_issue_assignees_before_owner_action",
+        "GitHub issue assignees changed between snapshots; verify the current assignees and separate active worker claim before routing work.",
     ),
     "PERSISTENT_P0_P1_WITHOUT_GITHUB_ISSUE_UPDATE": (
         "inspect_current_owner_progress_and_pr_ci",
@@ -116,6 +121,22 @@ def _validate_snapshot(report):
             update_at = _timestamp(issue_updated)
             if update_at > generated + timedelta(minutes=2):
                 raise PolicyInputError("issue update is later than source observation")
+        assignees_complete = item.get("github_assignees_source_complete", False)
+        assignee_drift = item.get("assignee_window_identity_drift", False)
+        assignees = item.get("github_assignees")
+        if type(assignees_complete) is not bool or type(assignee_drift) is not bool:
+            raise PolicyInputError("snapshot assignee observation flags are invalid")
+        if assignees_complete:
+            if (not isinstance(assignees, list)
+                    or len(assignees) > MAX_SNAPSHOT_ASSIGNEES
+                    or any(type(login) is not str or
+                           re.fullmatch(r"[A-Za-z0-9-]{1,39}", login) is None
+                           for login in assignees)):
+                raise PolicyInputError("snapshot GitHub assignee list is invalid")
+            assignees = sorted(set(assignees))
+        else:
+            # Legacy snapshots and incomplete provider metadata remain UNKNOWN.
+            assignees = None
         if (type(repo) is not str or repo not in state_by_repo or state_by_repo[repo] not in
                 ("SAMPLED", "INCOMPLETE") or type(num) is not int or num < 1
                 or type(rank) is not int or rank not in range(7)
@@ -126,10 +147,36 @@ def _validate_snapshot(report):
             raise PolicyInputError("snapshot issue URL does not match source")
         if url in unique:
             raise PolicyInputError("duplicate issue in source snapshot")
-        unique[url] = {"repository": repo, "number": num,
-                       "url": url, "priority_rank": rank,
-                       "issue_updated_at_utc": issue_updated}
+        unique[url] = {
+            "repository": repo, "number": num, "url": url,
+            "priority_rank": rank, "issue_updated_at_utc": issue_updated,
+            "github_assignees": assignees,
+            "github_assignees_source_complete": assignees_complete,
+            "assignee_window_identity_drift": assignee_drift,
+        }
     return generated, repositories, state_by_repo, unique
+
+
+def _assignee_display(names, complete, drift=False):
+    """Display only complete, stable source metadata; never infer a live claim."""
+    if complete is not True or drift is True or not isinstance(names, list):
+        return "UNKNOWN"
+    return ", ".join(names) if names else "none assigned in issue metadata"
+
+
+def _assignee_change_text(row):
+    drift = row.get("assignee_window_identity_drift", False)
+    current = _assignee_display(
+        row.get("current_github_assignees"),
+        row.get("github_assignees_source_complete"), drift,
+    )
+    if row.get("github_assignee_change_observed") is True:
+        previous = _assignee_display(
+            row.get("prior_github_assignees"),
+            row.get("prior_github_assignees_source_complete"), drift,
+        )
+        return "GitHub issue assignees changed: " + previous + " → " + current + " (not active claims)"
+    return "GitHub issue assignees (not active claims): " + current
 
 
 def load_previous_snapshot(path):
@@ -203,13 +250,24 @@ def compare_snapshots(previous, current):
         before = {k: v for k, v in before_items.items() if v["repository"] == repo}
         after = {k: v for k, v in after_items.items() if v["repository"] == repo}
         for url, item in after.items():
-            if url not in before:
+            prior = before.get(url)
+            assignee_change = bool(
+                prior is not None
+                and prior["github_assignees_source_complete"] is True
+                and item["github_assignees_source_complete"] is True
+                and prior["assignee_window_identity_drift"] is False
+                and item["assignee_window_identity_drift"] is False
+                and prior["github_assignees"] != item["github_assignees"]
+            )
+            if prior is None:
                 kind = "NEWLY_OBSERVED_NOT_PROVEN_NEW"
-            elif before[url]["priority_rank"] != item["priority_rank"]:
+            elif prior["priority_rank"] != item["priority_rank"]:
                 kind = "OBSERVED_PRIORITY_CHANGE"
+            elif assignee_change:
+                kind = "OBSERVED_GITHUB_ASSIGNEE_CHANGE"
             elif (item["priority_rank"] in (0, 1)
-                  and before[url]["issue_updated_at_utc"] is not None
-                  and before[url]["issue_updated_at_utc"] == item["issue_updated_at_utc"]
+                  and prior["issue_updated_at_utc"] is not None
+                  and prior["issue_updated_at_utc"] == item["issue_updated_at_utc"]
                   and (after_at - before_at).total_seconds() >= 6 * 3600):
                 kind = "PERSISTENT_P0_P1_WITHOUT_GITHUB_ISSUE_UPDATE"
             else:
@@ -219,9 +277,19 @@ def compare_snapshots(previous, current):
                 **item, "change": kind,
                 "human_followup_code": action_code,
                 "human_followup": action,
-                "prior_priority_rank": before[url]["priority_rank"]
-                if url in before else None,
+                "prior_priority_rank": prior["priority_rank"] if prior else None,
                 "current_priority_rank": item["priority_rank"],
+                "github_assignee_change_observed": assignee_change,
+                "prior_github_assignees": prior["github_assignees"] if prior else None,
+                "prior_github_assignees_source_complete": (
+                    prior["github_assignees_source_complete"] if prior else False
+                ),
+                "current_github_assignees": item["github_assignees"],
+                "github_assignees_source_complete": item["github_assignees_source_complete"],
+                "assignee_window_identity_drift": (
+                    item["assignee_window_identity_drift"] or
+                    (prior["assignee_window_identity_drift"] if prior else False)
+                ),
                 "closure_verified": False, "action_executed": False,
             })
         for url, item in before.items():
@@ -234,6 +302,12 @@ def compare_snapshots(previous, current):
                     "human_followup": action,
                     "prior_priority_rank": item["priority_rank"],
                     "current_priority_rank": None,
+                    "github_assignee_change_observed": False,
+                    "prior_github_assignees": item["github_assignees"],
+                    "prior_github_assignees_source_complete": item["github_assignees_source_complete"],
+                    "current_github_assignees": None,
+                    "github_assignees_source_complete": item["github_assignees_source_complete"],
+                    "assignee_window_identity_drift": item["assignee_window_identity_drift"],
                     "closure_verified": False, "action_executed": False,
                 })
     # Critical observed cards first; missing cards are review-only, never closed.
@@ -246,6 +320,7 @@ def compare_snapshots(previous, current):
     counts = {name: sum(c["change"] == name for c in changes) for name in (
         "NEWLY_OBSERVED_NOT_PROVEN_NEW", "OBSERVED_PRIORITY_CHANGE",
         "PERSISTENT_P0_P1_WITHOUT_GITHUB_ISSUE_UPDATE",
+        "OBSERVED_GITHUB_ASSIGNEE_CHANGE",
         "NOT_IN_CURRENT_DISPLAY_NOT_PROVEN_RESOLVED",
     )}
     report = {
@@ -308,6 +383,12 @@ def _operator_workorders(delta):
             "issue_url": row["url"],
             "issue_number": row["number"],
             "change": row["change"],
+            "github_assignee_change_observed": row.get("github_assignee_change_observed", False),
+            "prior_github_assignees": row.get("prior_github_assignees"),
+            "prior_github_assignees_source_complete": row.get("prior_github_assignees_source_complete", False),
+            "current_github_assignees": row.get("current_github_assignees"),
+            "github_assignees_source_complete": row.get("github_assignees_source_complete", False),
+            "assignee_window_identity_drift": row.get("assignee_window_identity_drift", False),
             "priority_rank_hint": rank,
             "priority_source": priority_source,
             "critical_priority_verified_from_current_label": (
@@ -423,9 +504,11 @@ def _operator_markdown(delta):
         ref = ("[" + item["repository"] + " #" + str(item["issue_number"]) +
                "](" + item["issue_url"] + ")" if item["issue_url"] else
                item["repository"] + " · SOURCE COVERAGE")
+        assignment = " · " + _assignee_change_text(item) if item["kind"] == "issue" else ""
         rows.append(
             "- " + ref + " · " + item["change"] +
             " · priority evidence " + item["priority_source"] +
+            assignment +
             " · GitHub detail " + item["live_github_issue_state"] +
             " · **Human next:** " + item["human_next_action"] +
             " (" + item["human_next_action_code"] + ") · NOT EXECUTED"
@@ -460,9 +543,10 @@ def _operator_html(delta):
             esc(item["issue_url"]) + "'>" + label + "</a>"
             if item["issue_url"] else label
         )
+        assignment = " · " + _assignee_change_text(item) if item["kind"] == "issue" else ""
         rows.append(
             "<li>" + link + " · " + esc(item["change"]) +
-            " · " + esc(item["priority_source"]) +
+            " · " + esc(item["priority_source"]) + esc(assignment) +
             " · GitHub detail " + esc(item["live_github_issue_state"]) +
             " · <strong>Human next:</strong> " + esc(item["human_next_action"]) +
             " <code>" + esc(item["human_next_action_code"]) +
@@ -509,6 +593,7 @@ def as_markdown(delta):
             "](" + change["url"] + ") · " + change["change"] +
             " · prior rank " + str(change["prior_priority_rank"]) +
             " → current rank " + str(change["current_priority_rank"]) +
+            " · " + _assignee_change_text(change) +
             " · **Human next:** " + change["human_followup"] +
             " · code: " + change["human_followup_code"] +
             (" · GitHub detail: " + change["live_issue_recheck_state"] +
@@ -563,7 +648,8 @@ def as_html(delta):
             esc(c["url"]) + "'>" + esc(c["repository"]) + " #" +
             esc(c["number"]) + "</a> · " + esc(c["change"]) +
             " · prior rank " + esc(c["prior_priority_rank"]) + " → current " +
-            esc(c["current_priority_rank"]) + " · human next: " +
+            esc(c["current_priority_rank"]) + " · " +
+            esc(_assignee_change_text(c)) + " · human next: " +
             esc(c["human_followup"]) +
             (" · GitHub detail: " + esc(c["live_issue_recheck_state"]) +
              (" · " + esc(c["live_issue_recheck_observed_at_utc"])
@@ -625,7 +711,10 @@ def as_delta_csv(delta):
     stream = io.StringIO(newline="")
     writer = csv.writer(stream, lineterminator="\n")
     writer.writerow((
-        "row_kind", "repository", "issue_url", "change_type",
+        "row_kind", "repository", "issue_url",
+        "github_assignee_change_observed", "prior_github_assignees",
+        "current_github_assignees", "github_assignees_source_complete",
+        "assignee_window_identity_drift", "change_type",
         "prior_priority_rank", "current_priority_rank",
         "source_transition", "human_source_action_code",
         "human_issue_action_code", "human_issue_followup",
@@ -635,14 +724,23 @@ def as_delta_csv(delta):
     ))
     for row in delta["repositories_compared"]:
         writer.writerow((
-            "source", row["repository"], "", "", "", "",
-            row["source_transition"], row["human_source_action_code"],
+            "source", row["repository"], "", False, "", "", False, False,
+            "", "", "", row["source_transition"], row["human_source_action_code"],
             "", "", False, False, "", "", "", "",
         ))
     for row in delta["changes"]:
         writer.writerow((
-            "issue", row["repository"], row["url"], row["change"],
-            row["prior_priority_rank"], row["current_priority_rank"],
+            "issue", row["repository"], row["url"],
+            row.get("github_assignee_change_observed", False),
+            _assignee_display(row.get("prior_github_assignees"),
+                              row.get("prior_github_assignees_source_complete", False),
+                              row.get("assignee_window_identity_drift", False)),
+            _assignee_display(row.get("current_github_assignees"),
+                              row.get("github_assignees_source_complete", False),
+                              row.get("assignee_window_identity_drift", False)),
+            row.get("github_assignees_source_complete", False),
+            row.get("assignee_window_identity_drift", False),
+            row["change"], row["prior_priority_rank"], row["current_priority_rank"],
             "", "", row["human_followup_code"], row["human_followup"],
             False, False,
             row.get("live_issue_recheck_state", ""),
@@ -654,6 +752,15 @@ def as_delta_csv(delta):
         writer.writerow((
             "operator_" + workorder["kind"],
             workorder["repository"], workorder["issue_url"] or "",
+            workorder.get("github_assignee_change_observed", False),
+            _assignee_display(workorder.get("prior_github_assignees"),
+                              workorder.get("prior_github_assignees_source_complete", False),
+                              workorder.get("assignee_window_identity_drift", False)),
+            _assignee_display(workorder.get("current_github_assignees"),
+                              workorder.get("github_assignees_source_complete", False),
+                              workorder.get("assignee_window_identity_drift", False)),
+            workorder.get("github_assignees_source_complete", False),
+            workorder.get("assignee_window_identity_drift", False),
             workorder["change"], "", workorder["priority_rank_hint"],
             workorder["priority_source"], "", workorder["human_next_action_code"],
             workorder["human_next_action"], False, False,
