@@ -1300,6 +1300,8 @@ def html_view(decision, registry=None):
         # The live reader can now distinguish partial status windows. Never
         # reuse that claim for a manually saved, unauthenticated snapshot.
         status_windows = notion.get("status_source_windows")
+        if live_notion and status_windows is None:
+            raise ValueError("live Notion claim snapshot lacks per-status source windows")
         window_html = (
             '<p class="muted">Geen afzonderlijk live bronvensterbewijs; '
             'geen vrije-werkconclusie uit een opgeslagen momentopname.</p>'
