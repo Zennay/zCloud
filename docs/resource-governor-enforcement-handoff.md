@@ -200,10 +200,20 @@ silently continuing under inconsistent reservation and process limits.
 This is a source-level safety guard, not permission to edit contracts
 or restart live research/training.
 
-The production SQLite creation race remains a separate release
-concern: pinned source paths must refer to the existing canonical
-database, never a brand-new independent authority. Do not switch a
-live service to an unverified or unreachable DB as a workaround.
+The pinned production SQLite authority is now opened with
+`mode=rw` (rather than SQLite's create-if-missing default), which
+rejects a missing file even if a shared mount disappears between
+filesystem preflight and the database open. An existing pinned database
+must already contain the required `resource_leases` columns; the
+wrapper does not initialize a new lease table when the pinned path
+points to unrelated or incomplete SQLite contents. Temporary
+un-pinned canary databases retain their isolated schema-bootstrap path.
+
+These source guards **do not authenticate** an operator's choice of a
+shared database or grant the run user permission to access it. Each
+real FTMO/HaxLab/LightUp launcher's approved service identity must use
+the same authorized canonical path, and production receipts must still
+prove both actual open authority and cross-project exclusion.
 
 ## Bounded heavy-pool waiting (opt-in)
 
@@ -241,6 +251,33 @@ no-starvation proof**. Achieving deterministic wait order across projects,
 crash-safe fairness and CPU-intensity ranking requires an authorized
 integration of the separately owned scheduler/runtime sources. Unrelated
 protected pool capacity remains separately reserved.
+
+## New VPS observed running workload · 23 October
+
+Read-only zSSH inspection on
+`VM-7eb5ee16-2c71-440d-b7fd-8095d204e930`
+found the live HaxLab self-play Node process
+`training/haxlab_selfplay.cjs`, launched under
+`training/continuous.cjs` in the
+`fuckball-ai-coach.service` user scope. Neither observed ancestor
+was the governed Python wrapper. The scope already had Linux
+`cpu.max=200000 100000` and
+`memory.max=3221225472`, i.e. an independent two-CPU quota and
+3-GiB memory cap. These bounds help contain that training service,
+but **do not establish shared heavy-pool exclusion with FTMO or
+LightUp**. The process was not signaled, stopped, restarted or
+reconfigured.
+
+The new VPS's zCloud GitHub Actions runner service
+`actions.runner.Zennay-zCloud.zcloud-vps-1.service` is present
+but disabled/inactive. Runner directory/configuration files exist,
+but its registration/labels and current authorization remain
+unverified. The owner-only canonical `history.db` is 0600
+`ubuntu:ubuntu` and cannot be inspected as the zSSH account;
+no permission escalation is authorized. Runner recovery remains
+tracked by existing incident
+[GitHub #1326](https://github.com/Zennay/zCloud/issues/1326).
+Operational service and CI gates are independent of the source merge.
 
 ## What remains before this milestone is DONE
 
