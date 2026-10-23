@@ -11,7 +11,8 @@ class WorkerScalingDashboardTests(unittest.TestCase):
         self.assertIn("function loadWorkerScaling()", app)
         self.assertIn("fetch('/api/worker-scaling?hours=12'", app)
         self.assertIn("scalingChip(p.id)", app)
-        self.assertIn("${dynamicWorkerControl()}${workerScalingPanel()}${workerDebugPanel()}", app)
+        self.assertIn("+dynamicWorkerControl()", app)
+        self.assertIn("+workerDebugPanel()+workerScalingPanel()", app)
         self.assertNotIn("api('/api/status?worker_scaling", app)
 
     def test_server_endpoint_is_read_only_report_adapter(self):

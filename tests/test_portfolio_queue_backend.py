@@ -67,6 +67,36 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(2, worker_count)
 
+    def test_allocator_prefers_complete_feature_over_older_same_priority_micro_task(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
+        micro = server.portfolio_queue_enqueue(
+            "supa", "Test planner flow navigation", "P2",
+            "Verify only a small planner navigation detail.",
+        )
+        feature = server.portfolio_queue_enqueue(
+            "supa", "Build complete planner user flow", "P2",
+            "Implement and integrate full planner UI, persistence and end-to-end tests.",
+        )
+        selected = server.portfolio_queue_allocate()
+        self.assertEqual([feature["queue_id"]], [row["queue_id"] for row in selected])
+        self.assertEqual("queued", next(
+            row["status"] for row in server.portfolio_queue_items(True)
+            if row["queue_id"] == micro["queue_id"]
+        ))
+
+    def test_allocator_preserves_urgent_priority_over_large_lower_priority_feature(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
+        urgent = server.portfolio_queue_enqueue(
+            "supa", "Test urgent planner flow navigation", "P0",
+            "Fix an urgent regression in planner navigation and verify the fix.",
+        )
+        server.portfolio_queue_enqueue(
+            "supa", "Build complete planner user flow", "P1",
+            "Implement and integrate full planner UI and persistence.",
+        )
+        selected = server.portfolio_queue_allocate()
+        self.assertEqual([urgent["queue_id"]], [row["queue_id"] for row in selected])
+
     def test_claims_priority_and_two_global_slots(self):
         server.portfolio_queue_enqueue("haxlab", "normal", "P2", "prove normal")
         server.portfolio_queue_enqueue("raiseai", "high", "P1", "prove high")
@@ -375,6 +405,54 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         rows = {item["queue_id"]: item for item in server.portfolio_queue_items(True)}
         self.assertEqual("queued", rows[existing["queue_id"]]["status"])
         self.assertIsNone(rows[existing["queue_id"]]["worker_slot"])
+
+    def test_force_lightup_second_worker_uses_exact_idle_slot_and_preserves_generating_w1(self):
+        # Reproduces the dashboard screenshot: slot 1 is Available while
+        # LightUp::w1 is already generating in physical slot 2.
+        # Force must take independent work only, never steal/rename w1.
+        self.assertGreaterEqual(server._portfolio_project_hard_cap("lightup"), 2)
+        original = server.portfolio_queue_enqueue(
+            "lightup", "Implement scope authorization decisions", "P0",
+            "Implement isolated scope authorization with tests.",
+        )
+        second = server.portfolio_queue_enqueue(
+            "lightup", "Implement evidence remediation pipeline", "P1",
+            "Implement isolated evidence remediation with tests.",
+        )
+        ts = server.now()
+        with server.connect() as conn:
+            conn.execute(
+                "UPDATE portfolio_queue SET status='running',worker_slot=2,"
+                "claimed_at=?,claim_expires='2099-01-01T00:00:00+00:00' WHERE queue_id=?",
+                (ts, original["queue_id"]),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO ai_global_slots(slot,project_id,worker_slot,assigned_at)"
+                " VALUES(2,'lightup',1,?)", (ts,),
+            )
+            conn.execute(
+                "INSERT INTO runner_events(ts,event,project_id,worker_slot,generating,sending)"
+                " VALUES(?,?,?,?,?,?)",
+                (ts, "generation-progress", "lightup", 1, 1, 0),
+            )
+            for key, value in (
+                (server._manual_force_start_priority_key("lightup"), ts),
+                (server._manual_force_start_slot_key("lightup"), "1"),
+            ):
+                conn.execute(
+                    "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?)",
+                    (key,value,ts,"test"),
+                )
+        selected = server.portfolio_queue_allocate()
+        by_id = {item["queue_id"]: item for item in selected}
+        self.assertEqual(2, by_id[original["queue_id"]]["worker_slot"])
+        self.assertEqual(1, by_id[second["queue_id"]]["worker_slot"])
+        allocation = server.portfolio_queue_allocation()
+        by_key = {w["worker_key"]:w["global_worker_slot"] for w in allocation["workers"]}
+        self.assertEqual(2, by_key["lightup::w1"],
+                         "running browser identity must not be renumbered")
+        self.assertEqual(1, by_key["lightup::w2"],
+                         "new independent worker must own the forced idle slot")
 
     def test_force_start_reuses_idle_running_p0_slot_for_lower_priority_project(self):
         server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
@@ -1106,7 +1184,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(2, len(selected))
         self.assertEqual({"ftmo"}, {item["project_id"] for item in selected})
         lanes = {item["execution_lane"]["lane_id"] for item in selected}
-        self.assertEqual({"critical-path", "qa-validation"}, lanes)
+        self.assertEqual({"critical-path", "strategy-implementation"}, lanes)
         for item in selected:
             self.assertTrue(item["execution_lane"]["scope"]["capabilities"])
 

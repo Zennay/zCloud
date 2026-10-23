@@ -1,0 +1,99 @@
+name: zCloud Force v2 deferred safe-idle addon activation
+
+on:
+  pull_request:
+    paths:
+      - scripts/zcloud_force_v2_idle_activation_20261013.py
+      - tests/test_zcloud_force_v2_idle_activation_20261013.py
+      - .github/workflows/zcloud-force-v2-idle-activation-20261013.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/zcloud_force_v2_idle_activation_20261013.py
+      - tests/test_zcloud_force_v2_idle_activation_20261013.py
+      - .github/workflows/zcloud-force-v2-idle-activation-20261013.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-force-v2-idle-activation
+  cancel-in-progress: false
+
+jobs:
+  unit:
+    name: Deny unsafe addon reload; validate one-shot activation contract
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Compile, deny-busy tests and source handshake
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_force_v2_idle_activation_20261013.py
+          python3 -m unittest -v tests.test_zcloud_force_v2_idle_activation_20261013
+          node --check firefox-extension/worker-controller-v2.js
+          node --check public/zcloud-worker.user.js
+          grep -Fq '@version      2.0.5' public/zcloud-worker.user.js
+          grep -Fq 'force_start' firefox-extension/worker-controller-v2.js
+
+  install:
+    name: Install a self-disabling idle-only addon update timer
+    needs: unit
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Install verified narrow user-only activation checker
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          test "$(id -u)" = 1000
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          test -f /home/ubuntu/snap/firefox/common/chatgpt-project-extension/manifest.json
+          test -f /home/ubuntu/zennay-cloud/public/zcloud-worker.user.js
+          install -d -m 0700 "$HOME/.local/libexec/zcloud" "$HOME/.local/state/zcloud"
+          install -d -m 0700 "$HOME/.config/systemd/user"
+          install -m 0700 scripts/zcloud_force_v2_idle_activation_20261013.py "$HOME/.local/libexec/zcloud/zcloud_force_v2_idle_activation_20261013.py"
+          install -m 0644 scripts/zcloud_reload_extension.mjs "$HOME/.local/libexec/zcloud/zcloud_reload_extension.mjs"
+          cmp scripts/zcloud_force_v2_idle_activation_20261013.py "$HOME/.local/libexec/zcloud/zcloud_force_v2_idle_activation_20261013.py"
+          cat >"$HOME/.config/systemd/user/zcloud-force-v2-idle-activation.service" <<'UNIT'
+          [Unit]
+          Description=One-shot safe-idle v2.0.5 Firefox addon activation, no chat interruption
+          [Service]
+          Type=oneshot
+          Environment=HOME=/home/ubuntu
+          Environment=XDG_RUNTIME_DIR=/run/user/1000
+          Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+          ExecStart=/usr/bin/python3 /home/ubuntu/.local/libexec/zcloud/zcloud_force_v2_idle_activation_20261013.py
+          UNIT
+          cat >"$HOME/.config/systemd/user/zcloud-force-v2-idle-activation.timer" <<'UNIT'
+          [Unit]
+          Description=Retry v2 addon activation only when every browser worker is proven idle
+          [Timer]
+          OnActiveSec=20s
+          OnUnitInactiveSec=90s
+          AccuracySec=10s
+          Unit=zcloud-force-v2-idle-activation.service
+          [Install]
+          WantedBy=timers.target
+          UNIT
+          systemctl --user daemon-reload
+          systemctl --user enable --now zcloud-force-v2-idle-activation.timer
+          systemctl --user is-active zcloud-force-v2-idle-activation.timer
+          echo "FORCE_V2_SAFE_IDLE_RETRY_ARMED=1"
+          echo "NO_BROWSER_RESTART_TAB_REMOVAL_OR_QUEUE_MUTATION=1"

@@ -101,7 +101,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         self.assertEqual(required.group(1), metadata.group(1))
         self.assertEqual(required.group(1), runtime.group(1))
-        self.assertEqual("1.3.16", required.group(1))
+        self.assertEqual("2.0.5", required.group(1))
 
     def test_workers_rotate_to_fresh_chat_on_broken_or_new_assignment(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
@@ -114,7 +114,8 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         self.assertIn("markAdoptNext", userscript)
         self.assertIn("adoptNextPending", userscript)
         self.assertIn('"fresh-chat-route-adoption"', userscript)
-        self.assertIn('"conversation-reset-requested"', userscript)
+        self.assertIn('"auto-chat-navigation-suppressed"', userscript)
+        self.assertNotIn('location.assign(', userscript)
         self.assertIn("conversation-reset-requested", server)
         self.assertIn("DO UPDATE SET conversation_id=''", server)
         self.assertIn("conversationLoadFailureReason", background)
@@ -127,7 +128,7 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
 
         self.assertIn("const VIOLENTMONKEY_PRIMARY_RUNNER = true;", background)
-        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.16";', background)
+        self.assertIn('const VIOLENTMONKEY_REQUIRED_VERSION = "2.0.5";', background)
         self.assertIn("ChatGPT DOM execution is owned by the Violentmonkey userscript", background)
         self.assertIn("data-zcloud-worker-id", background)
         self.assertIn("data-zcloud-worker-config", background)
@@ -155,6 +156,14 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         legacy_injection = inject_block.index("runProject.toString()", primary)
         self.assertLess(primary, bridge_return)
         self.assertLess(bridge_return, legacy_injection)
+
+    def test_primary_runner_retries_prompt_when_generation_never_starts(self):
+        userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
+
+        self.assertIn('await scheduleQualityRetry("no-generation-after-send"', userscript)
+        self.assertIn('await sendPrompt("no-generation-retry")', userscript)
+        self.assertIn('"no-generation-retry-send-unavailable"', userscript)
+        self.assertIn("generationDeadlineMs: timing.generationStartTimeoutMs", userscript)
 
     def test_fallback_refresh_is_stable_and_stale_commands_are_superseded(self):
         background = (ROOT / "firefox-extension" / "background.js").read_text(encoding="utf-8")
@@ -300,15 +309,16 @@ class ViolentmonkeyPrimaryRunnerTests(unittest.TestCase):
         fresh_start = userscript.index("async function requestFreshConversation(")
         fresh_end = userscript.index("function claimKey(", fresh_start)
         fresh_block = userscript[fresh_start:fresh_end]
-        self.assertIn('"Fresh chat requested by Violentmonkey worker"', fresh_block)
-        self.assertIn("if (!acknowledged)", fresh_block)
-        self.assertLess(fresh_block.index("commandResult("), fresh_block.index("location.assign("))
+        self.assertIn("auto-chat-navigation-suppressed", fresh_block)
+        self.assertIn("return false;", fresh_block)
+        self.assertNotIn("location.assign(", fresh_block)
+        self.assertNotIn('"completed"', fresh_block)
 
     def test_forced_initial_dispatch_retries_until_prompt_is_sent(self):
         userscript = (ROOT / "public" / "zcloud-worker.user.js").read_text(encoding="utf-8")
 
-        self.assertIn("// @version      1.3.16", userscript)
-        self.assertIn('const SCRIPT_VERSION = "1.3.16";', userscript)
+        self.assertIn("// @version      2.0.5", userscript)
+        self.assertIn('const SCRIPT_VERSION = "2.0.5";', userscript)
         self.assertIn(
             'const initialDispatchSent = await sendPrompt("violentmonkey-initial-dispatch");',
             userscript,

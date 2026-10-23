@@ -1,0 +1,55 @@
+name: zCloud Force exact-slot hosted regression
+on:
+  pull_request:
+    paths:
+      - server.py
+      - project-contracts.json
+      - public/app.js
+      - public/zcloud-worker-v2-engine.js
+      - public/zcloud-worker.user.js
+      - firefox-extension/worker-controller-v2.js
+      - tests/test_portfolio_queue_backend.py
+      - tests/test_global_worker_console_ui.py
+      - .github/workflows/zcloud-force-exact-slot-hosted.yml
+      - tests/test_force_exact_slot_hosted_trust_20261014.py
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable PR head without stored credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Enforce exact candidate SHA and repo provenance
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$BASE_REPO" = Zennay/zCloud
+          test -n "$HEAD_REPO"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "FORCE_SLOT_HOSTED_EXACT_SHA_VERIFIED=1"
+      - name: Check syntax and screenshot regression end to end
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_force_exact_slot_hosted_trust_20261014
+          python3 -m py_compile server.py project_runtime.py lane_generator.py
+          node --check public/app.js
+          node --check firefox-extension/worker-controller-v2.js
+          node --check public/zcloud-worker-v2-engine.js
+          node --check public/zcloud-worker.user.js
+          python3 -m unittest -v tests.test_global_worker_console_ui tests.test_portfolio_queue_backend
+          node tests/test_single_tab_worker_v2.js
+          echo FORCE_EXACT_SLOT_HOSTED_REGRESSION=PASS

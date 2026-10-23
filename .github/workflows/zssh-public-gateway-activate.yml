@@ -48,6 +48,7 @@ jobs:
       - name: Enforce explicit production activation and canonical runner
         env:
           ACTIVATION_PHRASE: "${{ inputs.activation_phrase }}"
+          PUBLIC_BASE_URL: "${{ inputs.public_base_url }}"
           EXPECTED_ZSSH_SHA: "${{ inputs.expected_zssh_sha }}"
         shell: bash
         run: |
@@ -55,6 +56,7 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_REF_NAME" = "main"
           test "$ACTIVATION_PHRASE" = "ACTIVATE_ZSSH_PUBLIC_GATEWAY"
+          test "$PUBLIC_BASE_URL" = "https://zssh.zennay.nl"
           [[ "$EXPECTED_ZSSH_SHA" =~ ^[0-9a-f]{40}$ ]]
           python3 scripts/zcloud_vps_runner_guard.py --json | tee "$RUNNER_TEMP/zssh-public-gateway-activate-runner-guard.json"
           test "$(hostname)" = "vps-bb300bba"

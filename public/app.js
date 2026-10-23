@@ -7,14 +7,168 @@ const date=(x,full=false)=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Ams
 const clock=x=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(x));
 const rel=x=>{const m=Math.floor((Date.now()-Date.parse(x))/60000);return m<1?'zojuist':m<60?m+' min geleden':m<1440?Math.floor(m/60)+' u geleden':date(x)};
 const STATUS_TIMEOUT_MS=30000,STATUS_CACHE_KEY='zcloud:last-status:v1',STATUS_CACHE_MAX_AGE_MS=24*60*60*1000;
-let DATA=null,ACTIVITY=[],HOST=[],HISTORY={},WORKER_SCALING=null,WORKER_SCALING_ERROR='',route='',range='7d',filter='',busy=false,routeVersion=0,dynamicWorkerSaveTimer=null;
+let DATA=null,ACTIVITY=[],HOST=[],HISTORY={},WORKER_SCALING=null,WORKER_SCALING_ERROR='',route='',range='7d',filter='',busy=false,routeVersion=0,dynamicWorkerSaveTimer=null,scrollToWorkersOnOverview=false,mobileWorkersActive=false;
+const ACTIVITY_CACHE_INTERVAL_MS=120000,ACTIVITY_MAX_PROJECTS=24,ACTIVITY_MAX_VISIBLE=240;
+let ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:0,projectsTotal:0,projectsRead:0,failed:0,limited:false,pending:false,scope:'',lastError:''};
+let ACTIVITY_PROJECT_FETCH=null;
+let ACTIVITY_PROJECT_FETCH_TIME=0;
+function activityCoverageText(){
+  const c=ACTIVITY_COVERAGE;
+  const prefix='Local VPS events only · GitHub PRs, branches and CI are not synchronized.';
+  if(c.pending)return prefix+' Reading project histories…';
+  if(!c.lastSuccess)return prefix+' Project coverage has not been checked.';
+  const partial=c.failed||c.projectsRead<c.projectsTotal;
+  const status=partial?'Partial coverage — some project histories are unavailable or not included.':'Project history read completed.';
+  const limit=c.limited?' Some projects have reached the last-80-events API limit.':'';
+  return prefix+' '+status+' '+c.projectsRead+'/'+c.projectsTotal+' project sources checked · last read '+date(c.lastSuccess,true)+'.'+limit;
+}
+/**
+ * The existing read-only API accepts ?project=<allowlisted id>, but its global
+ * 80-row cap can hide every quiet project behind one noisy checkout. Read each
+ * visible project at most once per two minutes, using bounded parallelism, and
+ * round-robin their local events without treating a successful /api/status as
+ * evidence that remote GitHub PRs or CI have been synchronized.
+ */
+async function refreshProjectActivity(version,force=false){
+  if(!DATA||route!=='activity')return;
+  const visible=(DATA.projects||[]).filter(p=>p&&typeof p.id==='string'
+      &&/^[a-z][a-z0-9_-]{0,55}$/.test(p.id));
+  const scoped=filter?visible.filter(p=>p.id===filter):visible;
+  const ids=scoped.slice(0,ACTIVITY_MAX_PROJECTS).map(p=>p.id);
+  const omitted=Math.max(0,scoped.length-ids.length);
+  const scope=ids.join('|');
+  if(!ids.length){
+    ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:0,projectsTotal:scoped.length,projectsRead:0,failed:0,limited:false,pending:false,scope,lastError:'no-visible-projects'};
+    render();return;
+  }
+  if(ACTIVITY_PROJECT_FETCH){
+    await ACTIVITY_PROJECT_FETCH;
+    if(version!==routeVersion||route!=='activity')return;
+    // New filter/scope while a previous request was pending: start the new
+    // scope rather than leaving an indefinite "Reading…" indication.
+    return refreshProjectActivity(version,force);
+  }
+  if(!force&&ACTIVITY_COVERAGE.scope===scope
+    &&Date.now()-ACTIVITY_PROJECT_FETCH_TIME<ACTIVITY_CACHE_INTERVAL_MS)return;
+  ACTIVITY_COVERAGE={...ACTIVITY_COVERAGE,pending:true,scope,lastError:''};
+  render();
+  const work=(async()=>{
+    const streams=new Map(),errors=[];
+    for(let start=0;start<ids.length;start+=4){
+      const batch=ids.slice(start,start+4);
+      const results=await Promise.allSettled(batch.map(id=>api('/api/activity?project='+encodeURIComponent(id),8000)));
+      if(version!==routeVersion||route!=='activity')return;
+      results.forEach((r,index)=>{
+        const id=batch[index];
+        if(r.status!=='fulfilled'||!Array.isArray(r.value)){errors.push(id);return;}
+        // Fail closed if an endpoint returns cross-project or malformed data.
+        const rows=r.value;
+        if(rows.length>80||rows.some(a=>!a||a.project!==id
+            ||typeof a.id!=='string'||a.id.length>256
+            ||typeof a.ts!=='string'||!Number.isFinite(Date.parse(a.ts)))){
+          errors.push(id);return;
+        }
+        streams.set(id,rows);
+      });
+    }
+    if(version!==routeVersion||route!=='activity'||filter!==((ids.length===1&&scope===filter)?filter:''))return;
+    const merged=[],seen=new Set(),indices=new Map(ids.map(id=>[id,0]));
+    while(merged.length<ACTIVITY_MAX_VISIBLE){
+      let advanced=false;
+      for(const id of ids){
+        const items=streams.get(id)||[];
+        let i=indices.get(id);
+        if(i>=items.length)continue;
+        const item=items[i];indices.set(id,i+1);
+        if(!seen.has(item.id)){merged.push(item);seen.add(item.id);}
+        advanced=true;
+        if(merged.length>=ACTIVITY_MAX_VISIBLE)break;
+      }
+      if(!advanced)break;
+    }
+    // A partial API outage must not silently delete the last-known local feed.
+    // Successful reads are merged with the previous global result when needed.
+    if(errors.length){
+      for(const item of ACTIVITY){
+        if(merged.length>=ACTIVITY_MAX_VISIBLE)break;
+        if(item&&typeof item.id==='string'&&!seen.has(item.id)){
+          merged.push(item);seen.add(item.id);
+        }
+      }
+    }
+    if(streams.size)ACTIVITY=merged;
+    ACTIVITY_PROJECT_FETCH_TIME=Date.now();
+    ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:streams.size?ACTIVITY_PROJECT_FETCH_TIME:ACTIVITY_COVERAGE.lastSuccess,
+      projectsTotal:scoped.length,projectsRead:streams.size,failed:errors.length+omitted,
+      limited:[...streams.values()].some(rows=>rows.length===80),
+      pending:false,scope,lastError:errors.length?'partial-local-reads':''};
+    render();
+  })();
+  ACTIVITY_PROJECT_FETCH=work;
+  try{await work;}finally{
+    if(ACTIVITY_PROJECT_FETCH===work)ACTIVITY_PROJECT_FETCH=null;
+    if(ACTIVITY_COVERAGE.pending&&version===routeVersion){
+      ACTIVITY_COVERAGE={...ACTIVITY_COVERAGE,pending:false,lastError:'interrupted'};
+      render();
+    }
+  }
+}
+
 function loadCachedStatus(){try{const cached=JSON.parse(localStorage.getItem(STATUS_CACHE_KEY)||'null');if(!cached||!cached.data||!cached.saved_at)return null;if(Date.now()-Number(cached.saved_at)>STATUS_CACHE_MAX_AGE_MS)return null;return cached.data}catch{return null}}
 function saveCachedStatus(data){try{localStorage.setItem(STATUS_CACHE_KEY,JSON.stringify({saved_at:Date.now(),data}))}catch{}}
 function hydrate(){document.querySelectorAll('[data-icon]').forEach(el=>{el.innerHTML=icon(el.dataset.icon);el.removeAttribute('data-icon')})}
 async function api(path,timeoutMs=10000){const r=await fetch(path,{cache:'no-store',signal:AbortSignal.timeout(timeoutMs)});if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}
 async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}
-async function saveProjectLayout(order,archived){await post('/api/project-layout',{order,archived});await refresh(true)}
-function syncNav(){document.querySelectorAll('[data-nav]').forEach(a=>a.classList.toggle('active',a.dataset.nav===route));$('projectCount').textContent=DATA.projects.length;const links=DATA.projects.map(p=>`<a href="#project/${esc(p.id)}" class="${route==='project/'+p.id?'active':''}"><span class="project-dot" style="--accent:${p.accent}"></span>${esc(p.name)}</a>`).join('');$('projectNav').innerHTML=links;const mobileProjects=$('mobileProjectNav');if(mobileProjects)mobileProjects.innerHTML=`<a href="#overview" data-nav="overview" class="mobile-overview-link ${route==='overview'?'active':''}">${icon('grid')}<span>Overview</span></a>`+links}
+async function saveProjectLayout(order,archived){
+  if(projectLayoutActionPending)return false;
+  projectLayoutActionPending=true;
+  let saved=false;
+  try{
+    await post('/api/project-layout',{order,archived});
+    saved=true;
+    if(!await refresh(true))throw new Error('Saved project order, status refresh failed');
+    projectLayoutNotice('Project order saved.');
+    return true;
+  }catch(_error){
+    projectLayoutNotice(saved
+      ?'Project order saved, but dashboard refresh failed. Reload to see the current order.'
+      :'Project order could not be confirmed. Check the project list before trying again.');
+    return false;
+  }finally{
+    projectLayoutActionPending=false;
+  }
+}
+let projectLayoutActionPending=false;
+function projectLayoutNotice(message){
+  const notice=$('notice');
+  if(notice){notice.hidden=false;notice.textContent=message}
+}
+async function changeProjectLayout(control,operation,order,archived){
+  if(projectLayoutActionPending)return;
+  projectLayoutActionPending=true;
+  const label=control.querySelector('b')||control;
+  const previousLabel=label.textContent;
+  control.disabled=true;
+  control.setAttribute('aria-busy','true');
+  label.textContent=operation==='archive'?'Archiving…':'Restoring…';
+  let backendConfirmed=false;
+  try{
+    await post('/api/project-layout',{order,archived});
+    backendConfirmed=true;
+    if(!await refresh(true))throw new Error('Saved layout, status refresh failed');
+    projectLayoutNotice(operation==='archive'?'Project archived successfully.':'Project restored successfully.');
+  }catch(_error){
+    projectLayoutNotice(backendConfirmed
+      ?'Your change was saved, but the dashboard could not refresh. Reload to view the latest projects.'
+      :'The project change could not be confirmed. Check the project list before trying again.');
+  }finally{
+    label.textContent=previousLabel;
+    control.removeAttribute('aria-busy');
+    control.disabled=false;
+    projectLayoutActionPending=false;
+  }
+}
+function syncNav(){document.querySelectorAll('[data-nav]').forEach(a=>a.classList.toggle('active',a.dataset.nav===route&&!(route==='overview'&&mobileWorkersActive)));document.querySelectorAll('[data-jump-workers]').forEach(a=>a.classList.toggle('active',route==='overview'&&mobileWorkersActive));$('projectCount').textContent=DATA.projects.length;const links=DATA.projects.map(p=>`<a href="#project/${esc(p.id)}" class="${route==='project/'+p.id?'active':''}"><span class="project-dot" style="--accent:${p.accent}"></span>${esc(p.name)}</a>`).join('');$('projectNav').innerHTML=links;const mobileProjects=$('mobileProjectNav');if(mobileProjects){mobileProjects.classList.toggle('is-overview',route==='overview');mobileProjects.innerHTML=`<a href="#overview" data-nav="overview" class="mobile-overview-link ${route==='overview'?'active':''}">${icon('grid')}<span>Overview</span></a>`+links}}
 function stat(label,value,note,ico,emphasis=false){return `<div class="stat"><div class="stat-label">${label}${icon(ico)}</div><div class="stat-value">${value}</div><div class="stat-note ${emphasis?'emphasis':''}">${note}</div></div>`}
 function heading(eyebrow,title,sub,right=''){return `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${sub}</p></div>${right}</div>`}
 function badge(p){return `<span class="badge ${p.health==='healthy'?'':'warn'}">${p.health==='healthy'?'Operational':'Needs attention'}</span>`}
@@ -127,7 +281,7 @@ function projectPrimaryActions(p,placement='card'){
   const pause=active?`<button type="button" class="project-secondary-button" data-runner-toggle="${esc(p.id)}" data-runner-action="pause" ${pending?'disabled':''}>Pause</button>`:'';
   return `<div class="project-primary-actions project-primary-actions-${esc(placement)}"><div class="project-action-copy"><small>${placement==='detail'?'PROJECT CONTROL':'WORK'}</small><span><i class="${active?'is-active':''}"></i>${esc(state)}</span></div><div class="project-action-buttons">${primary}${force}${pause}</div></div>`;
 }
-function projectCard(p){const draggable=!(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches);return `<article class="project-card" style="--accent:${p.accent}" draggable="${draggable}" data-project-id="${esc(p.id)}"><div class="project-card-top"><span class="project-icon">${icon(p.icon)}</span><div class="project-card-actions"><span class="drag-handle" title="Drag to move" aria-hidden="true">⋮⋮</span><button class="archive-button" data-archive="${esc(p.id)}" type="button">Archive</button></div></div><a class="project-card-link" href="#project/${esc(p.id)}" aria-label="View ${esc(p.name)}: ${num(p.progress)} percent of project steps"><div class="card-badge-row">${badge(p)}</div><div class="eyebrow">${p.eyebrow}</div><h3>${p.name}</h3><p>${p.goal}</p><div class="progress-row"><span>${p.completed} / ${p.milestones.length} project steps</span><strong>${num(p.progress)}<small>%</small></strong></div><div class="progress-track"><span style="width:${p.progress}%"></span></div><div class="project-bottom">${icon('target')}<span>${p.phase?'Phase: '+esc(p.phase):'Next: '+esc(p.next)}</span><span class="arrow">${icon('arrow')}</span></div></a>${projectPrimaryActions(p)}${projectCardOps(p)}${mobileRunnerControls(p)}</article>`}
+function projectCard(p){const draggable=!(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches);return `<article class="project-card" style="--accent:${p.accent}" draggable="${draggable}" data-project-id="${esc(p.id)}"><div class="project-card-top"><span class="project-icon">${icon(p.icon)}</span><div class="project-card-actions"><span class="drag-handle" title="Drag to move" aria-hidden="true">⋮⋮</span><button class="archive-button" data-archive="${esc(p.id)}" type="button">Archive</button></div></div><a class="project-card-link" href="#project/${esc(p.id)}" aria-label="View ${esc(p.name)}: ${num(p.progress)} percent of project steps"><div class="card-badge-row">${badge(p)}</div><div class="eyebrow">${p.eyebrow}</div><h3>${p.name}</h3><p>${p.goal}</p><div class="progress-row"><span>${p.completed} / ${p.milestones.length} project steps</span><strong>${num(p.progress)}<small>%</small></strong></div><div class="progress-track"><span style="width:${p.progress}%"></span></div><div class="project-bottom">${icon('target')}<span>${p.phase?'Phase: '+esc(p.phase):'Next: '+esc(p.next)}</span><span class="arrow">${icon('arrow')}</span></div></a></article>`}
 function attentionPanel(projectId=''){
   const all=Array.isArray(DATA?.attention_needed)?DATA.attention_needed:[];
   const items=projectId?all.filter(item=>item.project_id===projectId):all;
@@ -172,7 +326,7 @@ function runnerPanel(){
   return '<section class="runner-section"><div class="section-title"><div><h2>Project initiators</h2><p class="reduced">Firefox service, project status and recovery. New chats always receive a project-specific prompt.</p></div></div><div class="runner-grid">'+serviceCard+cards+'</div></section>';
 }
 async function restartRunner(projectId,button){
-  const projectName=DATA?.projects?.find(p=>p.id===projectId)?.name||projectId;
+  const projectName=DATA?.projects?.find(p=>p.id===String(projectId).split('::w')[0])?.name||projectId;
   if(!window.confirm('Start a new ChatGPT chat for '+projectName+'? Any running response in the old chat will be stopped.'))return;
   button.disabled=true;
   try{
@@ -196,16 +350,16 @@ async function setRunnerActive(projectId,action,button){
 async function forceStartProject(projectId,button){
   const previous=button.textContent;button.disabled=true;button.textContent='Force starting…';
   try{
-    const runner=(DATA?.chatgpt_runners||{})[projectId]||{};
-    const workers=[...new Set((runner.workers||[]).map(w=>String(w.worker_id||'').trim()).filter(Boolean))];
-    const ids=workers.length?workers:[projectId];
-    await Promise.all(ids.map(async workerId=>{
-      const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:workerId,action:'start',force:true}),signal:AbortSignal.timeout(10000)});
-      const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.error||'Force start failed')+' · '+workerId);
-      return data;
-    }));
-    button.textContent='Force started';
+    // Start exactly the requested PROJECT, not a stale list of per-worker IDs
+    // from the previous dashboard snapshot. The v2 page runner resolves the
+    // newest queue-backed w1 identity and its actual prompt at send time.
+    // A single parent command also prevents duplicate Force sends.
+    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:projectId,action:'start',force:true}),signal:AbortSignal.timeout(10000)});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.error||'Force start failed');
+    // Accepted != sent. The addon wakes the newly assigned worker to consume
+    // this command; do not display "started" before prompt-sent evidence.
+    button.textContent='Force requested';
     setTimeout(()=>refresh(true),650);
   }catch(error){button.textContent='Failed';window.alert(error.message||String(error))}
   finally{setTimeout(()=>{button.disabled=false;button.textContent=previous},2200)}
@@ -237,11 +391,11 @@ function dynamicWorkerControl(){
   const chatgpt=Math.max(0,Number(cfg.chatgpt_count??cfg.providers?.chatgpt?.count??2));
   const claude=Math.max(0,Number(cfg.claude_count??cfg.providers?.claude?.count??1));
   const total=chatgpt+claude;
-  const state=total>0?'On · '+total+' active slot'+(total===1?'':'s'):'Off';
+  const state=total>0?total+' worker'+(total===1?'':'s')+' beschikbaar':'Geen workers actief';
   const field=(key,label,value,min,max,step=1,suffix='')=>`<label><span>${esc(label)}</span><div class="dynamic-worker-input"><input type="number" inputmode="numeric" min="${min}" max="${max}" step="${step}" value="${esc(value)}" data-dynamic-setting="${esc(key)}" aria-label="${esc(label)}">${suffix?`<em>${esc(suffix)}</em>`:''}</div></label>`;
   return `<div class="dynamic-worker-control dynamic-worker-control-advanced" data-dynamic-worker-control>
     <div class="dynamic-worker-copy">
-      <small>Dynamic workers</small>
+      <small>WERKERPOOL</small>
       <strong>${esc(state)}</strong>
       <span>${chatgpt} ChatGPT · ${claude} Claude</span>
     </div>
@@ -261,7 +415,7 @@ function dynamicWorkerControl(){
         ${field('scheduler_interval_seconds','Backend scheduler',Number(cfg.scheduler_interval_seconds??5),1,300,1,'sec')}
       </div>
     </details>
-    <button type="button" class="dynamic-worker-save" data-save-dynamic-workers>Save</button>
+    <button type="button" class="dynamic-worker-save" data-save-dynamic-workers>Opslaan</button>
   </div>`;
 }
 async function saveDynamicWorkerSettings(button){
@@ -279,7 +433,9 @@ async function saveDynamicWorkerSettings(button){
     if(!response.ok)throw new Error(data.error||'Saving dynamic worker settings failed');
     if(data.dynamic_workers?.reconciled!==true)throw new Error('Worker settings were saved but the runtime did not reconcile');
     if(DATA)DATA.dynamic_workers=data.dynamic_workers;
-    button.textContent='Saved';
+    // Update rows immediately after a successful server-side reconciliation.
+    render();
+    button.textContent='Opgeslagen';
     setTimeout(()=>refresh(true),250);
   }catch(error){button.textContent=before;window.alert(error.message||String(error))}
   finally{button.disabled=false}
@@ -347,15 +503,137 @@ async function loadWorkerDebug(){
     else if(!r.ok)throw new Error('HTTP '+r.status);
     else{WORKER_DEBUG=await r.json();WORKER_DEBUG_ERROR=''}
   }catch(e){WORKER_DEBUG_ERROR='Diagnostics unavailable: '+(e.message||e)}
-  const el=$('workerDebug');if(el)el.outerHTML=workerDebugPanel();
+  const el=$('workerDebug');if(el)el.outerHTML=workerDebugPanel();const rows=$('globalWorkerRows');if(rows)rows.outerHTML=globalWorkerRows();
 }
 /*wd:end*/
-function overview(){const p=DATA.projects,done=p.reduce((n,p)=>n+p.completed,0),total=p.reduce((n,p)=>n+p.milestones.length,0),active=p.filter(p=>p.health==='healthy').length,recent=ACTIVITY.filter(a=>a.kind==='commit'&&Date.parse(a.ts)>Date.now()-86400000).length;return heading('PERSONAL WORKSPACE','Keep the work moving.','See what needs attention, continue a project and only open system details when you need them.',`<span class="date-label">${icon('calendar')}${new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',weekday:'short',day:'numeric',month:'long',year:'numeric'}).format(new Date())}</span>`)+attentionPanel()+`<div class="section-title project-section-title"><div><h2>Projects <span class="count">${p.length}</span></h2><span class="reduced">Open a project for context · drag to reorder</span></div></div><div class="project-grid" id="projectGrid">${p.map(projectCard).join('')}</div>${archivedPanel()}<details class="overview-advanced" data-disclosure="automation-settings"><summary><span>Automation settings</span><small>Worker pool and diagnostics</small></summary><div class="overview-advanced-body">${dynamicWorkerControl()}${workerScalingPanel()}${workerDebugPanel()}</div></details><div class="section-title snapshot-title"><div><h2>Portfolio snapshot</h2><span class="reduced">Useful context after the actions above</span></div></div><div class="stat-grid">${stat('Active projects',active+'<span>/ '+p.length+'</span>',active===p.length?'Everything is operating normally':'Check service status','layers',active===p.length)}${stat('Project steps completed',done+'<span>/ '+total+'</span>','According to the project plans','target')}${stat('Recent commits',recent,'Recorded in the last 24 hours','commit')}${stat('VPS uptime',Math.floor(DATA.host.uptime/86400)+'<span>d '+Math.floor(DATA.host.uptime%86400/3600)+'u</span>',DATA.host.cores+' vCPU · load '+num(DATA.host.load),'server')}</div><div class="dashboard-grid">${graphPanel(p)}${activityPanel()}</div>${infraStrip()}<details class="overview-advanced system-advanced" data-disclosure="system-controls"><summary><span>System controls</span><small>Firefox initiator and per-project recovery</small></summary><div class="overview-advanced-body">${runnerPanel()}</div></details>`}
+
+/* Pool slots remain queue-owned. A project dropdown requests scheduler priority;
+   it never claims to rebind a busy worker or an existing SQLite claim. */
+const GLOBAL_WORKER_PROJECT_REQUESTS={};
+const GLOBAL_WORKER_REQUEST_RESULTS={};
+const GLOBAL_WORKER_REQUEST_AT={};
+const WORKER_REQUEST_RETRY_MS=30000;
+function workerControlIcon(kind){
+  const paths={
+    play:'<path d="m8 5 11 7-11 7z"/>',
+    pause:'<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+    force:'<path d="M13 2 5 13h6l-1 9 9-12h-6z"/>'
+  };
+  return '<svg aria-hidden="true" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round">'+paths[kind]+'</svg>';
+}
+function globalWorkerRows(){
+  const settings=DATA?.dynamic_workers||{};
+  const count=Math.max(0,Math.min(16,Number(settings.chatgpt_count??0)+Number(settings.claude_count??0)));
+  const workers=Array.isArray(WORKER_DEBUG?.workers)?WORKER_DEBUG.workers:[];
+  const bySlot=new Map(workers.filter(w=>Number.isInteger(Number(w.global_slot))).map(w=>[Number(w.global_slot),w]));
+  const verified=Boolean(WORKER_DEBUG&&!WORKER_DEBUG_ERROR);
+  if(!count)return '<div class="global-worker-empty" id="globalWorkerRows">Nog geen workers. Kies hierboven een aantal en klik op Opslaan.</div>';
+  return '<div class="global-worker-list" id="globalWorkerRows">'+(WORKER_DEBUG_ERROR?'<p class="global-worker-access" role="alert">'+esc(WORKER_DEBUG_ERROR)+'</p>':'')+Array.from({length:count},(_,i)=>{
+    const slot=i+1,w=bySlot.get(slot),provider=slot<=Number(settings.chatgpt_count||0)?'ChatGPT':'Claude';
+    const assigned=verified?(w?.project||''):'';
+    if(assigned&&assigned===GLOBAL_WORKER_PROJECT_REQUESTS[slot]&&String(GLOBAL_WORKER_REQUEST_RESULTS[slot]||'').startsWith('Project priority requested')){
+      delete GLOBAL_WORKER_PROJECT_REQUESTS[slot];delete GLOBAL_WORKER_REQUEST_RESULTS[slot];delete GLOBAL_WORKER_REQUEST_AT[slot];
+    }
+    const choice=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:assigned;
+    const options=[...(DATA?.projects||[]),...(DATA?.archived_projects||[]),...(DATA?.worker_modes||[])].map(p=>'<option value="'+esc(p.id)+'"'+(choice===p.id?' selected':'')+'>'+esc(p.name)+'</option>').join('');
+    const pending=GLOBAL_WORKER_REQUEST_RESULTS[slot]||'';
+    const waiting=(pending.startsWith('Project priority requested')||pending.startsWith('Force voor worker'))&&Date.now()-Number(GLOBAL_WORKER_REQUEST_AT[slot]||0)<WORKER_REQUEST_RETRY_MS;
+    const verdict=verified?(w?(VERDICT_LABEL[w.verdict]||w.verdict):'Beschikbaar'):'Status niet geverifieerd';
+    const workerId=verified?String(w?.worker||''):'';
+    const paused=w?.desired_state==='paused';
+    const busySlot=Boolean(w&&['generating','prompt-sent'].includes(w.verdict));
+    const switching=Boolean(choice&&choice!==assigned);
+    const canPlay=verified&&!waiting&&((switching&&!busySlot)||(!switching&&workerId&&paused)||(!workerId&&Boolean(choice)));
+    const canPause=verified&&Boolean(workerId)&&!paused;
+    const canForce=verified&&!busySlot&&(Boolean(workerId)||Boolean(choice));
+    const chatId=workerId?((DATA?.chatgpt_runners||{})[assigned]?.workers||[]).find(x=>x.worker_id===workerId)?.conversation_id:'';
+    const chatUrl=chatId?(provider==='Claude'?'https://claude.ai/chat/':'https://chatgpt.com/c/')+encodeURIComponent(chatId):'';
+    const disabled=(allowed,reason)=>allowed?'':' disabled';
+    // Only one compact status notice per worker. Keep the full explanation in
+    // a native disclosure, so long scheduler responses cannot resize controls.
+    const noteLabel=pending
+      ?(waiting?'Aanvraag ingediend · wacht op werkertoewijzing':pending.startsWith('Project priority requested')?'Nog niet toegewezen. Probeer Play opnieuw.':pending)
+      :(switching?'Projectkeuze nog niet actief':'');
+    const noteDetail=pending
+      ?(waiting?'De projectwissel is aangevraagd. Hij wordt actief zodra de scheduler dit slot toewijst. '+pending:pending.startsWith('Project priority requested')?'De aanvraag is nog niet toegewezen. Je kunt opnieuw op Play drukken. '+pending:pending)
+      :(switching?'Druk op Play of Force om het gekozen project aan te vragen. Een lopende taak wordt niet onderbroken.':'');
+    return '<article class="global-worker-row" data-global-slot="'+slot+'">'
+      +'<div class="global-worker-identity"><span class="global-worker-index">'+String(slot).padStart(2,'0')+'</span><div><strong>Worker '+slot+'</strong><small>'+esc(provider)+'</small></div></div>'
+      +'<div class="global-worker-state '+(w?verdictClass(w.verdict):'idle')+'"><span class="global-worker-dot" aria-hidden="true"></span><span>'+esc(verdict)+'</span></div>'
+      +'<label class="global-worker-project"><span>Project</span><select data-global-worker-project="'+slot+'" aria-label="Project voor worker '+slot+'"><option value=""'+(!choice?' selected':'')+'>Geen project</option>'+options+'</select></label>'
+      +'<div class="global-worker-actions" aria-label="Bediening worker '+slot+'">'
+      +'<button type="button" class="worker-icon-action worker-play" data-global-worker-play="'+slot+'" aria-label="Start worker '+slot+'" title="Start worker"'+disabled(canPlay,'Kies een project of wacht totdat de worker beschikbaar is')+'>'+workerControlIcon('play')+'</button>'
+      +'<button type="button" class="worker-icon-action worker-pause" data-worker-action="pause" data-worker-id="'+esc(workerId)+'" aria-label="Pauzeer worker '+slot+'" title="Pauzeer worker"'+disabled(canPause,'Geen draaiende worker om te pauzeren')+'>'+workerControlIcon('pause')+'</button>'
+      +'<button type="button" class="worker-icon-action worker-force" data-global-worker-force="'+slot+'" aria-label="Forceer worker '+slot+'" title="Forceer opnieuw starten"'+disabled(canForce,'Worker is bezig of status ontbreekt')+'>'+workerControlIcon('force')+'</button>'
+      +'</div>'
+      +(chatUrl?'<a class="global-worker-chat" target="_blank" rel="noopener noreferrer" href="'+esc(chatUrl)+'" aria-label="Open de chat van worker '+slot+'">↗ Chat</a>':'')
+      +(noteLabel?'<details class="global-worker-note"><summary><span class="global-worker-note-icon" aria-hidden="true">i</span><span class="global-worker-note-label" role="status">'+esc(noteLabel)+'</span></summary><p class="global-worker-note-detail">'+esc(noteDetail)+'</p></details>':'')
+      +'</article>';
+  }).join('')+'</div>';
+}
+function globalWorkerConsole(){
+  const cfg=DATA?.dynamic_workers||{},count=Math.max(0,Number(cfg.chatgpt_count||0)+Number(cfg.claude_count||0));
+  return '<section class="worker-console worker-cockpit" id="workers" tabindex="-1" aria-label="Workers toewijzen">'
+    +'<div class="worker-console-heading"><div><span class="eyebrow">ZCLOUD / CONTROL CENTER</span><h2>Worker verdeling <span class="count">'+count+'</span></h2><p>Eén plek voor al je workers. Stel capaciteit in en kies per worker het project.</p></div><span class="worker-console-live"><i aria-hidden="true"></i> CENTRALE BESTURING</span></div>'
+    +'<div class="global-worker-pool-heading"><strong>Capaciteit</strong><small>Opslaan voegt workers toe of haalt ze weg</small></div>'
+    +dynamicWorkerControl()
+    +'<div class="global-worker-subhead"><strong>Toewijzingen</strong><small>Projectkeuzes worden aangevraagd zodra je Start of Force gebruikt. Een lopende taak wordt niet onderbroken.</small></div>'
+    +globalWorkerRows()
+    +'<details class="worker-console-diagnostics" data-disclosure="worker-diagnostics"><summary>Diagnostiek en scaling</summary>'+workerDebugPanel()+workerScalingPanel()+'</details>'
+    +'</section>';
+}
+async function forceGlobalWorker(slot,button){
+  const row=button.closest('[data-global-slot]');
+  const selected=String(row?.querySelector('[data-global-worker-project]')?.value||'');
+  const observed=(WORKER_DEBUG?.workers||[]).find(w=>Number(w.global_slot)===slot);
+  if(!WORKER_DEBUG||WORKER_DEBUG_ERROR){window.alert('Live workerstatus ontbreekt.');return}
+  if(observed&&['generating','prompt-sent'].includes(observed.verdict)){window.alert('Deze worker is nog bezig.');return}
+  if(selected&&selected!==observed?.project){await requestGlobalWorkerProject(slot,button,true);return}
+  if(observed?.worker){await controlWorker(observed.worker,'start',button,true,slot);return}
+  if(selected){await requestGlobalWorkerProject(slot,button,true);return}
+  window.alert('Kies eerst een project.');
+}
+async function playGlobalWorker(slot,button){
+  const row=button.closest('[data-global-slot]');
+  const selected=String(row?.querySelector('[data-global-worker-project]')?.value||'');
+  const verified=Boolean(WORKER_DEBUG&&!WORKER_DEBUG_ERROR);
+  const observed=(WORKER_DEBUG?.workers||[]).find(w=>Number(w.global_slot)===slot);
+  if(!verified){window.alert('Live workerstatus ontbreekt. Probeer opnieuw na verversen.');return}
+  if(selected&&selected!==observed?.project){await requestGlobalWorkerProject(slot,button);return}
+  if(observed?.worker){await controlWorker(observed.worker,'start',button);return}
+  if(selected){await requestGlobalWorkerProject(slot,button);return}
+  window.alert('Kies eerst een project om deze worker te starten.');
+}
+async function requestGlobalWorkerProject(slot,button,force=false){
+  const row=button.closest('[data-global-slot]'),selector=row?.querySelector('[data-global-worker-project]');
+  if(!selector)return;
+  const target=String(selector.value||'');
+  const observed=(WORKER_DEBUG?.workers||[]).find(w=>Number(w.global_slot)===slot);
+  if(!target){GLOBAL_WORKER_REQUEST_RESULTS[slot]='Automatic queue selection is already active. No project was reassigned.';render();return}
+  if(![...(DATA?.projects||[]),...(DATA?.archived_projects||[]),...(DATA?.worker_modes||[])].some(p=>p.id===target)){window.alert('Choose a valid project or worker role.');return}
+  if(observed&&observed.project!==target&&['generating','prompt-sent'].includes(observed.verdict)){
+    window.alert('This worker is busy. Finish or stop its current task before requesting a different project.');return;
+  }
+  const old=button.innerHTML;button.disabled=true;button.setAttribute('aria-busy','true');
+  try{
+    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:target,action:'start',force,global_worker_slot:slot}),signal:AbortSignal.timeout(10000)});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.error||'Could not request project');
+    // This API requests project admission; the scheduler can still select another slot.
+    GLOBAL_WORKER_REQUEST_RESULTS[slot]=force?'Force voor worker '+slot+' aangevraagd. Wacht op een veilige taaktoewijzing en nieuwe tab.':'Project priority requested. Waiting for queue allocation; no immediate slot switch is guaranteed.';
+    GLOBAL_WORKER_REQUEST_AT[slot]=Date.now();
+    GLOBAL_WORKER_PROJECT_REQUESTS[slot]=target;
+    setTimeout(()=>refresh(true),650);render();
+  }catch(error){delete GLOBAL_WORKER_REQUEST_AT[slot];GLOBAL_WORKER_REQUEST_RESULTS[slot]='Projectaanvraag mislukt; druk opnieuw op Play. '+(error.message||error);render()}
+  finally{button.disabled=false;button.innerHTML=old;button.removeAttribute('aria-busy')}
+}
+
+function overview(){const p=DATA.projects,done=p.reduce((n,p)=>n+p.completed,0),total=p.reduce((n,p)=>n+p.milestones.length,0),active=p.filter(p=>p.health==='healthy').length,recent=ACTIVITY.filter(a=>a.kind==='commit'&&Date.parse(a.ts)>Date.now()-86400000).length;return globalWorkerConsole()+heading('PROJECT PORTFOLIO','Keep the work moving.','Check project progress and activity below the worker controls.',`<span class="date-label">${icon('calendar')}${new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',weekday:'short',day:'numeric',month:'long',year:'numeric'}).format(new Date())}</span>`)+attentionPanel()+`<div class="section-title project-section-title"><div><h2>Projects <span class="count">${p.length}</span></h2><span class="reduced">Open a project for context · drag to reorder</span></div></div><div class="project-grid" id="projectGrid">${p.map(projectCard).join('')}</div>${archivedPanel()}<div class="section-title snapshot-title"><div><h2>Portfolio snapshot</h2><span class="reduced">Useful context after the actions above</span></div></div><div class="stat-grid">${stat('Active projects',active+'<span>/ '+p.length+'</span>',active===p.length?'Everything is operating normally':'Check service status','layers',active===p.length)}${stat('Project steps completed',done+'<span>/ '+total+'</span>','According to the project plans','target')}${stat('Recent commits',recent,'Recorded in the last 24 hours','commit')}${stat('VPS uptime',Math.floor(DATA.host.uptime/86400)+'<span>d '+Math.floor(DATA.host.uptime%86400/3600)+'u</span>',DATA.host.cores+' vCPU · load '+num(DATA.host.load),'server')}</div><div class="dashboard-grid">${graphPanel(p)}${activityPanel()}</div>${infraStrip()}`}
 function aiRunPanel(p){const r=p.last_chatgpt_run;return `<div class="panel"><div class="panel-header"><div><h2>Latest ChatGPT action</h2><div class="panel-subtitle">${r?(r.estimated?'Estimate based on project activity':'Automation measurement'):'No ChatGPT action measured yet'}</div></div>${icon('clock')}</div><div class="detail-note">${r?`${esc(r.label)}<br><br>${date(r.time,true)} · ${rel(r.time)}`:'No ChatGPT action is linked to this project yet.'}</div></div>`}
 function codePanel(p){if(p.updated)return `<div class="panel"><div class="panel-header"><h2>Latest code update</h2>${icon('commit')}</div><div class="detail-note">${esc(p.message)}<br><br>${esc(p.commit)} · ${date(p.updated,true)}${p.shallow?'<br>The runner uses a shallow Git checkout; the commit count is not the project total.':''}</div></div>`;if(p.source_status==='empty')return `<div class="panel"><div class="panel-header"><h2>Latest code update</h2>${icon('commit')}</div><div class="detail-note">Repository linked · no commits yet. New commits are picked up automatically by zCloud.</div></div>`;return ''}
 function services(p){const labels={active:'Active',activating:'Starting',waiting:'Waiting for next run',inactive:'Inactive',failed:'Failed',unknown:'Unknown'};return `<div class="panel"><div class="panel-header"><div><h2>Services</h2><div class="panel-subtitle">Live status · read-only</div></div>${badge(p)}</div><div class="service-list">${p.services.length?p.services.map(s=>`<div class="service-row"><div>${esc(s.name)}${s.name==='Research'&&s.last_run?`<div class="service-sub">Last run: ${Number.isFinite(Date.parse(s.last_run))?date(s.last_run,true):esc(s.last_run)}</div>`:''}</div><span class="service-state ${['active','activating','waiting'].includes(s.state)?'':'warn'}">${labels[s.state]||esc(s.state)}</span></div>`).join(''):'<div class="service-row"><span>Dashboard API</span><span class="service-state">Active</span></div>'}</div>${p.id==='ftmo'?'<div class="detail-note">The research task runs every five minutes. Waiting between runs is normal.</div>':''}</div>`}
 function componentPanel(p){const c=(p.components||[])[0];if(!c)return '';const rows=(c.milestones||[]).map((m,i)=>`<div class="milestone ${m.done?'done':i===0?'next':''}"><span class="milestone-check">${m.done?'✓':String(i+1).padStart(2,'0')}</span><span>${esc(m.title)}</span><em>${m.done?'Completed':''}</em></div>`).join('');return `<div class="panel" style="--accent:${esc(c.accent||p.accent)}"><div class="panel-header"><div><h2>${esc(c.name)}</h2><div class="panel-subtitle">Part of ${esc(p.name)}</div></div>${icon('watch')}</div><div class="detail-note">${esc(c.summary)}<br><br><strong>${num(c.progress)}%</strong> · ${esc(c.next_step)}</div><div class="progress-track"><span style="width:${c.progress}%"></span></div><div class="milestones">${rows}</div></div>`}
-function detail(p){let mini='';if(p.metrics?.available)mini=`<div class="metrics-mini"><div><strong>${num(p.metrics.analyzed)}</strong><span>Replays analyzed</span></div><div><strong>${num(p.metrics.hours)}</strong><span>Hours of replay data</span></div><div><strong>${num(p.metrics.failed)}</strong><span>Analysis errors</span></div></div>`;else if(p.id==='haxlab')mini='<p class="muted">Replay measurements are temporarily unavailable.</p>';return `<a class="back" href="#overview" data-nav="overview">${icon('back')}All projects</a><div class="page-heading"><div class="detail-heading" style="--accent:${p.accent}"><span class="project-icon">${icon(p.icon)}</span><div><div class="eyebrow">${p.eyebrow}</div><h1>${p.name}</h1></div></div><div class="detail-heading-actions">${badge(p)}</div></div>${projectPrimaryActions(p,'detail')}${attentionPanel(p.id)}<div class="detail-summary" style="--accent:${p.accent}"><div class="detail-progress">${num(p.progress)}<small>%</small></div><div class="detail-summary-copy"><strong>${p.goal}</strong>${p.phase?`<p><b>Phase:</b> ${esc(p.phase)} · <b>Status:</b> ${esc(p.status||'active')}</p>`:''}<p>${p.progress_basis}</p><div class="progress-track"><span style="width:${p.progress}%"></span></div>${mini}</div></div>${mobileRunnerControls(p,'detail')}<details class="overview-advanced project-worker-advanced" data-disclosure="project-workers-${esc(p.id)}"><summary><span>Worker details</span><small>Lane, task and technical status</small></summary><div class="overview-advanced-body">${workerDetailPanel(p)}</div></details><div class="detail-columns"><div class="detail-primary">${graphPanel([p])}${activityPanel(p.id,6)}${codePanel(p)}${aiRunPanel(p)}</div><div class="detail-primary"><div class="panel" style="--accent:${p.accent}"><div class="panel-header"><h2>Project steps</h2><span class="count">${p.completed} / ${p.milestones.length}</span></div><div class="milestones">${p.milestones.map((m,i)=>`<div class="milestone ${m.done?'done':m.title===p.next?'next':''}"><span class="milestone-check">${m.done?'✓':String(i+1).padStart(2,'0')}</span><span>${m.title}</span><em>${m.done?'Completed':m.title===p.next?'NEXT':''}</em></div>`).join('')}</div><div class="detail-note">This is plan progress. Live results and model quality are not evaluated by this metric.</div></div>${services(p)}${componentPanel(p)}</div></div>`}
+function detail(p){let mini='';if(p.metrics?.available)mini=`<div class="metrics-mini"><div><strong>${num(p.metrics.analyzed)}</strong><span>Replays analyzed</span></div><div><strong>${num(p.metrics.hours)}</strong><span>Hours of replay data</span></div><div><strong>${num(p.metrics.failed)}</strong><span>Analysis errors</span></div></div>`;else if(p.id==='haxlab')mini='<p class="muted">Replay measurements are temporarily unavailable.</p>';return `<a class="back" href="#overview" data-nav="overview">${icon('back')}All projects</a><div class="page-heading"><div class="detail-heading" style="--accent:${p.accent}"><span class="project-icon">${icon(p.icon)}</span><div><div class="eyebrow">${p.eyebrow}</div><h1>${p.name}</h1></div></div><div class="detail-heading-actions">${badge(p)}</div></div>${attentionPanel(p.id)}<div class="detail-summary" style="--accent:${p.accent}"><div class="detail-progress">${num(p.progress)}<small>%</small></div><div class="detail-summary-copy"><strong>${p.goal}</strong>${p.phase?`<p><b>Phase:</b> ${esc(p.phase)} · <b>Status:</b> ${esc(p.status||'active')}</p>`:''}<p>${p.progress_basis}</p><div class="progress-track"><span style="width:${p.progress}%"></span></div>${mini}</div></div><div class="detail-columns"><div class="detail-primary">${graphPanel([p])}${activityPanel(p.id,6)}${codePanel(p)}${aiRunPanel(p)}</div><div class="detail-primary"><div class="panel" style="--accent:${p.accent}"><div class="panel-header"><h2>Project steps</h2><span class="count">${p.completed} / ${p.milestones.length}</span></div><div class="milestones">${p.milestones.map((m,i)=>`<div class="milestone ${m.done?'done':m.title===p.next?'next':''}"><span class="milestone-check">${m.done?'✓':String(i+1).padStart(2,'0')}</span><span>${m.title}</span><em>${m.done?'Completed':m.title===p.next?'NEXT':''}</em></div>`).join('')}</div><div class="detail-note">This is plan progress. Live results and model quality are not evaluated by this metric.</div></div>${services(p)}${componentPanel(p)}</div></div>`}
 function workerDetailPanel(p){
   const r=(DATA?.chatgpt_runners||{})[p.id]||{},workers=r.workers||[];
   if(!workers.length)return '';
@@ -377,17 +655,25 @@ function workerDetailPanel(p){
   }).join('');
   return `<div class="panel worker-panel"><div class="panel-header"><div><h2>ChatGPT workers</h2><div class="panel-subtitle">${activeCount} of ${desiredCount} active · technical details only when needed</div></div><span class="count">${activeCount}/${desiredCount}</span></div><div class="worker-list">${cards}</div></div>`;
 }
-async function controlWorker(workerId,action,button){
-  const labels={push:'Pushing…',pause:'Pausing…',drain:'Finish task…',start:'Resuming…'},previous=button.textContent;
-  button.disabled=true;button.textContent=labels[action]||'Working…';
+async function controlWorker(workerId,action,button,force=false,globalSlot=null){
+  const previous=button.innerHTML,iconOnly=button.classList?.contains('worker-icon-action');
+  button.disabled=true;button.setAttribute('aria-busy','true');if(!iconOnly)button.textContent='Working…';
   try{
-    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:workerId,action}),signal:AbortSignal.timeout(10000)});
+    const response=await fetch('/api/runner-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:workerId,action,force,global_worker_slot:globalSlot}),signal:AbortSignal.timeout(10000)});
     const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'Workeraction failed');
-    button.textContent=action==='drain'?'Finishing task':action==='pause'?'Paused':action==='start'?'Resume':'Push started';setTimeout(()=>refresh(true),650);
-  }catch(error){button.textContent='Failed';window.alert(error.message||String(error))}
-  finally{setTimeout(()=>{button.disabled=false;button.textContent=previous},1800)}
+    if(!iconOnly)button.textContent=action==='drain'?'Finishing task':action==='pause'?'Paused':action==='start'?'Resume':'Push started';setTimeout(()=>refresh(true),650);
+  }catch(error){if(!iconOnly)button.textContent='Failed';window.alert(error.message||String(error))}
+  finally{setTimeout(()=>{button.disabled=false;button.innerHTML=previous;button.removeAttribute('aria-busy')},1800)}
 }
-function activityPage(){const visible=new Set(DATA.projects.map(p=>p.id));const list=ACTIVITY.filter(a=>visible.has(a.project)&&(!filter||a.project===filter));return `<div class="activity-page">${heading('WORKSPACE / ACTIVITY LOG','Every step counts.','Recorded code changes and project steps.',`<select class="filter-select" id="activityFilter" aria-label="Filter activity by project"><option value="">All projects</option>${DATA.projects.map(p=>`<option value="${p.id}" ${filter===p.id?'selected':''}>${p.name}</option>`).join('')}</select>`)}<div class="panel"><div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No activity for this project yet.</div>'}</div><div class="detail-note">Up to 80 recorded events. Archived projects are hidden. Commit dates come from Git; project steps use the date when the monitor first detected them.</div></div></div>`}
+function activityPage(){
+  const visible=new Set(DATA.projects.map(p=>p.id));
+  const list=ACTIVITY.filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
+  const coverage=activityCoverageText();
+  return `<div class="activity-page">${heading('WORKSPACE / ACTIVITY LOG','Local project activity.','Local VPS commits and milestones, not a complete GitHub activity history.',`<select class="filter-select" id="activityFilter" aria-label="Filter activity by project"><option value="">All projects</option>${DATA.projects.map(p=>`<option value="${esc(p.id)}" ${filter===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`)}
+  <div class="panel"><div class="panel-header"><div><h2>Local event coverage</h2><p class="panel-subtitle" role="status" aria-live="polite">${esc(coverage)}</p></div><button type="button" class="runner-action" data-activity-refresh ${ACTIVITY_COVERAGE.pending?'disabled aria-busy="true"':''}>Refresh project history</button></div>
+  <div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No local events are available for this selection. GitHub activity may still exist.</div>'}</div>
+  <div class="detail-note">Local event timestamps are not proof that a PR was merged or a CI run passed. The API returns at most 80 events per project; projects are interleaved to stop noisy projects hiding quieter work. Archived projects are hidden.</div></div></div>`;
+}
 function infrastructure(){const h=DATA.host,mem=h.memory.used/h.memory.total*100,disk=h.disk.used/h.disk.total*100;return heading('WORKSPACE / INFRASTRUCTURE','My VPS, up close.','Current load and trends, without interrupting my projects.')+`<div class="stat-grid">${stat('CPU usage',h.cpu==null?'—':num(h.cpu)+'<span>%</span>',h.cores+' vCPU · load '+num(h.load),'cpu')}${stat('Memory',num(mem)+'<span>%</span>',gb(h.memory.used)+' of '+gb(h.memory.total),'server')}${stat('Storage',num(disk)+'<span>%</span>',gb(h.disk.free)+' free on '+gb(h.disk.total),'disk')}${stat('Uptime',Math.floor(h.uptime/86400)+'<span>days</span>',Math.floor(h.uptime%86400/3600)+' hours since the last full day','clock')}</div><p class="infra-info">Live measurements every 15 seconds. History every five minutes, up to 24 hours in this chart.</p><div class="infra-grid"><div class="panel full-width"><div class="panel-header"><div><h2>Resource usage</h2><div class="panel-subtitle">Percentage · Amsterdam time</div></div><span class="tiny-tag">24 HOURS</span></div><div class="legend"><span style="--accent:#c2f970"><i class="legend-dot"></i>CPU</span><span style="--accent:#82b8ff"><i class="legend-dot"></i>Memory</span><span style="--accent:#a899ff"><i class="legend-dot"></i>Storage</span></div><div class="chart-wrap" id="hostChart"></div><div class="chart-detail" id="chartDetail">Select a data point for the exact measurement.</div></div>${DATA.projects.filter(p=>p.services.length).map(services).join('')}</div>`}
 function chart(target,series){const el=$(target);if(!el)return;let points=series.flatMap(s=>s.data).filter(p=>p.value!=null&&Number.isFinite(Date.parse(p.date)));if(!points.length){el.innerHTML='<div class="empty">No measurements in this period.<br>New history is recorded every five minutes.</div>';return}const w=660,h=215,left=44,right=15,top=12,bottom=33,plotw=w-left-right,ploth=h-top-bottom;let lo=Math.min(...points.map(p=>Date.parse(p.date))),hi=Math.max(...points.map(p=>Date.parse(p.date)));const single=lo===hi;if(single){lo-=150000;hi+=150000}const x=t=>left+(Date.parse(t)-lo)/(hi-lo)*plotw,y=v=>top+(100-v)/100*ploth;let svg=`<svg class="chart-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" role="group" aria-label="Time chart with percentages. Select a data point for the date.">`;
 for(const v of [0,25,50,75,100])svg+=`<line x1="${left}" x2="${w-right}" y1="${y(v)}" y2="${y(v)}" stroke="#2a303b" stroke-dasharray="3 5"/><text x="${left-10}" y="${y(v)+4}" text-anchor="end">${v}%</text>`;
@@ -396,19 +682,20 @@ for(const s of series){const data=s.data.filter(p=>p.value!=null&&Number.isFinit
 svg+='</svg>';el.innerHTML=svg;const countTimes=new Set(points.map(p=>p.date)).size;$('chartDetail').textContent=countTimes===1?'First data point · '+date(points[0].date,true)+' · History grows from now on.':date(Math.min(...points.map(p=>Date.parse(p.date))),true)+' — '+date(Math.max(...points.map(p=>Date.parse(p.date))),true)+' · Select a data point.';
 }
 function paintCharts(){if(route==='overview')chart('progressChart',DATA.projects.map(p=>({name:p.name,color:p.accent,data:(HISTORY[p.id]||[]).map(r=>({date:r.date,value:r.progress}))})));else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p)chart('progressChart',[{name:p.name,color:p.accent,data:(HISTORY[p.id]||[]).map(r=>({date:r.date,value:r.progress}))}])}else if(route==='infrastructure')chart('hostChart',[['cpu','CPU','#c2f970'],['memory','Memory','#82b8ff'],['disk','Storage','#a899ff']].map(([key,name,color])=>({name,color,data:HOST.map(r=>({date:r.ts,value:r[key]}))}))) }
-function render(){if(!DATA)return;const focused=document.activeElement;const restore=focused?.dataset.range?'[data-range="'+focused.dataset.range+'"]':focused?.id==='activityFilter'?'#activityFilter':null;const openDisclosures=[...document.querySelectorAll('details[data-disclosure][open]')].map(el=>el.dataset.disclosure);syncNav();let title='Overview',html;if(route==='activity'){html=activityPage();title='Activity'}else if(route==='infrastructure'){html=infrastructure();title='Infrastructure'}else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p){html=detail(p);title=p.name}else{html='<div class="empty">This project was not found. <a href="#overview">Back to overview</a></div>';title='Unknown project'}}else html=overview();$('crumb').textContent=title;document.title='zCloud — '+title;$('view').innerHTML=html;[...document.querySelectorAll('details[data-disclosure]')].forEach(el=>{if(openDisclosures.includes(el.dataset.disclosure))el.open=true});paintCharts();hydrate();if(restore)document.querySelector(restore)?.focus({preventScroll:true})}
-async function loadExtras(){const version=++routeVersion;const results=await Promise.allSettled([api('/api/activity'),api('/api/host-history'),...DATA.projects.map(p=>api('/api/history?project='+p.id+'&range='+range))]);if(version!==routeVersion)return;const fails=results.filter(r=>r.status==='rejected').length;if(results[0].status==='fulfilled')ACTIVITY=results[0].value;if(results[1].status==='fulfilled')HOST=results[1].value;DATA.projects.forEach((p,i)=>{if(results[i+2].status==='fulfilled')HISTORY[p.id]=results[i+2].value;else HISTORY[p.id]=[]});if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}render()}
+function render(){if(!DATA)return;const focused=document.activeElement;const restore=focused?.dataset.range?'[data-range="'+focused.dataset.range+'"]':focused?.id==='activityFilter'?'#activityFilter':null;const openDisclosures=[...document.querySelectorAll('details[data-disclosure][open]')].map(el=>el.dataset.disclosure);const selectedProject=document.activeElement?.dataset.globalWorkerProject;syncNav();let title='Overview',html;if(route==='activity'){html=activityPage();title='Activity'}else if(route==='infrastructure'){html=infrastructure();title='Infrastructure'}else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p){html=detail(p);title=p.name}else{html='<div class="empty">This project was not found. <a href="#overview">Back to overview</a></div>';title='Unknown project'}}else html=overview();$('crumb').textContent=title;document.title='zCloud — '+title;$('view').innerHTML=html;[...document.querySelectorAll('details[data-disclosure]')].forEach(el=>{if(openDisclosures.includes(el.dataset.disclosure))el.open=true});paintCharts();hydrate();document.querySelectorAll('[data-global-worker-project]').forEach(el=>{const slot=Number(el.dataset.globalWorkerProject);const w=(WORKER_DEBUG?.workers||[]).find(x=>Number(x.global_slot)===slot);el.value=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:(w?.project||'')});if(selectedProject)document.querySelector('[data-global-worker-project="'+selectedProject+'"]')?.focus({preventScroll:true});if(restore)document.querySelector(restore)?.focus({preventScroll:true})}
+async function loadExtras(){const version=++routeVersion;const results=await Promise.allSettled([api('/api/activity'),api('/api/host-history'),...DATA.projects.map(p=>api('/api/history?project='+p.id+'&range='+range))]);if(version!==routeVersion)return;const fails=results.filter(r=>r.status==='rejected').length;if(results[0].status==='fulfilled'&&Array.isArray(results[0].value)&&
+    (route!=='activity'||ACTIVITY_COVERAGE.projectsRead===0))ACTIVITY=results[0].value;if(results[1].status==='fulfilled')HOST=results[1].value;DATA.projects.forEach((p,i)=>{if(results[i+2].status==='fulfilled')HISTORY[p.id]=results[i+2].value;else HISTORY[p.id]=[]});if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}render();if(route==='activity')void refreshProjectActivity(version)}
 function setConnection(ok){$('connection').classList.toggle('offline',!ok);$('connection').innerHTML='<span class="status-dot"></span>'+(ok?'Live connected':'Connection lost')}
-async function refresh(initial=false){if(busy)return;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const stale=DATA.stale||Date.now()-Date.parse(DATA.time)>90000;setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+clock(DATA.time)+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling()}catch(e){setConnection(false);$('notice').hidden=false;$('notice').textContent=DATA?'Connection lost. The last loaded data remains visible; we will retry automatically.':'The VPS is temporarily unreachable. Try again or wait for the next refresh.';if(!DATA)$('view').innerHTML='<div class="loading">Not connected to zCloud yet.<button class="error-action" data-retry>Try again</button></div>'}finally{busy=false;$('refresh').disabled=false}}
-function navigate(){const hash=location.hash.slice(1)||'overview';const [path,query]=hash.split('?');route=path;filter=new URLSearchParams(query||'').get('project')||'';routeVersion++;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}
+async function refresh(initial=false){if(busy)return false;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const stale=DATA.stale||Date.now()-Date.parse(DATA.time)>90000;setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+clock(DATA.time)+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling();return true}catch(e){setConnection(false);$('notice').hidden=false;$('notice').textContent=DATA?'Connection lost. The last loaded data remains visible; we will retry automatically.':'The VPS is temporarily unreachable. Try again or wait for the next refresh.';if(!DATA)$('view').innerHTML='<div class="loading">Not connected to zCloud yet.<button class="error-action" data-retry>Try again</button></div>';return false}finally{busy=false;$('refresh').disabled=false}}
+function navigate(){const hash=location.hash.slice(1)||'overview';const [path,query]=hash.split('?');route=path;if(route!=='overview')mobileWorkersActive=false;if(scrollToWorkersOnOverview)mobileWorkersActive=true;filter=new URLSearchParams(query||'').get('project')||'';routeVersion++;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'});if(route==='overview'&&scrollToWorkersOnOverview){scrollToWorkersOnOverview=false;window.requestAnimationFrame(()=>{const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}})}}
 let draggedProject=null;
 document.addEventListener('dragstart',e=>{const card=e.target.closest('[data-project-id]');if(!card)return;draggedProject=card.dataset.projectId;card.classList.add('dragging');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',draggedProject)});
 document.addEventListener('dragover',e=>{const card=e.target.closest('[data-project-id]');if(!card||!draggedProject||card.dataset.projectId===draggedProject)return;e.preventDefault();card.classList.add('drag-over')});
 document.addEventListener('dragleave',e=>{e.target.closest('[data-project-id]')?.classList.remove('drag-over')});
-document.addEventListener('drop',async e=>{const target=e.target.closest('[data-project-id]');if(!target||!draggedProject)return;e.preventDefault();const ids=DATA.projects.map(p=>p.id).filter(id=>id!==draggedProject);const targetIndex=ids.indexOf(target.dataset.projectId);const rect=target.getBoundingClientRect();const after=e.clientY>rect.top+rect.height/2;ids.splice(targetIndex+(after?1:0),0,draggedProject);const archived=(DATA.archived_projects||[]).map(p=>p.id);const tail=(DATA.project_layout?.order||[]).filter(id=>archived.includes(id));await saveProjectLayout([...ids,...tail],archived);draggedProject=null});
+document.addEventListener('drop',async e=>{const target=e.target.closest('[data-project-id]');if(!target||!draggedProject)return;e.preventDefault();if(projectLayoutActionPending){draggedProject=null;projectLayoutNotice('Finish archiving or restoring before reordering projects.');return}const ids=DATA.projects.map(p=>p.id).filter(id=>id!==draggedProject);const targetIndex=ids.indexOf(target.dataset.projectId);const rect=target.getBoundingClientRect();const after=e.clientY>rect.top+rect.height/2;ids.splice(targetIndex+(after?1:0),0,draggedProject);const archived=(DATA.archived_projects||[]).map(p=>p.id);const tail=(DATA.project_layout?.order||[]).filter(id=>archived.includes(id));await saveProjectLayout([...ids,...tail],archived);draggedProject=null});
 document.addEventListener('dragend',()=>{document.querySelectorAll('.dragging,.drag-over').forEach(el=>el.classList.remove('dragging','drag-over'));draggedProject=null});
-document.addEventListener('click',async e=>{const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
+document.addEventListener('click',async e=>{const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
-document.addEventListener('change',async e=>{const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
+document.addEventListener('change',async e=>{const projectSelector=e.target.closest?.('[data-global-worker-project]');if(projectSelector){const slot=Number(projectSelector.dataset.globalWorkerProject);GLOBAL_WORKER_PROJECT_REQUESTS[slot]=projectSelector.value;delete GLOBAL_WORKER_REQUEST_RESULTS[slot];render();return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
 $('refresh').addEventListener('click',()=>refresh(true));window.addEventListener('hashchange',navigate);hydrate();navigate();const cachedStatus=loadCachedStatus();if(cachedStatus){DATA=cachedStatus;setConnection(false);$('notice').hidden=false;$('notice').textContent='Live connection is temporarily unavailable. Showing the last successful dashboard snapshot while reconnecting automatically.';$('syncTime').textContent='Last successful measurement '+clock(DATA.time)+' · reconnecting…';render()}refresh(true);setInterval(()=>{if(!document.hidden)refresh()},15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});

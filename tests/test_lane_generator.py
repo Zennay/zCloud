@@ -39,7 +39,7 @@ class LaneGeneratorTests(unittest.TestCase):
         selected = {lane["lane_id"]: lane["queue_id"] for lane in lanes}
 
         self.assertEqual("ftmo-critical", selected["critical-path"])
-        self.assertEqual("ftmo-qa", selected["qa-validation"])
+        self.assertEqual("ftmo-qa", selected["strategy-implementation"])
         self.assertEqual("ftmo-data", selected["data-provenance"])
 
     def test_same_lane_backlog_only_admits_one_queue_item(self):
@@ -49,6 +49,21 @@ class LaneGeneratorTests(unittest.TestCase):
 
         self.assertEqual(["ftmo-a"], list(lane_map))
         self.assertEqual("critical-path", lane_map["ftmo-a"]["lane_id"])
+
+    def test_same_priority_lane_selects_complete_feature_before_older_micro_qa(self):
+        micro = self.item("ftmo-micro", "Test candidate implementation probe", "P1")
+        macro = self.item("ftmo-feature", "Implement generation candidate end-to-end", "P1")
+        macro["created_at"] = "2026-10-02T00:00:00+00:00"
+        lane_map = eligible_queue_lane_map(self.project(), [micro, macro])
+        self.assertIn("ftmo-feature", lane_map)
+        self.assertNotIn("ftmo-micro", lane_map)
+
+    def test_higher_priority_qa_incident_still_outweighs_lower_priority_feature(self):
+        micro = self.item("ftmo-p0-qa", "Test candidate implementation probe", "P0")
+        macro = self.item("ftmo-p1-feature", "Implement generation candidate end-to-end", "P1")
+        lane_map = eligible_queue_lane_map(self.project(), [micro, macro])
+        self.assertIn("ftmo-p0-qa", lane_map)
+        self.assertNotIn("ftmo-p1-feature", lane_map)
 
     def test_active_queue_item_occupies_lane_before_queued_duplicate(self):
         running = self.item(
@@ -165,7 +180,7 @@ class LaneGeneratorTests(unittest.TestCase):
 
         lane = classify_backlog_item(project, item)
 
-        self.assertEqual("quality-validation", lane["lane_id"])
+        self.assertEqual("bugfix-delivery", lane["lane_id"])
 
     def test_cross_lane_explicit_file_collision_admits_only_higher_priority_scope(self):
         project = self.project("cloud", "platform")
@@ -237,6 +252,32 @@ class LaneGeneratorTests(unittest.TestCase):
         self.assertEqual("lightup-scope", selected["scope-authorization"])
         self.assertEqual("lightup-runtime", selected["assessment-runtime"])
         self.assertEqual("lightup-evidence", selected["evidence-remediation"])
+
+    def test_no_standalone_qa_execution_lanes_exist(self):
+        from lane_generator import PROFILE_LANES
+
+        forbidden = {"quality-validation", "qa-validation", "evaluation-validation"}
+        for profile, lanes in PROFILE_LANES.items():
+            with self.subTest(profile=profile):
+                self.assertFalse(forbidden & {lane["id"] for lane in lanes})
+        self.assertEqual(
+            ["product-core", "integration-runtime", "bugfix-delivery"],
+            [lane["id"] for lane in PROFILE_LANES["product"]],
+        )
+        self.assertEqual(
+            ["app-core", "device-integration", "bugfix-delivery"],
+            [lane["id"] for lane in PROFILE_LANES["device-product"]],
+        )
+
+    def test_fix_and_required_validation_remain_scoped_real_work(self):
+        ftmo = self.project("ftmo", "research-validation")
+        qa = self.item("ftmo-gate", "Implement frozen walk-forward risk gate", "P0")
+        risk_lane = classify_backlog_item(ftmo, qa)
+        self.assertEqual("strategy-implementation", risk_lane["lane_id"])
+        self.assertIn("ftmo-validation", risk_lane["scope"]["capabilities"])
+        product = self.project("supa", "product")
+        bug = {**self.item("supa-fix", "Fix broken planner integration crash bug"), "project_id": "supa"}
+        self.assertEqual("bugfix-delivery", classify_backlog_item(product, bug)["lane_id"])
 
     def test_unknown_explicit_lane_profile_fails_closed(self):
         project = self.project("lightup", "unknown-profile")

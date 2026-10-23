@@ -11,6 +11,7 @@ class ProjectAutonomyCoverageTests(unittest.TestCase):
         self.projects = json.loads((ROOT / "projects.json").read_text(encoding="utf-8"))
         self.contracts = json.loads((ROOT / "project-contracts.json").read_text(encoding="utf-8"))
         self.legacy = json.loads((ROOT / "autonomy-policy.json").read_text(encoding="utf-8"))
+        self.worker_modes = json.loads((ROOT / "worker-modes.json").read_text(encoding="utf-8"))
 
     def test_every_registered_active_project_has_explicit_runtime_contract(self):
         explicit = set((self.contracts.get("projects") or {}).keys())
@@ -20,9 +21,9 @@ class ProjectAutonomyCoverageTests(unittest.TestCase):
             if str(project.get("status") or "active") != "archived"
         }
         self.assertEqual(
-            active,
+            active | {mode["id"] for mode in self.worker_modes},
             explicit,
-            "Every active project must declare one canonical project runtime contract.",
+            "Every active portfolio project and worker role needs a runtime contract.",
         )
 
     def test_registry_contains_no_runtime_queue_or_lane_truth(self):

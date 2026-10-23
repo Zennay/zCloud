@@ -60,7 +60,7 @@ jobs:
 
           gh api "repos/$repo/contents/scripts/observe-public-origin-readiness.mjs?ref=$main_sha" --jq '.content' \
             | base64 --decode >"$RUNNER_TEMP/zssh-origin-observer.mjs"
-          grep -Fq 'DEFAULT_PRODUCTION_MCP_URL = "https://zssh.cheapgpt.shop/mcp"' "$RUNNER_TEMP/zssh-origin-observer.mjs"
+          grep -Fq 'export const DEFAULT_PRODUCTION_MCP_URL = "";' "$RUNNER_TEMP/zssh-origin-observer.mjs"
 
           gh api "repos/$repo/contents/submission/README.md?ref=$main_sha" --jq '.content' \
             | base64 --decode >"$RUNNER_TEMP/zssh-submission-readme.md"
@@ -105,7 +105,7 @@ jobs:
             printf '%s\t%s\t%s\n' "$name" "$value" "$action" >>"$RUNNER_TEMP/zssh-release-var-actions.tsv"
           }
 
-          set_exact_var ZSSH_PLUGIN_MCP_URL "https://zssh.cheapgpt.shop/mcp"
+          set_exact_var ZSSH_PLUGIN_MCP_URL "https://zssh.zennay.nl/mcp"
           set_exact_var ZSSH_REVIEW_FILE "/srv/zssh-review/sample.txt"
           set_exact_var ZSSH_REVIEW_WRITE_FILE "/srv/zssh-review/output.txt"
 

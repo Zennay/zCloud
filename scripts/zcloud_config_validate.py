@@ -197,10 +197,7 @@ def validate_project_contracts(
             f"{prefix}.lane_profile: expected one of {sorted(SUPPORTED_PROFILES)}",
         )
         cap = contract.get("ai_worker_cap")
-        cap_valid = isinstance(cap, int) and not isinstance(cap, bool) and cap >= 0
-        add(errors, cap_valid, f"{prefix}.ai_worker_cap: integer >= 0 required")
-        if cap_valid:
-            summary["ai_worker_caps"][str(pid)] = int(cap)
+        add(errors, isinstance(cap, int) and not isinstance(cap, bool) and cap >= 0, f"{prefix}.ai_worker_cap: integer >= 0 required")
 
         autonomy = contract.get("autonomy")
         if not isinstance(autonomy, dict):
@@ -237,6 +234,12 @@ def validate_project_contracts(
 
     summary["project_count"] = len(contract_ids)
     summary["resource_pools"] = sorted(str(name) for name in pools)
+    summary["ai_worker_caps"] = {
+        str(pid): cap for pid, contract in contracts.items()
+        if isinstance(contract, dict)
+        for cap in [contract.get("ai_worker_cap")]
+        if isinstance(cap, int) and not isinstance(cap, bool) and cap >= 0
+    }
     return summary
 
 
@@ -262,13 +265,8 @@ def validate_resource_policy(
         add(errors, priority in priorities, f"resource-policy.json.{pid}.priority: expected one of {sorted(priorities)}")
 
 
-def validate_worker_state(
-    db_path: Path,
-    project_ids: set[str],
-    max_workers: int,
-    project_worker_caps: dict[str, int],
-    errors: list[str],
-) -> dict:
+def validate_worker_state(db_path: Path, project_ids: set[str], max_workers: int,
+                          project_worker_caps: dict[str, int], errors: list[str]) -> dict:
     summary = {"checked": False, "targets": 0, "workers": 0}
     if not db_path.exists():
         errors.append("history.db: missing worker-state store")
@@ -291,14 +289,11 @@ def validate_worker_state(
             [dict(row) for row in conn.execute(
                 "SELECT project_id,worker_slot FROM ai_global_slots ORDER BY slot"
             )]
-            if "ai_global_slots" in tables
-            else []
+            if "ai_global_slots" in tables else []
         )
         conn.close()
         summary = {
-            "checked": True,
-            "targets": len(targets),
-            "workers": len(workers),
+            "checked": True, "targets": len(targets), "workers": len(workers),
             "allocations": len(allocations),
             "allocation_caps_checked": "ai_global_slots" in tables,
         }
@@ -326,27 +321,26 @@ def validate_worker_state(
             add(errors, 1 <= count <= max_workers, f"history.db: worker_count out of range for {pid}: {count}")
             missing = [slot for slot in range(1, count + 1) if slot not in by_project.get(pid, set())]
             add(errors, not missing, f"history.db: missing configured worker slots for {pid}: {missing}")
-
-        allocation_counts: dict[str, int] = {}
-        for allocation in allocations:
-            pid = str(allocation["project_id"])
+        # Runner target count is provisioned browser capacity, not the
+        # canonical active AI/code-work allocation limit. Only actual
+        # ai_global_slots reservations count against each project cap.
+        active: dict[str, int] = {}
+        for slot in allocations:
+            pid = str(slot["project_id"])
             if pid == "portfolio-review":
+                continue  # not a normal project execution allocation
+            add(errors, pid in project_ids,
+                f"history.db: unknown AI allocation project {pid!r}")
+            cap = project_worker_caps.get(pid)
+            add(errors, cap is not None,
+                f"history.db: missing canonical AI worker cap for {pid!r}")
+            if pid not in project_ids or cap is None:
                 continue
-            add(errors, pid in project_ids, f"history.db: unknown AI allocation project {pid!r}")
-            if pid not in project_ids:
-                continue
-            project_cap = project_worker_caps.get(pid)
-            add(errors, project_cap is not None, f"history.db: missing runtime worker cap for {pid}")
-            if project_cap is None:
-                continue
-            allocation_counts[pid] = allocation_counts.get(pid, 0) + 1
-        for pid, count in sorted(allocation_counts.items()):
-            project_cap = project_worker_caps[pid]
-            add(
-                errors,
-                count <= project_cap,
-                f"history.db: active AI allocation exceeds project runtime cap for {pid}: {count}>{project_cap}",
-            )
+            active[pid] = active.get(pid, 0) + 1
+        for pid, count in sorted(active.items()):
+            add(errors, count <= project_worker_caps[pid],
+                f"history.db: active AI allocations exceed runtime contract for {pid}: "
+                f"{count}>{project_worker_caps[pid]}")
     except Exception as exc:
         errors.append(f"history.db: worker-state validation failed: {exc}")
     return summary
@@ -361,6 +355,7 @@ def validate(
     server_path: Path,
     enhancements_path: Path,
     db_path: Path | None,
+    worker_modes_path: Path | None = None,
 ) -> dict:
     errors: list[str] = []
     try:
@@ -396,26 +391,46 @@ def validate(
 
     project_ids = validate_projects(projects, errors)
     validate_layout(layout, project_ids, errors)
+    mode_path=worker_modes_path or projects_path.with_name("worker-modes.json")
+    role_ids=set()
+    if mode_path.exists():
+        try:
+            modes=load_json(mode_path)
+            if not isinstance(modes,list):
+                raise ValueError("worker-modes.json: array required")
+            for mode in modes:
+                if not isinstance(mode,dict):
+                    errors.append("worker-modes.json: object role required")
+                    continue
+                pid=mode.get("id")
+                if not isinstance(pid,str) or not ID_RE.fullmatch(pid):
+                    errors.append("worker-modes.json: invalid role id")
+                elif pid in project_ids or pid in role_ids:
+                    errors.append(f"worker-modes.json: duplicate/colliding role {pid!r}")
+                else:
+                    role_ids.add(pid)
+                if not isinstance(mode.get("name"),str) or not mode["name"].strip():
+                    errors.append("worker-modes.json: role name required")
+        except ValueError as exc:
+            errors.append(str(exc))
+    executable_ids=project_ids | role_ids
     runtime_contracts = validate_project_contracts(
         project_contracts,
-        project_ids,
+        executable_ids,
         set(priority_weights) if isinstance(priority_weights, dict) else set(),
         errors,
     )
     validate_resource_policy(
         resources,
-        project_ids,
+        executable_ids,
         set(priority_weights) if isinstance(priority_weights, dict) else set(),
         set(project_units) if isinstance(project_units, dict) else set(),
         errors,
     )
     worker_state = (
         validate_worker_state(
-            db_path,
-            project_ids,
-            max_workers,
-            runtime_contracts.get("ai_worker_caps", {}),
-            errors,
+            db_path, executable_ids, max_workers,
+            runtime_contracts.get("ai_worker_caps", {}), errors,
         )
         if db_path is not None and isinstance(max_workers, int) and max_workers > 0
         else {"checked": False}
@@ -425,6 +440,7 @@ def validate(
         "errors": errors,
         "contracts": {
             "project_count": len(project_ids),
+            "worker_role_count": len(role_ids),
             "max_workers": max_workers,
             "priorities": sorted(priority_weights) if isinstance(priority_weights, dict) else [],
             "resource_projects": sorted(project_units) if isinstance(project_units, dict) else [],
@@ -443,6 +459,7 @@ def main(argv=None) -> int:
     parser.add_argument("--server", type=Path, required=True)
     parser.add_argument("--enhancements", type=Path, required=True)
     parser.add_argument("--db", type=Path)
+    parser.add_argument("--worker-modes", type=Path)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     result = validate(
@@ -453,6 +470,7 @@ def main(argv=None) -> int:
         server_path=args.server.resolve(),
         enhancements_path=args.enhancements.resolve(),
         db_path=args.db.resolve() if args.db else None,
+        worker_modes_path=args.worker_modes.resolve() if args.worker_modes else None,
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

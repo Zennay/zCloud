@@ -1,11 +1,15 @@
 {
   "order": [
     "ftmo",
+    "tradengine",
     "raiseai",
     "supa",
     "cloud",
     "zssh",
-    "haxlab"
+    "haxlab",
+    "mixlab",
+    "fuckball",
+    "tuddy"
   ],
   "archived": []
 }

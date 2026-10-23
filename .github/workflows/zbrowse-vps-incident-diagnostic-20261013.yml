@@ -1,0 +1,139 @@
+name: zBrowse VPS incident diagnostic 2026-10-13
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zbrowse-vps-incident-diagnostic-20261013.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-vps-incident-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  live-diagnostic:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact trusted main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          clean: true
+      - name: Verify trusted VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Collect bounded, credential-free zBrowse evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import shutil
+          import socket
+          import urllib.request
+          import urllib.error
+          from pathlib import Path
+
+          def run_status(argv, timeout=4):
+              try:
+                  done = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, text=True, timeout=timeout, check=False)
+                  return done.returncode, done.stdout.strip()
+              except (OSError, subprocess.TimeoutExpired):
+                  return -1, ""
+
+          def api(base, route):
+              req = urllib.request.Request(base + route, headers={"Accept": "application/json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=5) as res:
+                      payload = res.read(8192)
+                      try:
+                          data = json.loads(payload)
+                      except (json.JSONDecodeError, UnicodeDecodeError):
+                          return {"http": res.status, "json": False}
+                      if not isinstance(data, dict):
+                          return {"http": res.status, "json": False}
+                      info = {"http": res.status, "json": True}
+                      if route == "/api/health":
+                          info.update(status=data.get("status") if data.get("status") in ("ok", "degraded") else "invalid",
+                                      active_sessions=data.get("activeSessions") if isinstance(data.get("activeSessions"), int) else None,
+                                      capacity=data.get("capacity") if isinstance(data.get("capacity"), int) else None)
+                      elif route == "/api/sites":
+                          info.update(sites_valid=isinstance(data.get("sites"), list),
+                                      max_minutes=data.get("maxSessionMinutes") if isinstance(data.get("maxSessionMinutes"), int) else None)
+                      return info
+              except urllib.error.HTTPError as ex:
+                  return {"http": ex.code, "json": False}
+              except Exception:
+                  return {"http": None, "json": False}
+
+          def service(unit):
+              code, value = run_status(["systemctl", "is-active", unit])
+              return value if code in (0, 3) and value in ("active", "inactive", "failed", "activating", "deactivating") else "unknown"
+
+          result = {"host": "vps-bb300bba", "docker_service": service("docker.service"),
+                    "caddy_service": service("caddy.service")}
+          code, status = run_status(["sudo", "-n", "docker", "inspect", "-f",
+                                       "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
+                                       "zbrowse-gateway"])
+          result["gateway_container"] = status if code == 0 and status in (
+              "running healthy", "running starting", "running unhealthy", "running ",
+              "exited ", "created ", "paused ") else "absent_or_unknown"
+          code, _ = run_status(["sudo", "-n", "docker", "image", "inspect", "zbrowse-browser:1.0.0"])
+          result["browser_image_present"] = code == 0
+          result["source_checkout_present"] = (Path("/opt/zbrowse-source/zbrowse/docker-compose.yml").is_file())
+          result["local_health"] = api("http://127.0.0.1:8090", "/api/health")
+          result["local_sites"] = api("http://127.0.0.1:8090", "/api/sites")
+          result["public_health"] = api("https://zbrowse-tv.lizellay.chatgpt.site", "/api/health")
+          result["public_sites"] = api("https://zbrowse-tv.lizellay.chatgpt.site", "/api/sites")
+          result["nginx_service"] = service("nginx.service")
+          result["apache_service"] = service("apache2.service")
+          result["caddy_binary_installed"] = shutil.which("caddy") is not None
+          result["caddyfile_present"] = Path("/etc/caddy/Caddyfile").is_file()
+          for port in (80, 443):
+              try:
+                  with socket.create_connection(("127.0.0.1", port), timeout=1):
+                      result["loopback_port_" + str(port) + "_accepting"] = True
+              except OSError:
+                  result["loopback_port_" + str(port) + "_accepting"] = False
+          try:
+              result["sslip_public_dns_valid"] = (
+                  "198.244.191.182" in socket.gethostbyname_ex(
+                      "zbrowse.198-244-191-182.sslip.io")[2]
+              )
+          except OSError:
+              result["sslip_public_dns_valid"] = False
+          code, listener_output = run_status(["sudo", "-n", "ss", "-lntpH"], timeout=5)
+          listeners = []
+          if code == 0:
+              for line in listener_output.splitlines():
+                  fields = line.split()
+                  if len(fields) < 4 or not fields[3].endswith(":443"):
+                      continue
+                  address = fields[3].rsplit(":", 1)[0]
+                  bind = ("all_interfaces" if address in ("0.0.0.0", "[::]", "*") else
+                          "loopback" if address in ("127.0.0.1", "[::1]") else "specific_address")
+                  process = "unidentified"
+                  for candidate in ("docker-proxy", "nginx", "caddy", "haproxy", "traefik",
+                                    "python3", "node", "stunnel", "cloudflared", "envoy"):
+                      if ('"' + candidate + '"') in line:
+                          process = candidate
+                          break
+                  listeners.append({"bind": bind, "process": process})
+          result["listener_443"] = listeners
+          result["haproxy_service"] = service("haproxy.service")
+          result["traefik_service"] = service("traefik.service")
+          result["cloudflared_service"] = service("cloudflared.service")
+          result["zssh_service"] = service("zssh.service")
+          print("ZBROWSE_DIAGNOSTIC=" + json.dumps(result, sort_keys=True, separators=(",", ":")))
+          PY

@@ -1,0 +1,411 @@
+#!/usr/bin/env python3
+"""Offline fail-closed checks for the autonomous PR integration engine."""
+import importlib.util
+import pathlib
+import unittest
+
+MODULE = pathlib.Path(__file__).resolve().parents[1] / "scripts/zcloud_autonomous_pr_integrator.py"
+spec = importlib.util.spec_from_file_location("automerge_under_test", MODULE)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+A = "a" * 40
+B = "b" * 40
+ENV = {"GITHUB_REPOSITORY": "Zennay/zCloud", "GITHUB_REF": "refs/heads/main",
+       "GITHUB_SHA": B, "GITHUB_EVENT_NAME": "workflow_dispatch",
+       "GITHUB_TOKEN": "unit-test-token", "ZCLOUD_AUTOMERGE_ENABLED": "true",
+       "GITHUB_ACTOR": "Zennay", "GITHUB_TRIGGERING_ACTOR": "Zennay",
+       "GITHUB_RUN_ATTEMPT": "1"}
+
+
+def pr(docs=True):
+    return {"number": 21, "state": "open", "draft": False,
+            "mergeable": True, "mergeable_state": "clean", "changed_files": 1, "title": "Useful change",
+            "labels": [{"name": mod.LABEL}],
+            "head": {"sha": A, "repo": {"full_name": mod.REPO}},
+            "base": {"sha": B, "ref": "main", "repo": {"full_name": mod.REPO}}}
+
+
+def files(docs=True):
+    return [{"filename": "docs/worker-integration.md" if docs else "scripts/new_engine.py",
+             "status": "added"}]
+
+
+def optional_cpu_check():
+    link = f"https://github.com/{mod.REPO}/actions/runs/401/job/503"
+    return {
+        "id": 503, "head_sha": A, "name": "cpu-snapshot",
+        "status": "queued", "conclusion": None,
+        "details_url": link, "html_url": link,
+        "app": {"id": 15368, "slug": "github-actions",
+                "owner": {"login": "github"}},
+        "check_suite": {"id": 301},
+    }
+
+
+def checks():
+    def job(name, jid):
+        link = f"https://github.com/{mod.REPO}/actions/runs/400/job/{jid}"
+        return {
+            "id": jid, "head_sha": A, "name": name,
+            "status": "completed", "conclusion": "success",
+            "details_url": link, "html_url": link,
+            "app": {"id": 15368, "slug": "github-actions",
+                    "owner": {"login": "github"}},
+            "check_suite": {"id": 300},
+        }
+    return [job("critical-runner-flows", 501),
+            job(mod.REQUIRED_ADMISSION, 502)]
+
+
+class DecisionTest(unittest.TestCase):
+    def test_docs_green(self):
+        self.assertEqual(mod.decide(pr(), files(), checks(), [], B), "eligible")
+
+    def test_development_source_independent_from_production_release(self):
+        # A production blocker must not freeze separate development merges.
+        # Unsafe core runtime paths remain forbidden by safe_path().
+        self.assertEqual(mod.decide(pr(False), files(False), checks(), [], B), "eligible")
+        ok = [{"context": "other-required-check", "state": "success"}]
+        self.assertEqual(mod.decide(pr(False), files(False), checks(), ok, B), "eligible")
+
+    def test_nonopted_pr_does_not_merge(self):
+        p = pr()
+        p["labels"] = []
+        self.assertEqual(mod.decide(p, files(), checks(), [], B), "no_explicit_label")
+
+    def test_draft_and_unmergeable(self):
+        p = pr()
+        p["draft"] = True
+        self.assertEqual(mod.decide(p, files(), checks(), [], B), "not_review_ready")
+        p = pr()
+        p["mergeable_state"] = "blocked"
+        self.assertEqual(mod.decide(p, files(), checks(), [], B), "not_cleanly_mergeable")
+
+    def test_fork_or_drift_denied(self):
+        p = pr()
+        p["head"]["repo"]["full_name"] = "unknown/fork"
+        self.assertEqual(mod.decide(p, files(), checks(), [], B), "foreign_or_empty_head")
+        p = pr()
+        p["base"]["sha"] = A
+        self.assertEqual(mod.decide(p, files(), checks(), [], B), "base_drift")
+
+    def test_incomplete_checks(self):
+        self.assertEqual(mod.decide(pr(), files(), [], [], B), "missing_or_unbounded_checks")
+        x = checks()
+        x[0]["status"] = "in_progress"
+        self.assertEqual(mod.decide(pr(), files(), x, [], B), "required_smoke_not_green")
+        x = checks()
+        x[0]["head_sha"] = B
+        self.assertEqual(mod.decide(pr(), files(), x, [], B), "unbound_check")
+
+    def test_optional_queued_vps_cpu_must_not_block_green_hosted_smoke(self):
+        optional = optional_cpu_check()
+        self.assertEqual(mod.decide(pr(), files(), checks() + [optional], [], B),
+                         "eligible")
+        unknown = dict(optional, name="unknown-required-or-optional")
+        self.assertEqual(mod.decide(pr(), files(), checks() + [unknown], [], B),
+                         "check_not_green")
+        smoke = checks()
+        smoke[0]["conclusion"] = "failure"
+        self.assertEqual(mod.decide(pr(), files(), smoke + [optional], [], B),
+                         "required_smoke_not_green")
+        self.assertEqual(mod.decide(pr(), files(), [optional], [], B),
+                         "required_smoke_missing")
+
+    def test_known_optional_queued_vps_can_explain_unstable_state(self):
+        p = pr()
+        p["mergeable_state"] = "unstable"
+        optional = optional_cpu_check()
+        self.assertEqual(mod.decide(p, files(), checks(), [], B),
+                         "unstable_without_known_optional")
+        self.assertEqual(mod.decide(p, files(), checks() + [optional], [], B),
+                         "eligible")
+        bad = dict(optional, name="unknown-queued")
+        self.assertEqual(mod.decide(p, files(), checks() + [bad], [], B),
+                         "check_not_green")
+        p["mergeable_state"] = "blocked"
+        self.assertEqual(mod.decide(p, files(), checks() + [optional], [], B),
+                         "not_cleanly_mergeable")
+        p["mergeable_state"] = "unstable"
+        p["mergeable"] = False
+        self.assertEqual(mod.decide(p, files(), checks() + [optional], [], B),
+                         "not_cleanly_mergeable")
+
+    def test_failed_status_denied(self):
+        s = [{"context": "unit-test", "state": "failure"}]
+        self.assertEqual(mod.decide(pr(), files(), checks(), s, B), "status_not_green")
+
+    def test_integrator_trust_roots_require_separate_human_merge(self):
+        # The hourly integration workflow runs this fixture on trusted main.
+        # A labelled, green PR must never replace its own admission authority.
+        expected = {
+            "scripts/zcloud_autonomous_pr_integrator.py",
+            "scripts/zcloud_automerge_report_20261014.py",
+            "tests/test_zcloud_autonomous_pr_integrator.py",
+            "tests/test_zcloud_automerge_report_20261014.py",
+            "tests/test_deployops_automerge_workflow_replay_20261014_w11.py",
+    "tests/test_deployops_automerge_trust_roots_20261014_w12.py",
+            "tests/test_deployops_automerge_check_provenance_20261014_w14.py",
+            "tests/test_deployops_automerge_file_count_cpu_20261014_w15.py",
+            "tests/test_deployops_automerge_import_shadow_20261014_w16.py",
+            "tests/test_deployops_automerge_api_transport_20261014_w17.py",
+        }
+        self.assertEqual(mod.PROTECTED_INTEGRATION_FILES, expected)
+        for path in expected:
+            with self.subTest(path=path):
+                self.assertFalse(mod.safe_path(path))
+                candidate = [{"filename": path, "status": "modified"}]
+                self.assertEqual(mod.decide(pr(), candidate, checks(), [], B),
+                                 "protected_integration_source")
+
+    def test_no_special_runtime_paths(self):
+        for path in (".github/workflows/unsafe.yml", "server.py", "public/app.js",
+                     "projects.json", "scripts/../server.py", "/docs/x.md",
+                     "docs//x.md", "docs\\x.md", "experimental/main.py"):
+            with self.subTest(path=path):
+                self.assertFalse(mod.safe_path(path))
+
+    def test_files_pagination_or_duplicates(self):
+        self.assertEqual(mod.decide(pr(), files()*100, checks(), [], B),
+                         "incomplete_file_inventory")
+        self.assertEqual(mod.decide(pr(), files()*2, checks(), [], B),
+                         "unsafe_or_duplicate_path")
+
+    def test_deleted_or_renamed_denied(self):
+        for status in ("removed", "renamed"):
+            x = files()
+            x[0]["status"] = status
+            self.assertEqual(mod.decide(pr(), x, checks(), [], B), "unsupported_file_change")
+
+    def test_untrusted_event_and_apply_gate(self):
+        for env_change in ({"GITHUB_EVENT_NAME": "pull_request"},
+                           {"GITHUB_REF": "refs/heads/branch"},
+                           {"GITHUB_REPOSITORY": "another/repo"},
+                           {"GITHUB_SHA": A}):
+            env = {**ENV, **env_change}
+            if env_change.get("GITHUB_SHA") == A:
+                continue
+            with self.subTest(env_change=env_change), self.assertRaises(mod.Refused):
+                mod.main([], env, self.transport)
+        with self.assertRaises(mod.Refused):
+            mod.main(["--apply"], {**ENV, "ZCLOUD_AUTOMERGE_ENABLED": "false"}, self.transport)
+
+    @staticmethod
+    def transport(token, method, path, data=None):
+        if path == "/branches/main":
+            return {"commit": {"sha": B}}
+        if path.startswith("/pulls?"):
+            return [pr()]
+        if path == "/pulls/21":
+            return pr()
+        if path.endswith("/files?per_page=100"):
+            return files()
+        if path.endswith("/check-runs?per_page=100"):
+            return {"total_count": len(checks()), "check_runs": checks()}
+        if path.endswith("/statuses?per_page=100"):
+            return []
+        if path.endswith("/merge"):
+            return {"merged": True, "sha": "c" * 40}
+        raise AssertionError("unexpected API " + path)
+
+    def test_dry_run_never_merges(self):
+        calls = []
+        def transport(token, method, path, data=None):
+            calls.append((method, path))
+            return self.transport(token, method, path, data)
+        self.assertEqual(mod.main([], ENV, transport), 0)
+        self.assertFalse(any(method == "PUT" for method, _ in calls))
+
+    def test_apply_one_sha_bound_merge(self):
+        calls = []
+        def transport(token, method, path, data=None):
+            calls.append((method, path, data))
+            return self.transport(token, method, path, data)
+        self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+        writes = [x for x in calls if x[0] == "PUT"]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][2]["sha"], A)
+        self.assertTrue(writes[0][2]["commit_title"].endswith(" [skip ci]"))
+
+    def test_merge_rechecks_latest_approval_and_checks_before_write(self):
+        from collections import Counter
+        calls = []
+        def transport(token, method, path, data=None):
+            calls.append((method, path))
+            return self.transport(token, method, path, data)
+        self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+        reads = Counter(path for method, path in calls if method == "GET")
+        for path in ("/pulls/21", "/pulls/21/files?per_page=100",
+                     f"/commits/{A}/check-runs?per_page=100",
+                     f"/commits/{A}/statuses?per_page=100"):
+            self.assertEqual(reads[path], 2, path)
+        writes = [i for i, (method, _) in enumerate(calls) if method == "PUT"]
+        self.assertEqual(len(writes), 1)
+        self.assertGreater(writes[0], max(
+            i for i, (method, path) in enumerate(calls)
+            if method == "GET" and path.endswith("/statuses?per_page=100")))
+
+    def test_last_second_pr_draft_and_review_gate_are_fail_closed(self):
+        import contextlib
+        import io
+        import json
+        for updated, expected in (
+            ({"draft": True}, "recheck_not_review_ready"),
+            ({"state": "closed"}, "recheck_not_review_ready"),
+            ({"mergeable": None}, "recheck_not_cleanly_mergeable"),
+            ({"mergeable_state": "blocked"}, "recheck_not_cleanly_mergeable"),
+            ({"base": {**pr()["base"], "ref": "other"}}, "recheck_base_drift"),
+            ({"labels": []}, "changed_before_merge"),
+        ):
+            calls = 0
+            def transport(token, method, path, data=None):
+                nonlocal calls
+                if path == "/pulls/21":
+                    calls += 1
+                    if calls == 2:
+                        return {**pr(), **updated}
+                if method == "PUT":
+                    self.fail("unsafe source merge after PR approval drift")
+                return self.transport(token, method, path, data)
+            with self.subTest(updated=updated):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+                self.assertEqual(json.loads(out.getvalue())["receipts"][0]["decision"],
+                                 expected)
+                self.assertEqual(calls, 2)
+
+    def test_last_second_checks_statuses_and_file_scope_are_rechecked(self):
+        import contextlib
+        import io
+        import json
+        cases = (
+            ("/check-runs?per_page=100",
+             {"total_count": len(checks()), "check_runs": [
+                 {**checks()[0], "conclusion": "failure"}, checks()[1]]},
+             "recheck_required_smoke_not_green"),
+            ("/check-runs?per_page=100",
+             {"total_count": 3, "check_runs": checks()},
+             "recheck_incomplete_checks"),
+            ("/statuses?per_page=100",
+             [{"context": "branch-protection", "state": "failure"}],
+             "recheck_status_not_green"),
+            ("/files?per_page=100",
+             [{"filename": "public/unsafe.js", "status": "added"}],
+             "recheck_unsafe_or_duplicate_path"),
+        )
+        for suffix, replacement, expected in cases:
+            counts = {}
+            def transport(token, method, path, data=None):
+                if method == "PUT":
+                    self.fail("unsafe source merge after a second-stage check change")
+                if path.endswith(suffix):
+                    counts[path] = counts.get(path, 0) + 1
+                    if counts[path] == 2:
+                        return replacement
+                return self.transport(token, method, path, data)
+            with self.subTest(suffix=suffix, expected=expected):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+                self.assertEqual(json.loads(out.getvalue())["receipts"][0]["decision"],
+                                 expected)
+                self.assertEqual(max(counts.values()), 2)
+
+    def test_untrusted_multiline_title_cannot_change_commit_directives(self):
+        def transport(token, method, path, data=None):
+            if path == "/pulls/21":
+                malicious = pr()
+                malicious["title"] = "ok\\nproduction restart"
+                return malicious
+            if method == "PUT":
+                self.assertNotIn("\\n", data["commit_title"])
+                self.assertTrue(data["commit_title"].endswith(" [skip ci]"))
+            return self.transport(token, method, path, data)
+        self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+
+    def test_main_moves_before_merge(self):
+        branch_calls = 0
+        def transport(token, method, path, data=None):
+            nonlocal branch_calls
+            if path == "/branches/main":
+                branch_calls += 1
+                return {"commit": {"sha": B if branch_calls == 1 else A}}
+            if method == "PUT":
+                self.fail("must not merge stale main")
+            return self.transport(token, method, path, data)
+        self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+
+    def test_paginated_pr_inventory_reaches_older_opted_in_items(self):
+        paths = []
+        def transport(token, method, path, data=None):
+            paths.append(path)
+            if path.endswith("page=1"):
+                return [{"number": i, "labels": []} for i in range(1, 101)]
+            if path.endswith("page=2"):
+                return [{"number": 1001, "labels": [{"name": mod.LABEL}]}]
+            self.fail("unexpected page: " + path)
+        result = mod.list_open_prs(transport, "test-token")
+        self.assertEqual(len(result), 101)
+        self.assertEqual(result[-1]["number"], 1001)
+        self.assertEqual(len(paths), 2)
+
+    def test_pagination_fails_closed_on_duplicate_or_oversized_backlog(self):
+        def duplicate(token, method, path, data=None):
+            if path.endswith("page=1"):
+                return [{"number": i} for i in range(1, 101)]
+            return [{"number": 1}]
+        with self.assertRaises(mod.Refused):
+            mod.list_open_prs(duplicate, "test-token")
+        def endless(token, method, path, data=None):
+            page = int(path.split("page=")[-1])
+            return [{"number": 100 * (page - 1) + i} for i in range(1, 101)]
+        with self.assertRaises(mod.Refused):
+            mod.list_open_prs(endless, "test-token")
+        def malformed(token, method, path, data=None):
+            return [{"number": True}]
+        with self.assertRaises(mod.Refused):
+            mod.list_open_prs(malformed, "test-token")
+
+    def test_only_original_and_triggering_owner_may_apply(self):
+        for key in ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR"):
+            with self.subTest(key=key), self.assertRaises(mod.Refused):
+                mod.main(["--apply"], {**ENV, key: "untrusted"}, self.transport)
+
+    def test_replayed_or_untrusted_workflow_attempt_never_reads_api_or_merges(self):
+        # Retry/re-run of a previously completed integration job must not merge
+        # another labelled PR, even though its immutable event SHA is unchanged.
+        for value in (None, "", "0", "2", "3", "01", "1.0", 1, True):
+            env = dict(ENV)
+            if value is None:
+                env.pop("GITHUB_RUN_ATTEMPT")
+            else:
+                env["GITHUB_RUN_ATTEMPT"] = value
+            for args in ([], ["--apply"]):
+                calls = []
+                def forbidden_api(*a, **kw):
+                    calls.append((a, kw))
+                    self.fail("replayed workflow accessed GitHub API")
+                with self.subTest(value=value, args=args), self.assertRaisesRegex(
+                    mod.Refused, "replayed_or_unknown_attempt"
+                ):
+                    mod.main(args, env, forbidden_api)
+                self.assertEqual(calls, [])
+
+    def test_first_attempt_does_not_change_label_sha_and_owner_admission(self):
+        # Keep legitimate scheduled/manual owner-only, labelled exact-head
+        # behaviour; this hardening only closes repeat dispatch.
+        calls = []
+        def transport(token, method, path, data=None):
+            calls.append((method, path))
+            return self.transport(token, method, path, data)
+        self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+        self.assertEqual(sum(method == "PUT" for method, _ in calls), 1)
+
+    def test_missing_token_denied(self):
+        with self.assertRaises(mod.Refused):
+            mod.main([], {**ENV, "GITHUB_TOKEN": ""}, self.transport)
+
+
+if __name__ == "__main__":
+    unittest.main()

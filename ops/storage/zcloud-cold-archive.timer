@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily verified cold-storage offload for zCloud portfolio
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+RandomizedDelaySec=15m
+AccuracySec=1m
+Persistent=true
+Unit=zcloud-cold-archive.service
+
+[Install]
+WantedBy=timers.target

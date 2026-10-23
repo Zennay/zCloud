@@ -1,0 +1,103 @@
+name: zCloud deploy-ops read-only exact-main receipt proof
+
+on:
+  push:
+    branches:
+      - deployops/manual-main-readonly-proof-20261014-w1
+    # Isolated source-validation branch only. No automatic main-push trigger.
+    # Main is allowed exclusively through explicit owner workflow_dispatch.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  statuses: read
+
+concurrency:
+  group: zcloud-readonly-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  offline-exact-head-validation:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      ((github.event_name == 'push' &&
+        github.ref == 'refs/heads/deployops/manual-main-readonly-proof-20261014-w1') ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main' &&
+        github.actor == 'Zennay' &&
+        github.run_attempt == 1))
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out event's immutable candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Assert exact source revision
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Validate Python and fail-closed contracts offline
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_deployops_readonly_gate_20261014.py tests/test_zcloud_deployops_readonly_gate_20261014.py
+          python3 -m unittest -v tests.test_zcloud_deployops_readonly_gate_20261014
+          python3 -m unittest discover -v
+          bash tests/test_birds_eye_review.sh
+          node --check firefox-extension/recovery.js
+      - name: Read-only live main diagnostic (never authoritative)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/zcloud_deployops_readonly_gate_20261014.py --live > "$RUNNER_TEMP/deployops-gate.json"
+          rc="$?"
+          set -e
+          if [[ "$rc" != 0 && "$rc" != 2 ]]; then
+            echo "Observer unexpectedly exited with status $rc" >&2
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/deployops-gate.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              receipt = json.load(stream)
+          assert receipt.get("mutation_authorized") is False
+          assert receipt.get("release_authorized") is False
+          assert receipt.get("production_verified") is False
+          assert receipt.get("runner_outage_verified") is False
+          from pathlib import Path
+          from os import environ
+          observation = receipt.get("observation", "DENY")
+          print("ZCLOUD_READ_ONLY_GATE_" + str(observation))
+          sha = receipt.get("main_sha", "")
+          run_id = receipt.get("current_main_deploy_run")
+          lines = [
+              "## zCloud — read-only deployment observation",
+              "",
+              f"- **Observed classification:** `{observation}`",
+              f"- **Exact main SHA:** `{sha if len(sha) == 40 else 'unavailable'}`",
+              f"- **GitHub production status:** `{receipt.get('production_status', 'unverified')}`",
+              f"- **Deployment run:** {('https://github.com/Zennay/zCloud/actions/runs/' + str(run_id)) if type(run_id) is int and run_id > 0 else 'unverified'}",
+              "- **Source coverage:** latest bounded window; not exhaustive",
+              "- **VPS/AI generation health:** not verified",
+              "- **Recovery, worker restart, queue cancellation or deployment authority:** none",
+              "",
+              "Hosted source regression and this observation do **not** certify production.",
+          ]
+          Path(environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8").write("\n".join(lines) + "\n")
+          PY
+      - name: Preserve bounded non-authorizing evidence for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-readonly-gate-${{ github.run_id }}
+          path: ${{ runner.temp }}/deployops-gate.json
+          if-no-files-found: error
+          retention-days: 7

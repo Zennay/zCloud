@@ -1,0 +1,246 @@
+name: zCloud read-only live tab version probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-live-tab-version-probe.yml
+      - tests/test_zcloud_live_tab_probe_trust.py
+      - tests/test_zcloud_live_tab_manual_privacy_20261014.py
+      - scripts/zcloud_live_tab_rdp_port_20261016.py
+      - tests/test_zcloud_live_tab_rdp_port_20261016.py
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-live-tab-version-probe.yml
+      - tests/test_zcloud_live_tab_probe_trust.py
+      - tests/test_zcloud_live_tab_manual_privacy_20261014.py
+      - scripts/zcloud_live_tab_rdp_port_20261016.py
+      - tests/test_zcloud_live_tab_rdp_port_20261016.py
+  workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Explicit exact current main SHA for read-only browser debugger inspection"
+        required: true
+        type: string
+      approve_readonly_probe:
+        description: "Explicitly approve safe read-only Firefox debugger inspection"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-live-tab-version-probe-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  hosted-policy-regression:
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Read exact PR revision without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Check exact PR revision and run trust regressions
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m unittest -v tests.test_zcloud_live_tab_probe_trust tests.test_zcloud_live_tab_manual_privacy_20261014
+          python3 -m unittest -v tests.test_zcloud_live_tab_rdp_port_20261016
+          python3 -m py_compile scripts/zcloud_live_tab_rdp_port_20261016.py
+
+  inspect:
+    # A PR may only execute the hosted source checks above. Never grant an
+    # unreviewed revision access to Firefox or the permanent self-hosted runner.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.approve_readonly_probe == true &&
+      inputs.confirm_sha == github.sha
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Read exact trusted main revision without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Inspect Firefox debugger version without changing tabs
+        shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          APPROVE_READONLY: ${{ inputs.approve_readonly_probe }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch"
+          test "${GITHUB_ACTOR:-}" = "Zennay"
+          test "${GITHUB_TRIGGERING_ACTOR:-}" = "Zennay"
+          test "${GITHUB_RUN_ATTEMPT:-}" = "1"
+          test "$APPROVE_READONLY" = "true"
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
+          test "${GITHUB_REPOSITORY:-}" = "Zennay/zCloud"
+          test "${GITHUB_REF:-}" = "refs/heads/main"
+          test "${RUNNER_OS:-}" = "Linux"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          # Verify canonical zCloud runner ownership before any read-only RDP
+          # access. The repository-scoped FTMO research runner cannot be
+          # assumed to be selectable from zCloud (#1326).
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          # Step-level defense in depth if a job-level condition is refactored.
+          case "${GITHUB_EVENT_NAME:-}:${GITHUB_ACTOR:-}:${GITHUB_TRIGGERING_ACTOR:-}:${GITHUB_RUN_ATTEMPT:-}" in
+            workflow_dispatch:Zennay:Zennay:1) ;;
+            *) echo "Untrusted tab probe invocation refused" >&2; exit 1 ;;
+          esac
+          python3 - <<'PY'
+          import json, os, re, socket, subprocess, time
+          from pathlib import Path
+          # The authoritative source is the exact trusted main checkout.
+          # Hardcoding 1.3.18 became false when the installed v2 user script
+          # began reporting 2.0.3. Refuse inconsistent metadata/DOM markers.
+          source=Path("public/zcloud-worker.user.js").read_text(encoding="utf-8")
+          metadata=re.search(r"(?m)^//\s*@version\s+(\d+\.\d+\.\d+)\s*$",source)
+          marker_version=re.search(
+              r'document\.documentElement\?\.setAttribute\("data-zcloud-violentmonkey-ready",\s*"(\d+\.\d+\.\d+)"\)',
+              source)
+          if not metadata or not marker_version or metadata.group(1)!=marker_version.group(1):
+              raise SystemExit("Unsafe source version/DOM readiness mismatch")
+          expected_version=metadata.group(1)
+          print("RDP_EXPECTED_SCRIPT_VERSION="+expected_version)
+          # Only read Firefox RDP actor data. Never navigate, close, reload
+          # tabs or print private conversation titles, URLs or prompts.
+          from scripts.zcloud_live_tab_rdp_port_20261016 import (
+              detect_debugger_port, trusted_firefox_executable,
+          )
+          proc=subprocess.run(["ps","-eo","pid=,ppid=,args="],text=True,capture_output=True,timeout=5)
+          if proc.returncode != 0:
+              print("RDP_SAFE_PROBE_UNAVAILABLE=ps_error")
+              raise SystemExit(0)
+          status,port=detect_debugger_port(
+              proc.stdout.splitlines(),
+              verify_executable=trusted_firefox_executable,
+          )
+          print("FIREFOX_DEBUGGER_UNIQUE="+str(status=="unique").lower())
+          if status=="absent":
+              print("RDP_AVAILABLE=false")
+              raise SystemExit(0)
+          if status!="unique" or port is None:
+              print("RDP_SAFE_PROBE_UNAVAILABLE=ambiguous_debugger")
+              raise SystemExit(0)
+          # No host process identifiers in public Actions logs.
+          def msg(sock,timeout=8):
+              sock.settimeout(timeout)
+              prefix=bytearray()
+              while True:
+                  char=sock.recv(1)
+                  if not char:raise EOFError("RDP closed")
+                  if char==b":":break
+                  if len(prefix)>9 or not char.isdigit():raise ValueError("Unexpected RDP frame")
+                  prefix+=char
+              remaining=int(prefix)
+              if remaining>2_000_000:raise ValueError("RDP oversize")
+              data=bytearray()
+              while len(data)<remaining:
+                  part=sock.recv(min(65536,remaining-len(data)))
+                  if not part:raise EOFError("RDP incomplete")
+                  data+=part
+              return json.loads(data)
+          def send(sock,payload):
+              data=json.dumps(payload,separators=(",",":")).encode()
+              sock.sendall(str(len(data)).encode()+b":"+data)
+          try:
+              if not 1 <= port <= 65535:
+                  raise ValueError("invalid local debugger port")
+              with socket.create_connection(("127.0.0.1",port),timeout=4) as sock:
+                  hello=msg(sock)
+                  send(sock,{"to":str(hello.get("from") or "root"),"type":"listTabs"})
+                  listing=msg(sock)
+                  if "tabs" not in listing:
+                      print("RDP_LIST_TABS_UNAVAILABLE=1")
+                      print("RDP_RESPONSE_DETAIL_REDACTED=1")
+                      raise SystemExit(0)
+                  tabs=[tab for tab in listing.get("tabs",[]) if isinstance(tab,dict)]
+                  chat=[tab for tab in tabs if str(tab.get("url","")).startswith("https://chatgpt.com/")]
+                  # RDP field names and tab descriptor details remain private.
+                  print("RDP_TAB_COUNT="+str(len(tabs)))
+                  print("RDP_CHATGPT_TABS="+str(len(chat)))
+                  versions=[]
+                  # Current Firefox listTabs returns TabDescriptor actors,
+                  # which don't include consoleActor until getTarget().
+                  # This is a read-only actor discovery; no tab is navigated,
+                  # reloaded, selected, closed, or paused.
+                  # Firefox exposes TabDescriptor actors; obtaining the
+                  # console actor for only chat[0] silently hides stale
+                  # userscripts in other tabs. Query each bounded tab instead.
+                  def matching_reply(sock, expected_actor, budget=2.0):
+                      deadline=time.monotonic()+budget
+                      for _ in range(16):
+                          remaining=deadline-time.monotonic()
+                          if remaining<=0:break
+                          try:
+                              response=msg(sock,remaining)
+                          except TimeoutError:
+                              return {}
+                          if isinstance(response,dict) and response.get("from")==expected_actor:
+                              return response
+                      return {}
+                  sampled=chat[:20]
+                  for tab in sampled:
+                      tab_actor=tab.get("actor")
+                      if not isinstance(tab_actor,str) or not tab_actor:
+                          continue
+                      try:
+                          console_actor=tab.get("consoleActor")
+                          if not console_actor:
+                              send(sock,{"to":tab_actor,"type":"getTarget"})
+                              target_reply=matching_reply(sock,tab_actor)
+                              target_form=(target_reply.get("target") or
+                                           target_reply.get("form") or
+                                           target_reply.get("frame") or {})
+                              if isinstance(target_form,dict):
+                                  console_actor=target_form.get("consoleActor")
+                          if not isinstance(console_actor,str) or not console_actor:
+                              continue
+                          send(sock,{"to":console_actor,"type":"evaluateJS",
+                             "text":"document.documentElement?.getAttribute('data-zcloud-violentmonkey-ready') || ''"})
+                          response=matching_reply(sock,console_actor)
+                          if not response:
+                              continue
+                          value=response.get("result")
+                          if isinstance(value,dict):value=value.get("value","")
+                          version=str(value or "")
+                          versions.append(version if re.fullmatch(r"\d+\.\d+\.\d+",version) else "unknown")
+                      except (OSError,ValueError,TimeoutError,EOFError):
+                          # A failed per-tab observation is unknown, never a
+                          # reason to call the entire browser healthy.
+                          continue
+                  print("RDP_TABS_SAMPLED="+str(len(sampled)))
+                  print("RDP_SAMPLE_COMPLETE="+str(len(chat)<=20 and len(versions)==len(chat)).lower())
+                  print("RDP_VERSION_PROBES="+str(len(versions)))
+                  print("RDP_MATCHED_EXPECTED_COUNT="+str(sum(v==expected_version for v in versions)))
+                  print("RDP_NONMATCHING_OR_UNKNOWN_COUNT="+str(len(versions)-sum(v==expected_version for v in versions)))
+                  print("RDP_IS_TARGET_SCRIPT_LIVE="+str(bool(chat) and len(chat)<=20 and len(versions)==len(chat) and set(versions)=={expected_version}).lower())
+          except (OSError,ValueError,TimeoutError,EOFError) as exc:
+              print("RDP_SAFE_PROBE_UNAVAILABLE="+type(exc).__name__)
+          PY
+          echo "READ_ONLY_PROBE_NO_TAB_OR_BROWSER_CHANGES=1"

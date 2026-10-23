@@ -106,6 +106,15 @@ heal_user_unit() {
   if [[ "${service}" == "chatgpt-firefox.service" ]] && legacy_violentmonkey_only; then
     return 0
   fi
+  if [[ "${service}" == "chatgpt-firefox.service" ]]; then
+    # Standalone Firefox has its own process; systemd's inactive worker unit is
+    # NOT permission to start a second visible ChatGPT window. Preserve every
+    # live worker and expert tab regardless of the legacy drop-in's presence.
+    if pgrep -u "${RUNTIME_USER}" -f '(/snap/firefox/.*/usr/lib/firefox/firefox|/usr/lib/firefox/firefox|firefox-bin)' >/dev/null 2>&1; then
+      logger -t zcloud-runtime-heal "preserving existing standalone Firefox; skip chatgpt-firefox.service start"
+      return 0
+    fi
+  fi
   user_systemctl cat "${service}" >/dev/null 2>&1 || return 0
 
   if ! user_systemctl is-enabled --quiet "${service}" 2>/dev/null; then

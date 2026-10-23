@@ -184,5 +184,85 @@ class RuntimeProjectSchemaRepairTests(unittest.TestCase):
                 self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM config_audit").fetchone()[0])
 
 
+    def test_worker_role_demotion_keeps_live_user_fields_and_layout(self):
+        live = [
+            {"id": "cloud", "milestone_revision": "live-v2", "phase": "user-maintained"},
+            {"id": "zsentinel", "milestone_revision": "legacy-card"},
+        ]
+        candidate = [
+            {"id": "cloud", "milestone_revision": "candidate-v3"},
+            {"id": "mixlab", "milestone_revision": "mixlab-v1"},
+        ]
+        projects, changed = repair.repair_projects(live, candidate, worker_role_ids={"zsentinel"})
+        self.assertEqual(["zsentinel", "mixlab"], changed)
+        self.assertEqual(["cloud", "mixlab"], [row["id"] for row in projects])
+        self.assertEqual("user-maintained", projects[0]["phase"])
+        self.assertEqual("live-v2", projects[0]["milestone_revision"])
+        self.assertEqual(["cloud", "zsentinel"], [row["id"] for row in live])
+        layout = {"order": ["cloud", "zsentinel"], "archived": ["zsentinel"]}
+        self.assertEqual(
+            {"order": ["cloud"], "archived": []},
+            repair.repair_layout(layout, {"zsentinel"}),
+        )
+        self.assertEqual(["cloud", "zsentinel"], layout["order"])
+        with self.assertRaises(repair.RepairError):
+            repair.repair_projects(live, candidate + [{"id": "zsentinel"}], worker_role_ids={"zsentinel"})
+
+    def test_live_role_demotion_is_audited_and_idempotent(self):
+        with tempfile.TemporaryDirectory() as td:
+            root, candidate = Path(td) / "live", Path(td) / "candidate"
+            root.mkdir()
+            (candidate / "scripts").mkdir(parents=True)
+            before = [
+                {"id": "cloud", "milestone_revision": "live-v4", "phase": "operator"},
+                {"id": "zsentinel", "milestone_revision": "old-card"},
+            ]
+            (root / "projects.json").write_text(json.dumps(before))
+            (root / "project-layout.json").write_text(json.dumps({
+                "order": ["cloud", "zsentinel"], "archived": ["zsentinel"],
+            }))
+            (root / "resource-policy.json").write_text("{}")
+            (candidate / "projects.json").write_text(json.dumps([
+                {"id": "cloud", "milestone_revision": "repo-new"},
+                {"id": "tuddy", "milestone_revision": "tuddy-v1"},
+            ]))
+            (candidate / "worker-modes.json").write_text(json.dumps([
+                {"id": "zsentinel", "name": "zSentinel · Vliegende keep"},
+            ]))
+            for filename, content in [
+                ("server.py", "MAX_CHATGPT_WORKERS=4\n"),
+                ("enhancements.py", "PRIORITY_WEIGHTS={'normal':1}\nPROJECT_UNITS={'cloud':[]}\n"),
+                ("project-contracts.json", "{}"),
+            ]:
+                (candidate / filename).write_text(content)
+            validator = candidate / "scripts" / "validator.py"
+            validator.write_text("import sys\nassert '--worker-modes' in sys.argv\nsys.exit(0)\n")
+            db = root / "history.db"
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    "CREATE TABLE config_audit("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, "
+                    "config_key TEXT NOT NULL, target TEXT NOT NULL, old_value_json TEXT NOT NULL, "
+                    "new_value_json TEXT NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')"
+                )
+            params = dict(root=root, candidate=candidate, db=db, validator=validator,
+                          lock_path=Path(td) / "repair.lock")
+            result = repair.repair_live(**params)
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["layout_changed"])
+            self.assertEqual(["zsentinel", "tuddy"], result["projects"])
+            repaired = json.loads((root / "projects.json").read_text())
+            self.assertEqual(["cloud", "tuddy"], [row["id"] for row in repaired])
+            self.assertEqual("operator", repaired[0]["phase"])
+            layout = json.loads((root / "project-layout.json").read_text())
+            self.assertEqual({"order": ["cloud"], "archived": []}, layout)
+            with sqlite3.connect(db) as conn:
+                keys = [row[0] for row in conn.execute("SELECT config_key FROM config_audit ORDER BY id")]
+            self.assertEqual(["project.catalog", "project.layout"], keys)
+            self.assertFalse(repair.repair_live(**params)["changed"])
+            with sqlite3.connect(db) as conn:
+                self.assertEqual(2, conn.execute("SELECT COUNT(*) FROM config_audit").fetchone()[0])
+
+
 if __name__ == "__main__":
     unittest.main()

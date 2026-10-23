@@ -45,6 +45,7 @@ MANAGED_PATHS = (
     "project-layout.json",
     "resource-policy.json",
     "project-contracts.json",
+    "worker-modes.json",
     "portfolio_queue.seed.json",
     "public",
     "firefox-extension",

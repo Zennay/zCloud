@@ -7,15 +7,102 @@ on:
   push:
     branches: [main, 'worker/**']
 
+permissions:
+  contents: read
+
+# Only superseded checks of the SAME PR may be cancelled; preserve all main,
+# worker-branch and operator-dispatched evidence until terminal completion.
+concurrency:
+  group: zcloud-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  trusted-event:
+    # A required check must FAIL on an untrusted PR, not silently SKIP the
+    # regression job (GitHub treats skipped required jobs as successful).
+    # This admission step NEVER checks out or executes contributor code.
+    name: Reject untrusted regression events before checkout
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    steps:
+      - name: Assert trusted event and repository provenance
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
+          EVENT_KIND: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          SOURCE_ACTOR: ${{ github.actor }}
+          RESTART_ACTOR: ${{ github.triggering_actor }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_REPO" = Zennay/zCloud
+          case "$EVENT_KIND" in
+            pull_request)
+              test "$HEAD_REPO" = "$SOURCE_REPO"
+              test "$BASE_REPO" = "$SOURCE_REPO"
+              test "$GITHUB_BASE_REF" = main ;;
+            push)
+              [[ "$EVENT_REF" == refs/heads/main || "$EVENT_REF" == refs/heads/worker/* ]] ;;
+            workflow_dispatch)
+              test "$EVENT_REF" = refs/heads/main
+              test "$SOURCE_ACTOR" = Zennay
+              test "$RESTART_ACTOR" = Zennay
+              test "$ATTEMPT" = 1 ;;
+            *) echo "Unsupported regression event" >&2; exit 1 ;;
+          esac
   critical-runner-flows:
-    runs-on: ubuntu-latest
+    needs: trusted-event
+    # Run untrusted PR code only in hosted CI and only for this repository.
+    # Explicit operator dispatch always targets exact current canonical main.
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.base.repo.full_name == github.repository) ||
+       (github.event_name == 'push' &&
+        (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/worker/'))) ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main' &&
+        github.actor == 'Zennay' &&
+        github.triggering_actor == 'Zennay' &&
+        github.run_attempt == 1))
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          node-version: 20
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Verify exact immutable revision before executing repository code
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPOSITORY" = "Zennay/zCloud"
+          test "$HEAD_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$BASE_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            main_sha="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+            test -n "$main_sha"
+            test "$main_sha" = "$EXPECTED_SHA"
+          fi
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Test exact-head regression-workflow admission before executing project code
+        run: python3 -m unittest -v tests.test_deployops_regression_smoke_hosted_trust_20261014_w5
       - name: Run critical zCloud smoke suite
         run: python3 -m unittest discover -v
       - name: Verify 12h Birdseye shell scheduler isolation
@@ -26,12 +113,21 @@ jobs:
         run: bash tests/test_autonomy_runner_js.sh
       - name: Verify safe in-place Firefox addon reload helper
         run: node tests/test_reload_extension.mjs
+      - name: Verify Worker Cockpit rendering and mobile enhancement scripts
+        run: |
+          set -euo pipefail
+          node --check public/enhancements.js
+          node --check public/app.js
+          node tests/test_worker_debug_panel.js
       - name: Verify Firefox crash-recovery contract
         run: |
           node --check firefox-extension/recovery.js
           node --check firefox-extension/background.js
           node tests/test_firefox_recovery.js
           node tests/test_firefox_recovery_contract.js
+          node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
+          node tests/test_violentmonkey_send_tab_preservation.js
       - name: Verify Violentmonkey dynamic worker syntax
         run: node --check public/zcloud-worker.user.js
       - name: Verify fail-closed pre-change guard

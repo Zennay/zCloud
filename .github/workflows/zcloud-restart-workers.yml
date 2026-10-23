@@ -1,16 +1,11 @@
+# User-requested all-worker restart trigger 2026-10-09T00:16+02:00
 # FTMO verify72 recovery: restart standalone Violentmonkey Firefox 2026-10-02T09:27Z
 name: zCloud restart allocated workers
 
+# Manual emergency recovery only. Hourly Firefox recycling interrupted
+# active model generation; the per-worker progress watchdog handles idle stalls.
 on:
   workflow_dispatch:
-  schedule:
-    # Forced hourly refresh for the seven ChatGPT workers. The workflow itself
-    # prefers fresh chats and already recovers by recycling the Firefox consumer.
-    - cron: "3 * * * *"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/zcloud-restart-workers.yml"
 
 permissions:
   contents: read
@@ -22,7 +17,7 @@ concurrency:
 jobs:
   restart:
     runs-on: self-hosted
-    timeout-minutes: 3
+    timeout-minutes: 4
     steps:
       - name: Queue fresh-chat restart for allocated workers
         shell: bash
@@ -86,7 +81,21 @@ jobs:
           except OSError:
               pass
 
-          if legacy_vm_only:
+          # A manual worker restart must not recycle a healthy Firefox
+          # process and discard its ChatGPT/expert tabs. The userscript and
+          # existing worker tabs receive fresh commands without browser churn.
+          running_browser = subprocess.run(
+              ["pgrep", "-u", str(os.getuid()), "-f",
+               r"/snap/firefox/.*/usr/lib/firefox/firefox"],
+              text=True, capture_output=True, check=False,
+          ).stdout.strip()
+          if legacy_vm_only and running_browser:
+              print(json.dumps({
+                  "consumer_restart": "reused-existing-firefox",
+                  "browser_alive": True,
+                  "tabs_preserved": True,
+              }, sort_keys=True))
+          elif legacy_vm_only:
               bootstrap_urls = []
               with sqlite3.connect(DB, timeout=5) as bootstrap_db:
                   bootstrap_db.row_factory = sqlite3.Row
@@ -406,25 +415,85 @@ jobs:
                       "deduplicated": deduplicated,
                   })
 
-          deadline = time.time() + 35
-          final = {}
-          while time.time() < deadline:
+          def read_exact_command_states():
+              states = {}
               with sqlite3.connect(DB, timeout=5) as conn:
                   conn.row_factory = sqlite3.Row
-                  final = {}
                   for item in queued:
                       row = conn.execute(
                           "SELECT status,result,updated_at FROM runner_commands WHERE id=?",
                           (item["command_id"],),
                       ).fetchone()
-                      final[item["worker"]] = {
+                      states[item["worker"]] = {
                           "status": str(row["status"]) if row else "missing",
                           "result": (row["result"] if row else None),
                           "updated_at": (row["updated_at"] if row else None),
                       }
-              if all(v["status"] in ("completed", "failed") for v in final.values()):
-                  break
-              time.sleep(5)
+              return states
+
+          def poll_exact_command_states(timeout_seconds):
+              deadline = time.time() + timeout_seconds
+              states = read_exact_command_states()
+              while time.time() < deadline:
+                  if all(
+                      value["status"] in ("completed", "failed")
+                      for value in states.values()
+                  ):
+                      break
+                  time.sleep(5)
+                  states = read_exact_command_states()
+              return states
+
+          final = poll_exact_command_states(35)
+          pending_command_ids = [
+              int(item["command_id"])
+              for item in queued
+              if final.get(item["worker"], {}).get("status")
+              not in ("completed", "failed")
+          ]
+
+          # A Firefox restart can exceed the backend's 12-second caller timeout
+          # while the consumer itself is already healthy. Before failing exact
+          # restart command IDs at the normal 35-second poll boundary, perform
+          # one bounded consumer-health reconciliation and, only when healthy,
+          # give those same command IDs one bounded continuation window.
+          if pending_command_ids:
+              consumer_healthy = False
+              health_source = "unknown"
+              if legacy_vm_only:
+                  health_source = "standalone-firefox"
+                  try:
+                      os.kill(new_pid, 0)
+                      consumer_healthy = True
+                  except (ProcessLookupError, TypeError):
+                      consumer_healthy = False
+              else:
+                  health_source = "runner-live"
+                  health_deadline = time.time() + 20
+                  while time.time() < health_deadline:
+                      live_status, live = api_call("GET", "/api/runner-live")
+                      candidate = (
+                          (live.get("chatgpt_firefox") or {})
+                          if live_status < 300
+                          else {}
+                      )
+                      if candidate.get("active"):
+                          consumer_healthy = True
+                          break
+                      time.sleep(2)
+
+              print(json.dumps({
+                  "pending_reconcile": True,
+                  "pending_command_ids": pending_command_ids,
+                  "consumer_healthy": consumer_healthy,
+                  "health_source": health_source,
+              }, sort_keys=True))
+              if not consumer_healthy:
+                  raise SystemExit(
+                      "restart commands remained pending and Firefox consumer "
+                      "failed bounded health reconciliation"
+                  )
+              final = poll_exact_command_states(45)
 
           current_status, current_targets = api_call("GET", "/api/runner-targets")
           if current_status >= 300:
@@ -462,6 +531,39 @@ jobs:
               and worker not in superseded_workers
           ]
 
+          # The primary userscript intentionally leaves new_chat pending while a
+          # worker is generating/sending/awaiting a response. That is a safe
+          # deferred restart, not a dead consumer. Only excuse pending commands
+          # when fresh runner telemetry proves that exact worker is busy.
+          live_status, live_payload = api_call("GET", "/api/runner-live")
+          live_workers = {}
+          if live_status < 300:
+              for project in (live_payload.get("chatgpt_runners") or {}).values():
+                  for worker_state in (project.get("workers") or []):
+                      key = str(worker_state.get("worker_id") or "").strip()
+                      if key:
+                          live_workers[key] = worker_state
+
+          deferred_busy_workers = []
+          hard_pending_workers = []
+          for worker in pending_workers:
+              state = live_workers.get(worker) or {}
+              last_event = state.get("last_event") or {}
+              age = state.get("age_seconds")
+              recent_busy_defer = (
+                  str(state.get("state") or "") in ("live", "starting")
+                  and str(last_event.get("event") or "") == "send-blocked"
+                  and str(last_event.get("reason") or "") == "new-chat-deferred-busy"
+                  and isinstance(age, (int, float))
+                  and age <= 90
+              )
+              busy = bool(state.get("generating") or state.get("sending") or recent_busy_defer)
+              if busy:
+                  deferred_busy_workers.append(worker)
+              else:
+                  hard_pending_workers.append(worker)
+          pending_workers = hard_pending_workers
+
           replacement_push = None
           if allocation_changed or superseded_workers:
               push_status, replacement_push = api_call(
@@ -481,6 +583,7 @@ jobs:
               "superseded_workers": superseded_workers,
               "replacement_push": replacement_push,
               "pending_workers": pending_workers,
+              "deferred_busy_workers": deferred_busy_workers,
               "failed_workers": failed_workers,
           }, ensure_ascii=False, sort_keys=True))
           if pending_workers:

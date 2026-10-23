@@ -1,6 +1,11 @@
+/* Legacy extension worker controller permanently retired by v2.
+ * Kept only for historical diagnostics/rollback; no listeners or timers run.
+ */
+globalThis.ZCLOUD_SINGLE_TAB_CONTROLLER_V2 = true;
+if (!globalThis.ZCLOUD_SINGLE_TAB_CONTROLLER_V2) {
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "1.3.16";
+const VIOLENTMONKEY_REQUIRED_VERSION = "2.0.5";
 const violentmonkeyReadyProjects = new Set();
 const violentmonkeyFallbackProbeAt = new Map();
 const VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000;
@@ -22,6 +27,62 @@ const REPLACEMENT_HANDOFF_SESSION_KEY = "zcloud-replacement-handoff-v1";
 const REPLACEMENT_DRAIN_STATE_ATTR = "data-zcloud-replacement-drain-state";
 const Recovery = globalThis.ZCloudRecovery;
 if (!Recovery) throw new Error("zCloud recovery helper ontbreekt");
+
+// All automatic recovery opens are rate-limited *per allocated worker*, and
+// their history survives a background extension restart. Existing tabs and
+// active ChatGPT generations are preferred over any new browser tab.
+const TAB_OPEN_WINDOW_MS = 10 * 60 * 1000;
+const TAB_OPEN_LIMIT = 2;
+const CLOSED_TAB_COOLDOWN_MS = 5 * 60 * 1000;
+const BINDING_RETRY_MS = 90 * 1000;
+const TAB_OPEN_LEDGER_KEY = "zcloud-tab-open-ledger-v1";
+const tabOpensInFlight = new Set();
+const tabCloseCooldownUntil = new Map();
+const bindingRetryAt = new Map();
+const lastTabOpenWarningAt = new Map();
+let refreshingTargets = false;
+
+function tabOpenLedger(now = Date.now()) {
+  let rows = {};
+  try { rows = JSON.parse(localStorage.getItem(TAB_OPEN_LEDGER_KEY) || "{}"); } catch (_) {}
+  if (!rows || typeof rows !== "object" || Array.isArray(rows)) rows = {};
+  const fresh = {};
+  for (const [worker, stamps] of Object.entries(rows).slice(-96)) {
+    if (!Array.isArray(stamps)) continue;
+    const recent = stamps.filter(value =>
+      Number.isFinite(value) && value <= now && now - value < TAB_OPEN_WINDOW_MS
+    ).slice(-TAB_OPEN_LIMIT);
+    if (recent.length) fresh[worker] = recent;
+  }
+  return fresh;
+}
+
+function canOpenWorkerTab(workerId, reason, now = Date.now()) {
+  const history = tabOpenLedger(now)[workerId] || [];
+  const cooling = Number(tabCloseCooldownUntil.get(workerId) || 0) > now;
+  const blocked = cooling || history.length >= TAB_OPEN_LIMIT ||
+    tabOpensInFlight.has(workerId);
+  if (blocked && now - Number(lastTabOpenWarningAt.get(workerId) || 0) >= 60000) {
+    lastTabOpenWarningAt.set(workerId, now);
+    postStatus({projectId:workerId,event:"worker-tab-open-rate-limited",
+      reason:String(reason || "automatic-recovery").slice(0,100),
+      error:cooling ? "Tab gesloten: 5 minuten rust voordat zCloud heropent." :
+        "Maximaal 2 nieuwe tabs per worker per 10 minuten. Bestaande tabs blijven staan.",
+      at:new Date().toISOString()});
+  }
+  return !blocked;
+}
+
+async function createWorkerTab(target, url, reason) {
+  // Critical safety policy: no worker may ever create a new tab in response
+  // to a lost mapping, stalled heartbeat, allocation change or prompt.
+  // Firefox native session restore owns real browser-crash recovery.
+  const workerId = String(target?.project_id || "");
+  if (workerId) postStatus({projectId:workerId,event:"worker-tab-create-suppressed",
+    reason:String(reason || "preserve-existing-tabs").slice(0,100),at:new Date().toISOString()});
+  return null;
+}
+
 
 function portfolioAssignmentReady(target) {
   if (!target || target.assignment_ready !== true) return false;
@@ -331,13 +392,10 @@ async function verifyReplacementHandoffStillCurrent(target, handoff) {
 }
 
 async function closeRunnerTab(tabId) {
-  if (tabId == null) return;
-  intentionalTabClosures.add(tabId);
-  try {
-    await browser.tabs.remove(tabId);
-  } catch (_) {
-    intentionalTabClosures.delete(tabId);
-  }
+  // Retired destructive API. A pause, failed send, rotation or stale
+  // assignment must NEVER close a user-visible ChatGPT/Claude tab.
+  if (tabId != null) postStatus({event:"worker-tab-close-suppressed",
+    reason:"preserve-browser-tab",tabId,at:new Date().toISOString()});
 }
 
 async function recoverClosedWorker(target, reason = "unexpected-tab-closed") {
@@ -362,7 +420,8 @@ async function recoverClosedWorker(target, reason = "unexpected-tab-closed") {
     at: new Date().toISOString()
   });
   try {
-    const opened = await browser.tabs.create({url: target.url || "https://chatgpt.com/", active: true});
+    const opened = await createWorkerTab(target, target.url || "https://chatgpt.com/", reason);
+    if (!opened) return;
     tabTargets[opened.id] = target;
     projectTabs[target.project_id] = opened.id;
     await setRecoveryTag(opened.id, target.project_id);
@@ -429,18 +488,18 @@ async function pruneInactiveRestoredTabs(tabs, restoredAssignments, incomingTarg
         reason: "restored-worker-no-longer-allocated"
       });
     } catch (_) {}
-    await clearRecoveryTag(tab.id);
-    await closeRunnerTab(tab.id);
-    delete tabTargets[tab.id];
-    delete pendingAdoptions[tab.id];
-    if (projectTabs[workerId] === tab.id) delete projectTabs[workerId];
-    postStatus({
-      projectId: workerId,
-      event: "orphan-worker-tab-pruned",
-      reason: target ? "restored-worker-inactive-or-unassigned" : "restored-worker-missing",
-      at: new Date().toISOString(),
-      tabId: tab.id
-    });
+    // Never close a visible worker or expert tab merely because allocation
+    // changed. Keep a paused worker tagged for reuse; detach truly removed ones.
+    if (!target) {
+      await clearRecoveryTag(tab.id);
+      delete tabTargets[tab.id];
+      delete pendingAdoptions[tab.id];
+      if (projectTabs[workerId] === tab.id) delete projectTabs[workerId];
+      postStatus({projectId:workerId, event:"orphan-worker-tab-detached",
+        reason:"restored-worker-missing-preserve-browser-tab",
+        at:new Date().toISOString(), tabId:tab.id});
+    }
+    retained.push(tab);
   }
   return retained;
 }
@@ -1177,6 +1236,19 @@ function runProject(cfg) {
         generationDeadlineMs: 120000
       });
       status("generation-not-started", {reason: "no-generation-after-send", weakCycleStreak, retryScheduled});
+      // A VPS-dispatch-only worker cannot rely on the idle startup path here:
+      // that path deliberately stays closed unless the backend dispatches again.
+      // After the full 120s generation deadline, replay the exact same canonical
+      // assignment locally so a submitted-but-never-started ChatGPT turn cannot
+      // strand the worker indefinitely. This retry does not widen scope or change
+      // the assignment and still respects the per-worker anti-spam interval.
+      if (retryScheduled) {
+        if (await canAutoContinue()) {
+          await send("no-generation-retry");
+        } else {
+          status("auto-continue-blocked", {reason: "no-generation-retry-policy-closed"});
+        }
+      }
       return;
     }
     if (sawGeneration) {
@@ -1439,6 +1511,10 @@ async function syncRunnerConfig(tabId, target) {
   return {ok:false, reason:"config-refresh-unavailable"};
 }
 async function refreshTargets() {
+  // 5-second polls may overlap under VPS CPU/RAM pressure; without
+  // single-flight protection they both conclude the same worker is missing.
+  if (refreshingTargets) return;
+  refreshingTargets = true;
   try {
     const response = await fetch(API + "/runner-targets", {cache: "no-store"});
     if (!response.ok) throw new Error("config HTTP " + response.status);
@@ -1449,8 +1525,8 @@ async function refreshTargets() {
       const tabId = projectTabs[id];
       if (tabId != null) {
         try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: id, reason: "worker-count-reduced"}); } catch (_) {}
+        // A changing allocation never authorizes browser-tab destruction.
         await clearRecoveryTag(tabId);
-        await closeRunnerTab(tabId);
         delete tabTargets[tabId];
         delete pendingAdoptions[tabId];
       }
@@ -1461,7 +1537,7 @@ async function refreshTargets() {
       targets[id] = {...target, projectId: target.project_id || id, projectName: target.name || id};
     }
     postStatus({event: "targets-loaded", at: new Date().toISOString(), reason: Object.keys(targets).join(",")});
-    const tabs = await browser.tabs.query({url: "https://chatgpt.com/*"});
+    const tabs = await browser.tabs.query({url: ["https://chatgpt.com/*", "https://claude.ai/*", "https://claude.com/*"]});
     const restoredAssignments = await sessionAssignments(tabs);
     const recoveryTabs = await pruneInactiveRestoredTabs(tabs, restoredAssignments, incoming);
     const claimedTabIds = new Set(
@@ -1475,23 +1551,19 @@ async function refreshTargets() {
           projectName:target.name,target:target.url,event:"assignment-invalid",
           reason:"active-target-without-rendered-vps-assignment",at:new Date().toISOString()});
         if (assignedTabId != null) {
+          // A transient invalid assignment is not evidence that the browser
+          // itself is broken. Halt work but retain its tab/session identity.
+          // Once the backend assignment recovers, rebind the same tab.
           try { await browser.tabs.sendMessage(assignedTabId, {type:"runner-stop", projectId:target.project_id, reason:"assignment-invalid"}); } catch (_) {}
-          await clearRecoveryTag(assignedTabId);
-          await closeRunnerTab(assignedTabId);
-          delete tabTargets[assignedTabId];
-          delete projectTabs[target.project_id];
-          delete pendingAdoptions[assignedTabId];
+          bindingRetryAt.delete(target.project_id);
         }
         continue;
       }
       if (!target.active) {
         if (assignedTabId != null) {
           try { await browser.tabs.sendMessage(assignedTabId, {type: "runner-stop", projectId: target.project_id, reason: "project-paused"}); } catch (_) {}
-          await clearRecoveryTag(assignedTabId);
-          await closeRunnerTab(assignedTabId);
-          delete tabTargets[assignedTabId];
-          delete projectTabs[target.project_id];
-          delete pendingAdoptions[assignedTabId];
+          // Paused workers retain the very same tab and session identity.
+          await setRecoveryTag(assignedTabId, target.project_id);
         }
         continue;
       }
@@ -1513,19 +1585,20 @@ async function refreshTargets() {
             // claimed VPS queue item cannot remain stuck in target-tab-opening.
             pendingInitialDispatches.has(target.project_id) ||
             shouldProbeViolentmonkey(target.project_id)
-          )) {
+          ) && Date.now() >= Number(bindingRetryAt.get(target.project_id) || 0)) {
             const synced = await syncRunnerConfig(assignedTabId, target);
             if (!synced?.ok) {
               postStatus({projectId:target.project_id,baseProjectId:target.base_project_id,workerSlot:target.worker_slot,
                 projectName:target.name,target:target.url,event:"assignment-refresh-failed",
                 reason:synced?.reason || "unknown",at:new Date().toISOString(),tabId:assignedTabId});
-              await clearRecoveryTag(assignedTabId);
-              await closeRunnerTab(assignedTabId);
-              delete tabTargets[assignedTabId];
-              delete projectTabs[target.project_id];
-              delete pendingAdoptions[assignedTabId];
+              // Fail soft: keep the existing bound worker tab. Closing it
+              // creates a destructive 5-second close/open feedback loop.
+              // No prompt is sent until a later verified rebind succeeds.
+              bindingRetryAt.set(target.project_id, Date.now() + BINDING_RETRY_MS);
+              claimedTabIds.add(assignedTabId);
               continue;
             }
+            bindingRetryAt.delete(target.project_id);
           }
           claimedTabIds.add(assignedTabId);
           await setRecoveryTag(assignedTabId, target.project_id);
@@ -1554,7 +1627,8 @@ async function refreshTargets() {
         await inject(tab.id, target);
       } else {
         postStatus({projectId:target.project_id,projectName:target.name,target:target.url,event:"target-tab-opening",at:new Date().toISOString()});
-        const opened = await browser.tabs.create({url: target.url, active: true});
+        const opened = await createWorkerTab(target, target.url, "missing-allocated-worker-tab");
+        if (!opened) continue;
         tabTargets[opened.id] = target;
         projectTabs[target.project_id] = opened.id;
         claimedTabIds.add(opened.id);
@@ -1565,7 +1639,7 @@ async function refreshTargets() {
   } catch (error) {
     console.warn("[ZCloud Runner] config unavailable", error);
     postStatus({event:"config-load-failed",error:String(error?.message||error),at:new Date().toISOString()});
-  }
+  } finally { refreshingTargets = false; }
 }
 
 async function probeLiveThinkingPicker(tabId, target) {
@@ -1701,7 +1775,9 @@ async function inject(tabId, target) {
         "document.documentElement.setAttribute('data-zcloud-worker-id'," + JSON.stringify(effectiveTarget.project_id) + ");" +
         "document.documentElement.setAttribute('data-zcloud-worker-config'," + JSON.stringify(encodedConfig) + ");" +
         "document.documentElement.setAttribute('data-zcloud-force-initial-dispatch'," + JSON.stringify(effectiveTarget.force_initial_dispatch ? "true" : "false") + ");" +
-        "window.dispatchEvent(new Event('zcloud-worker-config'));";
+        "window.dispatchEvent(new Event('zcloud-worker-config'));" +
+        "if (!window.__zcloudFocusBridgeInstalled) { window.__zcloudFocusBridgeInstalled = true;" +
+        "window.addEventListener('zcloud-focus-request', () => { try { browser.runtime.sendMessage({type: 'zcloud-focus-request'}); } catch (_) {} }); }";
       await browser.tabs.executeScript(tabId, {code, runAt: "document_idle"});
       await new Promise(resolve => setTimeout(resolve, 500));
       const readiness = await browser.tabs.executeScript(tabId, {
@@ -1774,6 +1850,17 @@ async function inject(tabId, target) {
         at: new Date().toISOString(),
         tabId
       });
+      // The legacy injected runner below (runProject) predates Claude support
+      // and is hardwired to ChatGPT's DOM/flow. Running it against claude.ai
+      // -- e.g. while a human is on the sign-in screen, which is exactly where
+      // a slow/absent Violentmonkey readiness probe shows up -- caused it to
+      // repeatedly poke the page (its own internal timers + "new chat" style
+      // resets) every refresh cycle, making the login page reload/reset out
+      // from under whoever was trying to log in. Never run it for a Claude
+      // target; just leave the tab alone and keep retrying the VM probe.
+      if (/claude\.(ai|com)/i.test(String(effectiveTarget.url || target.url || ""))) {
+        return {mode: "violentmonkey-pending"};
+      }
     }
 
     await browser.tabs.executeScript(tabId, {code: "(" + runProject.toString() + ")(" + JSON.stringify(effectiveTarget) + ");", runAt: "document_idle"});
@@ -1803,6 +1890,18 @@ async function supersedeMissingTarget(projectId, commandId, action = "command") 
   });
 }
 async function newProjectChat(projectId, reason, commandId) {
+  // A backend/watchdog new_chat is not proof that the user is finished.
+  // Never navigate away from an existing ChatGPT conversation automatically,
+  // especially immediately after clicking Send. Only a future explicit
+  // operator-only in-place route is allowed by this safety gate.
+  if (reason !== "operator-requested-in-place-new-chat") {
+    postStatus({projectId,event:"worker-auto-new-chat-suppressed",
+      reason:String(reason || "keep-tab").slice(0,120),at:new Date().toISOString()});
+    if (commandId != null) await commandResult(commandId,"failed",
+      "Automatische chatrotatie geblokkeerd: bestaande Firefox-tab behouden");
+    return;
+  }
+
   const workerKeys = workerKeysFor(projectId);
   if (workerKeys.some(key => key !== projectId)) {
     if (runningActions.has(projectId)) return;
@@ -1824,20 +1923,29 @@ async function newProjectChat(projectId, reason, commandId) {
       return;
     }
     if (!portfolioAssignmentReady(target)) throw new Error("Actieve VPS queue-assignment ontbreekt of is niet gerenderd");
-    const handoff = await prepareReplacementHandoff(target, reason);
+    // Reuse the existing worker tab for every new conversation, including
+    // automatic rotation and dashboard recovery. Open only if genuinely absent.
     const oldTab = projectTabs[projectId];
+    let reusableTab = null;
     if (oldTab != null) {
-      await drainRunnerBeforeReplacement(oldTab, target, reason);
-      await verifyReplacementHandoffStillCurrent(target, handoff);
-      try { await browser.tabs.sendMessage(oldTab, {type: "runner-stop", projectId: projectId, reason: reason}); } catch (_) {}
-      await clearRecoveryTag(oldTab);
-      await closeRunnerTab(oldTab);
-      delete tabTargets[oldTab];
-      delete pendingAdoptions[oldTab];
+      try { reusableTab = await browser.tabs.get(oldTab); }
+      catch (_) {
+        delete projectTabs[projectId];
+        delete tabTargets[oldTab];
+        delete pendingAdoptions[oldTab];
+      }
     }
-    // Clear the durable conversation binding before the fresh tab is opened.
-    // Otherwise the Violentmonkey runner can fetch the old target during startup
-    // and bounce straight back to the broken /c/<id> URL.
+    if (!reusableTab && !canOpenWorkerTab(projectId, reason)) {
+      throw new Error("Nieuwe chat uitgesteld: maximaal 2 tabopeningen per worker per 10 minuten");
+    }
+    const handoff = await prepareReplacementHandoff(target, reason);
+    if (reusableTab) {
+      await drainRunnerBeforeReplacement(reusableTab.id, target, reason);
+      await verifyReplacementHandoffStillCurrent(target, handoff);
+      try { await browser.tabs.sendMessage(reusableTab.id, {type: "runner-stop", projectId: projectId, reason: reason}); } catch (_) {}
+    }
+    // Reset the binding before navigating this tab, preventing bounce-back
+    // to the old conversation URL during Violentmonkey startup.
     await postStatus({
       projectId: target.project_id,
       baseProjectId: target.base_project_id,
@@ -1856,7 +1964,10 @@ async function newProjectChat(projectId, reason, commandId) {
     pendingInitialDispatches.add(projectId);
     target.active = true;
     target.replacement_handoff = handoff;
-    const tab = await browser.tabs.create({url: "https://chatgpt.com/", active: true});
+    const tab = reusableTab
+      ? await browser.tabs.update(reusableTab.id, {url: "https://chatgpt.com/"})
+      : await createWorkerTab(target, "https://chatgpt.com/", reason);
+    if (!tab) throw new Error("Worker-tab niet beschikbaar; bestaande vensters blijven behouden.");
     tabTargets[tab.id] = target;
     projectTabs[projectId] = tab.id;
     await setRecoveryTag(tab.id, projectId);
@@ -1896,8 +2007,9 @@ async function startProject(projectId, commandId) {
     if (current != null) {
       try {
         await browser.tabs.get(current);
-        // Make an already-open worker tab visible during an explicit start.
-        await browser.tabs.update(current, {active: true});
+        // Keep the user's currently selected tab unchanged. Userscripts can
+        // continue processing in an inactive worker tab.
+        // No browser.tabs.update(... active:true) is necessary.
         // A tab existing is not proof that a generation was dispatched. Start
         // must force the current SQLite assignment through the browser runner.
         pendingInitialDispatches.add(projectId);
@@ -1914,7 +2026,8 @@ async function startProject(projectId, commandId) {
       await newProjectChat(projectId, "dashboard-start", commandId);
       return;
     }
-    const tab = await browser.tabs.create({url: target.url, active: true});
+    const tab = await createWorkerTab(target, target.url, "explicit-start");
+    if (!tab) throw new Error("Tab-open limiet bereikt; bestaande worker kan later worden hersteld");
     tabTargets[tab.id] = target;
     projectTabs[projectId] = tab.id;
     await setRecoveryTag(tab.id, projectId);
@@ -1939,11 +2052,8 @@ async function pauseProject(projectId, commandId) {
   const tabId = projectTabs[projectId];
   if (tabId != null) {
     try { await browser.tabs.sendMessage(tabId, {type: "runner-stop", projectId: projectId, reason: "dashboard-pause"}); } catch (_) {}
-    await clearRecoveryTag(tabId);
-    await closeRunnerTab(tabId);
-    delete tabTargets[tabId];
-    delete projectTabs[projectId];
-    delete pendingAdoptions[tabId];
+    // Pausing stops the runner, but preserves the tab for a later start.
+    await setRecoveryTag(tabId, projectId);
   }
   postStatus({projectId: projectId, projectName: target?.name, target: target?.url || "",
     event: "runner-paused", reason: "dashboard-pause", at: new Date().toISOString()});
@@ -2107,7 +2217,8 @@ async function recoverConversationLoadFailure(tabId, target) {
     at: new Date().toISOString(),
     tabId
   });
-  await newProjectChat(target.project_id, "chatgpt-conversation-load-failed", null);
+  // Preserve the failed conversation tab for diagnosis instead of opening
+  // or navigating away to another chat without the owner's consent.
   return true;
 }
 
@@ -2140,30 +2251,26 @@ function generationRotationDue(projectId, status) {
 }
 
 async function watchRunnerHealth() {
+  // Health status can lag the real ChatGPT generation by minutes. It must
+  // never cause an automatic new_chat, URL redirect or new browser tab.
+  // The primary Violentmonkey runner owns sending and reliable in-tab
+  // completion; the backend owns progress evaluation.
   try {
-    const response = await fetch(API + "/status", {cache: "no-store"});
+    const response = await fetch(API + "/status", {cache:"no-store"});
     if (!response.ok) return;
     const data = await response.json();
     for (const [projectId, status] of Object.entries(data.chatgpt_runners || {})) {
-      if (!status.active || status.auto_continue === false) continue;
-      if (generationRotationDue(projectId, status) &&
-          !status.generating && !status.sending &&
-          !runningActions.has(projectId) &&
-          Date.now() - Number(lastProactiveRotation.get(projectId) || 0) >= 120000) {
-        lastProactiveRotation.set(projectId, Date.now());
-        const state = conversationGenerationBudget.get(projectId);
-        if (state) state.count = 0;
-        await newProjectChat(projectId, "generation-budget-rotation", null);
-        continue;
-      }
+      if (!status?.active || status.auto_continue === false) continue;
       const stale = status.age_seconds != null && status.age_seconds > 300;
-      const stalled = status.stalled === true;
-      if ((!stale && !stalled) || Date.now() - (lastHealthRecovery[projectId] || 0) < 900000) continue;
+      if (!stale && status.stalled !== true) continue;
+      if (Date.now() - Number(lastHealthRecovery[projectId] || 0) < 900000) continue;
       lastHealthRecovery[projectId] = Date.now();
-      newProjectChat(projectId, stale ? "heartbeat-watchdog" : "stalled-watchdog", null);
+      postStatus({projectId,event:"worker-health-needs-attention",
+        reason:"automatic-chat-navigation-disabled",at:new Date().toISOString()});
     }
   } catch (_) {}
 }
+
 async function pollCommands() {
   try {
     const response = await fetch(API + "/runner-commands", {cache: "no-store"});
@@ -2226,6 +2333,10 @@ browser.runtime.onMessage.addListener((message, sender) => {
       .catch(() => ({auto_continue: false, vps_dispatch_only: true, continue_delay_seconds: 0, autonomy: {reason:"policy-unavailable"}}));
   } else if (message?.type === "runner-new-chat" && message.projectId) {
     newProjectChat(message.projectId, message.reason || "stall-recovery", null);
+  } else if (message?.type === "zcloud-focus-request") {
+    // Explicitly reject focus stealing by automation. The primary userscript
+    // may still focus its composer without changing the active tab/window.
+    return Promise.resolve({ok: false, reason: "background-only-worker"});
   } else if (message?.type === "runner-replacement-handoff-consumed" && message.projectId) {
     const tabId = sender?.tab?.id ?? null;
     const target = tabId != null ? tabTargets[tabId] : null;
@@ -2236,7 +2347,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
   }
 });
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (!tab.url || !tab.url.includes("chatgpt.com")) return;
+  if (!tab.url || !(tab.url.includes("chatgpt.com") || tab.url.includes("claude.ai") || tab.url.includes("claude.com"))) return;
   const assigned = tabTargets[tabId];
   if (assigned) {
     if (pendingAdoptions[tabId] === assigned.project_id && projectTabs[assigned.project_id] === tabId) {
@@ -2259,7 +2370,11 @@ browser.tabs.onRemoved.addListener(tabId => {
   delete tabTargets[tabId];
   delete pendingAdoptions[tabId];
   if (target && !intentional) {
-    recoverClosedWorker(target, "unexpected-tab-closed").catch(() => {});
+    // Manual/accidental closes need a cool-down; do not instantly re-open
+    // a tab the owner just closed and switch attention away.
+    tabCloseCooldownUntil.set(target.project_id, Date.now() + CLOSED_TAB_COOLDOWN_MS);
+    postStatus({projectId:target.project_id,event:"worker-tab-closed-cooldown",
+      reason:"unexpected-tab-closed",at:new Date().toISOString()});
   }
 });
 refreshTargets();
@@ -2270,3 +2385,5 @@ watchRunnerHealth();
 setInterval(watchRunnerHealth, 60000);
 watchConversationLoadFailures();
 setInterval(watchConversationLoadFailures, CONVERSATION_LOAD_FAILURE_SCAN_MS);
+
+} // legacy extension worker controller disabled in v2.

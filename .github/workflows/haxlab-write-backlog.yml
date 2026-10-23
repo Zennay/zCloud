@@ -1,20 +1,60 @@
 name: Normalize live HaxLab write queue
 
+# Historical queue-priority migration requires an intentional authorized operator.
+# Never run on push, PR, schedule, workflow_run or as a retry.
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/haxlab-write-backlog.yml
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: Exact 40-character current zCloud main revision
+        type: string
+        required: true
+      approve_queue_mutations:
+        description: Explicitly approve bounded HaxLab-only queue normalization
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   normalize:
-    runs-on: self-hosted
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.approve_queue_mutations == true &&
+      inputs.confirm_sha == github.sha
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
+      - name: Check out exact approved main source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Deny stale or foreign production queue mutations
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+          EXPECTED_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPO" = "Zennay/zCloud"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRMED_SHA" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$EXPECTED_SHA"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Remove stale generic/read-only HaxLab continuations and prioritize write work
         shell: bash
         run: |
@@ -42,7 +82,11 @@ jobs:
           def post(payload):
               req=urllib.request.Request(base+"/api/portfolio-queue",data=json.dumps(payload).encode(),method="POST",headers={"Content-Type":"application/json"})
               with urllib.request.urlopen(req,timeout=10) as r:
-                  return json.load(r)
+                  result=json.load(r)
+              # Never continue from an ambiguous or rejected queue mutation.
+              if not isinstance(result,dict) or result.get("ok") is not True:
+                  raise RuntimeError("queue update did not return a positive acknowledgement")
+              return result
 
           live=get_queue()
           items=live.get("items",[])
@@ -58,17 +102,15 @@ jobs:
               qid=row.get("queue_id")
               if qid not in stale_ids:
                   continue
+              if row.get("project_id")!="haxlab":
+                  # Never demote or complete a task belonging to another project.
+                  print("FOREIGN_QUEUE_ITEM_UNTOUCHED")
+                  continue
               status=str(row.get("status") or "").lower()
               slot=row.get("worker_slot")
-              if status in {"claimed","running","verifying"} and slot:
-                  result=post({
-                    "action":"result",
-                    "worker_slot":slot,
-                    "queue_id":qid,
-                    "result":"DONE",
-                    "evidence":"Superseded by completed Candidate-B gate and canonical write-first Arena v2 backlog.",
-                  })
-                  print("STALE_QUEUE_CLOSED",json.dumps(result,sort_keys=True))
+              if status in {"claimed","running","verifying"}:
+                  # Live task ownership is never revoked by a legacy queue normalizer.
+                  print("ACTIVE_OWNERSHIP_PRESERVED",json.dumps({"status":status},sort_keys=True))
               elif status=="queued":
                   # Re-enqueue at P3 with an explicit superseded title; this keeps
                   # history intact but prevents it outranking implementation work.
@@ -83,7 +125,7 @@ jobs:
                     "source_url":str(row.get("source_url") or ""),
                     "parent_queue_id":row.get("parent_queue_id"),
                   })
-                  print("STALE_QUEUE_DEPRIORITIZED",json.dumps(result,sort_keys=True))
+                  print("STALE_QUEUE_DEPRIORITIZED",json.dumps({"acknowledged":True},sort_keys=True))
 
           for qid,(priority,title,criteria) in canonical.items():
               result=post({
@@ -95,77 +137,18 @@ jobs:
                 "completion_criteria":criteria,
                 "source_url":"https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b",
               })
-              print("WRITE_QUEUE_NORMALIZED",json.dumps(result,sort_keys=True))
+              print("WRITE_QUEUE_NORMALIZED",json.dumps({"acknowledged":True},sort_keys=True))
 
-          # If a legacy synthetic P3 continuation is occupying a global slot
-          # while the canonical HaxLab P1 write lane is waiting, yield that
-          # synthetic item back to the queue. This does not complete/cancel
-          # real project work; it only removes stale fallback work from the
-          # scarce active slots so global priority can take effect.
-          mid=get_queue()
-          waiting_hax_p1=any(
-              x.get("queue_id")=="haxlab-closed-loop-arena-v2-implementation"
-              and x.get("eligible")
-              and str(x.get("status") or "").lower()=="queued"
-              for x in mid.get("items",[])
-          )
-          legacy_titles={
-              "Continue project autonomously with the next concrete implementation step",
-              "Superseded diagnostic/continuation; no longer primary work",
-          }
-          if waiting_hax_p1:
-              for row in mid.get("items",[]):
-                  status=str(row.get("status") or "").lower()
-                  if (
-                      row.get("priority")=="P3"
-                      and status in {"claimed","running","verifying"}
-                      and row.get("worker_slot")
-                      and str(row.get("title") or "") in legacy_titles
-                  ):
-                      result=post({
-                          "action":"result",
-                          "worker_slot":row.get("worker_slot"),
-                          "queue_id":row.get("queue_id"),
-                          "result":"CONTINUE",
-                          "evidence":"Legacy synthetic P3 continuation yielded to queued HaxLab P1 write-first implementation work.",
-                      })
-                      print("LEGACY_P3_YIELDED",json.dumps({
-                          "queue_id":row.get("queue_id"),
-                          "project_id":row.get("project_id"),
-                          "worker_slot":row.get("worker_slot"),
-                          "result":result,
-                      },sort_keys=True))
+          # No cross-project or active-worker preemption. A queued HaxLab task
+          # must be admitted by the normal serialized allocator, never by
+          # forcing another worker's current assignment to CONTINUE.
 
-          # Reconcile the existing worker pool without changing its settings so
-          # the freshly freed slot is immediately allocated by global priority.
-          with urllib.request.urlopen(base+"/api/dynamic-workers",timeout=10) as r:
-              settings=json.load(r).get("dynamic_workers") or {}
-          same_settings={
-              key:settings.get(key)
-              for key in (
-                  "chatgpt_count","claude_count",
-                  "chatgpt_cooldown_seconds","claude_cooldown_seconds",
-                  "check_interval_ms","tick_interval_ms",
-                  "heartbeat_interval_ms","generation_start_timeout_ms",
-                  "scheduler_interval_seconds"
-              )
-              if settings.get(key) is not None
-          }
-          req=urllib.request.Request(
-              base+"/api/dynamic-workers",
-              data=json.dumps(same_settings).encode(),
-              method="POST",
-              headers={"Content-Type":"application/json","X-ZCloud-Actor":"haxlab-write-queue-normalizer"},
-          )
-          with urllib.request.urlopen(req,timeout=10) as r:
-              reconciled=json.load(r)
-          print("WORKER_POOL_RECONCILED",json.dumps(reconciled,sort_keys=True))
+          # Do NOT POST to /api/dynamic-workers. The serialized scheduler
+          # observes queue changes itself. A historical HaxLab queue operation
+          # must never adjust global workers or affect another project's slot.
 
           final=get_queue()
           hax=[x for x in final.get("items",[]) if x.get("project_id")=="haxlab" and x.get("eligible")]
-          print("HAXLAB_ELIGIBLE_FINAL",json.dumps([
-              {k:x.get(k) for k in ("queue_id","priority","status","worker_slot","title")}
-              for x in hax
-          ],sort_keys=True))
-          print("ALLOCATION_FINAL",json.dumps(final.get("allocation"),sort_keys=True))
+          # Bounded counters only; raw queue rows may contain user prompts.
+          print("HAXLAB_ELIGIBLE_COUNT",len(hax))
           PY

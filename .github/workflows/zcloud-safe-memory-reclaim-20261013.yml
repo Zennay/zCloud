@@ -1,0 +1,145 @@
+name: zCloud safe VPS memory reclaim 2026-10-13
+
+# Drop clean page cache only on explicit, exact-head owner authorization.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-safe-memory-reclaim-20261013.yml
+      - scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py
+      - tests/test_zcloud_manual_pagecache_reclaim_policy_20261013_w2.py
+  workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact currently approved main SHA"
+        required: true
+        type: string
+      maintenance_ack:
+        description: "Type I_APPROVE_PAGECACHE_RECLAIM after serialized deployment-owner approval"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: (github.event_name == 'pull_request') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable pull request merge revision hosted only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify offline deny-first memory eligibility and workflow trust
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest -v tests.test_zcloud_manual_pagecache_reclaim_policy_20261013_w2
+          python3 -m py_compile scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py
+
+  reclaim:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.confirm_sha == github.sha &&
+      inputs.maintenance_ack == 'I_APPROVE_PAGECACHE_RECLAIM'
+    concurrency:
+      group: zcloud-production-deploy
+      cancel-in-progress: false
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact main without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Verify manual approval, immutable current main and trusted VPS
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
+          test "$(hostname)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Reclaim clean Linux page cache without touching active processes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          echo "=== HOST AND BEFORE ==="
+          date -u +'%Y-%m-%d %H:%M:%S UTC'
+          free -m
+          awk '/^(MemTotal|MemFree|MemAvailable|Cached|Buffers|SReclaimable|SwapTotal|SwapFree|Dirty|Writeback):/{print}' /proc/meminfo
+          echo "=== MEMORY PRESSURE ==="
+          cat /proc/pressure/memory || true
+          echo "=== TOP RESIDENT PROCESSES ==="
+          ps -eo pid,user,rss,comm --sort=-rss | head -n 18 || true
+          echo "=== LIVE FIREFOX BEFORE ==="
+          ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print "FIREFOX_PARENT_PID=" $1}'
+          if [[ "$(id -u)" != "0" ]] && ! sudo -n true; then
+            echo "SAFE_RECLAIM_SKIPPED=noninteractive_sudo_unavailable"
+            exit 0
+          fi
+          before_available="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+          before_free="$(awk '/^MemFree:/ {print $2}' /proc/meminfo)"
+          before_swap="$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)"
+          before_cached="$(awk '/^Cached:/ {print $2}' /proc/meminfo)"
+          # Only clean file-backed page cache; never swapoff, never kill/restart
+          # any browser, desktop session, database, user process or worker.
+          # Without sync, dirty write caches stay safely intact.
+          # Recheck immutable main immediately before even considering root IO.
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          last_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$last_main"
+          test "$last_main" = "$GITHUB_SHA"
+          # Skip if memory evidence is corrupt, critical, or pressure absent.
+          if python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then
+            # Re-check after the final policy computation, as directly as
+            # possible before the only privileged kernel write.
+            root_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+            test -n "$root_main"
+            test "$root_main" = "$GITHUB_SHA"
+            sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'
+            echo "SAFE_RECLAIM_CLEAN_PAGECACHE=1"
+          else
+            echo "SAFE_RECLAIM_SKIPPED=memory-policy-not-eligible"
+          fi
+          sleep 3
+          echo "=== AFTER ==="
+          free -m
+          awk '/^(MemTotal|MemFree|MemAvailable|Cached|Buffers|SReclaimable|SwapTotal|SwapFree|Dirty|Writeback):/{print}' /proc/meminfo
+          after_available="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+          after_free="$(awk '/^MemFree:/ {print $2}' /proc/meminfo)"
+          after_swap="$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)"
+          after_cached="$(awk '/^Cached:/ {print $2}' /proc/meminfo)"
+          echo "MEMFREE_DELTA_MIB=$(( (after_free-before_free)/1024 ))"
+          echo "MEMAVAILABLE_DELTA_MIB=$(( (after_available-before_available)/1024 ))"
+          echo "CACHED_DELTA_MIB=$(( (after_cached-before_cached)/1024 ))"
+          echo "SWAPFREE_DELTA_MIB=$(( (after_swap-before_swap)/1024 ))"
+          echo "=== LIVE FIREFOX AFTER ==="
+          ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print "FIREFOX_PARENT_PID=" $1}'
+          echo "ACTIVE_SERVICES_UNTOUCHED=1"

@@ -1,0 +1,53 @@
+{
+  "remote": "vpsarchive:zcloud-vps/automatic/cold-storage",
+  "rclone": "/home/ubuntu/.local/bin/rclone",
+  "enable_pruning": true,
+  "projects": [
+    {
+      "name": "fuckball",
+      "root": "/opt/fuckball-league-training",
+      "min_age_days": 30,
+      "cold_directories": [
+        "archive-ready",
+        "completed-runs",
+        "completed-experiments"
+      ]
+    },
+    {
+      "name": "haxlab",
+      "root": "/var/lib/haxlab",
+      "min_age_days": 30,
+      "cold_directories": [
+        "archive-ready",
+        "completed-exports"
+      ]
+    },
+    {
+      "name": "ftmo",
+      "root": "/home/ubuntu/Ftmo",
+      "min_age_days": 45,
+      "cold_directories": [
+        "archive-ready",
+        "historical-exports"
+      ]
+    },
+    {
+      "name": "tradengine",
+      "root": "/home/ubuntu/tradengine",
+      "min_age_days": 45,
+      "cold_directories": [
+        "archive-ready",
+        "historical-exports"
+      ]
+    },
+    {
+      "name": "zcloud",
+      "root": "/home/ubuntu/zennay-cloud",
+      "min_age_days": 30,
+      "cold_directories": [
+        "archive-ready"
+      ]
+    }
+  ],
+  "notes": "Only explicitly archived, cold, ubuntu-owned regular files are eligible. Never move champion/current/checkpoints, active work, SQLite or locks. Missing directories are skipped. Verify real host paths; configure additional projects in this registry."
+}
