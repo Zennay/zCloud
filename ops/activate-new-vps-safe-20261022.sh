@@ -29,10 +29,21 @@ unit_active() {
   systemctl is-active "$1" 2>/dev/null || true
 }
 
+docker_api_version() {
+  command -v docker >/dev/null 2>&1 || return 1
+  command -v timeout >/dev/null 2>&1 || return 1
+  timeout 10s docker info --format '{{.ServerVersion}}' 2>/dev/null
+}
+
 echo "=== NEW VPS BASE SERVICES: $MODE ==="
 echo "host=$EXPECTED_HOST"
 echo "archive=$(unit_load "$ARCHIVE_UNIT")/$(unit_active "$ARCHIVE_UNIT")"
 echo "docker=$(unit_load "$DOCKER_UNIT")/$(unit_active "$DOCKER_UNIT")"
+if DOCKER_VERSION="$(docker_api_version)" && [[ -n "$DOCKER_VERSION" ]]; then
+  echo "docker_api=reachable/$DOCKER_VERSION"
+else
+  echo "docker_api=unavailable"
+fi
 
 echo '=== GITHUB RUNNER UNITS (OBSERVE ONLY) ==='
 mapfile -t RUNNERS < <(
@@ -93,6 +104,10 @@ command -v docker >/dev/null 2>&1 || {
   echo 'REFUSED: Docker CLI missing; no automatic package installation' >&2
   exit 3
 }
+command -v timeout >/dev/null 2>&1 || {
+  echo 'REFUSED: timeout utility missing; cannot bound Docker API inspection' >&2
+  exit 3
+}
 
 # Explicit, narrowly scoped operator action. No production containers started.
 systemctl enable --now "$ARCHIVE_UNIT"
@@ -106,6 +121,15 @@ systemctl is-active --quiet "$DOCKER_UNIT" || {
   echo 'ERROR: Docker service not active after enable' >&2
   exit 4
 }
+DOCKER_VERSION="$(docker_api_version)" || {
+  echo 'ERROR: Docker daemon API did not respond within 10 seconds' >&2
+  exit 4
+}
+[[ -n "$DOCKER_VERSION" ]] || {
+  echo 'ERROR: Docker daemon returned no server version' >&2
+  exit 4
+}
+echo "Docker API reachable: server_version=$DOCKER_VERSION"
 
 echo 'BASE_SERVICES_READY: Docker and external archive active.'
 echo 'No GitHub runners, zCloud, training, browser or containers altered.'
