@@ -117,6 +117,40 @@ observed system headroom, not a claim of precise attributable CPU usage.
 No new manual QA suites or production actions were performed for this
 source change.
 
+
+
+### Admission details and memory-limit separation
+
+The normal `acquire_resource` API can reacquire an expired lease. A running
+governor wrapper must **never** treat that as a renewal: the owned generation
+must still exist and still be active under the same `BEGIN IMMEDIATE` write
+transaction. The same generation condition protects both late cleanup and
+the six-hour incident-retention path, so an older wrapper cannot remove or
+renew another process's replacement lease.
+
+Before a new non-protected workload starts, its canonical `memory_soft_mb`
+is reserved against the current host memory budget plus *all active*
+non-protected project leases, regardless of heavy/build pool. Any malformed,
+negative or unrecognized lease budget/pool blocks new admission instead of
+underestimating reserved RAM. Both zCloud and zSSH contract budgets remain
+reserved at host scope, even if those control-plane services are idle.
+
+An inherited systemd cgroup limit is **a separate additional ceiling**:
+the wrapper inspects `memory.max` and `memory.current` from the leaf through
+its ancestor cgroup-v2 slices. A dedicated FTMO unit's own memory ceiling
+cannot be charged again for zCloud/zSSH's *different* services. The global
+host reserve remains independent. No limit or cgroup is changed by read-only
+admission calculations. The physical host may still run non-governed work;
+`MemAvailable` and actual cgroup headroom are consequently both checked
+before launching a new job.
+
+On the connected new VPS, unprivileged read-only zSSH inspection showed
+approximately 24 GiB physical memory with approximately 7 GiB currently
+available and nontrivial system load. This observation is not a live
+resource-pool status receipt; the zSSH Unix account is not granted access
+to the canonical live SQLite database. Neither permissions nor production
+workloads were modified.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
