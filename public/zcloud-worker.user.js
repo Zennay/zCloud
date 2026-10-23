@@ -489,7 +489,8 @@
       // Human edits or late SPA transitions can happen while checking the
       // current queue lease. Never send a stale or partially replaced draft.
       const currentEditor=composer();
-      if(!visible(currentEditor)||composerText(currentEditor)!==prompt){
+      // The composer may become disabled while the fresh lease read is in flight.
+      if(!composerReady(currentEditor)||composerText(currentEditor)!==prompt){
         await blocked("composer-changed-before-send");return false;
       }
       // Close the gap between the earlier queue preflight and the actual
