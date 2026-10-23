@@ -311,7 +311,7 @@ def _group_rss_bytes(group_id: int) -> int:
 
 def _renew_existing_lease(conn, project_id: str, owner_id: str,
                           acquired_at: str, lease_seconds: int,
-                          metadata: dict) -> dict:
+                          metadata: dict, admitted_compute: dict) -> dict:
     """Renew only a STILL-ACTIVE lease, never reacquire a lost heavy slot.
 
     A scheduled renewal may be delayed beyond TTL by a paused worker or
@@ -331,11 +331,19 @@ def _renew_existing_lease(conn, project_id: str, owner_id: str,
             conn.rollback()
             return {"acquired": False, "reason": "resource_lease_lost",
                     "project_id": project_id}
+        current_compute = runtime.project_contract(project_id).get("compute") or {}
+        if any(str(current_compute.get(key)) != str(admitted_compute.get(key))
+               for key in ("pool", "class", "cpu_soft_cores", "memory_soft_mb")):
+            conn.rollback()
+            return {"acquired": False, "reason": "resource_contract_changed",
+                    "project_id": project_id}
         result = runtime.acquire_resource(
             conn, project_id, owner_id, lease_seconds=lease_seconds,
             metadata=metadata,
         )
-        if not result.get("acquired") or result.get("renewed") is not True:
+        if (not result.get("acquired") or result.get("renewed") is not True
+                or not _matches_admitted_contract(result.get("lease") or {},
+                                                  admitted_compute)):
             conn.rollback()
             return {"acquired": False, "reason": "resource_renewal_not_confirmed",
                     "project_id": project_id}
@@ -578,7 +586,7 @@ def run_governed(
 
         renewed = _renew_existing_lease(
             conn, project_id, owner_id, acquired_at, lease_seconds,
-            _metadata(command, pid=proc.pid),
+            _metadata(command, pid=proc.pid), compute,
         )
         if not renewed.get("acquired"):
             _stop_process_group(proc)
@@ -615,7 +623,7 @@ def run_governed(
             if now >= next_renewal:
                 renewed = _renew_existing_lease(
                     conn, project_id, owner_id, acquired_at, lease_seconds,
-                    _metadata(command, pid=proc.pid),
+                    _metadata(command, pid=proc.pid), compute,
                 )
                 if not renewed.get("acquired"):
                     _stop_process_group(proc)
