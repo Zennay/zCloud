@@ -620,4 +620,57 @@ def suggested_actions(packet):
         if item["severity"] == "review":
             return 5
         return 6
-    return sorted(result, key=display_rank)[:MAX_ACTIONS]
+    ranked = sorted(result, key=display_rank)
+    if len(ranked) <= MAX_ACTIONS:
+        return ranked
+
+    # A bounded incident desk must not silently make the tail of the action
+    # list disappear. Reserve one visible slot for a machine-readable and
+    # human-readable overflow receipt while retaining the eight highest-ranked
+    # concrete actions unchanged.
+    visible = ranked[:MAX_ACTIONS - 1]
+    omitted = ranked[MAX_ACTIONS - 1:]
+    severity_counts = {
+        level: sum(item.get("severity") == level for item in omitted)
+        for level in ("urgent", "review", "info")
+    }
+    safe_codes = []
+    for item in omitted:
+        code = item.get("id")
+        if (isinstance(code, str) and 0 < len(code) <= 64
+                and code[0].isascii() and code[0].isalnum()
+                and all(ch.isascii() and (
+                    ch.isdigit() or ch == "-"
+                    or (ch.isalpha() and ch.islower())
+                ) for ch in code)):
+            safe_codes.append(code)
+    code_sample = safe_codes[:8]
+    sample_note = (
+        " Voorbeelden: " + ", ".join(code_sample) + "."
+        if code_sample else ""
+    )
+    if len(safe_codes) > len(code_sample):
+        sample_note += " De lijst met weggelaten actietypen is zelf begrensd."
+    if len(omitted) > len(safe_codes):
+        sample_note += " Niet alle weggelaten acties hadden een veilig toonbare code."
+    overflow_severity = (
+        "urgent" if severity_counts["urgent"] else
+        "review" if severity_counts["review"] else "info"
+    )
+    overflow = action(
+        "action-card-overflow",
+        overflow_severity,
+        f"{len(omitted)} aanvullende herstelactie(s) vallen buiten de "
+        f"weergavelimiet van {MAX_ACTIONS}; urgent={severity_counts['urgent']}, "
+        f"review={severity_counts['review']}, info={severity_counts['info']}."
+        + sample_note,
+        "Open het volledige private eigenaarrapport en beoordeel ook de "
+        "weggelaten acties. Deze begrensde kaartlijst is niet volledig; "
+        "geen actie wordt hierdoor geautoriseerd.",
+        "ACTION_CARDS_TRUNCATED_REQUIRES_FULL_REPORT",
+    )
+    overflow["omitted_count"] = len(omitted)
+    overflow["omitted_severity_counts"] = severity_counts
+    overflow["omitted_action_codes"] = code_sample
+    overflow["omitted_action_codes_truncated"] = len(safe_codes) > len(code_sample)
+    return visible + [overflow]
