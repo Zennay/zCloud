@@ -90,6 +90,22 @@ def _assert_portfolio_pool_capacities(contracts: dict) -> None:
         if type(slots) is not int or slots < 2:
             raise RuntimeError("resource_control_pool_capacity_unsafe")
 
+    required_project_pools = {
+        "cloud": "protected", "zssh": "protected",
+        "ftmo": "heavy", "haxlab": "heavy", "lightup": "heavy",
+        "supa": "build", "raiseai": "build", "ulab": "disabled",
+    }
+    # A stale external project checkout must not silently classify FTMO
+    # backtests, HaxLab training or LightUp labs as a build job. A
+    # project with an approved future pool change needs a reviewed update
+    # to this governor rather than widening active production leases.
+    for project_id, expected_pool in required_project_pools.items():
+        project = contracts["projects"].get(project_id)
+        if project is None:
+            continue  # isolated contract fixtures may cover fewer projects
+        if (project.get("compute") or {}).get("pool") != expected_pool:
+            raise RuntimeError("resource_project_pool_contract_unsafe")
+
 
 def _pinned_database_identity(path: Path) -> tuple[int, int] | None:
     """Observe canonical production file identity without opening a new DB.
