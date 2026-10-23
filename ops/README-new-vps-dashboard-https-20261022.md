@@ -19,7 +19,7 @@ Use loopback-only backend binding and authenticated HTTPS Caddy instead.
    consistent SQLite backup has been reconciled under PR #1583 ownership.
    Never start a second production writer.
 2. The new zennay-cloud.service is already live on 127.0.0.1:8765 only.
-   Its local /api/status returns a current timestamp and projects array.
+   Its local /api/status returns a timezone-aware timestamp no more than 5 minutes old (and no more than 2 minutes in the future) plus a projects array.
 3. The DNS owner must independently confirm the authoritative delegation
    and the intended address records before publication. The publisher's
    getent ahosts check is a resolver-view preflight, not authoritative DNS
