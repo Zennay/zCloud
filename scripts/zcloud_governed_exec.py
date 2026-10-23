@@ -58,6 +58,29 @@ def connect(path: Path):
         raise
 
 
+def _pinned_database_identity(path: Path) -> tuple[int, int] | None:
+    """Observe canonical production file identity without opening a new DB.
+
+    If an operator-pinned SQLite mount/file is replaced, the wrapper must
+    stop and reconcile its original lease instead of believing two files
+    under the same pathname belong to the same heavy pool.
+    """
+    if os.environ.get("ZCLOUD_RESOURCE_DB") is None:
+        return None
+    try:
+        status = path.stat()
+        if not path.is_file() or path.is_symlink():
+            raise RuntimeError("resource_shared_database_identity_invalid")
+        return (status.st_dev, status.st_ino)
+    except OSError as exc:
+        raise RuntimeError("resource_shared_database_identity_unavailable") from exc
+
+
+def _assert_database_identity(path: Path, identity: tuple[int, int] | None) -> None:
+    if identity is not None and _pinned_database_identity(path) != identity:
+        raise RuntimeError("resource_shared_database_identity_changed")
+
+
 def _assert_shared_resource_db(db_path: Path) -> None:
     """Prevent accidental split-brain pools when a service pins its DB path.
 
@@ -534,7 +557,13 @@ def run_governed(
     memory_budget = int(compute.get("memory_soft_mb") or 0) * 1024 * 1024
     if compute.get("pool") == "heavy" and memory_budget <= 0:
         raise RuntimeError("heavy_memory_budget_unavailable")
+    db_identity = _pinned_database_identity(Path(db_path))
     conn = connect(Path(db_path))
+    try:
+        _assert_database_identity(Path(db_path), db_identity)
+    except Exception:
+        conn.close()
+        raise
     proc = None
     old_handlers = {}
     termination_requested = None
@@ -561,6 +590,7 @@ def run_governed(
 
         deadline = time.monotonic() + wait_seconds
         while True:
+            _assert_database_identity(Path(db_path), db_identity)
             if termination_requested is not None:
                 return 128 + int(termination_requested)
             conn.execute("BEGIN IMMEDIATE")
@@ -636,6 +666,7 @@ def run_governed(
             _stop_process_group(proc)
             return 128 + int(termination_requested)
 
+        _assert_database_identity(Path(db_path), db_identity)
         renewed = _renew_existing_lease(
             conn, project_id, owner_id, acquired_at, lease_seconds,
             _metadata(command, pid=proc.pid), compute,
@@ -648,6 +679,10 @@ def run_governed(
         next_renewal = time.monotonic() + renew_seconds
         next_memory_check = time.monotonic()
         while True:
+            # A swapped/detached shared SQLite file can allow an independent
+            # concurrent heavy admission under the same path. Stop the old
+            # workload at the first detected identity loss.
+            _assert_database_identity(Path(db_path), db_identity)
             # An ignored SIGTERM must not strand the wrapper in its ordinary
             # polling/renewal loop indefinitely. Start bounded group cleanup.
             if termination_requested is not None:
