@@ -1294,7 +1294,27 @@ def run_governed(
                     raise RuntimeError("resource_lease_retention_failed")
             elif acquired:
                 if not _release_owned_lease(conn, project_id, owner_id, acquired_at):
-                    raise RuntimeError("resource_lease_release_unconfirmed")
+                    # A later writer may have removed/replaced this exact
+                    # generation after we detected lease loss. Never delete
+                    # its successor just to make our cleanup look green.
+                    # But a failed DELETE while we STILL own the generation
+                    # remains a real release failure, never a false success.
+                    _assert_database_identity(Path(db_path), db_identity)
+                    remaining = conn.execute(
+                        "SELECT acquired_at FROM resource_leases "
+                        "WHERE project_id=? AND owner_id=?",
+                        (project_id, owner_id),
+                    ).fetchone()
+                    if (remaining is not None
+                            and remaining["acquired_at"] == acquired_at):
+                        raise RuntimeError("resource_lease_release_unconfirmed")
+                    print(json.dumps({
+                        "released": False,
+                        "reason": "resource_lease_generation_lost",
+                        "project_id": project_id,
+                    }, sort_keys=True), file=sys.stderr)
+                # This means no lease of OUR generation remains.
+                # A successor's lease was neither released nor modified.
                 release_ok = True
         except Exception as exc:
             conn.rollback()
