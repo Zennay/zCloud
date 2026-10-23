@@ -1389,6 +1389,21 @@ def html_view(decision, registry=None):
                 ('<p>Projectverdeling afgekapt na 12; overige projecten ONBEKEND '
                  'binnen de zichtbare werkbak.</p>' if len(ranked_projects) > 12 else '') +
                 '</details>')
+        # Apply the same Claimed/Running versus Verifying urgency as the
+        # private registry-owner workboard, only after the source-window
+        # counts have been validated and reconciled above.
+        if live_notion and unresolved_relations:
+            in_progress_relations = sum(
+                row["unresolved_project_relations"]
+                for row in status_windows if row["status"] in ("Claimed", "Running"))
+            project_relation_html = (
+                '<p class="banner">PROJECTRELATIES ONVOLLEDIG — ' +
+                str(unresolved_relations) + ' actieve statusregels zonder '
+                'eenduidige canonieke projectmapping, waarvan ' +
+                str(in_progress_relations) + ' Claimed/Running. ' +
+                ('P1' if in_progress_relations else 'P2') +
+                ' eigenaarcontrole: koppel originele Project-relatie en '
+                'controleer huidige queueclaim; geen werkovername of dispatch.</p>')
         notion_panel = (
             '<p>' + phrase(caveat, 80) + ' · onafgeronde werkregels: ' +
             str(notion["active_count"]) + ' · geen bestandsscope, claimvrijgave of dispatch.</p>' +
