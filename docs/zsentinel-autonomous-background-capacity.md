@@ -84,6 +84,16 @@ in plaats van de operatoropdracht te laten hangen. De descriptor blijft daarna
 het object waarvan de metadata en begrensde bytes worden gelezen. Dit is alleen
 invoerbescherming: het geeft geen release-, herstel- of deploymentautorisatie.
 
+## Conservatieve behandeling van onbekende inode-druk
+
+Als de root-inodebeschikbaarheid niet als geldige percentagebron beschikbaar is,
+wordt dit nu een expliciete gematigde drukreden. Het CPU-beleid blijft dan op de
+intermediaire `100% / CPUWeight 40`-trede in plaats van onbekende inode-druk als
+volledig idle te behandelen. Betrouwbaar waargenomen <1% vrije inodes blijft een
+urgente reden om CPU te laten wijken; deze wijziging leest alleen `statvfs` en
+start, stopt of herconfigureert geen runner of trainer buiten de bestaande
+geautoriseerde policy-route.
+
 ## 21 oktober · systeem- én gebruikersmanager GitHub runnerherstel
 
 De herstelwerkbank las eerder alleen `systemctl list-units` zonder `--user`.
