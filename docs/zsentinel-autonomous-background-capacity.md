@@ -280,13 +280,39 @@ The intermediate `100% CPUQuota / CPUWeight 40` rung is required whenever the co
 
 The preview and private on-host state now include a bounded array of
 machine-readable `reasons`: e.g. `zcloud-github-job-running`,
-`high-system-load`, `high-swap-use`, and
-`low-root-disk-headroom`. These describe independently observed host
-pressure, **not** proof of a failing specific GitHub workflow. An incomplete
-`/proc` or capacity read emits `incomplete-capacity-source` and chooses
-the conservative band. This lets operators distinguish a real running
-zCloud job from high host load or disk/swap pressure without exposing
-process arguments, runner IDs, home paths or command-line credentials.
+`high-system-load`, `high-swap-use`, `low-root-disk-headroom`, and
+the live host-wide memory-pressure signals below. These describe independently
+observed host pressure, **not** proof of a failing specific GitHub workflow.
+An incomplete required `/proc` or capacity read emits
+`incomplete-capacity-source` and chooses the conservative band. Optional
+PSI support may be unavailable on older/restricted kernels; that remains
+unknown rather than a fabricated healthy zero. This lets operators distinguish
+a real running zCloud job from host pressure without exposing process
+arguments, runner IDs, home paths or command-line credentials.
+
+### Live memory stalls also yield background CPU
+
+The governor now uses the kernel's memory Pressure Stall Information (PSI)
+`avg10` values as an additional host-wide admission signal. These are
+percentages of the previous ten seconds spent stalled, not runner-specific
+attribution:
+
+- `memory_psi_full_avg10_percent >= 1.0`: urgent pressure; cap the existing
+  background coach at the conservative 60% CPUQuota / CPUWeight 25 band.
+- `memory_psi_full_avg10_percent >= 0.25`, or
+  `memory_psi_some_avg10_percent >= 10.0`: moderate pressure; cap it at
+  100% / weight 40 unless another existing signal requires the stricter band.
+- Missing, malformed, non-finite or out-of-range PSI values do not become
+  zero and do not create a new claim of source completeness. The existing
+  required RAM, swap, load, disk and inode observations continue to govern
+  unknown-source handling. The kernel OOM counter remains diagnostic only:
+  its cumulative host-wide value is not used as evidence against a particular
+  runner or as a standalone current-pressure trigger.
+
+The same reason codes appear in the private JSON/HTML owner handoff and the
+Dutch CLI preview, so the applied recommendation and its pressure explanation
+remain consistent. The timer still only adjusts the existing user-scoped
+coach quota/weight; it never stops or restarts training or a runner.
 
 The tuner independently reconciles with the actual `systemctl --user
 show` values on every authorized oneshot invocation. It does not rely
