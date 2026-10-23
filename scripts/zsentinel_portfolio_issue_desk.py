@@ -50,6 +50,16 @@ VIEWS = {
 }
 
 
+def _assignee_display(issue):
+    """Render GitHub issue assignment without implying an active worker claim."""
+    if issue.get("github_assignees_source_complete") is not True:
+        return "UNKNOWN"
+    names = issue.get("github_assignees")
+    if not isinstance(names, list):
+        return "UNKNOWN"
+    return ", ".join(names) if names else "none assigned in issue metadata"
+
+
 def observe_portfolio(repositories, *, token=None, view="all"):
     """Read each explicitly selected repository once; never infer an absent issue."""
     if type(view) is not str or view not in VIEWS:
@@ -214,6 +224,9 @@ def observe_portfolio(repositories, *, token=None, view="all"):
                     "explicit_priority": issue["priority_from_explicit_labels"],
                     "title_hint_unverified": issue["unverified_title_prefix_hint"],
                     "issue_updated_at_utc": issue["updated_at_utc"],
+                    "github_assignees": issue["github_assignees"],
+                    "github_assignees_source_complete": issue["github_assignees_source_complete"],
+                    "assignee_window_identity_drift": issue["assignee_window_identity_drift"],
                     "source_window_changed": issue["source_window_identity_drift"],
                     "source_label_title_conflict": issue["explicit_label_title_disagreement"],
                     "human_action_code": workflow["human_action_code"],
@@ -349,11 +362,16 @@ def as_markdown(result):
                     " (not executed)")
     rows += ["", "## Issue workorders · source P0/P1 first", ""]
     for issue in result["issues"]:
+        assignees = _assignee_display(issue)
         rows += [
             "### [" + issue["repository"] + " #" + str(issue["number"]) +
             "](" + issue["url"] + ")",
             "- Observed label: " + issue["explicit_priority"] +
             " · unverified title hint: " + issue["title_hint_unverified"],
+            "- GitHub issue assignees (not active claims): " + assignees +
+            " · assignee source complete: " + str(issue["github_assignees_source_complete"]) +
+            " · assignee drift between source windows: " +
+            str(issue["assignee_window_identity_drift"]),
             "- **Problem:** " + issue["problem"],
             "- **Human action:** " + issue["human_next_action"] +
             " · code: " + issue["human_action_code"],
@@ -446,12 +464,17 @@ def as_html(result):
         rows.append("<div id='" + key + "'><h3>" + esc(label) +
                     " (" + str(len(items)) + ")</h3>")
         for issue in items:
+            assignees = _assignee_display(issue)
             rows += [
                 "<section class='hold'><h4><a target='_blank' rel='noopener noreferrer' href='" +
                 esc(issue["url"]) + "'>" + esc(issue["repository"]) + " #" +
                 esc(issue["number"]) + "</a></h4>",
                 "<p>Explicit label: " + esc(issue["explicit_priority"]) +
                 " · unverified title hint: " + esc(issue["title_hint_unverified"]) + "</p>",
+                "<p>GitHub issue assignees (not active claims): <code>" +
+                esc(assignees) + "</code> · source complete: " +
+                esc(issue["github_assignees_source_complete"]) +
+                " · assignee drift: " + esc(issue["assignee_window_identity_drift"]) + "</p>",
                 "<p><strong>Problem:</strong> " + esc(issue["problem"]) + "<br>" +
                 "<strong>Human action:</strong> " + esc(issue["human_next_action"]) +
                 "<br><strong>Status:</strong> " + esc(issue["status"]) +
@@ -479,8 +502,9 @@ def as_csv(result):
         "source_state", "sampled_issue_count", "source_partial_unknown",
         "display_view", "source_label_p0", "source_label_p1",
         "source_followup_code", "source_followup_executed",
-        "source_error_scope", "issue_url", "priority_label", "title_hint_unverified",
-        "human_action_code", "human_next_action", "status",
+        "source_error_scope", "issue_url", "github_assignees",
+        "github_assignees_source_complete", "assignee_window_identity_drift",
+        "priority_label", "title_hint_unverified", "human_action_code", "human_next_action", "status",
         "single_issue_live_pr_review_command", "command_executed",
         "active_claim_verified", "required_ci_verified",
         "merge_authorized", "deploy_authorized",
@@ -508,7 +532,7 @@ def as_csv(result):
             r["source_priority_counts"]["label_p0"] if r["source_priority_counts"] else None,
             r["source_priority_counts"]["label_p1"] if r["source_priority_counts"] else None,
             r["human_source_followup_code"], False,
-            r["source_error_scope"], "", "", "", "", "",
+            r["source_error_scope"], "", "", "", "", "", "", "", "",
             "SOURCE COVERAGE IS NOT LIVE OWNER AUTHORITY",
             "", False, False, False, False, False,
         )])
@@ -522,6 +546,8 @@ def as_csv(result):
             r["source_priority_counts"]["label_p1"],
             r["human_source_followup_code"], False,
             r["source_error_scope"], issue["url"],
+            _assignee_display(issue), issue["github_assignees_source_complete"],
+            issue["assignee_window_identity_drift"],
             issue["explicit_priority"], issue["title_hint_unverified"],
             issue["human_action_code"], issue["human_next_action"],
             issue["status"], issue["single_issue_live_pr_review_command"],
