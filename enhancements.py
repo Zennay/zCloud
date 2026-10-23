@@ -1,6 +1,6 @@
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hashlib, json, os, re, sqlite3, subprocess, time
 import project_runtime
 
@@ -901,7 +901,8 @@ def _claim_key_from_alert(alert):
     first=detail.split(" · ",1)[0].strip()
     return first if ":" in first and len(first) >= 4 else None
 
-def _claim_conflict_is_active(db_path, alert, now_ts, *, with_source_status=False):
+def _claim_conflict_is_active(db_path, alert, now_ts, *, with_source_status=False,
+                              connection=None):
     """Keep unresolved/unknown conflicts visible; report claim evidence separately."""
     claim_key=_claim_key_from_alert(alert)
     if not claim_key:
@@ -909,7 +910,8 @@ def _claim_conflict_is_active(db_path, alert, now_ts, *, with_source_status=Fals
         result, source=True, "unverified_legacy"
         return (result,source) if with_source_status else result
     try:
-        with _db_connect_readonly(db_path) as c:
+        with (nullcontext(connection) if connection is not None
+              else _db_connect_readonly(db_path)) as c:
             c.row_factory=sqlite3.Row
             if not c.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_claims'"
@@ -940,18 +942,29 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
     now_ts=datetime.now(timezone.utc)
     items=[]
     claim_sources=[]
-    alerts, alerts_source_status, alerts_more = list_alerts(
-        db_path,80,False,with_window_status=True)
-    for alert in alerts:
-        if str(alert.get("kind") or "").strip().lower().replace("-","_")=="claim_conflict":
-            active, claim_source = _claim_conflict_is_active(
-                db_path,alert,now_ts,with_source_status=True)
-            claim_sources.append(claim_source)
-            if not active:
-                continue
-        incident=_incident_from_alert(alert,recovery,now_ts)
-        if incident:
-            items.append(incident)
+    # Bind alert rows and matching lease evidence to one short-lived,
+    # read-only SQLite snapshot. Multiple per-alert opens could otherwise
+    # combine incompatible claim/alert moments during scheduler churn.
+    try:
+        with _db_connect_readonly(db_path) as c:
+            c.execute("BEGIN")
+            alerts, alerts_source_status, alerts_more = list_alerts(
+                db_path,80,False,with_window_status=True,connection=c)
+            for alert in alerts:
+                if str(alert.get("kind") or "").strip().lower().replace("-","_")=="claim_conflict":
+                    active, claim_source = _claim_conflict_is_active(
+                        db_path,alert,now_ts,with_source_status=True,connection=c)
+                    claim_sources.append(claim_source)
+                    if not active:
+                        continue
+                incident=_incident_from_alert(alert,recovery,now_ts)
+                if incident:
+                    items.append(incident)
+    except Exception:
+        # Keep independently observed worker/service incidents available.
+        # An alert read failure is never a clean/no-conflict receipt.
+        alerts_source_status, alerts_more = "unavailable", None
+        claim_sources=[]
     for project in (data or {}).get("projects", []):
         if project.get("health")=="healthy" or project.get("status")=="archived":
             continue
@@ -1043,11 +1056,12 @@ def incident_center(db_path, runners=None, recovery_dir=None, limit=6, data=None
                    any(source!="observed" for source in claim_sources) else None)}
 
 def list_alerts(db_path, limit=20, important_only=False, *,
-                with_source_status=False, with_window_status=False):
+                with_source_status=False, with_window_status=False, connection=None):
     """Read a bounded alert window and expose unavailable/truncated coverage."""
     try:
         cap=max(1,min(200,int(limit)))
-        with _db_connect_readonly(db_path) as c:
+        with (nullcontext(connection) if connection is not None
+              else _db_connect_readonly(db_path)) as c:
             c.row_factory = sqlite3.Row
             where = "WHERE important=1" if important_only else ""
             rows = c.execute("SELECT * FROM alerts %s ORDER BY ts DESC LIMIT ?" % where, (cap+1,)).fetchall()
