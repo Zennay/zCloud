@@ -40,10 +40,17 @@ def failures(source: str) -> list[str]:
     for condition in CONDITIONS:
         if condition not in guard:
             issues.append("event:" + condition)
-    # Both push and manual admission have independent main-ref checks.
-    main_condition = "github.ref == 'refs/heads/main'"
-    if guard.count(main_condition) != 2 and "event:" + main_condition not in issues:
-        issues.append("event:" + main_condition)
+    # Independent branch-specific checks must EACH survive source changes.
+    # Mere string presence would accept a removed PR/owner condition when
+    # the second occurrence remains in the shared fail-closed catch-all.
+    repeated_conditions = (
+        "github.ref == 'refs/heads/main'",  # push and manual
+        "github.event.pull_request.head.repo.full_name == github.repository",
+        "github.actor == 'Zennay'",
+    )
+    for condition in repeated_conditions:
+        if guard.count(condition) != 2 and "event:" + condition not in issues:
+            issues.append("event:" + condition)
     if re.findall(r"(?m)^  ([a-z][a-z-]*):\s*$", jobs) != ["trusted-event", "critical-runner-flows"]:
         issues.append("two_hosted_jobs")
     if "needs: trusted-event" not in critical:
