@@ -36,7 +36,12 @@ MIN_EXTRA_COMPLETIONS = 3
 
 
 def _dt(value: str) -> datetime:
-    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    # A naive timestamp is not UTC evidence. Never silently interpret it in the
+    # host's local timezone when assessing heartbeat freshness or event deltas.
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp_timezone_missing")
+    return parsed.astimezone(timezone.utc)
 
 
 def _pct(seconds: float, total: float) -> float:
@@ -44,7 +49,8 @@ def _pct(seconds: float, total: float) -> float:
 
 
 def _open_ro(db: Path) -> sqlite3.Connection:
-    c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    # as_uri() safely encodes spaces and URI-significant path characters.
+    c = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
     c.row_factory = sqlite3.Row
     return c
 
@@ -268,29 +274,99 @@ def scaling_assessment(workers: list[dict], desired_workers: int) -> dict:
     }
 
 
+def _unavailable_report(
+    now: datetime,
+    hours: float,
+    cutoff: datetime,
+    reason: str,
+    source_coverage: dict | None = None,
+) -> dict:
+    return {
+        "generated_at": now.isoformat(),
+        "window_hours": float(hours),
+        "cutoff": cutoff.isoformat(),
+        "method": "observational runner telemetry; no causal claim",
+        "source_status": "unavailable",
+        "source_complete": False,
+        "source_reasons": [reason],
+        "source_coverage": source_coverage or {
+            "runner_events": "unavailable",
+            "runner_targets": "unknown",
+            "alerts": "unknown",
+        },
+        "telemetry_rows": 0,
+        "window_empty": None,
+        "projects": [],
+    }
+
+
 def report(db: Path, hours: float = 12.0, project: str | None = None, now: datetime | None = None) -> dict:
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    cutoff = now - timedelta(hours=max(0.25, float(hours)))
-    with closing(_open_ro(db)) as c:
-        params: list[object] = [cutoff.isoformat()]
-        where = "ts>=? AND project_id IS NOT NULL AND project_id<>''"
-        if project:
-            where += " AND project_id=?"
-            params.append(project)
-        rows = c.execute(
-            f"SELECT ts,event,generating,sending,reason,error,project_id,worker_slot FROM runner_events WHERE {where} ORDER BY ts",
-            params,
-        ).fetchall()
+    window_hours = max(0.25, float(hours))
+    cutoff = now - timedelta(hours=window_hours)
+    if db.is_symlink() or not db.is_file():
+        return _unavailable_report(now, window_hours, cutoff, "database_missing_or_not_regular")
 
-        desired = {}
-        if _has_table(c, "runner_targets"):
-            for row in c.execute("SELECT project_id,worker_count FROM runner_targets"):
-                desired[str(row["project_id"])] = max(1, int(row["worker_count"] or 1))
+    try:
+        with closing(_open_ro(db)) as c:
+            if not _has_table(c, "runner_events"):
+                return _unavailable_report(
+                    now, window_hours, cutoff, "runner_events_table_missing",
+                    {"runner_events": "unavailable", "runner_targets": "unknown", "alerts": "unknown"},
+                )
+            params: list[object] = [cutoff.isoformat()]
+            where = "ts>=? AND project_id IS NOT NULL AND project_id<>''"
+            if project:
+                where += " AND project_id=?"
+                params.append(project)
+            rows = c.execute(
+                f"SELECT ts,event,generating,sending,reason,error,project_id,worker_slot FROM runner_events WHERE {where} ORDER BY ts",
+                params,
+            ).fetchall()
 
-        conflicts = defaultdict(int)
-        if _has_table(c, "alerts"):
-            for row in c.execute("SELECT project,COUNT(*) n FROM alerts WHERE kind='claim_conflict' AND ts>=? GROUP BY project", (cutoff.isoformat(),)):
-                conflicts[str(row["project"] or "cloud")] = int(row["n"])
+            target_source_available = _has_table(c, "runner_targets")
+            desired = {}
+            if target_source_available:
+                for row in c.execute("SELECT project_id,worker_count FROM runner_targets"):
+                    project_id = str(row["project_id"] or "").strip()
+                    if not project_id:
+                        raise ValueError("invalid_runner_target_project")
+                    desired[project_id] = max(1, int(row["worker_count"] or 1))
+
+            alerts_source_available = _has_table(c, "alerts")
+            conflicts = defaultdict(int)
+            if alerts_source_available:
+                for row in c.execute(
+                    "SELECT project,COUNT(*) n FROM alerts WHERE kind='claim_conflict' AND ts>=? GROUP BY project",
+                    (cutoff.isoformat(),),
+                ):
+                    conflicts[str(row["project"] or "cloud")] = int(row["n"])
+    except sqlite3.Error:
+        return _unavailable_report(now, window_hours, cutoff, "sqlite_read_failed")
+    except OSError:
+        return _unavailable_report(now, window_hours, cutoff, "database_unavailable")
+    except (TypeError, ValueError, OverflowError, KeyError):
+        return _unavailable_report(now, window_hours, cutoff, "invalid_source_row")
+
+    # Validate the source clock and slot identity before making any scale
+    # recommendation. A single malformed/naive timestamp must not be silently
+    # interpreted using the VPS timezone or disappear from a complete sample.
+    try:
+        for row in rows:
+            _dt(row["ts"])
+            if not str(row["project_id"] or "").strip() or not str(row["event"] or "").strip():
+                raise ValueError("missing_event_identity")
+            if int(row["worker_slot"] or 1) < 1:
+                raise ValueError("invalid_worker_slot")
+    except (TypeError, ValueError, OverflowError, KeyError):
+        return _unavailable_report(
+            now, window_hours, cutoff, "invalid_telemetry_row",
+            {
+                "runner_events": "partial",
+                "runner_targets": "observed" if target_source_available else "unavailable",
+                "alerts": "observed" if alerts_source_available else "unavailable",
+            },
+        )
 
     grouped: dict[tuple[str, int], list[sqlite3.Row]] = defaultdict(list)
     for row in rows:
@@ -301,32 +377,75 @@ def report(db: Path, hours: float = 12.0, project: str | None = None, now: datet
         by_project[pid].append({"worker_slot": slot, "metrics": worker_metrics(events, now=now)})
 
     projects = []
+    source_reasons = []
+    if not target_source_available:
+        source_reasons.append("runner_targets_table_missing")
+    if not alerts_source_available:
+        source_reasons.append("alerts_table_missing")
+
     for pid, workers in sorted(by_project.items()):
         workers.sort(key=lambda x: x["worker_slot"])
-        desired_count = desired.get(pid, max((w["worker_slot"] for w in workers), default=1))
-        total_finished = sum(w["metrics"]["completed_generations"] for w in workers if w["worker_slot"] <= desired_count)
-        total_worker_hours = sum(w["metrics"]["observed_seconds"] for w in workers if w["worker_slot"] <= desired_count) / 3600.0
-        coverage = worker_coverage(workers, desired_count)
+        desired_count = desired.get(pid) if target_source_available else None
+        if desired_count is None:
+            source_reasons.append("project_target_missing")
+            observed_slots = sorted({int(w["worker_slot"]) for w in workers})
+            fallback_count = max(observed_slots, default=1)
+            coverage = worker_coverage(workers, fallback_count)
+            coverage.update({
+                "state": "desired_worker_count_unknown",
+                "desired_workers": None,
+                "missing_worker_slots": [],
+                "missing_worker_slots_enumeration_complete": False,
+                "desired_worker_count_source": "unavailable",
+            })
+            assessment = {
+                "state": "insufficient_data",
+                "reason": "Geen schaaladvies: de gewenste workerconfiguratie ontbreekt voor dit project.",
+                "worker_coverage": coverage,
+            }
+        else:
+            coverage = worker_coverage(workers, desired_count)
+            assessment = scaling_assessment(workers, desired_count)
+
+        included = [
+            w for w in workers
+            if desired_count is None or w["worker_slot"] <= desired_count
+        ]
+        total_finished = sum(w["metrics"]["completed_generations"] for w in included)
+        total_worker_hours = sum(w["metrics"]["observed_seconds"] for w in included) / 3600.0
         projects.append({
             "project_id": pid,
             "desired_workers": desired_count,
+            "desired_workers_source": "observed" if desired_count is not None else "unavailable",
             "observed_worker_slots": [w["worker_slot"] for w in workers],
             "worker_coverage": coverage,
             "completed_generations": total_finished,
             "completed_per_worker_hour": round(total_finished / total_worker_hours, 2) if total_worker_hours > 0 else None,
-            "duplicate_work_prevented": conflicts.get(pid, 0),
-            "assessment": scaling_assessment(workers, desired_count),
+            "duplicate_work_prevented": conflicts.get(pid, 0) if alerts_source_available else None,
+            "claim_conflict_source_status": "observed" if alerts_source_available else "unavailable",
+            "assessment": assessment,
             "workers": workers,
         })
 
+    source_reasons = sorted(set(source_reasons))
+    source_coverage = {
+        "runner_events": "observed",
+        "runner_targets": "observed" if target_source_available else "unavailable",
+        "alerts": "observed" if alerts_source_available else "unavailable",
+    }
     return {
         "generated_at": now.isoformat(),
-        "window_hours": float(hours),
+        "window_hours": window_hours,
         "cutoff": cutoff.isoformat(),
         "method": "observational runner telemetry; heartbeat gaps >150s excluded; scaling assessment requires every desired slot and a fresh heartbeat; no causal claim",
+        "source_status": "partial" if source_reasons else "observed",
+        "source_complete": not source_reasons,
+        "source_reasons": source_reasons,
+        "source_coverage": source_coverage,
+        "telemetry_rows": len(rows),
+        "window_empty": not rows,
         "projects": projects,
     }
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Measure zCloud worker scaling from read-only telemetry")
