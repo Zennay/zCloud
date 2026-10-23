@@ -35,24 +35,30 @@ def _unique_object(pairs):
     return result
 
 
+def parse_metadata_json(raw_metadata: str) -> dict:
+    """Parse the canonical persisted metadata object without ambiguous duplicate keys."""
+    value = json.loads(raw_metadata, object_pairs_hook=_unique_object)
+    if not isinstance(value, dict):
+        raise ValueError("execution metadata must be a JSON object")
+    return value
+
+
 def choose_execution_route(item: dict) -> dict:
     """Return a bounded tool hint; no command, credentials, consent or hostname."""
     metadata = item.get("metadata")
     metadata_invalid = False
-    if not isinstance(metadata, dict):
-        raw_metadata = item.get("metadata_json")
-        if raw_metadata in (None, ""):
+    raw_metadata = item.get("metadata_json")
+    if raw_metadata not in (None, ""):
+        # Persisted JSON is canonical when present: a pre-parsed dict must not
+        # bypass duplicate-key or malformed-JSON rejection.
+        try:
+            metadata = parse_metadata_json(raw_metadata)
+        except (ValueError, TypeError):
             metadata = {}
-            metadata_invalid = metadata is not None and item.get("metadata") is not None
-        else:
-            try:
-                metadata = json.loads(raw_metadata, object_pairs_hook=_unique_object)
-            except (ValueError, TypeError):
-                metadata = {}
-                metadata_invalid = True
-            if not isinstance(metadata, dict):
-                metadata = {}
-                metadata_invalid = True
+            metadata_invalid = True
+    elif not isinstance(metadata, dict):
+        metadata_invalid = metadata is not None
+        metadata = {}
 
     explicit_present = "execution_capability" in metadata
     raw_explicit = metadata.get("execution_capability")
