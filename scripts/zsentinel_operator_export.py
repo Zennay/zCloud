@@ -112,8 +112,10 @@ formeel zijn afgerond. Een vergelijking kan optioneel uitsluitend in een NIEUW .
 onder een bestaande eigen 0700-map worden opgeslagen (--compare-output).
 Het bestand wordt create-only met 0600 gemaakt; bestaande uitvoer wordt nooit vervangen.
 Een broncheckout wordt tijdens de opname tweemaal gelezen via dezelfde veilig
-geopende bronmap; bronwijzigingen worden geweigerd. Dit garandeert geen
-atomische Git-commit-identiteit of actuele live-installatie.
+geopende bronmap; bronwijzigingen worden geweigerd. Bron- en bewijsbestanden
+worden met O_NONBLOCK geopend en daarna op regulier bestand gecontroleerd;
+een FIFO-substitutie faalt gesloten in plaats van de operator te laten hangen.
+Dit garandeert geen atomische Git-commit-identiteit of actuele live-installatie.
 De HTML-weergave is volledig offline zonder scripts, netwerkverzoeken
 of knop voor uitvoerende recovery.
 De operatorbundel is geen production deploy approval.
@@ -129,7 +131,7 @@ def _read_source(source_dir_fd, name):
     """Read through one pinned source directory, reject changed/replaced files."""
     if name not in SOURCES:
         raise ValueError("unexpected source module")
-    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW |
+    fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW |
                  getattr(os, "O_CLOEXEC", 0), dir_fd=source_dir_fd)
     try:
         before = os.fstat(fd)
@@ -285,7 +287,7 @@ def verify(bundle_dir):
             raise ValueError("unknown or missing bundle entries")
         content = {}
         for name in required:
-            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dirfd)
+            fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=dirfd)
             try:
                 info = os.fstat(fd)
                 if (not stat.S_ISREG(info.st_mode)
