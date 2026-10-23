@@ -746,9 +746,13 @@ def timeline_footprint(receipts):
                 results = user_failure_results.setdefault(name, {})
                 results[reason] = results.get(reason, 0) + 1
         cap = receipt.get("capacity")
-        if not isinstance(cap, dict) or cap.get("source_complete") is not True:
+        if not isinstance(cap, dict):
             unknown_capacity += 1
+            if index == len(receipts) - 1:
+                latest_swap_status = "UNKNOWN"
+                latest_pressure_high = None
             continue
+        source_complete = cap.get("source_complete") is True
         swap, disk = cap.get("swap_used_percent"), cap.get("disk_unavailable_percent")
         load, cores = cap.get("host_load"), cap.get("cores")
         swap_status = cap.get("swap_status")
@@ -764,10 +768,14 @@ def timeline_footprint(receipts):
             type(load) in (int, float) and 0 <= load < 1e6
             and type(cores) is int and 1 <= cores <= 4096
         )
-        # Legacy receipts may contain swap_used_percent=0 without proving
-        # that swap exists. Preserve the other valid metrics, but mark the
-        # overall sample incomplete and never treat the legacy zero as healthy.
-        if not (swap_source_valid and disk_valid and load_valid):
+        # An incomplete source must not hide independently observed disk/load
+        # pressure. Keep usable signals, but never present the sample as fully
+        # healthy when source completeness or swap configuration is unknown.
+        sample_unknown = (
+            not source_complete or not swap_source_valid
+            or not disk_valid or not load_valid
+        )
+        if sample_unknown:
             unknown_capacity += 1
         if index == len(receipts) - 1:
             latest_swap_status = (swap_status if swap_status in {
@@ -788,7 +796,7 @@ def timeline_footprint(receipts):
                            and swap >= 80))
             latest_pressure_high = (
                 True if known_high else
-                False if swap_source_valid else None
+                False if not sample_unknown else None
             )
     latest_failed = sorted(name for name, row in latest_service_rows.items()
                            if row["state"] == "failed")
