@@ -363,6 +363,36 @@ def _release_owned_lease(conn, project_id: str, owner_id: str,
         raise
 
 
+def _dedicated_scope_idle() -> bool:
+    """Optional fail-closed check for an exclusively owned Linux cgroup unit.
+
+    The service owner may set ZCLOUD_GOVERNOR_CGROUP to the real, dedicated
+    /sys/fs/cgroup path. This function only reads cgroup.procs; it neither
+    changes cgroup controls nor signals any PID. Without an explicit setting
+    the process-group-only compatibility path remains in effect.
+    """
+    value = os.environ.get("ZCLOUD_GOVERNOR_CGROUP")
+    if value is None:
+        return True
+    try:
+        root = Path("/sys/fs/cgroup").resolve(strict=True)
+        folder = Path(value).resolve(strict=True)
+        folder.relative_to(root)
+        if folder == root or not folder.is_dir():
+            return False
+        own_group = [
+            line.partition("::")[2] for line in
+            Path("/proc/self/cgroup").read_text().splitlines()
+            if line.startswith("0::")
+        ]
+        if len(own_group) != 1 or folder != root.joinpath(own_group[0].lstrip("/")):
+            return False
+        occupants = (folder / "cgroup.procs").read_text().splitlines()
+        return bool(occupants) and occupants == [str(os.getpid())]
+    except (OSError, ValueError):
+        return False
+
+
 def _signal_process_group(proc: subprocess.Popen | None, signum: int) -> None:
     if proc is None:
         return
@@ -573,6 +603,8 @@ def run_governed(
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
         group_stopped = _stop_process_group(proc)
+        if group_stopped:
+            group_stopped = _dedicated_scope_idle()
         release_ok = not acquired
         try:
             if acquired and not group_stopped:
