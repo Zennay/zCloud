@@ -86,7 +86,7 @@ def _effective_cgroup_memory_limits_mb(host_mb: int) -> tuple[int, int]:
     except (OSError, ValueError, IndexError) as exc:
         raise RuntimeError("resource_cgroup_memory_unavailable") from exc
 
-def _nonprotected_memory_admission(conn, project_id: str,
+def _nonprotected_memory_admission(conn, project_id: str, owner_id: str,
                                    compute: dict) -> dict | None:
     """Protect host memory for both control-plane projects across pools.
 
@@ -125,7 +125,8 @@ def _nonprotected_memory_admission(conn, project_id: str,
                 "project_id": project_id}
     now = datetime.now(timezone.utc).isoformat()
     leases = conn.execute(
-        "SELECT pool,memory_soft_mb FROM resource_leases WHERE lease_until>?",
+        "SELECT project_id,owner_id,pool,memory_soft_mb "
+        "FROM resource_leases WHERE lease_until>?",
         (now,),
     ).fetchall()
     other_mb = 0
@@ -136,7 +137,9 @@ def _nonprotected_memory_admission(conn, project_id: str,
                 or type(reserved_mb) is not int or reserved_mb <= 0):
             return {"acquired": False, "reason": "resource_existing_lease_invalid",
                     "project_id": project_id}
-        if pool_name != "protected":
+        if pool_name != "protected" and not (
+                lease["project_id"] == project_id and lease["owner_id"] == owner_id
+        ):
             other_mb += reserved_mb
     # MemAvailable is an additional pressure gate, not a proxy for leases.
     # The global host reserve and the leaf's delegated memory.max are
@@ -574,7 +577,7 @@ def run_governed(
                     "project_id": project_id,
                 })
                 return 75
-            pressure = _nonprotected_memory_admission(conn, project_id, compute)
+            pressure = _nonprotected_memory_admission(conn, project_id, owner_id, compute)
             if pressure is not None:
                 conn.rollback()
                 _admission_denied(pressure)
