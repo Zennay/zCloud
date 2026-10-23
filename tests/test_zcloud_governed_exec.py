@@ -110,6 +110,76 @@ class GovernedExecTests(unittest.TestCase):
         conn.commit()
         conn.close()
 
+    def test_protected_cloud_continues_while_heavy_pool_is_occupied(self):
+        # Critical zCloud/zSSH control-plane admission must not depend on
+        # release of the separately capped research/training heavy slot.
+        holder = self._connect()
+        self.assertTrue(
+            runtime.acquire_resource(holder, "ftmo", "long-heavy-owner")["acquired"]
+        )
+        holder.commit()
+        marker = self.root / "protected-control-plane.txt"
+        try:
+            rc = governed.run_governed(
+                self.db,
+                "cloud",
+                "protected-controller",
+                [
+                    sys.executable, "-c",
+                    f"from pathlib import Path; Path({str(marker)!r}).write_text('active')",
+                ],
+            )
+            self.assertEqual(0, rc)
+            self.assertEqual("active", marker.read_text())
+            self.assertEqual(
+                1, holder.execute(
+                    "SELECT COUNT(*) FROM resource_leases "
+                    "WHERE pool='heavy' AND owner_id='long-heavy-owner'"
+                ).fetchone()[0],
+            )
+            self.assertEqual(
+                0, holder.execute(
+                    "SELECT COUNT(*) FROM resource_leases WHERE pool='protected'"
+                ).fetchone()[0],
+            )
+        finally:
+            runtime.release_resource(holder, "ftmo", "long-heavy-owner")
+            holder.commit()
+            holder.close()
+
+    def test_duplicate_owner_rejects_child_without_touching_active_lease(self):
+        # The same owner key must not renew an existing generation while
+        # accidentally starting a second process outside the one-slot pool.
+        holder = self._connect()
+        original = runtime.acquire_resource(holder, "ftmo", "stable-owner")
+        self.assertTrue(original["acquired"])
+        holder.commit()
+        marker = self.root / "duplicate-owner-must-not-start.txt"
+        try:
+            rc = governed.run_governed(
+                self.db,
+                "ftmo",
+                "stable-owner",
+                [
+                    sys.executable, "-c",
+                    f"from pathlib import Path; Path({str(marker)!r}).write_text('bad')",
+                ],
+            )
+            self.assertEqual(75, rc)
+            self.assertFalse(marker.exists())
+            row = holder.execute(
+                "SELECT acquired_at,metadata_json FROM resource_leases "
+                "WHERE project_id='ftmo' AND owner_id='stable-owner'"
+            ).fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(
+                original["lease"]["acquired_at"], row["acquired_at"]
+            )
+        finally:
+            runtime.release_resource(holder, "ftmo", "stable-owner")
+            holder.commit()
+            holder.close()
+
     def test_successful_child_inherits_identity_and_releases_lease(self):
         marker = self.root / "identity.json"
         code = (
