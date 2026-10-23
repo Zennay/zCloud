@@ -2198,6 +2198,29 @@ def _notion_review_html(report):
         if ambiguous is not None else
         '<p>Leasevensters niet geleverd door deze Notion-bron; ONBEKEND.</p>'
     )
+    relation_panel = ""
+    if source["project_relation_coverage"] == "partial":
+        in_progress_relations = sum(
+            win["unresolved_project_relations"]
+            for win in source_windows if win["status"] in ("Claimed", "Running"))
+        relation_panel = (
+            '<p class="banner">PROJECTRELATIES ONVOLLEDIG — ' +
+            str(source["unresolved_project_relation_count"]) +
+            ' actieve statusregels zonder canonieke Project-relatie, waaronder ' +
+            str(in_progress_relations) + ' Claimed/Running. ' +
+            ('P1' if in_progress_relations else 'P2') +
+            ' register-/taakeigenaarcontrole nodig. Niet herclaimen of herstarten.</p>'
+        )
+    elif source["project_relation_coverage"] == "complete":
+        relation_panel = (
+            '<p class="muted">Binnen de begrensde Notion-bron geen onopgeloste '
+            'projectrelaties waargenomen; andere werkitems en leases ONBEKEND.</p>'
+        )
+    else:
+        relation_panel = (
+            '<p class="muted">Geen geverifieerde live projectrelatiebron; '
+            'geen conclusie over vrij werk.</p>'
+        )
     coverage_lines = "".join(
         "<li>" + escape(win["status"]) + ": ≥" +
         str(win["observed_rows"]) + " geobserveerd, " +
@@ -2213,6 +2236,7 @@ def _notion_review_html(report):
         (" · VEROUDERD/ONBEKEND" if old else " · recent gelezen") +
         '. Observaties zijn GEEN actuele workerlease, bestandsclaim of '
         'toestemming om werk over te nemen.</p>' + claim_window_html +
+        relation_panel +
         ('<details><summary>Brondekking per Notion-status</summary><ul>' +
          coverage_lines + '</ul></details>' if source_windows else '') +
         ('<ul>' + "".join(lines) + '</ul>' if lines else
