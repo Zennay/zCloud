@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import math
 import os
@@ -1119,17 +1119,45 @@ def run_governed(
                 _admission_denied({"reason": "resource_owner_already_running",
                                    "project_id": project_id})
                 return 75
-            # The underlying runtime prunes expired leases inside acquire.
-            # Preserve heavy exclusivity when a known supervised child group
-            # survived the TTL (e.g. a paused or crashed renewal wrapper).
-            if (compute.get("pool") == "heavy"
-                    and _expired_heavy_group_active(conn, live_authority=live_authority)):
-                conn.rollback()
-                _admission_denied({
-                    "reason": "resource_expired_heavy_process_still_active",
-                    "project_id": project_id,
-                })
-                return 75
+            # The shared runtime prunes *all* expired pools on acquire.
+            # A protected zCloud/zSSH admission must not erase the only
+            # surviving recovery evidence for an orphaned heavy child.
+            # Reconcile under this same BEGIN IMMEDIATE transaction before
+            # allowing the runtime's ordinary cleanup to run.
+            orphaned_heavy = (
+                _expired_heavy_group_active(conn, live_authority=live_authority)
+                if live_authority or compute.get("pool") == "heavy" else False
+            )
+            if orphaned_heavy:
+                if compute.get("pool") == "heavy":
+                    conn.rollback()
+                    _admission_denied({
+                        "reason": "resource_expired_heavy_process_still_active",
+                        "project_id": project_id,
+                    })
+                    return 75
+                # Conservatively retain the bounded expired heavy records,
+                # preserving the original PID/cgroup/host generation for an
+                # authorized owner to resolve. Protecting this slot must not
+                # block a different protected control-plane pool.
+                now = datetime.now(timezone.utc)
+                cutoff = now.isoformat()
+                amount = conn.execute(
+                    "SELECT COUNT(*) FROM resource_leases "
+                    "WHERE pool='heavy' AND lease_until<=?", (cutoff,)
+                ).fetchone()[0]
+                if amount > 256:
+                    conn.rollback()
+                    _admission_denied({
+                        "reason": "resource_expired_heavy_recovery_unbounded",
+                        "project_id": project_id,
+                    })
+                    return 75
+                conn.execute(
+                    "UPDATE resource_leases SET lease_until=? "
+                    "WHERE pool='heavy' AND lease_until<=?",
+                    ((now + timedelta(hours=6)).isoformat(), cutoff),
+                )
             # Check pool occupancy before host-memory pressure: if another
             # heavy job owns the only slot, bounded waiters must sleep
             # *without* re-scanning all host/cgroup memory each second.
