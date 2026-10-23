@@ -388,6 +388,31 @@ and attempting a new lease. This prevents a restarted service from
 admitting another heavy job beside a surviving, detached worker after
 a preceding wrapper crash and lease expiry.
 
+The same pinned heavy-service admission additionally checks its
+actual Linux cgroup-v2 `cpu.max` and `memory.max` files. Both must
+contain numeric kernel-enforced limits no higher than the project's
+declared `cpu_soft_cores` and `memory_soft_mb`. Missing/unlimited
+limits, non-dedicated service scopes and malformed values deny startup
+rather than relying on per-process `RLIMIT_AS` or CPU affinity alone.
+This is important for multi-process FTMO backtests, HaxLab training
+and LightUp lab bursts, which could otherwise exceed their aggregate
+memory budget despite every individual child staying under its own
+soft address-space limit.
+
+**Known rollout mismatches, owner actions required:** the existing
+FTMO recovery workflow's rendered unit template declares
+`CPUQuota=500%` for a contract with `cpu_soft_cores=4`, and does
+not show a `MemoryMax` declaration. The separately running
+`fuckball-ai-coach.service` was observed at a two-CPU quota and
+3-GiB memory max, while the **haxlab** contract has one CPU and
+3,072 MiB. Neither current service can be counted as a successful
+governor deployment under these new hard-budget preflights without
+the respective owner's reviewed, authorized unit change.
+The FTMO recovery workflow is separately owned (including retirement
+work), and the active HaxLab training service is owned by the separate
+external-disk migration. This PR does not change either unit or
+interrupt either service.
+
 On exit, the wrapper first stops and observes its own process group.
 For pinned production service commands, it then reads the entire
 dedicated unit's `cgroup.procs` subtree. A process which called
