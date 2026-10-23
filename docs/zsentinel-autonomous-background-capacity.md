@@ -122,6 +122,14 @@ niet van systeemrestarts, drukduur of kernel-OOM-kills.
 Dit is geen toestemming voor het inschakelen van swap, herstarten van runners,
 extra training, CI-reruns of een productiedeploy.
 
+Het offline tijdlijnrapport behandelt nu historische/legacy-bonnen zonder een
+expliciete `swap_status` als **onvolledige capaciteitsbron**, ook als ze een
+oude numerieke `swap_used_percent=0` bevatten. Geldige disk-/load-signalen
+blijven bruikbaar, maar een verder lage drukuitkomst blijft `UNKNOWN` zolang
+de swapbron niet onafhankelijk is vastgesteld. Onbekende swap telt niet mee
+als hoge swap en wordt niet verward met een geconfigureerde swapruimte;
+`NO_SWAP_CONFIGURED` blijft zichtbaar als afzonderlijke eigenaaractie.
+
 Een tweede read-only broncontrole op hetzelfde host toont `/opt/fuckball-training`
 en `/` beide op device `2050` en `/dev/sda2`. Daarmee blijft de daadwerkelijke
 training-outputlocatie op de **systeemschijf**; deze CPU-fix maakt dat pad niet
