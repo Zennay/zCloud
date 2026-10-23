@@ -378,6 +378,39 @@ with supervised systemd/cgroup containment and a live concurrency
 receipt, is still required. Never mark the release as complete based
 on this interim veto.
 
+## Dedicated live service cgroup ownership (crash and detach gate)
+
+A production **heavy** launcher with `ZCLOUD_RESOURCE_DB` pinned now
+requires that its own Linux cgroup-v2 path identify a dedicated
+`.service` unit, and that its unit subtree contain no live process
+other than the governor wrapper **before** opening the shared database
+and attempting a new lease. This prevents a restarted service from
+admitting another heavy job beside a surviving, detached worker after
+a preceding wrapper crash and lease expiry.
+
+On exit, the wrapper first stops and observes its own process group.
+For pinned production service commands, it then reads the entire
+dedicated unit's `cgroup.procs` subtree. A process which called
+`setsid()` and left the original process group but remained in the
+systemd unit prevents successful release of the heavy lease.
+Unreadable cgroup membership, nested/ambiguous cgroup paths, and
+non-dedicated (shared runner) scopes are **not** evidence of cleanup.
+The code does not signal unrelated processes or modify systemd
+settings. The presence of an escapee causes the existing
+incident-retention path to retain its original still-active lease,
+then report incomplete cleanup rather than claim an ordinary success.
+
+**Release caveat:** when a lease has already expired, the wrapper
+cannot resurrect its original generation merely to hold a slot.
+Absolute crash isolation still requires the service owner to use
+appropriate KillMode/control-group cleanup, bounded memory/CPU
+cgroups and an authorized deployment. A hidden process outside the
+service's delegated cgroup or on another host is not detected. The
+new checks are source-only and do not authorize restarting active
+HaxLab/Fuckball training or changing FTMO/LightUp services.
+Unpinned isolated canaries retain their existing process-group
+lifecycle checks.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
