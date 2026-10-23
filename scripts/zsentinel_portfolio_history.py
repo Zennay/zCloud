@@ -335,6 +335,10 @@ def compare_snapshots(previous, current):
         "ownership_claims_verified": False, "ci_or_review_verified": False,
         "actions_executed": False, "merge_or_deploy_authorized": False,
         "counts": counts,
+        "github_assignee_changes_observed": sum(
+            change.get("github_assignee_change_observed") is True
+            for change in changes
+        ),
         "source_transition_counts": {
             key: sum(c["source_transition"] == key for c in coverage)
             for key in ("GITHUB_SOURCE_LOST",
@@ -567,6 +571,8 @@ def as_markdown(delta):
     ]
     for name, count in delta["counts"].items():
         rows.append("- " + name + ": " + str(count))
+    rows.append("- GitHub assignee changes observed (not active claims): " +
+                str(delta["github_assignee_changes_observed"]))
     rows += ["- Hidden change cards: " + str(delta["omitted_change_cards"]), ""]
     if delta.get("live_issue_recheck"):
         live = delta["live_issue_recheck"]
@@ -622,6 +628,8 @@ def as_html(delta):
         " · current " + esc(delta["current_observed_at_utc"]) + "</p>",
         "<p>" + " · ".join(esc(k) + ": " + esc(v)
                           for k, v in delta["counts"].items()) + "</p>",
+        "<p>GitHub assignee changes observed (not active claims): " +
+        esc(delta["github_assignee_changes_observed"]) + "</p>",
         "<p>Hidden change cards: " + esc(delta["omitted_change_cards"]) + "</p><ul>",
     ]
     if delta.get("live_issue_recheck"):
