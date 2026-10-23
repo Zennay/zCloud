@@ -63,3 +63,12 @@ code/config pair are still required before the live exception can be
 considered resolved; service-active alone is not proof of that.
 
 **Known live limitation (22 Oct 2026):** zSSH connector still returned `McpServerError: Session terminated`; source commits/PRs are not proof of service activation. Existing zSSH public onboarding PR #391 has unresolved owner-auth/mTLS deployment gates and must remain separate from this private browser module.
+
+
+## Fail-closed route selection
+
+- A valid explicit `execution_capability` (`browser`, `system` or `none`) takes precedence over keyword inference.
+- A non-empty unsupported explicit capability is treated as `none`; it does not fall back to heuristics.
+- Without an explicit capability, mixed browser and system action signals return `capability=none` with `route_reason=ambiguous_mixed_capability`. A human or the source task metadata must disambiguate it.
+- Mentions of the zSSH transport or a VPS are not by themselves system-action signals, so a browser task can still select the browser module when it says that it runs through zSSH/on a VPS.
+- The result is only a routing hint. `authorized` remains false, pairing is still required, and all zSSH policy/approval gates remain authoritative.
