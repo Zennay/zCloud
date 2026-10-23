@@ -291,6 +291,14 @@ function safeAttentionSourceUrl(raw){
       &&url.hostname&&url.hostname.length<=253?url.href:'';
   }catch(_){return ''}
 }
+function statusSnapshotFreshness(){
+  const raw=DATA?.time;
+  if(typeof raw!=='string'||!raw.trim())return 'unknown';
+  const timestamp=Date.parse(raw),now=Date.now();
+  if(!Number.isFinite(timestamp)||timestamp>now+120000)return 'unknown';
+  if(DATA?.stale===true||now-timestamp>90000)return 'stale';
+  return 'fresh';
+}
 function attentionPanel(projectId=''){
   if(!Array.isArray(DATA?.attention_needed)){
     return '<section class="attention-panel"><div class="attention-head"><div>'
@@ -303,8 +311,15 @@ function attentionPanel(projectId=''){
   const items=projectId?all.filter(item=>item.project_id===projectId):all;
   const notion=DATA?.portfolio_queue_health?.notion_attention_url||'';
   if(!items.length){
-    if(projectId)return '';
-    return `<section class="attention-panel attention-clear"><div class="attention-head"><div><span class="eyebrow">ATTENTION NEEDED</span><h2>Nothing needs you right now</h2></div><span class="attention-count">0</span></div><p>Workers can keep moving without a human gate.</p>${notion?`<a class="text-link" href="${esc(notion)}" target="_blank" rel="noreferrer">Open Notion list →</a>`:''}</section>`;
+    const freshness=statusSnapshotFreshness();
+    if(projectId&&freshness==='fresh')return '';
+    const headline=freshness==='fresh'?'Nothing needs you right now'
+      :freshness==='stale'?'No human gates in the last snapshot':'Human-action status unconfirmed';
+    const count=freshness==='unknown'?'?':'0';
+    const note=freshness==='fresh'?'Workers can keep moving without a human gate.'
+      :freshness==='stale'?'The last observed snapshot had no pending human requests, but it is stale. Refresh before relying on it.'
+      :'The status timestamp is missing or untrusted. This is not proof that no human action is needed.';
+    return `<section class="attention-panel ${freshness==='fresh'?'attention-clear':''}"><div class="attention-head"><div><span class="eyebrow">ATTENTION NEEDED</span><h2>${headline}</h2></div><span class="attention-count">${count}</span></div><p>${note}</p>${notion&&!projectId?`<a class="text-link" href="${esc(notion)}" target="_blank" rel="noreferrer">Open Notion list →</a>`:''}</section>`;
   }
   const rows=items.map(item=>{
     const project=DATA.projects.find(p=>p.id===item.project_id);
@@ -1827,7 +1842,7 @@ async function loadExtras(){
   render();if(route==='activity')void refreshProjectActivity(version)
 }
 function setConnection(ok){$('connection').classList.toggle('offline',!ok);$('connection').innerHTML='<span class="status-dot"></span>'+(ok?'Live connected':'Connection lost')}
-async function refresh(initial=false){if(busy)return false;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const stale=DATA.stale||Date.now()-Date.parse(DATA.time)>90000;setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+clock(DATA.time)+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling();return true}catch(e){
+async function refresh(initial=false){if(busy)return false;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const freshness=statusSnapshotFreshness(),stale=freshness!=='fresh';setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=freshness==='unknown'?'The status timestamp is missing or untrusted. Treat this snapshot as historical and refresh before relying on it.':stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+(freshness==='unknown'?'time unknown':clock(DATA.time))+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling();return true}catch(e){
     // The status read failed: do not keep a prior queue snapshot looking live.
     // Queue-bound operator controls must wait for a new authorized source read.
     BLOCKED_QUEUE=null;
