@@ -1,0 +1,124 @@
+name: zCloud deploy-ops release evidence cockpit (hosted, read-only)
+
+on:
+  push:
+    branches:
+      - deployops/release-evidence-cockpit-20261015-w1
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/zcloud_deployops_release_evidence_cockpit_20261015.py'
+      - 'tests/test_zcloud_deployops_release_evidence_cockpit_20261015.py'
+      - 'docs/deploy-ops/release-evidence-cockpit-operator-20261015.md'
+      - '.github/workflows/zcloud-release-evidence-cockpit-20261015.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    # Execute source only on GitHub-hosted CI with no privileged token/secrets.
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.base.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Immutable source checkout, without persistent credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact checkout SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Run isolated safety regression matrix
+        run: python3 -m unittest -v tests.test_zcloud_deployops_release_evidence_cockpit_20261015
+      - name: Python bytecode compilation
+        run: python3 -m py_compile scripts/zcloud_deployops_release_evidence_cockpit_20261015.py
+
+  operator-evidence:
+    # Only branch-owner, first attempt, hosted read-only observation.
+    # Never run on PR code or a self-hosted production worker.
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/deployops/release-evidence-cockpit-20261015-w1' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      statuses: read
+    steps:
+      - name: Immutable source checkout, no persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify branch source identity
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Generate advisory evidence from canonical GitHub GET API
+        id: observe
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python3 scripts/zcloud_deployops_release_evidence_cockpit_20261015.py \
+            --json deploy-ops-evidence.json --html deploy-ops-evidence.html
+          rc=$?
+          set -e
+          # A malformed/incomplete source returns 2 *with sanitized outputs*.
+          # Preserve the diagnostic artifact, then fail the job after upload.
+          # Unknown crash/exit code is not an eligible artifact producer.
+          case "$rc" in
+            0|1|2) printf 'evidence_rc=%s\n' "$rc" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Observer crashed with an unknown exit code" >&2; exit 3 ;;
+          esac
+          test -s deploy-ops-evidence.json
+          test -s deploy-ops-evidence.html
+          {
+            echo '### zCloud deploy-ops observation — NO RELEASE AUTHORITY'
+            echo 'Advisory GET-only main SHA snapshot. Not live VPS health or deployment permission.'
+            echo 'Observed JSON:'
+            echo '~~~json'
+            cat deploy-ops-evidence.json
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain sanitized offline HTML and JSON for 1 day
+        if: >-
+          steps.observe.outputs.evidence_rc == '0' ||
+          steps.observe.outputs.evidence_rc == '1' ||
+          steps.observe.outputs.evidence_rc == '2'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: zcloud-release-evidence-readonly
+          path: |
+            deploy-ops-evidence.json
+            deploy-ops-evidence.html
+          retention-days: 1
+          if-no-files-found: error
+      - name: Fail closed AFTER artifact for incomplete GitHub evidence
+        if: steps.observe.outputs.evidence_rc == '2'
+        shell: bash
+        run: |
+          echo "Incomplete GitHub read-only evidence — see sanitized artifact" >&2
+          exit 2
