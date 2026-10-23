@@ -256,14 +256,20 @@ class GovernedExecTests(unittest.TestCase):
         initial.close()
         marker = self.root / "revoked-before-popen-must-not-start.txt"
 
+        successor_acquired_at = "2099-01-01T00:00:00+00:00"
+
         def revoke_generation(conn, project_id, owner_id, acquired_at):
             external = sqlite3.connect(self.db, timeout=5)
             try:
-                external.execute(
-                    "DELETE FROM resource_leases WHERE project_id=? "
-                    "AND owner_id=? AND acquired_at=?",
-                    (project_id, owner_id, acquired_at),
+                # Replace the original generation with a successor using
+                # the same (project_id, owner_id) composite owner key.
+                updated = external.execute(
+                    "UPDATE resource_leases SET acquired_at=?, lease_until=? "
+                    "WHERE project_id=? AND owner_id=? AND acquired_at=?",
+                    (successor_acquired_at, "2099-01-01T01:00:00+00:00",
+                     project_id, owner_id, acquired_at),
                 )
+                self.assertEqual(1, updated.rowcount)
                 external.commit()
             finally:
                 external.close()
@@ -285,12 +291,12 @@ class GovernedExecTests(unittest.TestCase):
         self.assertFalse(marker.exists())
         conn = self._connect()
         try:
-            self.assertEqual(
-                0, conn.execute(
-                    "SELECT COUNT(*) FROM resource_leases "
-                    "WHERE project_id='ftmo' AND owner_id='revoke-before-popen'"
-                ).fetchone()[0],
-            )
+            row = conn.execute(
+                "SELECT acquired_at FROM resource_leases "
+                "WHERE project_id='ftmo' AND owner_id='revoke-before-popen'"
+            ).fetchone()
+            self.assertIsNotNone(row, "cleanup deleted the successor lease")
+            self.assertEqual(successor_acquired_at, row["acquired_at"])
         finally:
             conn.close()
 
