@@ -178,7 +178,7 @@ def packet(report_data):
 
 def load_private(path):
     """Read only an owner-held, mode-0600, regular JSON file without symlinks."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     fd = os.open(path, flags)
     try:
         info = os.fstat(fd)
