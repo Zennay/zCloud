@@ -393,6 +393,9 @@ def _operator_workorders(delta):
             "current_github_assignees": row.get("current_github_assignees"),
             "github_assignees_source_complete": row.get("github_assignees_source_complete", False),
             "assignee_window_identity_drift": row.get("assignee_window_identity_drift", False),
+            "live_issue_github_assignees": row.get("live_issue_github_assignees"),
+            "live_issue_github_assignees_source_complete": row.get(
+                "live_issue_github_assignees_source_complete"),
             "priority_rank_hint": rank,
             "priority_source": priority_source,
             "critical_priority_verified_from_current_label": (
@@ -509,6 +512,12 @@ def _operator_markdown(delta):
                "](" + item["issue_url"] + ")" if item["issue_url"] else
                item["repository"] + " · SOURCE COVERAGE")
         assignment = " · " + _assignee_change_text(item) if item["kind"] == "issue" else ""
+        if (item["kind"] == "issue" and
+                item.get("live_issue_github_assignees_source_complete") is not None):
+            assignment += " · live GitHub assignees (not active claims): " + _assignee_display(
+                item.get("live_issue_github_assignees"),
+                item.get("live_issue_github_assignees_source_complete"),
+            )
         rows.append(
             "- " + ref + " · " + item["change"] +
             " · priority evidence " + item["priority_source"] +
@@ -548,6 +557,12 @@ def _operator_html(delta):
             if item["issue_url"] else label
         )
         assignment = " · " + _assignee_change_text(item) if item["kind"] == "issue" else ""
+        if (item["kind"] == "issue" and
+                item.get("live_issue_github_assignees_source_complete") is not None):
+            assignment += " · live GitHub assignees (not active claims): " + _assignee_display(
+                item.get("live_issue_github_assignees"),
+                item.get("live_issue_github_assignees_source_complete"),
+            )
         rows.append(
             "<li>" + link + " · " + esc(item["change"]) +
             " · " + esc(item["priority_source"]) + esc(assignment) +
@@ -600,6 +615,11 @@ def as_markdown(delta):
             " · prior rank " + str(change["prior_priority_rank"]) +
             " → current rank " + str(change["current_priority_rank"]) +
             " · " + _assignee_change_text(change) +
+            (" · live GitHub assignees (not active claims): " +
+             _assignee_display(change.get("live_issue_github_assignees"),
+                               change.get("live_issue_github_assignees_source_complete"))
+             if change.get("live_issue_github_assignees_source_complete") is not None
+             else "") +
             " · **Human next:** " + change["human_followup"] +
             " · code: " + change["human_followup_code"] +
             (" · GitHub detail: " + change["live_issue_recheck_state"] +
@@ -657,8 +677,13 @@ def as_html(delta):
             esc(c["number"]) + "</a> · " + esc(c["change"]) +
             " · prior rank " + esc(c["prior_priority_rank"]) + " → current " +
             esc(c["current_priority_rank"]) + " · " +
-            esc(_assignee_change_text(c)) + " · human next: " +
-            esc(c["human_followup"]) +
+            esc(_assignee_change_text(c)) +
+            (" · live GitHub assignees (not active claims): " +
+             esc(_assignee_display(c.get("live_issue_github_assignees"),
+                                   c.get("live_issue_github_assignees_source_complete")))
+             if c.get("live_issue_github_assignees_source_complete") is not None
+             else "") +
+            " · human next: " + esc(c["human_followup"]) +
             (" · GitHub detail: " + esc(c["live_issue_recheck_state"]) +
              (" · " + esc(c["live_issue_recheck_observed_at_utc"])
               if c.get("live_issue_recheck_observed_at_utc") else "") +
@@ -729,12 +754,13 @@ def as_delta_csv(delta):
         "issue_closure_verified", "actions_executed",
         "live_github_issue_detail", "live_observed_at_utc",
         "live_human_action_code", "live_github_state_reason",
+        "live_github_assignees", "live_github_assignees_source_complete",
     ))
     for row in delta["repositories_compared"]:
         writer.writerow((
             "source", row["repository"], "", False, "", "", False, False,
             "", "", "", row["source_transition"], row["human_source_action_code"],
-            "", "", False, False, "", "", "", "",
+            "", "", False, False, "", "", "", "", "", False,
         ))
     for row in delta["changes"]:
         writer.writerow((
@@ -755,6 +781,10 @@ def as_delta_csv(delta):
             row.get("live_issue_recheck_observed_at_utc") or "",
             row.get("live_next_action_code", ""),
             row.get("live_issue_state_reason") or "",
+            _assignee_display(row.get("live_issue_github_assignees"),
+                              row.get("live_issue_github_assignees_source_complete", False))
+            if row.get("live_issue_github_assignees_source_complete") is not None else "",
+            row.get("live_issue_github_assignees_source_complete", False),
         ))
     for workorder in delta["operator_workorders"]["workorders"]:
         writer.writerow((
@@ -775,6 +805,10 @@ def as_delta_csv(delta):
             workorder["live_github_issue_state"],
             workorder["live_github_observed_at_utc"] or "",
             workorder["human_next_action_code"], "",
+            _assignee_display(workorder.get("live_issue_github_assignees"),
+                              workorder.get("live_issue_github_assignees_source_complete", False))
+            if workorder.get("live_issue_github_assignees_source_complete") is not None else "",
+            workorder.get("live_issue_github_assignees_source_complete", False),
         ))
     return stream.getvalue()
 
