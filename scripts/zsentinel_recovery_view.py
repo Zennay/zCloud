@@ -1312,6 +1312,7 @@ def html_view(decision, registry=None):
                 raise ValueError("untrusted Notion status source windows")
             total_pages = 0
             total_rows = 0
+            total_unresolved_project_relations = 0
             any_partial = False
             descriptions = []
             for window, (expected_status, budget) in zip(status_windows, expected):
@@ -1323,12 +1324,15 @@ def html_view(decision, registry=None):
                         or window["page_budget"] != budget
                         or type(window.get("observed_rows")) is not int
                         or not 0 <= window["observed_rows"] <= window["pages_read"] * 100
+                        or type(window.get("unresolved_project_relations")) is not int
+                        or not 0 <= window["unresolved_project_relations"] <= window["observed_rows"]
                         or window.get("coverage") not in ("partial", "complete_within_source")
                         or window.get("read_only") is not True
                         or window.get("claim_scope_verified") is not False):
                     raise ValueError("untrusted Notion window evidence")
                 total_pages += window["pages_read"]
                 total_rows += window["observed_rows"]
+                total_unresolved_project_relations += window["unresolved_project_relations"]
                 any_partial |= window["coverage"] == "partial"
                 descriptions.append(
                     '<li>' + phrase(expected_status, 14) +
@@ -1341,6 +1345,7 @@ def html_view(decision, registry=None):
             if (type(notion.get("total_pages_read")) is not int
                     or notion["total_pages_read"] != total_pages
                     or notion["active_count"] != total_rows
+                    or total_unresolved_project_relations != unresolved_relations
                     or (notion["coverage"] == "incomplete") != any_partial):
                 raise ValueError("Notion status windows disagree with source")
             window_html = ('<details><summary>Notion brondekking per werkstatus'
