@@ -1,0 +1,199 @@
+name: zCloud dashboard cache-bust monotonic gate (hosted)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "public/index.html"
+      - "public/app.js"
+      - "public/enhancements.js"
+      - "public/enhancements.css"
+      - "scripts/zcloud_dashboard_cache_bust_gate_20261015.py"
+      - "tests/test_zcloud_dashboard_cache_bust_gate_20261015.py"
+      - ".github/workflows/zcloud-dashboard-cache-bust-gate-20261015.yml"
+
+  push:
+    branches: [main]
+    paths:
+      - "public/index.html"
+      - "public/app.js"
+      - "public/enhancements.js"
+      - "public/enhancements.css"
+      - "scripts/zcloud_dashboard_cache_bust_gate_20261015.py"
+      - "tests/test_zcloud_dashboard_cache_bust_gate_20261015.py"
+      - ".github/workflows/zcloud-dashboard-cache-bust-gate-20261015.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-dashboard-cache-bust-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Immutable base vs head asset cache tokens (no VPS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable same-repository head without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          clean: true
+          persist-credentials: false
+      - name: Deny foreign head or ambiguous exact-sha checkout
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              test "$GITHUB_BASE_REF" = "main"
+              EXPECTED_MAIN="$BASE_SHA"
+              ;;
+            push)
+              test "$GITHUB_REF" = "refs/heads/main"
+              test "$GITHUB_SHA" = "$HEAD_SHA"
+              # Require continuity, never treat a force-pushed unrelated history
+              # as safe direct-main evidence.
+              git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+              EXPECTED_MAIN="$HEAD_SHA"
+              ;;
+            *) exit 1 ;;
+          esac
+          test "${#BASE_SHA}" -eq 40
+          test "${#HEAD_SHA}" -eq 40
+          test "$(git cat-file -t "$BASE_SHA")" = "commit"
+          test "$(git cat-file -t "$HEAD_SHA")" = "commit"
+          # Ignore PR-local and global Git url.insteadOf rewrites: use / as cwd,\n          # empty Git environment, disabled Git config and the literal canonical URL.
+          current_main="$(timeout 15 env -i PATH=/usr/bin:/bin HOME=/nonexistent GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C / ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$EXPECTED_MAIN"
+      - name: Immutable trusted-base scanner first; explicit bootstrap warning
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          policy_path="scripts/zcloud_dashboard_cache_bust_gate_20261015.py"
+          provenance="untrusted_bootstrap_review_required"
+          # The exact immutable base tree is authoritative. Only a genuinely
+          # absent policy may use the visibly untrusted first-install path.
+          # Never turn a failed Git probe into an implicit bootstrap bypass.
+          policy_entry="$(git ls-tree "$BASE_SHA" -- "$policy_path")"
+          if [ -n "$policy_entry" ]; then
+            mode="$(printf '%s\n' "$policy_entry" | awk '{print $1 " " $2}')"
+            test "$mode" = "100644 blob"
+            git show "$BASE_SHA:$policy_path" > "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"
+            policy_path="$RUNNER_TEMP/trusted-dashboard-cache-gate.py"
+            provenance="immutable_pr_base"
+            echo "POLICY_PROVENANCE=$provenance"
+          else
+            # First installation: candidate source can demonstrate tests but
+            # cannot independently approve its own new policy.
+            echo "::warning::POLICY_PROVENANCE=$provenance"
+          fi
+          report="$RUNNER_TEMP/zcloud-cache-bust-policy.json"
+          policy_result=0
+          timeout 90 python3 -I "$policy_path" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" > "$report" || policy_result=$?
+          # A malicious candidate scanner cannot flood hosted logs with an
+          # unbounded JSON report before the renderer's size validation.
+          test -s "$report"
+          test "$(wc -c < "$report")" -le 16384
+          cat "$report"
+          REPORT="$report" PROVENANCE="$provenance" python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path(os.environ["REPORT"])
+          raw = path.read_bytes()
+          if not raw or len(raw) > 16384:
+              raise SystemExit("bounded_cache_report_missing_or_invalid")
+          try:
+              payload = json.loads(raw)
+          except (ValueError, UnicodeError) as exc:
+              raise SystemExit("cache_report_invalid_json") from exc
+          if not isinstance(payload, dict):
+              raise SystemExit("cache_report_not_object")
+          reasons = {
+              "cache_bust_delta_ok": "Cacheversies sluiten aan op de wijziging.",
+              "changed_asset_pin_unchanged": "Dashboardbestand gewijzigd zonder nieuwe cacheversie.",
+              "nonmonotonic_cache_pin": "Cacheversie is teruggezet of hergebruikt.",
+          }
+          result = payload.get("ok") is True
+          if type(payload.get("ok")) is not bool:
+              raise SystemExit("cache_report_missing_verdict")
+          reason = payload.get("reason")
+          description = reasons.get(reason, "Bronbewijs geweigerd of onvolledig.")
+          names = {"public/app.js": "Dashboard JavaScript", "public/enhancements.js": "Dashboard enhancements", "public/enhancements.css": "Dashboard CSS"}
+          changed = payload.get("changed", [])
+          if not isinstance(changed, list) or any(k not in names for k in changed):
+              raise SystemExit("cache_report_invalid_paths")
+          scope = ", ".join(names[n] for n in changed) if changed else "Geen bronwijziging aan bewaakte assets"
+          versions = payload.get("asset_versions", {})
+          if not isinstance(versions, dict) or any(k not in names for k in versions):
+              raise SystemExit("cache_report_invalid_versions")
+          version_lines = []
+          for name in names:
+              if name not in versions:
+                  continue  # Older trusted base policy may not emit versions yet.
+              value = versions[name]
+              if (not isinstance(value, dict) or set(value) != {"before", "after"} or
+                      any(not isinstance(value[k], str) or
+                          not re.fullmatch(r"r[1-9][0-9]{0,8}", value[k])
+                          for k in ("before", "after"))):
+                  raise SystemExit("cache_report_unsafe_version")
+              version_lines.append(
+                  f"- {names[name]}: {value['before']} → {value['after']}"
+              )
+          event = "Directe wijziging op main" if os.environ.get("GITHUB_EVENT_NAME") == "push" else "Pull request"
+          lines = [
+              "### Dashboard-cachecontrole",
+              f"- Gebeurtenis: {event}",
+              f"- Uitkomst: {'GESLAAGD' if result else 'AFGEWEZEN'}",
+              f"- Uitleg: {description}",
+              f"- Gecontroleerde wijziging: {scope}",
+              f"- Scannerbron: {os.environ['PROVENANCE']}",
+              "- Dit is uitsluitend broncontrole; geen toestemming voor deploy of VPS-herstel.",
+          ]
+          lines.extend(version_lines)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          PY
+          test "$policy_result" -eq 0
+
+      - name: Run exact-asset Git regression fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_dashboard_cache_bust_gate_20261015
+          python3 -m py_compile scripts/zcloud_dashboard_cache_bust_gate_20261015.py
+      - name: Recheck immutable current main after policy and PR tests
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            test "$GITHUB_REF" = "refs/heads/main"
+            EXPECTED_MAIN="$HEAD_SHA"
+          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            test "$GITHUB_BASE_REF" = "main"
+            EXPECTED_MAIN="$BASE_SHA"
+          else
+            exit 1
+          fi
+          current_main="$(timeout 15 env -i PATH=/usr/bin:/bin HOME=/nonexistent GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C / ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$EXPECTED_MAIN"
