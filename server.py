@@ -214,6 +214,30 @@ def project_runner_prompt(project_id, name):
     )
 
 
+# Every Nth continuation turn the browser driver replaces the short
+# "Ga door met <project>." with this explicit integration/release mission,
+# so open PRs actually reach main and main actually reaches live.
+RELEASE_TURN_EVERY = 3
+
+
+def project_release_turn_prompt(project_id, name):
+    scope = (
+        'in de ECHTE portfolio-projecten (niet zSentinel zelf)' if project_id == 'zsentinel'
+        else f'voor {name}'
+    )
+    return (
+        f'MERGE & LIVE-RONDE {scope}: deze beurt is je hoofdopdracht afleveren wat al klaarligt, niet iets nieuws bouwen. '
+        '1) Loop alle open PRs na die niet actief door een andere worker geclaimd zijn: los conflicten en falende verplichte CI op, '
+        'maak drafts reviewklaar en voer de echte GitHub-merge uit zodra exact-head checks, reviews en branch protection dat toestaan. '
+        'Bevestig merged=true en het nieuwe default-branch SHA. '
+        '2) Zet de gemergede main live via de bestaande deployroute van het project (deploy-workflow, releasescript of '
+        'service-herstart via zSSH volgens de projectdocs), voor zover de release-gates van het project dat toestaan. '
+        '3) Verifieer live: health-/versie-endpoint of draaiende service toont het nieuwe main-SHA. '
+        'Rapporteer per PR: gemerged (SHA), live (bewijs) of geblokkeerd (exacte gate of oorzaak). '
+        'Geen bypass, force-merge of uitrol over een productie-, broker-, security- of onderzoeksgate heen; '
+        'benoem die blokkade en pak de volgende PR. Ga daarna door met het normale werk.'
+    )
+
 def _worker_work_package_brief(project_id, queue_item):
     """Bind the actual claimed queue deliverable to the browser prompt.
 
@@ -3947,6 +3971,8 @@ def runner_worker_targets(allocation=None, base=None, *, reconcile=True):
                     'name':worker_name,'conversation_id':conversation_id,
                     'url':dynamic_provider_url(provider_name,conversation_id),
                     'prompt':rendered_prompt,
+                    'release_turn_prompt':'' if reviewer_mode else project_release_turn_prompt(project_id,cfg['name']),
+                    'release_turn_every':0 if reviewer_mode else RELEASE_TURN_EVERY,
                     'queue_item':queue_item,
                     'reviewer_mode':reviewer_mode,
                     'assignment_ready':assignment_ready,
