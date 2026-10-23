@@ -22,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from zsentinel_product_issue_inbox import QA as QA_ONLY_TITLE
+from zsentinel_product_issue_inbox import explicit_qa_only_pr
 from zsentinel_private_report_writer import write_private_report
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -401,7 +401,7 @@ def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
         title = row.get("title")
         updated_at = source_clock(row.get("updated_at"))
         product_candidate = (type(title) is str and 0 < len(title) <= 256
-                             and not QA_ONLY_TITLE.match(title))
+                             and not explicit_qa_only_pr(row))
         # Reuse the existing issue-first product semantics: explicit #N in
         # a PR title is an unverified hint even when the body has no refs.
         # Body and title coverage are independent. A truncated/invalid body
@@ -550,7 +550,9 @@ def selected_source_pr(repo, number, token, expanded_files=False):
     title = receipt.get("title")
     if type(title) is not str or not 0 < len(title) <= 256:
         raise ValueError("selected PR product title unavailable")
-    product_candidate = QA_ONLY_TITLE.match(title) is None
+    # A PR title alone cannot establish product eligibility: its branch and
+    # structured labels may mark it QA-only despite a feature-like title.
+    product_candidate = not explicit_qa_only_pr(receipt)
     if expanded_files:
         files, observed_pages = changed_paths_focused(repo, number, token)
     else:
