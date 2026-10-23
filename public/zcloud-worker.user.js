@@ -45,7 +45,7 @@
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let target=null,inflight=false,sending=false,awaiting=false,everGenerating=false;
   const markBusy=()=>document.documentElement?.setAttribute("data-zcloud-v2-busy",
-    sending||awaiting||generating()?"true":"false");
+    sending||awaiting||generating()||approvalPending()?"true":"false");
   // An explicit Force owns one command ID and may only be delivered to its
   // freshly created tab. Fail closed when the local command service is down.
   async function forceAllowed(){
@@ -333,6 +333,9 @@
         observedGenerating=true;reportedGenerating=true;
         everGenerating=true;awaiting=false;
         await status(started?"generation-started":"generation-progress");return;
+      }
+      if(approvalPending()){
+        await blocked("human-approval-pending");return;
       }
       if(resetRoute!==null){
         if(failedConversation()||!visible(composer())||
