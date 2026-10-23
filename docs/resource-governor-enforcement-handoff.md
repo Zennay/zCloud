@@ -337,18 +337,21 @@ FTMO or LightUp heavy workload from running simultaneously.
 
 To avoid admitting competing new heavy work during that migration gap,
 the same governor now applies a **conservative, read-only Linux /proc
-veto** to every new `heavy` pool admission: it searches live Node
-command identities for those observed self-play / continuous-training
-scripts. If an instance exists outside confirmed lease coordination,
+veto** to every new `heavy` pool admission: it inspects the observed
+`fuckball-ai-coach.service` Linux cgroup membership, including surviving
+Python/Node descendants with changed command identities, and additionally
+recognizes the observed Node self-play / continuous-training script names
+if the process moved into a different scope. If an instance exists outside
+confirmed lease coordination,
 the attempted new heavy admission rolls back without launching a child.
 With `--wait-seconds`, it checks again within the bounded window,
 sleeping outside the SQLite transaction and holding no leased slot.
 The source does not signal, stop or take over that legacy coach.
 
-**Limitations:** a filename-based fallback recognizes only these
-observed Node entrypoints, and cannot discover unknown or renamed
-FTMO/HaxLab/LightUp jobs, hidden process namespaces, training on
-another host, or child processes that have changed executable identity.
+**Limitations:** this temporary scope/filename fallback recognizes
+only the observed `fuckball-ai-coach.service` unit and two Node script
+entrypoints. It cannot discover unknown FTMO/LightUp jobs, other
+HaxLab unit names, hidden process namespaces or training on another host.
 Consequently it does **not** prove one shared heavy pool. A full
 authorized migration to the canonical SQLite lease owner, together
 with supervised systemd/cgroup containment and a live concurrency
