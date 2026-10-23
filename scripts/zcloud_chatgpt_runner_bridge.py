@@ -396,8 +396,9 @@ def _archive_bulk_storage_gate(archive: dict[str, object]) -> dict[str, object]:
         "free_space_unknown": "Archive free-space evidence is missing or invalid; do not infer capacity.",
         "below_30_gib": "The archive has less than 30 GiB free; request an owner-approved larger destination.",
         "capacity_candidate_not_training_authorization": (
-            "The archive has at least 30 GiB and is a separate non-read-only filesystem, "
-            "but its physical drive, training output path and application-user write access "
+            "The archive has at least 30 GiB, a separate non-read-only filesystem and a "
+            "local block-device source hint, but its independent physical drive, training "
+            "output path and application-user write access "
             "are not verified. Do not start training or move data from this hint."
         ),
     }
@@ -874,6 +875,8 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
             "filesystem_identity_unknown": "ARCHIVE_BULK_FILESYSTEM_EVIDENCE_UNKNOWN",
             "read_only_mount": "ARCHIVE_BULK_READ_ONLY",
             "mount_writability_unknown": "ARCHIVE_BULK_WRITE_STATUS_UNKNOWN",
+            "virtual_or_network_mount": "ARCHIVE_BULK_REJECT_VIRTUAL_OR_NETWORK",
+            "block_backing_unknown": "ARCHIVE_BULK_BLOCK_DEVICE_NOT_VERIFIED",
             "free_space_unknown": "ARCHIVE_BULK_CAPACITY_UNKNOWN",
             "below_30_gib": "ARCHIVE_BULK_BELOW_30_GIB",
             "capacity_candidate_not_training_authorization": (
@@ -892,6 +895,7 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
             "archive_mount_observation_unavailable",
             "archive_mount_ambiguous_multiple_entries",
             "archive_mount_changed_during_observation",
+            "archive_mount_backing_changed_during_observation",
         )):
             codes.append("ARCHIVE_MOUNT_UNAVAILABLE_NO_OFFLOAD")
         if "archive_mount_read_only_no_offload" in evidence_warnings:
