@@ -481,6 +481,13 @@ def _notion_owner_status_summary(observed, source_mode, registry):
             "live_owner_verified": False,
             "review_required": True, "can_claim": False,
         })
+    # The canonical registry and the live source must agree on how many
+    # positive rows lacked a resolvable Project relation. Without this,
+    # a source could claim a different urgent mapping count from the
+    # actual grouped unfinished-work inventory.
+    if (mode[0] == "notion_readonly_data_source_pages"
+            and registry is not None and unknown_total != unresolved_relations):
+        raise ValueError("unresolved Notion project counts disagree with registry mapping")
     # Flag substantive owner attention before the large Verifying backlog:
     # rows are incomplete positive observations, not eligible work slots.
     known.sort(key=lambda x: (
