@@ -94,6 +94,16 @@ urgente reden om CPU te laten wijken; deze wijziging leest alleen `statvfs` en
 start, stopt of herconfigureert geen runner of trainer buiten de bestaande
 geautoriseerde policy-route.
 
+## Coherente root-capaciteitsopname
+
+De hoofd-snapshot leest root-schijfruimte, vrije inodes en volumeomvang nu uit één
+`statvfs`-waarneming. De device/inode-identiteit van `/` wordt vóór en na die
+meting vergeleken; bij een wijzigende root-mount blijven de capaciteitsvelden
+ONBEKEND. De bestaande `source_complete`- en drukregels laten het CPU-advies dan
+conservatief zakken in plaats van metriek van twee verschillende volumes te
+combineren. De afzonderlijke kleine helpers blijven beschikbaar voor bestaande
+callers, maar de policy gebruikt één gecombineerde opname.
+
 ## 21 oktober · systeem- én gebruikersmanager GitHub runnerherstel
 
 De herstelwerkbank las eerder alleen `systemctl list-units` zonder `--user`.
