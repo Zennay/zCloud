@@ -388,6 +388,7 @@ def _checks_summary(payload, sha, full_name):
     sampled_blocking_checks = []
     sampled_non_success_checks = []
     sampled_pending_checks = []
+    sampled_check_observations = []
     # Cancelled, stale, unknown and other non-success terminal conclusions
     # must not silently disappear from the merge-first operator's attention.
     # These are sampled hints, not proof that branch protection requires them.
@@ -414,6 +415,22 @@ def _checks_summary(payload, sha, full_name):
             "".join(c if c.isprintable() else " " for c in name)[:90]
             if isinstance(name, str) else "unnamed sampled check"
         )
+        if not isinstance(status, str) or not status or len(status) > 32:
+            raise GitHubReadError("check-run status is malformed")
+        if conclusion is not None and (not isinstance(conclusion, str) or len(conclusion) > 64):
+            raise GitHubReadError("check-run conclusion is malformed")
+        app = row.get("app")
+        app_id = app.get("id") if isinstance(app, dict) else None
+        if app_id is not None and (type(app_id) is not int or app_id < 0):
+            raise GitHubReadError("check-run app identity is malformed")
+        sampled_check_observations.append({
+            "name": clean_name,
+            "status": status,
+            "conclusion": conclusion,
+            "app_id": app_id,
+            "head_sha": source_sha,
+            "url": check_link,
+        })
         if status == "completed" and conclusion not in ("success", "neutral", "skipped"):
             if len(sampled_blocking_checks) < 6:
                 sampled_blocking_checks.append({
@@ -444,11 +461,55 @@ def _checks_summary(payload, sha, full_name):
         "sampled_count": len(rows), "provider_total_count": count,
         "sample_incomplete": count > len(rows),
         "sample_status_counts": sums, "sample_names": observed_names[:12],
+        "sampled_check_observations": sampled_check_observations,
         "sampled_blocking_checks": sampled_blocking_checks,
         "sampled_non_success_checks": sampled_non_success_checks,
         "sampled_pending_checks": sampled_pending_checks,
         "required_checks_identified": False,
         "required_ci_verdict": "UNKNOWN",
+    }
+
+
+def _commit_status_summary(payload, sha, full_name):
+    """Bounded commit-status observation pinned to one immutable SHA."""
+    if type(payload) is not dict or payload.get("sha") != sha:
+        raise GitHubReadError("commit-status response SHA does not match exact HEAD")
+    count = payload.get("total_count")
+    rows = payload.get("statuses")
+    state = payload.get("state")
+    if type(count) is not int or not 0 <= count <= 10**9:
+        raise GitHubReadError("commit-status total count is invalid")
+    if not isinstance(rows, list) or len(rows) > MAX_LIST_PAGE or count < len(rows):
+        raise GitHubReadError("commit-status sample is invalid")
+    if state not in ("pending", "success", "failure", "error"):
+        raise GitHubReadError("combined commit-status state is invalid")
+    sampled = []
+    for row in rows:
+        if type(row) is not dict:
+            raise GitHubReadError("commit-status row is malformed")
+        context = row.get("context")
+        row_state = row.get("state")
+        if not isinstance(context, str) or not context.strip() or len(context) > 200:
+            raise GitHubReadError("commit-status context is malformed")
+        if row_state not in ("pending", "success", "failure", "error"):
+            raise GitHubReadError("commit-status row state is malformed")
+        updated_at = row.get("updated_at")
+        if updated_at is not None and (not isinstance(updated_at, str) or len(updated_at) > 64):
+            raise GitHubReadError("commit-status update clock is malformed")
+        sampled.append({
+            "context": context.strip(),
+            "state": row_state,
+            "updated_at": updated_at,
+        })
+    return {
+        "schema_version": "zsentinel-exact-commit-status-sample-v1",
+        "source_sha": sha,
+        "combined_state": state,
+        "sampled_count": len(sampled),
+        "provider_total_count": count,
+        "sample_incomplete": count > len(sampled),
+        "sampled_statuses": sampled,
+        "required_ci_verified": False,
     }
 
 
