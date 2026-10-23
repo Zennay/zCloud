@@ -21,6 +21,18 @@ def connect(path: Path):
     return conn
 
 
+def _validated_owner(value: str) -> str:
+    """Reject ambiguous/truncated CLI lease identities before opening SQLite.
+
+    The runtime currently persists owner_id with a 200-character maximum.
+    Do not silently truncate or normalize: callers must be able to renew and
+    release with exactly the identity supplied at acquisition.
+    """
+    if not value or not value.strip() or len(value) > 200 or "\x00" in value:
+        raise ValueError("--owner must be nonempty, NUL-free and <= 200 characters")
+    return value
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", type=Path, default=ROOT / "history.db")
@@ -50,6 +62,21 @@ def main(argv=None) -> int:
     sub.add_parser("status")
 
     args = parser.parse_args(argv)
+    if args.command in {"acquire", "release"}:
+        _validated_owner(args.owner)
+    if args.command == "acquire":
+        args.validated_metadata = json.loads(args.metadata_json)
+        if not isinstance(args.validated_metadata, dict):
+            raise ValueError("--metadata-json must be an object")
+        # The core runtime can truncate serialized JSON at 4000 characters.
+        # Enforce a stricter UTF-8 byte bound and valid finite JSON first.
+        # Rejected metadata must never create or mutate a resource lease.
+        serialized = json.dumps(
+            args.validated_metadata, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        )
+        if len(serialized.encode("utf-8")) > 4000:
+            raise ValueError("--metadata-json exceeds 4000 UTF-8 bytes")
     conn = connect(args.db)
     try:
         if args.command == "receipt":
@@ -72,15 +99,12 @@ def main(argv=None) -> int:
             print(json.dumps({"ok": True, "receipt": result}, ensure_ascii=False, sort_keys=True))
             return 0
         if args.command == "acquire":
-            metadata = json.loads(args.metadata_json)
-            if not isinstance(metadata, dict):
-                raise ValueError("--metadata-json must be an object")
             result = runtime.acquire_resource(
                 conn,
                 args.project,
                 args.owner,
                 lease_seconds=args.lease_seconds,
-                metadata=metadata,
+                metadata=args.validated_metadata,
             )
             conn.commit()
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
