@@ -107,6 +107,25 @@ def _assert_portfolio_pool_capacities(contracts: dict) -> None:
             raise RuntimeError("resource_project_pool_contract_unsafe")
 
 
+def _admitted_pool_over_limit(conn, pool_name: str) -> bool:
+    """Enforce hard slot ceiling after tentative admission, before commit.
+
+    A different checkout may change the runtime slots between our contract
+    preflight and resource acquire. BEGIN IMMEDIATE makes the independent
+    active-lease count authoritative for this admission transaction.
+    """
+    ceilings = {"heavy": 1, "build": 2, "disabled": 0}
+    ceiling = ceilings.get(pool_name)
+    if ceiling is None:
+        return False  # Protected control-plane work stays admissible.
+    now = datetime.now(timezone.utc).isoformat()
+    occupied = int(conn.execute(
+        "SELECT COUNT(*) FROM resource_leases "
+        "WHERE pool=? AND lease_until>?", (pool_name, now),
+    ).fetchone()[0])
+    return occupied > ceiling
+
+
 def _pinned_database_identity(path: Path) -> tuple[int, int] | None:
     """Observe canonical production file identity without opening a new DB.
 
@@ -688,6 +707,13 @@ def run_governed(
                                "resource_contract_admission_mismatch"
                                if result.get("acquired") else
                                result.get("reason") or "resource_admission_unavailable"),
+                    "project_id": project_id,
+                })
+                return 75
+            if _admitted_pool_over_limit(conn, str(compute.get("pool") or "")):
+                conn.rollback()
+                _admission_denied({
+                    "reason": "resource_pool_capacity_unsafe",
                     "project_id": project_id,
                 })
                 return 75
