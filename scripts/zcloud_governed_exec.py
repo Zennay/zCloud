@@ -489,6 +489,7 @@ def run_governed(
     *,
     lease_seconds: int = 300,
     renew_seconds: int = 60,
+    wait_seconds: int = 0,
 ) -> int:
     if not command:
         raise ValueError("command is required")
@@ -497,6 +498,7 @@ def run_governed(
 
     lease_seconds = max(60, min(6 * 3600, int(lease_seconds or 300)))
     renew_seconds = max(5, min(int(renew_seconds or 60), max(5, lease_seconds // 2)))
+    wait_seconds = max(0, min(3600, int(wait_seconds or 0)))
     compute = dict(runtime.project_contract(project_id).get("compute") or {})
     memory_budget = int(compute.get("memory_soft_mb") or 0) * 1024 * 1024
     if compute.get("pool") == "heavy" and memory_budget <= 0:
@@ -511,45 +513,7 @@ def run_governed(
         # Serialize same-owner admission with the pool capacity reservation.
         # Reusing an active owner key would otherwise renew one lease while
         # starting a second real process without consuming another slot.
-        conn.execute("BEGIN IMMEDIATE")
-        existing = conn.execute(
-            "SELECT 1 FROM resource_leases WHERE project_id=? AND owner_id=? "
-            "AND lease_until>?",
-            (project_id, owner_id, datetime.now(timezone.utc).isoformat()),
-        ).fetchone()
-        if existing:
-            conn.rollback()
-            _admission_denied({"reason": "resource_owner_already_running",
-                               "project_id": project_id})
-            return 75
-        pressure = _nonprotected_memory_admission(conn, project_id, compute)
-        if pressure is not None:
-            conn.rollback()
-            _admission_denied(pressure)
-            return 75
-        result = runtime.acquire_resource(
-            conn,
-            project_id,
-            owner_id,
-            lease_seconds=lease_seconds,
-            metadata=_metadata(command),
-        )
-        if (not result.get("acquired") or result.get("renewed")
-                or not _matches_admitted_contract(result.get("lease") or {}, compute)):
-            conn.rollback()
-            _admission_denied({
-                "reason": ("resource_owner_already_running"
-                           if result.get("renewed") else
-                           "resource_contract_admission_mismatch"
-                           if result.get("acquired") else
-                           result.get("reason") or "resource_admission_unavailable"),
-                "project_id": project_id,
-            })
-            return 75
-        conn.commit()
-        acquired = True
-        acquired_at = str(result["lease"]["acquired_at"])
-
+        # Install handlers before any capacity wait, not after admission.
         def forward(signum, _frame):
             nonlocal termination_requested
             if termination_requested is None:
@@ -563,6 +527,58 @@ def run_governed(
         for signum in (signal.SIGTERM, signal.SIGINT):
             old_handlers[signum] = signal.getsignal(signum)
             signal.signal(signum, forward)
+
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            if termination_requested is not None:
+                return 128 + int(termination_requested)
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT 1 FROM resource_leases WHERE project_id=? AND owner_id=? "
+                "AND lease_until>?",
+                (project_id, owner_id, datetime.now(timezone.utc).isoformat()),
+            ).fetchone()
+            if existing:
+                conn.rollback()
+                _admission_denied({"reason": "resource_owner_already_running",
+                                   "project_id": project_id})
+                return 75
+            pressure = _nonprotected_memory_admission(conn, project_id, compute)
+            if pressure is not None:
+                conn.rollback()
+                _admission_denied(pressure)
+                return 75
+            result = runtime.acquire_resource(
+                conn,
+                project_id,
+                owner_id,
+                lease_seconds=lease_seconds,
+                metadata=_metadata(command),
+            )
+            if (not result.get("acquired") or result.get("renewed")
+                    or not _matches_admitted_contract(result.get("lease") or {}, compute)):
+                conn.rollback()
+                # Re-attempt only a busy pool; safety or identity denials
+                # must never turn into an indefinite retry.
+                if result.get("reason") == "resource_pool_busy" and wait_seconds:
+                    remaining = deadline - time.monotonic()
+                    if remaining > 0:
+                        time.sleep(min(1.0, remaining))
+                        continue
+                _admission_denied({
+                    "reason": ("resource_owner_already_running"
+                               if result.get("renewed") else
+                               "resource_contract_admission_mismatch"
+                               if result.get("acquired") else
+                               result.get("reason") or "resource_admission_unavailable"),
+                    "project_id": project_id,
+                })
+                return 75
+            conn.commit()
+            acquired = True
+            acquired_at = str(result["lease"]["acquired_at"])
+            break
+
 
         if termination_requested is not None:
             return 128 + int(termination_requested)
@@ -721,6 +737,8 @@ def main(argv=None) -> int:
     parser.add_argument("--owner", help="Unique live lease owner; not needed for --inspect-pool")
     parser.add_argument("--lease-seconds", type=int, default=300)
     parser.add_argument("--renew-seconds", type=int, default=60)
+    parser.add_argument("--wait-seconds", type=int, default=0,
+                        help="Bounded wait for a busy resource pool; default fail-fast")
     parser.add_argument("--inspect-pool", action="store_true",
                         help="Read a redacted shared-pool snapshot, without launching a workload")
     parser.add_argument("command", nargs=argparse.REMAINDER)
@@ -747,6 +765,7 @@ def main(argv=None) -> int:
         command,
         lease_seconds=args.lease_seconds,
         renew_seconds=args.renew_seconds,
+        wait_seconds=args.wait_seconds,
     )
 
 
