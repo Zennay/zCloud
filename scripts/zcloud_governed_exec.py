@@ -195,15 +195,48 @@ def _signal_process_group(proc: subprocess.Popen | None, signum: int) -> None:
 
 
 def _group_exists(proc: subprocess.Popen) -> bool:
-    """Fail closed when a process group cannot be proven absent."""
+    """Check for live (non-zombie) members of our private process group.
+
+    Linux keeps a process group addressable through killpg(0) while orphan
+    zombies await their reaper, even though those zombies consume no work.
+    Treat a missing or inaccessible /proc member as inconclusive rather than
+    claiming safe release.
+    """
     try:
         os.killpg(proc.pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
-
+    found = False
+    try:
+        with os.scandir("/proc") as processes:
+            for entry in processes:
+                if not entry.name.isdecimal():
+                    continue
+                try:
+                    source = (Path("/proc") / entry.name / "stat").read_text()
+                    fields = source.rpartition(")")[2].split()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    return True
+                if len(fields) < 3:
+                    return True
+                try:
+                    group = int(fields[2])
+                except ValueError:
+                    return True
+                if group != proc.pid:
+                    continue
+                found = True
+                if fields[0] not in ("Z", "X"):
+                    return True
+    except OSError:
+        return True
+    # All observed group members are already dead; a zombie cannot do work.
+    # If killpg said yes but no group member was visible, stay conservative.
+    return not found
 
 def _stop_process_group(proc: subprocess.Popen | None, *, grace_seconds: float = 2.0) -> bool:
     """Stop the owned session before a resource lease can be released.
