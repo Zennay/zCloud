@@ -65,9 +65,14 @@ def _apply_process_limits(project_id: str) -> None:
 
 
 def _metadata(command, *, pid=None):
+    # Only bounded command identity belongs in the lease, not arguments,
+    # private file paths, environment values or unbounded free-form text.
+    basename = Path(str(command[0])).name if command else ""
+    basename = "".join(ch if ord(ch) >= 32 and ord(ch) != 127 else "_"
+                       for ch in basename[:128])
     payload = {
         "executor": "zcloud-governed-exec",
-        "command": Path(command[0]).name if command else "",
+        "command": basename,
     }
     for key, env_name in (
         ("workflow_run_id", "GITHUB_RUN_ID"),
@@ -90,7 +95,7 @@ def _safe_owner(owner_id: str) -> str:
     """Never create a lease with a truncated or unreleasable owner key."""
     if (not isinstance(owner_id, str) or not 1 <= len(owner_id) <= 200
             or owner_id != owner_id.strip() or not owner_id.strip()
-            or "\x00" in owner_id):
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in owner_id)):
         raise ValueError("invalid resource owner identifier")
     return owner_id
 
