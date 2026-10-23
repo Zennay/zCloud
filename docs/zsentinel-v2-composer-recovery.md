@@ -237,3 +237,8 @@ it does not assert that the userscript is installed or that a workflow passed.
 The v2 worker now distinguishes a visible DOM node from an actually editable composer. Native disabled/read-only controls, `aria-disabled`/`aria-readonly` states, and inert or disabled ancestors are treated as unavailable. When responsive duplicates exist, the worker prefers an enabled visible editor; if a disabled visible field contains text, it is preserved as a blocker instead of silently switching editors and risking a human draft.
 
 The same guard is used for missing-composer recovery, terminal conversation-error classification, in-flight New chat transition handling, and the final prompt-fill boundary. Existing 45-second one-shot recovery and manual-reconciliation rules remain unchanged. Both the standalone v2 engine and the embedded engine in the served userscript are kept byte-identical. This is source-only; no browser deployment or merge is implied.
+
+
+## 23 October · Recheck editability at the irreversible Send boundary
+
+The final pre-send guard now rechecks that the selected composer is still visible and editable after the asynchronous fresh-assignment/lease read. If ChatGPT disables or makes the field read-only during that wait—even when the field still contains the exact queued prompt—the worker reports the existing `composer-changed-before-send` blocker and does not click Send. This closes the final time-of-check/time-of-use gap; the standalone and bundled engine remain byte-identical.
