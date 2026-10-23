@@ -358,7 +358,13 @@ physical runner. The read-only `--inspect-pool` output now reports
 `legacy_detection_scope`, plus `legacy_unleased_training_detected`
 (`null` when not checked for an isolated canary), and
 `effective_remaining` alongside raw `remaining`.
-**Never interpret an isolated-canary snapshot as live shared-pool status.**
+`source` also explicitly distinguishes `readonly_canonical_pool_snapshot`
+from `readonly_isolated_canary_snapshot` and reports
+`canonical_live_authority` as a boolean.
+`other_unleased_heavy_jobs_verified_absent=false` is always reported,
+because the known HaxLab fallback is not a complete inventory of
+FTMO/LightUp/unknown heavy work. **Never interpret an isolated-canary
+snapshot or provisional remaining slots as live admission proof.**
 A new production service must pin the shared DB; choosing an alternate
 private unpinned DB does not grant production safety or release approval.
 
