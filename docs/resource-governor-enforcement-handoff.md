@@ -279,6 +279,41 @@ tracked by existing incident
 [GitHub #1326](https://github.com/Zennay/zCloud/issues/1326).
 Operational service and CI gates are independent of the source merge.
 
+## Shared authority and pool identity hardening
+
+For service owners who pin `ZCLOUD_RESOURCE_DB`, the launcher now records
+the existing SQLite file's device/inode identity before opening it and
+revalidates that identity after opening and repeatedly during admission
+waiting and execution. A missing, swapped or remounted database must
+cause a fail-closed exit and the usual process-group/lease cleanup;
+the same pathname is not sufficient proof of the same shared
+authority. A lost mount is not permission to create a replacement
+database. The protected production table must also be a real
+`resource_leases` table with its expected columns and
+`PRIMARY KEY(project_id, owner_id)`, so a similarly named view or
+incompatible lease table cannot be misinterpreted as the authority.
+
+The canonical portfolio invariants are additionally enforced in the
+governed runner regardless of a particular project's checkout:
+the `heavy` pool can have **at most one slot**, `build` at most two,
+`disabled` no slots, and `protected` at least two. Existing
+contract fixtures may intentionally omit a pool not used by their
+project. A critical project's pool classification is checked when
+present: zCloud/zSSH → protected; FTMO/HaxLab/LightUp → the
+**same heavy pool**; Supa/RaiseAI → build; uLab → disabled. Widening
+a local resource-pool definition or reclassifying a critical project
+fails closed. These guards are evaluated on initial admission,
+during bounded waiting and on renewal; intentional future policy
+changes require the usual reviewed, authorized rollout.
+
+None of this proves that **every actual service launcher** has been
+converted to invoke the governed runner. In particular the observed
+`fuckball-ai-coach.service` training process is not controlled merely
+because HaxLab is classified as heavy in the contract. Service owners
+must explicitly connect each real process entrypoint to the shared
+authority, keep systemd/cgroup containment for detached descendants
+and verify exclusion during the authorized live concurrency canary.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
