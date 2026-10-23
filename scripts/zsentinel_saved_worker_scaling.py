@@ -446,6 +446,25 @@ def normalize_report(data, raw_sha256, now=None):
 
 
 
+def _worker_heartbeat_consistent(report, worker):
+    """Cross-check the source's heartbeat age against its timestamp at capture time."""
+    if not isinstance(worker, dict) or worker.get("heartbeat_freshness") != "fresh":
+        return False
+    age = worker.get("last_heartbeat_age_seconds")
+    heartbeat = worker.get("last_heartbeat")
+    if type(age) is not int or age < 0 or age > 150 or not isinstance(heartbeat, str):
+        return False
+    try:
+        observed_at = _timestamp(report.get("source_generated_at"))
+        heartbeat_at = _timestamp(heartbeat)
+    except ValueError:
+        return False
+    age_from_clock = (observed_at - heartbeat_at).total_seconds()
+    if age_from_clock < -MAX_FUTURE_SKEW_SECONDS or age_from_clock > 150 + MAX_FUTURE_SKEW_SECONDS:
+        return False
+    return abs(age_from_clock - age) <= MAX_FUTURE_SKEW_SECONDS
+
+
 def _project_evidence_comparable(report, project):
     """Require complete, versioned source evidence without requiring it to be recent now."""
     coverage = report.get("source_coverage")
@@ -456,7 +475,9 @@ def _project_evidence_comparable(report, project):
     desired = project.get("desired_workers")
     if not isinstance(workers, list) or not isinstance(observed, list):
         return False
-    slots = [worker.get("worker_slot") for worker in workers if isinstance(worker, dict)]
+    if any(not isinstance(worker, dict) for worker in workers):
+        return False
+    slots = [worker.get("worker_slot") for worker in workers]
     return bool(
         report.get("source_status") == "observed"
         and report.get("source_complete") is True
@@ -471,6 +492,7 @@ def _project_evidence_comparable(report, project):
         and len(slots) == len(set(slots))
         and set(slots) == set(observed)
         and len(observed) == desired
+        and all(_worker_heartbeat_consistent(report, worker) for worker in workers)
     )
 
 
