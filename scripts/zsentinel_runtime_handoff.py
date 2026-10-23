@@ -2317,6 +2317,59 @@ def _notion_clock_owner_overview(report):
              if source["owner_cards_sample_truncated"] else "") +
             "GEEN queueclaim of hersteltoestemming.")
 
+def _notion_relation_owner_overview(report):
+    """Return source-bound registry-owner follow-up, even if its card was crowded out."""
+    meta = report.get("notion_project_relation_owner_review")
+    if meta is None:
+        return "Projectrelatie-opvolging: historische bron zonder afzonderlijke eigenaaractie."
+    if (type(meta) is not dict
+            or meta.get("coverage") not in (
+                "live_readonly_incomplete", "live_readonly_bounded", "not_observed_or_stale")
+            or meta.get("source_only_not_owner_proof") is not True
+            or any(meta.get(k) is not False for k in (
+                "claim_authorized", "retry_authorized", "dispatch_authorized"))
+            or type(meta.get("owner_card_shown")) is not bool
+            or type(meta.get("owner_card_omitted")) is not bool):
+        raise ValueError("untrusted Notion registry-owner summary")
+    cards = report.get("priority_items", [])
+    if type(cards) is not list or len(cards) > MAX_ITEMS:
+        raise ValueError("unbounded Notion registry-owner action list")
+    visible = [x for x in cards
+               if type(x) is dict and x.get("kind") ==
+                  "notion_project_relation_owner_review"]
+    if len(visible) > 1 or meta["owner_card_shown"] != (len(visible) == 1):
+        raise ValueError("Notion registry-owner visibility disagrees with handoff")
+    count = meta.get("source_count")
+    if meta["coverage"] == "not_observed_or_stale":
+        if count is not None or visible or meta["owner_card_omitted"]:
+            raise ValueError("stale Notion mapping cannot assert current owner action")
+        return "Projectrelaties: actuele eigenaarbron ONBEKEND; geen vrijgegeven taken."
+    notion = _notion_review_summary(report)
+    if (notion is None or notion["coverage"] != meta["coverage"]
+            or type(count) is not int or not 0 <= count <= 400
+            or count != notion["unresolved_project_relation_count"]
+            or (meta["owner_card_omitted"] != (count > 0 and not visible))):
+        raise ValueError("Notion registry-owner count/visibility source mismatch")
+    if count == 0:
+        if meta["coverage"] != "live_readonly_bounded":
+            raise ValueError("incomplete project mapping source claims no missing relations")
+        return ("Geen onopgeloste projectrelaties gezien binnen het beperkte "
+                "Notion-venster; geen lease-/eigenaarsbewijs.")
+    if meta["coverage"] != "live_readonly_incomplete":
+        raise ValueError("positive missing relations with complete coverage")
+    in_progress = sum(
+        win["unresolved_project_relations"]
+        for win in notion["status_windows"]
+        if win["status"] in ("Claimed", "Running"))
+    return (str(count) + " actieve statusregels zonder canonieke Project-relatie, "
+            + str(in_progress) + " daarvan Claimed/Running: " +
+            ("P1" if in_progress else "P2") + " menselijke register-/claimcontrole. " +
+            ("Actiekaart NIET zichtbaar door prioriteitslimiet; bronprobleem blijft open."
+             if meta["owner_card_omitted"] else
+             "Actiekaart zichtbaar binnen de bestaande P0/PR-werkbak.") +
+            " Geen werkovername, retry of dispatch.")
+
+
 def _notion_relation_card_detail(card, report):
     """Validate the single registry-owner action against the exact live windows."""
     if card.get("kind") != "notion_project_relation_owner_review":
@@ -2660,6 +2713,8 @@ def handoff_html(report):
             escape(_selection_owner_line(report)) + '</p>' +
             '<p class="small muted">Notion claimklokken: ' +
             escape(_notion_clock_owner_overview(report)) + '</p>' +
+            '<p class="small muted">Notion projectrelaties: ' +
+            escape(_notion_relation_owner_overview(report)) + '</p>' +
             ('<ol>' + ''.join(cards) + '</ol>' if cards else
              '<p>Geen actie in het onderzochte venster; geen compleet herstelbewijs.</p>') +
             ('<p>Werkbak afgekapt; extra items blijven buiten dit venster.</p>'
@@ -2823,6 +2878,7 @@ def markdown(report):
         raise ValueError("invalid routing gate coverage")
     lines.append("Project-gebalanceerde shortlist: " + _selection_owner_line(report))
     lines.append("Notion claimklokken: " + _notion_clock_owner_overview(report))
+    lines.append("Notion projectrelaties: " + _notion_relation_owner_overview(report))
     lines.append("")
     lines.append("## Prioritaire opvolging")
     for n, card in enumerate(report["priority_items"], 1):
