@@ -679,6 +679,31 @@ but is **not** a production cross-project or cross-host canary,
 does not replace GitHub Actions checks, and does not prove
 cross-writer expired-lease reconciliation in runtime PR #1547.
 
+## Explicit stop and over-budget cleanup regressions
+
+The existing executor test suite now covers two additional process
+lifecycle safety conditions against an **isolated temporary SQLite
+database**, with a bounded test-only sleeping child:
+
+- **SIGTERM while running:** send SIGTERM to the test governor after
+  its child has started and the temporary lease exists; verify the
+  governor exits with `128+SIGTERM`, the child no longer executes and
+  the owned lease row is removed only after cleanup.
+- **Aggregate RSS over budget:** mock one `_group_rss_bytes` reading
+  above the heavy project's allowed RAM (no actual memory stress).
+  Verify the governed execution returns 75, the sleeping child has
+  terminated and its lease was removed. Any short-lived zombie is
+  treated as non-running rather than new computation.
+
+Running the **15 existing and extended regression cases** from the
+immutable GitHub executor and tests, with `project_runtime.py` and
+`lane_generator.py` from the exact recorded main baseline, completed:
+**15 passed, 0 failed, 0 errors, 0 skipped**. The test harness used
+an automatically deleted temporary worktree and SQLite. This proves
+local test behavior; it does **not** replace queued GitHub Actions CI,
+approved shared production DB migration, complete remote-host
+crash recovery or the real FTMO/HaxLab/LightUp concurrency canary.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
