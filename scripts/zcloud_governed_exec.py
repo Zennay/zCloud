@@ -780,6 +780,14 @@ def run_governed(
     if compute.get("pool") == "heavy" and memory_budget <= 0:
         raise RuntimeError("heavy_memory_budget_unavailable")
     db_identity = _pinned_database_identity(Path(db_path))
+    # On a pinned live heavy service, no old orphan or detached training
+    # child may share the unit before the next lease is even requested.
+    # This closes the window after a crashed wrapper's lease has expired:
+    # a new invocation cannot run beside the surviving unleased worker.
+    if (compute.get("pool") == "heavy"
+            and os.environ.get("ZCLOUD_RESOURCE_DB") is not None
+            and not _owned_service_cgroup_drained()):
+        raise RuntimeError("resource_dedicated_heavy_unit_not_idle")
     conn = connect(Path(db_path))
     try:
         _assert_database_identity(Path(db_path), db_identity)
