@@ -117,6 +117,11 @@ visible in source statistics but never entered the owner follow-up queue.
   neither output can promote a changed priority, project, source timestamp
   or ownership claim. The JSON handoff contains the corresponding bounded
   summary without any claim/dispatch/retry permissions.
+- The default recovery cockpit and full-portfolio overview also use the
+  source-reconciled **Claimed/Running subset** to display the same P1/P2
+  urgency, without guessing the missing task's original project or owner.
+  The portfolio source JSON exports that subset separately; saved snapshots
+  never supply it.
 
 This is an operator follow-up, **not** automated reassignment, claim release,
 CI retry, registry write, worker recovery, or deployment. All existing GitHub
