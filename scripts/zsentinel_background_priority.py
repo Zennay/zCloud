@@ -241,10 +241,11 @@ def workers():
             except FileNotFoundError:
                 # A process exited between its directory listing and inspection.
                 continue
-            except (OSError, PermissionError):
-                # A still-existing process was unreadable: fail closed.
-                if directory.exists():
-                    complete = False
+            except OSError:
+                # FileNotFoundError is handled above. Any other read error,
+                # including an inaccessible /proc entry, is UNKNOWN rather
+                # than proof that the runner process disappeared.
+                complete = False
     except OSError:
         # A broken /proc observation must never license a high CPU quota.
         return False, False, False
