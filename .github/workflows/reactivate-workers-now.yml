@@ -1,13 +1,11 @@
+# manual all-worker restart trigger 2026-10-06 23:05 Europe/Amsterdam
 # dashboard-access recovery retrigger 2026-10-04T22:17Z
 # manual worker start trigger 2026-10-04 user-request
 # FTMO verify72 recovery: reactivate dead Violentmonkey consumer 2026-10-02T09:24Z
 name: Reactivate zCloud workers now
 
+# Manual-only; pushing this workflow must NEVER auto-restart Firefox.
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/reactivate-workers-now.yml
   workflow_dispatch:
 
 permissions:
@@ -33,44 +31,25 @@ jobs:
             systemctl --user is-active --quiet "$dependency"
           done
 
-          echo "=== CLEAN ORPHAN FIREFOX MAINS ==="
-          mapfile -t orphan_firefox < <(
-            ps -eo pid=,ppid=,args= |
-              awk '$2 == 1 && $0 ~ /\/snap\/firefox\/.*\/usr\/lib\/firefox\/firefox/ && $0 !~ /-contentproc/ {print $1}'
-          )
-          for pid in "${orphan_firefox[@]}"; do
-            echo "ORPHAN_FIREFOX_TERMINATE pid=$pid"
-            kill -TERM "$pid" 2>/dev/null || true
-          done
-          if [[ "${#orphan_firefox[@]}" -gt 0 ]]; then
-            sleep 3
-            for pid in "${orphan_firefox[@]}"; do
-              if kill -0 "$pid" 2>/dev/null; then
-                echo "ORPHAN_FIREFOX_KILL pid=$pid"
-                kill -KILL "$pid" 2>/dev/null || true
-              fi
-            done
-          fi
-
-          systemctl --user reset-failed chatgpt-firefox.service || true
-          systemctl --user restart chatgpt-firefox.service || systemctl --user start chatgpt-firefox.service
-          for _ in $(seq 1 20); do
-            if systemctl --user is-active --quiet chatgpt-firefox.service; then
-              break
-            fi
-            sleep 2
-          done
+          echo "=== PRESERVE EXISTING FIREFOX AND CHATGPT TABS ==="
+          # Never decide that a Firefox desktop is orphaned merely because its
+          # parent PID is 1. Standalone Violentmonkey deliberately detaches.
+          # A blind kill/restart here erases every live worker and expert tab.
           if systemctl --user is-active --quiet chatgpt-firefox.service; then
-            echo "FIREFOX_RUNTIME=managed_service"
-          elif pgrep -f '/snap/firefox/.*/firefox.*zcloud_worker=' >/dev/null; then
-            echo "FIREFOX_RUNTIME=existing_zcloud_process"
-          elif pgrep -af 'firefox' | grep -q 'zcloud_worker='; then
-            echo "FIREFOX_RUNTIME=existing_zcloud_process"
+            echo "FIREFOX_RUNTIME=existing_managed_service"
+          elif pgrep -u "$(id -u)" -f '(/snap/firefox/.*/usr/lib/firefox/firefox|/usr/lib/firefox/firefox|firefox-bin)' >/dev/null; then
+            echo "FIREFOX_RUNTIME=existing_standalone"
           else
-            systemctl --user --no-pager --full status chatgpt-firefox.service || true
-            journalctl --user -u chatgpt-firefox.service -n 60 --no-pager || true
-            echo "FIREFOX_RUNTIME=missing"
-            exit 1
+            # Start the managed service only if there truly is no browser.
+            # Never restart a healthy service or spawn multiple ChatGPT windows.
+            echo "FIREFOX_RUNTIME=absent"
+            systemctl --user reset-failed chatgpt-firefox.service || true
+            systemctl --user start chatgpt-firefox.service || {
+              echo "No existing Firefox, and managed recovery unavailable; refusing destructive fallback."
+              exit 1
+            }
+            systemctl --user is-active --quiet chatgpt-firefox.service
+            echo "FIREFOX_RUNTIME=recovered_managed_service"
           fi
 
           if ! curl -fsS --max-time 4 http://127.0.0.1:8765/api/runner-targets >/dev/null 2>&1; then

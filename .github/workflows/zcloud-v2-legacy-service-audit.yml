@@ -1,0 +1,118 @@
+name: zCloud v2 legacy worker service audit
+
+# Pull requests must never execute diagnostic commands on the permanent VPS.
+# A trusted manual main dispatch can read a bounded legacy-service snapshot.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-v2-legacy-service-audit.yml
+      - tests/test_zcloud_v2_legacy_service_audit_trust_20261013_w1.py
+  workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Explicit exact current main SHA for read-only VPS inventory"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-v2-legacy-service-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: (github.event_name == 'pull_request') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Checkout immutable PR head revision without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Validate isolated workflow trust contracts (hosted only)
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m unittest -v tests.test_zcloud_v2_legacy_service_audit_trust_20261013_w1
+
+  inspect:
+    name: Explicit trusted-main VPS legacy worker service inventory
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      inputs.confirm_sha == github.sha
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact trusted main commit without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Enforce exact commit and permanent VPS identity before any live reads
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = 'workflow_dispatch'
+          test "$GITHUB_REPOSITORY" = 'Zennay/zCloud'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$GITHUB_ACTOR" = 'Zennay'
+          test "$GITHUB_TRIGGERING_ACTOR" = 'Zennay'
+          [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$CONFIRMED_SHA"
+          # Reject stale manual dispatch if main advanced before runner execution.
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$CONFIRMED_SHA"
+          test "$(hostname)" = 'vps-bb300bba'
+          test "$(id -un)" = 'ubuntu'
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Read-only bounded worker service inventory
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          echo '=== FIREFOX PROCESS IDENTITIES (no arguments) ==='
+          ps -eo pid=,ppid=,comm= | grep -Ei 'firefox|web-ext' | head -n 5 || true
+          echo '=== USER SERVICE NAMES ==='
+          systemctl --user list-units --all --no-pager --plain |
+            grep -Ei 'zcloud|chatgpt|firefox|worker|watchdog|self-heal' | head -n 65 || true
+          echo '=== SYSTEM SERVICE NAMES ==='
+          systemctl list-units --all --no-pager --plain |
+            grep -Ei 'zcloud|zennay-cloud|chatgpt|firefox|worker|watchdog|self-heal' | head -n 65 || true
+          echo '=== USER TIMERS ==='
+          systemctl --user list-timers --all --no-pager |
+            grep -Ei 'zcloud|chatgpt|firefox|worker|watchdog' | head -n 25 || true
+          echo '=== NON-SECRET SOURCE VERSION EVIDENCE ==='
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p = Path('/home/ubuntu/zennay-cloud/public/zcloud-worker.user.js')
+          if p.is_file():
+              for line in p.read_text(encoding='utf-8',errors='replace').splitlines()[:8]:
+                  if line.startswith('// @version'):
+                      print('LIVE_VM_SCRIPT_SOURCE_VERSION=' + line[:100].strip())
+          e = Path('/home/ubuntu/snap/firefox/common/chatgpt-project-extension/manifest.json')
+          if e.is_file():
+              manifest = json.loads(e.read_text(encoding='utf-8'))
+              scripts = manifest.get('background',{}).get('scripts',[])
+              if isinstance(scripts,list):
+                  print('LIVE_EXTENSION_BACKGROUND_FILE_COUNT=' + str(min(len(scripts),1000)))
+          PY
+          echo 'NO_PROCESS_OR_TAB_MUTATION=1'

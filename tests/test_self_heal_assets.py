@@ -57,6 +57,17 @@ class SelfHealAssetsTest(unittest.TestCase):
         self.assertLess(text.index('systemctl is-active --quiet "${unit}"'), text.index('systemctl start "${unit}"'))
         self.assertLess(text.index("sleep 3"), text.index('systemctl start "${unit}"'))
 
+    def test_existing_firefox_prevents_a_second_managed_window(self):
+        script = (ROOT / "scripts/zcloud-self-heal.sh").read_text()
+        guard = 'pgrep -u "${RUNTIME_USER}" -f'
+        start = 'user_systemctl start "${service}"'
+        self.assertIn(guard, script)
+        self.assertIn('preserving existing standalone Firefox', script)
+        self.assertLess(script.index(guard), script.index(start))
+        # Never terminate a standalone user's desktop/browser from self-heal.
+        self.assertNotIn('kill -TERM', script)
+        self.assertNotIn('kill -KILL', script)
+
     def test_probe_has_disable_sentinel_and_bounded_health_checks(self):
         text = (ROOT / "scripts/zcloud-self-heal.sh").read_text()
         self.assertIn(".disable-self-heal", text)

@@ -1,0 +1,112 @@
+name: Recover RaiseAI Actions listener safely
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/raiseai-runner-recovery-current.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raiseai-runner-recovery-current
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RAISE_REPO: Zennay/RaiseAI
+      RAISE_SERVICE: actions.runner.Zennay-RaiseAI.vps-bb300bba.service
+
+    steps:
+      - name: Recover idle RaiseAI listener only when backlog exists
+        id: recover
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+
+          backlog="$(
+            gh api "repos/$RAISE_REPO/actions/runs?per_page=100"               --jq '[.workflow_runs[] | select(.status=="queued" or .status=="pending" or .status=="waiting")] | length'
+          )"
+          active_runs="$(
+            gh api "repos/$RAISE_REPO/actions/runs?status=in_progress&per_page=100"               --jq '.total_count'
+          )"
+
+          pre_state="$(systemctl is-active "$RAISE_SERVICE" 2>/dev/null || true)"
+          pre_pid="$(systemctl show "$RAISE_SERVICE" -p MainPID --value 2>/dev/null || true)"
+          control_group="$(systemctl show "$RAISE_SERVICE" -p ControlGroup --value 2>/dev/null || true)"
+          worker_before=0
+          listener_before=0
+
+          if [[ "$pre_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$pre_pid/cmdline"; then
+            pre_cmdline="$(tr '\0' ' ' < "/proc/$pre_pid/cmdline")"
+            [[ "$pre_cmdline" == *"Runner.Listener"* || "$pre_cmdline" == *"runsvc.sh"* ]] && listener_before=1 || true
+          fi
+
+          if [[ -n "$control_group" && "$control_group" != "/" ]]; then
+            for proc in /proc/[0-9]*; do
+              test -r "$proc/cgroup" || continue
+              grep -Fq "$control_group" "$proc/cgroup" || continue
+              test -r "$proc/cmdline" || continue
+              cmdline="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+              if [[ "$cmdline" == *"Runner.Worker"* ]]; then
+                worker_before=1
+                break
+              fi
+            done
+          fi
+
+          echo "RAISEAI_RECOVERY_PRE backlog=$backlog active_runs=$active_runs state=$pre_state pid=$pre_pid listener=$listener_before worker=$worker_before"
+
+          action=preserve
+          if (( backlog > 0 )) && (( active_runs == 0 )) && (( worker_before == 0 )); then
+            sudo -n systemctl reset-failed "$RAISE_SERVICE" >/dev/null 2>&1 || true
+            sudo -n systemctl restart "$RAISE_SERVICE"
+            action=restart-idle-listener
+          fi
+
+          post_state=""
+          post_pid=""
+          for _ in $(seq 1 20); do
+            post_state="$(systemctl is-active "$RAISE_SERVICE" 2>/dev/null || true)"
+            post_pid="$(systemctl show "$RAISE_SERVICE" -p MainPID --value 2>/dev/null || true)"
+            if [[ "$post_state" == "active" && "$post_pid" =~ ^[1-9][0-9]*$ ]] && test -r "/proc/$post_pid/cmdline"; then
+              post_cmdline="$(tr '\0' ' ' < "/proc/$post_pid/cmdline")"
+              if [[ "$post_cmdline" == *"Runner.Listener"* || "$post_cmdline" == *"runsvc.sh"* ]]; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+
+          test "$post_state" = "active"
+          [[ "$post_pid" =~ ^[1-9][0-9]*$ ]]
+          echo "RAISEAI_RECOVERY_ACTION=$action"
+          echo "RAISEAI_RECOVERY_POST state=$post_state pid=$post_pid"
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+
+      - name: Prove RaiseAI queue pickup after recovery
+        if: steps.recover.outputs.action == 'restart-idle-listener'
+        shell: bash
+        run: |
+          set -euo pipefail
+          picked=""
+          for _ in $(seq 1 36); do
+            picked="$(
+              gh api "repos/$RAISE_REPO/actions/runs?status=in_progress&per_page=100"                 --jq '.workflow_runs[0].id // empty'
+            )"
+            if [[ -n "$picked" ]]; then
+              break
+            fi
+            sleep 5
+          done
+          test -n "$picked"
+          name="$(gh api "repos/$RAISE_REPO/actions/runs/$picked" --jq .name)"
+          sha="$(gh api "repos/$RAISE_REPO/actions/runs/$picked" --jq .head_sha)"
+          echo "RAISEAI_QUEUE_PICKUP_GREEN run=$picked name=$name sha=$sha"

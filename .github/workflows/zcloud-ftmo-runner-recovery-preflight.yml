@@ -1,0 +1,140 @@
+name: zCloud FTMO runner recovery preflight
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_ftmo_research_runner_diagnostic.py"
+      - "scripts/zcloud_ftmo_runner_recovery_preflight.py"
+      - "tests/test_zcloud_ftmo_runner_recovery_preflight.py"
+      - "tests/test_zcloud_ftmo_runner_recovery_preflight_workflow.py"
+      - "tests/test_ftmo_runner_recovery_dispatch_isolation_20261014.py"
+      - ".github/workflows/zcloud-ftmo-runner-recovery-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-ftmo-runner-recovery-preflight-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  hosted-source:
+    name: FTMO runner recovery preflight contract on GitHub-hosted CI
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable PR revision without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Verify exact PR head and offline preflight contracts
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m py_compile \
+            scripts/zcloud_ftmo_research_runner_diagnostic.py \
+            scripts/zcloud_ftmo_runner_recovery_preflight.py
+          python3 -m unittest -v \
+            tests.test_zcloud_ftmo_research_runner_diagnostic \
+            tests.test_zcloud_ftmo_runner_recovery_preflight \
+            tests.test_zcloud_ftmo_runner_recovery_preflight_workflow \
+            tests.test_ftmo_runner_recovery_dispatch_isolation_20261014
+          echo ZCLOUD_FTMO_RECOVERY_PREFLIGHT_HOSTED_GREEN=1
+
+  preflight:
+    # Only an explicit owner action on a fresh canonical main may read VPS.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact preflight revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove trusted permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused recovery-preflight regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v             tests.test_zcloud_ftmo_research_runner_diagnostic             tests.test_zcloud_ftmo_runner_recovery_preflight             tests.test_zcloud_ftmo_runner_recovery_preflight_workflow
+          python3 -m py_compile             scripts/zcloud_ftmo_research_runner_diagnostic.py             scripts/zcloud_ftmo_runner_recovery_preflight.py
+
+      - name: Collect live snapshot and evaluate preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot="$RUNNER_TEMP/zcloud-ftmo-runner-live-snapshot.json"
+          decision="$RUNNER_TEMP/zcloud-ftmo-runner-recovery-preflight.json"
+          python3 scripts/zcloud_ftmo_research_runner_diagnostic.py > "$snapshot"
+          python3 scripts/zcloud_ftmo_runner_recovery_preflight.py             --snapshot "$snapshot"             --same-job-live-evidence | tee "$decision"
+          DECISION="$decision" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["DECISION"]).read_text(encoding="utf-8"))
+          assert payload["policy"] == "zcloud-ftmo-runner-recovery-preflight-v1"
+          assert payload["mutation_authorized"] is False
+          assert payload["decision"] in {
+              "deny_incomplete",
+              "deny_orphaned_processes",
+              "start_candidate",
+              "deny_inflight_work",
+              "no_recovery_needed",
+              "deny_degraded",
+          }
+          print(
+              "ZCLOUD_FTMO_RUNNER_RECOVERY_PREFLIGHT_GREEN="
+              f"decision:{payload['decision']}:"
+              f"candidate:{payload['writer_action_candidate']}"
+          )
+          PY
+
+      - name: Upload bounded preflight evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-ftmo-runner-recovery-preflight-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/zcloud-ftmo-runner-live-snapshot.json
+            ${{ runner.temp }}/zcloud-ftmo-runner-recovery-preflight.json
+          if-no-files-found: error
+          retention-days: 14

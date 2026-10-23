@@ -1,0 +1,92 @@
+name: zGuard VPS verification
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/zguard-vps-verification.yml
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: zGuard git ref to verify
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 15
+    steps:
+      - name: Check out zCloud runner guard
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify permanent zCloud VPS runner
+        run: python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Check out zGuard history
+        uses: actions/checkout@v4
+        with:
+          repository: Zennay/zGuard
+          ref: main
+          fetch-depth: 0
+          path: zguard-source
+          persist-credentials: false
+
+      - name: Verify requested or stacked zGuard refs
+        shell: bash
+        env:
+          REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${REQUESTED_REF}" ]]; then
+            targets=("quality:${REQUESTED_REF}")
+          else
+            targets=(
+              "baseline:011dd124169faa44eadad190b6079daa2f603620"
+              "quality:3e60b2399daa1d82d9b537a17b7690225b4f4651"
+              "quality:a9364bec5beb0e3dca64ae0ae27f917a5d6f345e"
+            )
+          fi
+
+          tmp_root="$(mktemp -d)"
+          trap 'rm -rf "${tmp_root}"' EXIT
+
+          for target in "${targets[@]}"; do
+            mode="${target%%:*}"
+            target_ref="${target#*:}"
+
+            if ! target_sha="$(git -C zguard-source rev-parse "${target_ref}^{commit}" 2>/dev/null)"; then
+              git -C zguard-source fetch --no-tags origin "${target_ref}"
+              target_sha="$(git -C zguard-source rev-parse FETCH_HEAD)"
+            fi
+
+            snapshot="${tmp_root}/${target_sha}"
+            mkdir -p "${snapshot}"
+            git -C zguard-source archive "${target_sha}" | tar -x -C "${snapshot}"
+
+            printf 'ZGUARD_VPS_TARGET mode=%s sha=%s host=%s runner=%s\n'               "${mode}" "${target_sha}" "$(hostname)" "${RUNNER_NAME:-unknown}"
+
+            if [[ "${mode}" == "baseline" ]]; then
+              main_sha="6908e315501c15f9bf18f3a1f85ca97f26d0f050"
+              changed="$(git -C zguard-source diff --name-only "${main_sha}..${target_sha}")"
+              test "${changed}" = "zbrowse/docker-compose.yml"
+              git -C zguard-source diff --quiet "${main_sha}..${target_sha}" --                 zbrowse/gateway/package.json zbrowse/gateway/package-lock.json
+            fi
+
+            (
+              cd "${snapshot}"
+              node tests/smoke.test.js
+              bash zbrowse/scripts/validate.sh
+              cd zbrowse/gateway
+              npm ci --omit=dev --ignore-scripts --no-audit
+              if [[ "${mode}" == "quality" ]]; then
+                npm audit --omit=dev --audit-level=high
+              fi
+            )
+          done

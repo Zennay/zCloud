@@ -1,0 +1,146 @@
+name: Worker Firefox session continuity
+on:
+  pull_request:
+    paths:
+      - "deploy/chatgpt-firefox-prestart.sh"
+      - "deploy/chatgpt-firefox.service"
+      - "systemd-user-units/chatgpt-firefox.service"
+      - "tests/test_firefox_worker_prestart.py"
+      - "tests/test_worker_tabs_restore.js"
+      - ".github/workflows/worker-firefox-session-continuity.yml"
+      - "tests/test_firefox_session_manual_install_20261014.py"
+  push:
+    branches:
+      - main
+      - fix/worker-firefox-crash-session-preservation-20261012
+    paths:
+      - "deploy/chatgpt-firefox-prestart.sh"
+      - "deploy/chatgpt-firefox.service"
+      - "systemd-user-units/chatgpt-firefox.service"
+      - "tests/test_firefox_worker_prestart.py"
+      - "tests/test_worker_tabs_restore.js"
+      - ".github/workflows/worker-firefox-session-continuity.yml"
+      - "tests/test_firefox_session_manual_install_20261014.py"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Owner-approved next-restart Firefox unit install"
+        type: boolean
+        required: true
+        default: false
+      confirm_sha:
+        description: "Exact approved current main SHA"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Offline tab recovery and browser profile checks
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify immutable hosted candidate
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Inspect prestart, six-tab recovery and unit isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n deploy/chatgpt-firefox-prestart.sh
+          node tests/test_worker_tabs_restore.js
+          python3 -m unittest discover -s tests -p test_firefox_worker_prestart.py -v
+          python3 -m unittest -v tests.test_firefox_session_manual_install_20261014
+          ! grep -Eq '^rm -[rf]+ .*sessionstore' deploy/chatgpt-firefox-prestart.sh
+          ! grep -q '^ExecStopPost=' deploy/chatgpt-firefox.service
+          echo 'Worker crash session continuity contracts verified (offline).'
+
+  install-on-vps:
+    name: Install next-restart worker protection without touching running tabs
+    needs: verify
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      inputs.apply == true &&
+      inputs.confirm_sha == github.sha
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    concurrency:
+      group: zcloud-production-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify owner approval, current main and permanent runner
+        shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          APPROVED_APPLY: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_ACTOR" = Zennay
+          test "$APPROVED_APPLY" = true
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          test "$(hostname -s)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          echo "FIREFOX_SESSION_OWNER_CURRENT_MAIN_VERIFIED=1"
+      - name: Install non-destructive recovery prestart, no restart or stop
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          # Preserve the owner-specific profile and everything under it.
+          # Do not stop/restart Firefox, trigger work or change queue ownership.
+          install -d -m 0700 "$HOME/.local/bin" "$HOME/.config/systemd/user"
+          install -m 0755 deploy/chatgpt-firefox-prestart.sh "$HOME/.local/bin/chatgpt-firefox-prestart.sh"
+          # Respect userscript-only mode: preserve existing unit/drop-in state.
+          if [ -f "$HOME/.config/systemd/user/chatgpt-firefox.service" ]; then
+            cp -p "$HOME/.config/systemd/user/chatgpt-firefox.service" "$HOME/.config/systemd/user/chatgpt-firefox.service.backup-$GITHUB_RUN_ID"
+          fi
+          install -m 0644 deploy/chatgpt-firefox.service "$HOME/.config/systemd/user/chatgpt-firefox.service"
+          systemctl --user daemon-reload
+          # If a standalone Firefox already holds the profile, stop only
+          # the broken systemd START-PRE retry loop (never the live browser).
+          # MainPID=0 means systemd owns no running web-ext/browser consumer.
+          main_pid="$(systemctl --user show chatgpt-firefox.service -p MainPID --value || echo unknown)"
+          restarts="$(systemctl --user show chatgpt-firefox.service -p NRestarts --value || echo 0)"
+          if [[ "$main_pid" == "0" ]] && [[ "$restarts" =~ ^[0-9]+$ ]] && (( restarts >= 5 )) \
+            && pgrep -u "$(id -u)" -f '(/snap/firefox/.*/usr/lib/firefox/firefox|/usr/lib/firefox/firefox|firefox-bin)' >/dev/null 2>&1; then
+            # Preserve live session and existing worker unit state. A broken
+            # profile-lock retry loop needs a separate exact-owner repair gate.
+            echo "BROKEN_PROFILE_LOCK_RETRY_LOOP_NEEDS_OWNER_ACTION=1"
+          fi
+          cmp deploy/chatgpt-firefox-prestart.sh "$HOME/.local/bin/chatgpt-firefox-prestart.sh"
+          cmp deploy/chatgpt-firefox.service "$HOME/.config/systemd/user/chatgpt-firefox.service"
+          echo 'Installed for next worker Firefox restart; existing browser and Office staff sessions untouched.'

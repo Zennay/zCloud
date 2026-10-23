@@ -8,7 +8,7 @@ from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
 from scripts import worker_scaling_report
-from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap
+from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -29,8 +29,8 @@ AUTONOMY_SIGNAL_EVENTS = ('autonomy-continue','autonomy-wait-vps','autonomy-wait
 # Compatibility: this remains the TOTAL number of dynamic browser workers.
 # Provider-specific counts live in DYNAMIC_CHATGPT_WORKERS / DYNAMIC_CLAUDE_WORKERS.
 GLOBAL_CHATGPT_WORKER_LIMIT = 3
-MAX_CHATGPT_WORKERS = 8
-MAX_DYNAMIC_WORKERS_PER_PROVIDER = 8
+MAX_CHATGPT_WORKERS = 20
+MAX_DYNAMIC_WORKERS_PER_PROVIDER = 20
 DYNAMIC_CHATGPT_WORKERS = 2
 DYNAMIC_CLAUDE_WORKERS = 1
 DYNAMIC_CHATGPT_COOLDOWN_SECONDS = 120
@@ -86,17 +86,19 @@ FEATURE_FLAG_DEFINITIONS = {
 }
 WORKER_LANES = (
     'kritieke pad / eerstvolgende veilige projectgate',
-    'tests, validatie, determinisme en race-condition checks',
+    'bugfix-implementatie, regressieherstel en gerichte tests',
     'data, provider-validatie, preprocessing en provenance',
     'VPS-infra, performance, concurrency en resourceveiligheid',
     'stress-tests, transactiekosten, diagnostics en challenge-simulaties',
     'voorbereidend werk voor de volgende generatie zonder verborgen OOS-resultaten',
     'telemetrie, documentatie en reproduceerbaarheid',
-    'onafhankelijke QA van open werk zonder bestaand werk te dupliceren',
+    'uitvoerbare issues oplossen zonder bestaand werk te dupliceren',
 )
 def _load_project_registry():
     """Load presentation metadata and hydrate runtime fields from the canonical contract."""
     projects=json.loads((ROOT/'projects.json').read_text())
+    # Do not render a legacy sentinel card from operator-owned live registry.
+    projects=[project for project in projects if project.get('id')!='zsentinel']
     for project in projects:
         project_id=str(project.get('id') or '').strip().lower()
         try:
@@ -112,7 +114,26 @@ def _load_project_registry():
         project['lane_profile']=str(contract.get('lane_profile') or '')
     return projects
 
-PROJECT_INDEX = {p['id']: p for p in _load_project_registry()}
+# Worker roles are queue-capable but NOT normal product/portfolio cards.
+WORKER_MODES_FILE = ROOT / 'worker-modes.json'
+def _load_worker_modes():
+    # Backend source may deploy before optional worker role presentation metadata.
+    modes=(json.loads(WORKER_MODES_FILE.read_text(encoding='utf-8'))
+           if WORKER_MODES_FILE.exists()
+           else [{'id':'zsentinel','name':'zSentinel · Vliegende keep',
+                  'goal':'Remove portfolio blockers before clearing remaining issues.'}])
+    if not isinstance(modes,list) or not modes:
+        raise ValueError('worker-modes.json must be a nonempty list')
+    ids=[row.get('id') for row in modes if isinstance(row,dict)]
+    if len(ids)!=len(modes) or len(set(ids))!=len(ids) or not all(isinstance(pid,str) and pid for pid in ids):
+        raise ValueError('Duplicate or malformed worker mode identifier')
+    return modes
+
+WORKER_MODES = _load_worker_modes()
+PORTFOLIO_PROJECT_INDEX = {p['id']:p for p in _load_project_registry()}
+if set(PORTFOLIO_PROJECT_INDEX) & {role['id'] for role in WORKER_MODES}:
+    raise ValueError('Worker role cannot also be a portfolio project')
+PROJECT_INDEX = {**PORTFOLIO_PROJECT_INDEX, **{role['id']:role for role in WORKER_MODES}}
 
 VPS_EXECUTION_POLICY_FILE = ROOT / 'vps-execution-policy.json'
 
@@ -159,40 +180,114 @@ def action_request_allowed(handler):
     return same_origin and fetch_site in ('same-origin', 'same-site')
 
 def project_runner_prompt(project_id, name):
+    if project_id=='zsentinel':
+        return (
+            'Werk verder aan het herstel van ANDERE zCloud-projecten als zSentinel · Vliegende keep. '
+            'DIT IS EEN WERKERROL EN EEN PORTFOLIOBREDE HERSTELPROMPT, GEEN PRODUCT OF PROJECT. '
+            'Maak geen zSentinel-project, zSentinel-roadmap, zSentinel-issues of zSentinel-QA-PRs. '
+            'Werk uitsluitend aan de rolcode zelf wanneer een concreet defect aantoonbaar het herstellen van andere projecten blokkeert. '
+            'Kijk in Notion in welke fase het project zit dat je daadwerkelijk gaat herstellen; lees de relevante project-HQs, Project Genesis OS, Company OS en Portfolio Control Tower OS. '
+            'Onderzoek de actuele problemen in ALLE 13 echte projecten via GitHub issues, branches, PRs, CI, de uitvoerwachtrij, deployments en workerclaims. '
+            'PRIORITEIT 1: verwijder echte P0/P1-blokkades: falende CI, gebroken services, niet-toegewezen of vastgelopen workers en mislukte dependencies. '
+            'Kies het hoogste-impact onbeheerde probleem in een ECHT portfolio-project, los de oorzaak materieel op, test en verifieer daadwerkelijke voortgang. '
+            'Respecteer bestaande eigenaren, claims, geheime gegevens, FTMO-holdouts en veiligheids-, apparaat- en releasegates; forceer niets buiten autorisatie. '
+            'PRIORITEIT 2: pak bestaande onafgemaakte of mergeklare PRs op in de echte projecten volgens actuele claims; maak drafts reviewklaar, los echte blokkades op en merge zelfstandig zodra GitHub exact-head checks, vereiste reviews en branch protection toestaat. Bevestig merged-status plus default-branch commit; een nieuwe PR is geen oplevering. Geen bypass of source merge als live deploy voorstellen. Werk daarna open bugs, issues en features af. '
+            'Als een onderdeel wacht op CI, review of VPS, kies meteen ander vrij uitvoerbaar herstelwerk in een ander project. '
+            'Voer meerdere concrete fixes na elkaar uit en stop niet bij een statuscheck, nieuwe taak, enkele commit of een groene heartbeat. '
+        'Herstel bij voorkeur één volledige cross-project kritieke route in plaats van een reeks symptoomfixes; bewijs daarna herstelde taakuitvoering. '
+            'Rapporteer steeds het echte doelproject, de fix, tests, PR/commit, runtimebewijs en resterende blockers. '
+        )
     return (
         f'Werk verder aan {name}. '
         'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
-        'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet '
-        'na één actie, commit, retrigger of statuscheck. Als iets wacht op CI, VPS, review of een andere dependency, '
-        'pak direct ander veilig uitvoerbaar werk binnen hetzelfde project. Kies steeds een vrij onderdeel en ga door '
-        'tot de runlimiet, echte projectafronding of totdat er werkelijk geen veilige uitvoerbare vervolgstap meer is.'
+        'Check actuele main, open issues/PRs, branch-eigenaars en CI; kies urgent open werk in de ACTUELE fase. '
+        'LEVERBELEID 20-10-2026 — MERGE EERST: inventariseer aan het begin van elke run de bestaande open PRs op het project, hun actuele head, mergeability, verplichte checks, review-gates en actuele werkclaims. Pak eerst je eigen onafgemaakte PR of een vrij, mergeklaar product-PR en werk die daadwerkelijk af voordat je een nieuwe branch/PR maakt. Draft of HOLD is geen eindresultaat; maak reviewklaar en los concrete codeconflicten en falende vereiste CI op, tenzij er een echte, benoemde externe veiligheids- of autorisatiegate is. Merge zelfstandig met GitHub zodra GitHub de actuele head, branch protection en verplichte review/checks toestaat; probeer geen verboden bypass of force-merge. Controleer daarna de GitHub merged-status en het nieuwe commit-SHA op de echte default branch. Pas dan telt de wijziging als opgeleverd op main. Een open PR, losse commit, groen testverslag of queued CI is uitdrukkelijk NIET afgerond. Laat alleen de specifiek geblokkeerde PR wachten en pak bij wachten direct een ander vrij integratiewerkpakket. Rapporteer aantallen daadwerkelijk gemergede PRs, bijbehorende main-SHAs en afzonderlijk wat nog niet gemerged is. Nieuwe productbranches alleen wanneer bestaand vrij merge-/integratiewerk niet uitvoerbaar is; geen parallelle PR-stapels. Na uitrol gelden aparte release-gates; een source merge is geen live deploy en geeft nooit toestemming voor security-, broker- of onderzoeksacties. '
+        'Bouw echte functionaliteit en fix bugs; geen eindeloze QA-rondes of toekomstfase-drafts zonder productblokkade. '
+        'Kies één samenhangende productmijlpaal en lever deze end-to-end: bouw alle benodigde onderdelen, sluit bestaande PRs, integreer en bewijs werking. '
+        'Losse QA, documenten, configuratietweaks, één mini-fix of alleen een nieuwe PR zijn geen afgeronde mijlpaal. '
+        'Geen nieuwe QA-, regressie- of testsuites schrijven, uitbreiden of draaien; controleer hooguit een build, bestaande CI-resultaten of directe productwerking. Bestaande verplichte GitHub-checks blijven intact. '
+        'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet na één actie, commit, retrigger of statuscheck. '
+        'HOLD alleen bij falende CI, scopeconflict of bewezen risico voor veiligheid, rechten, research of productie; beperk het tot de getroffen actie en herstel waar mogelijk. '
+        'Ontbrekende data/toestemming blokkeren ander veilig fasewerk niet. Als iets wacht op CI, VPS of review, pak direct ander veilig uitvoerbaar werk. '
+        'Kies steeds een vrij onderdeel, respecteer parallel eigenaarschap en ga door tot de runlimiet of echte afronding. '
+        'Sluit issues pas na aantoonbaar resultaat; rapporteer kort gebouwd, getest, gemerged, live en resterende echte blokkades.'
+    )
+
+
+def _worker_work_package_brief(project_id, queue_item):
+    """Bind the actual claimed queue deliverable to the browser prompt.
+
+    Queue rows may contain long Notion acceptance criteria. Keep a compact
+    preview; the worker must fetch the full source before implementing. The
+    canonical safety/release prompt is never replaced by queue data.
+    """
+    if not isinstance(queue_item, dict):
+        return ''
+    assigned_project = str(queue_item.get('project_id') or project_id).strip().lower()
+    if assigned_project != str(project_id).strip().lower():
+        return ''
+    def compact(value, limit):
+        value = re.sub(r'[\x00-\x1f\x7f]+', ' ', str(value or ''))
+        value = re.sub(r'\s+', ' ', value).strip()
+        if len(value) <= limit:
+            return value
+        return value[:limit].rsplit(' ', 1)[0].rstrip('.,;: ') + '…'
+
+    title = compact(queue_item.get('title'), 140)
+    if not title:
+        return ''
+    criteria = compact(queue_item.get('completion_criteria'), 360)
+    return (
+        f' HOOFDOPDRACHT VAN DEZE CLAIM: {title}. '
+        + (f'Acceptatie-samenvatting: {criteria} ' if criteria else '')
+        + 'Lees de volledige queue-/Notioncriteria en houd dit werkpakket vast tot een werkende end-to-end '
+        'mijlpaal: implementatie, integratie, tests en main-merge indien toegestaan. '
+        'Maak geen afzonderlijke micro-PRs of nieuwe QA-only taken als ditzelfde werk nog openstaat. '
+        'Een deelstap is CONTINUE, niet DONE; bij een externe gate blijft uitsluitend de getroffen stap open.'
     )
 
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
+    # zSentinel is a cross-portfolio recovery ROLE. Never attach a project-specific QA lane.
+    if project_id=='zsentinel':
+        return project_runner_prompt(project_id, name)
     prompt = project_runner_prompt(project_id, name)
+    work_package = _worker_work_package_brief(project_id, queue_item)
     worker_total = max(1, int(total or 1))
     lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
     lane_id = str(lane.get('lane_id') or '').strip() if isinstance(lane, dict) else ''
     lane_id = re.sub(r'[^a-zA-Z0-9._:/-]+', '-', lane_id).strip('-')[:80]
+    # Existing active assignments may carry an old QA-only lane ID.
+    # Keep their ownership/queue untouched; normalize only the new prompt.
+    if lane_id in {'quality-validation', 'qa-validation', 'evaluation-validation'}:
+        lane_id = (
+            'strategy-implementation' if project_id in {'ftmo', 'tradengine'}
+            else 'model-improvement' if project_id == 'haxlab'
+            else 'bugfix-delivery'
+        )
+    implementation_focus = (
+        ' Bouw of repareer echte functionaliteit; test gericht en respecteer alle verplichte gates.'
+        if lane_id in {'strategy-implementation', 'model-improvement', 'bugfix-delivery'} else ''
+    )
     if lane_id:
         if worker_total > 1:
             return (
                 prompt
                 + f' Parallel focus {int(slot or 1)}/{worker_total}: {lane_id}. '
                 'Blijf binnen dit niet-conflicterende werkgebied, controleer open branches/PRs en neem geen werk over '
-                'dat al actief door een andere worker wordt uitgevoerd.'
+                'dat al actief door een andere worker wordt uitgevoerd.' + implementation_focus + work_package
             )
         return (
             prompt
-            + f' Focus: {lane_id}. Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.'
+            + f' Focus: {lane_id}. Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.' + implementation_focus + work_package
         )
     if worker_total <= 1:
-        return prompt
+        return prompt + work_package
     return (
         prompt
         + f' Er werken {worker_total} workers parallel aan dit project. Kies zelfstandig een ander vrij, '
         'niet-conflicterend werkgebied, controleer open branches/PRs en vermijd dubbel werk.'
+        + work_package
     )
 
 
@@ -266,7 +361,9 @@ def live_receipt_status(data):
 def public_status(data):
     live_data=live_receipt_status(data)
     visible, archived, layout=project_views(live_data)
-    return {**live_data,'projects':visible,'archived_projects':archived,'project_layout':layout,'alerts':enhancements.list_alerts(DB,8,False)}
+    return {**live_data,'projects':visible,'archived_projects':archived,'project_layout':layout,
+            'worker_modes':[{'id':role['id'],'name':role['name'],'description':role.get('goal','')} for role in WORKER_MODES],
+            'alerts':enhancements.list_alerts(DB,8,False)}
 
 def now(): return datetime.now(timezone.utc).isoformat()
 def cmd(args):
@@ -285,14 +382,34 @@ def _violentmonkey_only_mode():
         return False
 
 def _standalone_firefox_pids():
+    """Detect *all* Firefox main processes, not just one Snap argv layout.
+
+    Missing a live Firefox instance caused the recovery watchdog to launch a
+    second window. Never count content processes or the pgrep command itself.
+    """
+    pids=[]
     try:
-        proc=subprocess.run(
-            ['pgrep','-u',str(os.getuid()),'-f',r'/snap/firefox/.*/usr/lib/firefox/firefox'],
-            text=True,capture_output=True,check=False,timeout=5,
-        )
-        return [int(value) for value in proc.stdout.split() if value.isdigit()]
-    except Exception:
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                if entry.stat().st_uid != os.getuid():
+                    continue
+                raw=(entry/'cmdline').read_bytes().split(b'\0')
+                argv=[item.decode('utf-8','replace') for item in raw if item]
+                if not argv:
+                    continue
+                executable=Path(argv[0]).name.lower()
+                if executable not in ('firefox','firefox-bin','firefox-esr'):
+                    continue
+                if '-contentproc' in argv:
+                    continue
+                pids.append(int(entry.name))
+            except (OSError, ValueError):
+                continue
+    except OSError:
         return []
+    return sorted(pids)
 
 def _firefox_session_env(primary_pid=None):
     allowed={
@@ -325,6 +442,16 @@ def _firefox_session_env(primary_pid=None):
     env=os.environ.copy()
     env.pop('RUNNER_TRACKING_ID',None)
     env.update(values)
+    # Never trust an inherited DISPLAY that points at a known headless/offscreen
+    # X server. If a crashed Firefox was itself misdirected onto one (e.g. :99,
+    # which on this host is Xvfb -- a virtual framebuffer with no remote-desktop
+    # viewer), copying its environment would silently perpetuate the same
+    # invisible display forever across every future auto-restart. The VPS's
+    # real, xrdp-visible session is Xorg on :10 (started by xrdp-sesexec); :99
+    # must never be treated as the browser's home display.
+    _HEADLESS_DISPLAYS={':99',':99.0'}
+    if env.get('DISPLAY') in _HEADLESS_DISPLAYS:
+        env.pop('DISPLAY',None)
     if not env.get('DISPLAY'):
         sockets=sorted(
             (Path('/tmp/.X11-unix').glob('X*') if Path('/tmp/.X11-unix').exists() else []),
@@ -390,7 +517,16 @@ def restart_firefox_runtime():
     """Recover either the managed systemd Firefox or the standalone VM runtime."""
     existing=_standalone_firefox_pids()
     current=firefox_runner_status()
-    browser_was_dead=not bool(current.get('active'))
+    # A healthy/visible Firefox is authoritative. Do not terminate it, discard
+    # its tabs or spawn a new ChatGPT window for a restart/health command.
+    # True crash recovery is still allowed when no browser runtime is active.
+    if current.get('active') or existing:
+        # If the desktop probe is temporarily wrong while /proc still shows
+        # Firefox, absolutely do not terminate or replace the user's window.
+        return {**current, 'active':bool(current.get('active') or existing),
+                'reused_existing_browser':True,
+                'allocation_preserved':True, 'released_slots':[]}
+    browser_was_dead=True
     recovery_guard=None
     released=[]
     if browser_was_dead:
@@ -404,27 +540,24 @@ def restart_firefox_runtime():
         _persist_global_worker_allocation(portfolio_queue_allocation())
 
     if _violentmonkey_only_mode():
-        old_pids=existing
-        env=_firefox_session_env(old_pids[0] if old_pids else None)
-        for pid in old_pids:
-            try: os.kill(pid,signal.SIGTERM)
-            except ProcessLookupError: pass
-        deadline=time.time()+10
-        alive=list(old_pids)
-        while alive and time.time()<deadline:
-            time.sleep(0.5)
-            next_alive=[]
-            for pid in alive:
-                try: os.kill(pid,0);next_alive.append(pid)
-                except ProcessLookupError: pass
-            alive=next_alive
-        for pid in alive:
-            try: os.kill(pid,signal.SIGKILL)
-            except ProcessLookupError: pass
+        old_pids=[]
+        env=_firefox_session_env(None)
+        # A genuinely dead Firefox has no PIDs to signal. Never kill a
+        # browser here; one window with restored tabs is handled by Firefox.
         log_path=Path('/tmp/zcloud-firefox-recovery.log')
+        # Always recover the EXACT original standalone Firefox profile.
+        # A plain '/usr/bin/firefox' used the default profile, opening an
+        # apparently new browser without the six worker tabs or extension.
+        profile=Path.home()/'snap/firefox/common/chatgpt-webext-profile'
+        if not profile.is_dir():
+            return {**current, 'recovery_error':'original-worker-profile-not-found',
+                    'allocation_preserved':True, 'released_slots':released}
         with log_path.open('ab',buffering=0) as log:
             subprocess.Popen(
-                ['/usr/bin/firefox',*_firefox_bootstrap_urls()],
+                # Firefox restores the saved window/tabs; the v2 controller
+                # rebinds their session tags and adds only truly missing slots.
+                ['/usr/bin/firefox','-no-remote','-profile',str(profile),
+                 '-start-debugger-server','45485'],
                 stdin=subprocess.DEVNULL,stdout=log,stderr=log,
                 env=env,start_new_session=True,close_fds=True,
             )
@@ -462,6 +595,73 @@ def restart_firefox_runtime():
     status['released_slots']=released
     status['allocation_preserved']=bool(browser_was_dead)
     return status
+
+# --- Firefox crash watchdog -------------------------------------------------
+# The external zcloud-firefox-supervisor (systemd timer, /usr/local/sbin) only
+# triggers a recovery when workers are currently allocated to the browser. That
+# leaves a real gap: if Firefox crashes while idle (no allocated workers), it
+# previously stayed dead until something happened to re-allocate a worker, even
+# though the hard requirement is a visible, interactive Firefox at all times on
+# the VPS desktop. This in-process watchdog closes that gap by monitoring
+# firefox_runner_status() unconditionally and calling the same
+# restart_firefox_runtime() recovery path used everywhere else, so there is
+# still exactly one recovery implementation -- just an additional, allocation
+# independent trigger for it. It uses its own confirmation counter and cooldown
+# so it never fights the external supervisor; whichever notices the crash first
+# brings Firefox back, and the other sees it active and stays quiet.
+FIREFOX_WATCHDOG_INTERVAL_SECONDS=int(os.environ.get('ZCLOUD_FIREFOX_WATCHDOG_INTERVAL_SECONDS','15'))
+FIREFOX_WATCHDOG_CONFIRMATIONS=max(1,int(os.environ.get('ZCLOUD_FIREFOX_WATCHDOG_CONFIRMATIONS','2')))
+FIREFOX_WATCHDOG_COOLDOWN_SECONDS=max(10,int(os.environ.get('ZCLOUD_FIREFOX_WATCHDOG_COOLDOWN_SECONDS','60')))
+_firefox_watchdog_state={'missing_confirmations':0,'last_restart_at':0.0,'last_reason':None}
+
+def _firefox_watchdog_log_event(kind,text):
+    try:
+        eid=f"{kind}:{int(time.time()*1000)}"
+        with connect() as c:
+            c.execute('INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?)',(eid,now(),'cloud',kind,text,''))
+    except Exception:
+        logging.exception('firefox-watchdog: could not log %s event',kind)
+
+def firefox_watchdog_tick():
+    state=_firefox_watchdog_state
+    status=firefox_runner_status()
+    if status.get('active'):
+        if state['missing_confirmations']:
+            state['missing_confirmations']=0
+            state['last_reason']=None
+        return status
+    state['missing_confirmations']+=1
+    reason=status.get('service_state') or status.get('state') or 'unknown'
+    state['last_reason']=reason
+    if state['missing_confirmations']<FIREFOX_WATCHDOG_CONFIRMATIONS:
+        return status
+    now_ts=time.time()
+    if now_ts-state['last_restart_at']<FIREFOX_WATCHDOG_COOLDOWN_SECONDS:
+        return status
+    logging.warning('firefox-watchdog: Firefox down (%s); requesting recovery (idle-safe path)',reason)
+    _firefox_watchdog_log_event('firefox-crash',f"Firefox niet actief ({reason}); automatisch herstel gestart door idle-watchdog")
+    state['last_restart_at']=now_ts
+    state['missing_confirmations']=0
+    try:
+        result=restart_firefox_runtime()
+    except Exception:
+        logging.exception('firefox-watchdog: recovery attempt raised')
+        _firefox_watchdog_log_event('firefox-recovery','Firefox herstelpoging mislukt met een fout')
+        return status
+    ok=bool(result.get('active'))
+    _firefox_watchdog_log_event('firefox-recovery','Firefox automatisch hersteld' if ok else 'Firefox herstelpoging zonder succes')
+    if not ok:
+        logging.warning('firefox-watchdog: recovery attempt did not bring Firefox active: %s',result.get('recovery_error') or result.get('state'))
+    return result
+
+def firefox_watchdog():
+    time.sleep(20)
+    while True:
+        try:
+            firefox_watchdog_tick()
+        except Exception:
+            logging.exception('firefox-watchdog: unexpected failure in tick')
+        time.sleep(FIREFOX_WATCHDOG_INTERVAL_SECONDS)
 
 def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
     """Return host RAM/swap admission state for browser workers.
@@ -742,7 +942,7 @@ def dynamic_worker_settings():
     return {
         'count':int(total),
         'enabled':bool(total > 0),
-        'max_workers':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER*2),
+        'max_workers':int(MAX_CHATGPT_WORKERS),
         'max_workers_per_provider':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER),
         'cooldown_seconds':int(DYNAMIC_CHATGPT_COOLDOWN_SECONDS),
         'chatgpt_count':counts['chatgpt'],
@@ -777,6 +977,8 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
         0 if legacy_only else payload.get('claude_count',DYNAMIC_CLAUDE_WORKERS),
         'Claude workers',0,MAX_DYNAMIC_WORKERS_PER_PROVIDER
     )
+    if chatgpt_count + claude_count > MAX_CHATGPT_WORKERS:
+        raise ValueError(f'Maximum {MAX_CHATGPT_WORKERS} totale workers')
     chatgpt_cooldown=_dynamic_int(payload.get('chatgpt_cooldown_seconds',DYNAMIC_CHATGPT_COOLDOWN_SECONDS),'ChatGPT cooldown',5,86400)
     claude_cooldown=_dynamic_int(payload.get('claude_cooldown_seconds',DYNAMIC_CLAUDE_COOLDOWN_SECONDS),'Claude cooldown',5,86400)
     check_ms=_dynamic_int(payload.get('check_interval_ms',DYNAMIC_WORKER_CHECK_INTERVAL_MS),'Check interval',1000,60000)
@@ -968,6 +1170,7 @@ def init_db():
             except Exception: return default
         DYNAMIC_CHATGPT_WORKERS=setting_int('chatgpt_count',DYNAMIC_CHATGPT_WORKERS,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
         DYNAMIC_CLAUDE_WORKERS=setting_int('claude_count',DYNAMIC_CLAUDE_WORKERS,0,MAX_DYNAMIC_WORKERS_PER_PROVIDER)
+        DYNAMIC_CLAUDE_WORKERS=min(DYNAMIC_CLAUDE_WORKERS,MAX_CHATGPT_WORKERS-DYNAMIC_CHATGPT_WORKERS)
         DYNAMIC_CHATGPT_COOLDOWN_SECONDS=setting_int('chatgpt_cooldown_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS,5,86400)
         DYNAMIC_CLAUDE_COOLDOWN_SECONDS=setting_int('claude_cooldown_seconds',PORTFOLIO_AI_COOLDOWN_SECONDS,5,86400)
         DYNAMIC_WORKER_CHECK_INTERVAL_MS=setting_int('check_interval_ms',5000,1000,60000)
@@ -1141,16 +1344,22 @@ def collect():
             except Exception:
                 p['source_status']='unavailable'; p['message']='Git-bron tijdelijk niet beschikbaar'
         p['services']=[]
+        try:
+            project_quality=enhancements.quality_for(p['id'])
+            if (
+                project_quality.get('available')
+                or project_quality.get('items')
+                or (project_quality.get('comparison') or {}).get('available')
+            ):
+                p['quality']=project_quality
+        except Exception:
+            pass
         if p['id']=='haxlab':
             names=['haxlab-analyzer.service','haxlab-ingest.service','haxlab-worker.service','haxlab-autonomy.timer','haxlab-autonomy.service',RUNNERS['haxlab']]
             try:p['metrics']=replay_metrics()
             except Exception:p['metrics']={'available':False}
-            try:p['quality']=enhancements.quality_for('haxlab')
-            except Exception:p['quality']={'available':False,'items':[]}
         elif p['id']=='ftmo':
             names=['ftmo-autonomous.timer','ftmo-autonomous.service',RUNNERS['ftmo']]
-            try:p['quality']=enhancements.quality_for('ftmo')
-            except Exception:p['quality']={'available':False,'items':[]}
         elif p['id']=='supa': names=[SUPA_SYNC]
         elif p['id']=='raiseai': names=['raise-gateway.service']
         elif p['id']=='zssh': names=['zssh.service']
@@ -1987,13 +2196,29 @@ def _autonomy_initialize_project(project_id):
         row=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
     return dict(row) if row else None
 
-def _autonomy_enqueue_start(project_id,reason):
+def _autonomy_enqueue_start(project_id,reason,min_interval_seconds=90):
+    # A worker that keeps failing to make progress (e.g. stuck on a login
+    # screen that needs a human) also keeps runner_targets.active flipping
+    # back to False every time the extension gives up on it. Without a
+    # cooldown here, autonomy_scheduler_tick (which runs every few seconds)
+    # re-enqueues a 'start' command just as fast, and each one forces a full
+    # conversation reset (new tab, old one closed) in the extension -- which
+    # is exactly what makes the page reload out from under someone trying to
+    # log in before it ever finishes loading. Rate-limit restarts of the same
+    # stuck worker instead of re-firing on every scheduler tick.
     ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         runtime=c.execute('SELECT * FROM autonomy_runtime WHERE project_id=?',(project_id,)).fetchone()
         if runtime and bool(runtime['manual_pause']):
             return False
+        if runtime and runtime['last_dispatch_at']:
+            try:
+                last=datetime.fromisoformat(runtime['last_dispatch_at']).astimezone(timezone.utc)
+                if (datetime.now(timezone.utc)-last).total_seconds() < max(0,int(min_interval_seconds or 0)):
+                    return False
+            except Exception:
+                pass
         target=c.execute('SELECT active FROM runner_targets WHERE project_id=?',(project_id,)).fetchone()
         if not target or bool(target['active']):
             return False
@@ -2003,7 +2228,7 @@ def _autonomy_enqueue_start(project_id,reason):
         c.execute('UPDATE runner_targets SET active=1 WHERE project_id=?',(project_id,))
         c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',
                   (project_id,'start','pending',ts,ts,None))
-        c.execute('UPDATE autonomy_runtime SET last_reason=? WHERE project_id=?',(str(reason)[:250],project_id))
+        c.execute('UPDATE autonomy_runtime SET last_dispatch_at=?,last_reason=? WHERE project_id=?',(ts,str(reason)[:250],project_id))
     return True
 
 def _autonomy_dispatch_due(runtime,min_interval_seconds):
@@ -2208,6 +2433,23 @@ def _manual_start_priority_key(project_id):
 def _manual_force_start_priority_key(project_id):
     return 'manual_force_start_priority:' + str(project_id or '').strip().lower()
 
+def _manual_force_start_slot_key(project_id):
+    return 'manual_force_start_slot:' + str(project_id or '').strip().lower()
+
+def _manual_force_start_slot_locked(connection, project_id, at=None):
+    """Return a fresh explicitly requested provider slot; stale hints deny themselves."""
+    if not _manual_force_start_priority_active_locked(connection, project_id, at):
+        return 0
+    row=connection.execute(
+        'SELECT value FROM runtime_settings WHERE key=?',
+        (_manual_force_start_slot_key(project_id),),
+    ).fetchone()
+    raw=str(row['value'] or '') if row else ''
+    if not raw.isdecimal() or raw.startswith('0'):
+        return 0
+    requested=int(raw)
+    return requested if 1 <= requested <= GLOBAL_CHATGPT_WORKER_LIMIT else 0
+
 def _bounded_manual_intent_active_locked(connection, key, at=None):
     row=connection.execute(
         'SELECT value FROM runtime_settings WHERE key=?',
@@ -2392,7 +2634,7 @@ def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
         """SELECT * FROM portfolio_queue
            WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
            ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-                    created_at,queue_id LIMIT 80"""
+                    created_at,queue_id LIMIT 240"""
     ).fetchall()
     preempted={str(value) for value in (preempted or set())}
     rows=[row for row in rows if str(row['queue_id']) not in preempted]
@@ -2654,6 +2896,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
     priority_by_project={
         'lightup':'P0',
         'zssh':'P1',
+        'zsentinel':'P1',
         'ftmo':'P1',
         'zguard':'P2',
         'cloud':'P2',
@@ -2667,6 +2910,24 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         with connect() as c:
             sequence=c.execute('SELECT COUNT(*) FROM portfolio_queue WHERE project_id=?',(project_id,)).fetchone()[0]+1
         parent_queue_id=f'auto-refill-{project_id}-{sequence}'
+    if project_id=='zsentinel':
+        # A role can be queue-addressable without becoming a roadmap/project.
+        # The generic per-project continuation would accidentally make workers
+        # implement zSentinel itself instead of repairing other projects.
+        return portfolio_queue_enqueue(
+            project_id,
+            'Fix blockers, broken workers and open issues across OTHER portfolio projects',
+            'P1',
+            'PRIORITY 1: pick the highest-impact unowned actionable blocker in one of the 13 real projects. '
+            'Fix the underlying failure with code, tests, runtime verification and scoped permissions. '
+            'Read current Notion HQ/handoff and GitHub issues, PRs, CI, worker claims and deployment evidence '
+            'for the affected real project. Do not create a zSentinel product roadmap, '
+            'zSentinel QA tasks or zSentinel feature PRs. Do not steal existing ownership or skip gates. '
+            'PRIORITY 2: move to another safe unowned open issue, broken workflow or unfinished feature '
+            'in a real project; implement multiple material fixes across projects without waiting on a blocked task.',
+            project.get('notion_url') or '',
+            parent_queue_id=parent_queue_id,
+        )
     criteria=(
         f'Read the current {name} HQ/handoff and execute a substantial multi-step work package, not a single micro-task. '
         'Treat this assignment as a long-running implementation block: identify the highest-value safe unblocked roadmap area, '
@@ -2776,6 +3037,7 @@ def portfolio_queue_allocate():
     # browser work. Read this outside the allocator transaction to avoid opening
     # a nested SQLite connection while the write lock is held.
     busy_worker_keys=_busy_ai_worker_keys()
+    prior_worker_by_slot={slot:key for key,slot in _current_global_slot_map().items()}
     # Queue items preempted during this allocation pass must stay queued until
     # the next scheduler tick. Re-claiming them immediately into another slot
     # races the browser/worker mapping that is still being recycled.
@@ -2813,7 +3075,9 @@ def portfolio_queue_allocate():
                 row_project=str(occupied['project_id'] or '')
                 local_ordinals[row_project]=local_ordinals.get(row_project,0)+1
                 local_slot=local_ordinals[row_project]
-                worker_key=f'{row_project}::w{local_slot}'
+                previous_key=prior_worker_by_slot.get(int(occupied['worker_slot'] or 0),'')
+                worker_key=(previous_key if previous_key.startswith(row_project+'::w')
+                            else f'{row_project}::w{local_slot}')
                 status=str(occupied['status'] or '')
                 project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
                 if status=='verifying' or project_priority=='system':
@@ -2856,10 +3120,26 @@ def portfolio_queue_allocate():
         # A Force Start only needs an allocation override when its project is not
         # already resident. Pick one queued force-intent candidate deterministically.
         force_pairs=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+        occupied_counts={}
+        for occupied in occupied_rows:
+            pid=str(occupied['project_id'] or '')
+            occupied_counts[pid]=occupied_counts.get(pid,0)+1
+        occupied_slots={int(x['worker_slot']):str(x['project_id'] or '') for x in occupied_rows}
         force_pairs=[
             pair for pair in force_pairs
-            if str(pair[0]['project_id'] or '') not in occupied_projects
-            and _manual_force_start_priority_active_locked(c,pair[0]['project_id'],ts_dt)
+            if _manual_force_start_priority_active_locked(c,pair[0]['project_id'],ts_dt)
+            and (
+                str(pair[0]['project_id'] or '') not in occupied_projects
+                or (
+                    # A project that already has a worker may be forced into
+                    # another, explicitly selected slot ONLY when a separate,
+                    # scope-compatible queued lane and contractual capacity exist.
+                    (hint:=_manual_force_start_slot_locked(c,pair[0]['project_id'],ts_dt)) > 0
+                    and occupied_slots.get(hint) != str(pair[0]['project_id'] or '')
+                    and occupied_counts.get(str(pair[0]['project_id'] or ''),0)
+                        < _portfolio_project_hard_cap(pair[0]['project_id'])
+                )
+            )
         ]
         force_pair=min(
             force_pairs,
@@ -2871,6 +3151,7 @@ def portfolio_queue_allocate():
         ) if force_pairs else None
         force_project=str(force_pair[0]['project_id'] or '') if force_pair else ''
         force_queue_id=str(force_pair[0]['queue_id'] or '') if force_pair else ''
+        force_preferred_slot=_manual_force_start_slot_locked(c,force_project,ts_dt) if force_pair else 0
 
         # If Force Start targets an already-resident project, the normal command
         # path is enough; consume the transient allocation override immediately.
@@ -2880,6 +3161,8 @@ def portfolio_queue_allocate():
                     'DELETE FROM runtime_settings WHERE key=?',
                     (_manual_force_start_priority_key(project_id),),
                 )
+                c.execute('DELETE FROM runtime_settings WHERE key=?',
+                          (_manual_force_start_slot_key(project_id),))
 
         force_victim_slot=None
         if force_pair:
@@ -2890,7 +3173,9 @@ def portfolio_queue_allocate():
                 row_project=str(occupied['project_id'] or '')
                 local_ordinals[row_project]=local_ordinals.get(row_project,0)+1
                 local_slot=local_ordinals[row_project]
-                worker_key=f'{row_project}::w{local_slot}'
+                previous_key=prior_worker_by_slot.get(int(occupied['worker_slot'] or 0),'')
+                worker_key=(previous_key if previous_key.startswith(row_project+'::w')
+                            else f'{row_project}::w{local_slot}')
                 project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
                 if row_project==force_project or project_priority=='system':
                     continue
@@ -2907,7 +3192,11 @@ def portfolio_queue_allocate():
                     int(occupied['worker_slot'] or 0),
                 ))
             if victims:
-                force_victim_slot=min(victims)[-1]
+                # Force for a specific UI worker MUST NOT preempt an unrelated
+                # slot. A busy/protected requested slot remains untouched.
+                eligible=[v for v in victims if not force_preferred_slot or v[-1]==force_preferred_slot]
+                if eligible:
+                    force_victim_slot=min(eligible)[-1]
 
         for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
             row=c.execute("""SELECT * FROM portfolio_queue
@@ -2919,6 +3208,10 @@ def portfolio_queue_allocate():
             # slot was occupied before any priority/manual-start preemption below.
             slot_was_occupied = row is not None
             lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+            # Do not admit this forced queue item in the wrong global slot.
+            if force_pair and force_preferred_slot and slot!=force_preferred_slot:
+                lane_candidates=[pair for pair in lane_candidates
+                                 if str(pair[0]['queue_id'] or '')!=force_queue_id]
             used_counts={}
             for item in selected:
                 pid=str(item.get('project_id') or '')
@@ -2985,7 +3278,9 @@ def portfolio_queue_allocate():
                         key=lambda pair: (
                             _portfolio_priority_rank(pair[0]['priority']),
                             0 if _manual_start_priority_active_locked(c,pair[0]['project_id'],ts_dt) else 1,
-                            str(pair[0]['created_at'] or ''),
+                            work_package_rank(dict(pair[0])),
+                            work_package_rank(dict(pair[0])),
+                    str(pair[0]['created_at'] or ''),
                             str(pair[0]['queue_id'] or ''),
                         ),
                     )[0] if (manual_candidates or lane_candidates) else None
@@ -3049,6 +3344,15 @@ def portfolio_queue_allocate():
                 if not lane_candidates:
                     continue
 
+            # A selected Force target outranks unrelated queued lanes in its
+            # exact idle slot. It still needs a real eligible queue claim and
+            # still passes the hard-cap and memory admission checks below.
+            if force_pair and force_preferred_slot==slot and not force_replacement:
+                force_candidates=[pair for pair in lane_candidates
+                                  if str(pair[0]['queue_id'] or '')==force_queue_id]
+                if force_candidates:
+                    lane_candidates=force_candidates
+
             # Hard caps are project-specific and apply even when no alternative
             # project is runnable. This prevents FTMO PR/CI churn from consuming
             # more browser/code-worker slots than the runner can productively serve.
@@ -3094,15 +3398,17 @@ def portfolio_queue_allocate():
                       (slot,ts,lease_until,ts,lane_metadata,row['queue_id']))
             row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(row['queue_id'],)).fetchone()
             selected.append(_portfolio_queue_row(row))
-            if force_replacement and str(row['project_id'] or '')==force_project:
+            if (force_replacement or force_preferred_slot==slot) and str(row['project_id'] or '')==force_project:
                 c.execute(
-                    'DELETE FROM runtime_settings WHERE key=?',
-                    (_manual_force_start_priority_key(force_project),),
+                    'DELETE FROM runtime_settings WHERE key IN (?,?)',
+                    (_manual_force_start_priority_key(force_project),
+                     _manual_force_start_slot_key(force_project)),
                 )
                 force_pair=None
                 force_project=''
                 force_queue_id=''
                 force_victim_slot=None
+                force_preferred_slot=0
             if not slot_was_occupied:
                 new_workers_claimed += 1
     return selected
@@ -3227,12 +3533,40 @@ def portfolio_queue_allocation():
         item=portfolio_queue_current_for_slot(slot)
         if item:
             active.append(item)
+    # Keep an existing project's worker ordinal bound to its previous
+    # physical slot. If an idle lower-numbered slot is later Force-assigned
+    # to the same project, renumbering its generating worker would silently
+    # orphan the active browser session.
+    with connect() as c:
+        previous={
+            (str(r['project_id']),int(r['slot'])):int(r['worker_slot'])
+            for r in c.execute(
+                'SELECT slot,project_id,worker_slot FROM ai_global_slots'
+            ).fetchall()
+        }
+    # Reserve ALL surviving worker ordinals before filling any newly
+    # available global slot. Allocating low-numbered slots first otherwise
+    # steals w1 from an already-generating worker on global slot 2.
+    surviving={(str(item['project_id']),int(item['worker_slot']))
+               for item in active}
+    protected={}
+    for (project_id,global_slot),old in previous.items():
+        if (project_id,global_slot) in surviving and old > 0:
+            protected.setdefault(project_id,set()).add(old)
     used={}
     workers=[]
     for item in sorted(active,key=lambda x:int(x.get('worker_slot') or 99)):
         project_id=item['project_id']
-        local_slot=used.get(project_id,0)+1
-        used[project_id]=local_slot
+        global_slot=int(item['worker_slot'])
+        reserved=used.setdefault(project_id,set())
+        old=previous.get((project_id,global_slot))
+        if old and old > 0 and old not in reserved:
+            local_slot=old
+        else:
+            local_slot=1
+            while local_slot in reserved or local_slot in protected.get(project_id,set()):
+                local_slot+=1
+        reserved.add(local_slot)
         workers.append({
             'worker_key':f'{project_id}::w{local_slot}',
             'project_id':project_id,
@@ -3596,6 +3930,13 @@ def runner_worker_targets(allocation=None, base=None, *, reconcile=True):
                               if allocated else f"{cfg['name']} · worker {slot}/{count}"))
                 rendered_prompt=cfg['prompt'] if reviewer_mode else project_worker_prompt(
                     project_id,cfg['name'],cfg['prompt'],slot,count,queue_item
+                )
+                # Applied to EVERY outgoing worker prompt, including zSentinel and reviewer.
+                rendered_prompt += (
+                    ' VPS/SSH: gebruik voortaan standaard de verbonden zSSH MCP-tools '
+                    '(zssh_exec/zssh_run_safe) voor toegestane VPS-toegang en commando’s. '
+                    'Geen handmatige SSH als zSSH beschikbaar is. Respecteer de zSSH-rechten; '
+                    'bij weigering geen omweg, maar pak ander veilig werk.'
                 )
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
@@ -4131,6 +4472,14 @@ class Handler(BaseHTTPRequestHandler):
                 project_id=str(payload.get('project_id') or '')
                 action=str(payload.get('action') or '')
                 force_start=action=='start' and payload.get('force') is True
+                force_slot=0
+                if force_start and payload.get('global_worker_slot') is not None:
+                    raw=payload.get('global_worker_slot')
+                    if isinstance(raw,bool) or not isinstance(raw,int) or not (1 <= raw <= GLOBAL_CHATGPT_WORKER_LIMIT):
+                        return self.reply({'error':'Ongeldig workerslot voor Forceer'},400)
+                    force_slot=raw
+                    if force_slot>dynamic_provider_count('chatgpt'):
+                        return self.reply({'error':'Dit slot is geen ChatGPT-worker'},409)
                 if action=='restart_firefox':
                     try:
                         status=restart_firefox_runtime()
@@ -4171,6 +4520,12 @@ class Handler(BaseHTTPRequestHandler):
                                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
                                 (_manual_force_start_priority_key(base_project_id),intent_ts,intent_ts,actor),
                             )
+                            if force_slot:
+                                c.execute(
+                                    "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
+                                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,actor=excluded.actor",
+                                    (_manual_force_start_slot_key(base_project_id),str(force_slot),intent_ts,actor),
+                                )
                     elif not is_worker and action=='pause':
                         c.execute(
                             'DELETE FROM runtime_settings WHERE key IN (?,?)',
@@ -4179,6 +4534,8 @@ class Handler(BaseHTTPRequestHandler):
                                 _manual_force_start_priority_key(base_project_id),
                             ),
                         )
+                        c.execute('DELETE FROM runtime_settings WHERE key=?',
+                                  (_manual_force_start_slot_key(base_project_id),))
                     # Health treats pending browser commands older than the
                     # canonical threshold as invalid. Keep admission fail-safe too,
                     # even though the scheduler now reconciles the same global set
@@ -4246,7 +4603,8 @@ class Handler(BaseHTTPRequestHandler):
                                     c.execute('UPDATE runner_targets SET active=0 WHERE project_id=?',(project_id,))
                                     c.execute("UPDATE runner_workers SET desired_state='paused' WHERE project_id=?",(project_id,))
                             ts=now()
-                            cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at) VALUES(?,?,?,?,?)',(project_id,action,'pending',ts,ts))
+                            cur=c.execute('INSERT INTO runner_commands(project_id,action,status,created_at,updated_at,result) VALUES(?,?,?,?,?,?)',(project_id,action,'pending',ts,ts,('force-new-tab:slot='+str(force_slot)) if force_start and force_slot else
+                                ('force-new-tab' if force_start else None)))
                             command_id=cur.lastrowid
                 if rate_limited:
                     return self.reply({'error':'Er is net al een actie voor deze worker of dit project gestart'},429)
@@ -4549,13 +4907,23 @@ class Handler(BaseHTTPRequestHandler):
             except Exception: command_limit=100
             with connect() as c:
                 rows=c.execute(
-                    "SELECT id,project_id,action,created_at FROM ("
-                    "SELECT id,project_id,action,created_at FROM runner_commands "
+                    "SELECT id,project_id,action,created_at,result FROM ("
+                    "SELECT id,project_id,action,created_at,result FROM runner_commands "
                     "WHERE status='pending' ORDER BY id DESC LIMIT ?"
                     ") ORDER BY id",
                     (command_limit,),
                 ).fetchall()
-            return self.reply({'commands':[dict(r) for r in rows]})
+            # Old userscripts only understand 'start'. Wire a distinct browser-facing
+            # action for Force so an outdated tab can NEVER consume its fresh
+            # replacement-tab ticket while Firefox/Violentmonkey updates.
+            return self.reply({'commands':[{'id':r['id'],'project_id':r['project_id'],
+                'action':'force_start' if str(r['result'] or '').startswith('force-new-tab') else r['action'],
+                'created_at':r['created_at'],
+                'force':str(r['result'] or '').startswith('force-new-tab'),
+                'global_worker_slot':(int(r['result'].split('slot=',1)[1]) if
+                                      str(r['result'] or '').startswith('force-new-tab:slot=') and
+                                      str(r['result'].split('slot=',1)[1]).isdecimal() else None)}
+                for r in rows]})
         with LOCK:data=CACHE
         if u.path.startswith('/api/'):
             if data is None:return self.reply({'error':'Monitor start op'},503)
@@ -4600,4 +4968,5 @@ if __name__=='__main__':
     init_db()
     threading.Thread(target=sampler,daemon=True,name='cloud-monitor').start()
     threading.Thread(target=autonomy_scheduler,daemon=True,name='zcloud-autonomy').start()
+    threading.Thread(target=firefox_watchdog,daemon=True,name='zcloud-firefox-watchdog').start()
     ThreadingHTTPServer((os.getenv('ZENNAY_BIND','0.0.0.0'),int(os.getenv('ZENNAY_PORT','8765'))),Handler).serve_forever()

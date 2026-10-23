@@ -1,0 +1,154 @@
+name: zCloud hosted main source continuity (not production)
+
+# Independent of skip-ci merges; never emits zCloud regression smoke workflow_run.
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+  workflow_run:
+    workflows: ['zCloud autonomous safe PR integration']
+    types: [completed]
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-hosted-main-source-verification.yml
+      - scripts/zcloud_hosted_main_integrity_20261014.py
+      - tests/test_zcloud_hosted_main_integrity_20261014.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-main-source-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-source:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+       ((github.event_name == 'schedule' ||
+         (github.event_name == 'workflow_dispatch' &&
+          github.actor == 'Zennay' &&
+          github.triggering_actor == 'Zennay')) &&
+        github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_run' &&
+        github.ref == 'refs/heads/main' &&
+        github.event.workflow_run.name == 'zCloud autonomous safe PR integration' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        (github.event.workflow_run.event == 'schedule' ||
+         github.event.workflow_run.event == 'workflow_dispatch') &&
+        github.event.workflow_run.run_attempt == 1 &&
+        github.event.workflow_run.head_sha != github.sha)) &&
+      github.run_attempt == 1
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 12
+    steps:
+      - name: Checkout immutable event revision without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Set up pinned Node 24 for browser-contract tests
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Assert supported Node.js runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p 'process.versions.node.split(".")[0]')" = 24
+      - name: Verify SHA identity and fresh main before test
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          UPSTREAM_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          main_sha="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          python3 scripts/zcloud_hosted_main_integrity_20261014.py \
+            --stage before --event "$GITHUB_EVENT_NAME" --repository "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF" --actor "$GITHUB_ACTOR" \
+            --triggering-actor "$GITHUB_TRIGGERING_ACTOR" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --expected-sha "$EXPECTED_SHA" --checkout-sha "$(git rev-parse HEAD)" \
+            --main-sha "$main_sha" --head-repo "$HEAD_REPO" --upstream-sha "$UPSTREAM_SHA" \
+            | tee "$RUNNER_TEMP/zcloud-source-before.json"
+      - name: Verify complete Python regression without a production release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -v
+      - name: Verify shell and Firefox JavaScript contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/test_birds_eye_review.sh
+          bash tests/test_improvement_stopgate_js.sh
+          bash tests/test_autonomy_runner_js.sh
+          node tests/test_reload_extension.mjs
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
+          node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
+          node tests/test_violentmonkey_send_tab_preservation.js
+          node --check public/zcloud-worker.user.js
+      - name: Refuse source certification if main moved during tests
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          UPSTREAM_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          main_sha="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          python3 scripts/zcloud_hosted_main_integrity_20261014.py \
+            --stage after --event "$GITHUB_EVENT_NAME" --repository "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF" --actor "$GITHUB_ACTOR" \
+            --triggering-actor "$GITHUB_TRIGGERING_ACTOR" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --expected-sha "$EXPECTED_SHA" --checkout-sha "$(git rev-parse HEAD)" \
+            --main-sha "$main_sha" --head-repo "$HEAD_REPO" --upstream-sha "$UPSTREAM_SHA" \
+            | tee "$RUNNER_TEMP/zcloud-source-after.json"
+      - name: Summarize source-only verdict, never production proof
+        if: always()
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          temp = Path(os.environ['RUNNER_TEMP'])
+          def status(phase):
+              p = temp / f'zcloud-source-{phase}.json'
+              if not p.exists():
+                  return 'incomplete'
+              data = json.loads(p.read_text(encoding='utf-8'))
+              return 'verified-source-only' if data.get('source_verified') is True else 'deny'
+          report = [
+              '## zCloud hosted source continuity', '',
+              f"- Candidate: {os.environ['EXPECTED_SHA']}",
+              f"- Before: **{status('before')}**",
+              f"- After: **{status('after')}**",
+              '- VPS listener, Firefox, generation, SQLite and deployment: not inspected.',
+              '- Recovery, queue mutation and deployment authority: none.',
+          ]
+          Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8').write('\n'.join(report)+'\n')
+          PY
+      - name: Preserve bounded source-only verification receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-hosted-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-source-*.json
+          retention-days: 7
+          if-no-files-found: warn

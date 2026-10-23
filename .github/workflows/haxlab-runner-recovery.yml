@@ -1,50 +1,105 @@
-name: Recover HaxLab runner
+name: Recover HaxLab runner (owner-approved, no active listener restart)
 
+# P0 worker continuity: never retry/restart an active listener to prove health.
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/haxlab-runner-recovery.yml"
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: 'Exact current zCloud main commit SHA'
+        required: true
+        type: string
+      approve_inactive_start:
+        description: 'Approve starting only an inactive HaxLab Actions listener'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
   group: haxlab-runner-recovery
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   recover:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.approve_inactive_start == true &&
+      inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
-      - name: Recover HaxLab Actions listener
+      - name: Check out immutable approved main without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Verify owner, exact fresh main, and permanent zCloud runner
         shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
-          test "$(hostname)" = "vps-bb300bba"
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          live_main="$(timeout 15s git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]
+          test "$live_main" = "$GITHUB_SHA"
+          test "$(hostname)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null
+      - name: Only start an inactive HaxLab listener; preserve active assignments
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          # Recheck in the same shell step immediately before a possible write.
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          live_main="$(timeout 15s git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]
+          test "$live_main" = "$GITHUB_SHA"
+          test "$(hostname)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null
 
           SERVICE=actions.runner.Zennay-Haxlab.vps-bb300bba-haxlab.service
           RUN_USER=haxlab-runner
 
           pre_state="$(systemctl is-active "$SERVICE" || true)"
-          pre_pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
-          worker=0
-          if pgrep -u "$RUN_USER" -f 'Runner\.Worker' >/dev/null 2>&1; then
-            worker=1
-          fi
-
           action=none
           if [ "$pre_state" != "active" ]; then
+            # systemctl start is idempotent: an intervening listener recovery
+            # cannot be interrupted by this one-shot. Never restart or stop.
             sudo -n systemctl reset-failed "$SERVICE" || true
             sudo -n systemctl start "$SERVICE"
             action=start-inactive-listener
-          elif [ "$worker" -eq 1 ]; then
-            action=preserve-active-worker
           else
-            sudo -n systemctl restart "$SERVICE"
-            action=restart-idle-listener
+            # Absence of Runner.Worker is NOT proof a live listener is idle:
+            # a queued job may be assigned between our two observations.
+            action=preserve-active-listener
           fi
 
           for _ in $(seq 1 20); do
@@ -58,7 +113,8 @@ jobs:
           [[ "$pid" =~ ^[1-9][0-9]*$ ]]
           cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
           [[ "$cmdline" == *"Runner.Listener"* || "$cmdline" == *"runsvc.sh"* ]]
-
-          echo "HAXLAB_RUNNER_RECOVERY action=$action pre_state=$pre_state pre_pid=$pre_pid post_state=$state post_pid=$pid"
-          echo "HAXLAB_SERVICES"
+          # Bounded process state only: no command line, working directory,
+          # job contents, environment variables, tokens or project files.
+          echo "HAXLAB_LISTENER_RECOVERY action=$action pre_state=$pre_state post_state=$state pid_valid=true"
+          echo "HAXLAB_ADJACENT_SERVICE_STATES"
           systemctl is-active haxlab-ingest.service haxlab-worker.service haxlab-analyzer.service || true

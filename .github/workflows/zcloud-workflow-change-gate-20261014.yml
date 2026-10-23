@@ -1,0 +1,42 @@
+name: zCloud changed-workflow privilege gate
+
+# Source-only hosted validation: no VPS, privileged tokens or production actions.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_workflow_change_gate_20261014.py"
+      - "tests/test_zcloud_workflow_change_gate_20261014.py"
+      - "tests/test_zcloud_workflow_trusted_gate_20261014.py"
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Checkout exact PR revision with base history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify source, run negative tests and check changed workflow privilege
+        shell: bash
+        env:
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXACT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_HEAD"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          python3 -m py_compile scripts/zcloud_workflow_change_gate_20261014.py
+          python3 -m unittest -v tests.test_zcloud_workflow_change_gate_20261014
+          python3 scripts/zcloud_workflow_change_gate_20261014.py --base "$EXACT_BASE" --head "$EXACT_HEAD"

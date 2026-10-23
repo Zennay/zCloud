@@ -18,13 +18,18 @@
   "projects": [
     "haxlab",
     "ftmo",
+    "tradengine",
     "cloud",
     "supa",
     "raiseai",
     "ulab",
     "zssh",
     "lightup",
-    "zguard"
+    "zguard",
+    "mixlab",
+    "fuckball",
+    "tuddy",
+    "zsentinel"
   ],
   "capabilities": [
     "local-shell",

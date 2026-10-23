@@ -1,0 +1,28 @@
+[Unit]
+Description=zCloud verified cross-project cold archive offload
+Documentation=https://github.com/Zennay/zCloud/tree/main/ops/storage
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/zcloud-storage/retention.json
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+Environment=HOME=/home/ubuntu
+Environment=XDG_CONFIG_HOME=/home/ubuntu/.config
+StateDirectory=zcloud-cold-archive
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 /usr/local/libexec/zcloud-cold-archive.py --config /etc/zcloud-storage/retention.json --apply --max-files 100 --max-bytes 21474836480
+TimeoutStartSec=3h
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+LockPersonality=true
+ReadWritePaths=/var/lib/zcloud-cold-archive

@@ -1,0 +1,49 @@
+name: zCloud HaxLab write queue quarantine hosted proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/haxlab-write-backlog.yml"
+      - ".github/workflows/zcloud-haxlab-write-quarantine-hosted-20261014.yml"
+      - "tests/test_zcloud_haxlab_write_backlog_quarantine_20261014.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/haxlab-write-backlog.yml"
+      - ".github/workflows/zcloud-haxlab-write-quarantine-hosted-20261014.yml"
+      - "tests/test_zcloud_haxlab_write_backlog_quarantine_20261014.py"
+
+permissions:
+  contents: read
+
+jobs:
+  deny-automatic-worker-interruption:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == 'Zennay/zCloud' &&
+        github.event.pull_request.base.repo.full_name == 'Zennay/zCloud'))
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact immutable source without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Verify immutable GitHub repository before source execution
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPO" = "Zennay/zCloud"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Prove live queue mutations remain owner-only
+        run: python3 -m unittest -v tests.test_zcloud_haxlab_write_backlog_quarantine_20261014

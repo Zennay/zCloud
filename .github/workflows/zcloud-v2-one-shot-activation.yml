@@ -1,0 +1,86 @@
+name: zCloud P0 one-shot worker v2 activation
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-v2-one-shot-activation.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: zcloud-p0-one-shot-worker-v2-activation-alternate
+  cancel-in-progress: false
+jobs:
+  activate:
+    runs-on: [self-hosted, ftmo-research]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify one-tab engine from current main and activate without browser restart
+        shell: bash
+        env:
+          XDG_RUNTIME_DIR: /run/user/1000
+          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          node --check firefox-extension/worker-controller-v2.js
+          node --check public/zcloud-worker.user.js
+          node tests/test_single_tab_v2_crash_recovery.js
+          node tests/test_single_tab_v2_auto_heal.js
+          node tests/test_single_tab_worker_v2.js
+          node tests/test_single_tab_v2_thinking_high.js
+          node tests/test_v2_workmode_high_controls.js
+          node tests/test_single_tab_v2_cycle.js
+          root="/home/ubuntu/zennay-cloud"
+          addon="$HOME/snap/firefox/common/chatgpt-project-extension"
+          backup="$HOME/.local/state/zcloud/p0-v2-one-shot-$GITHUB_RUN_ID"
+          mkdir -p "$backup" "$root/public" "$addon"
+          before="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
+          test -n "$before"
+          kill -0 "$before"
+          echo "FIREFOX_PID_BEFORE=$before"
+          echo "DEPLOY_COMMIT=$(git rev-parse HEAD)"
+          python3 - <<'PY'
+          import json,pathlib
+          m=json.loads(pathlib.Path("firefox-extension/manifest.json").read_text())
+          assert m["background"]["scripts"][-1]=="worker-controller-v2.js"
+          assert "storage" in m["permissions"]
+          s=pathlib.Path("public/zcloud-worker.user.js").read_text()
+          assert "// @version      2.0.1" in s
+          assert "if (window.__ZCLOUD_SINGLE_TAB_V2) return;" in s
+          assert "POLL_MS=30000" in s
+          print("EXCLUSIVE_V2_SOURCE_CONTRACT=1")
+          PY
+          # Never kill Firefox, close tabs, navigate an existing page, or
+          # touch an expert tab. Backup only the exact files being replaced.
+          for rel in public/zcloud-worker.user.js public/zcloud-worker-v2-engine.js; do
+            test ! -e "$root/$rel" || cp -p "$root/$rel" "$backup/$(basename "$rel").previous"
+            install -m 0644 "$rel" "$root/$rel"
+            cmp "$rel" "$root/$rel"
+          done
+          for rel in background.js manifest.json worker-controller-v2.js; do
+            test ! -e "$addon/$rel" || cp -p "$addon/$rel" "$backup/$rel.previous"
+            install -m 0644 "firefox-extension/$rel" "$addon/$rel"
+            cmp "firefox-extension/$rel" "$addon/$rel"
+          done
+          echo "VM_V2_SOURCE_INSTALLED=1"
+          echo "ADDON_V2_FILES_INSTALLED=1"
+          bash scripts/zcloud_retire_legacy_worker_services.sh
+          # Addon-only reload never stops or restarts the Firefox process.
+          # V2 controller explicitly preserves preexisting unverified VM tabs.
+          node scripts/zcloud_reload_extension.mjs
+          sleep 3
+          after="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
+          test "$before" = "$after"
+          echo "FIREFOX_PID_AFTER=$after"
+          echo "SAME_FIREFOX_PROCESS_VERIFIED=1"
+          echo "V2_ADDON_CONTROLLER_HOT_RELOADED=1"
+          echo "CRASH_TAB_REHYDRATION_INSTALLED=1"
+          echo "ACTIVE_TAB_SELF_HEAL_INSTALLED=1"
+          echo "NOTE=Violentmonkey installed script must independently upgrade to 2.0.1; existing tabs have not been reloaded."

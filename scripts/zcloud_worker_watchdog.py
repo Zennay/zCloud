@@ -493,6 +493,10 @@ def run_once(
     if runtime_status >= 300:
         fallback_memory = host_memory_guard()
         live_status, live_runtime = api_call(base_url, "GET", "/api/runner-live")
+
+        # A timeout and missing runner telemetry never prove Firefox crashed.
+        # Keep every existing browser/expert tab; dedicated browser-liveness
+        # recovery handles an actually dead Firefox process.
         if (
             selected_keys
             and degraded_memory_recovery_needed(fallback_memory)
@@ -501,65 +505,23 @@ def run_once(
                 live_runtime if live_status < 300 else {},
             )
         ):
-            global_state = state.setdefault("global", {})
-            last_restart_age = seconds_since(global_state.get("last_firefox_restart_at"), now)
-            if last_restart_age < FIREFOX_RUNTIME_RESTART_COOLDOWN_SECONDS:
-                state["updated_at"] = now.isoformat()
-                state["version"] = 1
-                if not dry_run:
-                    save_state(state_path, state)
-                return {
-                    "ok": True,
-                    "checked_at": now.isoformat(),
-                    "allocated_workers": sorted(selected_keys),
-                    "worker_count": len(selected_keys),
-                    "workers": [],
-                    "global_action": None,
-                    "memory_guard": fallback_memory,
-                    "reason": "status-unavailable-memory-pressure-recovery-cooldown",
-                    "targets_status": targets_status,
-                    "runtime_status": runtime_status,
-                    "runner_live_status": live_status,
-                }
-
-            if dry_run:
-                action = {
-                    "action": "restart_firefox",
-                    "reason": "status-unavailable-memory-pressure-worker-runtime-lost",
-                    "ok": True,
-                    "dry_run": True,
-                }
-            else:
-                status_code, payload = api_call(
-                    base_url,
-                    "POST",
-                    "/api/runner-control",
-                    {"project_id": "", "action": "restart_firefox"},
-                )
-                accepted = status_code < 300 and bool(payload.get("ok"))
-                action = {
-                    "action": "restart_firefox",
-                    "reason": "status-unavailable-memory-pressure-worker-runtime-lost",
-                    "ok": accepted,
-                    "http_status": status_code,
-                    "response": payload,
-                }
-                if accepted:
-                    global_state["last_firefox_restart_at"] = now.isoformat()
-
             state["updated_at"] = now.isoformat()
             state["version"] = 1
             if not dry_run:
                 save_state(state_path, state)
             return {
-                "ok": bool(action.get("ok")),
+                "ok": True,
                 "checked_at": now.isoformat(),
                 "allocated_workers": sorted(selected_keys),
                 "worker_count": len(selected_keys),
                 "workers": [],
-                "global_action": action,
+                "global_action": {
+                    "action": "restart_firefox_suppressed",
+                    "ok": True,
+                    "reason": "browser-liveness-unverified-preserve-tabs",
+                },
                 "memory_guard": fallback_memory,
-                "reason": "status-unavailable-memory-pressure-worker-runtime-lost",
+                "reason": "status-unavailable-memory-pressure-browser-preserved",
                 "targets_status": targets_status,
                 "runtime_status": runtime_status,
                 "runner_live_status": live_status,
@@ -587,12 +549,8 @@ def run_once(
     firefox_recovery_reason = None
     if selected_keys and not bool(firefox.get("active")):
         firefox_recovery_reason = "firefox-runtime-inactive"
-    elif critical_memory_firefox_recovery_needed(
-        selected_keys=selected_keys,
-        runtime=runtime,
-        memory_guard=memory_guard,
-    ):
-        firefox_recovery_reason = "critical-memory-worker-runtime-lost"
+    # Never recycle a live Firefox process due to critical RAM or missing
+    # worker heartbeats. Browser liveness recovery is independently managed.
 
     if firefox_recovery_reason:
         global_state = state.setdefault("global", {})
@@ -780,26 +738,12 @@ def run_once(
 
     global_action = None
     if selected_keys and len(global_recovery_candidates) == len(selected_keys):
-        global_state = state.setdefault("global", {})
-        if seconds_since(global_state.get("last_firefox_restart_at"), now) >= GLOBAL_RECOVERY_COOLDOWN_SECONDS:
-            if dry_run:
-                global_action = {"action": "restart_firefox", "ok": True, "dry_run": True}
-            else:
-                status_code, payload = api_call(
-                    base_url,
-                    "POST",
-                    "/api/runner-control",
-                    {"project_id": "", "action": "restart_firefox"},
-                )
-                accepted = status_code < 300 and bool(payload.get("ok"))
-                global_action = {
-                    "action": "restart_firefox",
-                    "ok": accepted,
-                    "http_status": status_code,
-                    "response": payload,
-                }
-                if accepted:
-                    global_state["last_firefox_restart_at"] = now.isoformat()
+        # Per-worker in-tab recovery only; never kill the desktop browser.
+        global_action = {
+            "action": "restart_firefox_suppressed",
+            "ok": True,
+            "reason": "stalled-workers-preserve-existing-tabs",
+        }
 
     state["updated_at"] = now.isoformat()
     state["version"] = 1

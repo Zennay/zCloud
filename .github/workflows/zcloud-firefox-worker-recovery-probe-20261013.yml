@@ -1,0 +1,171 @@
+name: zCloud Firefox worker tab recovery read-only probe
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-firefox-worker-recovery-probe-20261013.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-firefox-worker-recovery-probe-20261013.yml
+      - scripts/zcloud_firefox_readonly_snapshot_20261014.py
+      - scripts/zcloud_firefox_rdp_ports_20261016.py
+      - tests/test_zcloud_firefox_rdp_ports_20261016.py
+      - tests/test_zcloud_firefox_readonly_snapshot_20261014.py
+      - tests/test_zcloud_firefox_probe_manual_trust_20261014.py
+  workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact current main SHA explicitly approved for read-only Firefox debugger inspection"
+        required: true
+        type: string
+      approve_readonly_probe:
+        description: "Confirm local read-only Firefox observation without changing tabs or worker state"
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: zcloud-manual-firefox-debugger-readonly
+  cancel-in-progress: false
+jobs:
+  hosted-proof:
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+       github.repository == 'Zennay/zCloud')
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify offline SQLite-only metadata and no GET-side mutation
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m unittest -v tests.test_zcloud_firefox_readonly_snapshot_20261014
+          python3 -m py_compile scripts/zcloud_firefox_readonly_snapshot_20261014.py
+          python3 -m unittest -v tests.test_zcloud_firefox_probe_manual_trust_20261014
+          python3 -m unittest -v tests.test_zcloud_firefox_rdp_ports_20261016
+
+  inspect:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      github.ref == 'refs/heads/main' &&
+      inputs.approve_readonly_probe == true &&
+      inputs.confirm_sha == github.sha
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Enforce exact current main and permanent VPS before local observation
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+          APPROVED: ${{ inputs.approve_readonly_probe }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$APPROVED" = true
+          [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$CONFIRMED_SHA"
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(hostname -s)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Inspect local SQLite counters strictly read-only
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CONFIRMED_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$CONFIRMED_SHA"
+          python3 scripts/zcloud_firefox_readonly_snapshot_20261014.py
+      - name: Inspect running Firefox, addon launcher, and active script evidence without mutation
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(git rev-parse HEAD)" = "$CONFIRMED_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$CONFIRMED_SHA"
+          python3 - <<'PY'
+          import json,pathlib,subprocess,re,socket
+          from scripts.zcloud_firefox_rdp_ports_20261016 import extract_ports
+          out=subprocess.check_output(["ps","-eo","pid=,ppid=,args="],text=True)
+          rows=out.splitlines()
+          main=[x for x in rows if "firefox" in x.lower() and "-start-debugger-server" in x and "contentproc" not in x]
+          launcher=[x for x in rows if "web-ext" in x and "run" in x and "--source-dir" in x]
+          print("FIREFOX_PROCESSES="+str(len(main)))
+          print("FIREFOX_LAUNCHED_WITH_WEB_EXT="+str(bool(launcher)))
+          print("FIREFOX_DEBUGGER_PROCESS_COUNT="+str(len(main)))
+          print("FIREFOX_PROFILE_ORIGINAL="+str(any("chatgpt-webext-profile" in x for x in main)))
+          src=pathlib.Path("/home/ubuntu/snap/firefox/common/chatgpt-project-extension")
+          script=src/"worker-controller-v2.js"
+          manifest=src/"manifest.json"
+          print("V2_ADDON_SOURCE_ON_DISK="+str(script.is_file()))
+          if manifest.is_file():
+            data=json.loads(manifest.read_text());print("EXTENSION_MANIFEST_VERSION="+str(data.get("version")))
+          # No localhost control-plane GETs: /api/runner-targets may reconcile
+          # and mutate SQLite (issue #1341). This live probe deliberately reports
+          # no worker identities, prompts or browser navigation.
+          print("RUNNER_TARGETS_HTTP_SKIPPED=backend_get_may_write")
+          ports=extract_ports(main)
+          if len(ports)!=1:
+            print("RDP_SKIPPED=port-not-unique")
+          else:
+            try:
+              sock=socket.create_connection(("127.0.0.1",ports[0]),timeout=4)
+              sock.settimeout(6)
+              def recv():
+                prefix=bytearray()
+                for _ in range(10):
+                  c=sock.recv(1)
+                  if c==b":":break
+                  if not c or not c.isdigit():raise ValueError("frame")
+                  prefix+=c
+                else:
+                  raise ValueError("oversize RDP frame header")
+                if not prefix:raise ValueError("empty RDP frame header")
+                n=int(prefix)
+                if n<1 or n>1_000_000:raise ValueError("oversize RDP frame")
+                data=bytearray()
+                while len(data)<n:
+                  part=sock.recv(min(65536,n-len(data)))
+                  if not part:raise EOFError("incomplete RDP response")
+                  data.extend(part)
+                return json.loads(data.decode("utf-8","strict"))
+              def send(data):
+                b=json.dumps(data).encode();sock.sendall(str(len(b)).encode()+b":"+b)
+              root=recv();send({"to":root.get("from","root"),"type":"listAddons"})
+              ans=recv()
+              addons=[{"id":a.get("id"),"name":a.get("name")} for a in ans.get("addons",[]) if "project-runner" in str(a.get("id",""))]
+              print("LIVE_PROJECT_RUNNER_ADDON_COUNT="+str(len(addons)))
+              sock.close()
+            except Exception as e:print("RDP_PROBE_ERROR="+type(e).__name__)
+          print("READ_ONLY_NO_PROCESS_OR_TAB_MUTATION=1")
+          PY

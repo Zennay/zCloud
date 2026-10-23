@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      1.3.16
+// @version      2.0.5
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -16,11 +16,405 @@
 // @downloadURL  http://127.0.0.1:8765/zcloud-worker.user.js
 // ==/UserScript==
 
+// zCloud v2 browser DOM engine. Bundled into zcloud-worker.user.js.
+// Exactly one slot-bound browser tab; no window/tab APIs and no location redirects.
 (() => {
+  "use strict";
+  window.__ZCLOUD_SINGLE_TAB_V2 = true;
+  if (location.hostname !== "chatgpt.com") return;
+  const fromUrl = new URL(location.href).searchParams.get("zcloud_worker") || "";
+  const stored = sessionStorage.getItem("zcloud-v2-worker") || sessionStorage.getItem("zcloud-bound-project") || "";
+  if (fromUrl && stored && fromUrl !== stored) return;
+  // Force commands have a unique browser-tab ticket. An older conversation
+  // with the same worker ID must not steal a forced prompt on project switch.
+  const ticketFromUrl = new URL(location.href).searchParams.get("zcloud_force_command") || "";
+  const forceTicket = /^(?:[1-9][0-9]*)$/.test(ticketFromUrl) ? ticketFromUrl :
+    sessionStorage.getItem("zcloud-v2-force-command") || "";
+  if (ticketFromUrl) sessionStorage.setItem("zcloud-v2-force-command",forceTicket);
+  const id = fromUrl || stored;
+  if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
+  window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
+  sessionStorage.setItem("zcloud-v2-worker",id);
+  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.5");
+  document.documentElement?.setAttribute("data-zcloud-v2-owner",id);
+  const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  let target=null,inflight=false,sending=false,awaiting=false,everGenerating=false;
+  const markBusy=()=>document.documentElement?.setAttribute("data-zcloud-v2-busy",
+    sending||awaiting||generating()?"true":"false");
+  // An explicit Force owns one command ID and may only be delivered to its
+  // freshly created tab. Fail closed when the local command service is down.
+  async function forceAllowed(){
+    try{
+      const payload=await api("/runner-commands?limit=100");
+      return !(payload.commands||[]).some(c=>c?.force===true &&
+        (c.project_id===id||c.project_id===target?.base_project_id) &&
+        String(c.id)!==forceTicket);
+    }catch(_){return false}
+  }
+  let resetRoute=null;
+  let promptAt=0,awaitingAt=0,baseline="",baselineAssistantCount=0,next=false,lastBlock="",lastCommand=0;
+  let reportedConversation=sessionStorage.getItem("zcloud-v2-reported-conversation")||"";
+  let chatAt=Number(sessionStorage.getItem("zcloud-v2-chat-at")||0);
+  if(!chatAt||chatAt>Date.now())chatAt=Date.now();
+  sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
+  const label=el=>String(el?.getAttribute?.("aria-label")||el?.getAttribute?.("aria-valuetext")||el?.innerText||el?.textContent||"").trim();
+  const visible=el=>{if(!el)return false;const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=="none"&&s.visibility!=="hidden"&&r.width>0&&r.height>0};
+  const generating=()=>!!document.querySelector('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]');
+  const reply=()=>{const a=[...document.querySelectorAll('[data-message-author-role="assistant"]')];return a.length?String(a[a.length-1].innerText||a[a.length-1].textContent||"").trim():""};
+  const conversation=()=>location.pathname.match(/^\/c\/([0-9a-f-]{20,})/i)?.[1]||"";
+  const assistantCount=()=>document.querySelectorAll('[data-message-author-role="assistant"]').length;
+  function api(path,method="GET",body=null){
+    return new Promise((resolve,reject)=>GM_xmlhttpRequest({
+      method,url:API+path,timeout:9000,headers:body?{"Content-Type":"application/json"}:undefined,
+      data:body?JSON.stringify(body):undefined,
+      onload:r=>{try{if(r.status<200||r.status>=300)throw Error("HTTP "+r.status);resolve(JSON.parse(r.responseText||"{}"))}catch(e){reject(e)}},
+      onerror:()=>reject(Error("offline")),ontimeout:()=>reject(Error("timeout"))
+    }));
+  }
+  async function status(event,extra={}){
+    if(!target)return;
+    const at=new Date().toISOString();
+    try{await api("/runner-status","POST",{
+      projectId:id,baseProjectId:target.base_project_id||id.split("::w")[0],
+      workerSlot:target.worker_slot||1,globalWorkerSlot:target.global_worker_slot||1,
+      queueItem:target.queue_item?.queue_id||"",projectName:target.name||id,
+      target:location.href,targetConversation:conversation(),title:document.title,
+      event,at,progressAt:at,generating:generating(),sending,
+      assistantCharacters:reply().length,runner:"violentmonkey",
+      provider:"chatgpt",runnerVersion:"2.0.5",...extra
+    })}catch(_){}
+  }
+  async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
+  function high(){
+    // The live composer attribute is authoritative: a checked menu item
+    // elsewhere must never override an explicitly Medium/Low composer.
+    const triggers=[...document.querySelectorAll('button[data-codex-intelligence-trigger][data-selected-reasoning-effort]')].filter(visible);
+    if(triggers.length)return triggers.every(el=>el.getAttribute("data-selected-reasoning-effort")==="high");
+    if([...document.querySelectorAll('[data-selected-reasoning-effort="high"]')].some(visible))return true;
+    if([...document.querySelectorAll('button,[role="button"]')].some(el=>visible(el)&&/^(high|hoog) selector\b/i.test(label(el))))return true;
+    return [...document.querySelectorAll('[role="menuitemradio"],[role="radio"],[role="option"]')]
+      .some(el=>visible(el)&&/^(high|hoog)$/i.test(label(el))&&
+        (el.getAttribute("aria-checked")==="true"||el.getAttribute("aria-selected")==="true"));
+  }
+  async function ensureHigh(){
+    if(high())return true;
+    const selectors=['button[data-codex-intelligence-trigger][data-composer-navigation-target="reasoning"]',
+      'button[data-codex-intelligence-trigger]',
+      'button[aria-label="ChatGPT-model selecteren"]','button[aria-label="Select ChatGPT model"]',
+      'button[data-testid="model-switcher-dropdown-button"]',
+      'button[aria-label*="Thinking" i][aria-haspopup]'];
+    // Responsive layouts can contain a hidden first match. Inspect all.
+    const picker=selectors.flatMap(s=>[...document.querySelectorAll(s),document.querySelector(s)]).find(visible);
+    if(!picker){await status("thinking-high-unavailable",{reason:"selector-missing"});return false}
+    if(picker.getAttribute("aria-expanded")!=="true")picker.click();
+    const exactHigh=el=>{
+      const value=String(el.getAttribute("data-value")||"").trim();
+      const name=String(el.getAttribute("aria-label")||"").trim();
+      const text=String(el.innerText||el.textContent||"").trim().split(/\n/)[0].trim();
+      return /^(high|hoog)(?: thinking)?$/i.test(value||name||text);
+    };
+    let selected=false,openedThinking=false;
+    for(let n=0;n<20;n++){
+      await sleep(170);
+      if(high())return true;
+      const candidates=[...document.querySelectorAll('button,[role="menuitemradio"],[role="radio"],[role="menuitem"],[role="option"]')];
+      const option=candidates.find(el=>visible(el)&&exactHigh(el));
+      if(option&&!selected){option.click();selected=true;continue}
+      if(!option&&!openedThinking){
+        const thinking=candidates.find(el=>visible(el)&&/^(thinking|denkmodus)$/i.test(label(el)));
+        if(thinking){thinking.click();openedThinking=true}
+      }
+    }
+    await status("thinking-high-unavailable",{reason:"not-confirmed"});
+    return false; // NEVER send in Instant/Medium.
+  }
+  function newChatButton(){
+    return ['button[aria-label="Nieuwe chat"]','button[aria-label="New chat"]',
+      'button[data-testid="new-chat-button"]'].flatMap(s=>[...document.querySelectorAll(s),document.querySelector(s)]).find(visible)||null;
+  }
+  function failedConversation(){
+    const t=String((document.querySelector("main")||document.body)?.innerText||"").toLowerCase();
+    return /could not load (?:this )?(?:chatgpt )?conversation|conversation not found|gesprek kon niet worden geladen/.test(t);
+  }
+  async function newChat(reason){
+    if(generating()||sending||awaiting)return false;
+    const button=newChatButton();
+    if(!button){await blocked("new-chat-button-missing");return false}
+    resetRoute=location.pathname;
+    button.click(); // SAME browser tab; SPA route, not location.assign
+    chatAt=Date.now();sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
+    promptAt=0;next=true;everGenerating=false;baseline="";
+    await status("conversation-reset-requested",{reason});
+    return true;
+  }
+  const composer=()=>document.querySelector('#prompt-textarea,[contenteditable="true"][role="textbox"],textarea');
+  const sendButton=()=>document.querySelector('button[data-testid="send-button"],button[aria-label="Send message"],button[aria-label="Verzenden"]');
+  async function fill(text){
+    const box=composer();if(!visible(box))return false;
+    box.focus({preventScroll:true});
+    if(box.tagName==="TEXTAREA"||box.tagName==="INPUT"){
+      const proto=box.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+      const setter=Object.getOwnPropertyDescriptor(proto,"value")?.set;
+      if(setter)setter.call(box,text);else box.value=text;
+      box.dispatchEvent(new Event("input",{bubbles:true}));
+    }else{
+      document.execCommand("selectAll",false,null);
+      document.execCommand("insertText",false,text);
+      box.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:text}));
+    }
+    await sleep(350);
+    return !!String(box.value||box.innerText||box.textContent||"").trim();
+  }
+  function ready(t){
+    if(!t||t.active!==true||t.assignment_ready!==true||t.desired_state==="paused"||t.desired_state==="draining")return false;
+    const slot=Number(t.global_worker_slot||0),total=Number(t.global_worker_count||0);
+    return slot>0&&total>=slot&&!!String(t.queue_item?.queue_id||"")&&
+      String(t.prompt||"").startsWith("Werk verder aan ")&&
+      String(t.prompt||"").includes("Kijk in Notion");
+  }
+  // Long policy instructions belong in the first message of a claimed ChatGPT chat.
+  // Repeated prompts in that SAME chat may be short, but never carry over to a
+  // new conversation, different queue claim or another worker's assignment.
+  const initialContextKey="zcloud-v2-full-context:"+id;
+  function fullContextPolicy(full){
+    return full.includes("LEVERBELEID 20-10-2026")?"merge-first-20261020":"legacy";
+  }
+  function fullPromptVisible(full){
+    const prefix=full.slice(0,Math.min(64,full.length));
+    if(!prefix)return false;
+    return [...document.querySelectorAll('[data-message-author-role="user"]')]
+      .some(el=>{
+        const t=String(el.innerText||el.textContent||"");
+        return t.includes(prefix)&&t.includes("Kijk in Notion")&&
+          (fullContextPolicy(full)!=="merge-first-20261020" || t.includes("LEVERBELEID 20-10-2026"));
+      });
+  }
+  function promptForThisTurn(full){
+    const cid=conversation(),queue=String(target?.queue_item?.queue_id||"");
+    if(!cid||!queue)return full;
+    let prior=null;
+    try{prior=JSON.parse(sessionStorage.getItem(initialContextKey)||"null")}catch(_){}
+    if(prior&&prior.queue!==queue)return full; // A new claim needs its own full context.
+    const saved=prior?.queue===queue&&prior?.conversation===cid&&
+      prior?.policy===fullContextPolicy(full);
+    const visibleFull=fullPromptVisible(full);
+    if(!saved&&!visibleFull)return full;
+    if(visibleFull&&!saved){
+      try{sessionStorage.setItem(initialContextKey,JSON.stringify({queue,conversation:cid,policy:fullContextPolicy(full)}))}catch(_){}
+    }
+    const part=/^Werk verder aan ([^.\n]{2,80})\./.exec(full)?.[1]||"";
+    const project=part.startsWith("het herstel van ")?"zSentinel":
+      (part||String(target?.base_project_id||id.split("::w")[0]));
+    return "Ga door met "+project+".";
+  }
+  function noteFullContextSent(full,actual){
+    if(actual!==full)return;
+    try{sessionStorage.setItem(initialContextKey,JSON.stringify({
+      queue:String(target?.queue_item?.queue_id||""),
+      policy:fullContextPolicy(full),
+      conversation:conversation()||"",
+      pending:!conversation()
+    }))}catch(_){}
+  }
+  async function send(reason){
+    if(sending||awaiting||generating()||!target||!ready(target))return false;
+    if(!(await forceAllowed())){await blocked("force-tab-handoff-required");return false}
+    const fullPrompt=String(target.prompt||"").trim();if(!fullPrompt)return false;
+    const prompt=promptForThisTurn(fullPrompt);
+    sending=true;markBusy();
+    try{
+      if(!(await ensureHigh())){await blocked("high-not-verified");return false}
+      if(!(await fill(prompt))){await blocked("composer-missing");return false}
+      // Recheck after asynchronous UI work; settings/allocation can change.
+      if(!high()){await blocked("high-changed-before-send");return false}
+      const fresh=await api("/runner-targets");
+      if(!ready(fresh.projects?.[id])||fresh.projects[id].queue_item.queue_id!==target.queue_item.queue_id){
+        await blocked("assignment-changed-before-send");return false;
+      }
+      const button=sendButton();
+      if(!visible(button)||button.disabled||button.getAttribute("aria-disabled")==="true"){
+        await blocked("send-button-unavailable");return false;
+      }
+      baseline=reply();baselineAssistantCount=assistantCount();button.click();promptAt=Date.now();awaitingAt=promptAt;
+      awaiting=true;everGenerating=false;next=false;lastBlock="";
+      noteFullContextSent(fullPrompt,prompt);
+      await status("prompt-sent",{reason,thinkingEffort:"high"});
+      return true;
+    }finally{sending=false;markBusy()}
+  }
+  async function commands(){
+    let result;try{result=await api("/runner-commands")}catch(_){return}
+    const incoming=(result.commands||[]).filter(c=>c&&Number(c.id||0)>lastCommand&&
+      (c.project_id===id||(c.project_id===target?.base_project_id&&
+       (c.global_worker_slot?
+        Number(c.global_worker_slot)===Number(target?.global_worker_slot||0):
+        Number(target?.worker_slot||1)===1))));
+    for(const command of incoming){
+      const action=String(command.action||"");
+      if(!["start","force_start","push","new_chat"].includes(action))continue;
+      if(command.force===true && String(command.id)!==forceTicket)continue;
+      if(awaiting||generating()||sending)continue;
+      // Legacy watchdogs queue new_chat after a stale heartbeat, which used
+      // to steal a tab straight after Send. In v2, ONLY a visible load error
+      // or the 1-hour idle policy may reset the conversation.
+      if(action==="new_chat"){
+        try{await api("/runner-command-result","POST",{
+          command_id:command.id,status:"failed",
+          result:"v2 preserved tab; in-tab rotation limited to error or one-hour idle"
+        });lastCommand=Number(command.id)}catch(_){}
+        continue;
+      }
+      if(!(await send("database-"+action)))continue;
+      try{await api("/runner-command-result","POST",{
+        command_id:command.id,status:"completed",result:"single-tab worker v2 action"
+      });lastCommand=Number(command.id)}catch(_){}
+    }
+  }
+  async function poll(){
+    if(inflight)return;inflight=true;
+    // This is a liveness signal for the Firefox controller; independent of
+    // the selected tab or an ongoing assignment. A paused worker may report
+    // liveness, but it is NEVER reloaded while its assignment is paused.
+    document.documentElement?.setAttribute("data-zcloud-v2-last-poll",String(Date.now()));
+    try{
+      const payload=await api("/runner-targets"),actual=payload.projects?.[id]||null;
+      target=actual;
+      if(!ready(actual)){
+        // An open browser tab is not an authorized dispatch. Report the
+        // missing queue/slot contract instead of silently looking healthy.
+        if(actual && actual.active===true && actual.desired_state!=="paused" &&
+           actual.desired_state!=="draining"){
+          const reason=!actual.assignment_ready?"queue-assignment-not-ready":
+            !actual.queue_item?.queue_id?"queue-lease-missing":
+            !actual.global_worker_slot?"worker-slot-unallocated":
+            !String(actual.prompt||"").startsWith("Werk verder aan ")?"prompt-contract-mismatch":
+            "worker-target-not-ready";
+          await blocked(reason);
+        }
+        return;
+      }
+      await status("heartbeat",{reason:"worker-v2-check-30s"});
+      const cid=conversation();
+      if(cid && cid!==reportedConversation) {
+        reportedConversation=cid;
+        sessionStorage.setItem("zcloud-v2-reported-conversation",cid);
+        await status("conversation-adopted",{
+          reason:"v2-in-place-conversation",targetConversation:cid
+        });
+      }
+      if(generating()){
+        observedGenerating=true;
+        everGenerating=true;awaiting=false;
+        await status("generation-progress");return;
+      }
+      if(resetRoute!==null){
+        if(failedConversation()||!visible(composer())||
+           (location.pathname===resetRoute&&/^\/c\//.test(resetRoute))){
+          await blocked("new-chat-transition-pending");return;
+        }
+        resetRoute=null;
+        chatAt=Date.now();sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
+      }
+      // A terminal conversation-load error is stronger evidence than the
+      // pending generation timeout. It must be handled BEFORE the awaiting
+      // guard, otherwise a failed page remains stuck forever.
+      if(failedConversation()){
+        if(awaiting){
+          awaiting=false;everGenerating=false;next=false;
+          await status("generation-aborted",{reason:"conversation-load-failed"});
+        }
+        await newChat("could-not-load-conversation");
+        return;
+      }
+      const result=reply();
+      if(awaiting){
+        if(everGenerating||assistantCount()>baselineAssistantCount||(result&&result!==baseline)){
+          awaiting=false;everGenerating=false;next=true;
+          await status("generation-finished");
+        }else if(Date.now()-awaitingAt<120000){return}
+        else if(Date.now()-awaitingAt<300000){await blocked("generation-unconfirmed-no-duplicate");return}
+        else{
+          const box=composer(),draft=String(box?.value||box?.innerText||box?.textContent||"").trim();
+          if(!visible(box)||(draft&&draft!==String(target.prompt||"").trim())){
+            await blocked("stalled-send-preserved-draft");return;
+          }
+          awaiting=false;everGenerating=false;
+          await newChat("generation-never-started-five-minutes");
+          return;
+        }
+      }else if(everGenerating){
+        everGenerating=false;next=true;await status("generation-finished");
+      }
+      if(Date.now()-chatAt>=MAX_AGE){
+        if(await newChat("one-hour-conversation"))return;
+      }
+      await commands();
+      if((next||!promptAt)&&!awaiting&&!generating())
+        await send(next?"next-prompt-after-response":"initial-prompt");
+    }catch(e){await blocked("poll-error:"+String(e.message||e).slice(0,80))}
+    finally{inflight=false;markBusy()}
+  }
+  // Firefox addon wakes this exact slot after Forceer/Start, without
+  // waiting for the 30-second background heartbeat cycle. The page still
+  // verifies a fresh queue lease and Thinking High before any send.
+  markBusy();
+  document.documentElement?.addEventListener?.("zcloud-v2-wake", () => {
+    if (!inflight) poll();
+  });
+  // Background tabs should continue within seconds after completion,
+  // not wait for the next 30-second heartbeat. This is local DOM observation,
+  // not an extra per-worker API polling loop.
+  const FINISH_SETTLE_MS = 1800;
+  let finishTimer = null, observedGenerating = false;
+  function scheduleFinishedResponseCheck() {
+    if (finishTimer !== null) clearTimeout(finishTimer);
+    finishTimer = setTimeout(() => {
+      finishTimer = null;
+      if (generating() || sending || (!awaiting && !everGenerating)) return;
+      if (inflight) { scheduleFinishedResponseCheck(); return; }
+      // poll() refreshes allocation; send() verifies High and exact lease.
+      poll();
+    }, FINISH_SETTLE_MS);
+  }
+  function generationDomChanged() {
+    if (!awaiting && !everGenerating) {
+      observedGenerating = false;
+      return;
+    }
+    if (generating()) {
+      observedGenerating = true;
+      if (awaiting) { awaiting = false; everGenerating = true; }
+      if (finishTimer !== null) { clearTimeout(finishTimer); finishTimer = null; }
+      return;
+    }
+    if (observedGenerating) {
+      observedGenerating = false;
+      scheduleFinishedResponseCheck();
+    } else if (awaiting &&
+        (assistantCount() > baselineAssistantCount ||
+         (reply() && reply() !== baseline))) {
+      // A very fast response can elude the stop-button observer.
+      // Require fresh assistant content and the same settling window.
+      scheduleFinishedResponseCheck();
+    }
+  }
+  if (typeof MutationObserver === "function" && document.documentElement) {
+    const generationObserver = new MutationObserver(generationDomChanged);
+    generationObserver.observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ["data-testid", "aria-label"]
+    });
+  }
+  poll();setInterval(poll,POLL_MS);
+})();
+
+(() => {
+  if (window.__ZCLOUD_SINGLE_TAB_V2) return; // legacy timers retired in v2
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "1.3.16";
+  const SCRIPT_VERSION = "2.0.5";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
@@ -72,6 +466,8 @@
   let tickTimer = null;
   let heartbeatTimer = null;
   let freshConversationPending = false;
+  let lastRoutePreservationReportAt = 0;
+  let lastDeferredNewChatReportAt = 0;
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -222,6 +618,18 @@
     try { sessionStorage.setItem("zcloud-pending-project", String(projectId || "")); } catch (_) {}
   }
 
+  // A worker's tab is owned by its slot, not by a generic ChatGPT page or
+  // assistant conversation. Remember identity even after URL query cleanup.
+  // Unmarked expert/personal tabs must never be auto-adopted.
+  function boundProjectId() {
+    try { return sessionStorage.getItem("zcloud-bound-project") || ""; }
+    catch (_) { return ""; }
+  }
+  function rememberBoundProject(projectId) {
+    if (!projectId) return;
+    try { sessionStorage.setItem("zcloud-bound-project", String(projectId)); } catch (_) {}
+  }
+
   function clearNavigationMarkers() {
     try { sessionStorage.removeItem("zcloud-pending-project"); } catch (_) {}
     try {
@@ -290,30 +698,21 @@
   }
 
   async function requestFreshConversation(reason, commandId = 0) {
-    if (freshConversationPending || !target?.project_id || generationActive() || sending || awaitingGeneration) return false;
-    freshConversationPending = true;
-    const queueId = String(target?.queue_item?.queue_id || "").trim();
-    if (queueId) rememberQueueId(target.project_id, queueId);
-    setPendingProject(target.project_id);
-    await status("conversation-reset-requested", {
-      reason: String(reason || "fresh-chat-policy").slice(0, 120),
-      previousConversation: conversationId(),
-      queueItem: queueId
-    });
-    if (commandId) {
-      const acknowledged = await commandResult(
-        commandId,
-        "completed",
-        "Fresh chat requested by Violentmonkey worker"
-      );
-      if (!acknowledged) {
-        freshConversationPending = false;
-        return false;
-      }
-      lastHandledCommandId = Math.max(lastHandledCommandId, Number(commandId || 0));
+    // The userscript must never navigate or abandon a ChatGPT tab after
+    // sending. Even a database new_chat can be issued by the automatic
+    // watchdog, so it is NOT authorization to replace the conversation.
+    // Keep commands pending for explicit operator intervention; do not
+    // falsely acknowledge a reset that was not performed.
+    if (!target?.project_id) return false;
+    const now = Date.now();
+    if (now - lastDeferredNewChatReportAt > 60000) {
+      lastDeferredNewChatReportAt = now;
+      await status("auto-chat-navigation-suppressed", {
+        reason:String(reason || "preserve-existing-tab").slice(0,120),
+        commandId: Number(commandId || 0)
+      });
     }
-    location.assign(freshConversationNavigationUrl(target));
-    return true;
+    return false;
   }
 
   function claimKey(projectId) {
@@ -440,15 +839,22 @@
     const active = Object.values(projects).filter(item => item?.active === true);
     const ready = active.filter(assignmentReady);
     const pending = pendingProjectId();
+    // Do not claim an arbitrary ChatGPT tab to fill an empty worker slot.
+    // A stable worker marker or a previously bound tab is mandatory.
+    const ownedProjectId = pending || target?.project_id || boundProjectId();
     let next = null;
 
     if (pending && projects[pending] && claimCandidate(projects[pending])) next = projects[pending];
 
     const currentProvider = provider();
-    if (!next && isWorkerProvider(currentProvider)) {
+    if (!next && ownedProjectId && isWorkerProvider(currentProvider)) {
       const cid = conversationId();
       if (cid) {
-        const matched = active.find(item => candidateProvider(item) === currentProvider && item?.conversation_id === cid) || null;
+        const matched = active.find(item =>
+          item?.project_id === ownedProjectId &&
+          candidateProvider(item) === currentProvider &&
+          item?.conversation_id === cid
+        ) || null;
         if (matched && claimCandidate(matched)) next = matched;
       }
     }
@@ -457,14 +863,16 @@
       next = projects[target.project_id];
     }
 
-    if (!next) {
+    if (!next && ownedProjectId) {
+      // Only reclaim the tab's original worker. Never rotate an expert or an
+      // unrelated worker tab into whichever slot happens to be available.
       const ordered = [
         ...ready.filter(item => candidateProvider(item) === currentProvider),
         ...ready.filter(item => candidateProvider(item) !== currentProvider),
         ...active.filter(item => candidateProvider(item) === currentProvider),
         ...active.filter(item => candidateProvider(item) !== currentProvider)
       ];
-      next = ordered.find(claimCandidate) || null;
+      next = ordered.find(item => item?.project_id === ownedProjectId && claimCandidate(item)) || null;
     }
 
     if (!next) {
@@ -474,6 +882,7 @@
       return;
     }
 
+    rememberBoundProject(next.project_id);
     const expectedProvider = candidateProvider(next);
     const currentConversation = conversationId();
     if (!next.conversation_id && currentProvider === expectedProvider && currentConversation && adoptNextPending(next.project_id)) {
@@ -491,10 +900,19 @@
       : currentProvider === expectedProvider && isNewChatPage(expectedProvider);
 
     if (!onRightPage) {
-      if (!generationActive() && !sending) {
-        setPendingProject(next.project_id);
-        renewClaim(next);
-        location.assign(navigationUrlForCandidate(next, tabToken));
+      // ChatGPT changes / -> /c/<id> asynchronously after sending. The
+      // previous 5-second redirect raced the send, abandoning the live
+      // generation and giving the impression that the tab disappeared.
+      // Never route a bound worker as a side effect of polling: preserve
+      // the actual tab and report a mismatch instead.
+      const now = Date.now();
+      if (now - lastRoutePreservationReportAt > 60000) {
+        lastRoutePreservationReportAt = now;
+        await status("worker-tab-route-preserved", {
+          reason: "poll-navigation-disabled",
+          expectedConversation: String(next.conversation_id || ""),
+          currentConversation
+        });
       }
       return;
     }
@@ -511,7 +929,8 @@
 
     const queueId = String(target?.queue_item?.queue_id || "").trim();
     const rememberedQueue = rememberedQueueId(target.project_id);
-    if (currentProvider === "chatgpt" && currentConversation && queueId && rememberedQueue && rememberedQueue !== queueId && !generationActive() && !sending) {
+    if (currentProvider === "chatgpt" && currentConversation && queueId && rememberedQueue && rememberedQueue !== queueId &&
+        !generationActive() && !sending && !awaitingGeneration && !sawGeneration) {
       rememberQueueId(target.project_id, queueId);
       await requestFreshConversation("queue-assignment-changed");
       return;
@@ -932,6 +1351,17 @@
     return false;
   }
 
+  async function ensureFocused(timeoutMs = 2000) {
+    if (document.hasFocus()) return true;
+    try { window.dispatchEvent(new Event("zcloud-focus-request")); } catch (_) {}
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (document.hasFocus()) return true;
+      await sleep(100);
+    }
+    return document.hasFocus();
+  }
+
   async function fill(text) {
     const box = composer();
     if (!box) return false;
@@ -1076,6 +1506,7 @@
 
     sending = true;
     try {
+      await ensureFocused();
       if (currentProvider === "chatgpt") {
         const highReady = await ensureHighThinking();
         if (!highReady) {
@@ -1295,6 +1726,7 @@
 
     const loadFailure = conversationLoadFailureReason();
     if (loadFailure) {
+      // Report the failure but never silently leave the user's current tab.
       await requestFreshConversation(loadFailure);
       return;
     }
@@ -1339,7 +1771,21 @@
         await status("generation-finished", {reason: "response-detected-between-polls"});
       } else if (now >= generationDeadline) {
         awaitingGeneration = false;
-        await status("generation-not-started", {reason: "no-generation-after-send"});
+        await scheduleQualityRetry("no-generation-after-send", {
+          generationDeadlineMs: timing.generationStartTimeoutMs
+        });
+        await status("generation-not-started", {
+          reason: "no-generation-after-send",
+          retryScheduled: true
+        });
+        // The prompt was already dispatched and the full anti-spam interval has
+        // elapsed, but ChatGPT/Claude never entered a generating state. Reuse the
+        // exact same assignment locally so a VPS-dispatch-only worker cannot
+        // remain stranded waiting for another backend push.
+        if (target && assignmentReady(target) && !draining) {
+          const retried = await sendPrompt("no-generation-retry");
+          if (!retried) await reportSendBlocked("no-generation-retry-send-unavailable");
+        }
       }
       return;
     }

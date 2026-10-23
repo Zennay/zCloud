@@ -56,6 +56,8 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         self.assertIn("SHORT_CYCLE_MS = 15 * 1000", background)
         self.assertIn("repeated-short-or-null-result", background)
         self.assertIn("repeated-no-generation", background)
+        self.assertIn('await send("no-generation-retry")', background)
+        self.assertIn('"no-generation-retry-policy-closed"', background)
         self.assertIn('QUALITY_RETRY_LIMIT = "unbounded"', background)
         self.assertIn("quality-retry-scheduled", background)
         self.assertNotIn("Werk verder aan het project en voer nu een concrete volgende stap uit", background)
@@ -147,7 +149,7 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
         css = (ROOT / "public" / "style.css").read_text(encoding="utf-8")
 
         self.assertIn('id="mobileProjectNav"', index)
-        self.assertIn("if(mobileProjects)mobileProjects.innerHTML=", app)
+        self.assertIn("mobileProjects.classList.toggle('is-overview',route==='overview')", app)
         self.assertIn("(pointer: coarse)", app)
         self.assertIn('draggable="${draggable}"', app)
         self.assertIn(".mobile-project-nav{display:flex", css)

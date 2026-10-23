@@ -1,0 +1,121 @@
+name: zCloud v2 Violentmonkey metadata-only inspection
+
+# A normal main push must never occupy the FTMO runner or attach debugger
+# watchers to live Firefox. GitHub-hosted source tests remain automatic.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-v2-violentmonkey-actor-probe.yml
+      - scripts/zcloud_vm_actor_readonly_probe_20261014.py
+      - tests/test_zcloud_vm_actor_readonly_probe_20261014.py
+      - tests/test_zcloud_vm_probe_hosted_admission_20261015_w10.py
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-v2-violentmonkey-actor-probe.yml
+      - scripts/zcloud_vm_actor_readonly_probe_20261014.py
+      - tests/test_zcloud_vm_actor_readonly_probe_20261014.py
+      - tests/test_zcloud_vm_probe_hosted_admission_20261015_w10.py
+  workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact currently approved main SHA for metadata-only proof"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-vm-actor-metadata-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  hosted-proof:
+    # PR source tests use the exact head SHA, but must never execute a
+    # foreign/untrusted PR source (even on a GitHub-hosted runner).
+    # Existing trusted main push verification remains automatic/hosted.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.repository == 'Zennay/zCloud' &&
+       github.actor == 'Zennay' &&
+       github.triggering_actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.base.ref == 'main') ||
+      (github.event_name == 'push' &&
+       github.repository == 'Zennay/zCloud' &&
+       github.ref == 'refs/heads/main')
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable candidate with no retained credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Validate exact source and metadata-only probe policy
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m py_compile scripts/zcloud_vm_actor_readonly_probe_20261014.py
+          python3 -m unittest -v tests.test_zcloud_vm_actor_readonly_probe_20261014 tests.test_zcloud_vm_probe_hosted_admission_20261015_w10
+
+  inspect:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.confirm_sha == github.sha
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Checkout current main with no persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Require owner, exact fresh main and permanent zCloud runner
+        shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          test "$(hostname -s)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          echo "VM_METADATA_MANUAL_MAIN_VERIFIED=1"
+      - name: Observe only bounded Firefox addon metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          python3 scripts/zcloud_vm_actor_readonly_probe_20261014.py

@@ -24,8 +24,8 @@ jobs:
     env:
       XDG_RUNTIME_DIR: /run/user/1000
       DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
-      ZSSH_PRODUCTION_ORIGIN: https://zssh.cheapgpt.shop
-      ZSSH_PRODUCTION_HOST: zssh.cheapgpt.shop
+      ZSSH_PRODUCTION_ORIGIN: https://zssh.zennay.nl
+      ZSSH_PRODUCTION_HOST: zssh.zennay.nl
       ZSSH_EXPECTED_IPV4: 198.244.191.182
     steps:
       - name: Check out zCloud coordination
@@ -205,7 +205,7 @@ jobs:
           if [[ "$dns_ready" == "True" ]]; then
             next_gate="Configure production OAuth/OIDC issuer + JWKS + dedicated reviewer account, then activate isolated public gateway/Caddy ingress and run external ingress preflight"
           else
-            next_gate="Create/update public DNS A record zssh.cheapgpt.shop -> 198.244.191.182; then configure production OAuth/OIDC before activating the isolated public gateway"
+            next_gate="Create/update public DNS A record zssh.zennay.nl -> 198.244.191.182; then configure production OAuth/OIDC before activating the isolated public gateway"
           fi
 
           evidence_json="$(python3 - "$report" <<'PY'
@@ -240,7 +240,7 @@ jobs:
             receipt \
             --project zssh \
             --phase "Public plugin · production submission hardening" \
-            --action "Audited selected production origin zssh.cheapgpt.shop on canonical VPS lane" \
+            --action "Audited selected production origin zssh.zennay.nl on canonical VPS lane" \
             --commit "$ZSSH_SHA" \
             --ci-status success \
             --next-gate "$next_gate" \
@@ -261,9 +261,9 @@ jobs:
 
           dns_ready = os.environ.get("DNS_READY") == "1"
           description = (
-              "DNS ready: zssh.cheapgpt.shop -> 198.244.191.182"
+              "DNS ready: zssh.zennay.nl -> 198.244.191.182"
               if dns_ready
-              else "DNS pending: zssh.cheapgpt.shop != 198.244.191.182"
+              else "DNS pending: zssh.zennay.nl != 198.244.191.182"
           )
           payload = json.dumps({
               "state": "success",

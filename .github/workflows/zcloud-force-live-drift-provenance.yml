@@ -1,0 +1,172 @@
+name: zCloud live source drift provenance (owner-approved, read-only)
+
+# PRs run hosted policy tests only. Never auto-probe a production VPS.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-force-live-drift-provenance.yml
+      - tests/test_zcloud_force_live_drift_provenance_20261014.py
+  workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact 40-character SHA of current main approved for read-only VPS provenance"
+        required: true
+        type: string
+      approve_readonly_proof:
+        description: "Explicit approval to read bounded live source metadata (never modify it)"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-manual-live-drift-provenance
+  cancel-in-progress: false
+
+jobs:
+  hosted-policy:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Checkout exact untrusted source on GitHub-hosted runner only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact PR source and deny-first regression
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m unittest -v tests.test_zcloud_force_live_drift_provenance_20261014
+
+  probe:
+    name: Manually approved exact-main permanent-VPS read-only source proof
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.approve_readonly_proof == true
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Checkout immutable approved main without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Validate original/manual actor, exact fresh main and permanent runner
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+          APPROVED: ${{ inputs.approve_readonly_proof }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$APPROVED" = "true"
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$GITHUB_SHA" = "$CONFIRMED_SHA"
+          test "$(git rev-parse HEAD)" = "$CONFIRMED_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$CONFIRMED_SHA"
+          test "$(hostname)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Read canonical source fingerprints, publish only aggregate categories
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CONFIRMED_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$CONFIRMED_SHA"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import subprocess
+
+          root = Path("/home/ubuntu/zennay-cloud")
+          names = (
+              "server.py", "public/app.js", "public/index.html",
+              "public/enhancements.css", "public/zcloud-worker-v2-engine.js",
+              "public/zcloud-worker.user.js", "scripts/zcloud_worker_watchdog.py",
+              "firefox-extension/background.js",
+          )
+          counts = {
+              "current_main": 0, "recorded_git_ancestor": 0,
+              "unresolved_drift": 0, "missing": 0, "unsafe_path": 0,
+              "oversize_or_read_error": 0,
+          }
+          if root.is_symlink() or not root.is_dir():
+              raise SystemExit("unverifiable canonical live source directory")
+          for name in names:
+              live = root / name
+              candidate = Path(name)
+              if any(part.is_symlink() for part in (live, *live.parents) if part != Path("/")):
+                  counts["unsafe_path"] += 1
+                  continue
+              if not live.is_file() or not candidate.is_file():
+                  counts["missing"] += 1
+                  continue
+              try:
+                  if live.stat().st_size > 2_000_000 or candidate.stat().st_size > 2_000_000:
+                      counts["oversize_or_read_error"] += 1
+                      continue
+                  live_digest = hashlib.sha256(live.read_bytes()).digest()
+                  if hashlib.sha256(candidate.read_bytes()).digest() == live_digest:
+                      counts["current_main"] += 1
+                      continue
+                  commits = subprocess.run(
+                      ["git", "log", "-20", "--format=%H", "--", name],
+                      text=True, capture_output=True, check=True, timeout=10,
+                  ).stdout.splitlines()
+                  previous = False
+                  for commit in commits:
+                      if len(commit) != 40 or any(c not in "0123456789abcdef" for c in commit):
+                          continue
+                      result = subprocess.run(
+                          ["git", "show", f"{commit}:{name}"],
+                          capture_output=True, check=False, timeout=5,
+                      )
+                      if result.returncode == 0 and len(result.stdout) <= 2_000_000:
+                          if hashlib.sha256(result.stdout).digest() == live_digest:
+                              previous = True
+                              break
+                  counts["recorded_git_ancestor" if previous else "unresolved_drift"] += 1
+              except (OSError, subprocess.SubprocessError):
+                  counts["oversize_or_read_error"] += 1
+          result = {
+              "counted_sources": len(names), "categories": counts,
+              "mutation_authorized": False,
+              "worker_runtime_verified": False,
+              "production_verified": False,
+              "no_api_sqlite_or_worker_reads": True,
+          }
+          if sum(counts.values()) != len(names):
+              raise SystemExit("source category accounting mismatch")
+          print("LIVE_SOURCE_DRIFT_AGGREGATE=" + json.dumps(result, sort_keys=True))
+          PY
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$CONFIRMED_SHA"
+          echo "LIVE_SOURCE_DRIFT_PROOF_NON_AUTHORIZING=1"

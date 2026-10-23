@@ -91,6 +91,48 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(8, result["contracts"]["max_workers"])
 
+    def test_worker_only_role_is_valid_and_not_in_project_layout(self):
+        (self.root / "worker-modes.json").write_text(json.dumps([{"id":"zsentinel","name":"zSentinel"}]))
+        contracts=json.loads(self.project_contracts.read_text())
+        contracts["projects"]["zsentinel"]=dict(contracts["projects"]["cloud"])
+        self.project_contracts.write_text(json.dumps(contracts))
+        self.resources.write_text(json.dumps({"cloud":{"priority":"normal"},"zsentinel":{"priority":"high"}}))
+        self.enhancements.write_text(self.enhancements.read_text().replace("['zennay-cloud.service']}", "['zennay-cloud.service'],'zsentinel':[]}"))
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO runner_targets VALUES('zsentinel',1)")
+            conn.execute("INSERT INTO runner_workers VALUES('zsentinel',1,'running')")
+        result=self.validate()
+        self.assertTrue(result["ok"],result)
+        self.assertEqual(1,result["contracts"]["worker_role_count"])
+
+    def test_predeploy_candidate_worker_modes_validate_before_live_file_exists(self):
+        staged_dir = self.root / "staged"
+        staged_dir.mkdir()
+        candidate_modes = staged_dir / "worker-modes.json"
+        candidate_modes.write_text(json.dumps([{"id": "zsentinel", "name": "zSentinel"}]))
+        contracts = json.loads(self.project_contracts.read_text())
+        contracts["projects"]["zsentinel"] = dict(contracts["projects"]["cloud"])
+        self.project_contracts.write_text(json.dumps(contracts))
+        self.assertFalse(self.validate()["ok"])  # Not yet deployed to live root.
+        result = cfg.validate(
+            projects_path=self.projects,
+            layout_path=self.layout,
+            resource_path=self.resources,
+            project_contracts_path=self.project_contracts,
+            server_path=self.server,
+            enhancements_path=self.enhancements,
+            db_path=self.db,
+            worker_modes_path=candidate_modes,
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(1, result["contracts"]["worker_role_count"])
+
+    def test_worker_only_role_cannot_shadow_real_project(self):
+        (self.root / "worker-modes.json").write_text(json.dumps([{"id":"cloud","name":"Fake"}]))
+        result=self.validate()
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("duplicate/colliding role" in x for x in result["errors"]))
+
     def test_allows_zero_worker_cap_for_external_gate(self):
         contracts = json.loads(self.project_contracts.read_text())
         contracts["projects"]["cloud"]["ai_worker_cap"] = 0

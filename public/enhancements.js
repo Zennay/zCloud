@@ -1,3 +1,48 @@
+/* Keep a readable recovery screen if the main dashboard fails before rendering.
+   This script is already in the backend's explicit static-file allowlist. */
+(function zcloudBootstrapRecovery(){
+  'use strict';
+  var broken = false;
+  var shown = false;
+  function recover(){
+    if (shown) return;
+    var view = document.getElementById('view');
+    if (!view) return;
+    var stillLoading = !!view.querySelector('.loading') || !view.textContent.trim();
+    if (!stillLoading) return;
+    shown = true;
+    var panel = document.createElement('section');
+    panel.className = 'panel';
+    panel.setAttribute('role', 'alert');
+    var heading = document.createElement('h2');
+    heading.textContent = 'zCloud kon het dashboard niet openen';
+    var explanation = document.createElement('p');
+    explanation.textContent = 'De pagina is niet goed geladen. Vernieuw de pagina; workers op de VPS worden hierdoor niet gestopt.';
+    var retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'error-action';
+    retry.textContent = 'Dashboard opnieuw laden';
+    retry.addEventListener('click', function(){ window.location.reload(); });
+    panel.appendChild(heading);
+    panel.appendChild(explanation);
+    panel.appendChild(retry);
+    view.replaceChildren(panel);
+    var connection = document.getElementById('connection');
+    if (connection) connection.textContent = 'Dashboardfout';
+  }
+  function failed(event){
+    // Do not display raw exception text, URLs, prompts or token-bearing paths.
+    var target = event && event.target;
+    var assetFailure = target && (target.tagName === 'SCRIPT' || target.tagName === 'LINK');
+    if (assetFailure || event && event.error) {
+      broken = true;
+      window.setTimeout(recover, 0);
+    }
+  }
+  window.addEventListener('error', failed, true);
+  window.addEventListener('unhandledrejection', function(){ broken = true; window.setTimeout(recover, 0); });
+  window.setTimeout(recover, 10000);
+})();
 'use strict';
 (function(){
   const trText=value=>String(value??'').replace(/Needs attention/g,'Needs attention').replace(/Onbekend/g,'Unknown').replace(/Geen vaste VPS-worker/g,'No dedicated VPS worker').replace(/Geen herstelpunt/g,'No recovery point').replace(/Herstel getest/g,'Recovery tested').replace(/Herstelcontrole nodig/g,'Recovery check needed').replace(/Herstel loopt/g,'Recovery in progress').replace(/Herstelpunt klaar/g,'Recovery point ready').replace(/Controleer dit incident\./g,'Check this incident.');
@@ -27,7 +72,7 @@
     var sourceBits=[];
     if(p.milestone_revision)sourceBits.push('Checkpoint '+String(p.milestone_revision));
     if(p.progress_basis)sourceBits.push(String(p.progress_basis));
-    ['latest','current','best'].forEach(function(k){var x=cmp[k];if(x&&x.source)sourceBits.push((k==='latest'?'Nieuwste':k==='current'?'Huidig':'Beste')+': '+String(x.source))});
+    ['latest','current','best'].forEach(function(k){var x=cmp[k];if(x&&x.source){var stamp=x.observed_at?' @ '+String(x.observed_at):'';sourceBits.push((k==='latest'?'Nieuwste':k==='current'?'Huidig':'Beste')+': '+String(x.source)+stamp)}});
     var comparison=slots?'<div class="evidence-comparison">'+slots+'</div>':'<div class="evidence-empty">No reliable latest/current/best evidence for this project yet.</div>';
     return '<div class="panel evidence-progress-panel" style="--accent:'+esc(p.accent)+'"><div class="panel-header"><div><h2>Evidence-backed progress</h2><div class="panel-subtitle">Checkpoint progress, change and current bottleneck</div></div><strong class="evidence-progress-value">'+num(p.progress)+'%</strong></div><div class="evidence-summary"><div><span>Change ('+esc(range)+')</span><strong>'+esc(deltaText)+'</strong></div><div><span>Current bottleneck</span><strong>'+esc(bottleneck)+'</strong></div></div>'+comparison+'<details class="section-details evidence-details"><summary>Sources and technical details</summary><p>'+esc(sourceBits.join(' · ')||'No source metadata available')+'</p></details></div>';
   }

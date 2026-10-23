@@ -1,0 +1,152 @@
+name: zCloud read-only worker diagnostic (owner-authorized)
+
+# Historical 13-Oct push retrigger is disabled: never publish raw prompts,
+# event payloads or process argv automatically on a normal main push.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-worker-prompt-stop-20261013.yml
+      - scripts/zcloud_worker_prompt_safe_diagnostic.py
+      - tests/test_zcloud_worker_prompt_safe_diagnostic.py
+      - tests/test_zcloud_worker_prompt_fresh_main_20261014.py
+      - tests/test_zcloud_worker_diagnostic_explicit_consent_20261014.py
+      - tests/test_deployops_worker_diagnostic_fork_admission_20261014_w7.py
+  workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Explicit exact current main SHA to permit read-only numeric worker diagnosis"
+        type: string
+        required: true
+      approve_readonly_diagnostic:
+        description: "I explicitly authorize a bounded, private worker-state diagnostic"
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-prompt-safe-diagnostic-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  trusted-pr-source:
+    # No checkout of pull_request source until the owner/repository admission
+    # is explicitly successful. A fork must fail, not report a green skip.
+    if: (github.event_name == 'pull_request') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    steps:
+      - name: Reject untrusted source before any contributor code executes
+        shell: bash
+        env:
+          EXPECTED_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          EVENT_KIND: ${{ github.event_name }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$EVENT_KIND" = pull_request
+          test "$EXPECTED_REPO" = Zennay/zCloud
+          test "$HEAD_REPO" = "$EXPECTED_REPO"
+          test "$BASE_REPO" = "$EXPECTED_REPO"
+          test "$GITHUB_BASE_REF" = main
+          test "$ATTEMPT" = 1
+  hosted-policy-proof:
+    needs: trusted-pr-source
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact candidate without retained GitHub credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify immutable candidate and executed privacy regression
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m unittest -v tests.test_zcloud_worker_prompt_safe_diagnostic tests.test_zcloud_worker_prompt_fresh_main_20261014 tests.test_zcloud_worker_diagnostic_explicit_consent_20261014 tests.test_deployops_worker_diagnostic_fork_admission_20261014_w7
+          python3 -m py_compile scripts/zcloud_worker_prompt_safe_diagnostic.py
+
+  owner-vps-inspection:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.confirm_sha == github.sha &&
+      inputs.approve_readonly_diagnostic == true
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 4
+    steps:
+      - name: Checkout exact trusted main without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify owner and permanent runner before any localhost read
+        shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          APPROVE_DIAGNOSTIC: ${{ inputs.approve_readonly_diagnostic }}
+        run: |
+          set -euo pipefail
+          test "$APPROVE_DIAGNOSTIC" = "true"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Collect redacted numeric summary only
+        shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          APPROVE_DIAGNOSTIC: ${{ inputs.approve_readonly_diagnostic }}
+        run: |
+          set -euo pipefail
+          # Revalidate authority in the exact step that accesses private runtime.
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$APPROVE_DIAGNOSTIC" = "true"
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          python3 -m unittest -q tests.test_zcloud_worker_prompt_safe_diagnostic
+          python3 scripts/zcloud_worker_prompt_safe_diagnostic.py

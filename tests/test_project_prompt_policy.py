@@ -39,7 +39,7 @@ def test_worker_prompt_is_short_project_first_and_not_queue_owned():
     assert "ZCLOUD_QUEUE_" not in prompt
     assert "Ga door met de queue" not in prompt
     assert "meerdere materiële stappen achter elkaar" in prompt
-    assert len(prompt) < 1000
+    assert len(prompt) < 2700
 
 
 def test_stale_persisted_base_prompt_is_ignored():
@@ -57,7 +57,7 @@ def test_no_assignment_stays_local_and_simple():
     assert "Kies steeds een vrij onderdeel" in prompt
     assert "Er werken 2 workers parallel" in prompt
     assert "VPS_QUEUE_ASSIGNMENT" not in prompt
-    assert len(prompt) < 1000
+    assert len(prompt) < 2700
 
 
 def test_collision_coordination_is_compact_without_raw_claim_bloat():
@@ -66,3 +66,27 @@ def test_collision_coordination_is_compact_without_raw_claim_bloat():
     assert "Er werken 2 workers parallel" in prompt
     assert "claims" not in prompt
     assert "preregistration, walk-forward en final holdout" not in prompt
+
+
+def test_autonomous_merge_first_policy_prevents_permanent_noncritical_hold():
+    """Workers finish eligible work; a held future milestone does not freeze current deliverables."""
+    for project_id in ACTIVE_PROJECTS:
+        project = server.PROJECT_INDEX[project_id]
+        base = server.project_runner_prompt(project_id, project["name"])
+        prompt = server.project_worker_prompt(
+            project_id, project["name"], "",
+            1, 2, {"queue_id": "policy-check", "execution_lane": {"lane_id": "qa-validation"}}
+        )
+        assert "Rond open PRs af" in base
+        assert "integreer op actuele main" in prompt
+        assert "groene exact-head CI en branchchecks" in prompt
+        assert "Geen extra review tenzij GitHub die verplicht" in prompt
+        assert "Na uitrol gelden release-gates" in prompt
+        assert "merge is geen live deploy" in prompt
+        assert "HOLD alleen bij falende CI, scopeconflict" in prompt
+        assert "rechten, research of productie" in prompt
+        assert "de uurlijkse audit doet de brede kwaliteits- en voortgangsreview" in prompt
+        assert "geen eindeloze QA-rondes" in prompt
+        assert "merge zelfstandig" in prompt
+        assert "ACTUELE fase" in prompt
+        assert len(prompt) < 2700

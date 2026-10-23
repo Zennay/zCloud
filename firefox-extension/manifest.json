@@ -1,18 +1,22 @@
 {
   "manifest_version": 2,
   "name": "ChatGPT Project Runner",
-  "version": "0.8.0",
+  "version": "0.9.1",
   "permissions": [
     "tabs",
     "sessions",
+    "storage",
     "https://chatgpt.com/*",
+    "https://claude.com/*",
+    "https://claude.ai/*",
     "http://127.0.0.1:8765/*",
     "http://localhost:8765/*"
   ],
   "background": {
     "scripts": [
       "recovery.js",
-      "background.js"
+      "background.js",
+      "worker-controller-v2.js"
     ],
     "persistent": true
   },

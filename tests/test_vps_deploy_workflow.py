@@ -244,22 +244,19 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             text.index("- name: Promote backend runtime core"):
             text.index("- name: Promote autonomy policies and queue seed")
         ]
-        known_sha = "160c82219aca441644edb6acebbbfa92914e7f5e71736dbc75481576a815c80f"
-        known_lkg = "20261002T105256Z-a57439eb"
-        self.assertIn(f'expected_live_sha="{known_sha}"', authorize)
-        self.assertIn(f'expected_lkg="{known_lkg}"', authorize)
-        self.assertIn('last-known-good.json', authorize)
-        self.assertIn('sha256sum "$root/server.py"', authorize)
-        self.assertIn(
-            'if [[ "$live_sha" == "$expected_live_sha" && "$current_lkg" == "$expected_lkg" ]]',
-            authorize,
-        )
-        self.assertIn('echo "enabled=true" >> "$GITHUB_OUTPUT"', authorize)
+        legacy_pin = "160c82219aca441644edb6acebbbfa92914e7f5e71736dbc75481576a815c80f:20261002T105256Z-a57439eb"
+        proven_pin = "cc54280fe8d34385a8498c4043578daaf6d81e3714bd09b39b729be0769a114e:20261009T163321Z-a57439eb"
+        self.assertIn(legacy_pin, authorize)
+        self.assertIn(proven_pin, authorize)
+        self.assertIn("last-known-good.json", authorize)
+        self.assertIn("sha256sum", authorize)
+        self.assertIn("if [[ \"$live_sha:$current_lkg\" == \"$pin\" ]]", authorize)
+        self.assertIn("echo \"live_sha=$live_sha\" >> \"$GITHUB_OUTPUT\"", authorize)
         self.assertIn("KNOWN_LIVE_SERVER_RECONCILE=authorized", authorize)
-        self.assertIn('if [[ "${{ steps.server_drift_reconcile.outputs.enabled }}" == "true" ]]', core)
+        self.assertIn("steps.server_drift_reconcile.outputs.enabled", core)
         self.assertIn("--reconcile-known-live-sha", core)
-        self.assertIn(f'"server.py={known_sha}"', core)
-        self.assertIn('"${reconcile_args[@]}"', core)
+        self.assertIn("steps.server_drift_reconcile.outputs.live_sha", core)
+        self.assertIn("reconcile_args", core)
         self.assertNotIn("- name: Bootstrap validated project catalog", text)
 
 
@@ -489,6 +486,26 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn("--path vps-execution-policy.json", policy)
         server = (ROOT / "server.py").read_text(encoding="utf-8")
         self.assertIn("VPS_EXECUTION_POLICY = _load_vps_execution_policy()", server)
+
+    def test_guard_release_immediately_rearms_vps_native_self_heal(self):
+        text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
+        resume = "Resume external self-heal"
+        rearm = "Re-arm VPS-native self-heal after guarded deploy"
+        receipt = "Record evidence-backed production state receipt"
+        self.assertIn(rearm, text)
+        block = text[text.index("- name: " + rearm):text.index("- name: " + receipt)]
+        self.assertIn("if: always()", block)
+        self.assertIn('test ! -e "$sentinel"', block)
+        self.assertIn("test -x /usr/local/sbin/zcloud-self-heal", block)
+        self.assertIn("test -x /usr/local/sbin/zcloud-worker-watchdog", block)
+        self.assertIn("sudo -n systemctl start zcloud-self-heal.service", block)
+        self.assertIn("systemctl is-enabled --quiet zcloud-self-heal.timer", block)
+        self.assertIn("systemctl is-active --quiet zcloud-self-heal.timer", block)
+        self.assertIn('get("/api/runner-targets")', block)
+        self.assertIn('get("/api/runner-live")', block)
+        self.assertIn("POSTDEPLOY_SELF_HEAL_GREEN", block)
+        self.assertLess(text.index(resume), text.index(rearm))
+        self.assertLess(text.index(rearm), text.index(receipt))
 
     def test_successful_deploy_records_and_verifies_live_state_receipt(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
