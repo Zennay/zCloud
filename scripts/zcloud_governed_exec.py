@@ -85,30 +85,47 @@ def _signal_process_group(proc: subprocess.Popen | None, signum: int) -> None:
         return
 
 
-def _stop_process_group(proc: subprocess.Popen | None, *, grace_seconds: float = 2.0) -> None:
-    """Boundedly terminate the governed process tree before releasing its lease."""
+def _group_exists(proc: subprocess.Popen) -> bool:
+    """Fail closed when a process group cannot be proven absent."""
+    try:
+        os.killpg(proc.pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _stop_process_group(proc: subprocess.Popen | None, *, grace_seconds: float = 2.0) -> bool:
+    """Stop the owned session before a resource lease can be released.
+
+    A direct child finishing is NOT proof all of its spawned workers stopped.
+    The caller must retain admission if the process group cannot be proven gone.
+    """
     if proc is None:
-        return
-    _signal_process_group(proc, signal.SIGTERM)
-    deadline = time.monotonic() + max(0.1, float(grace_seconds))
-    while time.monotonic() < deadline:
-        try:
-            os.killpg(proc.pid, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.05)
-    else:
-        _signal_process_group(proc, signal.SIGKILL)
-    if proc.poll() is None:
-        try:
-            proc.wait(timeout=1)
-        except subprocess.TimeoutExpired:
+        return True
+    try:
+        _signal_process_group(proc, signal.SIGTERM)
+        deadline = time.monotonic() + max(0.1, float(grace_seconds))
+        while time.monotonic() < deadline:
+            if not _group_exists(proc):
+                break
+            time.sleep(0.05)
+        if _group_exists(proc):
             _signal_process_group(proc, signal.SIGKILL)
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                if not _group_exists(proc):
+                    break
+                time.sleep(0.05)
+        if proc.poll() is None:
             try:
                 proc.wait(timeout=1)
             except subprocess.TimeoutExpired:
-                pass
-
+                return False
+        return not _group_exists(proc)
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 def run_governed(
     db_path: Path,
@@ -198,9 +215,23 @@ def run_governed(
     finally:
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
-        _stop_process_group(proc)
+        group_stopped = _stop_process_group(proc)
         if acquired:
             try:
+                if not group_stopped:
+                    # An orphan that still uses the heavy pool must not
+                    # immediately grant another project the same slot.
+                    # Preserve the lease at the maximum bounded TTL for
+                    # owner recovery; do not report successful completion.
+                    result = runtime.acquire_resource(
+                        conn, project_id, owner_id, lease_seconds=6 * 3600,
+                        metadata={"executor": "zcloud-governed-exec",
+                                  "cleanup": "process_group_unverified"},
+                    )
+                    conn.commit()
+                    if not result.get("acquired"):
+                        raise RuntimeError("unable to retain resource after incomplete cleanup")
+                    raise RuntimeError("governed_process_group_not_stopped; resource lease retained")
                 runtime.release_resource(conn, project_id, owner_id)
                 conn.commit()
             except Exception as exc:
@@ -218,6 +249,8 @@ def run_governed(
                     file=sys.stderr,
                 )
         conn.close()
+        if acquired and not group_stopped:
+            raise RuntimeError("Resource admission held: governed process group could not be stopped")
 
 
 def main(argv=None) -> int:
