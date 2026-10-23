@@ -139,6 +139,13 @@ training-outputlocatie op de **systeemschijf**; deze CPU-fix maakt dat pad niet
 veilig en autoriseert geen trainingstart. De aparte externe-opslag/cutover-gate
 uit issue #1588 en het bestaande training-PR moet onafhankelijk worden voldaan.
 
+Historische T0/T1-vergelijkingen bewaren nu naast de numerieke metric ook de
+bronstatus vóór en na de meting. De privé-HTML en Markdown-eigenaaroverdracht
+tonen `swap geconfigureerd`, `geen swap geconfigureerd` of `swapbron UNKNOWN`
+en melden een wijziging alleen wanneer beide bronstatussen bekend zijn. De
+numerieke swapdelta blijft niet-vergelijkbaar tenzij beide bonnen
+`OBSERVED` melden.
+
 ## Coherente root-capaciteitsopname
 
 De hoofd-snapshot leest root-schijfruimte, vrije inodes en volumeomvang nu uit één
