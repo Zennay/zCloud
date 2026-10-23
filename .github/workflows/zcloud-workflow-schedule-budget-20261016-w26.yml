@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-schedule-budget-${{ github.event.pull_request.number }}
+  group: zcloud-schedule-budget-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
   cancel-in-progress: false
 
 jobs:
