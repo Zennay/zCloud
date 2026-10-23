@@ -97,9 +97,10 @@ def _nonprotected_memory_admission(conn, project_id: str,
             if len(fields) == 3 and fields[2] == "kB":
                 if fields[0] in ("MemTotal:", "MemAvailable:"):
                     mem[fields[0][:-1]] = int(fields[1]) // 1024
-        host_mb, cgroup_free_mb = _effective_cgroup_memory_limits_mb(mem["MemTotal"])
-        available_mb = min(host_mb, cgroup_free_mb, mem["MemAvailable"])
-        if host_mb <= 0 or available_mb < 0:
+        host_mb = mem["MemTotal"]
+        cgroup_limit_mb, cgroup_free_mb = _effective_cgroup_memory_limits_mb(host_mb)
+        available_mb = mem["MemAvailable"]
+        if host_mb <= 0 or available_mb < 0 or cgroup_limit_mb <= 0:
             raise ValueError("host memory numbers invalid")
     except (OSError, ValueError, KeyError) as exc:
         raise RuntimeError("resource_host_memory_evidence_unavailable") from exc
@@ -121,8 +122,14 @@ def _nonprotected_memory_admission(conn, project_id: str,
         "WHERE pool != 'protected' AND lease_until>?", (now,)
     ).fetchone()[0])
     # MemAvailable is an additional pressure gate, not a proxy for leases.
+    # The global host reserve and the leaf's delegated memory.max are
+    # independent ceilings. Deducting zCloud/zSSH's global RAM reserve from
+    # a dedicated FTMO-only cgroup would double-count unrelated services and
+    # prevent even an appropriately bounded heavy job from ever starting.
     if (budget_mb + other_mb > host_mb - protected_mb - safety_mb
-            or available_mb < budget_mb + safety_mb):
+            or available_mb < budget_mb + safety_mb
+            or budget_mb > cgroup_limit_mb
+            or budget_mb > cgroup_free_mb):
         return {"acquired": False, "reason": "resource_protected_memory_headroom",
                 "project_id": project_id}
     return None
