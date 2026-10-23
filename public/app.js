@@ -829,9 +829,8 @@ function blockedQueuePanel(){
   const snapshotFresh=blockedQueueSourceIsFresh();
   const unboundFieldsCount=items.filter(blockedQueueIsParked).length;
   const summary=DATA?.portfolio_queue_health;
-  const observedStatus=typeof DATA?.time==='string'?Date.parse(DATA.time):NaN;
-  const statusCurrent=!DATA?.stale&&Number.isFinite(observedStatus)
-    &&observedStatus<=Date.now()+120000&&Date.now()-observedStatus<=90000;
+  // Keep queue summary labels consistent with the connection-aware status gate.
+  const statusCurrent=statusSnapshotFreshness()==='fresh';
   const admissionSummary=summary&&Number.isSafeInteger(summary.owner_clear_queued)
     &&Number.isSafeInteger(summary.owner_held_queued)
     ?'<p class="blocked-queue-claim-summary" role="status">'
