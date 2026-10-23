@@ -66,8 +66,9 @@ def read_private_state():
     except OSError:
         return None
     try:
-        fd = os.open(STATE.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_CLOEXEC", 0), dir_fd=directory)
+        fd = os.open(STATE.name, os.O_RDONLY | os.O_NONBLOCK
+                     | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                     dir_fd=directory)
         try:
             meta = os.fstat(fd)
             if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.geteuid()
