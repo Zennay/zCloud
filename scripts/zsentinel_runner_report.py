@@ -701,6 +701,8 @@ def timeline_footprint(receipts):
                     "watchdog", "core-dump", "resources"}
     partial = 0
     high_swap = 0
+    no_swap_samples = 0
+    latest_swap_status = "UNKNOWN"
     high_disk = 0
     high_load = 0
     unknown_capacity = 0
@@ -755,7 +757,13 @@ def timeline_footprint(receipts):
                 and type(cores) is int and 1 <= cores <= 4096):
             unknown_capacity += 1
             continue
-        high_swap += swap >= 80
+        swap_status = cap.get("swap_status")
+        if swap_status == "NO_SWAP_CONFIGURED":
+            no_swap_samples += 1
+        if index == len(receipts) - 1:
+            latest_swap_status = (swap_status if swap_status in {
+                "OBSERVED", "NO_SWAP_CONFIGURED"} else "UNKNOWN")
+        high_swap += swap >= 80 and swap_status != "NO_SWAP_CONFIGURED"
         high_disk += disk >= 90
         high_load += load > 1.35 * cores
         if index == len(receipts) - 1:
@@ -792,6 +800,8 @@ def timeline_footprint(receipts):
         "incomplete_user_service_samples": incomplete_user,
         "unknown_capacity_samples": unknown_capacity,
         "swap_high_samples": high_swap,
+        "no_swap_configured_samples": no_swap_samples,
+        "latest_swap_status": latest_swap_status,
         "root_high_samples": high_disk,
         "load_high_samples": high_load,
         "latest_failed_services": latest_failed[:20],
@@ -904,6 +914,15 @@ def timeline_owner_actions(summary, comparisons):
             "een andere systemd-status is geen herstelbewijs.",
             "HISTORISCH FAILED · HUIDIG JOBHERSTEL ONBEKEND",
         ))
+    if summary.get("latest_swap_status") == "NO_SWAP_CONFIGURED":
+        tasks.append((
+            "P1 · geen swapbuffer in laatste VPS-bron",
+            "De laatste bewaarde bron toont geen geconfigureerde swap. "
+            "Laat de runtime-eigenaar RAM- en OOM-risico beoordelen voordat "
+            "extra training of workers worden toegelaten; geen automatische "
+            "swapaanmaak of serviceactie.",
+            "GEEN SWAP · EIGENAARCONTROLE NODIG",
+        ))
     if reboot:
         tasks.append((
             "P1 · bootwissel in herstelperiode",
@@ -972,7 +991,9 @@ def render_timeline_footprint(summary):
         + str(summary["unknown_capacity_samples"])
         + " onvolledige capaciteitsmetingen</p>"
         "<p><strong>Druk waargenomen:</strong> hoge swap "
-        + str(summary["swap_high_samples"]) + "× · weinig rootruimte "
+        + str(summary["swap_high_samples"]) + "× · geen swap geconfigureerd "
+        + str(summary.get("no_swap_configured_samples", 0))
+        + "× · weinig rootruimte "
         + str(summary["root_high_samples"]) + "× · hoge CPU-load "
         + str(summary["load_high_samples"]) + "×. "
         "Dit zijn meetmomenten, geen minuten onder druk.</p>"
@@ -1158,6 +1179,8 @@ def render_private_handoff(data):
         f"- Onvolledige runnerinventaris: {summary['incomplete_service_samples']} meetmomenten.",
         f"- Ontbrekende capaciteitsbron: {summary['unknown_capacity_samples']} meetmomenten.",
         f"- Swap >=80%: {summary['swap_high_samples']} meetmomenten.",
+        f"- Geen swap geconfigureerd: {summary.get('no_swap_configured_samples', 0)} meetmomenten.",
+        f"- Laatste swapstatus: {summary.get('latest_swap_status', 'UNKNOWN')}.",
         f"- Rootruimte >=90% niet beschikbaar: {summary['root_high_samples']} meetmomenten.",
         f"- Load >1,35× beschikbare CPU-cores: {summary['load_high_samples']} meetmomenten.",
         f"- Laatste meetmoment: {len(summary['latest_failed_services'])} als failed "
@@ -1411,6 +1434,12 @@ def render_private_json_handoff(data):
         pressure[key] = (value if type(value) in (int, float)
                          and math.isfinite(value) and 0 <= value < 1e10
                          else None)
+    # Preserve verified swap configuration separately from numerical usage.
+    # Missing/legacy values are UNKNOWN rather than an observed zero capacity.
+    swap_status = host.get("swap_status")
+    pressure["swap_status"] = (
+        swap_status if swap_status in {"OBSERVED", "NO_SWAP_CONFIGURED"}
+        else "UNKNOWN")
     # Kernel OOM counters apply to ALL host processes, not any named runner.
     # A missing/newer-source signal remains null, not a healthy zero.
     psi_available = host.get("memory_psi_observed") is True
