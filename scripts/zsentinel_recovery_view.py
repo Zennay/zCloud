@@ -1295,7 +1295,7 @@ def html_view(decision, registry=None):
         caveat = ("Handmatig opgeslagen query, NIET live; huidige eigenaar en herkomst ONBEKEND"
                   if notion["source"] ==
                   "user_supplied_notion_connector_export_unverified_origin" else
-                  ("Onvolledige Notion-paginering" if notion["coverage"] == "incomplete"
+                  ("Onvolledige Notion-brondekking (paginering of projectmapping)" if notion["coverage"] == "incomplete"
                    else "Notion werkstatuspagina's opgevraagd"))
         # The live reader can now distinguish partial status windows. Never
         # reuse that claim for a manually saved, unauthenticated snapshot.
