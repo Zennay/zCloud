@@ -336,6 +336,7 @@ def _notion_owner_status_summary(observed, source_mode, registry):
     unresolved_relations = observed.get("unresolved_project_relation_count")
     if mode[0] == "notion_readonly_data_source_pages":
         if (relation_coverage not in ("complete", "partial")
+                or type(count) is not int or not 0 <= count <= 400
                 or type(unresolved_relations) is not int
                 or not 0 <= unresolved_relations <= count
                 or (relation_coverage == "complete") != (unresolved_relations == 0)):
