@@ -27,6 +27,7 @@ PROMOTION_MIN_GAP = 45
 PROMOTION_MAX_SAMPLE_GAP = 240
 MAX_PRIVATE_STATE = 16 * 1024
 MAX_RUNNER_CMDLINE_BYTES = 8 * 1024
+MAX_RUNNER_PROCESS_SCAN = 8192
 
 
 def _boot_token():
@@ -210,9 +211,16 @@ def workers():
     complete = True
     try:
         entries = Path("/proc").iterdir()
+        scanned = 0
         for directory in entries:
             if not directory.name.isdigit():
                 continue
+            scanned += 1
+            if scanned > MAX_RUNNER_PROCESS_SCAN:
+                # Never let a pathological process table turn a minute timer
+                # into an unbounded scan or a false claim of complete coverage.
+                complete = False
+                break
             try:
                 if (directory / "comm").read_text().strip() != "Runner.Worker":
                     continue
