@@ -399,6 +399,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         # Native live observation exports one bounded coverage receipt for
         # each status; a manually saved snapshot cannot claim this provenance.
         live_windows = notion.get("status_source_windows")
+        if live_notion and live_windows is None:
+            raise ValueError("live Notion portfolio source lacks per-status windows")
         if live_windows is not None:
             expected = (("Claimed", 1), ("Running", 1), ("Verifying", 2))
             if (notion["source"] != "notion_readonly_data_source_pages"
