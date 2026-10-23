@@ -24,6 +24,8 @@ RESULTS = frozenset({
 # still requiring an explicit paired conclusion below.
 COMPLETED = frozenset({"completed"}) | RESULTS
 MAX_PROJECTS = 200
+MAX_RUNTIME_ERROR_AGE = timedelta(minutes=10)
+RUNTIME_ERROR_KINDS = frozenset({"missing_explicit_runtime_contract"})
 
 
 def utc_time(value: str, field: str) -> datetime:
@@ -82,7 +84,30 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
         if when > now:
             return verdict(pid, "intentional_wait", "scheduled_wait_not_elapsed",
                            "Recheck after the frozen/wait boundary; do not generate false incidents.")
-    if github.get("active_owner_pr") is True or runtime.get("ownership_locked") is True:
+    # Explicit runtime faults are accepted only with their own fresh timestamp;
+    # the outer snapshot clock alone cannot refresh an old service-log excerpt.
+    runtime_error_kind = runtime.get("error_kind")
+    if runtime_error_kind is not None:
+        if runtime_error_kind not in RUNTIME_ERROR_KINDS:
+            raise ValueError(f"{pid}.runtime.error_kind: unsupported explicit runtime fault")
+        runtime_error_at = required_time(runtime, "error_observed_at", now,
+                                         pid + ".runtime")
+        if now - runtime_error_at > MAX_RUNTIME_ERROR_AGE:
+            return verdict(pid, "unknown", "stale_runtime_error_observation",
+                           "Refresh the current service log; an old runtime error cannot establish the present blocker.")
+    elif runtime.get("error_observed_at") not in (None, ""):
+        raise ValueError(f"{pid}.runtime.error_observed_at: requires an explicit error_kind")
+    owner_held = (github.get("active_owner_pr") is True
+                  or runtime.get("ownership_locked") is True)
+    if runtime_error_kind == "missing_explicit_runtime_contract":
+        if owner_held:
+            return verdict(pid, "owner_held", "runtime_contract_missing_owner_active",
+                           "Keep the existing runtime-contract owner and PR; ask that owner to complete the explicit contract. Do not restart, retry, claim or deploy.",
+                           "runtime-contract-missing")
+        return verdict(pid, "blocked", "runtime_contract_missing",
+                       "Route the exact project to its authorized runtime-contract owner and complete the existing product change; do not restart, retry, claim or deploy from this log alone.",
+                       "runtime-contract-missing")
+    if owner_held:
         return verdict(pid, "owner_held", "active_owner_or_serialized_release",
                        "Do not edit the owner's files; add bounded diagnostic evidence to the existing issue.")
     # Every GitHub job diagnosis must be anchored in a fresh observed snapshot.
@@ -191,6 +216,13 @@ def diagnose(snapshot: dict[str, Any], now: datetime | None = None) -> dict[str,
         "mutations_performed": False,
         "deploy_authorized": False,
         "incidents": [item for item in reports if item["state"] == "stalled"],
+        "runtime_contract_faults": [
+            item for item in reports
+            if item.get("reason") in (
+                "runtime_contract_missing", "runtime_contract_missing_owner_active",
+                "stale_runtime_error_observation",
+            )
+        ],
         "projects": reports,
     }
 
