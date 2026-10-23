@@ -557,7 +557,7 @@ def write_private_state(data):
         os.close(directory)
 
 
-RUNNER_UNIT = re.compile(r"^actions\.runner\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.service$")
+RUNNER_UNIT = re.compile(r"^actions\.runner\.[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+\.service$")
 
 
 def _scoped_runner_inventory(user_scope=False):
@@ -579,7 +579,15 @@ def _scoped_runner_inventory(user_scope=False):
         # otherwise plain --no-legend output. Never silently hide P0 failures.
         if fields and fields[0] == "●":
             fields = fields[1:]
-        if len(fields) < 4 or not RUNNER_UNIT.fullmatch(fields[0]):
+        if len(fields) < 4:
+            if fields and fields[0].startswith("actions.runner."):
+                partial = True
+            continue
+        if not RUNNER_UNIT.fullmatch(fields[0]):
+            # A runner-looking unit that fails our known-name grammar is not
+            # proof that no runner service exists; preserve partial coverage.
+            if fields[0].startswith("actions.runner."):
+                partial = True
             continue
         name, state, detail = fields[0], fields[2], fields[3]
         if name in seen:
