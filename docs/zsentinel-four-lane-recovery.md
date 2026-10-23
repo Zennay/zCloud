@@ -1,3 +1,24 @@
+## 23 October 2026 · inode-uitputting zichtbaar naast vrije root-schijfruimte
+
+De hostobserver gebruikt nu dezelfde read-only `statvfs("/")`-meting om ook
+beschikbare inodecapaciteit te signaleren. Vrije bytes alleen zijn geen
+voldoende bewijs dat een runner nog bestanden, logs of tijdelijke bestanden
+kan aanmaken: een bestandssysteem kan zijn inodes uitputten terwijl er nog
+schijfruimte over is.
+
+De JSON bevat afzonderlijke velden `inode_status`, `available_inodes`,
+`unavailable_inode_percent` en `inode_pressure_hint`, naast de bestaande
+blok-/GiB-meting. Bij minstens 95% niet-beschikbare inodes is de inode-druk
+`HIGH`; vanaf 90% is die `ELEVATED`. Als het bestandssysteem geen bruikbare
+inode-totalen rapporteert, blijft inodecapaciteit `UNKNOWN` en wordt de
+gecombineerde root-schijfbron `PARTIAL` in plaats van volledig waargenomen.
+Bekende blok- of inode-druk blijft zichtbaar bij onvolledige dekking; zonder
+bruikbare inodegegevens wordt geen volledig gezond oordeel gegeven.
+
+De operatorweergave toont vrije inodes en de inode-druk afzonderlijk. Dit is
+uitsluitend metadata-observatie: geen directoryscan, cleanup, claim-, runner-,
+service-, queue- of deploymentmutatie.
+
 ## 23 October 2026 · herstelactie-overflow wordt zichtbaar
 
 De lokale herstelcockpit begrenst de incidentenlijst tot negen kaarten. Eerder
