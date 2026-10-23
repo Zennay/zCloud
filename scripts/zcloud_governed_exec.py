@@ -69,12 +69,17 @@ def _apply_process_limits(project_id: str, parent_pid: int | None = None) -> Non
         allowed = sorted(os.sched_getaffinity(0))
         if not allowed:
             raise RuntimeError("resource_cpu_affinity_unavailable")
-        # Isolate a physical schedulable CPU from non-control work when the
-        # host offers more than one. zCloud/zSSH can remain schedulable there.
-        # The pool lease alone does not reserve OS scheduler capacity.
+        # Preserve one schedulable CPU on a 2-CPU host, or two on a
+        # larger host, for zCloud and the separately authorized zSSH
+        # control-plane. Resource leases alone do not reserve OS CPUs.
+        reserve = min(2, max(0, len(allowed) - 1))
         if compute.get("pool") != "protected":
-            if len(allowed) < 2:
+            if not reserve:
                 raise RuntimeError("protected_control_cpu_headroom_unavailable")
+            allowed = allowed[reserve:]
+        elif project_id == "zssh" and len(allowed) > 1:
+            # Keep the dedicated zSSH control path usable when zCloud is
+            # busy; zSSH still requires independent manual authorization.
             allowed = allowed[1:]
         count = _bounded_cpu_count(compute.get("cpu_soft_cores"), len(allowed))
         os.sched_setaffinity(0, set(allowed[:count]))
