@@ -4,7 +4,7 @@
 
 ChatGPT and zCloud workers use **zSSH as the single remote execution gateway** for VPS, files, Git, processes, services, runners and deployments. Browser work is handled by the reusable [BrowserAgent](https://github.com/Zennay/BrowserAgent) Playwright module loaded inside an authorized zSSH target; no independent VPS-agent service or separate BrowserAgent gateway is installed. [Architecture and migration](docs/zssh-browser-architecture.md).
 
-Queue lanes now expose advisory `execution_route` metadata and assigned worker prompts prefer `zssh_browser` for web/DOM tasks or the existing zSSH tools for system tasks. The route grants no permission by itself: zSSH's credentials, target pairing, host allowlist and human approvals remain the enforcement points. No live deployment has been verified by this documentation change.
+Queue lanes now expose advisory `execution_route` metadata and assigned worker prompts prefer `zssh_browser` for web/DOM tasks or the existing zSSH tools for system tasks. Mixed browser/system signals and unsupported explicit capabilities fail closed to no tool; transport mentions such as zSSH/VPS alone do not imply a system-action route. The route grants no permission by itself: zSSH's credentials, target pairing, host allowlist and human approvals remain the enforcement points. No live deployment has been verified by this documentation change.
 
 
 A dependency-free, read-only project dashboard deployed at `/home/ubuntu/zennay-cloud` on the existing VPS. Run `python3 server.py`; default port 8765. Environment overrides: `ZENNAY_BIND`, `ZENNAY_PORT`.
