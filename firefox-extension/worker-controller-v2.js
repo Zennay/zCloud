@@ -122,6 +122,12 @@
     }
     return workerMarker(tab.url);
   }
+  browser.runtime.onMessage.addListener((message,sender) => {
+    if(message?.type!=="zcloud-worker-identity" || !sender.tab ||
+       !isWorkerUrl(sender.tab.url))return undefined;
+    return tagOf(sender.tab).then(key=>
+      /^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(key||"")?key:null);
+  });
   async function restoredTabIdentity(tab) {
     const tagged = await tagOf(tab);
     if (tagged) return tagged;

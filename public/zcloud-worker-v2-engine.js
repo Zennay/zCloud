@@ -1,6 +1,6 @@
 // zCloud v2 browser DOM engine. Bundled into zcloud-worker.user.js.
 // Exactly one slot-bound browser tab; no window/tab APIs and no location redirects.
-(() => {
+(function startV2() {
   "use strict";
   window.__ZCLOUD_SINGLE_TAB_V2 = true;
   if (location.hostname !== "chatgpt.com") return;
@@ -14,10 +14,14 @@
     sessionStorage.getItem("zcloud-v2-force-command") || "";
   if (ticketFromUrl) sessionStorage.setItem("zcloud-v2-force-command",forceTicket);
   const id = fromUrl || stored;
+  if(!id){
+    document.documentElement?.addEventListener("zcloud-worker-identity-ready",startV2,{once:true});
+    return;
+  }
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
   window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
   sessionStorage.setItem("zcloud-v2-worker",id);
-  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.6");
+  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.7");
   document.documentElement?.setAttribute("data-zcloud-v2-owner",id);
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -42,10 +46,10 @@
   sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
   const label=el=>String(el?.getAttribute?.("aria-label")||el?.getAttribute?.("aria-valuetext")||el?.innerText||el?.textContent||"").trim();
   const visible=el=>{if(!el)return false;const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=="none"&&s.visibility!=="hidden"&&r.width>0&&r.height>0};
-  const generating=()=>!!document.querySelector('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]');
-  const reply=()=>{const a=[...document.querySelectorAll('[data-message-author-role="assistant"]')];return a.length?String(a[a.length-1].innerText||a[a.length-1].textContent||"").trim():""};
+  const generating=()=>!!document.querySelector('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"]');
+  const reply=()=>{const a=[...document.querySelectorAll('[data-message-author-role="assistant"],[data-markdown-text-style="assistant-message"]')];return a.length?String(a[a.length-1].innerText||a[a.length-1].textContent||"").trim():""};
   const conversation=()=>location.pathname.match(/\/c\/([0-9a-f-]{20,})(?:\/|$)/i)?.[1]||"";
-  const assistantCount=()=>document.querySelectorAll('[data-message-author-role="assistant"]').length;
+  const assistantCount=()=>document.querySelectorAll('[data-message-author-role="assistant"],[data-markdown-text-style="assistant-message"]').length;
   function api(path,method="GET",body=null){
     return new Promise((resolve,reject)=>GM_xmlhttpRequest({
       method,url:API+path,timeout:9000,headers:body?{"Content-Type":"application/json"}:undefined,
@@ -64,7 +68,7 @@
       target:location.href,targetConversation:conversation(),title:document.title,
       event,at,progressAt:at,generating:generating(),sending,
       assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.6",...extra
+      provider:"chatgpt",runnerVersion:"2.0.7",...extra
     });return true}catch(_){return false}
   }
   async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
@@ -166,7 +170,7 @@
   function fullPromptVisible(full){
     const prefix=full.slice(0,Math.min(64,full.length));
     if(!prefix)return false;
-    return [...document.querySelectorAll('[data-message-author-role="user"]')]
+    return [...document.querySelectorAll('[data-message-author-role="user"],[data-markdown-text-style="user-message"]')]
       .some(el=>{
         const t=String(el.innerText||el.textContent||"");
         return t.includes(prefix)&&t.includes("Kijk in Notion")&&
@@ -201,6 +205,11 @@
     }))}catch(_){}
   }
   async function send(reason){
+    if(!navigator.locks?.request){await blocked("composer-lock-unavailable");return false}
+    return navigator.locks.request("zcloud-chatgpt-composer",{ifAvailable:true},
+      lock=>lock?sendLocked(reason):false);
+  }
+  async function sendLocked(reason){
     if(sending||awaiting||generating()||!target||!ready(target))return false;
     if(!(await forceAllowed())){await blocked("force-tab-handoff-required");return false}
     const fullPrompt=String(target.prompt||"").trim();if(!fullPrompt)return false;
@@ -220,10 +229,15 @@
       if(!visible(button)||button.disabled||button.getAttribute("aria-disabled")==="true"){
         await blocked("send-button-unavailable");return false;
       }
+      // Drafts on the new-chat route can synchronize between browser tabs.
+      const draft=String(composer()?.value||composer()?.innerText||composer()?.textContent||"").trim();
+      if(draft!==prompt){await blocked("composer-draft-changed-before-send");return false}
       baseline=reply();baselineAssistantCount=assistantCount();button.click();promptAt=Date.now();awaitingAt=promptAt;
       awaiting=true;everGenerating=false;next=false;lastBlock="";
       noteFullContextSent(fullPrompt,prompt);
       await status("prompt-sent",{reason,thinkingEffort:"high"});
+      // Keep other blank tabs from replacing the shared draft during routing.
+      for(let n=0;n<40&&!conversation()&&!generating();n++)await sleep(250);
       return true;
     }finally{sending=false;markBusy()}
   }
@@ -292,8 +306,8 @@
         }
       }
       if(generating()){
-        const started=!observedGenerating;
-        observedGenerating=true;
+        const started=!reportedGenerating;
+        observedGenerating=true;reportedGenerating=true;
         everGenerating=true;awaiting=false;
         await status(started?"generation-started":"generation-progress");return;
       }
@@ -313,14 +327,14 @@
           awaiting=false;everGenerating=false;next=false;
           await status("generation-aborted",{reason:"conversation-load-failed"});
         }
-        await newChat("could-not-load-conversation");
+        await blocked("conversation-load-failed-preserved");
         return;
       }
       const result=reply();
       if(awaiting){
         if(everGenerating||assistantCount()>baselineAssistantCount||(result&&result!==baseline)){
           awaiting=false;everGenerating=false;next=true;
-          await status("generation-finished");
+          reportedGenerating=false;await status("generation-finished");
         }else if(Date.now()-awaitingAt<120000){return}
         else if(Date.now()-awaitingAt<300000){await blocked("generation-unconfirmed-no-duplicate");return}
         else{
@@ -329,15 +343,14 @@
             await blocked("stalled-send-preserved-draft");return;
           }
           awaiting=false;everGenerating=false;
-          await newChat("generation-never-started-five-minutes");
+          awaiting=true;
+          await blocked("generation-unconfirmed-chat-preserved");
           return;
         }
       }else if(everGenerating){
-        everGenerating=false;next=true;await status("generation-finished");
+        everGenerating=false;next=true;reportedGenerating=false;await status("generation-finished");
       }
-      if(Date.now()-chatAt>=MAX_AGE){
-        if(await newChat("one-hour-conversation"))return;
-      }
+      // Preserve existing chats; age alone never authorizes a reset.
       await commands();
       if((next||!promptAt)&&!awaiting&&!generating())
         await send(next?"next-prompt-after-response":"initial-prompt");
@@ -355,7 +368,7 @@
   // not wait for the next 30-second heartbeat. This is local DOM observation,
   // not an extra per-worker API polling loop.
   const FINISH_SETTLE_MS = 1800;
-  let finishTimer = null, observedGenerating = false;
+  let finishTimer = null, observedGenerating = false, reportedGenerating = false;
   function scheduleFinishedResponseCheck() {
     if (finishTimer !== null) clearTimeout(finishTimer);
     finishTimer = setTimeout(() => {
@@ -373,6 +386,7 @@
     }
     if (generating()) {
       observedGenerating = true;
+      if(!reportedGenerating){reportedGenerating=true;status("generation-started").catch(()=>{})}
       if (awaiting) { awaiting = false; everGenerating = true; }
       if (finishTimer !== null) { clearTimeout(finishTimer); finishTimer = null; }
       return;
