@@ -151,6 +151,35 @@ resource-pool status receipt; the zSSH Unix account is not granted access
 to the canonical live SQLite database. Neither permissions nor production
 workloads were modified.
 
+## Read-only admission inspection (source-only until release)
+
+The existing governed executor now supports a privacy-safe, read-only
+snapshot of the **actual database named by the invoking operator**.
+A reader cannot acquire/renew/release any lease through this mode:
+
+```sh
+python3 scripts/zcloud_governed_exec.py --inspect-pool \
+  --db /home/ubuntu/zennay-cloud/history.db --project ftmo
+```
+
+The command requires the exact operator-granted SQLite read access. The
+existing `ZCLOUD_RESOURCE_DB` environment, when set, must resolve to the
+same path as `--db`. A missing/invalid DB fails closed rather than creating
+an empty authority. The inspector uses SQLite `mode=ro` with
+`PRAGMA query_only=ON`, and does not initialize tables or prune expired
+leases. It emits bounded pool capacity, currently active admitted lease
+counts, available slots, an observation timestamp, `pinned_database` and
+inconsistency flags. Lease owner identities, metadata and child commands
+are never included.
+
+`admission_granted=false` and `runtime_deployment_verified=false` are
+intentionally fixed in the inspection result: a point-in-time observer
+does not reserve a slot, guarantee future admission, or certify that
+FTMO/HaxLab/LightUp actually use the same live pool. A live incident
+receipt still requires authorized owner inspection of the deployed
+service/cgroup, actual controlled contention and the production
+release gate.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
