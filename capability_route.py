@@ -102,8 +102,18 @@ def choose_execution_route(item: dict) -> dict:
             capability = "none"
             route_reason = "no_capability_signal"
 
-    requested_target = str(metadata.get("zssh_target_id") or "").strip()
-    target_id = requested_target if TARGET_PATTERN.fullmatch(requested_target) else None
+    target_id = None
+    if "zssh_target_id" in metadata:
+        raw_target = metadata.get("zssh_target_id")
+        requested_target = raw_target.strip() if isinstance(raw_target, str) else ""
+        if TARGET_PATTERN.fullmatch(requested_target):
+            target_id = requested_target
+        else:
+            # A supplied but invalid target must not silently become an
+            # unscoped/default-target route.
+            capability = "none"
+            selection_source = "metadata_error"
+            route_reason = "invalid_target_id"
     return {
         "capability": capability,
         "tool": TOOLS[capability],
