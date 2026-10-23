@@ -114,6 +114,11 @@ een misleidende gebruiksmeter. T0/T1-vergelijkingen van swappercentages worden
 alleen als vergelijkbaar verklaard als beide bonnen `OBSERVED` melden; oude
 bonnen zonder `swap_status` blijven voor die metriek niet vergelijkbaar.
 De privé-eigenaarhandoff voegt een P1-opdracht toe om geheugenrisico te beoordelen.
+Ook een historisch privébronvenster rapporteert nu per bronmoment of swap
+werkelijk afwezig was, toont de laatste `swap_status` en maakt dat in het
+offline HTML-verloop en de Markdown-ownerhandoff zichtbaar. De JSON-ownerinbox
+draagt dezelfde toegelaten status mee. Dit zijn tellingen van **waarnemingen**,
+niet van systeemrestarts, drukduur of kernel-OOM-kills.
 Dit is geen toestemming voor het inschakelen van swap, herstarten van runners,
 extra training, CI-reruns of een productiedeploy.
 
