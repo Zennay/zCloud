@@ -253,22 +253,41 @@ def workers():
 
 
 def memory_pressure():
-    """Return available memory in GiB and used swap fraction, or unknown."""
+    """Return RAM, swap fraction, and explicit swap-source classification.
+
+    A host without configured swap is not one with verified free swap.
+    Keep the numeric legacy fraction (0.0) for report compatibility, but
+    require the separate NO_SWAP_CONFIGURED advisory for CPU promotion.
+    """
+    unknown = (None, None, "UNKNOWN")
     try:
+        # /proc/meminfo is a small procfs document; bound the read rather than
+        # trusting an unbounded or substituted input.
+        with open("/proc/meminfo", "rb") as stream:
+            raw = stream.read(65537)
+        if len(raw) > 65536:
+            return unknown
         fields = {}
-        for line in Path("/proc/meminfo").read_text().splitlines():
+        for line in raw.decode("ascii").splitlines():
             key, sep, value = line.partition(":")
-            if sep and key in {"MemAvailable", "SwapTotal", "SwapFree"}:
-                fields[key] = int(value.split()[0])
-        available = fields["MemAvailable"] / (1024 ** 2)
-        total = fields["SwapTotal"]
-        free = fields["SwapFree"]
-        if available < 0 or total < 0 or free < 0 or free > total:
-            return None, None
-        used = (total - free) / total if total else 0.0
-        return available, used
-    except (OSError, ValueError, IndexError, KeyError):
-        return None, None
+            if not sep or key not in {"MemAvailable", "SwapTotal", "SwapFree"}:
+                continue
+            words = value.strip().split()
+            if key in fields or len(words) != 2 or words[1] != "kB":
+                return unknown
+            fields[key] = int(words[0])
+        available_kib, total, free = (
+            fields["MemAvailable"], fields["SwapTotal"], fields["SwapFree"]
+        )
+        if not (0 <= available_kib < 2 ** 53 and 0 <= total < 2 ** 53
+                and 0 <= free <= total):
+            return unknown
+        available = available_kib / (1024 ** 2)
+        if total == 0:
+            return available, 0.0, "NO_SWAP_CONFIGURED"
+        return available, (total - free) / total, "OBSERVED"
+    except (OSError, ValueError, UnicodeError, KeyError):
+        return unknown
 
 
 
@@ -390,7 +409,7 @@ def root_volume_identity():
 
 def snapshot():
     runner, sentinel, proc_ok = workers()
-    memory, swap_used = memory_pressure()
+    memory, swap_used, swap_status = memory_pressure()
     oom = memory_oom_observation()
     capacity = root_capacity_observation()
     disk_used = capacity["disk_used_fraction"]
@@ -404,13 +423,15 @@ def snapshot():
         load = os.getloadavg()[0]
     except (OSError, AttributeError):
         cores, load = 1, None
-    unknown = (not proc_ok or memory is None or swap_used is None or
-               disk_used is None or load is None or root_free is None)
+    unknown = (not proc_ok or memory is None or swap_used is None
+               or swap_status == "UNKNOWN" or disk_used is None
+               or load is None or root_free is None)
     return {
         "runner_active": runner, "zcloud_runner_active": sentinel,
         "host_load": round(load, 2) if load is not None else None,
         "cores": cores, "memory_available_gib": round(memory, 2) if memory is not None else None,
         "swap_used_percent": round(swap_used * 100, 1) if swap_used is not None else None,
+        "swap_status": swap_status,
         "disk_unavailable_percent": round(disk_used * 100, 1) if disk_used is not None else None,
         "root_mount_device": root_dev, "root_volume_bytes": root_total,
         "root_available_gib": root_free,
@@ -444,6 +465,8 @@ def pressure_reasons(s):
         elif memory < 3:
             moderate.append("limited-available-memory")
     swap = s["swap_used_percent"]
+    if s.get("swap_status") == "NO_SWAP_CONFIGURED":
+        moderate.append("no-swap-configured")
     if swap is not None:
         if swap >= 80:
             urgent.append("high-swap-use")
@@ -647,6 +670,7 @@ REASON_LABELS = {
     "low-available-memory": "er is weinig vrij beschikbaar RAM",
     "limited-available-memory": "het beschikbare RAM is beperkt",
     "high-swap-use": "het swapgebruik is hoog",
+    "no-swap-configured": "er is geen swap geconfigureerd; ga voorzichtig om met geheugenpieken",
     "elevated-swap-use": "het swapgebruik is verhoogd",
     "low-root-disk-headroom": "de root-schijf heeft weinig vrije ruimte",
     "limited-root-disk-headroom": "de vrije ruimte op de root-schijf is beperkt",
@@ -670,6 +694,11 @@ def human_preview(data):
           f"{data['swap_used_percent'] if data['swap_used_percent'] is not None else 'onbekend'}%;"
           f" root niet beschikbaar "
           f"{data['disk_unavailable_percent'] if data['disk_unavailable_percent'] is not None else 'onbekend'}%")
+    print("Swapstatus: " + {
+        "OBSERVED": "swapruimte geconfigureerd",
+        "NO_SWAP_CONFIGURED": "geen swap geconfigureerd",
+        "UNKNOWN": "niet betrouwbaar meetbaar",
+    }.get(data.get("swap_status"), "bron onbekend (legacy)"))
     print("Vrije root-schijfruimte: " +
           (str(data.get("root_available_gib")) + " GiB" if
            data.get("root_available_gib") is not None else "onbekend"))
