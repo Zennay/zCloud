@@ -20,6 +20,13 @@ import project_runtime as runtime  # noqa: E402
 
 
 def connect(path: Path):
+    if os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
+        # A supervised workload with a pinned shared database must never
+        # create its own empty SQLite store after a missing disk/mount.
+        # Doing so would silently create an independent "heavy" pool.
+        if (path.is_symlink() or not path.is_file()
+                or not os.access(path, os.R_OK | os.W_OK)):
+            raise RuntimeError("resource_shared_database_unavailable")
     conn = sqlite3.connect(path, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=15000")
