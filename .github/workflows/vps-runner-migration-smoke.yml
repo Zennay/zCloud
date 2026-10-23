@@ -1,0 +1,25 @@
+name: New VPS runner execution proof
+on:
+  push:
+    branches: [ops/runner-proof-20261023-2126]
+permissions:
+  contents: read
+jobs:
+  runner-proof:
+    runs-on: [self-hosted, Linux, X64, zcloud]
+    timeout-minutes: 3
+    steps:
+      - name: Verify new VPS identity and execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "VM-7eb5ee16-2c71-440d-b7fd-8095d204e930"
+          test "$RUNNER_NAME" = "vm-7eb5ee16-zcloud"
+          tmp="$(mktemp "$RUNNER_TEMP/runner-proof.XXXXXX")"
+          trap 'rm -f "$tmp"' EXIT
+          printf 'runner-execution-ok' > "$tmp"
+          test "$(cat "$tmp")" = runner-execution-ok
+          command -v git
+          command -v python3
+          curl --fail --silent --show-error --max-time 20 https://api.github.com/zen > /dev/null
+          printf 'PASS runner=%s host=%s commit=%s\n' "$RUNNER_NAME" "$(hostname)" "$GITHUB_SHA"
