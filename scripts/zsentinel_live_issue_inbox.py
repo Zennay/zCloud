@@ -29,6 +29,7 @@ PAGE_SIZE = 30
 MAX_DISPLAY = 45
 MAX_SAMPLED_DISPLAY_PAGES = 5  # 3x30 recent + 4x30 recall <= 210 source rows
 MAX_LABELS = 100
+MAX_ASSIGNEES = 20
 RECOGNIZED = {
     prefix + priority for prefix in ("", "priority:", "priority/")
     for priority in ("p0", "p1", "p2", "p3")
@@ -125,6 +126,26 @@ def _safe_issue(item, repository, *, observed_at):
     else:
         rank = 6
 
+    # GitHub issue assignees help route a human follow-up, but are not proof
+    # of a live worker lease or an active Notion task claim.
+    raw_assignees = item.get("assignees")
+    assignee_source_complete = (
+        isinstance(raw_assignees, list) and len(raw_assignees) <= MAX_ASSIGNEES
+    )
+    assignee_logins = []
+    if assignee_source_complete:
+        for assignee in raw_assignees:
+            login = assignee.get("login") if isinstance(assignee, dict) else None
+            if (not isinstance(login, str)
+                    or re.fullmatch(r"[A-Za-z0-9-]{1,39}", login) is None):
+                assignee_source_complete = False
+                break
+            assignee_logins.append(login)
+    if assignee_source_complete:
+        assignee_logins = sorted(set(assignee_logins))
+    else:
+        assignee_logins = None
+
     return {
         "number": number, "url": url, "updated_at_utc": updated_at,
         "last_github_update_age_hours": age_hours,
@@ -137,6 +158,9 @@ def _safe_issue(item, repository, *, observed_at):
         "explicit_label_title_disagreement": label_title_disagreement,
         "triage_rank": rank,
         "source_window_identity_drift": False,
+        "github_assignees": assignee_logins,
+        "github_assignees_source_complete": assignee_source_complete,
+        "assignee_window_identity_drift": False,
         "state": "open",
         "source_type": "github_recent_open_issue",
         "owner_next_step": (
@@ -166,7 +190,11 @@ def _operator_workflow(item):
     Source classification cannot establish a lease, real worker outage,
     approval, or effective severity outside the observed GitHub window.
     """
-    if item["source_window_identity_drift"]:
+    if item.get("assignee_window_identity_drift") is True:
+        kind = "assignee_source_changed"
+        problem = "GitHub issue assignees changed between sampled windows"
+        action = "Reopen the original issue and verify its current assignees and active worker claim"
+    elif item["source_window_identity_drift"]:
         kind = "source_changed"
         problem = "GitHub issue evidence changed between sampled windows"
         action = "Reopen the original issue and re-confirm priority and active owner"
@@ -195,6 +223,7 @@ def _operator_workflow(item):
         problem = "Open issue in bounded source with lower or unknown priority"
         action = "Inspect the source issue and existing repair PRs"
     codes = {
+        "assignee_source_changed": "recheck_changed_issue_assignees_before_owner_action",
         "source_changed": "recheck_changed_issue_source_before_owner_action",
         "conflicting_priority_labels": "reconcile_conflicting_priority_labels_with_issue_owner",
         "label_source_unknown": "inspect_source_issue_labels_before_priority",
@@ -208,7 +237,7 @@ def _operator_workflow(item):
         "human_action_code": codes[kind],
         "problem": problem,
         "action": action,
-        "status": "SOURCE OBSERVED; owner/CI/merge/recovery NOT VERIFIED",
+        "status": "SOURCE OBSERVED; GitHub assignee is not an active claim; CI/merge/recovery NOT VERIFIED",
         "human_followup_only": True,
         "issue_url": item["url"],
         "owner_claim_verified": False,
@@ -333,6 +362,17 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1,
                     existing["triage_rank"] = 6
                     existing["no_github_issue_update_for_72h"] = "UNKNOWN"
                     existing["last_github_update_age_hours"] = None
+                if (
+                    existing.get("github_assignees_source_complete") !=
+                        item["github_assignees_source_complete"]
+                    or existing.get("github_assignees") != item["github_assignees"]
+                ):
+                    # Assignment can change between non-atomic search windows.
+                    # Keep priority evidence separate, but require a fresh owner read.
+                    existing["assignee_window_identity_drift"] = True
+                    existing["owner_next_step"] = (
+                        "recheck_changed_issue_assignees_before_owner_action"
+                    )
 
     # Read recent issues first. Exact repo+issue-only filters exclude PR
     # storms from the inventory. Any GitHub permission denial ends this
@@ -515,6 +555,16 @@ def observe_repo_inbox(repo_full_name, *, token=None, display_page=1,
     }
 
 
+def _assignee_display(item):
+    """Human-readable GitHub issue assignment, never an active-claim assertion."""
+    if item.get("github_assignees_source_complete") is not True:
+        return "UNKNOWN"
+    names = item.get("github_assignees")
+    if not isinstance(names, list):
+        return "UNKNOWN"
+    return ", ".join(names) if names else "none assigned in issue metadata"
+
+
 def markdown(report):
     lines = [
         "# zSentinel — live GitHub issue inbox",
@@ -595,6 +645,7 @@ def markdown(report):
     for row in report["issues"]:
         label = row["priority_from_explicit_labels"]
         hint = row["unverified_title_prefix_hint"]
+        assignees = _assignee_display(row)
         lines.append(
             "- [Issue #" + str(row["number"]) + "](" + row["url"] +
             ") · label " + label + " · unverified title hint " + hint +
@@ -608,6 +659,8 @@ def markdown(report):
             ",".join(row["inbox_source_windows"]) +
             " · conflicting source snapshots: " +
             str(row["source_window_identity_drift"]) +
+            " · GitHub issue assignees (not active claims): " + assignees +
+            " · assignee source drift: " + str(row["assignee_window_identity_drift"]) +
             " · owner/repair/merge UNKNOWN"
         )
         workflow = row["operator_workflow"]
@@ -640,8 +693,9 @@ def workorders_csv(report, *, compact_all=False):
     writer = csv.writer(rows, lineterminator=chr(10))
     headings = (
         "observed_at_utc", "repository", "display_page",
-        "sampled_pages", "issue_url", "priority_source",
-        "unverified_title_hint", "source_window_drift",
+        "sampled_pages", "issue_url", "github_assignees",
+        "github_assignees_source_complete", "assignee_window_identity_drift",
+        "priority_source", "unverified_title_hint", "source_window_drift",
         "priority_label_conflict", "label_title_disagreement",
         "operator_workstream", "owner_step_code", "problem", "human_action", "status",
         "issue_updated_at_utc", "source_windows", "recent_window_complete",
@@ -677,8 +731,9 @@ def workorders_csv(report, *, compact_all=False):
         if report["all_sampled_issues_selected"] is not True:
             raise ValueError("all-sample CSV requires full bounded source")
         writer.writerow((
-            "observed_at_utc", "repository", "issue_url", "label_priority",
-            "human_action_code", "human_action", "source_conflict",
+            "observed_at_utc", "repository", "issue_url", "github_assignees",
+            "github_assignees_source_complete", "assignee_window_identity_drift",
+            "label_priority", "human_action_code", "human_action", "source_conflict",
             "sampled_issue_count", "source_partial_or_unknown",
             "active_owner_verified", "main_merge_authorized",
         ))
@@ -686,6 +741,8 @@ def workorders_csv(report, *, compact_all=False):
             step = item["operator_workflow"]
             writer.writerow([safe(value) for value in (
                 report["observed_at_utc"], report["repository"], item["url"],
+                _assignee_display(item), item["github_assignees_source_complete"],
+                item["assignee_window_identity_drift"],
                 item["priority_from_explicit_labels"],
                 step["human_action_code"], step["action"],
                 item["source_window_identity_drift"],
@@ -695,7 +752,7 @@ def workorders_csv(report, *, compact_all=False):
         if not report["issues"]:
             writer.writerow([safe(value) for value in (
                 report["observed_at_utc"], report["repository"], "", "UNKNOWN",
-                "inspect_current_source_before_owner_action",
+                False, False, "UNKNOWN", "inspect_current_source_before_owner_action",
                 "No issues in bounded source; verify current GitHub issues",
                 False, 0, report["source_partial_or_unknown"], False, False,
             )])
@@ -706,8 +763,9 @@ def workorders_csv(report, *, compact_all=False):
         writer.writerow([safe(value) for value in (
             report["observed_at_utc"], report["repository"],
             report["display_page"], report["display_pages_in_sample"],
-            item["url"], item["priority_from_explicit_labels"],
-            item["unverified_title_prefix_hint"],
+            item["url"], _assignee_display(item),
+            item["github_assignees_source_complete"], item["assignee_window_identity_drift"],
+            item["priority_from_explicit_labels"], item["unverified_title_prefix_hint"],
             item["source_window_identity_drift"],
             item["explicit_priority_label_conflict"],
             item["explicit_label_title_disagreement"],
@@ -725,8 +783,8 @@ def workorders_csv(report, *, compact_all=False):
         writer.writerow([safe(value) for value in (
             report["observed_at_utc"], report["repository"],
             report["display_page"], report["display_pages_in_sample"],
-            "", "UNKNOWN", "NONE", False, False, "UNKNOWN", "metadata_only_no_issues",
-            "inspect_source_before_owner_action",
+            "", "UNKNOWN", False, False, "UNKNOWN", "NONE", False, False,
+            "UNKNOWN", "metadata_only_no_issues", "inspect_source_before_owner_action",
             "No issues observed in bounded sampled source",
             "Refresh source and independently inspect current open issues",
             "SOURCE SAMPLE EMPTY; absence of incidents NOT VERIFIED",
@@ -849,6 +907,7 @@ def html_view(report):
                     " (" + str(len(items)) + ")</h2><ol>")
         for item in items:
             workflow = item["operator_workflow"]
+            assignees = _assignee_display(item)
             rows.append(
             "<li><a rel='noopener noreferrer' href='" + esc(item["url"]) +
             "'>Issue #" + esc(item["number"]) + "</a>"
@@ -867,6 +926,9 @@ def html_view(report):
             esc(", ".join(item["inbox_source_windows"])) +
             " · source changed during read: " +
             esc(item["source_window_identity_drift"]) +
+            "<br>GitHub issue assignees (not active claims): <code>" +
+            esc(assignees) + "</code> · assignee source drift: " +
+            esc(item["assignee_window_identity_drift"]) +
             "<p><strong>Problem:</strong> " + esc(workflow["problem"]) +
             "<br><strong>Action:</strong> " + esc(workflow["action"]) +
             "<br><strong>Status:</strong> " + esc(workflow["status"]) +
