@@ -1015,6 +1015,27 @@ def _worker_operator_action_codes(state: str, service_cgroup: dict,
         ))
     else:
         codes.append("ARCHIVE_BULK_GATE_UNKNOWN")
+    # The actual output directory is a separate observation from the archive:
+    # a healthy archive does not mean active training writes avoid root.
+    training = capacity.get("training_output_observation")
+    training_actions = {
+        "VERIFY_TRAINING_PATH_EXISTS",
+        "REQUEST_TRAINING_PATH_ACCESS",
+        "RESOLVE_TRAINING_PATH_TYPE",
+        "HOLD_TRAINING_SYSTEM_DISK",
+        "VERIFY_TRAINING_MOUNT_MEMBERSHIP",
+        "HOLD_TRAINING_FUSE_OR_NETWORK",
+        "VERIFY_TRAINING_BLOCK_DEVICE",
+        "HOLD_TRAINING_READ_ONLY_MOUNT",
+        "HOLD_TRAINING_INSUFFICIENT_SPACE",
+        "VERIFY_TRAINING_EXTERNAL_DRIVE_AND_PATHS",
+        "REFRESH_TRAINING_STORAGE_EVIDENCE",
+    }
+    if (isinstance(training, dict)
+            and training.get("next_step_code") in training_actions):
+        codes.append(str(training["next_step_code"]))
+    else:
+        codes.append("REFRESH_TRAINING_STORAGE_EVIDENCE")
     evidence_warnings = capacity.get("evidence_warnings", [])
     if isinstance(evidence_warnings, list):
         if any(reason in evidence_warnings for reason in (
