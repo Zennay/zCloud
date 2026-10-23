@@ -491,7 +491,22 @@ between `Popen` and the first PID-bearing renewal, a later admission
 can inspect this service scope for detached children; an old
 governor-executor record with no PID and no trusted service-cgroup
 identity is treated as **ambiguous and refused** rather than silently
-recycled. Synthetic legacy lease reservations not owned by the
+recycled.
+
+A canonical live heavy lease also records the originating Linux
+`host_boot_id` (one random UUID per boot) alongside its initial
+service-cgroup scope, before starting the child. The expired-lease
+inspector checks this origin identity **before** examining any local
+PID or cgroup: a lease from a different host/boot, or an older
+governed record without a verifiable origin, cannot be recycled on
+the assumption that the *current* machine has no matching process.
+This prevents a new VPS from interpreting its own empty `/proc`
+as proof that an orphaned worker on another VPS has stopped.
+Cross-host lease recovery still needs authorized operator evidence;
+a reboot/boot-ID mismatch is not itself proof of a clean release.
+Deliberately separate, unpinned canary SQLite databases continue
+using their own local process checks and do not claim shared-pool
+protection. Synthetic legacy lease reservations not owned by the
 governor retain the old pre-launch handling.
 
 The incident-retention code preserves the original `pid` and
