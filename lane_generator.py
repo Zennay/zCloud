@@ -402,13 +402,15 @@ def generate_execution_lanes(project, backlog, claims=()):
             if str(item.get("status") or "").lower() in ACTIVE_STATUSES
         ]
         if active:
-            chosen = active[0]
-            chosen_by_lane[lane_id] = chosen
-            occupied_scopes.append({
-                "queue_id": str(chosen.get("queue_id") or ""),
-                "lane_id": lane_id,
-                "scope": chosen["scope"],
-            })
+            # Display one representative but reserve EVERY live writer's
+            # declared scope before looking for a queued fallback elsewhere.
+            chosen_by_lane[lane_id] = active[0]
+            for existing in active:
+                occupied_scopes.append({
+                    "queue_id": str(existing.get("queue_id") or ""),
+                    "lane_id": lane_id,
+                    "scope": existing["scope"],
+                })
 
     queued = sorted(
         [
@@ -449,6 +451,10 @@ def generate_execution_lanes(project, backlog, claims=()):
             blocked_by_lane[lane_id].extend(conflicts)
             continue
 
+        # Earlier rejected candidates are not blockers of this successfully
+        # admitted, non-conflicting fallback. Preserve blockers only if no
+        # candidate for this lane was admitted at all.
+        blocked_by_lane[lane_id] = []
         chosen_by_lane[lane_id] = candidate
         occupied_scopes.append({
             "queue_id": str(candidate.get("queue_id") or ""),

@@ -411,10 +411,12 @@ def release_resource(connection: sqlite3.Connection, project_id: str, owner_id: 
     return {"released": cursor.rowcount == 1}
 
 
-def resource_status(connection: sqlite3.Connection) -> dict:
+def resource_status(connection: sqlite3.Connection, *, prune_expired: bool = True) -> dict:
+    """Display active leases without mutating SQLite for diagnostic GET calls."""
     contracts = load_contracts()
     ts = _now()
-    _cleanup_expired(connection, ts)
+    if prune_expired:
+        _cleanup_expired(connection, ts)
     rows = connection.execute(
         "SELECT * FROM resource_leases WHERE lease_until>? ORDER BY pool,acquired_at", (ts,)
     ).fetchall()

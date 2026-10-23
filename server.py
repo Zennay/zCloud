@@ -7,8 +7,9 @@ import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, loggin
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
-from scripts import worker_scaling_report
+from scripts import worker_scaling_report, zcloud_worker_progress_history, zcloud_activity_fair_page, zcloud_github_activity_live, zcloud_queue_retry_live
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
+from scripts.zcloud_product_delivery_policy import is_new_product_delivery, product_queue_snapshot
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -168,16 +169,11 @@ def action_request_allowed(handler):
         allowed = set()
     if addr in allowed:
         return True
-    host = (handler.headers.get('Host') or '').strip()
-    origin = (handler.headers.get('Origin') or '').strip()
-    referer = (handler.headers.get('Referer') or '').strip()
-    fetch_site = (handler.headers.get('Sec-Fetch-Site') or '').strip().lower()
-    same_origin = bool(host) and (
-        origin in ('http://' + host, 'https://' + host) or
-        referer.startswith('http://' + host + '/') or
-        referer.startswith('https://' + host + '/')
-    )
-    return same_origin and fetch_site in ('same-origin', 'same-site')
+    # Host/Origin/Referer/Sec-Fetch-Site are caller-supplied browser metadata,
+    # not authenticated remote identity. Non-browser clients can forge all of
+    # them. Preserve loopback and the existing explicit peer allowlist above;
+    # all other management requests fail closed, regardless of headers.
+    return False
 
 def project_runner_prompt(project_id, name):
     if project_id=='zsentinel':
@@ -325,16 +321,29 @@ RUNNER_DEFAULTS = {
 }
 LAYOUT_FILE = ROOT / 'project-layout.json'
 
+def _layout_known_unique_ids(items, allowed_ids):
+    """Keep the first occurrence of each canonical project and discard unknowns."""
+    allowed=set(allowed_ids)
+    result=[]
+    seen=set()
+    for value in (items if isinstance(items,list) else []):
+        if isinstance(value,str) and value in allowed and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
 def load_project_layout(projects=None):
-    ids=[p['id'] for p in projects] if projects else [p['id'] for p in json.loads((ROOT/'projects.json').read_text())]
+    projects=projects if projects is not None else json.loads((ROOT/'projects.json').read_text())
+    ids=[p['id'] for p in projects]
+    ids=_layout_known_unique_ids(ids,ids)
     default={'order':ids,'archived':[]}
     if not LAYOUT_FILE.exists():
         return default
     try:
         raw=json.loads(LAYOUT_FILE.read_text())
-        order=[x for x in raw.get('order',[]) if x in ids]
+        order=_layout_known_unique_ids(raw.get('order',[]),ids)
         order += [x for x in ids if x not in order]
-        archived=[x for x in raw.get('archived',[]) if x in ids]
+        archived=_layout_known_unique_ids(raw.get('archived',[]),ids)
         return {'order':order,'archived':archived}
     except Exception:
         logging.exception('Invalid project layout')
@@ -342,9 +351,10 @@ def load_project_layout(projects=None):
 
 def save_project_layout(layout, projects):
     ids=[p['id'] for p in projects]
-    order=[x for x in layout.get('order',[]) if x in ids]
+    ids=_layout_known_unique_ids(ids,ids)
+    order=_layout_known_unique_ids(layout.get('order',[]),ids)
     order += [x for x in ids if x not in order]
-    archived=[x for x in layout.get('archived',[]) if x in ids]
+    archived=_layout_known_unique_ids(layout.get('archived',[]),ids)
     payload={'order':order,'archived':archived}
     tmp=LAYOUT_FILE.with_suffix('.tmp')
     tmp.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+'\n')
@@ -710,7 +720,7 @@ def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
             'available_mb':None,'total_mb':None,'swap_total_mb':None,'swap_free_mb':None,
             'headroom_mb':WORKER_MEMORY_HEADROOM_MB,'per_new_slot_mb':WORKER_MEMORY_PER_NEW_SLOT_MB,
             'new_worker_capacity':0,'pressure':'unknown','healthy_for_new_worker':False,
-            'swap_healthy':False,'error':str(exc)[:200],
+            'swap_healthy':False,'swap_exhausted':None,'error':str(exc)[:200],
         }
     total=max(0,int(values.get('MemTotal') or 0))
     available=max(0,int(values.get('MemAvailable') or values.get('MemFree') or 0))
@@ -720,8 +730,16 @@ def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
     # Swap is a last-resort shock absorber, not worker capacity. With no useful
     # swap configured, preserve an extra 512 MiB of real RAM before admitting tabs.
     swap_healthy=(swap_total >= WORKER_SWAP_MIN_TOTAL_MB and swap_free >= min(WORKER_SWAP_MIN_FREE_MB,swap_total))
+    # A configured swap device with no meaningful free space cannot absorb a
+    # new browser tab's transient memory spike. Reserve enough RAM for recovery,
+    # but do not admit fresh claims solely because MemAvailable briefly rose.
+    # Hosts intentionally configured without swap keep their existing extra
+    # real-RAM reserve rather than being permanently denied new work.
+    swap_exhausted=(swap_total >= WORKER_SWAP_MIN_TOTAL_MB
+                    and swap_free < min(WORKER_SWAP_MIN_FREE_MB,swap_total))
     effective_reserve=reserve + (0 if swap_healthy else 512)
-    capacity=max(0,(available-effective_reserve)//WORKER_MEMORY_PER_NEW_SLOT_MB)
+    capacity=(0 if swap_exhausted else
+              max(0,(available-effective_reserve)//WORKER_MEMORY_PER_NEW_SLOT_MB))
     if available < WORKER_MEMORY_CRITICAL_MB:
         pressure='critical'
     elif available < WORKER_MEMORY_WARN_MB:
@@ -735,6 +753,7 @@ def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
         'headroom_mb':reserve,'effective_headroom_mb':effective_reserve,
         'per_new_slot_mb':WORKER_MEMORY_PER_NEW_SLOT_MB,'new_worker_capacity':int(capacity),
         'pressure':pressure,'healthy_for_new_worker':bool(capacity > 0),'swap_healthy':bool(swap_healthy),
+        'swap_exhausted':bool(swap_exhausted),
     }
 
 def _worker_recovery_hold_until():
@@ -1073,6 +1092,9 @@ def init_db():
         c.execute('CREATE TABLE IF NOT EXISTS host_samples(ts TEXT PRIMARY KEY, cpu REAL, memory REAL, disk REAL, load REAL)')
         c.execute('CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, ts TEXT, project TEXT, kind TEXT, title TEXT, detail TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS events_ts ON events(ts)')
+        # Supports bounded fair per-project Activity keysets without a repeated
+        # global timestamp scan for every quiet project (#1518).
+        c.execute('CREATE INDEX IF NOT EXISTS events_project_ts_id ON events(project,ts DESC,id DESC)')
         c.execute('CREATE TABLE IF NOT EXISTS runner_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, event TEXT, target TEXT, title TEXT, generating INTEGER, sending INTEGER, reason TEXT, tab_id INTEGER, error TEXT)')
         columns={r['name'] for r in c.execute('PRAGMA table_info(runner_events)').fetchall()}
         if 'project_id' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN project_id TEXT')
@@ -1270,8 +1292,12 @@ def host_metrics():
     if CPU_PREV and total > CPU_PREV[0]: cpu = round(100*(1-(idle-CPU_PREV[1])/(total-CPU_PREV[0])),1)
     CPU_PREV = (total,idle)
     m = {a:int(b.split()[0])*1024 for a,b in (line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())}
+    # Swap is part of the read-only host capacity observation. It is not a
+    # worker-lease or a reason to restart a running listener automatically.
+    swap_total=max(0,m.get('SwapTotal',0))
+    swap_free=max(0,min(swap_total,m.get('SwapFree',0)))
     d = shutil.disk_usage('/')
-    return {'cpu':cpu, 'cores':os.cpu_count(), 'load':round(os.getloadavg()[0],2), 'uptime':int(float(Path('/proc/uptime').read_text().split()[0])), 'memory':{'total':m['MemTotal'],'used':m['MemTotal']-m['MemAvailable']}, 'disk':{'total':d.total,'used':d.used,'free':d.free}}
+    return {'cpu':cpu, 'cores':os.cpu_count(), 'load':round(os.getloadavg()[0],2), 'uptime':int(float(Path('/proc/uptime').read_text().split()[0])), 'memory':{'total':m['MemTotal'],'used':m['MemTotal']-m['MemAvailable']}, 'swap':{'total':swap_total,'used':swap_total-swap_free,'free':swap_free}, 'disk':{'total':d.total,'used':d.used,'free':d.free}}
 
 def service_states():
     out = cmd(['systemctl','show',*SERVICES,'--property=Id,ActiveState,SubState,Result,ExecMainExitTimestamp,LastTriggerUSec'])
@@ -1581,20 +1607,21 @@ def improvement_loop_resume(project_id=IMPROVEMENT_PROJECT_ID):
             (project_id,IMPROVEMENT_RUNNING,0,0,None,None,None,ts))
     return improvement_loop_state(project_id)
 
-def _coordination_claim_rows_locked(connection,project_id,exclude_owner=None,ts=None):
+def _coordination_claim_rows_locked(connection,project_id,exclude_owner=None,ts=None,*,prune_expired=True):
     ts=ts or now()
-    connection.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
+    if prune_expired:
+        connection.execute('DELETE FROM task_claims WHERE lease_until<=?',(ts,))
     rows=connection.execute(
-        'SELECT project_id,claim_key,owner_id,worker_id FROM task_claims WHERE project_id=? ORDER BY claim_key,owner_id,worker_id',
-        (project_id,),
+        'SELECT project_id,claim_key,owner_id,worker_id FROM task_claims WHERE project_id=? AND lease_until>? ORDER BY claim_key,owner_id,worker_id',
+        (project_id,ts),
     ).fetchall()
     return [
         {'project_id':r['project_id'],'claim_key':r['claim_key'],'owner_id':r['owner_id'],'worker_id':r['worker_id']}
         for r in rows if not exclude_owner or r['owner_id']!=exclude_owner
     ]
 
-def _coordination_claims_fingerprint_locked(connection,project_id,exclude_owner=None,ts=None):
-    rows=_coordination_claim_rows_locked(connection,project_id,exclude_owner,ts)
+def _coordination_claims_fingerprint_locked(connection,project_id,exclude_owner=None,ts=None,*,prune_expired=True):
+    rows=_coordination_claim_rows_locked(connection,project_id,exclude_owner,ts,prune_expired=prune_expired)
     raw=json.dumps(rows,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
     return hashlib.sha256(raw).hexdigest(),rows
 
@@ -1734,7 +1761,7 @@ def worker_preflight_record(project_id,worker_id,owner_id,notion,github,vps_prof
         )
     return worker_preflight_state(project_id,worker_id,owner_id)
 
-def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=None):
+def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=None,*,prune_expired=True):
     row=connection.execute(
         'SELECT * FROM worker_preflights WHERE project_id=? AND worker_id=? AND owner_id=?',
         (project_id,worker_id,owner_id),
@@ -1750,7 +1777,7 @@ def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=N
     except Exception:
         expired=True
     fingerprint,current_claims=_coordination_claims_fingerprint_locked(
-        connection,project_id,owner_id,ts or reference.isoformat()
+        connection,project_id,owner_id,ts or reference.isoformat(),prune_expired=prune_expired
     )
     claims_changed=fingerprint!=row['claims_fingerprint']
     try:notion=json.loads(row['notion_json'])
@@ -1773,9 +1800,9 @@ def _worker_preflight_state_locked(connection,project_id,worker_id,owner_id,ts=N
         'vps':vps,
     }
 
-def worker_preflight_state(project_id,worker_id,owner_id):
+def worker_preflight_state(project_id,worker_id,owner_id,*,prune_expired=True):
     with connect() as c:
-        return _worker_preflight_state_locked(c,project_id,worker_id,owner_id)
+        return _worker_preflight_state_locked(c,project_id,worker_id,owner_id,prune_expired=prune_expired)
 
 def _normalize_conflict_scope(metadata):
     metadata=metadata if isinstance(metadata,dict) else {}
@@ -2602,7 +2629,7 @@ def _portfolio_queue_row(row):
     item['execution_lane']=metadata.get('execution_lane') if isinstance(metadata.get('execution_lane'),dict) else None
     return item
 
-def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
+def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None,eligible_queue_ids=None):
     ts=ts or now()
     params=[]
     project_clause=''
@@ -2631,6 +2658,10 @@ def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
         claims_by_project.setdefault(str(row['project_id']),[]).append(_claim_payload(row))
     backlog_by_project={}
     for row in backlog:
+        # Deny only *new* queued candidates; preserve active owner scopes.
+        if (eligible_queue_ids is not None and str(row['status']) == 'queued'
+                and str(row['queue_id']) not in eligible_queue_ids):
+            continue
         backlog_by_project.setdefault(str(row['project_id']),[]).append(dict(row))
     target_ids=ids or sorted(backlog_by_project)
     lanes=[]
@@ -2654,20 +2685,39 @@ def portfolio_execution_lanes(project_id=None):
         return _portfolio_lane_snapshot_locked(c,ids,now())
 
 def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
-    rows=connection.execute(
-        """SELECT * FROM portfolio_queue
-           WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
-           ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-                    created_at,queue_id LIMIT 240"""
-    ).fetchall()
+    # Fetch at most four ordered pages. Old QA-only P0/P1 items can otherwise
+    # consume the original global LIMIT 240 and starve a safe product fix at
+    # position 241. This scan is bounded; no queue rows are edited.
     preempted={str(value) for value in (preempted or set())}
-    rows=[row for row in rows if str(row['queue_id']) not in preempted]
+    rows=[]
+    for offset in (0,240,480,720):
+        page=connection.execute(
+            """SELECT * FROM portfolio_queue
+               WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                             WHEN 'P2' THEN 2 ELSE 3 END,
+                        created_at,queue_id LIMIT 240 OFFSET ?""",
+            (offset,),
+        ).fetchall()
+        # 17 Oct: skip fresh isolated QA; leave existing claimed/running work
+        # and task leases in place. Preserve original P0/P1 relative ordering.
+        rows.extend(
+            row for row in page
+            if str(row['queue_id']) not in preempted
+            and is_new_product_delivery(dict(row))
+        )
+        if len(rows)>=240 or len(page)<240:
+            break
+    rows=rows[:240]
     if not rows:
         return []
     project_ids={str(row['project_id']) for row in rows}
     lane_map={
         str(lane.get('queue_id')):lane
-        for lane in _portfolio_lane_snapshot_locked(connection,project_ids,ts)
+        for lane in _portfolio_lane_snapshot_locked(
+            connection,project_ids,ts,
+            eligible_queue_ids={str(row['queue_id']) for row in rows},
+        )
         if lane.get('queue_id') and lane.get('status')=='queued'
     }
     return [(row,lane_map[str(row['queue_id'])]) for row in rows if str(row['queue_id']) in lane_map]
@@ -2827,7 +2877,7 @@ def _attention_action_for_blocker(project_id,title,evidence):
         return f'{name}: complete the external review/submission step'
     return f'{name}: your input is needed to unblock this step'
 
-def portfolio_queue_items(include_done=False):
+def portfolio_queue_items(include_done=False, *, with_delivery_policy=False):
     with connect() as c:
         if include_done:
             rows=c.execute("""SELECT * FROM portfolio_queue
@@ -2838,7 +2888,14 @@ def portfolio_queue_items(include_done=False):
                               WHERE status NOT IN ('done','dropped')
                               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                                        created_at, queue_id""").fetchall()
-    return [_portfolio_queue_row(row) for row in rows]
+    # Preserve the exact *raw* SQLite rows only for the private advisory
+    # classifier. Public rows still redact metadata_json; policy may reject
+    # corrupted JSON that the legacy display normalizer represents as {}.
+    public_items=[_portfolio_queue_row(row) for row in rows]
+    if with_delivery_policy:
+        policy=product_queue_snapshot([dict(row) for row in rows])
+        return public_items,policy
+    return public_items
 
 def portfolio_queue_current_for_slot(global_slot):
     try: slot=int(global_slot)
@@ -3552,22 +3609,50 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
     return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created,'attention':attention,'queue_audit':audit}
 
 def portfolio_queue_allocation():
+    # Issue #588: never assemble slot ownership using one SQLite connection
+    # per slot. A concurrent scheduler transition between reads can fabricate
+    # two simultaneously active owners that never coexisted in the database.
+    # A single deferred READ transaction also binds historical slot ordinals
+    # and advisory queued candidates to that very same committed snapshot.
+    ts=now()
+    with connect() as c:
+        c.execute('BEGIN')
+        active_rows=c.execute(
+            """SELECT * FROM portfolio_queue
+               WHERE worker_slot BETWEEN 1 AND ?
+                 AND status IN ('claimed','running','verifying')
+                 AND (claim_expires IS NULL OR claim_expires>?)
+               ORDER BY worker_slot,updated_at DESC""",
+            (GLOBAL_CHATGPT_WORKER_LIMIT,ts),
+        ).fetchall()
+        previous_rows=c.execute(
+            'SELECT slot,project_id,worker_slot FROM ai_global_slots'
+        ).fetchall()
+        queued_rows=c.execute(
+            """SELECT * FROM portfolio_queue
+               WHERE status NOT IN ('done','dropped')
+               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                        WHEN 'P2' THEN 2 ELSE 3 END,created_at,queue_id"""
+        ).fetchall()
     active=[]
-    for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
-        item=portfolio_queue_current_for_slot(slot)
-        if item:
-            active.append(item)
+    seen_slots=set()
+    for row in active_rows:
+        slot=int(row['worker_slot'])
+        if slot in seen_slots:
+            # Preserve the previous 'latest updated row per slot' contract
+            # without ever presenting two owners for a single global slot.
+            continue
+        seen_slots.add(slot)
+        active.append(_portfolio_queue_row(row))
     # Keep an existing project's worker ordinal bound to its previous
     # physical slot. If an idle lower-numbered slot is later Force-assigned
     # to the same project, renumbering its generating worker would silently
     # orphan the active browser session.
-    with connect() as c:
-        previous={
-            (str(r['project_id']),int(r['slot'])):int(r['worker_slot'])
-            for r in c.execute(
-                'SELECT slot,project_id,worker_slot FROM ai_global_slots'
-            ).fetchall()
-        }
+    previous={
+        (str(r['project_id']),int(r['slot'])):int(r['worker_slot'])
+        for r in previous_rows
+    }
+    queued=[_portfolio_queue_row(row) for row in queued_rows]
     # Reserve ALL surviving worker ordinals before filling any newly
     # available global slot. Allocating low-numbered slots first otherwise
     # steals w1 from an already-generating worker on global slot 2.
@@ -3603,7 +3688,6 @@ def portfolio_queue_allocation():
             'desired_state':'running',
             'score':10000-_portfolio_priority_rank(item['priority'])*1000,
         })
-    queued=portfolio_queue_items(False)
     candidates=[{
         'worker_key':None,'project_id':item['project_id'],'worker_slot':None,
         'score':10000-_portfolio_priority_rank(item['priority'])*1000,
@@ -4348,7 +4432,8 @@ def _age_seconds(ts):
     except Exception: return None
 
 def worker_debug_report():
-    workers = runner_worker_targets()
+    # Diagnostics must not bootstrap/reconcile runner_workers on a GET.
+    workers = runner_worker_targets(reconcile=False)
     window = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
     marks = ','.join('?' * len(WORKER_BLOCK_EVENTS))
     rows = []
@@ -4392,8 +4477,32 @@ def worker_debug_report():
         cmds = [{'status': r['status'], 'result': r['r'], 'count': r['n']} for r in c.execute("SELECT status,COALESCE(substr(result,1,90),'') r,COUNT(*) n FROM runner_commands WHERE created_at>? GROUP BY 1,2 ORDER BY n DESC LIMIT 8", (window,)).fetchall()]
     try: firefox = firefox_runner_status()
     except Exception as exc: firefox = {'active': None, 'error': str(exc)[:120]}
+    memory=worker_memory_status()
+    hold=_worker_recovery_hold_until()
+    if hold:
+        admission_reason='oom_recovery_hold'
+    elif memory.get('swap_exhausted') is True:
+        admission_reason='configured_swap_exhausted'
+    elif memory.get('new_worker_capacity',0)<=0:
+        admission_reason='insufficient_memory_headroom'
+    else:
+        admission_reason=None
+    # The report explains NEW browser admission only. A blocked new slot does
+    # not authorize preempting, terminating or reclaiming an existing worker.
+    admission={
+        'new_worker_capacity':memory.get('new_worker_capacity'),
+        'new_worker_blocked':admission_reason is not None,
+        'reason':admission_reason,
+        'pressure':memory.get('pressure'),
+        'available_mb':memory.get('available_mb'),
+        'swap_total_mb':memory.get('swap_total_mb'),
+        'swap_free_mb':memory.get('swap_free_mb'),
+        'swap_exhausted':memory.get('swap_exhausted'),
+        'recovery_hold_until':hold.isoformat() if hold else None,
+        'existing_workers_preserved':True,
+    }
     return {'time': now(), 'workers': rows, 'summary': summary, 'events_15m': events, 'failed_commands_15m': failed,
-            'commands_15m': cmds, 'firefox': firefox,
+            'commands_15m': cmds, 'firefox': firefox, 'new_worker_admission': admission,
             'contract': {'prompt': 'project-first', 'queue_binding': 'structured-metadata', 'text_boilerplate_required': False}}
 
 def dynamic_force_push():
@@ -4866,10 +4975,57 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/resource-governor':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             with connect() as c:
-                return self.reply(project_runtime.resource_status(c))
+                return self.reply(project_runtime.resource_status(c,prune_expired=False))
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
+        if u.path=='/api/queue-retry-incidents':
+            # Explicit operator read, not an admission, lease or recovery action.
+            # Apply the existing trusted management peer gate before DB access.
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):
+                return self.reply({'error':'Niet toegestaan'},403)
+            names=q.get('project',[])
+            if len(names)!=1:return self.reply({'error':'Selecteer exact een project of all'},400)
+            project_id=names[0]
+            if project_id!='all' and project_id not in PORTFOLIO_PROJECT_INDEX:
+                return self.reply({'error':'Onbekend project'},404)
+            try:
+                result=zcloud_queue_retry_live.snapshot(
+                    DB,set(PORTFOLIO_PROJECT_INDEX),project_id,threshold=3,limit=40
+                )
+            except zcloud_queue_retry_live.ObservationUnavailable:
+                # Never convert a denied/partial DB read into a false zero count.
+                return self.reply({'error':'Queue bron tijdelijk niet betrouwbaar'},503)
+            return self.reply(result)
+        if u.path in ('/api/github-activity-live','/api/product-issues-live'):
+            # On-demand only, never a queue/worker action. Private or remote
+            # API reads require the existing trusted management peer admission.
+            # Reject before a GitHub network request or refresh is scheduled.
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):
+                return self.reply({'error':'Niet toegestaan'},403)
+            names=q.get('project',[])
+            if len(names)!=1:return self.reply({'error':'Selecteer exact een project'},400)
+            project_id=names[0]
+            if project_id not in PORTFOLIO_PROJECT_INDEX:
+                return self.reply({'error':'Onbekend project'},404)
+            try:
+                kind='activity' if u.path=='/api/github-activity-live' else 'issues'
+                sample=zcloud_github_activity_live.read_live(ROOT/'projects.json',project_id,kind=kind)
+            except (ValueError,OSError):
+                return self.reply({'error':'GitHub bron niet beschikbaar'},400)
+            # Explicit state=refreshing is NOT a successful synced feed; clients
+            # may poll by user initiation, with the bounded cache guarding calls.
+            return self.reply(sample)
+        if u.path=='/api/worker-progress-history':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            project_id=str(q.get('project',[''])[0] or '').strip().lower()
+            if project_id not in PROJECT_INDEX:return self.reply({'error':'Onbekend project'},400)
+            try:
+                slot=int(q.get('slot',['1'])[0]);limit=int(q.get('limit',['24'])[0])
+                report=zcloud_worker_progress_history.read_worker_progress(DB,project_id,slot,limit)
+            except (ValueError,TypeError):
+                return self.reply({'error':'Ongeldige worker-selectie'},400)
+            return self.reply(report)
         if u.path=='/api/worker-debug':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply(worker_debug_report())
@@ -4883,7 +5039,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/runner-targets':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             allocation=global_worker_allocation()
-            return self.reply({'projects':runner_worker_targets(allocation=allocation),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings()})
+            return self.reply({'projects':runner_worker_targets(allocation=allocation,reconcile=False),'max_workers':GLOBAL_CHATGPT_WORKER_LIMIT,'global_allocation':allocation,'dynamic_workers':dynamic_worker_settings()})
         if u.path=='/api/runner-live':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             target_cfg=runner_targets()
@@ -4891,7 +5047,9 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/portfolio-queue':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
-            return self.reply({'backend':'sqlite','items':portfolio_queue_items(include_done),'allocation':global_worker_allocation(),'time':now()})
+            items,policy=portfolio_queue_items(include_done,with_delivery_policy=True)
+            return self.reply({'backend':'sqlite','items':items,'delivery_policy':policy,
+                               'allocation':global_worker_allocation(),'time':now()})
         if u.path=='/api/portfolio-attention':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_resolved=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
@@ -4908,7 +5066,7 @@ class Handler(BaseHTTPRequestHandler):
             worker_id=str(q.get('worker',[''])[0] or '').strip()
             owner_id=str(q.get('owner',[''])[0] or '').strip()
             if not project_id or not worker_id or not owner_id:return self.reply({'error':'project, worker en owner zijn verplicht'},400)
-            return self.reply(worker_preflight_state(project_id,worker_id,owner_id))
+            return self.reply(worker_preflight_state(project_id,worker_id,owner_id,prune_expired=False))
         if u.path=='/api/config-audit':
             if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
             try: limit=int(q.get('limit',['80'])[0])
@@ -4922,7 +5080,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({'improvement':improvement_loop_state(q.get('project',[IMPROVEMENT_PROJECT_ID])[0] or IMPROVEMENT_PROJECT_ID),'time':now()})
         if u.path=='/api/task-claims':
             if not action_request_allowed(self):return self.reply({'error':'Alleen vertrouwde beheerclients'},403)
-            return self.reply({'claims':task_claims(q.get('project',[''])[0] or None),'time':now()})
+            return self.reply({'claims':task_claims(q.get('project',[''])[0] or None,prune_expired=False),'time':now()})
         if u.path=='/api/runner-commands':
             if self.client_address[0] not in ('127.0.0.1','::1'):return self.reply({'error':'Alleen lokaal'},403)
             # Browser workers must never be starved by an old pending backlog.
@@ -4976,10 +5134,54 @@ class Handler(BaseHTTPRequestHandler):
                 if pid not in [p['id'] for p in data['projects']]:return self.reply({'error':'Onbekend project'},404)
                 days={'24h':1,'7d':7,'30d':30,'all':0}.get(q.get('range',['7d'])[0],7)
                 return self.reply(history(pid,days))
-            if u.path=='/api/activity':
+            if u.path in ('/api/activity','/api/activity-page'):
+                # Keep the old array API compatible while removing the global
+                # 80-row starvation problem (#1518). The new paged endpoint
+                # offers explicit, source-limited coverage and safe cursors.
+                project_ids=([pid] if pid else sorted(PROJECT_INDEX))
+                if pid and pid not in PROJECT_INDEX:return self.reply({'error':'Onbekend project'},404)
+                if u.path=='/api/activity-page':
+                    try:
+                        limit=int(q.get('limit',['80'])[0])
+                        raw_cursor=q.get('cursor',[''])[0]
+                        if len(raw_cursor)>4096:raise ValueError('cursor exceeds budget')
+                        cursor=json.loads(raw_cursor) if raw_cursor else None
+                        with connect() as c:
+                            c.execute('BEGIN')
+                            page=zcloud_activity_fair_page.fair_page(
+                                c,project_ids,page_size=limit,cursor=cursor
+                            )
+                    except (TypeError,ValueError):
+                        return self.reply({'error':'Ongeldige paginaselectie of bron-tijdstempel'},400)
+                    return self.reply(page)
                 with connect() as c:
-                    rows=c.execute('SELECT * FROM events WHERE (?="" OR project=?) ORDER BY ts DESC LIMIT 80',(pid,pid)).fetchall()
-                return self.reply([dict(r) for r in rows])
+                    c.execute('BEGIN')
+                    try:
+                        page=zcloud_activity_fair_page.fair_page(c,project_ids)
+                        ids=[item['id'] for item in page['events']]
+                        if ids:
+                            marks=','.join('?' for _ in ids)
+                            rows=c.execute(
+                                'SELECT * FROM events WHERE id IN ('+marks+')',ids
+                            ).fetchall()
+                            by_id={row['id']:dict(row) for row in rows}
+                            result=[by_id[eid] for eid in ids if eid in by_id]
+                        else:
+                            result=[]
+                    except ValueError:
+                        # Corrupt legacy event timestamps must not take down
+                        # the original dashboard route; preserve the previous
+                        # bounded fallback. /api/activity-page surfaces the
+                        # explicit coverage failure instead.
+                        logging.warning('Activity fair source unavailable: malformed event timestamp')
+                        rows=c.execute(
+                            'SELECT * FROM events WHERE (?="" OR project=?) ORDER BY ts DESC LIMIT 80',
+                            (pid,pid),
+                        ).fetchall()
+                        result=[dict(row) for row in rows]
+                # Release the SQLite read snapshot BEFORE socket I/O to avoid
+                # slow HTTP readers extending the database read transaction.
+                return self.reply(result)
             if u.path=='/api/host-history':
                 with connect() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
                 return self.reply([dict(r) for r in reversed(rows)])
