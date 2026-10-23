@@ -41,13 +41,23 @@ def connect(path: Path):
         if os.environ.get("ZCLOUD_RESOURCE_DB") is not None:
             # An existing, unrelated SQLite database at the pinned path
             # must not be silently initialized as an empty resource pool.
-            columns = {row["name"] for row in conn.execute(
-                "PRAGMA table_info(resource_leases)"
-            )}
+            row = conn.execute(
+                "SELECT type FROM sqlite_master WHERE name='resource_leases'"
+            ).fetchone()
+            fields = {
+                field["name"]: field
+                for field in conn.execute("PRAGMA table_info(resource_leases)")
+            }
             required = {"project_id", "owner_id", "pool", "workload_class",
                         "cpu_soft_cores", "memory_soft_mb", "acquired_at",
                         "lease_until", "metadata_json"}
-            if not required.issubset(columns):
+            if (row is None or row["type"] != "table"
+                    or not required.issubset(fields)
+                    or fields["project_id"]["pk"] != 1
+                    or fields["owner_id"]["pk"] != 2):
+                # Without the canonical composite primary key, a pre-existing
+                # SQLite file can store ambiguous duplicate owner leases and
+                # silently violate the one-heavy-job admission invariant.
                 raise RuntimeError("resource_shared_database_schema_unavailable")
         else:
             runtime.init_tables(conn)
