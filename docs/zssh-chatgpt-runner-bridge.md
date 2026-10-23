@@ -1,3 +1,22 @@
+## 23 October 2026 · archive bulk-storage gate requires inode headroom too
+
+The configured `/home/ubuntu/VPS-Archief` bulk-storage advisory now requires
+both the existing free-byte threshold and an observed, non-pressured inode
+capacity before describing the archive as a possible offload candidate. The
+inode snapshot is admitted only for a stable, mounted, separate,
+local-block-backed, writable target; inode data from root-shared, read-only,
+virtual/network or unverified mounts is not credited.
+
+The receipt exposes inode totals/free/available, the percentage unavailable
+to the unprivileged process, an explicit observation status and a bounded
+pressure enum. At least 99% unavailable is CRITICAL, 95% is HIGH and 90% is
+ELEVATED. Missing/invalid counters keep the advisory at UNKNOWN, and an
+unstable mount/backing recheck clears inode fields together with the source
+identity. The operator-action list keeps a separate inode HOLD/review code
+even when the same archive also has a low-byte-capacity issue. This remains a
+read-only advisory; no archive transfer, cleanup, training launch, runner
+restart or claim/queue mutation is authorized.
+
 ## 23 October 2026 · training-output inode exhaustion is a separate HOLD
 
 The owner-only `/zssh workers` receipt now checks inode capacity at the actual
