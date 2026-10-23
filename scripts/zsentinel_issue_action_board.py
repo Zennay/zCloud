@@ -100,9 +100,10 @@ def build(report):
                 or type(issue.get("project")) is not str
                 or type(issue.get("title")) is not str
                 or not 1 <= len(issue["title"]) <= 180
+                or type(issue.get("issue_evidence_stale")) is not bool
                 or issue["url"] in seen or issue.get("merge_authorized") is not False
                 or issue.get("claim_authorized") is not False):
-            raise ValueError("untrusted or duplicate source issue")
+            raise ValueError("untrusted, duplicate or freshness-unverified source issue")
         seen.add(issue["url"])
         activity = issue.get("activity")
         if (type(activity) is not dict
@@ -188,7 +189,7 @@ def build(report):
             # issue clocks cannot endorse a linked PR's commit identity.
             observed_head = None
             if has_live_gate and (
-                    issue.get("issue_evidence_stale") is not True and
+                    issue.get("issue_evidence_stale") is False and
                     report.get("source_clocks_within_10_minutes") is True and
                     live.get("exact_head_stable_on_second_read") is True):
                 value = live.get("head_sha_observed")
