@@ -300,6 +300,40 @@ class GovernedExecTests(unittest.TestCase):
             conn.close()
 
 
+    def test_bounded_heavy_wait_times_out_without_starting_child(self):
+        holder = self._connect()
+        self.assertTrue(
+            runtime.acquire_resource(holder, "ftmo", "persistent-holder")["acquired"]
+        )
+        holder.commit()
+        marker = self.root / "must-not-start.txt"
+        try:
+            started = time.monotonic()
+            rc = governed.run_governed(
+                self.db,
+                "haxlab",
+                "timed-out-contender",
+                [
+                    sys.executable, "-c",
+                    f"from pathlib import Path; Path({str(marker)!r}).write_text('bad')",
+                ],
+                wait_seconds=1,
+            )
+            elapsed = time.monotonic() - started
+            self.assertEqual(75, rc)
+            self.assertGreaterEqual(elapsed, 0.75)
+            self.assertLess(elapsed, 4.0)
+            self.assertFalse(marker.exists())
+            self.assertEqual(
+                1, runtime.resource_status(holder, prune_expired=False)[
+                    "pools"
+                ]["heavy"]["used"]
+            )
+        finally:
+            runtime.release_resource(holder, "ftmo", "persistent-holder")
+            holder.commit()
+            holder.close()
+
     def test_waiting_heavy_contender_starts_only_after_holder_releases(self):
         # Exercise two independent SQLite users, not a mocked capacity
         # calculator. The wrapper must rollback while waiting and must
