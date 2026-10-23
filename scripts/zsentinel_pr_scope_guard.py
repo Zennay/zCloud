@@ -432,12 +432,25 @@ def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
         # must never silently count as a fully inspected issue source.
         body_covered = body is None or (type(body) is str and len(body) <= 32000)
         title_covered = type(title) is str and 0 < len(title) <= 256
-        body_refs = ({int(m.group(1)) for m in re.finditer(
-            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b",
-            body or "")} if body_covered else set())
-        title_refs = ({int(m.group(1)) for m in re.finditer(
-            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b",
-            title)} if title_covered else set())
+        # Text links are unverified issue references, never a GitHub claim,
+        # exact-head guarantee or permission to merge. Scope full URLs to
+        # this repository so an unrelated project with the same issue number
+        # cannot become an apparent duplicate implementation.
+        issue_link = re.compile(
+            re.escape("https://github.com/" + repo + "/issues/") +
+            r"([1-9][0-9]{0,7})(?![A-Za-z0-9/_-])"
+        )
+        issue_hash = re.compile(
+            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b"
+        )
+        body_refs = ({
+            int(m.group(1)) for pattern in (issue_hash, issue_link)
+            for m in pattern.finditer(body or "")
+        } if body_covered else set())
+        title_refs = ({
+            int(m.group(1)) for pattern in (issue_hash, issue_link)
+            for m in pattern.finditer(title)
+        } if title_covered else set())
         refs_covered = (body_covered and title_covered
                         and len(body_refs | title_refs) <= MAX_REFERENCED_ISSUES)
         refs = sorted(body_refs | title_refs)[:MAX_REFERENCED_ISSUES]
