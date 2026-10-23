@@ -1071,3 +1071,8 @@ A failed `/api/status` refresh also marks the cached snapshot stale, even when
 its timestamp is less than 90 seconds old. The dashboard connection failure
 must not leave stale attention cards actionable; non-queue resolution stays
 disabled until a successful status refresh with a trustworthy timestamp.
+
+The overview queue summary uses the same connection-aware freshness decision as
+the attention panel. A successful-looking timestamp from a cached response
+cannot label owner-clearance counts as the latest snapshot after a failed
+status refresh.
