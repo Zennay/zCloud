@@ -1,0 +1,646 @@
+#!/usr/bin/env python3
+"""Compare two bounded, owner-neutral worker event snapshots (#1342).
+
+A heartbeat and a generation-progress cursor have distinct meanings.
+Neither is a product commit, an active claim lease, or a recovery receipt.
+All inputs are private observations from one indexed local history.db.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from datetime import datetime, timedelta, timezone
+from html import escape
+from pathlib import Path
+
+from zsentinel_disk_trend import load_previous
+from zsentinel_private_output import write_private_output
+from zsentinel_worker_progress_observer import observe_worker_progress
+
+SCHEMA = "zsentinel-worker-progress-delta-v1"
+SOURCE_SCHEMA = "zsentinel-worker-progress-observation-v1"
+SOURCE = "existing_sqlite_mode_ro_query_only_indexed_runner_events"
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
+MAX_ENTRIES = 24
+MAX_HOURS = 72
+MAX_CURRENT_SOURCE_AGE = timedelta(minutes=10)
+
+# Operator priority, not automatic incident severity or scheduler admission.
+# Slots disappearing from the bounded observation demand an owner check
+# before routine activity signals; none of these classes proves recovery.
+OPERATOR_ORDER = {
+    "source_snapshot_stale_requires_refresh": 0,
+    "missing_in_current_sample_not_resolved": 0,
+    "claim_window_changed_requires_owner_recheck": 1,
+    "claim_window_unavailable_requires_owner_recheck": 1,
+    "indexed_source_reset_or_regression": 1,
+    "paused_or_draining_owner_hold": 2,
+    "running_allocated_no_new_event": 3,
+    "first_cursor_observed_not_delta": 4,
+    "new_in_bounded_sample_not_new_claim": 5,
+    "new_events_without_indexed_progress": 6,
+    "generation_progress_signal_observed": 7,
+    "other_bounded": 8,
+}
+OPERATOR_LABELS = {
+    "source_snapshot_stale_requires_refresh": "Bron ouder dan 10 minuten; eerst vernieuwen",
+    "missing_in_current_sample_not_resolved": "Niet meer waargenomen (geen herstel)",
+    "claim_window_changed_requires_owner_recheck": "Queue-claimvenster gewijzigd; eigenaarcontrole nodig",
+    "claim_window_unavailable_requires_owner_recheck": "Queue-claimvenster ontbreekt; eigenaarcontrole nodig",
+    "indexed_source_reset_or_regression": "Eventbron mogelijk gereset",
+    "paused_or_draining_owner_hold": "Pauze/drain door eigenaar",
+    "running_allocated_no_new_event": "Running, geen nieuw event gezien",
+    "first_cursor_observed_not_delta": "Eerste cursor, geen voortgangsdelta",
+    "new_in_bounded_sample_not_new_claim": "Nieuw in steekproef (geen claim)",
+    "new_events_without_indexed_progress": "Nieuwe events, geen expliciete voortgang",
+    "generation_progress_signal_observed": "Expliciet progress-event; commit onbekend",
+    "other_bounded": "Geen betrouwbare verandering",
+}
+
+
+def _owner_sort(rows):
+    if (type(rows) is not list or len(rows) > 2 * MAX_ENTRIES
+            or any(type(row) is not dict
+                   or row.get("stage") not in OPERATOR_ORDER
+                   or type(row.get("project_id")) is not str
+                   or not SLUG.fullmatch(row["project_id"])
+                   or type(row.get("worker_slot")) is not int
+                   or not 1 <= row["worker_slot"] <= 16
+                   for row in rows)):
+        raise ValueError("untrusted or unbounded operator worker rows")
+    return sorted(rows, key=lambda row: (
+        OPERATOR_ORDER[row["stage"]], row["project_id"], row["worker_slot"],
+    ))
+
+
+def _utc(value):
+    if type(value) is not str or not 1 <= len(value) <= 45:
+        raise ValueError("worker source UTC clock required")
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("invalid worker UTC clock") from exc
+    if dt.tzinfo is None or dt.utcoffset() != timedelta(0):
+        raise ValueError("worker source clock must be UTC")
+    return dt.astimezone(timezone.utc)
+
+
+def _cursor(value):
+    if value is None:
+        return None
+    if type(value) is not int or not 1 <= value <= 2**53 - 1:
+        raise ValueError("invalid indexed worker cursor")
+    return value
+
+
+def _progress_window_label(value):
+    return "JA" if value is True else "NEE" if value is False else "ONBEKEND"
+
+
+def _source(r):
+    if (type(r) is not dict or r.get("schema") != SOURCE_SCHEMA
+            or r.get("source") != SOURCE
+            or r.get("actions_performed") is not False
+            or r.get("worker_resumed_verified") is not False
+            or r.get("live_worker_claims_verified") is not False
+            or r.get("database_write_authorized") is not False
+            or r.get("runner_restart_authorized") is not False
+            or type(r.get("event_inventory_complete")) is not bool
+            or r["event_inventory_complete"] is not False):
+        raise ValueError("untrusted read-only worker evidence")
+    identity = r.get("source_file_identity_sha256_private")
+    if type(identity) is not str or not HEX64.fullmatch(identity):
+        raise ValueError("worker source identity missing")
+    projects = r.get("selected_projects")
+    rows = r.get("entries")
+    if (type(projects) is not list or not 1 <= len(projects) <= 3
+            or len(set(projects)) != len(projects)
+            or any(type(p) is not str or not SLUG.fullmatch(p) for p in projects)
+            or type(rows) is not list or len(rows) > MAX_ENTRIES):
+        raise ValueError("unbounded or untrusted worker projects")
+    observed = {}
+    for row in rows:
+        if type(row) is not dict:
+            raise ValueError("untrusted worker row")
+        project, slot = row.get("project_id"), row.get("worker_slot")
+        if (project not in projects or type(slot) is not int
+                or not 1 <= slot <= 16 or (project,slot) in observed
+                or row.get("owner_claim_verified") is not False
+                or row.get("worker_resumed_verified") is not False
+                or row.get("repair_authorized") is not False
+                or row.get("event_source") != "indexed_local_runner_events_only"):
+            raise ValueError("untrusted worker slot or authorization flag")
+        claim_window_fingerprint = row.get("claim_window_fingerprint")
+        if (claim_window_fingerprint is not None and
+                (type(claim_window_fingerprint) is not str
+                 or not HEX64.fullmatch(claim_window_fingerprint))):
+            raise ValueError("invalid private claim-window fingerprint")
+        claim_window_correlation = row.get("claim_window_correlation")
+        progress_timestamp_window = row.get("progress_timestamp_in_current_claim_window")
+        if (progress_timestamp_window is not None
+                and type(progress_timestamp_window) is not bool):
+            raise ValueError("invalid progress timestamp claim-window flag")
+        if claim_window_correlation is not None and claim_window_correlation not in (
+                "time_window_only_not_identity_bound",
+                "unavailable_no_valid_current_lease"):
+            raise ValueError("invalid claim-window correlation")
+        if ((claim_window_correlation == "time_window_only_not_identity_bound")
+                != (claim_window_fingerprint is not None)):
+            raise ValueError("claim-window identity and fingerprint coverage disagree")
+        last = _cursor(row.get("latest_indexed_event_id"))
+        progress = _cursor(row.get("latest_indexed_progress_event_id"))
+        if progress is not None and (last is None or progress > last):
+            raise ValueError("progress event cannot be after last event")
+        state = row.get("desired_state")
+        if state not in ("running", "paused", "draining", "unknown"):
+            raise ValueError("unknown worker desired state")
+        allocated = row.get("allocated_global_slot")
+        if allocated is not None and (type(allocated) is not int or
+                                      not 1 <= allocated <= 32):
+            raise ValueError("invalid global worker slot")
+        observed[(project,slot)] = {
+            "latest": last, "progress": progress, "desired": state,
+            "allocated": allocated,
+            "claim_from_source": row.get("queue_claim_status_observed")
+                                 in ("claimed", "running", "verifying"),
+            "claim_lease_current_from_source": row.get("queue_lease_current_from_source") is True,
+            "claim_window_fingerprint": claim_window_fingerprint,
+            "progress_timestamp_window": progress_timestamp_window,
+        }
+    return identity, _utc(r.get("observed_at_utc")), tuple(projects), observed
+
+
+def compare(previous, current, now=None):
+    key0, t0, projects0, old = _source(previous)
+    key1, t1, projects1, new = _source(current)
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("comparison clock must be timezone-aware")
+    now = now.astimezone(timezone.utc)
+    if (key0 != key1 or projects0 != projects1
+            or not timedelta(0) < t1 - t0 <= timedelta(hours=MAX_HOURS)
+            or t1 > now + timedelta(minutes=2)):
+        raise ValueError("same live indexed SQLite and selected projects, ordered UTC snapshots required")
+    source_age = now - t1
+    source_age_seconds = max(0, int(source_age.total_seconds()))
+    source_freshness = (
+        "stale" if source_age > MAX_CURRENT_SOURCE_AGE else "fresh"
+    )
+    items = []
+    counts = {
+        "source_snapshot_stale_requires_refresh": 0,
+        "generation_progress_signal_observed": 0,
+        "new_events_without_indexed_progress": 0,
+        "first_cursor_observed_not_delta": 0,
+        "running_allocated_no_new_event": 0,
+        "paused_or_draining_owner_hold": 0,
+        "indexed_source_reset_or_regression": 0,
+        "claim_window_changed_requires_owner_recheck": 0,
+        "claim_window_unavailable_requires_owner_recheck": 0,
+        "new_in_bounded_sample_not_new_claim": 0,
+        "missing_in_current_sample_not_resolved": 0,
+        "other_bounded": 0,
+    }
+    # Both sides of the bounded sample matter. Previously only the intersection
+    # was rendered: a worker that disappeared from observation had no private
+    # owner-action row at all, despite appearing in an aggregate counter.
+    # Such a disappearance is NEVER evidence that the task was completed,
+    # the claim was released or its original worker can be replaced.
+    shared = old.keys() & new.keys()
+    for project, slot in sorted(old.keys() | new.keys()):
+        before, after = old.get((project, slot)), new.get((project, slot))
+        previous_progress_window = (before["progress_timestamp_window"]
+                                   if before is not None else None)
+        current_progress_window = (after["progress_timestamp_window"]
+                                  if after is not None else None)
+        if before is None or after is None:
+            progress_window_observation = "not_comparable_missing_worker_card"
+        elif previous_progress_window is None or current_progress_window is None:
+            progress_window_observation = "unknown_legacy_or_claim_window"
+        elif previous_progress_window == current_progress_window:
+            progress_window_observation = ("unchanged_in_claim_window"
+                                           if current_progress_window
+                                           else "unchanged_outside_claim_window")
+        else:
+            progress_window_observation = ("changed_to_in_claim_window"
+                                           if current_progress_window
+                                           else "changed_outside_claim_window")
+        first = before["latest"] if before is not None else None
+        last = after["latest"] if after is not None else None
+        pfirst = before["progress"] if before is not None else None
+        plast = after["progress"] if after is not None else None
+        # A previously missing cursor is not zero. A progress event only
+        # advanced when the prior progress cursor increased, or when the
+        # new progress event is newer than the previous *last event* cursor.
+        # This preserves real new generation events without treating first
+        # observation or bounded event-retention gaps as new work.
+        progress_advanced = (
+            plast is not None and (
+                (pfirst is not None and plast > pfirst)
+                or (pfirst is None and first is not None and plast > first)
+            )
+        )
+        event_advanced = first is not None and last is not None and last > first
+        # Across missing/changed queue claims, raw indexed events may belong
+        # to a DIFFERENT task on the same browser worker slot. Suppress the
+        # misleading advanced flags even when the SQLite cursor increased.
+        comparable_claim_window = bool(
+            before is not None and after is not None
+            and before["claim_window_fingerprint"] is not None
+            and before["claim_window_fingerprint"] == after["claim_window_fingerprint"]
+        )
+        if not comparable_claim_window or source_freshness == "stale":
+            event_advanced = False
+            progress_advanced = False
+        if source_freshness == "stale":
+            stage = "source_snapshot_stale_requires_refresh"
+            action = (
+                "De huidige workerbron is ouder dan tien minuten. Vernieuw eerst "
+                "de toegestane read-only waarneming; deze historische vergelijking "
+                "bewijst geen actuele voortgang, stagnatie, claimstatus of herstel."
+            )
+        elif before is None:
+            stage = "new_in_bounded_sample_not_new_claim"
+            action = "Controleer met eigenaar of dit een bestaande toewijzing is; geen claim of vrije capaciteit bewezen."
+        elif after is None:
+            stage = "missing_in_current_sample_not_resolved"
+            action = "Controleer bij eigenaar waarom de worker niet meer wordt waargenomen; geen herstel of vrijgave bewezen."
+        elif (before["claim_window_fingerprint"] != after["claim_window_fingerprint"]
+              and (before["claim_window_fingerprint"] is not None
+                   or after["claim_window_fingerprint"] is not None)):
+            stage = "claim_window_changed_requires_owner_recheck"
+            action = (
+                "Het waargenomen queue-claimvenster veranderde tussen snapshots; "
+                "vergelijk cursors niet alsof dit dezelfde taak is. Laat de bevoegde "
+                "eigenaar de actuele claim en voortgang handmatig verifiëren."
+            )
+        elif after["desired"] in ("paused", "draining"):
+            # The owner deliberately held this slot; absent queue evidence
+            # must not override an explicit pause/drain with a restart hint.
+            stage = "paused_or_draining_owner_hold"
+            action = "Respecteer actuele pauze-/drainstatus en bestaande eigenaar."
+        elif (before["claim_window_fingerprint"] is None
+              or after["claim_window_fingerprint"] is None):
+            stage = "claim_window_unavailable_requires_owner_recheck"
+            action = (
+                "Een of beide actuele queueclaimvensters ontbreken; browsercursors "
+                "kunnen niet aan dezelfde taak worden verbonden. Controleer eerst "
+                "de originele lease en eigenaar, zonder claimovername."
+            )
+        elif ((first is not None and last is not None and last < first)
+                or (pfirst is not None and plast is not None and plast < pfirst)
+                or (pfirst is not None and plast is None)):
+            stage = "indexed_source_reset_or_regression"
+            action = "Eigenaar verifieert reset/retentie en broncontinuïteit; geen hervatting afleiden."
+        elif progress_advanced:
+            stage = "generation_progress_signal_observed"
+            action = "Controleer echte codecommit of taakoplevering; event is geen productbewijs."
+        elif event_advanced:
+            stage = "new_events_without_indexed_progress"
+            action = "Er kwamen events bij, maar geen nieuw expliciet progress-event; inspecteer eigenaarstatus."
+        elif (first is None and last is not None):
+            stage = "first_cursor_observed_not_delta"
+            action = "De eventcursor is voor het eerst zichtbaar; controleer bronretentie en eigenaar voordat voortgang wordt aangenomen."
+        elif (after["desired"] == "running" and after["allocated"] is not None
+              and t1 - t0 >= timedelta(minutes=15)):
+            stage = "running_allocated_no_new_event"
+            action = "Vraag eigenaar om actuele lease en echte voortgang te verifiëren; geen takeover."
+        else:
+            stage = "other_bounded"
+            action = "Deze twee snapshots bewijzen geen stagnatie of productoplevering."
+        counts[stage] += 1
+        items.append({
+            "project_id": project, "worker_slot": slot,
+            "stage": stage, "owner_action": action,
+            "event_cursor_advanced_observed": event_advanced,
+            "explicit_progress_cursor_advanced_observed": progress_advanced,
+            "current_desired_state": after["desired"] if after is not None else "not_observed",
+            "current_global_slot_observed": after["allocated"] if after is not None else None,
+            "source_claim_lease_current_but_not_authority":
+                after["claim_lease_current_from_source"] if after is not None else False,
+            "previous_progress_timestamp_in_claim_window": (
+                previous_progress_window if type(previous_progress_window) is bool else None),
+            "current_progress_timestamp_in_claim_window": (
+                current_progress_window if type(current_progress_window) is bool else None),
+            "progress_timestamp_window_observation": progress_window_observation,
+            "claim_window_changed_observed": bool(
+                before is not None and after is not None
+                and before["claim_window_fingerprint"] != after["claim_window_fingerprint"]
+                and (before["claim_window_fingerprint"] is not None
+                     or after["claim_window_fingerprint"] is not None)),
+            "previous_claim_window_observed": (
+                before["claim_window_fingerprint"] is not None if before is not None else False),
+            "current_claim_window_observed": (
+                after["claim_window_fingerprint"] is not None if after is not None else False),
+            "slot_present_in_previous_sample": before is not None,
+            "slot_present_in_current_sample": after is not None,
+            "claim_epoch_verified": False,
+            "product_delivery_verified": False,
+            "worker_recovery_verified": False,
+            "owner_claim_changed": False,
+        })
+    return {
+        "schema": SCHEMA,
+        "previous_observed_at_utc": t0.isoformat(),
+        "current_observed_at_utc": t1.isoformat(),
+        "source_freshness": source_freshness,
+        "current_source_age_seconds": source_age_seconds,
+        "source_coverage": "same_indexed_db_two_bounded_snapshots_not_claim_epoch",
+        "source_selected_projects": list(projects1),
+        "shared_worker_slots_observed": len(shared),
+        "new_worker_slots_unpaired": len(new.keys() - old.keys()),
+        "disappeared_worker_slots_unpaired": len(old.keys() - new.keys()),
+        "counts": counts,
+        "items": items,
+        "progress_timestamp_window_changes_observed": sum(
+            item["progress_timestamp_window_observation"] in (
+                "changed_to_in_claim_window", "changed_outside_claim_window")
+            for item in items),
+        "event_is_not_product_delivery": True,
+        "claim_epoch_verified": False,
+        "task_completion_verified": False,
+        "owner_claims_changed": False,
+        "queue_write_authorized": False,
+        "restart_authorized": False,
+        "automatic_followup_dispatched": False,
+    }
+
+
+def public_summary(report):
+    if (type(report) is not dict or report.get("schema") != SCHEMA
+            or report.get("event_is_not_product_delivery") is not True
+            or any(report.get(k) is not False for k in (
+                "claim_epoch_verified", "task_completion_verified",
+                "owner_claims_changed", "queue_write_authorized",
+                "restart_authorized", "automatic_followup_dispatched"))
+            or type(report.get("counts")) is not dict
+            or type(report.get("items")) is not list
+            or len(report["items"]) > 2 * MAX_ENTRIES
+            or report.get("source_freshness") not in ("fresh", "stale")
+            or type(report.get("current_source_age_seconds")) is not int
+            or report["current_source_age_seconds"] < 0
+            or type(report.get("counts", {}).get("source_snapshot_stale_requires_refresh")) is not int
+            or not 0 <= report["counts"]["source_snapshot_stale_requires_refresh"] <= len(report["items"])
+            or type(report.get("progress_timestamp_window_changes_observed")) is not int
+            or not 0 <= report["progress_timestamp_window_changes_observed"] <= len(report["items"])):
+        raise ValueError("unsafe worker progress trend")
+    return {
+        "schema": "zsentinel-worker-progress-delta-public-v1",
+        "coverage": report["source_coverage"],
+        "source_freshness": report["source_freshness"],
+        "current_source_age_seconds": report["current_source_age_seconds"],
+        "stale_source_requires_refresh": report["counts"]["source_snapshot_stale_requires_refresh"],
+        "shared_worker_slots": report["shared_worker_slots_observed"],
+        "progress_signals_observed": report["counts"]["generation_progress_signal_observed"],
+        "new_event_without_progress": report["counts"]["new_events_without_indexed_progress"],
+        "first_cursor_seen_not_delta": report["counts"]["first_cursor_observed_not_delta"],
+        "running_without_new_events": report["counts"]["running_allocated_no_new_event"],
+        "owner_paused_or_draining": report["counts"]["paused_or_draining_owner_hold"],
+        "source_regressions": report["counts"]["indexed_source_reset_or_regression"],
+        "claim_window_changes_requiring_owner_review":
+            report["counts"]["claim_window_changed_requires_owner_recheck"],
+        "progress_timestamp_window_changes_observed":
+            report["progress_timestamp_window_changes_observed"],
+        "new_in_sample_not_new_claim": report["new_worker_slots_unpaired"],
+        "missing_in_sample_not_recovered": report["disappeared_worker_slots_unpaired"],
+        "product_delivery_verified": False,
+        "claim_epoch_verified": False,
+        "claims_changed": False,
+        "recovery_authorized": False,
+    }
+
+
+def human_text(report):
+    data = public_summary(report)
+    freshness = (
+        "STALE — eerst nieuwe bronwaarneming nodig"
+        if data["source_freshness"] == "stale"
+        else "FRESH binnen 10-minutengrens"
+    )
+    return (
+        "zSentinel workers #1342 · bron " + freshness +
+        " (" + str(data["current_source_age_seconds"]) + " s oud); " +
+        str(data["stale_source_requires_refresh"]) +
+        " workerkaarten geblokkeerd door verouderde bron; " +
+        str(data["progress_signals_observed"]) +
+        " expliciete voortgangssignalen, " +
+        str(data["new_event_without_progress"]) +
+        " workers met nieuwe events maar geen nieuw progress-event, " +
+        str(data["first_cursor_seen_not_delta"]) +
+        " voor het eerst zichtbare eventcursors zonder delta-bewijs, " +
+        str(data["running_without_new_events"]) +
+        " toegewezen workers zonder eventtoename; " +
+        str(data["claim_window_changes_requiring_owner_review"]) +
+        " gewijzigde claimvensters die een eigenaarcontrole vereisen; " +
+        str(data["progress_timestamp_window_changes_observed"]) +
+        " wijzigingen van progress-tijdstip in het claimvenster; " +
+        str(data["new_in_sample_not_new_claim"]) +
+        " nieuw in steekproef (geen nieuwe claim), " +
+        str(data["missing_in_sample_not_recovered"]) +
+        " niet meer in steekproef (geen herstelbewijs).\n"
+        "ACTIE: eigenaar verifieert claim-epoch, lease en echte productoplevering; "
+        "geen heartbeat- of eventbewijs voor commit.\n"
+        "STATUS: brongebonden eventvergelijking; geen claim-, herstel- of releasebevoegdheid."
+    )
+
+
+def public_html(report):
+    data = public_summary(report)
+    return (
+        '<section aria-label="Worker voortgang tussen twee meetpunten">'
+        '<h2>Worker · heartbeat versus echte events (#1342)</h2>'
+        '<p>Huidige bron: <strong>' + escape(data["source_freshness"].upper()) +
+        '</strong>, ' + str(data["current_source_age_seconds"]) +
+        ' seconden oud; stale kaarten die eerst ververst moeten worden: ' +
+        str(data["stale_source_requires_refresh"]) + '.</p>' +
+        '<p>Nieuwe expliciete generatiesignalen: ' +
+        str(data["progress_signals_observed"]) +
+        '; alleen andere/heartbeat events: ' + str(data["new_event_without_progress"]) +
+        '; voor het eerst zichtbare eventcursors (geen delta): ' +
+        str(data["first_cursor_seen_not_delta"]) +
+        '; toegewezen running zonder nieuwe events: ' +
+        str(data["running_without_new_events"]) +
+        '; gewijzigde claimvensters met eigenaarcontrole: ' +
+        str(data["claim_window_changes_requiring_owner_review"]) +
+        "; wijzigingen van progress-tijdstip in claimvenster: " +
+        str(data["progress_timestamp_window_changes_observed"]) +
+        '; nieuw in beperkte steekproef (geen nieuwe claim): ' +
+        str(data["new_in_sample_not_new_claim"]) +
+        '; verdwenen uit beperkte steekproef (geen herstel): ' +
+        str(data["missing_in_sample_not_recovered"]) +
+        ' (bounded bron; GEEN bewijs van falen of voortgang).</p>'
+        '<p>Claim-epoch en concrete productoplevering NIET bewezen; '
+        'geen automatische overname of herstart.</p>'
+        '<p><a href="https://github.com/Zennay/zCloud/issues/1342" '
+        'rel="noopener noreferrer">Open issue #1342</a></p></section>'
+    )
+
+
+
+def private_markdown(report):
+    """Human-readable bounded owner handoff, including unpaired worker slots.
+
+    The Markdown is a private offline observation, never a claim, recovery,
+    GitHub approval or proof that a disappearing worker completed its task.
+    """
+    data = public_summary(report)
+    rows = report.get("items")
+    if type(rows) is not list or len(rows) > 2 * MAX_ENTRIES:
+        raise ValueError("unbounded worker owner handoff")
+    lines = [
+        "# zSentinel · worker voortgang en eigenaaracties",
+        "",
+        "**Bron:** twee read-only observaties van dezelfde geïndexeerde DB; "
+        "geen claim-epoch, productoplevering, veilige vrijgave of herstel bewezen.",
+        "",
+        "- Vorige bron: " + report["previous_observed_at_utc"],
+        "- Huidige bron: " + report["current_observed_at_utc"],
+        "- Actualiteitsgrens: " + data["source_freshness"] +
+        " (" + str(data["current_source_age_seconds"]) +
+        " seconden oud; grens 600 seconden)",
+        "- Beide keren waargenomen slots: " + str(data["shared_worker_slots"]),
+        "- Nieuw in beperkte bron (niet nieuwe claim): " +
+        str(data["new_in_sample_not_new_claim"]),
+        "- Verdwenen uit beperkte bron (niet opgelost): " +
+        str(data["missing_in_sample_not_recovered"]),
+        "- Gewijzigde claimvensters (cursorvergelijking geblokkeerd): " +
+        str(data["claim_window_changes_requiring_owner_review"]),
+        "- Wijzigingen van progress-tijdstip binnen claimvenster: " +
+        str(data["progress_timestamp_window_changes_observed"]),
+        "",
+        "| Project | Worker-slot | Waarneming | Progress-tijdstip claimvenster | Bevoegde eigenaaractie |",
+        "| --- | ---: | --- | --- | --- |"
+    ]
+    for row in _owner_sort(rows):
+        if (type(row) is not dict
+                or type(row.get("project_id")) is not str
+                or not SLUG.fullmatch(row["project_id"])
+                or type(row.get("worker_slot")) is not int
+                or not 1 <= row["worker_slot"] <= 16
+                or type(row.get("stage")) is not str
+                or row["stage"] not in report["counts"]
+                or type(row.get("owner_action")) is not str
+                or row.get("progress_timestamp_window_observation") not in (
+                    "not_comparable_missing_worker_card", "unknown_legacy_or_claim_window",
+                    "unchanged_in_claim_window", "unchanged_outside_claim_window",
+                    "changed_to_in_claim_window", "changed_outside_claim_window")
+                or (row.get("previous_progress_timestamp_in_claim_window") is not None
+                    and type(row.get("previous_progress_timestamp_in_claim_window")) is not bool)
+                or (row.get("current_progress_timestamp_in_claim_window") is not None
+                    and type(row.get("current_progress_timestamp_in_claim_window")) is not bool)
+                or not 1 <= len(row["owner_action"]) <= 220
+                or any(ord(c) < 32 or ord(c) == 127 for c in row["owner_action"])):
+            raise ValueError("invalid private worker followup")
+        # Reject Markdown table injection even though current actions are
+        # internally generated and project/slot identities are canonical.
+        label = OPERATOR_LABELS[row["stage"]].replace("|", "\\|")
+        action = row["owner_action"].replace("|", "\\|")
+        window = (_progress_window_label(row.get("previous_progress_timestamp_in_claim_window")) +
+                  " → " + _progress_window_label(row.get("current_progress_timestamp_in_claim_window")) +
+                  " (" + row["progress_timestamp_window_observation"] + ")").replace("|", "\\|")
+        lines.append("| " + row["project_id"] + " | " +
+                     str(row["worker_slot"]) + " | " + label +
+                      " | " + window + " | " + action + " |")
+    lines += ["", "**Vervolg:** bevestig bij de werkelijke eigenaar of dezelfde "
+              "worker, taak, lease en codelevering nog bestaan. Geen automatische "
+              "claim, retry, dispatch, restart, merge of deploy.", ""]
+    return "\n".join(lines)
+
+
+def private_html(report):
+    public_summary(report)
+    rows = []
+    for item in _owner_sort(report["items"]):
+        stage = item["stage"]
+        if stage not in OPERATOR_LABELS:
+            raise ValueError("unknown operator worker stage")
+        if (item.get("progress_timestamp_window_observation") not in (
+                "not_comparable_missing_worker_card", "unknown_legacy_or_claim_window",
+                "unchanged_in_claim_window", "unchanged_outside_claim_window",
+                "changed_to_in_claim_window", "changed_outside_claim_window")
+                or (item.get("previous_progress_timestamp_in_claim_window") is not None
+                    and type(item.get("previous_progress_timestamp_in_claim_window")) is not bool)
+                or (item.get("current_progress_timestamp_in_claim_window") is not None
+                    and type(item.get("current_progress_timestamp_in_claim_window")) is not bool)):
+            raise ValueError("invalid progress timestamp window receipt")
+        rows.append('<tr><td>' + escape(item["project_id"]) + '</td><td>' +
+                    str(item["worker_slot"]) + '</td><td>' +
+                    escape(OPERATOR_LABELS[stage]) + '</td><td>' +
+                    escape(_progress_window_label(item.get("previous_progress_timestamp_in_claim_window")) +
+                           " → " + _progress_window_label(item.get("current_progress_timestamp_in_claim_window")) +
+                           " (" + item["progress_timestamp_window_observation"] + ")") + '</td><td>' +
+                    escape(item["owner_action"]) + '</td></tr>')
+    return (
+        '<!doctype html><html lang="nl"><meta charset="utf-8">'
+        '<meta name="referrer" content="no-referrer">'
+        '<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;;'
+        'style-src &#39;unsafe-inline&#39;;base-uri &#39;none&#39;">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>zSentinel · Worker voortgang</title>'
+        '<style>body{font:16px system-ui;max-width:1000px;margin:1rem auto;'
+        'background:#0b1220;color:#f8fafc;line-height:1.5;padding:1rem}'
+        'a{color:#93c5fd}table{border-collapse:collapse;width:100%}'
+        'td,th{border:1px solid #64748b;padding:.5rem}</style>'
+        '<main><h1>zSentinel · Worker progress tussen twee waarnemingen</h1>' +
+        public_html(report) + '<table><thead><tr><th>Project</th>'
+        '<th>Slot</th><th>Bronstatus</th><th>Progress-tijdstip claimvenster</th><th>Benodigde eigenaaractie</th>'
+        '</tr></thead><tbody>' + "".join(rows) +
+        '</tbody></table></main></html>'
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Private read-only worker event snapshots and cross-snapshot progress")
+    sources = parser.add_mutually_exclusive_group(required=True)
+    sources.add_argument("--database", type=Path, help="existing indexed local history.db only")
+    sources.add_argument("--current-snapshot", type=Path,
+                         help="already captured 0600 private worker source; compare without database")
+    parser.add_argument("--project", action="append", default=[],
+                        help="one to three canonical project IDs")
+    parser.add_argument("--previous", type=Path)
+    parser.add_argument("--snapshot-output", type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--format", choices=("text", "html", "json", "md"), default="text")
+    args = parser.parse_args()
+    try:
+        if args.current_snapshot and (not args.previous or args.snapshot_output):
+            raise ValueError("offline requires existing previous and current private snapshots")
+        if args.database and not args.project:
+            raise ValueError("read-only database observation needs 1-3 selected projects")
+        if args.current_snapshot and args.project:
+            raise ValueError("offline projects are bound to existing saved observations")
+        if not args.previous and not args.snapshot_output:
+            raise ValueError("choose private snapshot output or previous comparison")
+        if args.output and (args.format == "text" or not args.previous):
+            raise ValueError("private trend output needs previous and html/json/md format")
+        if args.previous and args.format != "text" and not args.output:
+            raise ValueError("non-text comparison requires new private report file")
+        chosen = [p for p in (args.output, args.snapshot_output, args.previous,
+                              args.current_snapshot) if p]
+        if len({str(p.resolve()) for p in chosen}) != len(chosen):
+            raise ValueError("private source/output paths must all differ")
+        latest = (load_previous(args.current_snapshot) if args.current_snapshot
+                  else observe_worker_progress(args.database, args.project))
+        result = (compare(load_previous(args.previous), latest)
+                  if args.previous else None)
+        if result and args.output:
+            content = (private_html(result) if args.format == "html"
+                       else json.dumps(result, ensure_ascii=True, indent=2)
+                       if args.format == "json" else private_markdown(result)
+                       if args.format == "md" else human_text(result))
+            write_private_output(args.output, content, args.format)
+        if args.snapshot_output:
+            write_private_output(args.snapshot_output,
+                                 json.dumps(latest, ensure_ascii=True, sort_keys=True, indent=2),
+                                 "json")
+        print(human_text(result) if result and args.format == "text" else
+              "Private worker source/report generated without runtime, queue or claim changes.")
+    except (ValueError, OSError, json.JSONDecodeError):
+        parser.exit(2, "zSentinel worker progress source unavailable; no actions made.\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

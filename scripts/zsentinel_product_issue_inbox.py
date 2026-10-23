@@ -31,6 +31,31 @@ REPO = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 SEVERITY = re.compile(r"^\s*(?:\[(P[01])\]|(P[01])(?=\s|:|\-)|(?:[A-Za-z][A-Za-z -]{0,38}\s+)(P[01])\s*:)", re.I)
 QA = re.compile(r"^\s*(?:P[0-3](?=\s|:|\-)(?:\s*[:\-]?\s*)?)?(?:QA|test|regression|quality[ -]validation)\b", re.I)
 
+def explicit_qa_only_pr(pr):
+    """Exclude clearly QA-only PRs from *product* merge-first inventory.
+
+    This is never a merge admission or a judgment about required CI. Prefer
+    structured labels and branch naming in addition to title prefixes.
+    """
+    if not isinstance(pr, dict):
+        raise ValueError("invalid PR metadata")
+    title = pr.get("title")
+    labels = pr.get("labels")
+    head = pr.get("head")
+    head_ref = head.get("ref") if isinstance(head, dict) else None
+    marked = isinstance(labels, list) and any(
+        isinstance(label, dict)
+        and isinstance(label.get("name"), str)
+        and label["name"].lower() in (
+            "qa", "qa-only", "tests-only", "quality-validation",
+            "qa-validation", "regression")
+        for label in labels[:30])
+    branch_only = (isinstance(head_ref, str) and head_ref.lower().startswith(
+        ("qa/", "test/", "tests/", "quality-validation/")))
+    return bool((isinstance(title, str) and QA.match(title))
+                or marked or branch_only)
+
+
 def object_unique(pairs):
     result = {}
     for key, value in pairs:
@@ -40,33 +65,45 @@ def object_unique(pairs):
     return result
 
 def canonical_projects(path):
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_CONFIG_BYTES:
+    """Resolve project identity from one stable, bounded JSON inode.
+
+    The registry is the trust root for issue/PR routing. Do not stat one path
+    then open a second inode: replacement with a FIFO could block a collector
+    or replacement JSON could silently change its source repositories.
+    """
+    from zsentinel_recovery_router import read_json
+    if not isinstance(path, Path):
         raise ValueError("invalid_registry")
-    blob = path.read_bytes()
-    if len(blob) > MAX_CONFIG_BYTES:
-        raise ValueError("registry_oversized")
-    rows = json.loads(blob, object_pairs_hook=object_unique)
+    rows = read_json(path, MAX_CONFIG_BYTES, "canonical project registry")
     if not isinstance(rows, list):
         raise ValueError("invalid_registry_schema")
     result = {}
+    repositories = set()
     for row in rows:
+        # A silently skipped row could hide an actively owned P0 project from
+        # every downstream workboard. Abort the whole registry instead.
         if not isinstance(row, dict):
-            continue
+            raise ValueError("invalid_registry_row")
         key, url = row.get("id"), row.get("repo_url")
         if not isinstance(key, str) or not PROJECT.fullmatch(key) or not isinstance(url, str):
-            continue
+            raise ValueError("invalid_registry_project")
         try:
             p = urllib.parse.urlsplit(url)
-            if p.scheme != "https" or p.hostname != "github.com" or p.username or p.password or p.port not in (None, 443):
-                continue
+            if (p.scheme != "https" or p.netloc != "github.com"
+                    or p.username or p.password or p.port is not None):
+                raise ValueError("invalid_registry_origin")
         except ValueError:
-            continue
+            raise ValueError("invalid_registry_origin") from None
         names = p.path.strip("/").split("/")
-        if p.query or p.fragment or len(names) != 2 or names[0] != CANONICAL_OWNER or not REPO.fullmatch(names[1]):
-            continue
-        if key in result:
-            raise ValueError("duplicate_project")
-        result[key] = names[0] + "/" + names[1]
+        if (p.query or p.fragment or len(names) != 2
+                or names[0] != CANONICAL_OWNER or not REPO.fullmatch(names[1])
+                or p.path != "/" + "/".join(names)):
+            raise ValueError("invalid_registry_repository")
+        repository = names[0] + "/" + names[1]
+        if key in result or repository in repositories:
+            raise ValueError("duplicate_project_or_repository")
+        result[key] = repository
+        repositories.add(repository)
     if not result or len(result) > MAX_REPOS:
         raise ValueError("invalid_canonical_repositories")
     return result
@@ -118,6 +155,22 @@ class _NoGithubRedirects(urllib.request.HTTPRedirectHandler):
 _GITHUB_OPENER = urllib.request.build_opener(_NoGithubRedirects())
 
 
+class GithubAdmissionError(ValueError):
+    """Non-secret provider denial category with backwards-compatible error text.
+
+    Caller-visible messages remain intentionally indistinguishable when
+    GitHub's 403 response cannot prove billing, rate limit or repo permission.
+    """
+
+    def __init__(self, category):
+        if category not in (
+                "authentication_required", "rate_limit_confirmed",
+                "forbidden_or_rate_limit_unknown"):
+            raise ValueError("invalid GitHub admission category")
+        super().__init__("github_permission_or_rate_limit")
+        self.category = category
+
+
 def bounded_get(url, token):
     # A redirect is a degraded source result, not permission to forward credentials.
     parsed = urllib.parse.urlsplit(url)
@@ -142,8 +195,18 @@ def bounded_get(url, token):
     except urllib.error.HTTPError as error:
         if error.code == 404:
             raise ValueError("repository_inaccessible") from None
-        if error.code in (401, 403, 429):
-            raise ValueError("github_permission_or_rate_limit") from None
+        if error.code == 401:
+            raise GithubAdmissionError("authentication_required") from None
+        if error.code == 429:
+            raise GithubAdmissionError("rate_limit_confirmed") from None
+        if error.code == 403:
+            # GitHub can report a rate-budget exhaustion as HTTP 403.
+            # Headers only; never copy exception bodies, URLs or credentials.
+            remaining = (error.headers.get("X-RateLimit-Remaining")
+                         if error.headers is not None else None)
+            category = ("rate_limit_confirmed" if remaining == "0"
+                        else "forbidden_or_rate_limit_unknown")
+            raise GithubAdmissionError(category) from None
         raise ValueError("github_http_unavailable") from None
     except (TimeoutError, OSError, urllib.error.URLError):
         raise ValueError("github_network_unavailable") from None
@@ -160,13 +223,17 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
     observed = datetime.now(timezone.utc)
     records = {}
     coverage = []
+    recent_open_product_prs = []
     calls = 0
     rate_or_auth_denied = False
+    admission_denied_projects = 0
     for project in names:
         repo = projects[project]
         statuses = []
+        project_denied = False
+        denial_category = None
         for direction in ("asc", "desc"):
-            if rate_or_auth_denied:
+            if rate_or_auth_denied or project_denied:
                 statuses.append("not_fetched_after_rate_or_auth_denial")
                 continue
             if calls >= MAX_CALLS:
@@ -216,15 +283,23 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                 statuses.append("bounded_truncated" if len(issues) == 12 else "bounded_window")
             except ValueError as error:
                 statuses.append(str(error))
-                if str(error) == "github_permission_or_rate_limit":
-                    rate_or_auth_denied = True
+                if isinstance(error, GithubAdmissionError):
+                    project_denied = True
+                    denial_category = error.category
+                    if error.category == "rate_limit_confirmed":
+                        rate_or_auth_denied = True
+                elif str(error) == "github_permission_or_rate_limit":
+                    # Legacy compatible denial without provider subtype: fail
+                    # closed for this project, but do not poison unrelated repos.
+                    project_denied = True
         successful = sum(s.startswith("bounded_") for s in statuses)
         # Candidate reuse first: check a bounded recent window of existing
         # open PRs for explicit #issue references. This is NOT proof of
         # active ownership or acceptance: never claim the PR's branch.
-        pr_coverage = ("not_fetched_after_rate_or_auth_denial" if rate_or_auth_denied
+        pr_coverage = ("not_fetched_after_rate_or_auth_denial"
+                       if rate_or_auth_denied or project_denied
                        else "not_fetched_budget")
-        if not rate_or_auth_denied and calls < MAX_CALLS:
+        if not rate_or_auth_denied and not project_denied and calls < MAX_CALLS:
             calls += 1
             params = urllib.parse.urlencode({
                 "state": "open", "sort": "updated", "direction": "desc",
@@ -242,21 +317,82 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                     number = pr["number"]
                     if isinstance(number, bool) or number < 1 or number > 100000000:
                         continue
-                    body = pr.get("body")
-                    if not isinstance(body, str) or len(body) > 32000:
+                    # QA-only PRs are not product merge-first work even when
+                    # an unrelated open P0/P1 issue happens to be mentioned
+                    # in their body. Apply one consistent title/branch/label
+                    # boundary to both the workboard and issue linking.
+                    if explicit_qa_only_pr(pr):
                         continue
-                    referenced = set(
-                        int(m.group(1)) for m in re.finditer(
-                            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b", body
-                        )
+                    title = pr.get("title")
+                    pr_head = pr.get("head")
+                    head_sha = pr_head.get("sha") if isinstance(pr_head, dict) else None
+                    base = pr.get("base")
+                    base_repo = base.get("repo") if isinstance(base, dict) else None
+                    base_name = base.get("ref") if isinstance(base, dict) else None
+                    if (pr.get("state") == "open"
+                            and type(title) is str and 0 < len(title) <= 256
+                            and not explicit_qa_only_pr(pr)
+                            and isinstance(head_sha, str)
+                            and re.fullmatch(r"[a-f0-9]{40}", head_sha)
+                            and isinstance(base_repo, dict)
+                            and base_repo.get("full_name") == repo
+                            and type(base_name) is str and 0 < len(base_name) <= 100):
+                        # This is a PR LIST receipt, not re-fetched gate/HEAD
+                        # evidence, and emphatically not an owner lease.
+                        recent_open_product_prs.append({
+                            "project": project, "repository": repo,
+                            "number": number,
+                            "url": "https://github.com/" + repo + "/pull/" + str(number),
+                            "title": title[:180], "draft": pr.get("draft") is True,
+                            "listed_head_sha": head_sha, "listed_base": base_name,
+                            "source": "bounded_recent_open_pr_listing_unverified_current_head",
+                            "ownership_verified": False, "merge_authorized": False,
+                        })
+                    # A product PR can name its existing issue in its
+                    # title alone ("fix: missing composer (#698)"). Treat title
+                    # and body as textual evidence only; neither authorizes a
+                    # claim, a merge, or a declaration that the issue is fixed.
+                    body = pr.get("body")
+                    body = body if isinstance(body, str) and len(body) <= 32000 else ""
+                    # Match ONLY explicit same-repository issue links.
+                    # Cross-project issues and PR URLs are not candidates for
+                    # same-repository fixes, even if their numeric IDs match.
+                    issue_link = re.compile(
+                        re.escape("https://github.com/" + repo + "/issues/") +
+                        r"([1-9][0-9]{0,7})(?![A-Za-z0-9/_-])"
                     )
+                    hash_reference = re.compile(
+                        r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b"
+                    )
+                    references_in_title = {
+                        int(m.group(1)) for m in hash_reference.finditer(title)
+                    } | {
+                        int(m.group(1)) for m in issue_link.finditer(title)
+                    }
+                    references_in_body = {
+                        int(m.group(1)) for m in hash_reference.finditer(body)
+                    } | {
+                        int(m.group(1)) for m in issue_link.finditer(body)
+                    }
+                    referenced = references_in_title | references_in_body
                     closing_references = {
                         int(m.group(1)) for m in re.finditer(
                             r"(?i)\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\s+#([1-9][0-9]{0,7})\b",
                             body
                         )
+                    } | {
+                        int(m.group(1)) for m in re.finditer(
+                            r"(?i)\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\s+" +
+                            issue_link.pattern, body
+                        )
                     }
                     for issue_num in referenced:
+                        reference_origin = (
+                            "title_and_body" if (issue_num in references_in_title
+                                                 and issue_num in references_in_body)
+                            else "title_only" if issue_num in references_in_title
+                            else "body_only"
+                        )
                         record = records.get(repo + "#" + str(issue_num))
                         if record is not None and len(record["related_open_prs"]) < 3:
                             record["related_open_prs"].append({
@@ -266,19 +402,27 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                                 "relationship": ("closing_keyword_only" if issue_num in closing_references
                                                  else "text_reference_only"),
                                 "active_claim": "not_verified",
+                                "reference_origin": reference_origin,
                             })
                 pr_coverage = "bounded_truncated" if len(open_prs) == 8 else "bounded_window"
             except ValueError as error:
                 pr_coverage = str(error)
-                if str(error) == "github_permission_or_rate_limit":
-                    rate_or_auth_denied = True
+                if isinstance(error, GithubAdmissionError):
+                    project_denied = True
+                    denial_category = error.category
+                    if error.category == "rate_limit_confirmed":
+                        rate_or_auth_denied = True
+                elif str(error) == "github_permission_or_rate_limit":
+                    project_denied = True
         coverage.append({
             "project": project, "repository": repo, "oldest_window": statuses[0], "open_pr_window": pr_coverage,
             "recent_window": statuses[1],
             "status": ("partial" if successful == 2 and pr_coverage.startswith("bounded_")
                        else "degraded" if successful else "unavailable"),
             "active_claims_verified": False,
+            "provider_admission": denial_category,
         })
+        admission_denied_projects += int(project_denied)
     priority_rank = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
     grouped = defaultdict(list)
     excluded_qa = 0
@@ -314,7 +458,13 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
         "observed_at": observed.isoformat(timespec="seconds"),
         "projects": names, "coverage": coverage, "request_count": calls,
         "items": result, "suppressed_qa_only": excluded_qa,
+        # One-page PR listing, never exhaustive or proof of active ownership.
+        "recent_open_product_prs": recent_open_product_prs,
+        "merge_first_open_product_prs": merge_first_board(recent_open_product_prs, records, names),
+        # Global stop only for a confirmed provider limit. Repository-local
+        # 401/403 is not authority to suppress independently readable repos.
         "stopped_after_rate_or_auth_denial": rate_or_auth_denied,
+        "repository_admission_denials": admission_denied_projects,
         "truncated": len(result) >= max_items or any("bounded_truncated" in
             (row["oldest_window"], row["recent_window"]) for row in coverage),
         "queue_ownership_known": False,
@@ -322,6 +472,61 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
         "actions_authorized": False,
         "fully_synchronized": False,
     }
+
+def merge_first_board(open_prs, all_issues, projects, limit=45):
+    """Build an advisory, round-robin merge-first queue from observed PRs.
+
+    Only already-sampled, text-referenced issues influence priority. Nothing
+    here proves branch ownership, fixes, review, required CI, or merge access.
+    """
+    by_url = {}
+    for issue in all_issues.values():
+        for reference in issue.get("related_open_prs", []):
+            links = by_url.setdefault(reference["url"], [])
+            if len(links) < 12:
+                links.append({
+                    "url": issue["url"], "number": issue["number"],
+                    "priority": issue["priority"],
+                    "relationship": reference["relationship"],
+                    "reference_origin": reference.get("reference_origin", "unknown"),
+                })
+    ranks = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
+    grouped = defaultdict(list)
+    for pr in open_prs:
+        links = sorted(by_url.get(pr["url"], []),
+                       key=lambda item: (ranks[item["priority"]], item["number"]))
+        grouped[pr["project"]].append({
+            **pr, "sampled_issue_priority": links[0]["priority"] if links else "Unspecified",
+            "sampled_issue_references": links[:5],
+            "review_state": "not_observed",
+            "exact_head_ci": "not_observed",
+            "active_claim": "not_verified",
+            "ready_to_merge": False,
+        })
+    for rows in grouped.values():
+        rows.sort(key=lambda row: (ranks[row["sampled_issue_priority"]],
+                                  row["draft"], row["number"]))
+    result = []
+    for severity in ("P0", "P1", "P2", "Unspecified"):
+        offsets = {project: 0 for project in projects}
+        while len(result) < limit:
+            advanced = False
+            for project in projects:
+                rows = grouped.get(project, [])
+                i = offsets[project]
+                while i < len(rows) and ranks[rows[i]["sampled_issue_priority"]] < ranks[severity]:
+                    i += 1
+                if i < len(rows) and rows[i]["sampled_issue_priority"] == severity:
+                    result.append(rows[i])
+                    i += 1
+                    advanced = True
+                offsets[project] = i
+                if len(result) >= limit:
+                    break
+            if not advanced:
+                break
+    return result
+
 
 STYLE = """
 :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#111923;color:#edf4ff}
@@ -360,21 +565,71 @@ def html_view(data):
                     ref = escape(candidate["url"], quote=True)
                     relationship = ("mentions" if candidate["relationship"] == "text_reference_only"
                                     else "closing keyword")
+                    origin = {"title_only": "title", "body_only": "body",
+                              "title_and_body": "title + body"}.get(
+                                  candidate.get("reference_origin"), "source unknown")
                     label = (("Draft PR #" if candidate["draft"] else "Open PR #") +
-                             str(candidate["number"]) + " · " + relationship)
+                             str(candidate["number"]) + " · " + relationship + " · " + origin)
                     refs.append("<a href='" + ref + "' target='_blank' rel='noopener noreferrer'>" +
                                 escape(label) + "</a>")
-                lines.append("<div class='muted'><small>Open PR text references (not verified fixes or owners): " +
+                lines.append("<div class='muted'><small>Open PR title/body references (not verified fixes or owners): " +
                              " · ".join(refs) + "</small></div>")
         sections.append("<section><h2>" + escape(priority_name) + " · " + str(len(rows))
                         + " sampled issues</h2>" +
                         ("".join(lines) or "<p class='muted'>No sampled issues in this class. Coverage is not exhaustive.</p>")
                         + "</section>")
+    pr_rows = []
+    for pr in data.get("merge_first_open_product_prs", []):
+        hints = []
+        for issue in pr["sampled_issue_references"]:
+            hints.append("<a href='" + escape(issue["url"], quote=True) +
+                         "' target='_blank' rel='noopener noreferrer'>" +
+                         escape(issue["priority"]) + " issue #" +
+                         str(issue["number"]) + " (text: " +
+                         escape({"title_only": "title", "body_only": "body",
+                                 "title_and_body": "title + body"}.get(
+                                     issue.get("reference_origin"), "source unknown")) +
+                         ")</a>")
+        pr_rows.append(
+            "<div class='issue'><a class='issue-title' href='" +
+            escape(pr["url"], quote=True) +
+            "' target='_blank' rel='noopener noreferrer'>" +
+            escape(pr["title"]) + "</a><span class='tag'>" +
+            escape(pr["project"]) + "</span><span class='tag'>" +
+            escape("DRAFT" if pr["draft"] else "OPEN") +
+            "</span><span class='tag'>" +
+            escape(pr["sampled_issue_priority"]) +
+            " sampled link</span><p class='muted'><small>" +
+            (" · ".join(hints) if hints else "No priority issue in bounded sample") +
+            " · listed HEAD only; current CI, review and claim unknown." +
+            " Not authorized to merge.</small></p></div>")
+    pr_section = (
+        "<section><h2>Merge eerst: bestaande product-PR’s · " +
+        str(len(pr_rows)) + " in bounded view</h2>"
+        "<p>Bestaande product-PR’s vóór nieuw werk. Prioriteit uit enkel "
+        "waargenomen issue-verwijzingen; geen huidige gate of eigenaar bewezen. "
+        "Ontbrekende PR’s kunnen buiten het beperkte bronvenster vallen.</p>" +
+        ("".join(pr_rows) or "<p class='muted'>No open PRs in the bounded source window.</p>") +
+        "</section>")
     coverage = []
+    source_denials = {
+        "authentication_required":
+            "GitHub HTTP 401: bevoegde eigenaar moet toegang controleren.",
+        "rate_limit_confirmed":
+            "GitHub-rate-limit bevestigd: andere verzoeken uitgesteld.",
+        "forbidden_or_rate_limit_unknown":
+            "GitHub 403: bronrechten of rate-limit onbekend.",
+    }
     for item in data["coverage"]:
-        coverage.append("<li><b>" + escape(item["project"]) + "</b> — oldest " +
+        category = item.get("provider_admission")
+        if category is not None and category not in source_denials:
+            raise ValueError("invalid provider denial classification")
+        coverage.append("<li><b>" + escape(item["project"]) + "</b> — oudste " +
                         escape(item["oldest_window"]) + "; recent " +
-                        escape(item["recent_window"]) + "; recent open PRs " + escape(item["open_pr_window"]) + "</li>")
+                        escape(item["recent_window"]) + "; open PR-venster " +
+                        escape(item["open_pr_window"]) +
+                        ("; " + escape(source_denials[category]) if category else "") +
+                        "</li>")
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'>"
             "<meta name='referrer' content='no-referrer'>"
@@ -385,12 +640,12 @@ def html_view(data):
             "explicit P0/P1 label or title, oldest first within each priority. "
             "QA-only work excluded by the 17 October product policy.</p><p class='notice'>"
             "Partial bounded sample, not a full backlog or active claim/runner inventory. "
-            "A GitHub assignee is not an active worker claim. On a GitHub 403/429, later repos are not queried. Do not overwrite owned work, "
+            "GitHub-assignees are not active worker claims. Repo-specific 401/403 never suppress another independent project; confirmed rate limits stop further requests. Do not overwrite owned work, "
             "perform recovery, merge or deploy from this page.</p><p class='muted'>"
             "Observed " + escape(data["observed_at"]) + " · requests " +
             str(data["request_count"]) + " · QA-only excluded " +
             str(data["suppressed_qa_only"]) + "</p></header><main>" +
-            "".join(sections) +
+            pr_section + "".join(sections) +
             "<section><details><summary>GitHub source coverage by project</summary>"
             "<ul>" + "".join(coverage) + "</ul></details></section></main>"
             "<footer>All external links open GitHub. Read-only, no tracking or remote scripts. "

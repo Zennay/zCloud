@@ -16,9 +16,16 @@ from typing import Any
 UTC = timezone.utc
 PAUSED = frozenset({"paused", "parked", "human-blocked"})
 RUNNING = frozenset({"running", "in_progress"})
-COMPLETED = frozenset({"completed", "failure", "success", "cancelled"})
-RESULTS = frozenset({"success", "failure", "cancelled", "timed_out", "action_required"})
+RESULTS = frozenset({
+    "success", "failure", "cancelled", "timed_out", "action_required",
+    "neutral", "skipped", "stale", "startup_failure",
+})
+# Accept legacy snapshots that encode a terminal outcome in job_status, while
+# still requiring an explicit paired conclusion below.
+COMPLETED = frozenset({"completed"}) | RESULTS
 MAX_PROJECTS = 200
+MAX_RUNTIME_ERROR_AGE = timedelta(minutes=10)
+RUNTIME_ERROR_KINDS = frozenset({"missing_explicit_runtime_contract"})
 
 
 def utc_time(value: str, field: str) -> datetime:
@@ -77,7 +84,30 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
         if when > now:
             return verdict(pid, "intentional_wait", "scheduled_wait_not_elapsed",
                            "Recheck after the frozen/wait boundary; do not generate false incidents.")
-    if github.get("active_owner_pr") is True or runtime.get("ownership_locked") is True:
+    # Explicit runtime faults are accepted only with their own fresh timestamp;
+    # the outer snapshot clock alone cannot refresh an old service-log excerpt.
+    runtime_error_kind = runtime.get("error_kind")
+    if runtime_error_kind is not None:
+        if type(runtime_error_kind) is not str or runtime_error_kind not in RUNTIME_ERROR_KINDS:
+            raise ValueError(f"{pid}.runtime.error_kind: unsupported explicit runtime fault")
+        runtime_error_at = required_time(runtime, "error_observed_at", now,
+                                         pid + ".runtime")
+        if now - runtime_error_at > MAX_RUNTIME_ERROR_AGE:
+            return verdict(pid, "unknown", "stale_runtime_error_observation",
+                           "Refresh the current service log; an old runtime error cannot establish the present blocker.")
+    elif runtime.get("error_observed_at") not in (None, ""):
+        raise ValueError(f"{pid}.runtime.error_observed_at: requires an explicit error_kind")
+    owner_held = (github.get("active_owner_pr") is True
+                  or runtime.get("ownership_locked") is True)
+    if runtime_error_kind == "missing_explicit_runtime_contract":
+        if owner_held:
+            return verdict(pid, "owner_held", "runtime_contract_missing_owner_active",
+                           "Keep the existing runtime-contract owner and PR; ask that owner to complete the explicit contract. Do not restart, retry, claim or deploy.",
+                           "runtime-contract-missing")
+        return verdict(pid, "blocked", "runtime_contract_missing",
+                       "Route the exact project to its authorized runtime-contract owner and complete the existing product change; do not restart, retry, claim or deploy from this log alone.",
+                       "runtime-contract-missing")
+    if owner_held:
         return verdict(pid, "owner_held", "active_owner_or_serialized_release",
                        "Do not edit the owner's files; add bounded diagnostic evidence to the existing issue.")
     # Every GitHub job diagnosis must be anchored in a fresh observed snapshot.
@@ -95,10 +125,27 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
             raise ValueError(f"{pid}.github.head_sha: canonical lowercase full SHA required")
         if status in {"queued", "waiting", "pending"}:
             queued = required_time(github, "queued_at", now, pid + ".github")
+            route = github.get("runner_route", "unknown")
+            if route not in ("self_hosted", "hosted_or_custom", "unknown"):
+                raise ValueError(f"{pid}.github.runner_route: untrusted job route")
+            if status in ("waiting", "pending"):
+                # These may be approval/concurrency pauses, NOT jobs that
+                # have failed to obtain a self-hosted runner.
+                return verdict(pid, "intentional_wait", "github_job_pending_or_waiting",
+                               "Read exact job approval and concurrency status; never restart a runner to resolve a human wait.")
             if github.get("runner_assigned") is False and now - queued >= timedelta(minutes=30):
+                if route == "self_hosted":
+                    return verdict(pid, "stalled", "github_job_unassigned",
+                                   "Check exact runner labels, runner group/repo access and listener via an independent route; never restart a runner from the queued job.",
+                                   "github-unassigned", sha)
+                # The *job* is demonstrably stuck unassigned for >=30m,
+                # even when the runner route is unknown or hosted. This is
+                # actionable as an operator incident, NOT proof that a VPS
+                # listener is missing. Keep it out of self-hosted incident
+                # dedup by using an independent unknown-route identity.
                 return verdict(pid, "stalled", "github_job_unassigned",
-                               "Check exact labels, runner group/repo access and listener from an independent route. Do not restart the missing runner from its own queued job.",
-                               "github-unassigned", sha)
+                               "Inspect exact GitHub admission, billing, concurrency and job labels via an independent route; do not infer a VPS outage or restart any runner without explicit self-hosted evidence and owner approval.",
+                               "github-unassigned-route-unverified", sha)
             return verdict(pid, "in_progress", "github_queue_not_yet_actionable",
                            "Continue observing; queue delay alone does not prove a broken runner.")
         if status in COMPLETED:
@@ -109,9 +156,19 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
                 return verdict(pid, "stalled", "github_workflow_failed",
                                "Inspect the exact-head failed job log; reproduce and fix an independently owned scoped defect, then verify fresh CI.",
                                "workflow-failed", sha)
+            if conclusion == "startup_failure":
+                return verdict(pid, "stalled", "github_job_startup_failure",
+                               "Inspect exact runner bootstrap, labels, access and admission evidence; do not infer a code defect or restart/retry without owner approval.",
+                               "github-startup-failure", sha)
             if conclusion == "cancelled":
                 return verdict(pid, "unknown", "github_job_cancelled",
                                "Resolve cancellation reason and owner before retrying.")
+            if conclusion == "stale":
+                return verdict(pid, "unknown", "github_job_stale_conclusion",
+                               "Refresh the current exact-head run/job; stale conclusions do not establish the current commit's result.")
+            if conclusion in {"neutral", "skipped"}:
+                return verdict(pid, "unknown", "github_job_neutral_or_skipped",
+                               "Inspect workflow conditions and required-check policy; neutral/skipped are not success or recovery evidence.")
     state = runtime.get("execution_state")
     if state == "running":
         hb = required_time(runtime, "heartbeat_at", now, pid + ".runtime")
@@ -159,6 +216,13 @@ def diagnose(snapshot: dict[str, Any], now: datetime | None = None) -> dict[str,
         "mutations_performed": False,
         "deploy_authorized": False,
         "incidents": [item for item in reports if item["state"] == "stalled"],
+        "runtime_contract_faults": [
+            item for item in reports
+            if item.get("reason") in (
+                "runtime_contract_missing", "runtime_contract_missing_owner_active",
+                "stale_runtime_error_observation",
+            )
+        ],
         "projects": reports,
     }
 

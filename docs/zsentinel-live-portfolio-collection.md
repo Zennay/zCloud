@@ -1,0 +1,456 @@
+# zSentinel · éénmalig live portfolio-productbord
+
+## Productfunctie
+`scripts/zsentinel_portfolio_workboard.py --collect-live` verzamelt in één expliciete
+operatoractie de **bestaande open GitHub productissues en daarbij aangetroffen
+bestaande PR's** voor de geregistreerde projecten. Dezelfde bestaande collectors
+en conservatieve exact-HEAD-PR-reader worden per maximaal drie canonieke
+projecten gebruikt. De bestaande portfolio-aggregator presenteert P0 vóór P1
+met een eerlijke projectverdeling, observatiemoment en expliciete brondekking.
+
+Voorheen moest een operator voor elk venster eerst zelf een JSON-bronbestand
+genereren en daarna 1–6 afzonderlijke bestanden combineren. Dat blijft als
+volledig offline route beschikbaar; live is een **opt-in** extra bronroute.
+
+## Brongebonden project- en claimidentiteit
+
+De projectregistratie `projects.json` bepaalt welke bestaande GitHub-
+repositories zSentinel überhaupt mag observeren. Het productbord leest die
+registratie nu via de gedeelde begrensde JSON-inode-reader: geen symlink,
+onbegrensde inhoud, FIFO-substitutie of stilzwijgend overgeslagen ongeldige
+projectregel. De parser weigert ook dubbele sleutels, dubbele repositories,
+niet-canonieke GitHub-origins en ontbrekende/ambigue projectidentiteiten.
+Een onvolledig projectregister levert een fout, **geen** kunstmatig lege
+P0/P1-werkvoorraad.
+
+Bij optionele live Notion-claimobservatie moet elke projectrelatie exact
+bij de **zelfde** canonieke GitHub-projectset passen. Het register wordt voor
+deze relatiekaart eenmaal no-follow en begrensd geopend; ontbrekende of
+dubbele Notion-projectlinks en botsende repo-relaties worden geweigerd.
+Ook de Notion JSON-respons weigert dubbele sleutels en niet-standaard
+numerieke constanten, zodat een bronbotsing geen actieve Claimed/Running/
+Verifying-status kan verbergen. Dit verifieert geen lease, claim-eigenaar of
+vrijgave: alleen een begrensde, leesbare bronkoppeling.
+
+De aparte merge-eerst-PR-reader hergebruikt nu exact de QA-only-selectieregel
+van de issue-inbox, inclusief alle bekende QA-only branchprefixen en labels.
+Geen enkele bronverzameling geeft merge-, worker-, queue- of deploybevoegdheid.
+
+## Operatorgebruik
+
+```sh
+# Alleen vanaf een reeds geautoriseerde eigen projectcheckout. Private parent bestaat.
+# Laat GITHUB_TOKEN weg voor publiek beschikbare brongegevens.
+umask 077
+python3 scripts/zsentinel_portfolio_workboard.py \
+  --collect-live \
+  --format html \
+  --output /private/operator-only/zsentinel-portfolio-actueel.html
+
+# Beperk de reikwijdte bewust tot twee geregistreerde projecten:
+python3 scripts/zsentinel_portfolio_workboard.py \
+  --collect-live --project cloud --project supa \
+  --format json \
+  --output /private/operator-only/zsentinel-cloud-supa-actueel.json
+
+# Bestaande volledig offline import blijft apart:
+python3 scripts/zsentinel_portfolio_workboard.py \
+  --snapshot /private/operator-only/bron-1.json \
+  --snapshot /private/operator-only/bron-2.json \
+  --format md \
+  --output /private/operator-only/zsentinel-opvolging.md
+```
+
+Elke `--output` is een **nieuwe** reguliere privéfile met veilige
+`0600`-permissies via de gedeelde create-only writer, zonder bestaande rapporten
+te overschrijven. Live verzameling zonder expliciet privé-outputpad wordt
+geweigerd, evenals live + handmatige bronbestanden in dezelfde aanroep.
+Gedeeltelijke/onbereikbare GitHub-bronnen krijgen een onvolledige status en
+geven een niet-nul afsluitstatus, maar zijn geen lege backlog.
+
+## Merge-eerst PR-inbox zonder extra GitHub-verzoeken
+
+Het productbord toont nu boven de issuekaarten een afzonderlijke lijst met de
+**reeds open product-PR's die de issuecollector toch al ophaalt**: maximaal de
+acht recentst bijgewerkte open PR's per projectvenster. Expliciet QA-only
+werk wordt gefilterd op titelprefix, bekende QA-only labels en
+`qa/`, `test/`, `tests/` of `quality-validation/` als branchprefix. De tool
+wijzigt geen bestaande QA-PR en start geen QA-/regressiewerk.
+Daardoor verdwijnen bestaande PR's niet uit beeld wanneer hun gekoppelde issue
+ouder is dan de begrensde eerste/laatste-issue-steekproef. Dezelfde lijst is
+opgenomen in privé JSON en Markdown, ook bij de bestaande offline-snapshotroute
+wanneer de bronsnapshot dit veld bevat.
+
+De bestaande **exact-HEAD PR-lezer** gebruikt nu ook de overgebleven
+ruimte binnen zijn vaste limiet van drie PR's per projectvenster om PR's te
+inspecteren die niet naar een gesampled issue verwijzen. Eerst komen urgente
+issue-gerelateerde PR's, daarna reviewklare open product-PR's eerlijk over
+projecten verdeeld, en daarna drafts. Dit kost hoogstens dezelfde maximaal
+15 bestaande PR-GETs per venster. De kaart toont de werkelijk waargenomen
+vervolgactie als de PR-HEAD niet veranderde; zonder herlezing blijft de bron
+uitdrukkelijk onbekend.
+
+Het offline HTML- en Markdown-overzicht onderscheidt het aantal PR-kaarten
+waarvoor exacte-HEAD-bronnen zijn waargenomen van PR's die nog niet zijn
+geïnspecteerd of sindsdien gewijzigd. **Geen van beide aantallen is
+merge-gereedbewijs**: review-/CI-/branchregels, actuele exclusieve schrijvers
+en de bevoegde productie-eigenaar blijven afzonderlijk verplicht.
+Expliciete QA-only-titels, labels en bronbranch-prefixen worden zowel uit de
+PR-inbox als uit de issue→PR-productroutering geweerd; geen QA is gestart.
+
+Daarnaast verschijnen maximaal **drie** oudere open product-PR's per venster
+wanneer ze via een issue-link zijn geselecteerd en op hun exacte HEAD opnieuw
+zijn gelezen. De kaart vermeldt expliciet dat het om een oudere issue-linkbron
+gaat; zo'n PR hoeft niet in de acht recentste listings te staan. De maximale
+portfolio-PR-presentatie blijft begrensd tot **162 kaarten** over maximaal
+achttien projecten. Geen extra netwerkverzoeken of QA-rondes voor deze kaarten.
+
+Elke kaart toont project, titel, GitHub-PR-link, draft/open en exact de SHA
+*zoals gezien in die PR-lijst*. De koppeling aan een gesampled issue wordt
+alleen positief gemarkeerd wanneer die in dezelfde bron is aangetroffen.
+Afwezigheid van een koppeling betekent **niet** dat de PR geen issue heeft.
+Deze lijst is geen opnieuw opgehaalde actuele HEAD, verplichte CI, approval,
+filelease, eigenaarsclaim, merge- of deploytoestemming. Het venster kan afgekapt
+zijn en oudere open PR's missen. Voor echte integratie blijven de onafhankelijke
+PR-gates van toepassing; het werkbord start nooit zelf een merge.
+
+### Betrouwbare gedeeltelijke dekking bij GitHub-limieten
+
+Een bevestigde globale GitHub-ratelimiet stopt **volgende** projectvensters
+zonder opnieuw verzoeken te sturen. Al verzamelde onafhankelijke deelvensters
+blijven zichtbaar in het private rapport; de nog niet opgevraagde projecten
+verschijnen uitsluitend als `unavailable` / `ONBEKEND`, niet als een lege
+backlog of geslaagde scan. De CLI eindigt met een niet-successtatus voor
+onvolledige dekking. Ook een recent bronmoment met geweigerde issue-/PR-bron
+zet `all_projects_currently_read` niet op true.
+
+## Vergelijk actuele en eerder opgeslagen PR-bronnen
+
+Gebruik een **zelf opgeslagen private JSON-portfolio** uit dezelfde projectselectie
+om veranderingen in het werkelijke merge-eerstoverzicht terug te vinden. De
+vergelijking is offline, maakt geen GitHub-, Notion-, VPS- of queue-opvragen en
+wijzigt nooit een claim of PR.
+
+```sh
+python3 scripts/zsentinel_portfolio_workboard.py \
+  --collect-live --previous-portfolio ./vorige-prive-portfolio.json \
+  --format html --output ./huidige-portfolio-met-verschillen.html
+
+# Ook bij uitsluitend opgeslagen bronvensters, zonder netwerk:
+python3 scripts/zsentinel_portfolio_workboard.py \
+  --snapshot ./venster-1.json --snapshot ./venster-2.json \
+  --previous-portfolio ./vorige-prive-portfolio.json \
+  --format md --output ./verschillen-handmatig-opvolgen.md
+```
+
+De private vergelijking leest de vorige bron **éénmalig** als begrensd
+regulier bestand met `O_NOFOLLOW`, controleert identiteit vóór en na de
+lezing, weigert dubbele JSON-velden en bindt de vergelijking aan de SHA-256
+van de exact ingelezen bronbytes. De eerdere bron moet dezelfde geordende
+canonieke projecten bevatten, dezelfde niet-autoriserende status, een geldige
+oude tijdsperiode en maximaal 162 PR-vermeldingen.
+
+De vergelijker bekijkt naast de globale rapportdatum ook **elke eigen
+projectvensterdatum**. Een globaal nieuwere rapportage kan immers een
+project bevatten dat eerder of op hetzelfde tijdstip is gelezen. Voor zulke
+projecten markeert het rapport
+`current_project_window_not_newer_NO_DELTA_INFERRED`, vergelijkt het geen
+zogenaamd nieuwe HEAD en trekt het ook uit ontbrekende PR-vermeldingen geen
+sluitingsconclusie. Die projectnamen worden apart getoond in HTML en Markdown.
+
+De reviewvolgorde is vervolgens: eerst daadwerkelijk **waargenomen gewijzigde
+PR-HEADs** (actuele CI/review opnieuw opvragen), daarna projectvensters die
+niet nieuwer zijn, daarna andere bronwijzigingen en pas daarna PRs die alleen
+nieuw in een beperkte steekproef verschijnen. Alles blijft human-only.
+
+De drie onderscheiden signalen zijn:
+
+- **Waargenomen PR-HEAD gewijzigd:** een bestaande PR-vermelding heeft in
+  de nieuwere beperkte bron een andere HEAD; exacte-head checks en review
+  moeten opnieuw worden bekeken.
+- **Nu wél in de beperkte steekproef:** dit bewijst NIET dat de PR nieuw is.
+  De vorige bron kan dezelfde PR eenvoudig buiten de acht recente gevonden
+  vermeldingen hebben gelaten.
+- **Eerder gezien maar nu niet gesampled:** dit bewijst uitdrukkelijk NIET
+  dat de PR is gemerged, gesloten, dat een actieve claim vrij is gekomen
+  of dat een runner is hersteld. Bronbereikbaarheid en paginering kunnen
+  zijn veranderd. Bij geweigerde huidige GitHub-bron wordt de status
+  `current_source_unavailable_NO_CLOSURE_EVIDENCE`.
+
+Het verschilrapport zit als `pr_delta_since_previous_portfolio` in de private
+JSON-uitvoer, en als beperkte klikbare bronsectie in HTML/Markdown. De
+volledige lijsten zijn maximaal 162 huidige en 162 historisch verdwenen
+PR-vermeldingen; de lange HTML/Markdown-lijsten zijn ingekort om de
+operatorinterface leesbaar te houden. Geen enkele kaart verleent
+merge-/release-/eigendomsautorisatie. Verplichte huidige CI, onafhankelijke
+review en productie-eigenaar blijven de enige geldige autoriteitsroute.
+
+## Bewuste grenzen
+- Maximaal **18 canonieke repositories**, in maximaal **zes niet-overlappende
+  vensters** van drie projecten; per venster maximaal 24 productissues.
+- Maximaal **144 GitHub GET-verzoeken theoretisch** voor zes vensters
+  (per project drie issue-/PR-list-GETs, per venster maximaal drie bestaande
+  PR's maal vijf exacte-head-GETs). Het rapport vermeldt het waargenomen
+  budget. Er is geen scheduler, webbrowser-fetch, continue monitor of retry.
+- Alleen eerder aanwezige, canoniek gekoppelde PR's worden onderzocht; niet
+  aangetroffen PR's blijven onbekend. Geobserveerde PR-HEAD en status worden
+  niet als verplichte merge-gateautoriteit gebruikt.
+- Elk venster houdt zijn eigen waarnemingstijd en dekking; een onbekende of
+  verouderde bron is **niet vrijgegeven**. Zonder actuele Notion-/task_claim-
+  lease-eigenaarschap kan geen taak automatisch worden overgenomen.
+- Geen QA-/regressiesuite, runnerherstart, claimovername, CI-rerun, billing,
+  serverwriter, workflowdispatched taak, merge of deploy. Alle bestaande
+  onafhankelijke reviews, verplichte exacte-head CI, beschermd-main- en
+  security-/releasevoorwaarden blijven gelden.
+
+Dit bestand beschrijft source-codeproductgedrag op de open zCloud PR, **niet**
+een reeds gemergede main-versie of live geautoriseerde scheduler.
+
+
+## 21 oktober · Notion-claimimport zonder handmatige veldconversie
+
+De bestaande `--notion-claims-export PRIVATE.json`-ingang (live-cockpit,
+productissuebord en portfolioweergave) accepteert nu beide concrete
+*opgeslagen* responsvormen binnen dezelfde strikte
+`zsentinel-notion-connector-snapshot-v1` wrapper:
+
+- Genormaliseerde connectorrijen met `Work ID: 433` **of**
+  `Work ID: "PWQ-433"`, `Status: "Claimed" | "Running"` en de
+  relationele `Project` als één canonieke URL, als JSON-lijst of
+  vooraf geserialiseerde JSON-lijst. Een optionele Notion `?pvs=204`
+  verwijdert de projectidentiteit niet meer.
+- Notion-API paginarijen met unieke UUID `id`, exact bij de
+  gekozen data source passende `parent.data_source_id`, en getypeerde
+  `properties["Work ID"].number`, `properties["Status"].status.name`
+  en `properties["Project"].relation`. Deze rijen hoeven niet eerst
+  handmatig naar platte connectorvelden te worden omgezet. Een directe
+  Notion-API queryresponse met `object: "list"`, `has_more: false`,
+  `next_cursor: null` en minstens één dergelijke bronrij mag in de
+  bestaande privéwrapper worden geplaatst zónder `data_source_ids`;
+  de herkomstidentiteit moet dan op **iedere** pagina-rij kloppen.
+  Een lege REST-respons zonder expliciete `data_source_ids` wordt
+  geweigerd; afwezigheid mag nooit als vrije scope worden behandeld.
+  Afgekapt/onbekend project blijft **ONBEKEND**, nooit claimvrij.
+
+De operator bewaart de werkelijke bron-`observed_at_utc` en data-source
+in de bestaande wrapper; een oud bestand opnieuw inpakken maakt de bron
+niet live. Bestaande strikte eisen blijven: unieke Work IDs, alleen
+Claimed/Running, geen cursor of incomplete paginering, ≤100 rijen,
+≤128 KiB, ≤10 minuten oud, geen symlink, geen dubbele JSON-sleutels.
+Een ongeldige of conflicterende rij degradeert de hele optionele
+Notion-bron. Import is alleen een **positieve statusaanwijzing**;
+werkelijke claimhouder, scope, bestandsrechten, dispatch, merge, runner
+en productieherstel blijven onbewezen en ongeautoriseerd. De tool voert
+geen Notion-write of GitHub/VPS-actie uit.
+
+## 21 oktober · Notion-verificatiefase is geen vrije scope
+
+De live read-only Notion-query en de privé opgeslagen connector- of native
+API-snapshot behandelen nu **Claimed, Running en Verifying** als drie
+verschillende positieve aanwijzingen van nog niet afgerond projectwerk.
+Dit is een bewust conservatieve verruiming: in de werkelijke Portfolio
+Work Queue staat **Status** als select-veld en **Work ID** als Notion
+`unique_id` (`prefix: "PWQ"`, positieve `number`). De optionele
+native import accepteert daarnaast de reeds ondersteunde legacy
+`number`/`status`-vorm, maar valideert bij echte `unique_id` het
+exacte prefix en bij beide vormen de bronidentiteit.
+
+De importer bewaart aparte geaggregeerde `verifying_project_counts` en
+`verifying_count`. De portfolio-HTML toont nu de ondergrens
+**Verifying ≥N · eigenaar hercontroleren** bij een project met positieve
+verificatiewaarneming; het tekstrapport vermeldt dezelfde eigenaar-HOLD.
+De totaaltelling blijft een **observatie van werkstatussen**, géén bewijs
+van een huidige lease, uitvoerende worker of bestandsclaim. Ontbrekende
+projecten of onvolledige bronnen blijven **ONBEKEND**; de privé-snapshot
+blijft maximaal tien minuten bruikbaar.
+
+De bestaande P0/P1 probleemkiezer houdt een gerelateerde OPEN PR ook bij
+onvolledige GitHub-dekking vóór een nieuwe implementatie. Zonder bekende
+PR wordt bij waargenomen Verifying eerst een eigenaar-/reviewhercontrole
+gevraagd in plaats van nieuwe scope toe te kennen. Er wordt nog steeds
+**niets** automatisch geclaimd, geretriggerd, gemerged of gedeployed.
+
+### Live Notion-bronvensters: recent werk krijgt voorrang
+
+De vier reeds toegestane read-only Notion-pagina-aanvragen worden voortaan
+**niet** meer verbruikt door één gezamenlijke Status-OR-resultaatlijst.
+Er is precies één venster (maximaal 100 rijen) voor `Claimed`, één
+voor `Running` en maximaal twee vensters (200 rijen) voor
+`Verifying`. Elk bronvenster sorteert op `last_edited_time` aflopend.
+Zo kan een grote historische verificatieachterstand nieuwe bezette en
+lopende taken niet uit hetzelfde globale pagineringsbudget verdringen.
+Bij resterende pagina's wordt de dekking expliciet **incomplete**;
+het weergegeven aantal blijft een ondergrens, nooit alle claims.
+
+Als een Notion-pagina tussen de afzonderlijke reads van status verandert,
+wordt de inconsistentie niet omgezet in uitvoerautorisatie: dubbele
+pagina-identiteiten worden geweigerd en afwijkende statussen markeren de
+bron als incompleet. Geen extra vraagbudget, tokens in output, claimwrite,
+runnerherstart of automatische worker-toewijzing.
+
+## 21 oktober · Statusdekking in de bestaande operatorinterfaces
+
+De centrale read-only Notion-lezer levert nu expliciete bronreceipts
+`status_source_windows`: `Claimed` (max. één pagina), `Running`
+(max. één pagina) en `Verifying` (max. twee pagina's). Per status blijven
+de toegelaten paginabegroting, gelezen pagina's, waargenomen ondergrens
+en de aanduiding `complete_within_source` of `partial` behouden.
+De totale read-budget blijft maximaal vier Notion-query-aanvragen.
+**Complete binnen bronvenster** betekent nooit dat worker/lease of
+bestandscope compleet, actueel of overdraagbaar zijn.
+
+Deze gegevens worden nu werkelijk getoond in de bestaande:
+- **Live-cockpit** (`zsentinel_live_cockpit.py`): Nederlandse HTML
+  onder Notion-werkstatus, en in het tekstoverzicht per status een
+  eigen bronbegrenzing. `Verifying`-regels worden zonder parserfout
+  weergegeven, met de opdracht eigenaar/review opnieuw te controleren.
+- **Portfolio-CLI** (`zsentinel_portfolio_overview.py`): brongebonden
+  dekking in HTML en tekst; JSON bevat dezelfde valide brontabel
+  onder `notion_status_source_windows`.
+- **Productissue-werkbord** (`zsentinel_issue_delivery.py`): positieve
+  `Verifying`-statussen krijgen een aparte eigenaar-HOLD in de
+  vervolgstap, met zichtbare HTML- en Markdown-melding. Bestaande PR's
+  blijven voorgaan op een nieuwe implementatie.
+
+Een optionele, door een gebruiker opgeslagen privé-Notion-export kan
+dezelfde positieve werkstatus tonen, maar heeft **geen live
+per-status-bronbewijs**. De UI toont daarom 'ONBEKEND' in plaats van
+zelfverzekerde paginadekking. Bronvalidatie controleert voor een live
+bron exact de drie statussen, individuele pagina- en rijbudgetten, en
+de som met `active_count`; tegenstrijdige receipts worden geweigerd.
+
+Er zijn geen nieuwe provider-GET-budgetten, tokenlogs, leasevrijgaves,
+productie-SQLite-/Notion-writes, GitHub-workflow-reruns, automatische
+taakovername, merges, deploys of QA-/regressiesuites bijgekomen.
+
+### Fair voorbeeldvenster (zonder extra bronvragen)
+
+De optionele Notion-operatorlijst toont maximaal dertig werkitems.
+Voorheen konden veel `Claimed`-regels alle zichtbare voorbeeldplaatsen
+bezetten terwijl de volledige bron ook `Running` of `Verifying` bevatte.
+De bestaande live-lezer en de veilige privé snapshotadapter delen nu een
+begrensde round-robin selectiefunctie: zichtbare voorbeelden wisselen
+**Claimed → Running → Verifying** af zolang die statussen daadwerkelijk
+in de opgevraagde bron voorkomen. Het totale project-/statusoverzicht
+wordt ongewijzigd berekend over **alle** bronrijen, niet alleen de
+voorbeeldlijst. De voorbeeldreeks geeft nooit bewijs van volledigheid,
+workeridentiteit, lease of werkeigendom; handmatig opgeslagen exports
+blijven van ongeverifieerde herkomst.
+
+## 21 oktober · historisch werkbord en centrale eigenaaroverdracht
+
+**Historische werkbordimport:** bij het samenvoegen van één tot zes
+opgeslagen GitHub-/Notion-bronvensters wordt de oorspronkelijke
+issue→PR-actie voortaan teruggezet uit de canonieke route. Oude
+brongebonden Notion-voorvoegsels op `action` en de beide velden
+`notion_active_work_min` en `notion_verifying_work_min` worden niet
+als nieuwe, actuele eigenaarswaarneming doorgegeven. De parser accepteert
+alleen herkenbare oude voorvoegsels die eindigen op de canonieke
+bronactie; een vreemde of tegenstrijdige bron wordt geweigerd. In
+HTML, Markdown en JSON staat het aantal geneutraliseerde
+historische waarschuwingen. **Dit geeft geen bewijs dat die eigenaar
+nu vrij is**: recheck de actuele lease, Notion-status, PR en bestanden.
+
+**Centrale operator/eigenaaroverdracht:** de bestaande `--show-owner-handoff`
+en `--handoff-output .md/.json`-route toont nu de reeds waargenomen
+Notion-statusbron, zonder een tweede netwerkrequest. Per canoniek project
+is zichtbaar hoeveel onafgeronde statussen er minimaal zijn gezien
+en hoeveel daarvan in `Verifying` staan. Statusbrondekking, gelezen
+pagina's en afgekapt venster zijn ook in HTML, Markdown en JSON
+beschikbaar. Een project zonder bron of onbekende projectrelatie krijgt
+geen verzonnen live lease/eigendom; ongekoppelde statusregels blijven
+een geaggregeerd onbekend aantal. De statusoverdracht is **apart
+van de P0-incidentlijst** en verandert de volgorde, limieten of
+toestemmingsvlaggen daarvan niet.
+
+De broncontext vermeldt of gegevens live gedeeltelijk, incompleet,
+ouder dan tien minuten of door de gebruiker opgeslagen/onbevestigd zijn.
+Geen workerclaim, file lock, queue-RW, Notion-mutatie, provider-CI-rerun,
+automatische recovery, merge of deploy. De oplevering blijft gebonden
+aan de oorspronkelijke exact-head CI, onafhankelijke review en
+beschermde default-branch.
+
+### Geen Notion-paneel zonder bron
+
+De standaard eigenaaroverdracht laat de optionele Notion-sectie geheel
+weg als Notion niet is opgevraagd. Was de bron wel gevraagd maar is de
+read-only raadpleging mislukt, dan verschijnt uitdrukkelijk **Notion
+bron ONBEKEND**, niet "geen actieve werkitems". Alleen een daadwerkelijk
+geobserveerde bron mag positieve per-project statusondergrenzen tonen;
+zelfs dan is dit geen huidig worker-, lease- of bestandsclaimbewijs.
+
+
+## Root, queue-database and archive capacity in one live observation
+
+On the intended Linux VPS, `--observe-vps-capacity` already reports root
+filesystem capacity separately from the queue database mount. You can now
+supply the existing configured archive mount with `--archive-target` without
+starting a file hotspot scan. This reports aggregate free GiB, unavailable
+space percentage and inode headroom for that same opened mount.
+
+```sh
+python3 scripts/zsentinel_live_cockpit.py \
+  --database "$ZCLOUD_DB" \
+  --project Zennay/zCloud \
+  --observe-vps-capacity \
+  --archive-target /home/ubuntu/VPS-Archief \
+  --format html --output "$ZCLOUD_PRIVATE/capacity-current.html"
+```
+
+Use an existing database and a private output directory. The archive target
+must be an explicit absolute path and is opened with no-follow directory flags;
+the 16 KiB-capped proc memory reader exposes only validated scalar counters, and
+the archive directory identity is rechecked after mount-point detection. The
+report marks it as an external mount only when mount-point detection succeeds
+and its filesystem differs from root. It also states whether the
+target shares a device with the queue database. Missing/unreadable archive
+metadata degrades only the optional archive sub-observation and does not erase
+root/database capacity evidence. No file names or contents are read. The
+report does not prove any file is cold, private, unreferenced, encrypted or
+safe to transfer; it authorizes no copy, move, delete, service restart, queue
+write or claim change.
+
+
+The same live resource receipt now reports total and available memory,
+swap totals/used percentage, five-minute load per allowed CPU, and explicit
+root/database capacity bands plus `capacity_severity` and warning codes.
+Bands are advisory: `critical` when either measured filesystem is >=95%
+unavailable by the existing unprivileged-capacity metric, has <1 GiB free, or
+has >=95% of inodes unavailable; `high` at >=90%, <5 GiB, or >=90% inode
+unavailability. Swap >=90%, available RAM <=10%, and load >=2x allowed CPU
+count add warning codes. Root-critical capacity without a positively observed
+external archive mount adds `no_verified_external_archive_headroom`.
+None of these fields authorizes offload, cleanup, process termination, runner
+restart or claim release; pressure is a capacity signal, not a root-cause
+finding.
+
+
+### Capaciteitsmeting in de herstelcockpit
+
+When `--observe-vps-capacity` is enabled, the same-host read-only resource
+receipt is preserved in the decision JSON and rendered as a dedicated
+capacity panel in the HTML cockpit. It displays root and database filesystem
+headroom/bands, RAM and swap totals, five-minute load per allowed CPU, the
+explicit archive-mount state and warning codes. The router consumes the
+expanded receipt before recommending any new work: high/critical reported
+capacity, swap >=90%, available RAM <=10%, or filesystem headroom below 5 GiB
+keeps admission overloaded. A mounted archive is displayed as capacity evidence
+only; it never overrides root pressure or authorizes a copy, move, deletion,
+restart, queue write or claim change.
+
+
+### Conservatieve afronding van capaciteitsbewijs
+
+Vrije bytes/ruimte en beschikbare RAM/swap worden vóór classificatie naar
+beneden gekwantiseerd; bezettingspercentages, load-per-core en inode-
+onbeschikbaarheid worden naar boven gekwantiseerd. De weergegeven precisie kan
+zo geen drempel stilzwijgend versoepelen of de router laten afwijken van de
+capaciteitsbanden en warning-codes.
+
+## 23 oktober 2026 · hergebruik product-PR met alleen titelverwijzing
+
+De bestaande read-only GitHub issue-inbox koppelt open product-PR's nu op basis van expliciete `#123`-verwijzingen of volledige, **dezelfde-repository** `https://github.com/Zennay/<repo>/issues/123`-links in **zowel de PR-titel als de optionele beschrijving**. Issue-URL's naar andere repositories en PR-URL's tellen niet mee; nummergelijkheid tussen repositories is geen relatie. Eerder werd een bestaande productreparatie met een issueverwijzing uitsluitend in de titel niet getoond als verwante PR in het P0/P1-issuebord, waardoor een operator ten onrechte dubbel werk kon kiezen. De merge-first-rij, issueverwijzingen en offline HTML gebruiken dezelfde samengevoegde bronset.
+
+De issuekaart en de merge-first-PR-kaart tonen nu ook of de waargenomen tekstverwijzing uit de **titel**, de **body** of **beide** kwam. Oudere handmatig aangeleverde receipts zonder dit bronveld worden conservatief als onbekende herkomst gelabeld.
+
+Een titel- of beschrijvingsverwijzing is nadrukkelijk **alleen een tekstverwijzing**: geen bewezen issue-fix, bron-HEAD, huidige claimeigenaar, verplichte CI, review of merge-autorisatie. Bestaande uitsluiting van QA-only PR's blijft gelden; de open PR-paginering blijft bewust begrensd en onvolledig. Een ontbrekende body of body buiten de begrensde tekst wordt niet meer als reden gebruikt om een verder geldige expliciete titelverwijzing weg te gooien. Er zijn geen queue-, claim-, runner-, GitHub-workflow- of VPS-writes gekoppeld aan deze bronroute.
