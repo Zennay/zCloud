@@ -179,7 +179,8 @@ def _group_rss_bytes(group_id: int) -> int:
 
 
 def _renew_existing_lease(conn, project_id: str, owner_id: str,
-                          lease_seconds: int, metadata: dict) -> dict:
+                          acquired_at: str, lease_seconds: int,
+                          metadata: dict) -> dict:
     """Renew only a STILL-ACTIVE lease, never reacquire a lost heavy slot.
 
     A scheduled renewal may be delayed beyond TTL by a paused worker or
@@ -191,10 +192,11 @@ def _renew_existing_lease(conn, project_id: str, owner_id: str,
     try:
         now = datetime.now(timezone.utc).isoformat()
         row = conn.execute(
-            "SELECT lease_until FROM resource_leases "
+            "SELECT acquired_at,lease_until FROM resource_leases "
             "WHERE project_id=? AND owner_id=?", (project_id, owner_id)
         ).fetchone()
-        if row is None or not str(row["lease_until"]) > now:
+        if (row is None or row["acquired_at"] != acquired_at
+                or not str(row["lease_until"]) > now):
             conn.rollback()
             return {"acquired": False, "reason": "resource_lease_lost",
                     "project_id": project_id}
@@ -208,6 +210,48 @@ def _renew_existing_lease(conn, project_id: str, owner_id: str,
                     "project_id": project_id}
         conn.commit()
         return result
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _retain_owned_lease(conn, project_id: str, owner_id: str,
+                        acquired_at: str) -> bool:
+    """Retain a stuck process lease without renewing a newer owner instance."""
+    from datetime import timedelta
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        until = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()
+        cursor = conn.execute(
+            "UPDATE resource_leases SET lease_until=?,metadata_json=? "
+            "WHERE project_id=? AND owner_id=? AND acquired_at=?",
+            (until, '{"cleanup":"process_group_unverified","executor":"zcloud-governed-exec"}',
+             project_id, owner_id, acquired_at),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return False
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _release_owned_lease(conn, project_id: str, owner_id: str,
+                         acquired_at: str) -> bool:
+    """Only delete the lease from our own admission generation."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        cursor = conn.execute(
+            "DELETE FROM resource_leases WHERE project_id=? AND owner_id=? "
+            "AND acquired_at=?", (project_id, owner_id, acquired_at),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return False
+        conn.commit()
+        return True
     except Exception:
         conn.rollback()
         raise
@@ -321,6 +365,7 @@ def run_governed(
     proc = None
     old_handlers = {}
     acquired = False
+    acquired_at = None
     try:
         # Serialize same-owner admission with the pool capacity reservation.
         # Reusing an active owner key would otherwise renew one lease while
@@ -350,6 +395,7 @@ def run_governed(
             return 75
         conn.commit()
         acquired = True
+        acquired_at = str(result["lease"]["acquired_at"])
 
         env = os.environ.copy()
         env["ZCLOUD_RESOURCE_PROJECT"] = str(project_id)
@@ -363,7 +409,7 @@ def run_governed(
         )
 
         renewed = _renew_existing_lease(
-            conn, project_id, owner_id, lease_seconds,
+            conn, project_id, owner_id, acquired_at, lease_seconds,
             _metadata(command, pid=proc.pid),
         )
         if not renewed.get("acquired"):
@@ -403,7 +449,7 @@ def run_governed(
                 next_memory_check = now + 2.0
             if now >= next_renewal:
                 renewed = _renew_existing_lease(
-                    conn, project_id, owner_id, lease_seconds,
+                    conn, project_id, owner_id, acquired_at, lease_seconds,
                     _metadata(command, pid=proc.pid),
                 )
                 if not renewed.get("acquired"):
@@ -421,18 +467,12 @@ def run_governed(
             if acquired and not group_stopped:
                 # An orphan may keep using the heavy pool. Retain the slot
                 # at the maximum bounded TTL for explicit owner recovery.
-                retained = runtime.acquire_resource(
-                    conn, project_id, owner_id, lease_seconds=6 * 3600,
-                    metadata={"executor": "zcloud-governed-exec",
-                              "cleanup": "process_group_unverified"},
-                )
-                conn.commit()
-                if not retained.get("acquired"):
+                if not _retain_owned_lease(
+                    conn, project_id, owner_id, acquired_at
+                ):
                     raise RuntimeError("resource_lease_retention_failed")
             elif acquired:
-                result = runtime.release_resource(conn, project_id, owner_id)
-                conn.commit()
-                if not result.get("released"):
+                if not _release_owned_lease(conn, project_id, owner_id, acquired_at):
                     raise RuntimeError("resource_lease_release_unconfirmed")
                 release_ok = True
         except Exception as exc:
