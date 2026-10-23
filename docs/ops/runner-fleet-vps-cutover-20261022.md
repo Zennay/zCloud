@@ -59,3 +59,5 @@
 ## Assignment-proof command exit status
 
 `--action verify-jobs` is read-only and fail-closed: it exits successfully only when every selected repository has at least one **completed successful** workflow job with a positive runner ID and the exact newly registered runner name. Queued, in-progress, failed, or unavailable job receipts do not count as proof; the command exits non-zero while any selected repository remains unproven. A safe, separately approved job dispatch is required to create missing receipts.
+
+Inventory is also fail-closed: `--action inventory` exits non-zero if any selected repository's runner API cannot be read. Partial rows are still printed for operator diagnosis, but never reported as a complete inventory.
