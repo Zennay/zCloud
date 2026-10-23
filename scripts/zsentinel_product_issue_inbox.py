@@ -348,14 +348,23 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                             "source": "bounded_recent_open_pr_listing_unverified_current_head",
                             "ownership_verified": False, "merge_authorized": False,
                         })
+                    # A product PR can name its existing issue in its
+                    # title alone ("fix: missing composer (#698)"). Treat title
+                    # and body as textual evidence only; neither authorizes a
+                    # claim, a merge, or a declaration that the issue is fixed.
                     body = pr.get("body")
-                    if not isinstance(body, str) or len(body) > 32000:
-                        continue
-                    referenced = set(
+                    body = body if isinstance(body, str) and len(body) <= 32000 else ""
+                    references_in_title = {
+                        int(m.group(1)) for m in re.finditer(
+                            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b", title
+                        )
+                    }
+                    references_in_body = {
                         int(m.group(1)) for m in re.finditer(
                             r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b", body
                         )
-                    )
+                    }
+                    referenced = references_in_title | references_in_body
                     closing_references = {
                         int(m.group(1)) for m in re.finditer(
                             r"(?i)\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\s+#([1-9][0-9]{0,7})\b",
@@ -537,7 +546,7 @@ def html_view(data):
                              str(candidate["number"]) + " · " + relationship)
                     refs.append("<a href='" + ref + "' target='_blank' rel='noopener noreferrer'>" +
                                 escape(label) + "</a>")
-                lines.append("<div class='muted'><small>Open PR text references (not verified fixes or owners): " +
+                lines.append("<div class='muted'><small>Open PR title/body references (not verified fixes or owners): " +
                              " · ".join(refs) + "</small></div>")
         sections.append("<section><h2>" + escape(priority_name) + " · " + str(len(rows))
                         + " sampled issues</h2>" +
