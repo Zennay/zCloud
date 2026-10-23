@@ -1173,6 +1173,33 @@ def html_view(decision, registry=None):
         }
         window_totals = notion.get("claim_window_observation_counts")
         live_notion = notion["source"] == "notion_readonly_data_source_pages"
+        project_relation_html = (
+            '<p class="muted">Projectrelatie-dekking niet live geverifieerd; '
+            'deze bron kan geen vrije scope bewijzen.</p>'
+        )
+        if live_notion:
+            relation_coverage = notion.get("project_relation_coverage")
+            unresolved_relations = notion.get("unresolved_project_relation_count")
+            if (relation_coverage not in ("complete", "partial")
+                    or type(unresolved_relations) is not int
+                    or not 0 <= unresolved_relations <= notion["active_count"]
+                    or (relation_coverage == "complete") != (unresolved_relations == 0)):
+                raise ValueError("invalid Notion project-relation coverage")
+            if unresolved_relations:
+                project_relation_html = (
+                    '<p class="banner">PROJECTRELATIES ONVOLLEDIG — ' +
+                    str(unresolved_relations) +
+                    ' actieve rij(en) missen een eenduidige canonieke projectmapping. '
+                    'Geen vrije-werkconclusie; bevoegde eigenaar hercontroleert de bron.</p>'
+                )
+            else:
+                project_relation_html = (
+                    '<p class="muted">Projectrelaties compleet binnen deze begrensde '
+                    'bronwaarneming; geen bewijs van lease, bestandseigendom of vrijgave.</p>'
+                )
+        elif ("project_relation_coverage" in notion
+              or "unresolved_project_relation_count" in notion):
+            raise ValueError("saved Notion snapshot cannot claim live project-relation coverage")
         if live_notion:
             if (type(window_totals) is not dict or notion.get("claim_window_verified") is not False
                     or any(key not in claim_windows or type(count) is not int
@@ -1358,7 +1385,7 @@ def html_view(decision, registry=None):
         notion_panel = (
             '<p>' + phrase(caveat, 80) + ' · onafgeronde werkregels: ' +
             str(notion["active_count"]) + ' · geen bestandsscope, claimvrijgave of dispatch.</p>' +
-            window_html + window_counts_html +
+            project_relation_html + window_html + window_counts_html +
             ('<ul>' + ''.join(rows) + '</ul>' if rows else
              '<p class="empty">Geen actieve regels in deze waarneming; geen bewijs van vrije scope.</p>') +
             ('<p>Voorbeelden afgekapt na 30; zichtbaar per waargenomen '
