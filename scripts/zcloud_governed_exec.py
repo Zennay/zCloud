@@ -656,8 +656,10 @@ def run_governed(
                 next_renewal = now + renew_seconds
             time.sleep(0.5)
     finally:
-        for signum, handler in old_handlers.items():
-            signal.signal(signum, handler)
+        # Keep our signal handlers installed until every descendant is
+        # stopped and the lease is durably reconciled. Restoring SIG_DFL
+        # before cleanup lets a second SIGTERM kill this wrapper halfway
+        # through group termination or SQLite release.
         group_stopped = _stop_process_group(proc)
         release_ok = not acquired
         try:
@@ -681,7 +683,11 @@ def run_governed(
                 "error": type(exc).__name__,
             }, sort_keys=True), file=sys.stderr)
         finally:
-            conn.close()
+            try:
+                conn.close()
+            finally:
+                for signum, handler in old_handlers.items():
+                    signal.signal(signum, handler)
         if acquired and not group_stopped:
             raise RuntimeError("governed_process_group_not_stopped; resource lease not released")
         if not release_ok:
