@@ -117,10 +117,20 @@ def _nonprotected_memory_admission(conn, project_id: str,
         return {"acquired": False, "reason": "resource_memory_budget_missing",
                 "project_id": project_id}
     now = datetime.now(timezone.utc).isoformat()
-    other_mb = int(conn.execute(
-        "SELECT COALESCE(SUM(memory_soft_mb),0) FROM resource_leases "
-        "WHERE pool != 'protected' AND lease_until>?", (now,)
-    ).fetchone()[0])
+    leases = conn.execute(
+        "SELECT pool,memory_soft_mb FROM resource_leases WHERE lease_until>?",
+        (now,),
+    ).fetchall()
+    other_mb = 0
+    for lease in leases:
+        pool_name = lease["pool"]
+        reserved_mb = lease["memory_soft_mb"]
+        if (pool_name not in contracts["resource_pools"]
+                or type(reserved_mb) is not int or reserved_mb <= 0):
+            return {"acquired": False, "reason": "resource_existing_lease_invalid",
+                    "project_id": project_id}
+        if pool_name != "protected":
+            other_mb += reserved_mb
     # MemAvailable is an additional pressure gate, not a proxy for leases.
     # The global host reserve and the leaf's delegated memory.max are
     # independent ceilings. Deducting zCloud/zSSH's global RAM reserve from
