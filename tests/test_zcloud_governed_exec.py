@@ -310,18 +310,26 @@ class GovernedExecTests(unittest.TestCase):
         )
         holder.commit()
         output = self.root / "waiter-started.txt"
-        command = [
-            sys.executable,
-            str(ROOT / "scripts" / "zcloud_governed_exec.py"),
-            "--db", str(self.db), "--project", "haxlab",
-            "--owner", "second-owner", "--wait-seconds", "5",
-            "--lease-seconds", "180", "--renew-seconds", "30",
-            "--", sys.executable, "-c",
-            f"from pathlib import Path; Path({str(output)!r}).write_text('started')",
-        ]
+        # The contender uses its own interpreter but the SAME temporary
+        # contract override as the holder; runtime.CONTRACT_FILE is a
+        # process-local Python variable, not an inherited environment key.
+        child_code = (
+            f"from pathlib import Path; Path({str(output)!r}).write_text('started')"
+        )
+        contender_code = (
+            "import sys; from pathlib import Path; "
+            f"sys.path.insert(0, {str(ROOT)!r}); "
+            "import project_runtime as runtime; "
+            f"runtime.CONTRACT_FILE = Path({str(self.contract)!r}); "
+            "from scripts import zcloud_governed_exec as governed; "
+            "raise SystemExit(governed.run_governed("
+            f"Path({str(self.db)!r}), 'haxlab', 'second-owner', "
+            f"[sys.executable, '-c', {child_code!r}], "
+            "lease_seconds=180, renew_seconds=30, wait_seconds=5))"
+        )
         contender = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True,
+            [sys.executable, "-c", contender_code],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         try:
             # The contender must have reached its wait loop before the
