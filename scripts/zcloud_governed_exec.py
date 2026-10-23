@@ -543,11 +543,11 @@ def run_governed(
                 _admission_denied({"reason": "resource_owner_already_running",
                                    "project_id": project_id})
                 return 75
-            pressure = _nonprotected_memory_admission(conn, project_id, compute)
-            if pressure is not None:
-                conn.rollback()
-                _admission_denied(pressure)
-                return 75
+            # Check pool occupancy before host-memory pressure: if another
+            # heavy job owns the only slot, bounded waiters must sleep
+            # *without* re-scanning all host/cgroup memory each second.
+            # A successful reservation remains uncommitted until the
+            # independent host-memory guard approves the new workload.
             result = runtime.acquire_resource(
                 conn,
                 project_id,
@@ -573,6 +573,11 @@ def run_governed(
                                result.get("reason") or "resource_admission_unavailable"),
                     "project_id": project_id,
                 })
+                return 75
+            pressure = _nonprotected_memory_admission(conn, project_id, compute)
+            if pressure is not None:
+                conn.rollback()
+                _admission_denied(pressure)
                 return 75
             conn.commit()
             acquired = True
