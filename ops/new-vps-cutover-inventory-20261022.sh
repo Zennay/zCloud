@@ -53,6 +53,12 @@ echo "-- storage; filesystem type and source must be inspected before any traini
 df -hT /
 findmnt -rn -o TARGET,SOURCE,FSTYPE |
   grep -E 'VPS-Archief|/dev/|fuckball|haxlab' || true
+echo "-- block-device inventory (read-only; includes unmounted devices) --"
+if command -v lsblk >/dev/null 2>&1; then
+  lsblk --list --paths --output NAME,TYPE,FSTYPE,RO,MOUNTPOINTS
+else
+  echo 'WARNING: lsblk unavailable; unmounted block devices cannot be inventoried.' >&2
+fi
 echo "-- external training guard --"
 echo 'A rclone/FUSE archive or /dev/sda2 system partition is NEVER a training disk.'
 echo 'Fuckball external training requires a separately mounted ext4/xfs/btrfs block disk.'
