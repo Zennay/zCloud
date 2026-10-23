@@ -71,3 +71,8 @@ During operator prepare on 22 October 2026 the Firefox user unit reported `activ
 - Only once the new system actually executes jobs, retire old server and runner services; keep backups.
 
 Never publish registration tokens, browser sessions, private profile bytes or SQLite files in CI logs or GitHub.
+
+## Additional fail-closed safeguards · 23 October
+
+- The bootstrap refuses extra positional arguments so a typo cannot silently select a privileged phase.
+- When staging the historical SQLite snapshot, it now requires `PRAGMA integrity_check` to return `ok` before the temporary database is atomically installed. This proves structural integrity of the staged copy only; it does **not** prove that the snapshot contains the final post-fence source state or that live workers are recovered.
